@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/slate-tuple",
+    "crates/slate-schema",
+    "crates/slate-kernel",
+    "crates/slate-slatedb",
+    "crates/slate-derive",
+    "crates/slate-orm",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/howlerops/slate-orm"
+authors = ["slate-orm contributors"]
+
+[workspace.dependencies]
+slate-tuple = { path = "crates/slate-tuple", version = "0.0.1" }
+slate-schema = { path = "crates/slate-schema", version = "0.0.1" }
+slate-kernel = { path = "crates/slate-kernel", version = "0.0.1" }
+slate-slatedb = { path = "crates/slate-slatedb", version = "0.0.1" }
+slate-derive = { path = "crates/slate-derive", version = "0.0.1" }
+
+async-trait = "0.1"
+bytes = "1"
+futures = "0.3"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# proc-macro
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+# dev
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+panic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+todo = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

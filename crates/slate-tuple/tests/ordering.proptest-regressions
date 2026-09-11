@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bac2ab7880a2289682e54315afeebd95959cfa0d86a61753e9de16aebb7242f4 # shrinks to idx = [Bytes(b"")], suffix = [255]
+cc b17294ac2f81b4e8e0d122a89b5c3a8e53bc302e1d0a50af8bdd4adefc787821 # shrinks to a = Bytes(b"\xff"), b = Bytes(b"\xff\0")
