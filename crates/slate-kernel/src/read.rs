@@ -3,7 +3,7 @@
 //! Everything here needs only [`KvSnapshot`], which is what lets the same code
 //! serve a writer's transaction and a read replica. The security checks live
 //! here too, so a replica cannot be a way around them: there is no read path
-//! that does not go through [`SecuredReads`].
+//! that does not go through the secured reads in this module.
 
 use crate::error::Result;
 use crate::exec::QueryCursor;

@@ -8,9 +8,9 @@ The closest blueprint is FoundationDB's Record Layer rather than an ORM. The
 derive macro is a surface; the value is in the kernel underneath it, which owns
 the keyspace, index maintenance, and the point where access policy is enforced.
 
-> **Status: early.** The Rust record layer works end to end and is tested. The
-> gRPC head node and the Python, Go and TypeScript SDKs are not built yet. See
-> [Status](#status).
+> **Status: early.** The Rust record layer works end to end and is tested,
+> including read replicas over S3-compatible storage. The gRPC head node and the
+> Python, Go and TypeScript SDKs are not built yet. See [Status](#status).
 
 ```rust
 use slate_orm::{Record, Records, Expr, ScanOrder};
@@ -43,7 +43,7 @@ let found: Vec<User> = txn.find_records(&ctx, filter, ScanOrder::Ascending).awai
 | `slate-tuple` | Order-preserving tuple encoding, the closed value model |
 | `slate-schema` | Table, column and index definitions; the row body codec |
 | `slate-kernel` | Keyspace, record store, planner, executor, RLS/RBAC |
-| `slate-slatedb` | SlateDB backend |
+| `slate-slatedb` | SlateDB backend, S3-compatible storage, read replicas |
 | `slate-derive` | `#[derive(Record)]` and generated column constants |
 | `slate-orm` | Typed surface; re-exports the rest |
 
@@ -163,6 +163,40 @@ design.
 SlateDB gives a single fenced writer with multi-reader scale-out, so this is a
 single-writer database head with read replicas — a Neon-shaped system, not a
 Spanner-shaped one. That is the honest limitation, and it is deliberate.
+[`docs/topology.md`](docs/topology.md) covers it properly, including the
+improvements considered and left out.
+
+The short version:
+
+**Reads scale, writes do not.** A `RecordSnapshot` is the read-only counterpart
+of a `RecordTransaction`, and a replica-backed store simply lacks the write
+methods rather than having them and failing at runtime. Both go through the same
+secured read path, so a replica cannot be a way around a policy.
+
+**Consistency is a token.** A commit returns the sequence it landed at, and a
+read carrying that sequence may only be served by a view that has reached it.
+Threading the highest token seen gives monotonic reads for free.
+
+```rust
+let token = txn.commit().await?;
+watermark.observe_commit(token);
+let snapshot = pool.snapshot(watermark.freshness(), tenant.as_ref()).await?;
+```
+
+The token is a *durable* sequence — a replica reads object storage, so
+read-your-writes through one requires durable commits.
+
+**Routing is by tenant, not round-robin.** Reads come from object storage, so
+cache hit ratio dominates latency far more than balance does; because the
+keyspace is tenant-prefixed, one tenant's working set is a contiguous range that
+stays warm on one replica. The prefix that isolates a tenant for security is the
+one that makes it cacheable. Placement is rendezvous hashing, so losing a replica
+moves only its own tenants.
+
+**Conflicts are ordinary, fencing is terminal.** `RecordStore::transact` retries
+only what can succeed on a second attempt, with jittered backoff. A second writer
+fences the first, and a writer that retried past that would be a split brain, so
+`WriterFenced` is a distinct non-retryable error.
 
 Commit latency is bounded by the flush to object storage. `Durability::Visible`
 returns as soon as a write is committed and visible to readers but before it is
@@ -175,6 +209,23 @@ hold under plain snapshot isolation, because they rest on write-write conflicts
 rather than on read tracking; it is application invariants that read one row and
 write another which need serializable. The safer level is the default and
 stepping down is explicit.
+
+## Storage
+
+Anything speaking S3 works: AWS, MinIO, Tigris, Cloudflare R2. The differences
+between them are an endpoint, an addressing style and how credentials resolve,
+and they all live in `S3Config`.
+
+```rust
+let store = SlateStore::open_s3(
+    "/records",
+    S3Config::new("records")
+        .with_endpoint("http://127.0.0.1:9000")   // MinIO; Tigris and R2 are HTTPS
+        .with_credentials("minioadmin", "minioadmin")
+        .allow_http(true),
+)
+.await?;
+```
 
 ## Testing
 
@@ -196,10 +247,20 @@ Tests are written around guarantees rather than API surface:
   hidden rows via error codes, reach another tenant by asking explicitly, escape
   a policy by updating out of it, or leak null-valued rows through a negated
   policy.
-- The SlateDB integration tests re-check against a real instance the properties
-  the kernel suite proves against the in-memory backend — most importantly that
-  two concurrent writers cannot both take a unique index slot, which is what
-  says the in-memory backend's conflict detection is a faithful stand-in.
+- Routing is tested on the properties that justify it: a tenant always lands on
+  the same replica, tenants spread within 20% of even across four replicas, and
+  losing a replica moves *zero* tenants that were not on it.
+- Storage is tested over the S3 protocol as well as an in-memory object store —
+  the same assertions, both substrates — using an in-process S3 server so the
+  suite stays hermetic and needs no Docker daemon. A CI job additionally runs it
+  against MinIO.
+- What only a real instance can show is tested against one: two concurrent
+  writers unable to both take a unique index slot, a replica genuinely observing
+  the writer's data, security applying identically on a replica, and a second
+  writer fencing the first.
+
+Set `SLATE_S3_BUCKET` and friends to point the storage suite at your own MinIO,
+Tigris or R2 bucket instead of the in-process server.
 
 ## Status
 
@@ -212,15 +273,20 @@ Built and tested:
 - [x] Scan/filter executor and heuristic index selection
 - [x] RLS predicate injection and RBAC catalog
 - [x] `#[derive(Record)]` and the typed surface
-- [x] SlateDB backend
+- [x] SlateDB backend, and S3-compatible storage (AWS, MinIO, Tigris, R2)
+- [x] Read replicas, read tokens, tenant-affinity routing
+- [x] Conflict retry and writer fencing
 
 Not built:
 
 - [ ] gRPC head node — the single-writer server the topology above describes
-- [ ] Read replicas off SlateDB checkpoints/clones
+- [ ] Writer leadership: SlateDB fences but does not elect, so a lease has to
+      come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Cost-based planning, covering/index-only scans, joins
+- [ ] Projections, covering/index-only scans, pipelined index lookups — see
+      [`docs/topology.md`](docs/topology.md) for why these are in that order
+- [ ] Cost-based planning, joins
 - [ ] `IN` as multiple index ranges (today it is a residual filter)
 
 ## License

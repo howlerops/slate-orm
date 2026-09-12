@@ -476,8 +476,8 @@ impl<'a> RecordTransaction<'a> {
     /// Commit every buffered write atomically.
     ///
     /// Returns the sequence the writes landed at, or `None` if there were none.
-    /// Pass it to a later read as [`Freshness::AtLeast`] to read your own
-    /// writes back from a replica.
+    /// Pass it to a later read as [`Freshness::AtLeast`](crate::Freshness) to
+    /// read your own writes back from a replica.
     pub async fn commit(self) -> Result<Option<ReadToken>> {
         Ok(self.txn.commit().await?.map(ReadToken::new))
     }
