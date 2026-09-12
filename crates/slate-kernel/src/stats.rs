@@ -8,25 +8,27 @@
 //!
 //! # The cost model
 //!
-//! Three constants, in units of one object-storage round trip:
+//! Everything is in **object-store requests**; see the note on the constants
+//! for how they were measured and what they used to say.
 //!
 //! | | cost | why |
 //! |---|---|---|
-//! | open a scan | 1.0 | one round trip |
-//! | one row from a scan | 0.01 | a block fetch amortised over its rows, plus decode |
-//! | one point read | 1.0 | a round trip that amortises over nothing |
-//! | `n` pipelined reads | `ceil(n/16)` | issued together, they land together |
+//! | open a scan | 1.0 | one request |
+//! | one row from a scan | 0.000125 | measured: readahead returns ~8,000 rows per request |
+//! | one point read | 3.0 | measured: reaching a row by index takes three requests |
+//! | `n` overlapped reads | `3n` | concurrency hides latency; it does not do less work |
+//! | `k` disjoint ranges of one index | `k` opens | each range is its own iterator, walked in turn |
 //!
-//! `SCAN_ROW_COST` is a block fetch amortised over its rows: 0.01 says a block
-//! holds about a hundred. That belief has to be shared with anything measuring
-//! against the model — [`crate::latency::LatencyProfile`] states the same
-//! number, and when the two disagreed the planner looked wrong where it was
-//! not.
+//! The ratio decides when an index is worth using, and since the recalibration
+//! that is a statement about *absolute* numbers rather than percentages: a
+//! non-covering index scan beats a table scan of `n` rows only while it fetches
+//! fewer than `n / 24000` of them. At a million rows that is forty rows, not
+//! six per cent of a million.
 //!
-//! The ratio decides when an index is worth using: a non-covering index scan
-//! beats a table scan while it selects under roughly 6% of the rows the scan
-//! would touch. Overlapping the row lookups is what makes that 6% rather than
-//! 1% — see [`pipelined_read_cost`].
+//! Splitting an `IN` into a range per value pays the same arithmetic with the
+//! opens added: `k` ranges start `k` requests in the red and win by fetching
+//! fewer rows than one range over the whole span would. That is why the split
+//! is worth having and why a hundred-value `IN` is not.
 //!
 //! What does not change is that covering an index matters far more here than
 //! on local disk. Overlapping a round trip makes it cheaper; not making it at

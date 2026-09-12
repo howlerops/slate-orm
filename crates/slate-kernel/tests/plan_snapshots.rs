@@ -138,6 +138,29 @@ fn corpus() -> Vec<(&'static str, Query)> {
             }),
         ),
         (
+            "IN over an indexed column",
+            Query::all().filter(Expr::In {
+                column: col("kind"),
+                values: ["a", "q", "z"].map(|s| Value::Str(s.into())).into(),
+            }),
+        ),
+        (
+            "IN over an indexed column, projecting only indexed columns",
+            Query::all()
+                .filter(Expr::In {
+                    column: col("kind"),
+                    values: ["a", "q", "z"].map(|s| Value::Str(s.into())).into(),
+                })
+                .select([col("kind"), col("weight")]),
+        ),
+        (
+            "IN over an indexed column, large set",
+            Query::all().filter(Expr::In {
+                column: col("kind"),
+                values: (0..2000).map(|n| Value::Str(format!("k{n}"))).collect(),
+            }),
+        ),
+        (
             "indexed equality",
             Query::all().filter(Expr::eq(col("kind"), Value::Str("k".into()))),
         ),

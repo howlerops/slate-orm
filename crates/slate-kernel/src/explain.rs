@@ -57,6 +57,22 @@ pub enum AccessSummary {
         /// Index name.
         index: String,
     },
+    /// Several disjoint ranges of one index, followed by a read per row.
+    IndexScans {
+        /// Index name.
+        index: String,
+        /// How many ranges. Each is an iterator to open, so the count is what
+        /// makes this plan cost more than a single-range scan of the same
+        /// index — worth printing rather than summarising away.
+        ranges: usize,
+    },
+    /// Several disjoint ranges of one index, answered without reading any row.
+    IndexOnlyScans {
+        /// Index name.
+        index: String,
+        /// How many ranges.
+        ranges: usize,
+    },
     /// Several rows by primary key, read together.
     PointGets {
         /// How many keys.
@@ -73,6 +89,12 @@ impl fmt::Display for AccessSummary {
             Self::TableScan => f.write_str("Table Scan"),
             Self::IndexScan { index } => write!(f, "Index Scan using {index}"),
             Self::IndexOnlyScan { index } => write!(f, "Index Only Scan using {index}"),
+            Self::IndexScans { index, ranges } => {
+                write!(f, "Index Scan using {index} ({ranges} ranges)")
+            }
+            Self::IndexOnlyScans { index, ranges } => {
+                write!(f, "Index Only Scan using {index} ({ranges} ranges)")
+            }
             Self::PointGets { keys } => write!(f, "Point Gets ({keys} keys)"),
             Self::Nothing => f.write_str("Result (nothing)"),
         }
@@ -96,6 +118,27 @@ impl Explanation {
                     AccessSummary::IndexOnlyScan { index: name }
                 } else {
                     AccessSummary::IndexScan { index: name }
+                }
+            }
+            Access::IndexScans {
+                index,
+                ranges,
+                covering,
+            } => {
+                let name = table
+                    .index(*index)
+                    .map_or_else(|| format!("{index:?}"), |i| i.name().to_owned());
+                let ranges = ranges.len();
+                if *covering {
+                    AccessSummary::IndexOnlyScans {
+                        index: name,
+                        ranges,
+                    }
+                } else {
+                    AccessSummary::IndexScans {
+                        index: name,
+                        ranges,
+                    }
                 }
             }
             Access::PointGets { keys } => AccessSummary::PointGets { keys: keys.len() },

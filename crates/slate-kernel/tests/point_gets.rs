@@ -319,6 +319,10 @@ async fn an_enormous_set_is_not_expanded() {
 
 /// An `IN` that does not pin the whole key is not a set of point gets. Getting
 /// this wrong would read a handful of keys and call it the answer.
+///
+/// What it may become instead is a range per value over an index that leads on
+/// the column; that path has its own file, `index_in.rs`. All this asserts is
+/// the thing that would be a wrong answer rather than a slow one.
 #[tokio::test]
 async fn an_in_on_a_non_key_column_is_not_a_point_get() {
     let (store, _) = store(open()).await;

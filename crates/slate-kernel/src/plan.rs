@@ -14,6 +14,29 @@
 //! having correctly turned it into a range. Dropping conjuncts that the bounds
 //! provably enforce is a later optimisation, and one that has to be argued for
 //! rather than assumed.
+//!
+//! # One exception: an index the bounds do not describe
+//!
+//! A *partial* index breaks the rule above, and is the one place in the planner
+//! where a mistake loses rows rather than time. Its entries are only the rows
+//! its own predicate admits, so choosing it does not narrow a scan — it changes
+//! which rows exist to be scanned, and no amount of residual filtering puts a
+//! missing entry back. [`implies`] is therefore the gate: an index carrying a
+//! predicate is a candidate only when the query's predicate can be *shown* to
+//! land inside it, and "cannot show it" means the index is not used. That
+//! asymmetry is deliberate — a missed index costs a scan, a wrong one costs
+//! correctness.
+//!
+//! # Where partial and expression indexes are declared
+//!
+//! Not in [`IndexDef`], which is where they belong: `IndexDef` lives in
+//! `slate-schema`, and a predicate is an [`Expr`] and a computed key is a
+//! [`Scalar`](crate::scalar::Scalar) — both of which live *above* it in the
+//! dependency graph. Saying `IndexDef { predicate: Option<Expr> }` today is a
+//! dependency cycle, not a field. Until the expression language moves below the
+//! schema crate, the planner takes them alongside the table as [`IndexFacts`],
+//! so the decision logic — which is the part with the sharp edge — exists and
+//! is tested rather than waiting on a crate reshuffle.
 
 use crate::exec::DEFAULT_PREFETCH;
 use crate::query::{AccessHint, SortKey};
@@ -60,6 +83,39 @@ pub enum Access {
         /// [`Projection`].
         covering: bool,
     },
+    /// Walk several disjoint ranges of one index, one after another.
+    ///
+    /// What `IN` over an *indexed non-key* column becomes, the way
+    /// [`Access::PointGets`] is what `IN` over the key becomes. `kind IN ('a',
+    /// 'q')` names two values that need not sit next to each other, so the one
+    /// range holding both also holds every `kind` between them — which on a
+    /// column worth indexing is most of the index. Two ranges hold neither.
+    ///
+    /// # Order
+    ///
+    /// The ranges are disjoint and held in ascending *key* order — key, not
+    /// value, because a descending index column stores its values reversed and
+    /// the ranges are sorted by the bytes rather than by the literals. Each one
+    /// pins the leading column to a different value, so walking them in order
+    /// yields exactly what a single scan of the whole index would have yielded
+    /// with the other values left out. That is what lets an `ORDER BY` on the
+    /// index's own columns still stream, rather than being sorted.
+    ///
+    /// A descending scan walks the list backwards, each range descending. The
+    /// executor does the reversing, because it is the executor that knows which
+    /// way it is walking; the plan states the ranges once, ascending.
+    IndexScans {
+        /// Which index.
+        index: IndexId,
+        /// Disjoint ranges within the index's own prefix, in ascending key
+        /// order. Never empty, and never a single range — one range is an
+        /// [`Access::IndexScan`], and having two spellings of the same plan
+        /// would mean two things to test and two things to cost.
+        ranges: Vec<KeyRange>,
+        /// Whether the index entries alone answer the query. As
+        /// [`Access::IndexScan::covering`].
+        covering: bool,
+    },
     /// Fetch several rows by primary key, all at once.
     ///
     /// What `IN` over a key becomes. Distinct from a scan because the rows are
@@ -80,6 +136,94 @@ pub enum Access {
 /// model says so on its own — but it should not have to build a hundred
 /// thousand keys to find that out.
 pub const MAX_POINT_GETS: usize = 1024;
+
+/// How many ranges an `IN` over an index may become before it stays one range.
+///
+/// The same bound as [`MAX_POINT_GETS`] and for the same reason: the cost model
+/// already rejects a large set on its own — each range is a scan to open, so
+/// `k` ranges start `k` requests down against the hundred and twenty-six a
+/// whole table scan costs at a million rows — but it should not have to encode
+/// a hundred thousand key pairs to find that out.
+pub const MAX_INDEX_RANGES: usize = 1024;
+
+/// What one index knows about itself that [`IndexDef`] cannot yet say.
+///
+/// Two properties a record layer's indexes carry and this one's schema does
+/// not:
+///
+/// - a **partial** index has a predicate, and holds an entry only for the rows
+///   that predicate admits. `WHERE deleted_at IS NULL` over a table that is
+///   mostly deleted rows is a fraction of the entries and a fraction of the
+///   scan;
+/// - an **expression** index stores a value computed from the row rather than
+///   read out of it — `lower(email)`, `length(url)` — which is the only way to
+///   answer a query about that value without computing it per row.
+///
+/// See the module docs for why these are here and not on [`IndexDef`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IndexFact {
+    /// Rows the index holds. `None` means every row.
+    predicate: Option<Expr>,
+    /// The value the index's key holds, when it is computed rather than read.
+    expression: Option<crate::scalar::Scalar>,
+}
+
+impl IndexFact {
+    /// The predicate restricting which rows the index holds.
+    #[must_use]
+    pub const fn predicate(&self) -> Option<&Expr> {
+        self.predicate.as_ref()
+    }
+
+    /// The expression the index's key holds, for an expression index.
+    #[must_use]
+    pub const fn expression(&self) -> Option<&crate::scalar::Scalar> {
+        self.expression.as_ref()
+    }
+}
+
+/// The partial and expression indexes on a table, by index id.
+///
+/// Empty by default, which is what every existing caller gets: an index with no
+/// fact recorded is an ordinary index over columns, holding every row.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IndexFacts {
+    facts: std::collections::BTreeMap<IndexId, IndexFact>,
+}
+
+impl IndexFacts {
+    /// No index has anything extra to say.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that `index` holds only the rows `predicate` admits.
+    #[must_use]
+    pub fn partial(mut self, index: IndexId, predicate: Expr) -> Self {
+        self.facts.entry(index).or_default().predicate = Some(predicate);
+        self
+    }
+
+    /// Record that `index` keys on `expression` rather than on a column.
+    #[must_use]
+    pub fn computed(mut self, index: IndexId, expression: crate::scalar::Scalar) -> Self {
+        self.facts.entry(index).or_default().expression = Some(expression);
+        self
+    }
+
+    /// What is recorded about `index`, if anything.
+    #[must_use]
+    pub fn get(&self, index: IndexId) -> Option<&IndexFact> {
+        self.facts.get(&index)
+    }
+
+    /// Whether nothing has been recorded at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.facts.is_empty()
+    }
+}
 
 /// Which columns a query needs.
 ///
@@ -303,10 +447,19 @@ impl Candidate {
         };
         let touched = (returned / residual_selectivity).clamp(1.0, admitted);
 
-        let mut cost = SCAN_OPEN_COST + touched * SCAN_ROW_COST;
-        if let Access::IndexScan { covering, .. } = self.access
-            && !covering
-        {
+        // Every range is an iterator of its own, and opening one is a request.
+        // They are walked one after another rather than overlapped, so this is
+        // also `k` round trips of latency — the cost unit counts requests, and
+        // on that axis the two happen to agree.
+        let (opens, fetches_rows) = match &self.access {
+            Access::IndexScan { covering, .. } => (1.0, !covering),
+            Access::IndexScans {
+                ranges, covering, ..
+            } => (ranges.len() as f64, !covering),
+            _ => (1.0, false),
+        };
+        let mut cost = opens * SCAN_OPEN_COST + touched * SCAN_ROW_COST;
+        if fetches_rows {
             // The row has to be read before the residual can even be evaluated,
             // so this is per row touched, not per row returned. Issued in
             // waves, because the executor overlaps them — and at the same
@@ -434,6 +587,41 @@ pub fn plan_hinted(
     sort: &[SortKey],
     hint: Option<AccessHint>,
     compute: &[crate::scalar::Scalar],
+) -> Plan {
+    plan_annotated(
+        table,
+        predicate,
+        order,
+        projection,
+        stats,
+        limit,
+        sort,
+        hint,
+        compute,
+        &IndexFacts::new(),
+    )
+}
+
+/// [`plan_hinted`], told which indexes are partial and which key on an
+/// expression.
+///
+/// The one entry point that can choose a partial index, because it is the only
+/// one that knows an index *is* partial. Everything else delegates here with no
+/// facts at all, which is the same planner it always was: an index nothing has
+/// been recorded about holds every row of the table.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn plan_annotated(
+    table: &TableDef,
+    predicate: Arc<Expr>,
+    order: ScanOrder,
+    projection: &Projection,
+    stats: &TableStats,
+    limit: Option<usize>,
+    sort: &[SortKey],
+    hint: Option<AccessHint>,
+    compute: &[crate::scalar::Scalar],
+    facts: &IndexFacts,
 ) -> Plan {
     let conjuncts = predicate.conjuncts();
 
@@ -570,21 +758,31 @@ pub fn plan_hinted(
             consider(candidate);
         }
     }
+    let context = MatchContext {
+        table,
+        predicate: &predicate,
+        constraints: &constraints,
+        needed: &needed,
+        stats,
+        ordered,
+        compute,
+        width,
+    };
     for index in table.indexes() {
         if matches!(hint, Some(AccessHint::TableScan))
             || matches!(hint, Some(AccessHint::Index(wanted)) if wanted != index.id())
         {
             continue;
         }
+        // An index that cannot answer this query is not a candidate at all —
+        // and that includes one the caller hinted at. A hint is advice about
+        // which of several correct plans to take, never permission to read a
+        // partial index that does not hold the rows asked for.
+        let Some(candidate) = match_index(&context, index, facts.get(index.id())) else {
+            continue;
+        };
         considered += 1;
-        consider(match_index(
-            table,
-            index,
-            &constraints,
-            &needed,
-            stats,
-            ordered,
-        ));
+        consider(candidate);
     }
     // An index hint naming an index that is gone leaves nothing to consider.
     // Falling back beats refusing: a hint is advice.
@@ -629,6 +827,11 @@ pub fn plan_hinted(
     // the plan snapshot caught on its first run.
     let (access, estimated_rows, estimated_cost) = match &access {
         Access::TableScan { range } | Access::IndexScan { range, .. } if range.is_empty() => {
+            (Access::Nothing, 0.0, 0.0)
+        }
+        // A multi-range scan drops its empty ranges as it is built, so an empty
+        // list here means every value in the `IN` contradicted another bound.
+        Access::IndexScans { ranges, .. } if ranges.iter().all(KeyRange::is_empty) => {
             (Access::Nothing, 0.0, 0.0)
         }
         _ => (access, estimated_rows, estimated_cost),
@@ -988,44 +1191,475 @@ fn covers(table: &TableDef, index: &IndexDef, needed: &Needed) -> bool {
     }
 }
 
-fn match_index(
-    table: &TableDef,
-    index: &IndexDef,
-    constraints: &[(Ordinal, ColumnConstraints<'_>)],
-    needed: &Needed,
-    stats: &TableStats,
+/// Whether every row `query` admits is a row `index` admits.
+///
+/// The question a partial index turns on, and the only place in the planner
+/// where "not sure" and "no" have to mean the same thing. A `true` here lets
+/// the planner read an index that does not hold the whole table; if that
+/// judgement is wrong the query silently returns fewer rows than it should, and
+/// no residual can notice. So this answers `true` only for implications it can
+/// demonstrate, and `false` for everything else including plenty that are in
+/// fact true. A missed implication costs a table scan.
+///
+/// # What it can show
+///
+/// - the same term on both sides, syntactically;
+/// - a conjunction, when any one conjunct suffices — so `a = 1 AND b = 2`
+///   implies `a = 1`, and a security policy's own term counts as much as the
+///   caller's;
+/// - a disjunction, when *every* branch lands inside the index, which is what
+///   makes `WHERE (a = 1 OR a = 2)` usable against `WHERE a > 0`;
+/// - a bound against a looser bound in the same direction: `x > 10` implies
+///   `x > 3`, `x >= 4` implies `x > 3`, but `x >= 3` does not imply `x > 3`;
+/// - an equality or an `IN` against any bound every one of its values meets;
+/// - `IS NOT NULL` from any comparison, pattern match or `IN` on the column,
+///   because all of them are *unknown* rather than true on a null. This is the
+///   commonest partial index there is — `WHERE deleted_at IS NULL` is the
+///   other one — so it is worth the special case.
+///
+/// # What it cannot
+///
+/// Anything needing two conjuncts at once: `x >= 5 AND x <= 5` does not imply
+/// `x = 5` here. Anything arithmetic: nothing knows that `x > 3` on an integer
+/// is `x >= 4`. And through `NOT`, only what three-valued logic gives for
+/// nothing — that `NOT (x IS NULL)` is `x IS NOT NULL`, and that a negated
+/// comparison is still never true of a null.
+///
+/// Comparisons between literals use [`Value`]'s own order, which is exactly the
+/// order [`Expr::evaluate`](crate::Expr::evaluate) compares with. That is what
+/// makes the reasoning sound rather than approximately sound: the planner and
+/// the evaluator are not two opinions about what `<` means.
+#[must_use]
+pub fn implies(query: &Expr, index: &Expr) -> bool {
+    // Each conjunct of the index's predicate has to be established separately;
+    // together they are the whole of it.
+    index
+        .conjuncts()
+        .iter()
+        .all(|goal| implies_one(query, goal))
+}
+
+/// Whether `query` establishes the single term `goal`.
+fn implies_one(query: &Expr, goal: &Expr) -> bool {
+    if query == goal || matches!(goal, Expr::True) {
+        return true;
+    }
+    // A disjunctive goal is met by landing inside any one of its branches.
+    if let Expr::Or(branches) = goal
+        && branches.iter().any(|branch| implies_one(query, branch))
+    {
+        return true;
+    }
+    match query {
+        // A query that admits nothing is inside every set of rows, vacuously.
+        Expr::False => true,
+        // `conjuncts` flattens nested `And`s, so this sees every term at once
+        // rather than recursing pairwise.
+        Expr::And(_) => query
+            .conjuncts()
+            .iter()
+            .any(|conjunct| implies_one(conjunct, goal)),
+        // Every branch must land inside, because a row admitted by any one of
+        // them is admitted by the whole. An empty `Or` admits nothing, but
+        // saying so here would be reasoning about an expression nobody builds.
+        Expr::Or(branches) => {
+            !branches.is_empty() && branches.iter().all(|branch| implies_one(branch, goal))
+        }
+        _ => leaf_implies(query, goal),
+    }
+}
+
+/// One leaf term against one leaf goal.
+fn leaf_implies(query: &Expr, goal: &Expr) -> bool {
+    // `NOT (x IS NULL)` and `x IS NOT NULL` are the same predicate — `IS NULL`
+    // is the one test that is never unknown, so negating it is exact — and both
+    // spellings are written. Missing one of them would make the planner's
+    // answer depend on how the schema's author phrased it.
+    if let Some(column) = not_null_goal(goal) {
+        return excludes_nulls(query, column);
+    }
+    match goal {
+        Expr::Compare {
+            column,
+            op,
+            value: goal_value,
+        } if !goal_value.is_null() => match query {
+            Expr::Compare {
+                column: on,
+                op: held,
+                value,
+            } if on == column && !value.is_null() => {
+                comparison_implies(*held, value, *op, goal_value)
+            }
+            // Every value in the set has to meet the goal; one that does not is
+            // a row the index would not hold.
+            Expr::In { column: on, values } if on == column => {
+                !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| !value.is_null() && satisfies(value, *op, goal_value))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// The column a goal of "this column has a value" is about, in either spelling.
+fn not_null_goal(goal: &Expr) -> Option<Ordinal> {
+    match goal {
+        Expr::IsNull {
+            column,
+            negated: true,
+        } => Some(*column),
+        Expr::Not(inner) => match inner.as_ref() {
+            Expr::IsNull {
+                column,
+                negated: false,
+            } => Some(*column),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `x <held> value` being true forces `x <goal> goal_value` to be true.
+fn comparison_implies(held: CmpOp, value: &Value, goal: CmpOp, goal_value: &Value) -> bool {
+    use CmpOp::{Eq, Ge, Gt, Le, Lt, Ne};
+    match held {
+        // Pinned to one value: the goal either holds at it or does not.
+        Eq => satisfies(value, goal, goal_value),
+        // `x <> v` bounds nothing.
+        Ne => false,
+        Lt | Le | Gt | Ge => match (held, goal) {
+            // `x < v` and `v <= g` give `x < v <= g`.
+            (Lt, Lt | Le) => value <= goal_value,
+            // `x <= v` needs a strictly smaller `v` for a strict goal.
+            (Le, Lt) => value < goal_value,
+            (Le, Le) => value <= goal_value,
+            (Gt, Gt | Ge) => value >= goal_value,
+            (Ge, Gt) => value > goal_value,
+            (Ge, Ge) => value >= goal_value,
+            // A bound establishes `x <> g` when it excludes `g` outright.
+            (Lt, Ne) => goal_value >= value,
+            (Le, Ne) => goal_value > value,
+            (Gt, Ne) => goal_value <= value,
+            (Ge, Ne) => goal_value < value,
+            _ => false,
+        },
+    }
+}
+
+/// Whether the literal `value` satisfies `<op> goal_value`.
+///
+/// Written out rather than borrowed from the evaluator, which takes a row: two
+/// statements of one rule, the way `oracle.rs` restates the sort comparator.
+fn satisfies(value: &Value, op: CmpOp, goal_value: &Value) -> bool {
+    use core::cmp::Ordering::{Equal, Greater, Less};
+    let ordering = value.cmp(goal_value);
+    match op {
+        CmpOp::Eq => ordering == Equal,
+        CmpOp::Ne => ordering != Equal,
+        CmpOp::Lt => ordering == Less,
+        CmpOp::Le => matches!(ordering, Less | Equal),
+        CmpOp::Gt => ordering == Greater,
+        CmpOp::Ge => matches!(ordering, Greater | Equal),
+    }
+}
+
+/// Whether a row admitted by `query` must have a value in `column`.
+///
+/// Three-valued logic does the work: a comparison, a pattern match or an `IN`
+/// against a null is *unknown*, and unknown does not admit. So any of them
+/// being true is a statement that the column holds something — which is exactly
+/// what a `WHERE column IS NOT NULL` index holds.
+fn excludes_nulls(query: &Expr, column: Ordinal) -> bool {
+    match query {
+        Expr::IsNull {
+            column: on,
+            negated: true,
+        } => *on == column,
+        // `NOT e` is true only where `e` is false, and none of these are ever
+        // false on a null — they are unknown, and `NOT unknown` is unknown.
+        Expr::Not(inner) => match inner.as_ref() {
+            Expr::IsNull {
+                column: on,
+                negated: false,
+            } => *on == column,
+            inner => unknown_on_null(inner, column),
+        },
+        _ => unknown_on_null(query, column),
+    }
+}
+
+/// Whether `query` is unknown for every row whose `column` is null.
+fn unknown_on_null(query: &Expr, column: Ordinal) -> bool {
+    match query {
+        Expr::Compare {
+            column: on, value, ..
+        } => *on == column && !value.is_null(),
+        // An `IN` is true only of a value equal to one of the candidates, and
+        // null is equal to nothing — not even to a null candidate, which makes
+        // the test unknown rather than true.
+        Expr::In { column: on, .. } => *on == column,
+        Expr::Like { column: on, .. } | Expr::Matches { column: on, .. } => *on == column,
+        Expr::CompareColumns { left, right, .. } => *left == column || *right == column,
+        _ => false,
+    }
+}
+
+/// Everything matching one index against one query needs.
+///
+/// A struct rather than nine arguments: the list grew every time the planner
+/// learned something new, and a call site of nine positional values is one
+/// transposition away from planning a different query than it asked for.
+struct MatchContext<'a> {
+    table: &'a TableDef,
+    /// The whole predicate, security filter included. Needed as a tree rather
+    /// than as constraints because that is what a partial index's predicate has
+    /// to be implied by — and a policy term is as good an implication as a
+    /// caller's own `WHERE`.
+    predicate: &'a Expr,
+    constraints: &'a [(Ordinal, ColumnConstraints<'a>)],
+    needed: &'a Needed,
+    stats: &'a TableStats,
     ordered: bool,
-) -> Candidate {
+    compute: &'a [crate::scalar::Scalar],
+    /// Columns the table itself has. Anything at or past this is computed.
+    width: usize,
+}
+
+fn match_index(
+    cx: &MatchContext<'_>,
+    index: &IndexDef,
+    fact: Option<&IndexFact>,
+) -> Option<Candidate> {
+    // A partial index holds entries only for the rows its predicate admits, so
+    // using it for a query that reaches outside them does not return the wrong
+    // *columns*, it returns the wrong *rows* — silently, and with no residual
+    // able to put them back. This is the gate; see the module docs.
+    let partial = fact.and_then(IndexFact::predicate);
+    if let Some(predicate) = partial
+        && !implies(cx.predicate, predicate)
+    {
+        return None;
+    }
+
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.
     let mut key_columns: Vec<(Ordinal, Direction)> = Vec::new();
-    if let Some(tenant) = table.tenant_column() {
+    if let Some(tenant) = cx.table.tenant_column() {
         key_columns.push((tenant, Direction::Asc));
     }
-    key_columns.extend(index.columns().iter().map(|c| (c.ordinal, c.direction)));
+    let expression = fact.and_then(IndexFact::expression);
+    match expression {
+        None => key_columns.extend(index.columns().iter().map(|c| (c.ordinal, c.direction))),
+        Some(expression) => {
+            // An expression index keys on a value the row does not contain, so
+            // the only predicate it can serve is one over that same value —
+            // which in this layer means the query computed it and named the
+            // ordinal the computed value was appended at. A query that does not
+            // compute it has nothing the index's keys could be matched against,
+            // so the index is not a candidate rather than a full scan.
+            let position = cx.compute.iter().position(|scalar| scalar == expression)?;
+            let direction = index.columns().first()?.direction;
+            key_columns.push((Ordinal(cx.width + position), direction));
+        }
+    }
 
-    let base = keys::index_prefix(table, index, None);
-    let (range, bound_selectivity) = match_key(base, &key_columns, constraints, stats);
+    let base = keys::index_prefix(cx.table, index, None);
+    let (range, mut bound_selectivity) =
+        match_key(base.clone(), &key_columns, cx.constraints, cx.stats);
+    // A partial index is smaller than the table by exactly the share of rows
+    // its predicate keeps, and a scan of it can only ever touch what is in it.
+    // Independence again — see `stats` — but in the one direction that matters
+    // here, since the query implies the predicate and so the two overlap
+    // completely rather than by chance.
+    if let Some(predicate) = partial {
+        bound_selectivity *= cx.stats.predicate_selectivity(predicate);
+    }
 
     // Index entries end with the primary key, so an index scan is ordered by
     // its own columns and then by the key — which is what makes it a total
     // order rather than a partial one. Only worth computing if anything asked
     // for an order.
-    let natural_order = if ordered {
+    let natural_order = if cx.ordered {
         let mut order = key_columns.clone();
-        order.extend(table.primary_key().iter().map(|o| (*o, Direction::Asc)));
+        order.extend(cx.table.primary_key().iter().map(|o| (*o, Direction::Asc)));
         order
     } else {
         Vec::new()
     };
 
-    Candidate {
+    let covering = match expression {
+        None => covers(cx.table, index, cx.needed),
+        // Never, for an expression index — and not because the entry holds too
+        // little. It holds the computed value, which is what the query asked
+        // about. The executor is what cannot use it: every scalar is evaluated
+        // per row from the row's own columns, so `lower(title)` needs `title`,
+        // and a row rebuilt from an index entry has `title` null. It would
+        // compute `lower(null)`, which is null, and hand back a row that agrees
+        // with no other access path.
+        //
+        // Making this true means teaching the executor to take a computed value
+        // from the entry it is already holding — worth doing, and a change to
+        // the executor rather than to this decision.
+        Some(_) => false,
+    };
+
+    // An `IN` on the first column the equality prefix does not pin splits the
+    // one range into several narrow ones. Worth it precisely when the values
+    // are spread out, which is the case a single hull range serves worst.
+    if let Some((ranges, selectivity)) = in_ranges(&base, &key_columns, cx.constraints, cx.stats) {
+        let selectivity = partial.map_or(selectivity, |predicate| {
+            selectivity * cx.stats.predicate_selectivity(predicate)
+        });
+        // One range is an ordinary index scan, and a narrower one than the
+        // prefix match above produced — the `IN` pinned a column the equality
+        // terms did not.
+        let access = match <[KeyRange; 1]>::try_from(ranges) {
+            Ok([range]) => Access::IndexScan {
+                index: index.id(),
+                range,
+                covering,
+            },
+            Err(ranges) => Access::IndexScans {
+                index: index.id(),
+                ranges,
+                covering,
+            },
+        };
+        return Some(Candidate {
+            access,
+            bound_selectivity: selectivity,
+            natural_order,
+        });
+    }
+
+    Some(Candidate {
         access: Access::IndexScan {
             index: index.id(),
             range,
-            covering: covers(table, index, needed),
+            covering,
         },
         bound_selectivity,
         natural_order,
+    })
+}
+
+/// The disjoint ranges an `IN` splits an index scan into, and the share of the
+/// table they admit between them.
+///
+/// `None` when the predicate gives nothing to split on, which leaves the
+/// ordinary single-range scan in place.
+///
+/// The split has to be on the first key column the equality terms do not
+/// already pin. An `IN` on a later column does not narrow anything: with
+/// `(kind, size)` and only `size IN (1, 9)`, every range would have to span
+/// every `kind`, which is the whole index twice over. Reaching those values
+/// without the leading column means skipping through the index rather than
+/// scanning ranges of it, which is a different access path and not this one.
+fn in_ranges<'a>(
+    base: &[u8],
+    key_columns: &[(Ordinal, Direction)],
+    constraints: &[(Ordinal, ColumnConstraints<'a>)],
+    stats: &TableStats,
+) -> Option<(Vec<KeyRange>, f64)> {
+    let position = key_columns.iter().position(|(ordinal, _)| {
+        constraints_for(constraints, *ordinal)
+            .and_then(|c| c.equals)
+            .is_none()
+    })?;
+    let (ordinal, _) = key_columns.get(position)?;
+    let values = constraints_for(constraints, *ordinal)?.any_of?;
+    // Before anything is sorted or encoded: a set this large cannot win, and
+    // deciding that after sorting a hundred thousand values would be paying the
+    // planning cost to discover the plan is not worth planning.
+    if values.len() > MAX_INDEX_RANGES {
+        return None;
+    }
+
+    // Nulls are dropped rather than searched for. `x IN (NULL, 1)` is true only
+    // where `x = 1`: a null candidate makes the test *unknown* for every other
+    // row, and unknown admits nothing. A range for the null would return rows
+    // the residual then throws away.
+    let mut distinct: Vec<&'a Value> = values.iter().filter(|value| !value.is_null()).collect();
+    // Sorted and deduplicated for the same reason a point-get set is: `IN (1,
+    // 1)` is one range, and two copies of a range return every row in it twice.
+    distinct.sort();
+    distinct.dedup();
+    if distinct.is_empty() || distinct.len() > MAX_INDEX_RANGES {
+        return None;
+    }
+
+    let mut ranges = Vec::with_capacity(distinct.len());
+    let mut selectivity = 0.0f64;
+    let constraint = constraints_for(constraints, *ordinal)?;
+    for value in distinct {
+        // The column's *other* bounds still apply, and pinning it as an
+        // equality hides them: `match_key` takes a range term only from the
+        // first column no equality pins, so `kind IN ('a', 'q') AND kind > 'm'`
+        // would otherwise scan a range for `'a'` that the residual is certain
+        // to reject in full.
+        if !meets_other_bounds(constraint, value) {
+            continue;
+        }
+        // Pin the column and re-derive the bounds exactly as an equality there
+        // would have: same prefix, same range term on the column after it, same
+        // histogram. Rebuilding that here instead would be a second bound
+        // derivation to keep in step with the first.
+        let mut pinned: Vec<(Ordinal, ColumnConstraints<'a>)> = constraints.to_vec();
+        if let Some((_, constraint)) = pinned.iter_mut().find(|(o, _)| o == ordinal) {
+            constraint.equals = Some(value);
+            constraint.any_of = None;
+        }
+        let (range, share) = match_key(base.to_vec(), key_columns, &pinned, stats);
+        // A value contradicting another bound — `size IN (1, 9) AND size > 5` —
+        // contributes no range rather than a backwards one.
+        if range.is_empty() {
+            continue;
+        }
+        ranges.push(range);
+        selectivity += share;
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+    // Ascending *key* order, which for a descending column is descending value
+    // order. Sorting the encoded bounds rather than the literals is what makes
+    // that fall out rather than needing a case.
+    ranges.sort_by(|a, b| start_bytes(a).cmp(&start_bytes(b)));
+    Some((ranges, selectivity.clamp(f64::MIN_POSITIVE, 1.0)))
+}
+
+/// Whether one value of an `IN` also meets the column's other bounds.
+///
+/// Only the bounds the planner already understands — the residual still decides
+/// on the row, as everywhere else. A `false` here drops a range that would have
+/// been scanned for nothing; it can never drop a row, because the value it
+/// rejects is one no admitted row holds.
+fn meets_other_bounds(constraint: &ColumnConstraints<'_>, value: &Value) -> bool {
+    if !constraint
+        .ranges
+        .iter()
+        .all(|(op, bound)| satisfies(value, *op, bound))
+    {
+        return false;
+    }
+    match (&constraint.starts_with, value) {
+        (Some(Value::Str(prefix)), Value::Str(text)) => text.starts_with(prefix.as_str()),
+        // A prefix against a value that is not a string matches nothing, the
+        // same way `LIKE` on a non-string is unknown rather than false.
+        (Some(_), _) => false,
+        (None, _) => true,
+    }
+}
+
+/// Where a range starts, for ordering ranges against each other. `None` sorts
+/// first, which is where an unbounded start belongs.
+fn start_bytes(range: &KeyRange) -> Option<&[u8]> {
+    match &range.start {
+        Bound::Unbounded => None,
+        Bound::Included(key) | Bound::Excluded(key) => Some(key.as_slice()),
     }
 }

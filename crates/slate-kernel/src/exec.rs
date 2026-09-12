@@ -12,10 +12,10 @@ use crate::plan::{Access, Plan};
 use crate::query::{NullsOrder, SortKey};
 use crate::read::{self, IndexCursor, RawRow, RowCursor};
 use crate::scalar::Scalar;
-use crate::store::KvSnapshot;
+use crate::store::{KeyRange, KvSnapshot, ScanOrder};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use slate_schema::{ColumnSet, IndexDef, Row, TableDef, decode_row_columns};
+use slate_schema::{ColumnSet, IndexDef, IndexId, Row, TableDef, decode_row_columns};
 use slate_tuple::{Direction, Value};
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -32,6 +32,11 @@ enum Source<'a> {
     Index {
         cursor: IndexCursor<'a>,
         index: &'a IndexDef,
+        /// Ranges still to walk, for `Access::IndexScans`. Empty for an
+        /// ordinary single-range scan, which is the same code path with
+        /// nothing left over.
+        rest: std::vec::IntoIter<KeyRange>,
+        order: ScanOrder,
         inflight: FuturesOrdered<BoxFuture<'a, Result<Option<RawRow>>>>,
         exhausted: bool,
     },
@@ -39,6 +44,8 @@ enum Source<'a> {
     CoveringIndex {
         cursor: IndexCursor<'a>,
         index: &'a IndexDef,
+        rest: std::vec::IntoIter<KeyRange>,
+        order: ScanOrder,
     },
     /// A single row, fetched by primary key.
     Point(Option<Row>),
@@ -298,6 +305,73 @@ fn row_from_index_entry(
     Row::new(values)
 }
 
+/// Open an index walk over one or more ranges.
+///
+/// Only the first range is opened here; the rest are held and reached one at a
+/// time, so a query with a small limit never opens a range it does not get to.
+async fn index_source<'a>(
+    snapshot: &'a dyn KvSnapshot,
+    table: &'a TableDef,
+    index: IndexId,
+    ranges: Vec<KeyRange>,
+    covering: bool,
+    order: ScanOrder,
+) -> Result<Source<'a>> {
+    let index = table
+        .index(index)
+        .ok_or(KernelError::UnknownTable(table.id()))?;
+    let mut rest = ranges.into_iter();
+    // The planner never emits a rangeless index access, and a walk over no
+    // ranges reads nothing rather than everything — which is the safe way round
+    // for a case that should not arise.
+    let Some(first) = rest.next() else {
+        return Ok(Source::Empty);
+    };
+    let cursor = read::scan_index(snapshot, table, index, first, order).await?;
+    Ok(if covering {
+        Source::CoveringIndex {
+            cursor,
+            index,
+            rest,
+            order,
+        }
+    } else {
+        Source::Index {
+            cursor,
+            index,
+            rest,
+            order,
+            inflight: FuturesOrdered::new(),
+            exhausted: false,
+        }
+    })
+}
+
+/// The next index entry, crossing into the next range when this one runs out.
+///
+/// The ranges of an `Access::IndexScans` are disjoint and in the order they are
+/// to be walked, so concatenating them is the whole of what makes a multi-range
+/// scan produce the index's own order — there is no merge here, and nothing to
+/// get wrong beyond stopping at the right place.
+async fn next_index_entry<'a>(
+    snapshot: &'a dyn KvSnapshot,
+    table: &'a TableDef,
+    index: &'a IndexDef,
+    order: ScanOrder,
+    cursor: &mut IndexCursor<'a>,
+    rest: &mut std::vec::IntoIter<KeyRange>,
+) -> Result<Option<(Vec<Value>, Vec<Value>)>> {
+    loop {
+        if let Some(entry) = cursor.next().await? {
+            return Ok(Some(entry));
+        }
+        let Some(range) = rest.next() else {
+            return Ok(None);
+        };
+        *cursor = read::scan_index(snapshot, table, index, range, order).await?;
+    }
+}
+
 impl<'a> QueryCursor<'a> {
     /// Open a cursor for `plan` on `table`, returning at most `limit` rows
     /// after discarding `offset`.
@@ -330,21 +404,30 @@ impl<'a> QueryCursor<'a> {
                 range,
                 covering,
             } => {
-                let index = table
-                    .index(*index)
-                    .ok_or(KernelError::UnknownTable(table.id()))?;
-                let cursor =
-                    read::scan_index(snapshot, table, index, range.clone(), plan.order).await?;
-                if *covering {
-                    Source::CoveringIndex { cursor, index }
-                } else {
-                    Source::Index {
-                        cursor,
-                        index,
-                        inflight: FuturesOrdered::new(),
-                        exhausted: false,
-                    }
+                index_source(
+                    snapshot,
+                    table,
+                    *index,
+                    vec![range.clone()],
+                    *covering,
+                    plan.order,
+                )
+                .await?
+            }
+            // Several disjoint ranges of one index, walked in turn. The planner
+            // holds them in ascending key order; a descending walk takes them
+            // in reverse, so that the concatenation is still the index's own
+            // order and an `ORDER BY` it satisfies does not need a sort.
+            Access::IndexScans {
+                index,
+                ranges,
+                covering,
+            } => {
+                let mut ranges = ranges.clone();
+                if matches!(plan.order, ScanOrder::Descending) {
+                    ranges.reverse();
                 }
+                index_source(snapshot, table, *index, ranges, *covering, plan.order).await?
             }
         };
         let mut cursor = Self {
@@ -557,6 +640,8 @@ impl<'a> QueryCursor<'a> {
             Source::Index {
                 cursor,
                 index,
+                rest,
+                order,
                 inflight,
                 exhausted,
             } => {
@@ -566,7 +651,9 @@ impl<'a> QueryCursor<'a> {
                     // a round trip, so the reads are issued together and
                     // collected in order.
                     while !*exhausted && inflight.len() < *prefetch {
-                        match cursor.next().await? {
+                        match next_index_entry(*snapshot, table, index, *order, cursor, rest)
+                            .await?
+                        {
                             Some((_, primary_key)) => {
                                 let snapshot = *snapshot;
                                 let table = *table;
@@ -637,11 +724,19 @@ impl<'a> QueryCursor<'a> {
             Source::Sorted(rows) => Ok(rows.next()),
             Source::Point(row) => Ok(row.take()),
             Source::Rows(_) => unreachable!("handled by next_admitted"),
-            Source::CoveringIndex { cursor, index } => {
+            Source::CoveringIndex {
+                cursor,
+                index,
+                rest,
+                order,
+            } => {
                 // The entry already holds every column this query reads, so
                 // there is nothing to fetch. This is the whole point of a
                 // covering index: no read per matching row.
-                let Some((indexed, primary_key)) = cursor.next().await? else {
+                let Some((indexed, primary_key)) =
+                    next_index_entry(self.snapshot, self.table, index, *order, cursor, rest)
+                        .await?
+                else {
                     return Ok(None);
                 };
                 Ok(Some(row_from_index_entry(

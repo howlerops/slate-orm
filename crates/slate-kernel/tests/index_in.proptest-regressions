@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f43cd7454813a1e77a6215fedad5b32b2073a48b498c0e1410f0ad27bbb339e5 # shrinks to query = Query { filter: And([Compare { column: Ordinal(2), op: Gt, value: Str("k00") }, In { column: Ordinal(3), values: [I64(0), I64(1)] }, Or([In { column: Ordinal(2), values: [Str("k00")] }, In { column: Ordinal(2), values: [Str("k03")] }])]), order: Descending, projection: All, sort: [SortKey { column: Ordinal(3), direction: Asc, nulls: First }, SortKey { column: Ordinal(1), direction: Desc, nulls: Last }], limit: None, offset: 0, hint: None, compute: [] }

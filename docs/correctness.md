@@ -510,6 +510,69 @@ rather than nudged: a nested loop now wins at a hundred million inner rows
 rather than a hundred thousand, and a small table is simply cheaper to scan
 whole. Covering indexes are unaffected, since they do no point reads at all.
 
+## The one optimisation that can return a wrong answer
+
+`crates/slate-kernel/tests/partial_indexes.rs`, `crates/slate-kernel/tests/index_in.rs`
+
+Every other choice in the planner picks between paths over the same rows, with
+the residual predicate deciding what comes back; get one wrong and a query is
+slow. A **partial** index is different. It holds entries only for the rows its
+own predicate admits, so choosing it does not narrow a scan — it changes which
+rows exist to be found. Use one for a query that reaches outside it and the rows
+outside are not filtered out, they are never seen: no error, no empty result,
+just fewer rows than were asked for, on whichever queries happened to flip.
+
+So the gate is an implication check, `plan::implies`, and it is deliberately
+one-sided: an index carrying a predicate is a candidate only when the query's
+predicate can be *shown* to land inside it, and "cannot show it" means the index
+is not used. It answers `true` for syntactic equality, for a conjunction where
+any one conjunct suffices, for a disjunction where every branch lands inside,
+for a bound against a looser bound in the same direction, for an equality or an
+`IN` whose every value meets the goal, and for `IS NOT NULL` from any comparison
+or pattern match on the column — three-valued logic, since all of those are
+*unknown* rather than true on a null. It answers `false` for everything else,
+including implications a human can see: `x >= 5 AND x <= 5` does not imply
+`x = 5` here, because that needs two conjuncts at once. A missed implication
+costs a table scan. The asymmetry is the whole design.
+
+Two things make that reviewable rather than asserted. Comparisons between
+literals go through `Value`'s own ordering — the same total order
+`Expr::evaluate` compares with — so the planner and the evaluator are not two
+opinions about what `<` means. And a proptest generates pairs of expressions,
+and wherever `implies` says yes, checks every row of a corpus: a row the query
+admits and the index does not hold is a refutation. It cannot prove the general
+claim, but a wrong rule shows up as a concrete row. A second test counts how
+often the generators produce an implication at all — 200 of 2,048 pairs,
+measured, against a bar of 5% — because a property test that mostly skips is
+the failure mode the four flaky thresholds above were about.
+
+The test file is lopsided on purpose: one case showing a partial index being
+used, and a table of cases showing it not being used. Including one that is
+easy to get wrong — an `AccessHint` naming a partial index does **not** force
+it. A hint is advice about which of several correct plans to take, never
+permission to read an index that does not hold the rows asked for.
+
+`IN` over a secondary index is the same feature's easy half. It becomes one
+range per value rather than one range spanning them all, which is what the
+planner used to produce and which on a column worth indexing is most of the
+index. Nothing there can lose a row, so the tests are about the two ways it
+could still go wrong: reading the wrong entries (an oracle against a full scan,
+plus a count of index operations against a `LatencyStore`) and reading them in
+the wrong order (the ranges are held in ascending *key* order and concatenated,
+which is what lets an `ORDER BY` on the index's own columns still stream; a
+descending walk reverses the list, and a descending index column is covered
+separately because sorting encoded bounds rather than literals is what makes
+that fall out).
+
+### What is not covered
+
+Execution of a partial index. Maintaining one partially — writing no entry for a
+row the predicate rejects, deleting one when an update stops matching — lives in
+the record store, and is not done. Nothing writes a partial index or reads one
+back; what is tested is the decision, which is the half with the sharp edge.
+Until the write path closes, `plan_annotated` is the only entry point that can
+choose a partial index, and no other caller passes it any facts.
+
 ## What is still not proven
 
 Stated plainly, because a document like this is otherwise an advertisement.
@@ -523,6 +586,9 @@ what genuinely has not been done.
 - **Correlated columns in a join between two large sides.** Measured and found
   harmless everywhere it was measured; this is the shape where the mechanism
   could still bite, and it is the first place to look if it ever does.
-- **Scale.** ClickBench runs a million rows in memory. Nothing large has been
-  run against real object storage, so the cost model's 2.2 ms round trip is
-  still a fixture constant rather than a measurement at size.
+- **Scale beyond 200,000 rows on storage.** The cost model was calibrated
+  against a real S3 server at 200,000 rows, which is what corrected it; the
+  million-row runs are still in memory. Nothing has been measured at a size
+  where compaction, tiering and a cold cache all matter at once.
+- **Partial indexes end to end.** The planner decides correctly which of them
+  it may use, and nothing maintains them. See the section above.
