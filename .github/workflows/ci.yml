@@ -27,3 +27,37 @@ jobs:
         env:
           PROPTEST_CASES: 200000
       - run: cargo doc --workspace --no-deps
+
+  minio:
+    name: integration against MinIO
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        # The suite is hermetic by default (it runs a real S3 server in
+        # process), so this job exists to catch behaviour specific to a
+        # production-grade implementation: conditional writes, multipart
+        # thresholds, and error shapes.
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          MINIO_DEFAULT_BUCKETS: slate-orm
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SLATE_S3_BUCKET: slate-orm
+      SLATE_S3_ENDPOINT: http://127.0.0.1:9000
+      SLATE_S3_REGION: us-east-1
+      SLATE_S3_ACCESS_KEY_ID: minioadmin
+      SLATE_S3_SECRET_ACCESS_KEY: minioadmin
+      SLATE_S3_ALLOW_HTTP: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p slate-slatedb --test s3

@@ -21,6 +21,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(feature = "aws")]
+pub mod s3;
+#[cfg(feature = "aws")]
+pub use s3::S3Config;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use core::ops::Bound;
@@ -129,6 +134,15 @@ impl SlateStore {
             .await
             .map_err(convert)?;
         Ok(Self::from_db(Arc::new(db)))
+    }
+
+    /// Open (or create) a database in an S3-compatible bucket.
+    ///
+    /// Works against AWS S3, MinIO, Tigris and Cloudflare R2; see [`S3Config`]
+    /// for what differs between them.
+    #[cfg(feature = "aws")]
+    pub async fn open_s3(path: impl Into<Path>, config: S3Config) -> Result<Self> {
+        Self::open(path, config.build()?).await
     }
 
     /// Wrap an already-open database, so an application that manages SlateDB's

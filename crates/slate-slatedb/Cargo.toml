@@ -12,13 +12,25 @@ authors.workspace = true
 slate-kernel.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
-slatedb = "0.16"
+slatedb = { version = "0.16", default-features = false }
+
+[features]
+default = ["aws"]
+# S3-compatible object storage: AWS S3, MinIO, Tigris, Cloudflare R2.
+aws = ["slatedb/aws"]
 
 [dev-dependencies]
 slate-schema.workspace = true
 slate-tuple.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 uuid.workspace = true
+# A real S3 server, in process: the S3 code path is exercised for real in CI
+# without a Docker service container.
+s3s = "0.14"
+s3s-fs = "0.14"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+tempfile = "3"
 
 [lints]
 workspace = true
