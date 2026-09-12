@@ -11,6 +11,7 @@ use crate::expr::Expr;
 use crate::plan::{Access, Plan};
 use crate::query::{NullsOrder, SortKey};
 use crate::read::{self, IndexCursor, RawRow, RowCursor};
+use crate::scalar::Scalar;
 use crate::store::KvSnapshot;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
@@ -114,6 +115,9 @@ pub struct QueryCursor<'a> {
     output_columns: ColumnSet,
     /// Whether the output needs anything the filter did not already decode.
     needs_second_phase: bool,
+    /// Values computed per row and appended after the table's own columns, so
+    /// a filter, sort or grouping can name one by ordinal.
+    compute: Vec<Scalar>,
     prefetch: usize,
     limit: Option<usize>,
     offset: usize,
@@ -144,8 +148,24 @@ fn materialise(
     filter_columns: &ColumnSet,
     output_columns: &ColumnSet,
     two_phase: bool,
+    compute: &[Scalar],
     raw: &RawRow,
 ) -> Result<Option<Row>> {
+    // Computed values are appended after the table's own columns, and the
+    // residual may name one — so everything it could read has to exist before
+    // the filter runs. That rules out the two-phase split, which exists to
+    // avoid decoding columns a rejected row never needed.
+    if !compute.is_empty() {
+        let decoded = decode_row_columns(
+            table,
+            &raw.primary_key,
+            &raw.body,
+            wanted(output_columns, table),
+        )?;
+        let extended = extend(decoded, compute);
+        return Ok(residual.admits(&extended).then_some(extended));
+    }
+
     // One pass when the residual is not expected to reject much: decoding the
     // output columns anyway costs less than walking the row twice.
     let first = if two_phase {
@@ -166,6 +186,30 @@ fn materialise(
         &raw.body,
         wanted(output_columns, table),
     )?))
+}
+
+/// Append a row's computed values, in order, after its own columns.
+///
+/// Each is evaluated against the row as it stands, so a later expression can
+/// read an earlier one — which is what makes a chain of them expressible
+/// without nesting.
+fn extend(row: Row, compute: &[Scalar]) -> Row {
+    if compute.is_empty() {
+        return row;
+    }
+    let mut values = row.into_values();
+    values.reserve(compute.len());
+    for scalar in compute {
+        // Evaluated against the values as a slice rather than a rebuilt `Row`.
+        // Rebuilding cloned every value once per computed column, which is
+        // quadratic: ClickBench's ninety-sum query spent ninety seconds in it.
+        let value = {
+            let so_far: &[Value] = &values;
+            scalar.evaluate(so_far)
+        };
+        values.push(value);
+    }
+    Row::new(values)
 }
 
 /// `None` when the set holds every column, so the decoder can stop asking.
@@ -251,6 +295,7 @@ impl<'a> QueryCursor<'a> {
         plan: Plan,
         limit: Option<usize>,
         offset: usize,
+        compute: Vec<Scalar>,
     ) -> Result<Self> {
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
@@ -297,6 +342,7 @@ impl<'a> QueryCursor<'a> {
             output_columns: plan.output_columns,
             residual: plan.residual,
             prefetch: DEFAULT_PREFETCH,
+            compute,
             limit: None,
             offset: 0,
             skipped: 0,
@@ -429,6 +475,7 @@ impl<'a> QueryCursor<'a> {
             output_columns,
             needs_second_phase,
             prefetch,
+            compute,
             ..
         } = self;
 
@@ -441,6 +488,7 @@ impl<'a> QueryCursor<'a> {
                         filter_columns,
                         output_columns,
                         *needs_second_phase,
+                        compute,
                         &raw,
                     )? {
                         return Ok(Some(row));
@@ -476,6 +524,7 @@ impl<'a> QueryCursor<'a> {
                                 filter_columns,
                                 output_columns,
                                 *needs_second_phase,
+                                compute,
                                 &raw,
                             )? {
                                 return Ok(Some(row));
@@ -524,6 +573,7 @@ impl<'a> QueryCursor<'a> {
                                 filter_columns,
                                 output_columns,
                                 *needs_second_phase,
+                                compute,
                                 &raw,
                             )? {
                                 return Ok(Some(row));
@@ -549,6 +599,14 @@ impl<'a> QueryCursor<'a> {
             }
             _ => {
                 while let Some(row) = self.next_candidate().await? {
+                    // Already-sorted rows were extended and filtered on the
+                    // way in; anything else is extended here, before the
+                    // residual, for the same reason `materialise` does it.
+                    let row = if matches!(self.source, Source::Sorted(_)) {
+                        row
+                    } else {
+                        extend(row, &self.compute)
+                    };
                     if self.residual.admits(&row) {
                         return Ok(Some(row));
                     }

@@ -199,6 +199,26 @@ fn prefetch_depth(limit: Option<usize>) -> usize {
     }
 }
 
+/// The real columns behind an ordinal, which for a computed one is whatever
+/// feeds it.
+///
+/// A computed value lives past the table's own columns, so a filter or a sort
+/// key naming one refers to nothing the decoder knows about. What has to be
+/// read is its inputs.
+fn expanded_inputs(
+    column: Ordinal,
+    width: usize,
+    compute: &[crate::scalar::Scalar],
+) -> Vec<Ordinal> {
+    if column.0 < width {
+        return vec![column];
+    }
+    compute
+        .get(column.0 - width)
+        .map(|scalar| scalar.columns().into_iter().collect())
+        .unwrap_or_default()
+}
+
 /// A candidate access path and what it is expected to cost.
 struct Candidate {
     access: Access,
@@ -385,7 +405,15 @@ pub fn plan_full(
     sort: &[SortKey],
 ) -> Plan {
     plan_hinted(
-        table, predicate, order, projection, stats, limit, sort, None,
+        table,
+        predicate,
+        order,
+        projection,
+        stats,
+        limit,
+        sort,
+        None,
+        &[],
     )
 }
 
@@ -405,6 +433,7 @@ pub fn plan_hinted(
     limit: Option<usize>,
     sort: &[SortKey],
     hint: Option<AccessHint>,
+    compute: &[crate::scalar::Scalar],
 ) -> Plan {
     let conjuncts = predicate.conjuncts();
 
@@ -413,13 +442,28 @@ pub fn plan_hinted(
     let unsatisfiable = conjuncts.iter().any(|c| {
         matches!(c, Expr::Compare { value, .. } if value.is_null()) || matches!(c, Expr::False)
     });
-    let predicate_columns: ColumnSet = predicate.columns().into_iter().collect();
+    // A computed value lives past the table's own columns, and reading one
+    // means reading its inputs. Ordinals outside the table are dropped and
+    // replaced by whatever feeds them, so the rest of the planner never sees a
+    // column that does not exist.
+    let width = table.columns().len();
+    let predicate_columns: ColumnSet = predicate
+        .columns()
+        .into_iter()
+        .flat_map(|c| expanded_inputs(c, width, compute))
+        .collect();
     let mut output_columns = predicate_columns.clone();
     match projection.columns() {
         None => output_columns = ColumnSet::all(table.columns().len()),
         Some(columns) => {
             for column in columns {
-                output_columns.insert(*column);
+                if column.0 < width {
+                    output_columns.insert(*column);
+                } else if let Some(scalar) = compute.get(column.0 - width) {
+                    for input in scalar.columns() {
+                        output_columns.insert(input);
+                    }
+                }
             }
             // A column the sort orders by has to be decoded even when the
             // caller did not ask to see it. Leaving it out does not fail: it
@@ -427,7 +471,23 @@ pub fn plan_hinted(
             // comes out in whatever order the scan happened to produce. A
             // wrong order that looks like an order is worse than an error.
             for key in sort {
-                output_columns.insert(key.column);
+                if key.column.0 < width {
+                    output_columns.insert(key.column);
+                } else if let Some(scalar) = compute.get(key.column.0 - width) {
+                    for input in scalar.columns() {
+                        output_columns.insert(input);
+                    }
+                }
+            }
+            // Every computed value is evaluated on every row whether or not
+            // anything references it, so its inputs are always needed. The
+            // same hole the sort column fell through: an undecoded input reads
+            // as null and the computed value is quietly wrong rather than
+            // missing.
+            for scalar in compute {
+                for input in scalar.columns() {
+                    output_columns.insert(input);
+                }
             }
         }
     }
@@ -479,8 +539,17 @@ pub fn plan_hinted(
     let needed = match projection.columns() {
         None => Needed::All,
         Some(columns) => {
-            let mut set = predicate.columns();
-            set.extend(columns.iter().copied());
+            let mut set: BTreeSet<Ordinal> = predicate
+                .columns()
+                .into_iter()
+                .flat_map(|c| expanded_inputs(c, width, compute))
+                .collect();
+            set.extend(columns.iter().copied().filter(|c| c.0 < width));
+            // An index cannot answer a query on its own unless it holds what
+            // the computed values read, for the same reason.
+            for scalar in compute {
+                set.extend(scalar.columns());
+            }
             // Same reason as `output_columns`: an index that does not hold the
             // sort column cannot answer the query on its own, however well it
             // covers the projection.

@@ -455,7 +455,28 @@ impl<'a> RecordTransaction<'a> {
         aggregates: &[Aggregate],
     ) -> Result<Vec<Group>> {
         self.reads()
-            .group_by(context, table, query, group, aggregates)
+            .group_by(context, table, query, group, aggregates, &Expr::True)
+            .await
+    }
+
+    /// [`RecordTransaction::group_by`], keeping only the groups `having`
+    /// admits.
+    ///
+    /// The predicate is evaluated over the group rather than a row: its
+    /// grouping values come first and its aggregates after, so
+    /// [`Group::aggregate`] names the one to test. That is how `HAVING
+    /// COUNT(*) > 100` is written here.
+    pub async fn group_by_having(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+        having: &Expr,
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .group_by(context, table, query, group, aggregates, having)
             .await
     }
 
@@ -1230,7 +1251,28 @@ impl<'a> RecordSnapshot<'a> {
         aggregates: &[Aggregate],
     ) -> Result<Vec<Group>> {
         self.reads()
-            .group_by(context, table, query, group, aggregates)
+            .group_by(context, table, query, group, aggregates, &Expr::True)
+            .await
+    }
+
+    /// [`RecordTransaction::group_by`], keeping only the groups `having`
+    /// admits.
+    ///
+    /// The predicate is evaluated over the group rather than a row: its
+    /// grouping values come first and its aggregates after, so
+    /// [`Group::aggregate`] names the one to test. That is how `HAVING
+    /// COUNT(*) > 100` is written here.
+    pub async fn group_by_having(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+        having: &Expr,
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .group_by(context, table, query, group, aggregates, having)
             .await
     }
 }

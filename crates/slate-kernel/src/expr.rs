@@ -49,6 +49,19 @@ impl<T: Columns + ?Sized> Columns for &T {
     }
 }
 
+/// A bare run of values, for evaluating against a row being built.
+///
+/// Appending computed values to a row means reading the row as it stands
+/// while still growing it. Without this the only way to hand the evaluator
+/// something was to build a `Row`, which meant cloning every value once per
+/// computed column — quadratic, and on ClickBench's ninety-sum query that was
+/// ninety seconds.
+impl Columns for [Value] {
+    fn value(&self, ordinal: Ordinal) -> Option<&Value> {
+        self.get(ordinal.0)
+    }
+}
+
 /// The result of evaluating a predicate under SQL's three-valued logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Truth {

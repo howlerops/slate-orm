@@ -40,6 +40,7 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         limit: None,
         offset: 0,
         hint: query.hint,
+        compute: query.compute.clone(),
     }
 }
 
@@ -146,6 +147,7 @@ impl<'a> SecuredReads<'a> {
             query.planning_limit(),
             &query.sort,
             query.hint,
+            &query.compute,
         ))
     }
 
@@ -175,6 +177,7 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
         group: &[Ordinal],
         aggregates: &[Aggregate],
+        having: &Expr,
     ) -> Result<Vec<Group>> {
         let mut cursor = self
             .execute(context, table, &narrowed(query, aggregates, group))
@@ -232,7 +235,16 @@ impl<'a> SecuredReads<'a> {
             })
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(out.into_iter().map(|(_, group)| group).collect())
+
+        // `HAVING` filters groups, not rows, so it runs here and reads the
+        // aggregates rather than the columns. A group's key comes first and
+        // its aggregates after, in one ordinal space, so the same predicate
+        // language serves without learning anything new.
+        Ok(out
+            .into_iter()
+            .map(|(_, group)| group)
+            .filter(|group| matches!(having, Expr::True) || having.admits(&group.as_row()))
+            .collect())
     }
 
     /// Choose how to join two tables.
@@ -456,8 +468,15 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<QueryCursor<'a>> {
         let plan = self.plan(context, table, query)?;
-        let cursor =
-            QueryCursor::open(self.snapshot, table, plan, query.limit, query.offset).await?;
+        let cursor = QueryCursor::open(
+            self.snapshot,
+            table,
+            plan,
+            query.limit,
+            query.offset,
+            query.compute.clone(),
+        )
+        .await?;
         Ok(cursor.with_window(query.limit, query.offset))
     }
 }

@@ -24,6 +24,7 @@ pub mod query;
 pub mod read;
 pub mod record;
 pub mod retry;
+pub mod scalar;
 pub mod security;
 pub mod stats;
 pub mod store;
@@ -48,6 +49,7 @@ pub use record::{
     BULK_READ_CONCURRENCY, DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction,
 };
 pub use retry::{RetryPolicy, with_retries};
+pub use scalar::{Scalar, TimeUnit};
 pub use security::{
     Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
 };

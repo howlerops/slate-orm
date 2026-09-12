@@ -96,11 +96,9 @@ benchmark written by whoever wrote the engine.
 comparable to any published ClickBench score** — those are 100M rows on
 dedicated hardware — and lining them up beside one would be dishonest.
 
-**35 of 43 queries run.** The eight that do not all need the same missing
-thing: an *expression*. This language has predicates over columns, not scalars
-computed from them, so `length(URL)`, `EventTime`'s minute, `ClientIP - 1`,
-`DATE_TRUNC`, `REGEXP_REPLACE` and `CASE WHEN` have nowhere to be written. That
-is one feature, not eight.
+**42 of 43 queries run.** The one that does not, Q29, needs `REGEXP_REPLACE`
+— a regular-expression engine, which is a dependency rather than a feature of
+this layer, and one query is not a reason to take one on.
 
 | Q | wall | scanned | answer |
 |---:|---:|---:|---|
@@ -122,6 +120,7 @@ is one feature, not eight.
 | 16 group by UserID | 1.10 s | 1,000,000 | 79842 groups |
 | 17 group by (UserID, phrase) | 1.62 s | 1,000,000 | 98484 groups |
 | 18 same, unordered | 1.59 s | 1,000,000 | 98484 groups |
+| 19 `extract(minute FROM EventTime)` in the key | 2.84 s | 1,000,000 | 387401 groups |
 | 20 `WHERE UserID = …` | **0.01 s** | 0 | — |
 | 21 `COUNT(*) WHERE URL LIKE '%google%'` | 2.47 s | 1,000,000 | 95 |
 | 22 group by phrase, URL matched | 2.51 s | 1,000,000 | 1 group |
@@ -130,16 +129,22 @@ is one feature, not eight.
 | 25 order by EventTime limit 10 | 1.58 s | 1,000,000 | 10 rows |
 | 26 order by SearchPhrase limit 10 | 1.52 s | 1,000,000 | 10 rows |
 | 27 order by two columns limit 10 | 1.44 s | 1,000,000 | 10 rows |
+| 28 `AVG(length(URL))` … `HAVING COUNT(*) > 100000` | 1.84 s | 1,000,000 | 2 groups |
+| 30 ninety `SUM(width + n)` | 2.95 s | 1,000,000 | 1604089590, 1605089590 |
 | 31 group by (engine, IP) | 2.01 s | 1,000,000 | 22830 groups |
 | 32 group by (WatchID, IP), filtered | 2.08 s | 1,000,000 | 69354 groups |
 | 33 …unfiltered | **4.74 s** | 1,000,000 | **1,000,000 groups** |
 | 34 group by URL | 3.09 s | 1,000,000 | 275494 groups |
+| 35 `GROUP BY 1, URL` | 3.61 s | 1,000,000 | 275494 groups |
+| 36 `GROUP BY ClientIP, ClientIP - 1, - 2, - 3` | 1.91 s | 1,000,000 | 68330 groups |
 | 37 URL page views, July 2013 | 1.15 s | **413,825** | 171171 groups |
 | 38 Title page views | 0.78 s | **413,825** | 26185 groups |
 | 39 with `OFFSET 1000` | 0.61 s | **413,825** | 7385 groups |
+| 40 `CASE WHEN … THEN Referer ELSE ''` | 2.28 s | **413,825** | 242387 groups |
 | 41 with `IN (-1, 6)` | 0.68 s | **413,825** | 23599 groups |
 | 42 with `OFFSET 10000` | 0.65 s | **413,825** | 7006 groups |
-| | **55.55 s** | | 35 of 43 |
+| 43 `DATE_TRUNC('minute', EventTime)` | 0.70 s | **413,825** | **1440 groups** |
+| | **75.22 s** | | 42 of 43 |
 
 ### The answers are right, not just fast
 
@@ -155,11 +160,26 @@ computed independently was, with `pyarrow` over the same parquet:
 | `COUNT(DISTINCT SearchPhrase)` | 18316 | 18316 |
 | `MIN/MAX(EventDate)` | 15901, 15901 | 15901, 15901 |
 | `COUNT(*) WHERE URL LIKE '%google%'` | 95 | 95 |
+| distinct `ClientIP` (Q36's group count) | 68330 | 68330 |
+| `SUM(ResolutionWidth)` | 1604089590 | 1604089590 |
+| `SUM(ResolutionWidth + 1)` | 1605089590 | 1605089590 |
+| distinct minutes (Q43's group count) | 1440 | 1440 |
 
 The results are also consistent with each other in a way that would be hard to
-fake: Q16 finds 79,842 distinct `UserID` groups, matching Q5's distinct count
-exactly; Q13 finds 18,315 `SearchPhrase` groups, which is Q6's 18,316 minus the
-empty string Q13 filters out.
+fake:
+
+- Q16 finds 79,842 distinct `UserID` groups, matching Q5's distinct count.
+- Q13 finds 18,315 `SearchPhrase` groups — Q6's 18,316 less the empty string
+  Q13 filters out.
+- Q35 groups by a *constant* and `URL` and finds 275,494 groups, exactly what
+  Q34 finds grouping by `URL` alone. A constant key adds no groups.
+- Q36 groups by `ClientIP` and three values derived from it and finds 68,330,
+  which is the number of distinct `ClientIP`s: the derived keys are
+  functionally dependent and add nothing.
+- Q43 truncates `EventTime` to the minute and finds **1440** groups. The
+  partition is a single day. There are 1440 minutes in a day.
+- Q30's `SUM(width)` and `SUM(width + 1)` differ by exactly 1,000,000 — one
+  per row.
 
 ## What it found
 
@@ -213,6 +233,30 @@ on.
 The remaining 4.74 s is allocation: a million groups means a million key
 vectors and a million accumulator pairs. That is the next thing here, and it is
 not done.
+
+### The third pass: one feature wearing eight disguises
+
+The eight queries left after `COUNT(DISTINCT)` and `LIKE` all needed the same
+thing — a value *computed* from a row rather than read out of one. `length(URL)`,
+a timestamp's minute, `ClientIP - 1`, `CASE WHEN`, a literal as a grouping key,
+`DATE_TRUNC`, ninety `SUM(width + n)`. One feature, not eight.
+
+It reaches the rest of the layer without being woven through it. A query can
+*compute* extra values, which are appended after the table's own columns and
+addressed by ordinal like anything else — the same trick `JoinSchema` uses for
+a joined row. So grouping, sorting, filtering and aggregation all work over a
+computed value without any of them learning what an expression is.
+
+`HAVING` follows: a group laid out as its key then its aggregates is a row, so
+the ordinary predicate language filters groups without gaining a notion of what
+an aggregate is.
+
+And a mistake worth recording, because the benchmark found it immediately. Q30
+is ninety sums of ninety computed columns, and it took **90.85 s**. The first
+implementation of "append a computed value" rebuilt the row to evaluate the
+next one against, cloning every value once per computed column — quadratic.
+Evaluating against the values as a slice took it to **2.95 s**, and the whole
+set from 167.7 s to 75.2 s.
 
 ### What the second pass added
 

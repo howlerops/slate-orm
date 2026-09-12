@@ -240,3 +240,25 @@ pub struct Group {
     /// The aggregates, in the order they were requested.
     pub values: Vec<Value>,
 }
+
+impl Group {
+    /// The group as one row: its key, then its aggregates.
+    ///
+    /// What `HAVING` is evaluated against. Laying them out in one ordinal
+    /// space means the ordinary predicate language can filter groups without
+    /// gaining a notion of what an aggregate is — the `i`th aggregate is at
+    /// `key.len() + i`, and [`Group::aggregate`] does that arithmetic.
+    #[must_use]
+    pub fn as_row(&self) -> Row {
+        let mut values = self.key.clone();
+        values.extend(self.values.iter().cloned());
+        Row::new(values)
+    }
+
+    /// Where the `n`th aggregate sits in [`Group::as_row`], given how many
+    /// columns the query grouped by.
+    #[must_use]
+    pub const fn aggregate(group_columns: usize, n: usize) -> Ordinal {
+        Ordinal(group_columns + n)
+    }
+}

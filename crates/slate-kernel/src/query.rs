@@ -137,6 +137,13 @@ pub struct Query {
     pub offset: usize,
     /// An access path to use instead of the cheapest one. See [`AccessHint`].
     pub hint: Option<AccessHint>,
+    /// Extra values computed per row, appended after the table's own columns.
+    ///
+    /// The `i`th appears at ordinal `table.columns().len() + i`, so everything
+    /// downstream — a filter, a sort key, a grouping column, an aggregate —
+    /// addresses it the ordinary way and never has to learn what an expression
+    /// is. [`Query::computed`] does that arithmetic.
+    pub compute: Vec<crate::scalar::Scalar>,
 }
 
 impl Default for Query {
@@ -157,6 +164,7 @@ impl Query {
             limit: None,
             offset: 0,
             hint: None,
+            compute: Vec::new(),
         }
     }
 
@@ -231,6 +239,23 @@ impl Query {
     pub const fn offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
+    }
+
+    /// Compute extra values per row. See [`Query::compute`].
+    #[must_use]
+    pub fn computing<I: IntoIterator<Item = crate::scalar::Scalar>>(mut self, values: I) -> Self {
+        self.compute = values.into_iter().collect();
+        self
+    }
+
+    /// Where the `index`th computed value lands, given the table it is over.
+    ///
+    /// A free function of the table's width rather than something the query
+    /// hands back, so a caller can name a computed column while still building
+    /// the query that computes it.
+    #[must_use]
+    pub fn computed(table: &slate_schema::TableDef, index: usize) -> Ordinal {
+        Ordinal(table.columns().len() + index)
     }
 
     /// Read through this index rather than the cheapest path.

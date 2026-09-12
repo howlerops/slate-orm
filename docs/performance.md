@@ -379,6 +379,23 @@ order callers see is unchanged, because the encoding sorts as the values do —
 the property the whole keyspace already rests on. What is left is allocation: a
 million groups is a million key vectors and a million accumulator pairs.
 
+### Computing a value per row, quadratically
+
+Scalar expressions landed so the last eight ClickBench queries could run, and
+one of them measured the implementation immediately. Q30 is ninety
+`SUM(ResolutionWidth + n)` over ninety computed columns, and it took **90.85 s**
+against about a second for a plain scan.
+
+Appending a computed value has to evaluate it against the row *as it stands*,
+so a later expression can read an earlier one. The first version did that by
+rebuilding a `Row` each time — which clones every value once per computed
+column. At ninety columns on a hundred-and-five-column table that is roughly
+thirteen thousand value clones per row, a million times over.
+
+Evaluating against the values as a plain slice instead took Q30 to **2.95 s**,
+and the forty-two-query set from 167.7 s to 75.2 s. The fix was to let the
+evaluator read a `[Value]` rather than insisting on a `Row`.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

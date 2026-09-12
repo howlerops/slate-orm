@@ -6,7 +6,8 @@
 //! named.
 
 use slate_kernel::{
-    Aggregate, CmpOp, Expr, Group, KernelError, Query, RecordTransaction, SecurityContext, SortKey,
+    Aggregate, CmpOp, Expr, Group, KernelError, Query, RecordTransaction, Scalar, SecurityContext,
+    SortKey, TimeUnit,
 };
 use slate_schema::{Ordinal, TableDef};
 use slate_tuple::Value;
@@ -46,47 +47,16 @@ pub(crate) struct Unsupported {
     pub(crate) needs: &'static str,
 }
 
-/// The nine that still do not run, and why.
+/// The one that still does not run.
 ///
-/// All of them need the same missing thing in different clothes: an
-/// *expression*. This language has predicates over columns, not scalars
-/// computed from them, so `length(URL)`, `EventTime`'s minute, `ClientIP - 1`
-/// and `CASE WHEN` all have nowhere to be written. That is one feature, not
-/// nine, and it is the next one.
-pub(crate) const UNSUPPORTED: &[Unsupported] = &[
-    Unsupported {
-        number: 19,
-        needs: "extract(minute FROM …): no expressions in GROUP BY",
-    },
-    Unsupported {
-        number: 28,
-        needs: "length(), HAVING",
-    },
-    Unsupported {
-        number: 29,
-        needs: "REGEXP_REPLACE, length(), HAVING",
-    },
-    Unsupported {
-        number: 30,
-        needs: "arithmetic inside an aggregate",
-    },
-    Unsupported {
-        number: 35,
-        needs: "a literal as a grouping key",
-    },
-    Unsupported {
-        number: 36,
-        needs: "arithmetic in GROUP BY",
-    },
-    Unsupported {
-        number: 40,
-        needs: "CASE WHEN",
-    },
-    Unsupported {
-        number: 43,
-        needs: "DATE_TRUNC: no expressions in GROUP BY",
-    },
-];
+/// `REGEXP_REPLACE` needs a regular-expression engine, which is a dependency
+/// rather than a feature of this layer, and one query is not a reason to take
+/// one on. Everything else the other eighteen needed — scalar expressions,
+/// `HAVING`, `COUNT(DISTINCT)`, `LIKE` — is built.
+pub(crate) const UNSUPPORTED: &[Unsupported] = &[Unsupported {
+    number: 29,
+    needs: "REGEXP_REPLACE, length(), HAVING",
+}];
 
 fn s(text: &str) -> Value {
     Value::Str(text.to_owned())
@@ -331,6 +301,41 @@ pub(crate) fn runnable() -> Vec<Runnable> {
             sql: "SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10",
             note: Some("SELECT * really does decode all 105 columns, unlike Q25-27"),
         },
+        Runnable {
+            number: 19,
+            sql: "SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, m, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 28,
+            sql: "SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL <> '' GROUP BY CounterID HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 30,
+            sql: "SELECT SUM(ResolutionWidth), SUM(ResolutionWidth + 1), … SUM(ResolutionWidth + 89) FROM hits",
+            note: Some("all 90 sums, over 90 computed columns"),
+        },
+        Runnable {
+            number: 35,
+            sql: "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, URL ORDER BY c DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 36,
+            sql: "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 40,
+            sql: "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) FROM hits WHERE CounterID = 62 AND … GROUP BY … ORDER BY PageViews DESC LIMIT 10 OFFSET 1000",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 43,
+            sql: "SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) FROM hits WHERE CounterID = 62 AND … GROUP BY M ORDER BY M LIMIT 10 OFFSET 1000",
+            note: None,
+        },
     ];
     // Sorted, so the results table reads in ClickBench's order however the
     // list happens to be maintained.
@@ -393,9 +398,204 @@ pub(crate) async fn run(
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn grouped_computing(
+        txn: &Txn<'_>,
+        ctx: &SecurityContext,
+        table: &TableDef,
+        filter: Expr,
+        compute: Vec<Scalar>,
+        keys: &[Ordinal],
+        aggregates: &[Aggregate],
+        sort_by: Option<usize>,
+        limit: usize,
+        offset: usize,
+        having: Expr,
+    ) -> Result<Outcome, KernelError> {
+        let query = Query::all().filter(filter).computing(compute);
+        let plan = txn
+            .explain(ctx, table, &query)
+            .map(|e| e.access.to_string())
+            .unwrap_or_else(|_| "?".to_owned());
+        let groups = txn
+            .group_by_having(ctx, table, &query, keys, aggregates, &having)
+            .await?;
+        let total = groups.len();
+        let (rows, answer) = match sort_by {
+            Some(at) => {
+                let (kept, best) = top_by(groups, at, limit.saturating_add(offset));
+                (kept.saturating_sub(offset).min(limit), best)
+            }
+            None => (total.saturating_sub(offset).min(limit), String::new()),
+        };
+        Ok(Outcome {
+            rows,
+            plan,
+            answer: format!(
+                "{total} groups{}",
+                if answer.is_empty() {
+                    String::new()
+                } else {
+                    format!(", top {answer}")
+                }
+            ),
+        })
+    }
+
     let count_star = [Aggregate::Count];
 
     match number {
+        19 => {
+            let minute = Query::computed(table, 0);
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                Expr::True,
+                vec![Scalar::column(col("EventTime")).extract(TimeUnit::Minute)],
+                &[col("UserID"), minute, col("SearchPhrase")],
+                &count_star,
+                Some(0),
+                10,
+                0,
+                Expr::True,
+            )
+            .await
+        }
+        28 => {
+            let length = Query::computed(table, 0);
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                not_empty("URL"),
+                vec![Scalar::column(col("URL")).length()],
+                &[col("CounterID")],
+                &[Aggregate::Avg(length), Aggregate::Count],
+                Some(0),
+                25,
+                0,
+                // HAVING COUNT(*) > 100000: one grouping column, so the count
+                // is the second aggregate at ordinal 1 + 1.
+                Expr::compare(Group::aggregate(1, 1), CmpOp::Gt, Value::U64(100_000)),
+            )
+            .await
+        }
+        30 => {
+            // Ninety sums of ninety computed columns, which is the query.
+            let width = col("ResolutionWidth");
+            let computed: Vec<Scalar> = (0..90)
+                .map(|n| Scalar::column(width) + i64::from(n))
+                .collect();
+            let aggregates: Vec<Aggregate> = (0..90)
+                .map(|n| Aggregate::Sum(Query::computed(table, n)))
+                .collect();
+            let query = Query::all().computing(computed);
+            let plan = txn
+                .explain(ctx, table, &query)
+                .map(|e| e.access.to_string())
+                .unwrap_or_else(|_| "?".to_owned());
+            let values = txn.aggregate(ctx, table, &query, &aggregates).await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                // The first two of ninety, which is enough to check: the second
+                // is the first plus one per row.
+                answer: describe(values.get(..2).unwrap_or(&values)),
+            })
+        }
+        35 => {
+            let one = Query::computed(table, 0);
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                Expr::True,
+                vec![Scalar::literal(Value::I64(1))],
+                &[one, col("URL")],
+                &count_star,
+                Some(0),
+                10,
+                0,
+                Expr::True,
+            )
+            .await
+        }
+        36 => {
+            let ip = col("ClientIP");
+            let computed: Vec<Scalar> = (1..=3).map(|n| Scalar::column(ip) - n).collect();
+            let keys = vec![
+                ip,
+                Query::computed(table, 0),
+                Query::computed(table, 1),
+                Query::computed(table, 2),
+            ];
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                Expr::True,
+                computed,
+                &keys,
+                &count_star,
+                Some(0),
+                10,
+                0,
+                Expr::True,
+            )
+            .await
+        }
+        40 => {
+            let src = Query::computed(table, 0);
+            let case = Scalar::Case {
+                branches: vec![(
+                    Expr::eq(col("SearchEngineID"), Value::I64(0))
+                        .and(Expr::eq(col("AdvEngineID"), Value::I64(0))),
+                    Scalar::column(col("Referer")),
+                )],
+                otherwise: Box::new(Scalar::literal(Value::Str(String::new()))),
+            };
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                july_2013(62).and(Expr::eq(col("IsRefresh"), Value::I64(0))),
+                vec![case],
+                &[
+                    col("TraficSourceID"),
+                    col("SearchEngineID"),
+                    col("AdvEngineID"),
+                    src,
+                    col("URL"),
+                ],
+                &count_star,
+                Some(0),
+                10,
+                1_000,
+                Expr::True,
+            )
+            .await
+        }
+        43 => {
+            let minute = Query::computed(table, 0);
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                july_2013(62)
+                    .and(Expr::eq(col("IsRefresh"), Value::I64(0)))
+                    .and(Expr::eq(col("DontCountHits"), Value::I64(0))),
+                vec![Scalar::column(col("EventTime")).date_trunc(TimeUnit::Minute)],
+                &[minute],
+                &count_star,
+                // Ordered by the grouping key, which `group_by` already gives.
+                None,
+                10,
+                1_000,
+                Expr::True,
+            )
+            .await
+        }
         1 => {
             let query = Query::all().count_only();
             let plan = plan_of(&query);
