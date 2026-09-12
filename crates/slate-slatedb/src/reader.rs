@@ -23,7 +23,7 @@
 //!   Read-your-writes through a replica therefore requires durable commits.
 //!   [`SlateReader::wait_for_sequence`] is how a caller waits for one.
 
-use crate::convert;
+use crate::{ScanTuning, convert};
 use async_trait::async_trait;
 use bytes::Bytes;
 use slate_kernel::error::{KernelError, Result};
@@ -80,6 +80,7 @@ pub struct SlateReader {
     reader: Arc<DbReader>,
     mode: ReplicaMode,
     name: Arc<str>,
+    scan_tuning: ScanTuning,
 }
 
 impl core::fmt::Debug for SlateReader {
@@ -87,6 +88,7 @@ impl core::fmt::Debug for SlateReader {
         f.debug_struct("SlateReader")
             .field("name", &self.name)
             .field("mode", &self.mode)
+            .field("scan_tuning", &self.scan_tuning)
             .field("visible_sequence", &self.visible_sequence())
             .finish_non_exhaustive()
     }
@@ -125,7 +127,16 @@ impl SlateReader {
             reader: Arc::new(reader),
             mode,
             name: name.into().into(),
+            scan_tuning: ScanTuning::default(),
         })
+    }
+
+    /// How this replica's scans should read blocks. See
+    /// [`ScanTuning`](crate::ScanTuning).
+    #[must_use]
+    pub const fn with_scan_tuning(mut self, tuning: ScanTuning) -> Self {
+        self.scan_tuning = tuning;
+        self
     }
 
     /// Open a replica of a database in an S3-compatible bucket.
@@ -210,6 +221,7 @@ impl KvReadStore for SlateReader {
         Ok(Box::new(ReplicaSnapshot {
             reader: Arc::clone(&self.reader),
             point_in_time: self.mode.is_point_in_time(),
+            scan_tuning: self.scan_tuning,
         }))
     }
 
@@ -230,6 +242,7 @@ impl KvReadStore for SlateReader {
 struct ReplicaSnapshot {
     reader: Arc<DbReader>,
     point_in_time: bool,
+    scan_tuning: ScanTuning,
 }
 
 impl core::fmt::Debug for ReplicaSnapshot {
@@ -251,13 +264,14 @@ impl KvSnapshot for ReplicaSnapshot {
         range: KeyRange,
         order: ScanOrder,
     ) -> Result<Box<dyn KvIterator + Send + '_>> {
-        let options = ScanOptions {
+        let mut options = ScanOptions {
             order: match order {
                 ScanOrder::Ascending => IterationOrder::Ascending,
                 ScanOrder::Descending => IterationOrder::Descending,
             },
             ..ScanOptions::default()
         };
+        self.scan_tuning.apply(&mut options);
         let iter = self
             .reader
             .scan_with_options(Bounds::from(range), &options)

@@ -488,6 +488,7 @@ Built and tested:
 - [x] Chains of three or more tables, in the order written, with per-step plans
 - [x] `IN` over a primary key as a set of overlapped reads, not a scan
 - [x] Equi-depth histograms, so a range estimate knows which range it is
+- [x] Scan readahead on the SlateDB backend: 31x fewer object-store requests
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))

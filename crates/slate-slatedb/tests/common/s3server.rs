@@ -14,8 +14,81 @@ use s3s::auth::SimpleAuth;
 use s3s::service::S3ServiceBuilder;
 use slate_slatedb::S3Config;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+
+/// Requests the server has served, by method.
+///
+/// Wall-clock numbers move with the machine; "this scan made 1100 object-store
+/// requests and that one made 5" does not. Counting them here is the same
+/// discipline the kernel's `IoCounters` follow, one layer further down.
+#[derive(Debug, Default)]
+pub struct S3Counters {
+    gets: AtomicU64,
+    puts: AtomicU64,
+    other: AtomicU64,
+}
+
+impl S3Counters {
+    /// `GET` requests, which is what reading does.
+    pub fn gets(&self) -> u64 {
+        self.gets.load(Ordering::Relaxed)
+    }
+
+    /// `PUT` and `POST` requests, which is what writing does.
+    pub fn puts(&self) -> u64 {
+        self.puts.load(Ordering::Relaxed)
+    }
+
+    /// Everything else: `HEAD`, `DELETE`, listings.
+    pub fn other(&self) -> u64 {
+        self.other.load(Ordering::Relaxed)
+    }
+
+    /// Every request.
+    pub fn total(&self) -> u64 {
+        self.gets() + self.puts() + self.other()
+    }
+
+    /// Start counting again.
+    pub fn reset(&self) {
+        self.gets.store(0, Ordering::Relaxed);
+        self.puts.store(0, Ordering::Relaxed);
+        self.other.store(0, Ordering::Relaxed);
+    }
+
+    fn record(&self, method: &hyper::Method) {
+        match *method {
+            hyper::Method::GET => &self.gets,
+            hyper::Method::PUT | hyper::Method::POST => &self.puts,
+            _ => &self.other,
+        }
+        .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Wraps the S3 service to count what reaches it.
+#[derive(Clone)]
+struct Counting<S> {
+    inner: S,
+    counters: Arc<S3Counters>,
+}
+
+impl<S, B> hyper::service::Service<hyper::Request<B>> for Counting<S>
+where
+    S: hyper::service::Service<hyper::Request<B>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn call(&self, request: hyper::Request<B>) -> Self::Future {
+        self.counters.record(request.method());
+        self.inner.call(request)
+    }
+}
 
 const ACCESS_KEY: &str = "slateorm";
 const SECRET_KEY: &str = "slateormsecret";
@@ -25,6 +98,7 @@ pub struct LocalS3 {
     address: SocketAddr,
     bucket: String,
     server: JoinHandle<()>,
+    counters: Arc<S3Counters>,
     // Held so the backing directory outlives the server.
     _directory: tempfile::TempDir,
 }
@@ -39,6 +113,11 @@ impl LocalS3 {
         let mut builder = S3ServiceBuilder::new(filesystem);
         builder.set_auth(SimpleAuth::from_single(ACCESS_KEY, SECRET_KEY));
         let service = builder.build();
+        let counters = Arc::new(S3Counters::default());
+        let service = Counting {
+            inner: service,
+            counters: Arc::clone(&counters),
+        };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let address = listener.local_addr().expect("local addr");
@@ -64,8 +143,14 @@ impl LocalS3 {
             address,
             bucket: bucket.to_owned(),
             server,
+            counters,
             _directory: directory,
         }
+    }
+
+    /// What this server has been asked to do.
+    pub fn counters(&self) -> Arc<S3Counters> {
+        Arc::clone(&self.counters)
     }
 
     /// A config pointing at this server.

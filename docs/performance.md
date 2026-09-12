@@ -293,6 +293,53 @@ arithmetic on `Value`, which is a closed type holding strings and uuids as
 well as numbers, and sixty-four buckets already resolves to about 1.5% against
 a crossover near 6%.
 
+### SlateDB's readahead ships off, and we were passing the default
+
+Every measurement above runs against a latency *model*. This one does not.
+`examples/scan_tuning.rs` starts an S3 server in the process, writes a table,
+reopens the database so the data is genuinely in object storage rather than a
+memtable, and scans it.
+
+SlateDB's `ScanOptions` defaults to `read_ahead_bytes: 1` and
+`max_fetch_tasks: 1` — one block per request, one request at a time. That is
+the right default for a library that cannot know its caller's access pattern.
+A record layer does know: a table scan reads forward, from the first block to
+the last. We were passing the default anyway.
+
+20,000 rows, measured in both directions so a warming server cannot be
+mistaken for a faster plan:
+
+| setting | S3 GETs | forward | reversed |
+|---|---:|---:|---:|
+| SlateDB defaults (what we passed) | 1372 | 51 915 ms | 51 929 ms |
+| 64 KiB, one task | 109 | 256 ms | 380 ms |
+| 1 MiB, one task | 44 | 329 ms | 291 ms |
+| **1 MiB, four tasks** (now the default) | **44** | **127 ms** | **121 ms** |
+| 1 MiB, eight tasks | 40 | 131 ms | 86 ms |
+
+**Thirty-one times fewer object-store requests.** That is the number worth
+quoting: the wall-clock ratios here run from 158x to 409x depending on which
+pair you compare, because this server's per-request cost is its own, but 1372
+requests against 44 is arithmetic.
+
+The two levers do different things. Readahead removes requests — that is the
+31x. Concurrency then halves the time again at the *same* request count, which
+is latency overlap rather than less work. Eight tasks is not reliably better
+than four, so four is the default.
+
+Nothing here was built. The capability was already in SlateDB and we were
+declining it, which is worth saying plainly: the first thing to check before
+writing an optimisation is whether the layer below already has one.
+
+One thing this measurement implies and the model does not yet know: with
+readahead on, 20,000 rows arrive in 44 requests, so a scanned row costs about
+a fifth of the `SCAN_ROW_COST` of 0.01 the planner assumes. That constant is a
+property of the deployment — row size, block size, readahead — rather than a
+universal, and eventually it should come from the deployment. It is recorded
+here rather than retuned, because retuning it against one synthetic corpus of
+220-byte rows would be fitting to this fixture the way the block-size mismatch
+above already caught us once.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

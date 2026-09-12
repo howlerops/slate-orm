@@ -115,12 +115,80 @@ impl ByteRangeBounds for Bounds {
     }
 }
 
+/// How a scan reads blocks out of object storage.
+///
+/// SlateDB can fetch several blocks per request and several requests at once,
+/// but ships both off: its defaults are one block per fetch and one fetch in
+/// flight, so a scan pays a round trip per block, in turn. That is the right
+/// default for a library that cannot know its caller's access pattern. A
+/// record layer does know — a table scan reads forward, from the first block
+/// to the last — so it says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanTuning {
+    /// Bytes to pull per fetch. Each fetch reads whole blocks until it has at
+    /// least this much, or reaches the end of the file.
+    ///
+    /// The unit that matters on object storage is the request, not the byte:
+    /// one 1 MiB `GET` costs about what a 4 KiB one does, so a scan that asks
+    /// for a block at a time pays a round trip to save bandwidth nobody is
+    /// short of.
+    pub read_ahead_bytes: usize,
+    /// Fetches to keep in flight. Overlapping them is what turns a scan's
+    /// latency from the sum of its blocks into roughly the slowest of each
+    /// batch — the same reasoning as the read pipeline in the kernel.
+    pub max_fetch_tasks: usize,
+    /// Whether blocks a scan pulls should stay in the block cache.
+    ///
+    /// Off by default, following SlateDB. A scan touches blocks once and in
+    /// order, so caching them evicts whatever was being reused to hold data
+    /// nothing will ask for again. Turn it on for a table small enough and hot
+    /// enough that the whole thing is worth keeping.
+    pub cache_blocks: bool,
+}
+
+impl Default for ScanTuning {
+    /// A megabyte per fetch, four in flight, blocks not cached.
+    ///
+    /// Chosen for object storage, where a request costs far more than the
+    /// bytes it carries. Against a local disk the same settings read more than
+    /// they need; see [`ScanTuning::conservative`].
+    fn default() -> Self {
+        Self {
+            read_ahead_bytes: 1024 * 1024,
+            max_fetch_tasks: 4,
+            cache_blocks: false,
+        }
+    }
+}
+
+impl ScanTuning {
+    /// SlateDB's own defaults: one block per fetch, one fetch at a time.
+    ///
+    /// For a caller who has measured and found the readahead reads more than
+    /// it saves, or who is running against something with cheap round trips.
+    #[must_use]
+    pub const fn conservative() -> Self {
+        Self {
+            read_ahead_bytes: 1,
+            max_fetch_tasks: 1,
+            cache_blocks: false,
+        }
+    }
+
+    fn apply(self, options: &mut ScanOptions) {
+        options.read_ahead_bytes = self.read_ahead_bytes.max(1);
+        options.max_fetch_tasks = self.max_fetch_tasks.max(1);
+        options.cache_blocks = self.cache_blocks;
+    }
+}
+
 /// A [`KvStore`] backed by SlateDB.
 #[derive(Clone)]
 pub struct SlateStore {
     db: Arc<Db>,
     isolation: IsolationLevel,
     durability: Durability,
+    scan_tuning: ScanTuning,
 }
 
 impl core::fmt::Debug for SlateStore {
@@ -129,6 +197,7 @@ impl core::fmt::Debug for SlateStore {
         f.debug_struct("SlateStore")
             .field("isolation", &self.isolation)
             .field("durability", &self.durability)
+            .field("scan_tuning", &self.scan_tuning)
             .finish_non_exhaustive()
     }
 }
@@ -160,7 +229,21 @@ impl SlateStore {
             db,
             isolation: IsolationLevel::SerializableSnapshot,
             durability: Durability::default(),
+            scan_tuning: ScanTuning::default(),
         }
+    }
+
+    /// How scans should read blocks. See [`ScanTuning`].
+    #[must_use]
+    pub const fn with_scan_tuning(mut self, tuning: ScanTuning) -> Self {
+        self.scan_tuning = tuning;
+        self
+    }
+
+    /// The scan settings in force.
+    #[must_use]
+    pub const fn scan_tuning(&self) -> ScanTuning {
+        self.scan_tuning
     }
 
     /// Choose the isolation level for transactions this store opens.
@@ -222,6 +305,7 @@ impl KvStore for SlateStore {
         Ok(Box::new(SlateTransaction {
             txn,
             durability: self.durability,
+            scan_tuning: self.scan_tuning,
         }))
     }
 }
@@ -230,12 +314,14 @@ impl KvStore for SlateStore {
 pub struct SlateTransaction {
     txn: DbTransaction,
     durability: Durability,
+    scan_tuning: ScanTuning,
 }
 
 impl core::fmt::Debug for SlateTransaction {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SlateTransaction")
             .field("durability", &self.durability)
+            .field("scan_tuning", &self.scan_tuning)
             .finish_non_exhaustive()
     }
 }
@@ -251,13 +337,14 @@ impl KvSnapshot for SlateTransaction {
         range: KeyRange,
         order: ScanOrder,
     ) -> Result<Box<dyn KvIterator + Send + '_>> {
-        let options = ScanOptions {
+        let mut options = ScanOptions {
             order: match order {
                 ScanOrder::Ascending => IterationOrder::Ascending,
                 ScanOrder::Descending => IterationOrder::Descending,
             },
             ..ScanOptions::default()
         };
+        self.scan_tuning.apply(&mut options);
         let iter = self
             .txn
             .scan_with_options(Bounds::from(range), &options)
