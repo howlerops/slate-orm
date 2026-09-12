@@ -24,7 +24,7 @@ use crate::store::{KeyRange, ScanOrder};
 use crate::{expr::Expr, keys};
 use core::ops::Bound;
 use slate_schema::{ColumnSet, IndexDef, IndexId, Ordinal, TableDef};
-use slate_tuple::{Direction, Value, encode_value_into, prefix_successor};
+use slate_tuple::{Direction, Value, encode_prefix_into, encode_value_into, prefix_successor};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -180,6 +180,10 @@ struct ColumnConstraints<'a> {
     ranges: Vec<(CmpOp, &'a Value)>,
     /// Values from an `IN`, any one of which the column may equal.
     any_of: Option<&'a [Value]>,
+    /// A literal prefix every matching value must start with, from a `LIKE`
+    /// anchored at the front. Owned because it is derived from the pattern
+    /// rather than borrowed out of it — an escape makes them differ.
+    starts_with: Option<Value>,
 }
 
 /// How deep the executor will pipeline, given what the caller asked for.
@@ -585,6 +589,22 @@ fn collect_constraints<'a>(conjuncts: &[&'a Expr]) -> Vec<(Ordinal, ColumnConstr
                     }
                 }
             }
+            // A `LIKE` anchored at the front confines its matches to a range
+            // of the keyspace: every value starting with `abc` sorts between
+            // `abc` and the first thing above it. An unanchored pattern says
+            // nothing about where its matches are and stays a residual.
+            Expr::Like {
+                column,
+                pattern,
+                negated: false,
+            } => {
+                if let Some(prefix) = crate::expr::like_prefix(pattern) {
+                    let i = entry(*column, &mut out);
+                    if let Some((_, c)) = out.get_mut(i) {
+                        c.starts_with.get_or_insert(Value::Str(prefix));
+                    }
+                }
+            }
             // An `IN` pins the column to one of several values. It is not a
             // range — the values need not be adjacent — so it becomes several
             // reads rather than one wider one.
@@ -650,6 +670,25 @@ fn match_key(
         };
         encode_value_into(&mut prefix, value, *direction);
         equality_columns += 1;
+    }
+
+    // A `LIKE` anchored at the front behaves exactly like a range on the
+    // column after the equality prefix: every value starting with `abc`
+    // encodes to something beginning with the encoding of `abc` minus its
+    // terminator, so the matches are one contiguous span of the keyspace.
+    if let Some((ordinal, direction)) = key_columns.get(equality_columns)
+        && let Some(constraint) = constraints_for(constraints, *ordinal)
+        && constraint.equals.is_none()
+        && constraint.ranges.is_empty()
+        && let Some(start) = constraint.starts_with.as_ref()
+    {
+        let mut bounded = prefix.clone();
+        if encode_prefix_into(&mut bounded, start, *direction) {
+            if let Value::Str(text) = start {
+                selectivity *= stats.prefix_selectivity(*ordinal, text);
+            }
+            return (KeyRange::prefix(&bounded), selectivity);
+        }
     }
 
     // At most one range bound, on the column right after the equality prefix:

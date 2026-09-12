@@ -84,6 +84,13 @@ pub fn pipelined_read_cost(reads: f64, depth: usize) -> f64 {
 /// how the two columns vary together and nothing here records that.
 pub const COLUMN_RANGE_SELECTIVITY: f64 = 0.33;
 
+/// How much of a table an unanchored `LIKE` is expected to keep.
+///
+/// A tenth. Nothing recorded here can do better — a histogram describes where
+/// values sort, and `'%google%'` asks about substrings, which says nothing
+/// about sort position.
+pub const LIKE_SELECTIVITY: f64 = 0.1;
+
 /// Cost of one comparison level when sorting a row: CPU only, no I/O, so
 /// several orders of magnitude below a round trip.
 pub const SORT_ROW_COST: f64 = 0.000_02;
@@ -286,6 +293,26 @@ impl TableStats {
         (base * (1.0 - stats.null_fraction)).clamp(f64::MIN_POSITIVE, 1.0)
     }
 
+    /// The fraction of rows whose value starts with `prefix`.
+    ///
+    /// The range between the prefix and the next string above it, which the
+    /// histogram already knows how to answer. Without a histogram it is the
+    /// same flat guess an unanchored pattern gets.
+    #[must_use]
+    pub fn prefix_selectivity(&self, ordinal: Ordinal, prefix: &str) -> f64 {
+        let Some(histogram) = self.histogram(ordinal) else {
+            return LIKE_SELECTIVITY;
+        };
+        let low = Value::Str(prefix.to_owned());
+        // The successor of the prefix: the same string with its last character
+        // bumped, which is the first value that does not start with it.
+        let mut upper = prefix.to_owned();
+        upper.push(char::MAX);
+        let high = Value::Str(upper);
+        let span = histogram.fraction_below(&high) - histogram.fraction_below(&low);
+        span.clamp(f64::MIN_POSITIVE, 1.0)
+    }
+
     /// The fraction `bounds` keeps, using the column's histogram if there is
     /// one and [`TableStats::range_selectivity`] if there is not.
     ///
@@ -352,6 +379,22 @@ impl TableStats {
                     CmpOp::Ne => 1.0 - 1.0 / coarser,
                     CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => COLUMN_RANGE_SELECTIVITY,
                 }
+            }
+            // A pattern anchored at the front narrows to whatever share of
+            // the column starts that way, which the histogram can answer: it
+            // is the range between the prefix and its successor. A pattern
+            // that can start anywhere gets a guess, because nothing recorded
+            // here says how often a substring occurs.
+            Expr::Like {
+                column,
+                pattern,
+                negated,
+            } => {
+                let matched = match crate::expr::like_prefix(pattern) {
+                    Some(prefix) => self.prefix_selectivity(*column, &prefix),
+                    None => LIKE_SELECTIVITY,
+                };
+                if *negated { 1.0 - matched } else { matched }
             }
             Expr::IsNull { column, negated } => {
                 let fraction = self.column(*column).null_fraction;

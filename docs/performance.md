@@ -365,6 +365,20 @@ surviving row decoded, which on a wide table is gigabytes to produce a handful.
 And the projection could only be applied *because* the sort column now gets
 decoded: the correctness bug was hiding the performance one.
 
+### Grouping paid for an order nobody had asked for yet
+
+Groups accumulated into a `BTreeMap`, so a result came out ordered by key with
+no extra step. That was worth having until ClickBench measured it: Q33 groups
+`(WatchID, ClientIP)` with no filter, which on that corpus is exactly a million
+groups — one per row — and cost 6.53 s against 1.73 s for the same query with a
+filter that cut the keys down. The ordering was being paid on every insert, as
+O(log k) comparisons of a `Vec<Value>`.
+
+Hashing the encoded key and sorting once at the end took it to **4.74 s**. The
+order callers see is unchanged, because the encoding sorts as the values do —
+the property the whole keyspace already rests on. What is left is allocation: a
+million groups is a million key vectors and a million accumulator pairs.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

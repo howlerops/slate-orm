@@ -434,8 +434,10 @@ let store = SlateStore::open_s3(
 - `crates/slate-slatedb/examples/scan_tuning.rs` — scans against a real S3
   server, counting object-store requests.
 - `crates/slate-clickbench` — the 43 official ClickBench queries, as far as
-  this engine can express them. Not comparable to published ClickBench scores;
-  run because it is an adversarial workload nobody here designed for. See
+  this engine can express them — 35 of 43, with every independently checkable
+  answer verified against the same data read through `pyarrow`. Not comparable
+  to published ClickBench scores; run because it is an adversarial workload
+  nobody here designed for. See
   [`docs/clickbench.md`](docs/clickbench.md), which also covers the pgrust
   review.
 
@@ -494,7 +496,9 @@ Built and tested:
 - [x] Conflict retry and writer fencing
 - [x] Cost-based planning with statistics, `analyze`, and `EXPLAIN`
 - [x] Projections and index-only scans; pipelined index lookups
-- [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
+- [x] Aggregates including `COUNT(DISTINCT)`, `GROUP BY`, `ORDER BY`,
+      `LIMIT`/`OFFSET`
+- [x] `LIKE`, with an anchored pattern becoming scan bounds rather than a filter
 - [x] Inner, left, right and full outer joins, hash or nested-loop by cost,
       both sides secured; conditions spanning both sides
 - [x] Chains of three or more tables, in the order written, with per-step plans
@@ -512,6 +516,10 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
+- [ ] Scalar expressions — `length(x)`, `x + 1`, `DATE_TRUNC`, `CASE WHEN`.
+      The language has predicates over columns but not values computed from
+      them, which is the one feature the last eight ClickBench queries need
+- [ ] `HAVING`, which follows from those
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent
 - [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x

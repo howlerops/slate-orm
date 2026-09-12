@@ -19,8 +19,8 @@ use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use bytes::Bytes;
 use slate_schema::{ColumnDef, IndexDef, Ordinal, Row, TableDef, decode_row};
-use slate_tuple::Value;
-use std::collections::BTreeMap;
+use slate_tuple::{Direction, Value, encode_value_into};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Restrict a query to the columns an aggregation actually reads.
@@ -182,28 +182,57 @@ impl<'a> SecuredReads<'a> {
 
         // Grouped in a map rather than by sorting first: the input is not
         // ordered by the grouping columns in general, and requiring that would
-        // mean sorting every row to save a hash lookup per row.
-        let mut groups: BTreeMap<Vec<Value>, Accumulators> = BTreeMap::new();
+        // mean sorting every row to save a lookup per row.
+        //
+        // Hashed on the *encoded* key rather than ordered on the values. An
+        // ordered map gives group order for free, which was worth having until
+        // it was measured: a million distinct keys cost O(log k) comparisons
+        // of a `Vec<Value>` on every row, and the same query with a filter
+        // that cut the keys down ran nearly four times faster. Encoding the
+        // key once per row and hashing the bytes replaces those comparisons
+        // with one hash, and it is the same equality an index uses — two rows
+        // group together exactly when they would collide in a key.
+        let mut groups: HashMap<Vec<u8>, (Vec<Value>, Accumulators)> = HashMap::new();
+        let mut encoded = Vec::new();
         while let Some(row) = cursor.next().await? {
-            let key: Vec<Value> = group
-                .iter()
-                .map(|c| row.get(*c).cloned().unwrap_or(Value::Null))
-                .collect();
-            groups
-                .entry(key)
-                .or_insert_with(|| Accumulators::new(aggregates))
-                .push(&row)?;
+            encoded.clear();
+            for ordinal in group {
+                let value = row.get(*ordinal).unwrap_or(&Value::Null);
+                encode_value_into(&mut encoded, value, Direction::Asc);
+            }
+            match groups.get_mut(encoded.as_slice()) {
+                Some((_, accumulators)) => accumulators.push(&row)?,
+                None => {
+                    let key: Vec<Value> = group
+                        .iter()
+                        .map(|c| row.get(*c).cloned().unwrap_or(Value::Null))
+                        .collect();
+                    let mut accumulators = Accumulators::new(aggregates);
+                    accumulators.push(&row)?;
+                    groups.insert(encoded.clone(), (key, accumulators));
+                }
+            }
         }
 
-        // `BTreeMap` gives group order for free, and a deterministic result is
-        // worth more than the constant factor a hash map would save.
-        Ok(groups
+        // Sorted once at the end rather than maintained throughout. The order
+        // is the same one the ordered map produced — the encoding sorts as the
+        // values do, which is the property the whole keyspace rests on — so
+        // this is still deterministic, and callers that depended on the order
+        // still get it.
+        let mut out: Vec<(Vec<u8>, Group)> = groups
             .into_iter()
-            .map(|(key, accumulators)| Group {
-                key,
-                values: accumulators.finish(),
+            .map(|(encoded, (key, accumulators))| {
+                (
+                    encoded,
+                    Group {
+                        key,
+                        values: accumulators.finish(),
+                    },
+                )
             })
-            .collect())
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out.into_iter().map(|(_, group)| group).collect())
     }
 
     /// Choose how to join two tables.

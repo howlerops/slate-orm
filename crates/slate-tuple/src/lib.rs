@@ -29,7 +29,7 @@ pub mod value;
 
 pub use codec::{
     Direction, TupleReader, decode, decode_dynamic, decode_prefix, decode_prefix_with, encode,
-    encode_value_into, encode_with,
+    encode_prefix_into, encode_value_into, encode_with,
 };
 pub use error::{Result, TupleError};
 pub use range::{key_successor, prefix_range, prefix_successor};

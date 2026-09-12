@@ -96,39 +96,70 @@ benchmark written by whoever wrote the engine.
 comparable to any published ClickBench score** — those are 100M rows on
 dedicated hardware — and lining them up beside one would be dishonest.
 
-| Q | wall | rows scanned | plan |
-|---:|---:|---:|---|
-| 1 `COUNT(*)` | 0.92 s | 1,000,000 | Table Scan |
-| 2 `COUNT(*) WHERE AdvEngineID <> 0` | 1.20 s | 1,000,000 | Table Scan |
-| 3 `SUM/COUNT/AVG` | 1.22 s | 1,000,000 | Table Scan |
-| 4 `AVG(UserID)` | 0.85 s | 1,000,000 | Table Scan |
-| 7 `MIN/MAX(EventDate)` | 0.85 s | 1,000,000 | Table Scan |
-| 8 group by AdvEngineID | 1.20 s | 1,000,000 | Table Scan |
-| 13 group by SearchPhrase | 1.42 s | 1,000,000 | Table Scan |
-| 15 group by (SearchEngineID, SearchPhrase) | 1.46 s | 1,000,000 | Table Scan |
-| 16 group by UserID | 1.06 s | 1,000,000 | Table Scan |
-| 17 group by (UserID, SearchPhrase) | 1.70 s | 1,000,000 | Table Scan |
-| 18 same, no order | 1.96 s | 1,000,000 | Table Scan |
-| 20 `WHERE UserID = …` | **0.01 s** | 0 | Index Only Scan |
-| 25 order by EventTime limit 10 | 1.53 s | 1,000,000 | Table Scan |
-| 26 order by SearchPhrase limit 10 | 1.57 s | 1,000,000 | Table Scan |
-| 27 order by two columns limit 10 | 1.61 s | 1,000,000 | Table Scan |
-| 31 group by (SearchEngineID, ClientIP) | 1.69 s | 1,000,000 | Table Scan |
-| 32 group by (WatchID, ClientIP), filtered | 1.73 s | 1,000,000 | Table Scan |
-| 33 group by (WatchID, ClientIP), unfiltered | **6.53 s** | 1,000,000 | Table Scan |
-| 34 group by URL | 3.61 s | 1,000,000 | Table Scan |
-| 37 URL page views, July 2013 | 1.56 s | **413,825** | Table Scan |
-| 38 Title page views | 0.79 s | **413,825** | Table Scan |
-| 39 with `OFFSET 1000` | 0.62 s | **413,825** | Table Scan |
-| 41 with `IN (-1, 6)` | 0.74 s | **413,825** | Table Scan |
-| 42 with `OFFSET 10000` | 0.58 s | **413,825** | Table Scan |
-| | **36.42 s** | | 24 of 43 |
+**35 of 43 queries run.** The eight that do not all need the same missing
+thing: an *expression*. This language has predicates over columns, not scalars
+computed from them, so `length(URL)`, `EventTime`'s minute, `ClientIP - 1`,
+`DATE_TRUNC`, `REGEXP_REPLACE` and `CASE WHEN` have nowhere to be written. That
+is one feature, not eight.
 
-Nineteen queries do not run. `COUNT(DISTINCT)` accounts for seven, `LIKE` for
-four, and the rest need expressions where this engine only accepts columns:
-`extract(minute FROM …)`, `DATE_TRUNC`, `length()`, `REGEXP_REPLACE`,
-`CASE WHEN`, arithmetic inside an aggregate or a `GROUP BY`, and `HAVING`. The
-runner prints the list.
+| Q | wall | scanned | answer |
+|---:|---:|---:|---|
+| 1 `COUNT(*)` | 1.09 s | 1,000,000 | 1000000 |
+| 2 `COUNT(*) WHERE AdvEngineID <> 0` | 1.51 s | 1,000,000 | 14174 |
+| 3 `SUM/COUNT/AVG` | 1.41 s | 1,000,000 | 80778 / 1000000 / 1604.09 |
+| 4 `AVG(UserID)` | 0.96 s | 1,000,000 | 1.948e18 |
+| 5 `COUNT(DISTINCT UserID)` | 1.08 s | 1,000,000 | 79842 |
+| 6 `COUNT(DISTINCT SearchPhrase)` | 1.66 s | 1,000,000 | 18316 |
+| 7 `MIN/MAX(EventDate)` | 1.02 s | 1,000,000 | 15901, 15901 |
+| 8 group by AdvEngineID | 1.30 s | 1,000,000 | 5 groups |
+| 9 distinct users per region | 1.60 s | 1,000,000 | 1242 groups |
+| 10 five aggregates per region | 1.41 s | 1,000,000 | 1242 groups |
+| 11 distinct users per phone model | 1.44 s | 1,000,000 | 30 groups |
+| 12 …per (phone, model) | 1.33 s | 1,000,000 | 59 groups |
+| 13 group by SearchPhrase | 1.46 s | 1,000,000 | 18315 groups |
+| 14 distinct users per SearchPhrase | 1.51 s | 1,000,000 | 18315 groups |
+| 15 group by (engine, phrase) | 1.47 s | 1,000,000 | 19300 groups |
+| 16 group by UserID | 1.10 s | 1,000,000 | 79842 groups |
+| 17 group by (UserID, phrase) | 1.62 s | 1,000,000 | 98484 groups |
+| 18 same, unordered | 1.59 s | 1,000,000 | 98484 groups |
+| 20 `WHERE UserID = …` | **0.01 s** | 0 | — |
+| 21 `COUNT(*) WHERE URL LIKE '%google%'` | 2.47 s | 1,000,000 | 95 |
+| 22 group by phrase, URL matched | 2.51 s | 1,000,000 | 1 group |
+| 23 two `LIKE`s and a distinct count | 3.06 s | 1,000,000 | 53 groups |
+| 24 `SELECT *` … order by, limit 10 | 2.58 s | 1,000,000 | 10 rows |
+| 25 order by EventTime limit 10 | 1.58 s | 1,000,000 | 10 rows |
+| 26 order by SearchPhrase limit 10 | 1.52 s | 1,000,000 | 10 rows |
+| 27 order by two columns limit 10 | 1.44 s | 1,000,000 | 10 rows |
+| 31 group by (engine, IP) | 2.01 s | 1,000,000 | 22830 groups |
+| 32 group by (WatchID, IP), filtered | 2.08 s | 1,000,000 | 69354 groups |
+| 33 …unfiltered | **4.74 s** | 1,000,000 | **1,000,000 groups** |
+| 34 group by URL | 3.09 s | 1,000,000 | 275494 groups |
+| 37 URL page views, July 2013 | 1.15 s | **413,825** | 171171 groups |
+| 38 Title page views | 0.78 s | **413,825** | 26185 groups |
+| 39 with `OFFSET 1000` | 0.61 s | **413,825** | 7385 groups |
+| 41 with `IN (-1, 6)` | 0.68 s | **413,825** | 23599 groups |
+| 42 with `OFFSET 10000` | 0.65 s | **413,825** | 7006 groups |
+| | **55.55 s** | | 35 of 43 |
+
+### The answers are right, not just fast
+
+A benchmark that reports only timings cannot be checked, and a wrong answer
+produced quickly is the easiest result to get. Every answer that can be
+computed independently was, with `pyarrow` over the same parquet:
+
+| | slate-orm | pyarrow |
+|---|---:|---:|
+| `COUNT(*)` | 1000000 | 1000000 |
+| `COUNT(*) WHERE AdvEngineID <> 0` | 14174 | 14174 |
+| `COUNT(DISTINCT UserID)` | 79842 | 79842 |
+| `COUNT(DISTINCT SearchPhrase)` | 18316 | 18316 |
+| `MIN/MAX(EventDate)` | 15901, 15901 | 15901, 15901 |
+| `COUNT(*) WHERE URL LIKE '%google%'` | 95 | 95 |
+
+The results are also consistent with each other in a way that would be hard to
+fake: Q16 finds 79,842 distinct `UserID` groups, matching Q5's distinct count
+exactly; Q13 finds 18,315 `SearchPhrase` groups, which is Q6's 18,316 minus the
+empty string Q13 filters out.
 
 ## What it found
 
@@ -169,13 +200,40 @@ every surviving row decoded, which on a 105-column table is gigabytes to
 produce a handful. And the projection could only be applied *because* the sort
 column now gets decoded — the correctness bug was hiding the performance one.
 
-### Grouping on a high-cardinality key is the slowest thing here
+### Grouping on a high-cardinality key is still the slowest thing here
 
-Q33 groups by `(WatchID, ClientIP)` with no filter: about a million distinct
-groups, 6.53 s, where the same query filtered (Q32) is 1.73 s. Groups
-accumulate into a `BTreeMap`, chosen so results come out in a deterministic
-order. At a million groups that ordering is being paid for on every insert. It
-is the clearest remaining target the benchmark points at, and it is not done.
+Q33 groups by `(WatchID, ClientIP)` with no filter, and the answer column says
+why it is slow: **exactly 1,000,000 groups**, one per row. It was 6.53 s when
+groups accumulated into a `BTreeMap` for ordering, paying O(log k) comparisons
+of a `Vec<Value>` on every row. Hashing the encoded key and sorting once at the
+end took it to **4.74 s**, and the order callers see is unchanged — the
+encoding sorts as the values do, which is the property the whole keyspace rests
+on.
+
+The remaining 4.74 s is allocation: a million groups means a million key
+vectors and a million accumulator pairs. That is the next thing here, and it is
+not done.
+
+### What the second pass added
+
+`COUNT(DISTINCT)` and `LIKE` between them turned eleven of the nineteen
+unsupported queries into supported ones. Neither is exotic; both were simply
+missing.
+
+`COUNT(DISTINCT)` is exact and counts over the *encoded* value, so two rows
+count as one exactly when they would collide in an index — the same definition
+of equality the rest of the layer uses. Exactness costs memory proportional to
+the distinct count; an approximate counter is a different aggregate, not a
+cheaper version of this one.
+
+`LIKE` matches iteratively with backtracking rather than recursively, because a
+pattern is caller input and a recursive matcher on `%a%a%a%…` is a stack
+overflow waiting to be sent. A pattern anchored at the front is a key range
+rather than a filter: every value starting with `abc` encodes to something
+beginning with the encoding of `abc` minus its terminator, so the matches are
+one contiguous span. The test that matters there is the one asserting a bound
+never loses a row, across every pattern shape including escapes and a
+`\u{1f600}` prefix — a bound that is too narrow drops rows silently.
 
 ### `analyze` is slow on a wide table
 

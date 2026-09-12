@@ -19,6 +19,12 @@ pub(crate) struct Outcome {
     pub(crate) rows: usize,
     /// The access path, from `EXPLAIN`.
     pub(crate) plan: String,
+    /// What the query actually computed, abbreviated.
+    ///
+    /// Printed because a benchmark that only reports timings cannot be
+    /// checked. A wrong answer produced quickly is the easiest kind of
+    /// benchmark result to get.
+    pub(crate) answer: String,
 }
 
 /// A ClickBench query this engine can run.
@@ -40,55 +46,17 @@ pub(crate) struct Unsupported {
     pub(crate) needs: &'static str,
 }
 
-/// The nineteen that do not run, and why.
+/// The nine that still do not run, and why.
+///
+/// All of them need the same missing thing in different clothes: an
+/// *expression*. This language has predicates over columns, not scalars
+/// computed from them, so `length(URL)`, `EventTime`'s minute, `ClientIP - 1`
+/// and `CASE WHEN` all have nowhere to be written. That is one feature, not
+/// nine, and it is the next one.
 pub(crate) const UNSUPPORTED: &[Unsupported] = &[
-    Unsupported {
-        number: 5,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 6,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 9,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 10,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 11,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 12,
-        needs: "COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 14,
-        needs: "COUNT(DISTINCT)",
-    },
     Unsupported {
         number: 19,
         needs: "extract(minute FROM …): no expressions in GROUP BY",
-    },
-    Unsupported {
-        number: 21,
-        needs: "LIKE",
-    },
-    Unsupported {
-        number: 22,
-        needs: "LIKE",
-    },
-    Unsupported {
-        number: 23,
-        needs: "LIKE, COUNT(DISTINCT)",
-    },
-    Unsupported {
-        number: 24,
-        needs: "LIKE",
     },
     Unsupported {
         number: 28,
@@ -151,7 +119,7 @@ fn july_2013(counter: i64) -> Expr {
 /// grouping key and cannot order by what it computed. That is a real gap, and
 /// doing it in the harness is the honest way to run the query while the gap
 /// exists — the sort is over the groups, which are few, not over the rows.
-fn top_by(mut groups: Vec<Group>, at: usize, limit: usize) -> usize {
+fn top_by(mut groups: Vec<Group>, at: usize, limit: usize) -> (usize, String) {
     groups.sort_by(|a, b| {
         let key = |g: &Group| match g.values.get(at) {
             Some(Value::U64(n)) => *n as f64,
@@ -161,13 +129,33 @@ fn top_by(mut groups: Vec<Group>, at: usize, limit: usize) -> usize {
         };
         key(b).total_cmp(&key(a))
     });
-    groups.len().min(limit)
+    let best = groups
+        .first()
+        .map_or_else(String::new, |g| describe(&g.values));
+    (groups.len().min(limit), best)
+}
+
+/// A short rendering of some values, for the results table.
+fn describe(values: &[Value]) -> String {
+    values
+        .iter()
+        .map(|v| match v {
+            Value::Str(s) if s.len() > 18 => format!("{}…", &s[..18]),
+            other => format!("{other:?}")
+                .replace("I64(", "")
+                .replace("U64(", "")
+                .replace("F64(", "")
+                .replace("Str(", "")
+                .replace(')', ""),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Every query that runs, in ClickBench's numbering.
 #[must_use]
 pub(crate) fn runnable() -> Vec<Runnable> {
-    vec![
+    let mut all = vec![
         Runnable {
             number: 1,
             sql: "SELECT COUNT(*) FROM hits",
@@ -288,7 +276,66 @@ pub(crate) fn runnable() -> Vec<Runnable> {
             sql: "SELECT WindowClientWidth, WindowClientHeight, COUNT(*) FROM hits WHERE CounterID = 62 AND … AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth, WindowClientHeight ORDER BY PageViews DESC LIMIT 10 OFFSET 10000",
             note: Some("ORDER BY on the aggregate is done over the groups"),
         },
-    ]
+        Runnable {
+            number: 5,
+            sql: "SELECT COUNT(DISTINCT UserID) FROM hits",
+            note: None,
+        },
+        Runnable {
+            number: 6,
+            sql: "SELECT COUNT(DISTINCT SearchPhrase) FROM hits",
+            note: None,
+        },
+        Runnable {
+            number: 9,
+            sql: "SELECT RegionID, COUNT(DISTINCT UserID) AS u FROM hits GROUP BY RegionID ORDER BY u DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 10,
+            sql: "SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, AVG(ResolutionWidth), COUNT(DISTINCT UserID) FROM hits GROUP BY RegionID ORDER BY c DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 11,
+            sql: "SELECT MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE MobilePhoneModel <> '' GROUP BY MobilePhoneModel ORDER BY u DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 12,
+            sql: "SELECT MobilePhone, MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE MobilePhoneModel <> '' GROUP BY MobilePhone, MobilePhoneModel ORDER BY u DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 14,
+            sql: "SELECT SearchPhrase, COUNT(DISTINCT UserID) AS u FROM hits WHERE SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY u DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 21,
+            sql: "SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%'",
+            note: None,
+        },
+        Runnable {
+            number: 22,
+            sql: "SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 23,
+            sql: "SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, COUNT(DISTINCT UserID) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
+        Runnable {
+            number: 24,
+            sql: "SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10",
+            note: Some("SELECT * really does decode all 105 columns, unlike Q25-27"),
+        },
+    ];
+    // Sorted, so the results table reads in ClickBench's order however the
+    // list happens to be maintained.
+    all.sort_by_key(|r| r.number);
+    all
 }
 
 type Txn<'a> = RecordTransaction<'a>;
@@ -324,13 +371,26 @@ pub(crate) async fn run(
             .map(|e| e.access.to_string())
             .unwrap_or_else(|_| "?".to_owned());
         let groups = txn.group_by(ctx, table, &query, keys, aggregates).await?;
-        let rows = match sort_by {
-            Some(at) => top_by(groups, at, limit.saturating_add(offset))
-                .saturating_sub(offset)
-                .min(limit),
-            None => groups.len().min(limit),
+        let total = groups.len();
+        let (rows, answer) = match sort_by {
+            Some(at) => {
+                let (kept, best) = top_by(groups, at, limit.saturating_add(offset));
+                (kept.saturating_sub(offset).min(limit), best)
+            }
+            None => (total.min(limit), String::new()),
         };
-        Ok(Outcome { rows, plan })
+        Ok(Outcome {
+            rows,
+            plan,
+            answer: format!(
+                "{total} groups{}",
+                if answer.is_empty() {
+                    String::new()
+                } else {
+                    format!(", top {answer}")
+                }
+            ),
+        })
     }
 
     let count_star = [Aggregate::Count];
@@ -343,6 +403,7 @@ pub(crate) async fn run(
             Ok(Outcome {
                 rows: usize::try_from(n).unwrap_or(usize::MAX).min(1),
                 plan,
+                answer: String::new(),
             })
         }
         2 => {
@@ -350,46 +411,82 @@ pub(crate) async fn run(
                 .filter(Expr::compare(col("AdvEngineID"), CmpOp::Ne, Value::I64(0)))
                 .count_only();
             let plan = plan_of(&query);
-            txn.count(ctx, table, &query).await?;
-            Ok(Outcome { rows: 1, plan })
+            let n = txn.count(ctx, table, &query).await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: n.to_string(),
+            })
         }
         3 => {
             let query = Query::all();
             let plan = plan_of(&query);
-            txn.aggregate(
-                ctx,
-                table,
-                &query,
-                &[
-                    Aggregate::Sum(col("AdvEngineID")),
-                    Aggregate::Count,
-                    Aggregate::Avg(col("ResolutionWidth")),
-                ],
-            )
-            .await?;
-            Ok(Outcome { rows: 1, plan })
+            let values = txn
+                .aggregate(
+                    ctx,
+                    table,
+                    &query,
+                    &[
+                        Aggregate::Sum(col("AdvEngineID")),
+                        Aggregate::Count,
+                        Aggregate::Avg(col("ResolutionWidth")),
+                    ],
+                )
+                .await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: describe(&values),
+            })
         }
         4 => {
             let query = Query::all();
             let plan = plan_of(&query);
-            txn.aggregate(ctx, table, &query, &[Aggregate::Avg(col("UserID"))])
+            let values = txn
+                .aggregate(ctx, table, &query, &[Aggregate::Avg(col("UserID"))])
                 .await?;
-            Ok(Outcome { rows: 1, plan })
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: describe(&values),
+            })
+        }
+        5 | 6 => {
+            let column = if number == 5 {
+                col("UserID")
+            } else {
+                col("SearchPhrase")
+            };
+            let query = Query::all();
+            let plan = plan_of(&query);
+            let values = txn
+                .aggregate(ctx, table, &query, &[Aggregate::CountDistinct(column)])
+                .await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: describe(&values),
+            })
         }
         7 => {
             let query = Query::all();
             let plan = plan_of(&query);
-            txn.aggregate(
-                ctx,
-                table,
-                &query,
-                &[
-                    Aggregate::Min(col("EventDate")),
-                    Aggregate::Max(col("EventDate")),
-                ],
-            )
-            .await?;
-            Ok(Outcome { rows: 1, plan })
+            let values = txn
+                .aggregate(
+                    ctx,
+                    table,
+                    &query,
+                    &[
+                        Aggregate::Min(col("EventDate")),
+                        Aggregate::Max(col("EventDate")),
+                    ],
+                )
+                .await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: describe(&values),
+            })
         }
         8 => {
             grouped(
@@ -401,6 +498,58 @@ pub(crate) async fn run(
                 &count_star,
                 Some(0),
                 usize::MAX,
+                0,
+            )
+            .await
+        }
+        9 => {
+            grouped(
+                txn,
+                ctx,
+                table,
+                Expr::True,
+                &[col("RegionID")],
+                &[Aggregate::CountDistinct(col("UserID"))],
+                Some(0),
+                10,
+                0,
+            )
+            .await
+        }
+        10 => {
+            grouped(
+                txn,
+                ctx,
+                table,
+                Expr::True,
+                &[col("RegionID")],
+                &[
+                    Aggregate::Sum(col("AdvEngineID")),
+                    Aggregate::Count,
+                    Aggregate::Avg(col("ResolutionWidth")),
+                    Aggregate::CountDistinct(col("UserID")),
+                ],
+                Some(1),
+                10,
+                0,
+            )
+            .await
+        }
+        11 | 12 => {
+            let keys = if number == 11 {
+                vec![col("MobilePhoneModel")]
+            } else {
+                vec![col("MobilePhone"), col("MobilePhoneModel")]
+            };
+            grouped(
+                txn,
+                ctx,
+                table,
+                not_empty("MobilePhoneModel"),
+                &keys,
+                &[Aggregate::CountDistinct(col("UserID"))],
+                Some(0),
+                10,
                 0,
             )
             .await
@@ -427,6 +576,20 @@ pub(crate) async fn run(
                 not_empty("SearchPhrase"),
                 &[col("SearchEngineID"), col("SearchPhrase")],
                 &count_star,
+                Some(0),
+                10,
+                0,
+            )
+            .await
+        }
+        14 => {
+            grouped(
+                txn,
+                ctx,
+                table,
+                not_empty("SearchPhrase"),
+                &[col("SearchPhrase")],
+                &[Aggregate::CountDistinct(col("UserID"))],
                 Some(0),
                 10,
                 0,
@@ -481,7 +644,73 @@ pub(crate) async fn run(
                 .select([col("UserID")]);
             let plan = plan_of(&query);
             let rows: usize = txn.execute(ctx, table, &query).await?.count().await?;
-            Ok(Outcome { rows, plan })
+            Ok(Outcome {
+                rows,
+                plan,
+                answer: String::new(),
+            })
+        }
+        21 => {
+            let query = Query::all()
+                .filter(Expr::like(col("URL"), "%google%"))
+                .count_only();
+            let plan = plan_of(&query);
+            let n = txn.count(ctx, table, &query).await?;
+            Ok(Outcome {
+                rows: 1,
+                plan,
+                answer: n.to_string(),
+            })
+        }
+        22 => {
+            grouped(
+                txn,
+                ctx,
+                table,
+                Expr::like(col("URL"), "%google%").and(not_empty("SearchPhrase")),
+                &[col("SearchPhrase")],
+                &[Aggregate::Min(col("URL")), Aggregate::Count],
+                Some(1),
+                10,
+                0,
+            )
+            .await
+        }
+        23 => {
+            grouped(
+                txn,
+                ctx,
+                table,
+                Expr::like(col("Title"), "%Google%")
+                    .and(Expr::not_like(col("URL"), "%.google.%"))
+                    .and(not_empty("SearchPhrase")),
+                &[col("SearchPhrase")],
+                &[
+                    Aggregate::Min(col("URL")),
+                    Aggregate::Min(col("Title")),
+                    Aggregate::Count,
+                    Aggregate::CountDistinct(col("UserID")),
+                ],
+                Some(2),
+                10,
+                0,
+            )
+            .await
+        }
+        24 => {
+            // `SELECT *`, so every column really is decoded — the shape Q25-27
+            // used to have by accident, kept here because the query asks for it.
+            let query = Query::all()
+                .filter(Expr::like(col("URL"), "%google%"))
+                .sort_by([SortKey::asc(col("EventTime"))])
+                .limit(10);
+            let plan = plan_of(&query);
+            let rows: usize = txn.execute(ctx, table, &query).await?.count().await?;
+            Ok(Outcome {
+                rows,
+                plan,
+                answer: String::new(),
+            })
         }
         25..=27 => {
             let sort: Vec<SortKey> = match number {
@@ -502,7 +731,11 @@ pub(crate) async fn run(
                 .limit(10);
             let plan = plan_of(&query);
             let rows: usize = txn.execute(ctx, table, &query).await?.count().await?;
-            Ok(Outcome { rows, plan })
+            Ok(Outcome {
+                rows,
+                plan,
+                answer: String::new(),
+            })
         }
         31..=33 => {
             let keys = if number == 31 {

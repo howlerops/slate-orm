@@ -76,10 +76,10 @@ async fn main() {
          ClickBench results, which are 100M rows on dedicated hardware.\n"
     );
     println!(
-        "{:>4}  {:>10}  {:>7}  {:>12}  {:>8}  plan",
-        "Q", "wall", "rows", "scanned", "reads"
+        "{:>4}  {:>10}  {:>7}  {:>12}  {:>8}  {:<34}  answer",
+        "Q", "wall", "rows", "scanned", "reads", "plan"
     );
-    println!("{:-<104}", "");
+    println!("{:-<150}", "");
 
     let mut total = 0.0f64;
     for runnable in queries::runnable() {
@@ -92,17 +92,22 @@ async fn main() {
         let wall = started.elapsed().as_secs_f64();
         total += wall;
         println!(
-            "{:>4}  {:>9.2}s  {:>7}  {:>12}  {:>8}  {}",
+            "{:>4}  {:>9.2}s  {:>7}  {:>12}  {:>8}  {:<34}  {}",
             runnable.number,
             wall,
             outcome.rows,
             counters.scan_rows(),
             counters.gets(),
-            outcome.plan
+            outcome.plan,
+            outcome.answer
         );
     }
-    println!("{:-<104}", "");
-    println!("{:>4}  {total:>9.2}s  (24 of 43 queries)", "sum");
+    println!("{:-<150}", "");
+    println!(
+        "{:>4}  {total:>9.2}s  ({} of 43 queries)",
+        "sum",
+        queries::runnable().len()
+    );
 
     println!("\nNot run, and what each would need:");
     for missing in queries::UNSUPPORTED {

@@ -8,8 +8,8 @@
 
 use crate::error::{KernelError, Result};
 use slate_schema::{Ordinal, Row};
-use slate_tuple::Value;
-use std::collections::BTreeSet;
+use slate_tuple::{Value, encode};
+use std::collections::{BTreeSet, HashSet};
 
 /// A value computed over a set of rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,14 @@ pub enum Aggregate {
     Sum(Ordinal),
     /// Mean of the non-null values, as a double, or null if there are none.
     Avg(Ordinal),
+    /// `COUNT(DISTINCT column)`: how many different non-null values appeared.
+    ///
+    /// Exact, and over the *encoded* value, so two rows count as one exactly
+    /// when they would collide in an index — the same definition of equality
+    /// the rest of the layer uses. Exactness costs memory proportional to the
+    /// number of distinct values; an approximate counter would not, and is a
+    /// different aggregate rather than a cheaper version of this one.
+    CountDistinct(Ordinal),
 }
 
 impl Aggregate {
@@ -34,9 +42,12 @@ impl Aggregate {
     pub const fn column(self) -> Option<Ordinal> {
         match self {
             Self::Count => None,
-            Self::CountColumn(c) | Self::Min(c) | Self::Max(c) | Self::Sum(c) | Self::Avg(c) => {
-                Some(c)
-            }
+            Self::CountColumn(c)
+            | Self::Min(c)
+            | Self::Max(c)
+            | Self::Sum(c)
+            | Self::Avg(c)
+            | Self::CountDistinct(c) => Some(c),
         }
     }
 
@@ -54,6 +65,7 @@ impl Aggregate {
             Self::Max(_) => Accumulator::Extreme(None, false),
             Self::Sum(_) => Accumulator::Total(Total::default()),
             Self::Avg(_) => Accumulator::Total(Total::default()),
+            Self::CountDistinct(_) => Accumulator::Distinct(HashSet::new()),
         }
     }
 }
@@ -126,6 +138,10 @@ enum Accumulator {
     /// The extreme seen so far, and whether we are looking for the minimum.
     Extreme(Option<Value>, bool),
     Total(Total),
+    /// Every distinct encoding seen. Encoded rather than held as values
+    /// because [`Value`] is not hashable — it can hold a float — and because
+    /// the encoding is what decides equality everywhere else here.
+    Distinct(HashSet<Vec<u8>>),
 }
 
 /// Aggregates being computed over a stream of rows.
@@ -181,6 +197,17 @@ impl Accumulators {
                         total.add(value)?;
                     }
                 }
+                Accumulator::Distinct(seen) => {
+                    if let Some(value) = value.filter(|v| !v.is_null()) {
+                        let encoded = encode(core::slice::from_ref(value));
+                        // Checked before inserting so a repeated value does
+                        // not allocate: on a low-cardinality column that is
+                        // nearly every row.
+                        if !seen.contains(&encoded) {
+                            seen.insert(encoded);
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -199,6 +226,7 @@ impl Accumulators {
                     Aggregate::Avg(_) => total.average(),
                     _ => total.sum(),
                 },
+                Accumulator::Distinct(seen) => Value::U64(seen.len() as u64),
             })
             .collect()
     }

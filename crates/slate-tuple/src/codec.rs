@@ -188,6 +188,41 @@ impl Sink<'_> {
     }
 }
 
+/// Encode the *start* of a string or byte value: everything a longer value
+/// sharing this prefix would also begin with.
+///
+/// The full encoding ends in a terminator, which is what makes it prefix-free
+/// and therefore sortable. Leaving the terminator off gives the opposite and
+/// equally useful thing: a byte prefix shared by every encoding of a value
+/// that starts this way. `LIKE 'abc%'` becomes a key range through this.
+///
+/// Returns `false` and writes nothing for a value that is not a string or
+/// bytes, since no other type has meaningful prefixes.
+pub fn encode_prefix_into(out: &mut Vec<u8>, value: &Value, direction: Direction) -> bool {
+    let mut sink = Sink {
+        buf: out,
+        mask: direction.mask(),
+    };
+    let bytes = match value {
+        Value::Bytes(b) => {
+            sink.push(codes::BYTES);
+            &b[..]
+        }
+        Value::Str(s) => {
+            sink.push(codes::STR);
+            s.as_bytes()
+        }
+        _ => return false,
+    };
+    for &b in bytes {
+        sink.push(b);
+        if b == codes::NUL {
+            sink.push(codes::ESCAPE);
+        }
+    }
+    true
+}
+
 /// Append one element's encoding to `out`.
 pub fn encode_value_into(out: &mut Vec<u8>, value: &Value, direction: Direction) {
     let mut sink = Sink {

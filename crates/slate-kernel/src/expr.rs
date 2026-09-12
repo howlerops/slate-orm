@@ -175,6 +175,21 @@ pub enum Expr {
         /// Whether the test is inverted.
         negated: bool,
     },
+    /// `column LIKE pattern`, with SQL's wildcards: `%` matches any run of
+    /// characters and `_` matches exactly one.
+    ///
+    /// A pattern anchored at the front — `'abc%'` — is a key range rather than
+    /// a filter, and the planner turns it into one. Anything else stays a
+    /// residual, because a pattern that can start anywhere says nothing about
+    /// where in the keyspace its matches are.
+    Like {
+        /// The column being matched.
+        column: Ordinal,
+        /// The pattern.
+        pattern: String,
+        /// Whether the test is inverted, for `NOT LIKE`.
+        negated: bool,
+    },
     /// `column IN (values)`.
     In {
         /// The column being tested.
@@ -212,6 +227,26 @@ impl Expr {
     #[must_use]
     pub const fn compare_columns(left: Ordinal, op: CmpOp, right: Ordinal) -> Self {
         Self::CompareColumns { left, op, right }
+    }
+
+    /// `column LIKE pattern`. See [`Expr::Like`].
+    #[must_use]
+    pub fn like(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Like {
+            column,
+            pattern: pattern.into(),
+            negated: false,
+        }
+    }
+
+    /// `column NOT LIKE pattern`.
+    #[must_use]
+    pub fn not_like(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Like {
+            column,
+            pattern: pattern.into(),
+            negated: true,
+        }
     }
 
     /// `column IS NULL`.
@@ -315,6 +350,21 @@ impl Expr {
                 }
                 Truth::from(op.apply(a.cmp(b)))
             }
+            Self::Like {
+                column,
+                pattern,
+                negated,
+            } => {
+                let Some(actual) = row.value(*column) else {
+                    return Truth::Unknown;
+                };
+                // A null matches no pattern, and does not fail to match one
+                // either: the same three-valued rule as a comparison.
+                let Value::Str(text) = actual else {
+                    return Truth::Unknown;
+                };
+                Truth::from(like_matches(text, pattern) != *negated)
+            }
             Self::IsNull { column, negated } => {
                 // `IS NULL` is the one test that is never unknown.
                 let is_null = row.value(*column).is_none_or(Value::is_null);
@@ -394,6 +444,15 @@ impl Expr {
                 op: *op,
                 right: f(*right),
             },
+            Self::Like {
+                column,
+                pattern,
+                negated,
+            } => Self::Like {
+                column: f(*column),
+                pattern: pattern.clone(),
+                negated: *negated,
+            },
             Self::IsNull { column, negated } => Self::IsNull {
                 column: f(*column),
                 negated: *negated,
@@ -424,7 +483,8 @@ impl Expr {
             | Self::False
             | Self::Compare { .. }
             | Self::IsNull { .. }
-            | Self::In { .. } => None,
+            | Self::In { .. }
+            | Self::Like { .. } => None,
             Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
                 (Some(a), Some(b)) if a != b => Some((*left, *right)),
                 _ => None,
@@ -455,7 +515,8 @@ impl Expr {
             Self::True | Self::False => {}
             Self::Compare { column, .. }
             | Self::IsNull { column, .. }
-            | Self::In { column, .. } => {
+            | Self::In { column, .. }
+            | Self::Like { column, .. } => {
                 out.insert(*column);
             }
             Self::CompareColumns { left, right, .. } => {
@@ -470,4 +531,101 @@ impl Expr {
             Self::Not(inner) => inner.collect_columns(out),
         }
     }
+}
+
+/// Whether `text` matches a SQL `LIKE` pattern.
+///
+/// `%` matches any run of characters, `_` matches exactly one. Both can be
+/// escaped with a backslash, which is what most dialects do without an
+/// explicit `ESCAPE` clause.
+///
+/// Iterative with backtracking rather than recursive: a pattern is caller
+/// input, and a recursive matcher on `%a%a%a%…` is a stack overflow waiting to
+/// be sent. This is O(text x pattern) in the worst case and linear in
+/// practice.
+#[must_use]
+pub fn like_matches(text: &str, pattern: &str) -> bool {
+    let text: Vec<char> = text.chars().collect();
+    let pattern: Vec<char> = pattern.chars().collect();
+
+    let (mut t, mut p) = (0usize, 0usize);
+    // Where to resume if the current `%` turns out to have matched too little.
+    let (mut star_p, mut star_t) = (None, 0usize);
+
+    while t < text.len() {
+        let literal = match pattern.get(p) {
+            Some('%') => {
+                star_p = Some(p);
+                star_t = t;
+                p += 1;
+                continue;
+            }
+            Some('_') => {
+                p += 1;
+                t += 1;
+                continue;
+            }
+            // An escape takes the next character literally, and a trailing
+            // backslash is itself.
+            Some('\\') => pattern.get(p + 1).copied().unwrap_or('\\'),
+            Some(other) => *other,
+            None => {
+                // Pattern spent with text left over: only a `%` can absorb it.
+                match star_p {
+                    Some(star) => {
+                        p = star + 1;
+                        star_t += 1;
+                        t = star_t;
+                        continue;
+                    }
+                    None => return false,
+                }
+            }
+        };
+        let width = if pattern.get(p) == Some(&'\\') { 2 } else { 1 };
+
+        if text.get(t) == Some(&literal) {
+            p += width;
+            t += 1;
+            continue;
+        }
+        match star_p {
+            Some(star) => {
+                p = star + 1;
+                star_t += 1;
+                t = star_t;
+            }
+            None => return false,
+        }
+    }
+
+    // Text spent: whatever is left of the pattern must match nothing. `p` can
+    // run past the end when the pattern was exhausted first, which `get` reads
+    // as "nothing left", the same answer.
+    pattern
+        .get(p..)
+        .is_none_or(|rest| rest.iter().all(|c| *c == '%'))
+}
+
+/// The literal prefix a pattern requires, if it requires one.
+///
+/// `'abc%'` and `'abc%def'` both begin with `abc`, so every match sorts inside
+/// that prefix and the scan can be bounded by it. `'%abc'` has none. Returns
+/// `None` rather than an empty string when there is nothing to bound by, so a
+/// caller cannot mistake "no constraint" for "matches the empty prefix".
+#[must_use]
+pub fn like_prefix(pattern: &str) -> Option<String> {
+    let mut prefix = String::new();
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '%' | '_' => break,
+            '\\' => match chars.next() {
+                Some(escaped) => prefix.push(escaped),
+                None => prefix.push('\\'),
+            },
+            other => prefix.push(other),
+        }
+    }
+    (!prefix.is_empty()).then_some(prefix)
 }
