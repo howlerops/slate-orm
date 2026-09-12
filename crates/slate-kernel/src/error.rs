@@ -122,6 +122,21 @@ pub enum KernelError {
     #[error("this writer has been fenced by a newer one and must stop")]
     WriterFenced,
 
+    /// A commit did not finish within the configured limit.
+    ///
+    /// **This does not mean the write did not happen.** The commit may have
+    /// been applied already, may land later, or may never land; the timeout
+    /// says only that nobody knows yet. That is why it is not retryable —
+    /// a caller that retried could apply the same change twice.
+    ///
+    /// Raised only when a backend is configured with a commit timeout. It
+    /// exists because a stalled object store makes SlateDB wait indefinitely
+    /// rather than fail, and a writer that hangs with no error is harder to
+    /// operate than one that stops loudly. Reconcile from what is actually in
+    /// the store rather than assuming either outcome.
+    #[error("commit did not complete within the configured timeout; its outcome is unknown")]
+    CommitTimedOut,
+
     /// A read replica has not caught up to the sequence the caller requires.
     ///
     /// Raised rather than served stale, so that read-your-writes is a promise
@@ -219,6 +234,10 @@ impl KernelError {
     /// decode failure will fail identically on every attempt, and
     /// [`KernelError::WriterFenced`] will fail forever by design — retrying any
     /// of them turns a clear error into a hang.
+    ///
+    /// [`KernelError::CommitTimedOut`] is excluded for the opposite reason: it
+    /// might well succeed on a retry, but the first attempt may also have
+    /// landed, so retrying risks applying the change twice.
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
         matches!(self, Self::TransactionConflict)

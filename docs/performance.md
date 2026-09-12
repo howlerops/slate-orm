@@ -422,6 +422,26 @@ the previous commit in a worktree and running both binaries alternately on the
 same machine, then callgrind: instructions up 5.7%, wall time up 49%, and one
 symbol in the new profile that was absent from the old.
 
+## The cost model was measured, and was wrong
+
+Everything below this line predates a calibration against real object storage,
+and the constants it rests on have since changed. `slate-slatedb`'s
+`cost_calibration` example found the model overcharging scans about eighty
+times and undercharging index lookups about forty, in the same direction — so
+the planner preferred a plan doing **58x the object-store requests, taking 9x
+as long**. The full account is in
+[`docs/correctness.md`](correctness.md#the-cost-model-was-calibrated-against-itself).
+
+Two things to carry into any reading of the numbers here:
+
+- The unit is now **object-store requests**, measured, not round trips inferred
+  from a latency fixture. A scan returns about 8,000 rows per request; a point
+  read costs about 3.
+- Wall times below were derived as cost × 2.2 ms against the old constants.
+  They are kept because the *relative* findings they record — late
+  materialisation, the projection fix, hash grouping — were measured directly
+  in wall time and still hold. The costs beside them no longer are.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

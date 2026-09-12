@@ -305,31 +305,48 @@ fn assumed_statistics_are_used_when_nothing_is_known() {
     assert!((stats.equality_selectivity(Ordinal(0)) - 0.009).abs() < 0.001);
 }
 
-/// The cost model charges overlapped reads as waves, not one round trip each.
+/// Overlapping reads costs the same as not overlapping them.
 ///
-/// This is the difference between preferring a 58 ms table scan and a 20 ms
-/// index scan on the benchmark corpus. The executor has always pipelined; the
-/// model simply did not know.
+/// This test asserted the opposite until the model was measured against object
+/// storage. The old rule was `ceil(n / depth)`: reads issued together land
+/// together, so sixteen at depth sixteen cost one round trip. That is true of
+/// *latency* and false of *work*, and the cost model's unit is work — the
+/// requests the provider serves and bills. Concurrency does not make them
+/// fewer.
+///
+/// Believing otherwise made index lookups look sixteen times cheaper than they
+/// are, which, together with scans being overcharged eighty times, had the
+/// planner preferring a plan that did 58x the object-store requests and took
+/// 9x as long. See `slate-slatedb`'s `cost_calibration` example.
 #[test]
-fn pipelined_reads_cost_waves_not_round_trips() {
+fn overlapped_reads_cost_the_same_as_serial_ones() {
     use slate_kernel::stats::{POINT_READ_COST, pipelined_read_cost};
 
     assert_eq!(pipelined_read_cost(0.0, 16), 0.0, "nothing to read");
-    // One read and a full wave of them cost the same: a wave is a round trip
-    // that nothing amortises, which is why a small limit gains least.
-    assert_eq!(pipelined_read_cost(1.0, 16), POINT_READ_COST);
-    assert_eq!(pipelined_read_cost(16.0, 16), POINT_READ_COST);
-    assert_eq!(pipelined_read_cost(17.0, 16), 2.0 * POINT_READ_COST);
-    assert_eq!(pipelined_read_cost(100.0, 16), 7.0 * POINT_READ_COST);
-    // A depth of zero would divide by nothing; it means "no overlap".
-    assert_eq!(pipelined_read_cost(4.0, 0), 4.0 * POINT_READ_COST);
+    for reads in [1.0, 16.0, 17.0, 100.0] {
+        assert_eq!(
+            pipelined_read_cost(reads, 16),
+            reads * POINT_READ_COST,
+            "{reads} reads at depth 16"
+        );
+        // Depth does not enter into it any more.
+        assert_eq!(
+            pipelined_read_cost(reads, 16),
+            pipelined_read_cost(reads, 1),
+            "depth changed the cost of {reads} reads"
+        );
+    }
 }
 
-/// A non-covering index scan is worth its lookups up to roughly 6% of the
-/// table, and not beyond. The old model put that boundary at about 1%, and so
-/// scanned whole tables to return a hundred rows.
+/// Where a non-covering index scan stops being worth its lookups.
+///
+/// Both ends of this test now say "scan", which is the measured answer for a
+/// ten-thousand-row table: see the note inside. The boundary has moved twice —
+/// first from 1% to 6% when pipelining was added to the model, then off the
+/// percentage scale entirely when the model was measured against object
+/// storage rather than a latency fixture.
 #[tokio::test]
-async fn an_index_wins_up_to_a_few_percent_of_the_table() {
+async fn an_index_is_not_worth_its_lookups_on_a_small_table() {
     let filter = || Expr::eq(col("kind"), Value::Str("kind-1".into()));
     let with = |distinct: u64| {
         TableStats::with_row_count(10_000).with_column(
@@ -341,8 +358,17 @@ async fn an_index_wins_up_to_a_few_percent_of_the_table() {
         )
     };
 
-    // Selective: 500 distinct values over ten thousand rows means an equality
-    // keeps 0.2% of them, so the lookups pay for themselves.
+    // Selective *as a percentage* is not the test any more. 500 distinct values
+    // over ten thousand rows keeps 0.2% of them — twenty rows — and twenty
+    // point reads cost about sixty object-store requests where the whole table
+    // is one or two. So the scan wins, and it really is faster.
+    //
+    // The rule that replaced "a few percent" is absolute, not proportional:
+    // fetching `k` rows beats scanning `n` only when `n > 24000k`, because a
+    // scan returns ~8000 rows per request and a point read costs ~3. A
+    // percentage can never satisfy that, however small — `k = 0.002n` needs
+    // `n > 48n`. Indexes earn their keep on large tables and small absolute
+    // result sets, which is a narrower claim than this test used to make.
     let selective = store()
         .await
         .with_statistics(Statistics::new().with(T, with(500)));
@@ -351,8 +377,8 @@ async fn an_index_wins_up_to_a_few_percent_of_the_table() {
         .explain(&root(), &table(), &Query::all().filter(filter()))
         .unwrap();
     assert!(
-        !matches!(plan.access, AccessSummary::TableScan),
-        "0.2% of the table should go through the index, got {plan}"
+        matches!(plan.access, AccessSummary::TableScan),
+        "twenty rows out of ten thousand is cheaper to scan, got {plan}"
     );
 
     // Broad: two distinct values means half the table, far past the point

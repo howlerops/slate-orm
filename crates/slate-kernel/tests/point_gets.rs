@@ -83,7 +83,16 @@ async fn store(
     // exactly what the planner is being tested on.
     let analyzed = {
         let txn = loader.begin().await.unwrap();
-        txn.analyze(&root, &notes()).await.unwrap()
+        let mut stats = txn.analyze(&root, &notes()).await.unwrap();
+        // The seeded corpus is small, and a small table is cheaper to scan
+        // whole than to fetch a handful of rows out of: a scan returns ~8000
+        // rows per object-store request while a point read costs ~3, so point
+        // gets only win once the table is large. That crossover is
+        // `planner.rs`'s subject; this file is about whether an `IN` over the
+        // key becomes point gets *when it should*, so the row count is set to
+        // a size where it should.
+        stats.row_count = 5_000_000;
+        stats
     };
 
     let slow = LatencyStore::new(backing, LatencyProfile::free());

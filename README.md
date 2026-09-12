@@ -515,9 +515,17 @@ Tests are written around guarantees rather than API surface:
   over a **tenant-scoped table with a composite key and mixed-direction
   indexes**, since the single-column case exercises none of the keyspace code
   that matters.
-- **Writer handover** is covered on both sides of the takeover, and replicas
-  are read from while the writer commits — a replica may lag, but the state it
-  serves must be one the database was actually in.
+- **Writer handover** is covered on both sides of the takeover, including two
+  writers genuinely overlapping across a lease change, and replicas are read
+  from while the writer commits — a replica may lag, but the state it serves
+  must be one the database was actually in.
+- **Faults are injected below the storage engine too**, at the object store, so
+  a crash lands inside SlateDB rather than above it. What survives must be
+  coherent even when committed data is lost.
+- The **cost model is calibrated against a real S3 server**, not a latency
+  fixture. Doing that found it overcharging scans eighty times and
+  undercharging index lookups forty — see
+  [`docs/correctness.md`](docs/correctness.md).
 - Row-level security is checked as a **matrix**, once per access path, rather
   than as a set of scenarios: a policy honoured by the table scan and skipped
   by the k-NN search is a leak, and the paths that skip it are the ones added

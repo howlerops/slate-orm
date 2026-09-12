@@ -189,6 +189,7 @@ pub struct SlateStore {
     isolation: IsolationLevel,
     durability: Durability,
     scan_tuning: ScanTuning,
+    commit_timeout: Option<core::time::Duration>,
 }
 
 impl core::fmt::Debug for SlateStore {
@@ -198,6 +199,7 @@ impl core::fmt::Debug for SlateStore {
             .field("isolation", &self.isolation)
             .field("durability", &self.durability)
             .field("scan_tuning", &self.scan_tuning)
+            .field("commit_timeout", &self.commit_timeout)
             .finish_non_exhaustive()
     }
 }
@@ -230,7 +232,39 @@ impl SlateStore {
             isolation: IsolationLevel::SerializableSnapshot,
             durability: Durability::default(),
             scan_tuning: ScanTuning::default(),
+            commit_timeout: None,
         }
+    }
+
+    /// Give up on a commit that has not finished within `limit`.
+    ///
+    /// Off by default, and opt-in rather than a default, because of what a
+    /// timeout here can and cannot tell you.
+    ///
+    /// **Why it exists.** When the object store stops accepting writes — a full
+    /// disk, a revoked credential, a bucket policy change — SlateDB does not
+    /// return an error. It waits, indefinitely. Measured directly:
+    /// two hundred puts and a flush against an object store refusing every
+    /// write did not return in twenty seconds, with no record-layer code
+    /// involved (`slatedb_hangs_when_the_object_store_refuses_writes` in
+    /// `storage_crash.rs` pins it). A head node in that state looks alive and
+    /// serves nothing, which is the failure mode an operator finds last.
+    ///
+    /// **What a timeout means here.** Not "the commit did not happen".
+    /// The write may already be applied, may land later, or may never land;
+    /// the timeout only says nobody knows yet. So
+    /// [`KernelError::CommitTimedOut`] is deliberately *not* retryable — a
+    /// caller that retried could apply the same change twice. Treat it the way
+    /// you would treat a fenced writer: stop, and reconcile from what is
+    /// actually in the store.
+    ///
+    /// This does not fix the hang, which is not ours to fix. It converts an
+    /// unbounded wait into a reportable event, which is the part this layer
+    /// can be responsible for.
+    #[must_use]
+    pub const fn with_commit_timeout(mut self, limit: core::time::Duration) -> Self {
+        self.commit_timeout = Some(limit);
+        self
     }
 
     /// How scans should read blocks. See [`ScanTuning`].
@@ -306,6 +340,7 @@ impl KvStore for SlateStore {
             txn,
             durability: self.durability,
             scan_tuning: self.scan_tuning,
+            commit_timeout: self.commit_timeout,
         }))
     }
 }
@@ -315,6 +350,7 @@ pub struct SlateTransaction {
     txn: DbTransaction,
     durability: Durability,
     scan_tuning: ScanTuning,
+    commit_timeout: Option<core::time::Duration>,
 }
 
 impl core::fmt::Debug for SlateTransaction {
@@ -366,15 +402,26 @@ impl KvTransaction for SlateTransaction {
 
     async fn commit(self: Box<Self>) -> Result<Option<u64>> {
         let durability = self.durability;
-        // `commit` returns None for an empty batch, and otherwise a handle that
-        // has been applied but not necessarily flushed.
-        let Some(handle) = self.txn.commit().await.map_err(convert)? else {
-            return Ok(None);
+        let limit = self.commit_timeout;
+        let apply = async move {
+            // `commit` returns None for an empty batch, and otherwise a handle
+            // that has been applied but not necessarily flushed.
+            let Some(handle) = self.txn.commit().await.map_err(convert)? else {
+                return Ok(None);
+            };
+            if durability == Durability::Durable {
+                handle.await_durable().await.map_err(convert)?;
+            }
+            Ok(Some(handle.seqnum()))
         };
-        if durability == Durability::Durable {
-            handle.await_durable().await.map_err(convert)?;
+        // The whole commit is bounded, not just the flush: with the object
+        // store refusing writes, `commit` itself is where it stops.
+        match limit {
+            None => apply.await,
+            Some(limit) => tokio::time::timeout(limit, apply)
+                .await
+                .unwrap_or(Err(KernelError::CommitTimedOut)),
         }
-        Ok(Some(handle.seqnum()))
     }
 
     fn rollback(self: Box<Self>) {

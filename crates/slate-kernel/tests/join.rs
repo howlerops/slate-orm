@@ -563,10 +563,14 @@ async fn the_planner_picks_a_loop_only_for_a_small_outer_side() {
         )
         .with(
             BOOKS,
-            TableStats::with_row_count(100_000).with_column(
+            // A hundred million books over ten million authors: ten each, and
+            // an inner table large enough that scanning it is genuinely worse
+            // than ten point reads. At a hundred thousand books it is not —
+            // see the note on the crossover in `join.rs`.
+            TableStats::with_row_count(100_000_000).with_column(
                 book_col("author_id"),
                 slate_kernel::ColumnStats {
-                    distinct: 10_000,
+                    distinct: 10_000_000,
                     null_fraction: 0.0,
                 },
             ),
@@ -599,9 +603,14 @@ async fn the_planner_picks_a_loop_only_for_a_small_outer_side() {
 /// The loop's advantage is that it does not read the whole inner table. Count
 /// the rows read rather than trusting the estimate.
 ///
-/// This needs a corpus the cost model would actually reach for an index on: at
-/// two books per author a probe is worth two point reads, where a hash join
-/// reads every book there is.
+/// This is about the *mechanics* of the two algorithms, not about which one the
+/// planner picks. It used to assert both, and could no longer: at a thousand
+/// inner rows the planner now correctly prefers a hash join, because scanning a
+/// thousand rows is one object-store request and two point reads are about six.
+/// Which algorithm wins where is
+/// [`the_planner_picks_a_loop_only_for_a_small_outer_side`]'s question, and it
+/// needs a corpus far larger than one a test can seed. What is still true at
+/// any size, and is what this checks, is that a loop reads less.
 #[tokio::test]
 async fn a_loop_reads_less_than_a_scan_of_the_inner_side() {
     const AUTHOR_COUNT: u64 = 500;
@@ -654,13 +663,17 @@ async fn a_loop_reads_less_than_a_scan_of_the_inner_side() {
     );
 
     let txn = store.begin().await.unwrap();
-    let one = on_author().left(Query::all().filter(Expr::eq(author_col("id"), Value::U64(7))));
-
-    // Left to itself, the planner should reach for the loop here.
-    let plan = txn
-        .explain_join(&reader(1), &authors(), &books(), &one)
-        .unwrap();
-    assert!(plan.is_nested_loop(), "expected a loop, got: {plan}");
+    // The probe is pinned to `by_author`. Left to itself it would scan books
+    // instead — a thousand rows is one object-store request and two point reads
+    // are about six — and then the loop would read exactly as much as the hash
+    // join, which is the outcome this test kept getting before the hint was
+    // added. Pinning it makes the comparison the intended one: a real index
+    // probe against a full build.
+    let mut probe = Query::all();
+    probe.hint = Some(slate_kernel::AccessHint::Index(IndexId(20)));
+    let one = on_author()
+        .left(Query::all().filter(Expr::eq(author_col("id"), Value::U64(7))))
+        .right(probe);
 
     counters.reset();
     let loops = txn

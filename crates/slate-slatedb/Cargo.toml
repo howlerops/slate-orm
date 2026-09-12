@@ -23,6 +23,8 @@ default = ["aws"]
 aws = ["slatedb/aws"]
 
 [dev-dependencies]
+# For the object-store fault injector, whose trait methods return boxed streams.
+futures.workspace = true
 slate-schema.workspace = true
 slate-tuple.workspace = true
 tokio = { workspace = true, features = ["net"] }

@@ -603,15 +603,41 @@ async fn an_accumulated_result_is_bounded() {
 }
 
 /// Walking down from one record is the shape an ORM asks for, and it is where
-/// the loop should win: one author, not the whole table.
+/// the loop should win — but only once the inner table is *very* much larger
+/// than the rows fetched from it.
+///
+/// This test used to assert a loop at a hundred thousand inner rows, and that
+/// was wrong: measured against object storage, a scan of two hundred thousand
+/// rows costs 25 requests and 0.37 s, while four hundred point reads cost 1,221
+/// requests and 3.73 s. Point reads are about three requests each and a scan
+/// returns about eight thousand rows per request, so the crossover sits around
+/// four rows fetched per hundred thousand scanned — three orders of magnitude
+/// further toward scanning than the old model believed. See
+/// `slate-slatedb`'s `cost_calibration` example.
+///
+/// So the inner table here is a hundred *million* rows, which is where a probe
+/// genuinely wins, and the hundred-thousand case now asserts the opposite.
 #[tokio::test]
 async fn the_planner_picks_a_loop_when_the_accumulated_side_is_small() {
     let (store, _) = store(open()).await;
     let defs = tables();
     let store = store.with_statistics(
         Statistics::new()
-            .with(AUTHORS, TableStats::with_row_count(10_000))
-            .with(BOOKS, TableStats::with_row_count(100_000))
+            .with(AUTHORS, TableStats::with_row_count(10_000_000))
+            .with(
+                BOOKS,
+                // Ten million distinct authors over a hundred million books:
+                // ten books each, which is the shape an ORM walks. Without
+                // this the default distinct count of 100 would put a million
+                // books under every author, where scanning is obviously right.
+                TableStats::with_row_count(100_000_000).with_column(
+                    b("author_id"),
+                    slate_kernel::ColumnStats {
+                        distinct: 10_000_000,
+                        null_fraction: 0.0,
+                    },
+                ),
+            )
             .with(PUBLISHERS, TableStats::with_row_count(1_000)),
     );
     let txn = store.begin().await.unwrap();
@@ -623,7 +649,7 @@ async fn the_planner_picks_a_loop_when_the_accumulated_side_is_small() {
     let plan = txn.explain_chain(&reader(1), &refs(&defs), &one).unwrap();
     assert!(
         matches!(plan.steps[0].algorithm, JoinAlgorithm::NestedLoop),
-        "one author against a hundred thousand books should probe: {:?}",
+        "one author against a hundred million books should probe: {:?}",
         plan.steps[0].algorithm
     );
 
@@ -634,6 +660,23 @@ async fn the_planner_picks_a_loop_when_the_accumulated_side_is_small() {
     assert!(
         matches!(plan.steps[0].algorithm, JoinAlgorithm::Hash { .. }),
         "ten thousand authors should not each be a probe: {:?}",
+        plan.steps[0].algorithm
+    );
+
+    // And at a hundred thousand inner rows the scan wins, which is the case
+    // this test asserted backwards until object storage was measured.
+    drop(txn);
+    let store = store.with_statistics(
+        Statistics::new()
+            .with(AUTHORS, TableStats::with_row_count(10_000))
+            .with(BOOKS, TableStats::with_row_count(100_000))
+            .with(PUBLISHERS, TableStats::with_row_count(1_000)),
+    );
+    let txn = store.begin().await.unwrap();
+    let plan = txn.explain_chain(&reader(1), &refs(&defs), &one).unwrap();
+    assert!(
+        matches!(plan.steps[0].algorithm, JoinAlgorithm::Hash { .. }),
+        "a hundred thousand inner rows is cheaper to scan than to probe: {:?}",
         plan.steps[0].algorithm
     );
 }

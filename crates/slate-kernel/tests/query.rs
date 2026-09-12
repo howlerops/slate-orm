@@ -413,11 +413,16 @@ async fn the_planner_uses_the_indexes_it_should() {
 async fn a_limit_lowers_the_estimate_without_changing_the_choice() {
     let table = metrics();
     let value = col("value");
-    // A thousand rows match, so a limit of ten leaves most of them unread.
+    // Ten rows match out of a million, so a limit of ten leaves most of the
+    // table unread and an index is genuinely the cheaper path. It used to be a
+    // thousand matches, which an index no longer wins: a thousand point reads
+    // is about three thousand object-store requests where scanning a million
+    // rows is a hundred and twenty-six. Indexes pay off on small *absolute*
+    // result sets, not small fractions — see `planner.rs`.
     let stats = TableStats::with_row_count(1_000_000).with_column(
         value,
         ColumnStats {
-            distinct: 1_000,
+            distinct: 100_000,
             null_fraction: 0.0,
         },
     );
@@ -437,7 +442,9 @@ async fn a_limit_lowers_the_estimate_without_changing_the_choice() {
         ScanOrder::Ascending,
         &Projection::All,
         &stats,
-        Some(10),
+        // Below the ten rows that match, or the limit reads them all and
+        // changes nothing.
+        Some(3),
     );
 
     assert!(matches!(unlimited.access, Access::IndexScan { .. }));
@@ -448,7 +455,7 @@ async fn a_limit_lowers_the_estimate_without_changing_the_choice() {
         limited.estimated_cost,
         unlimited.estimated_cost
     );
-    assert!(limited.estimated_rows <= 10.0);
+    assert!(limited.estimated_rows <= 3.0);
 }
 
 #[tokio::test]

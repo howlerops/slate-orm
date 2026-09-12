@@ -16,14 +16,23 @@
 //!
 //! # Choosing an algorithm
 //!
-//! Under this cost model a scanned row costs a hundredth of a round trip and a
-//! probe costs at least one, so a hash join — two scans, no probes — is the
-//! general answer. A nested loop only wins when the outer side is smaller than
-//! roughly a hundredth of the inner one.
+//! A hash join is two scans and no probes; a nested loop is one scan and a
+//! probe per outer row. Which wins depends entirely on what a scanned row costs
+//! against what a probe costs, and measuring that against object storage moved
+//! the answer a long way.
 //!
-//! That is not a marginal case: it is what an ORM does all day. Load one user,
-//! then their orders. One outer row against ten thousand inner ones is
-//! precisely where the loop is right, and the planner picks it there.
+//! A scan with readahead returns roughly eight thousand rows per request. A
+//! point read costs about three. So a probe is worth it only when it saves
+//! scanning something like twenty-four thousand rows — which means the loop
+//! wins when the *rows fetched* are a vanishingly small fraction of the inner
+//! table, not merely a small one.
+//!
+//! This used to say a loop wins when the outer side is under a hundredth of the
+//! inner, which was three orders of magnitude out. Measured: four hundred point
+//! reads cost 1,221 requests and 3.73 s, while scanning the whole two-hundred
+//! thousand row table cost 25 requests and 0.37 s. Loading one parent and its
+//! ten children still picks a loop — but only once the inner table is in the
+//! hundreds of millions, not the hundreds of thousands.
 //!
 //! # Outer joins, and which algorithm can serve them
 //!
@@ -72,7 +81,7 @@ use crate::error::{KernelError, Result};
 use crate::expr::{CmpOp, Columns, Expr};
 use crate::plan::Plan;
 use crate::query::Query;
-use crate::stats::{POINT_READ_COST, SCAN_ROW_COST, TableStats, pipelined_read_cost};
+use crate::stats::{POINT_READ_COST, SCAN_ROW_COST, TableStats};
 use slate_schema::{ColumnDef, Ordinal, Row, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into};
 
@@ -507,14 +516,21 @@ pub(crate) fn hash_cost(left: &Plan, right: &Plan) -> f64 {
 
 /// The cost of a nested-loop join: the outer scan, plus a probe per outer row.
 ///
-/// The probes are overlapped [`PROBE_CONCURRENCY`] deep, the same as an index
-/// scan's row lookups, so they cost waves rather than one apiece. Without that
-/// the model overstates a loop by the same factor it overstated an index scan.
-/// The unit of a wave is a whole probe, not a round trip: a probe opens a scan
-/// and may read several rows.
+/// One probe per outer row, at whatever that probe's own plan costs — the
+/// probe's cost already counts its requests, so this multiplies a count by a
+/// cost and must not scale either.
+///
+/// It used to route the row count through [`pipelined_read_cost`], which was
+/// wrong twice over. Dividing by [`PROBE_CONCURRENCY`] treated overlapping as
+/// though it did less work rather than less waiting; and once that helper was
+/// corrected to charge `POINT_READ_COST` per read, sharing it here silently
+/// multiplied every probe's whole plan cost by three. Probes *are* overlapped,
+/// and that is worth real wall-clock time — but wall clock is not the unit
+/// here, and a model that mixes the two is how the constants came to be wrong
+/// by three orders of magnitude in the first place.
 pub(crate) fn nested_loop_cost(left: &Plan, probe: &Plan) -> f64 {
-    let waves = pipelined_read_cost(left.estimated_rows.max(0.0), PROBE_CONCURRENCY);
-    left.estimated_cost + waves * probe.estimated_cost
+    let probes = left.estimated_rows.max(0.0);
+    left.estimated_cost + probes * probe.estimated_cost
 }
 
 /// Bind the join equalities to a row's values, for planning or running a probe.

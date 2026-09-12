@@ -45,36 +45,65 @@ use slate_schema::{Ordinal, TableDef, TableId};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
 
-/// Cost of opening a scan, in round trips.
+// The unit, and how it was calibrated.
+//
+// Costs are in *object-store requests*, because that is what a scan and a point
+// read can both be counted in, what the provider bills, and what saturates
+// first. The constants below were measured against an S3 server at 200,000
+// rows by `slate-slatedb`'s `cost_calibration` example — not against a latency
+// fixture, which is how the previous ones came to be wrong.
+
+/// Cost of opening a scan, in object-store requests.
 pub const SCAN_OPEN_COST: f64 = 1.0;
+
 /// Cost of one row pulled from an open scan.
-pub const SCAN_ROW_COST: f64 = 0.01;
-/// Cost of one point read, issued on its own and waited for.
-pub const POINT_READ_COST: f64 = 1.0;
+///
+/// Measured: a scan with readahead on returns roughly **8,000 rows per
+/// request** — 200,000 rows in 25 requests, 50,000 in 6. The previous value of
+/// `0.01` assumed a hundred rows per request, overcharging every scan by about
+/// eighty times.
+///
+/// It depends on row width, so it is an average rather than a constant of
+/// nature: wider rows fit fewer per block. Eight thousand is what this corpus
+/// gives with a realistic row and the default 1 MiB readahead.
+pub const SCAN_ROW_COST: f64 = 0.000_125;
+
+/// Cost of one point read.
+///
+/// Measured at **three requests per read**, not one: following an index entry
+/// to its row goes through more than a single object fetch. 400 rows reached
+/// by index cost 1,217 requests.
+pub const POINT_READ_COST: f64 = 3.0;
 
 /// What `n` point reads cost when issued `depth` at a time.
 ///
-/// An index scan does not wait for each row lookup in turn — it keeps
-/// [`crate::exec::DEFAULT_PREFETCH`] of them in flight, and a nested-loop join
-/// does the same with its probes. Charging each one a full round trip makes
-/// the model prefer a table scan where an index scan is measurably faster: on
-/// the benchmark corpus it picked a 22 ms plan over a 17 ms one.
+/// **They cost the same as issuing them one at a time.** Concurrency hides
+/// latency; it does not do less work, and the unit here is work. `depth` is
+/// kept in the signature because the caller has it and because the wall-clock
+/// story is still worth explaining at the call sites, but it no longer divides
+/// anything.
 ///
-/// The shape is waves, not a discount. Reads issued together land together, so
-/// `n` of them at depth `d` cost `ceil(n / d)` round trips — which is why a
-/// small limit does not get the full benefit: ten reads and one read both cost
-/// one wave, and one wave is a whole round trip that nothing amortises.
+/// This used to be `ceil(n / depth)`, which was wrong in a way worth recording,
+/// because the reasoning that produced it was sound and the measurement behind
+/// it was not. The argument was: reads issued together land together, so `n` of
+/// them at depth `d` cost `ceil(n / d)` round trips. That is true of *latency*.
+/// It was validated against a latency fixture, where concurrent reads do
+/// complete in the time of one — and the fixture only ever modelled time, so it
+/// could not have shown the error.
 ///
-/// Measured against the latency fixture, where any number of concurrent reads
-/// complete in the time of one: 100 reads at depth 16 came to 7 waves and 500
-/// came to 32, both matching to within the timer's resolution.
+/// Against real object storage the two halves of the model were being measured
+/// in different units, and the errors compounded in the same direction: scans
+/// were charged eighty times too much, index lookups forty times too little.
+/// For `WHERE bucket = 7` over 200,000 rows the planner preferred an index scan
+/// at cost 30 over a table scan at cost 2001, and the plan it chose did **58
+/// times more object-store requests and took nine times longer** — 1,217
+/// requests and 3.6 s against 21 requests and 0.4 s.
 #[must_use]
-pub fn pipelined_read_cost(reads: f64, depth: usize) -> f64 {
+pub fn pipelined_read_cost(reads: f64, _depth: usize) -> f64 {
     if reads <= 0.0 {
         return 0.0;
     }
-    let depth = depth.max(1) as f64;
-    (reads / depth).ceil() * POINT_READ_COST
+    reads * POINT_READ_COST
 }
 /// How much of a table a comparison between two of its columns is expected to
 /// keep.

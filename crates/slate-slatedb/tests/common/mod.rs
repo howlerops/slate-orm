@@ -15,6 +15,7 @@
     unreachable_pub
 )]
 
+pub mod faulty_store;
 pub mod restart;
 
 use slate_kernel::{

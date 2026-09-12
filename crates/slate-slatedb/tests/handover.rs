@@ -361,3 +361,210 @@ async fn the_index_and_the_table_agree_after_a_handover() {
     txn.commit().await.unwrap();
     second.backend().close().await.unwrap();
 }
+
+// --- two writers at once --------------------------------------------------
+//
+// Everything above has one writer active at a time. A real handover does not:
+// the old head node is still serving when the new one starts, and for a moment
+// both believe they own the database. SlateDB fences but does not elect, so
+// the thing that decides who may write has to live outside it — which is what
+// `Lease` stands in for here.
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The smallest thing that deserves the name: a monotonic generation number,
+/// and a rule that only the holder of the newest one may write.
+///
+/// This is not a lease implementation to copy — there is no expiry, no
+/// renewal, no fault tolerance. It exists so that "two writers overlap" can be
+/// written down as a test, and so the *store's* behaviour under that overlap
+/// is what gets measured rather than the lease's.
+#[derive(Debug, Default)]
+struct Lease {
+    current: AtomicU64,
+}
+
+impl Lease {
+    /// Take the lease, returning the generation the caller now holds.
+    fn acquire(&self) -> u64 {
+        self.current.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Whether `generation` is still the newest.
+    fn holds(&self, generation: u64) -> bool {
+        self.current.load(Ordering::SeqCst) == generation
+    }
+}
+
+/// Two writers overlapping across a lease change never both land a write.
+///
+/// Both processes are live at once: the old one keeps writing while the new one
+/// starts and takes over. What must hold is not that the old writer stops
+/// immediately — it cannot know — but that nothing it writes *after* the
+/// takeover is visible, and that the database is coherent afterwards.
+///
+/// The lease is checked before each attempt and the store is the backstop. That
+/// is the arrangement the topology note recommends, and this is the test that
+/// says the backstop works when the lease is a moment late.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_overlapping_writers_never_both_land_a_write() {
+    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let lease = Arc::new(Lease::default());
+
+    // The incumbent, writing steadily.
+    let first_gen = lease.acquire();
+    let first = writer(Arc::clone(&object_store)).await;
+
+    // What each generation believes it committed.
+    let committed: Arc<Mutex<Vec<(u64, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let fenced_after_takeover = Arc::new(AtomicU64::new(0));
+
+    let incumbent = {
+        let lease = Arc::clone(&lease);
+        let committed = Arc::clone(&committed);
+        let fenced = Arc::clone(&fenced_after_takeover);
+        async move {
+            for id in 0..30u64 {
+                // A well-behaved head node checks its lease — and is still
+                // racing, because the check and the write are not atomic.
+                let held = lease.holds(first_gen);
+                match write(&first, id).await {
+                    Ok(()) => {
+                        committed.lock().unwrap().push((first_gen, id));
+                        assert!(
+                            held || lease.holds(first_gen),
+                            "the old writer committed after losing the lease"
+                        );
+                    }
+                    Err(KernelError::WriterFenced) => {
+                        fenced.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(other) => panic!("unexpected error from the incumbent: {other:?}"),
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+    };
+
+    let challenger = {
+        let object_store = Arc::clone(&object_store);
+        let lease = Arc::clone(&lease);
+        let committed = Arc::clone(&committed);
+        async move {
+            // Start partway through the incumbent's run, so the two genuinely
+            // overlap rather than taking turns.
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+            let generation = lease.acquire();
+            let second = writer(object_store).await;
+            for id in 100..130u64 {
+                if write(&second, id).await.is_ok() {
+                    committed.lock().unwrap().push((generation, id));
+                }
+                tokio::task::yield_now().await;
+            }
+            second
+        }
+    };
+
+    let (_, second) = tokio::join!(incumbent, challenger);
+
+    assert!(
+        fenced_after_takeover.load(Ordering::SeqCst) > 0,
+        "the incumbent was never fenced, so the two writers did not overlap"
+    );
+
+    // Everything that was reported committed is present, and nothing else is.
+    let expected: Vec<u64> = {
+        let mut ids: Vec<u64> = committed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, id)| *id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(
+        ids(&second).await,
+        expected,
+        "the surviving rows are not exactly the ones a writer was told it committed"
+    );
+
+    let _ = second.backend().close().await;
+}
+
+/// The store is coherent after an overlap, not just correct about row counts.
+///
+/// Two writers interleaving is the most plausible way to end up with an index
+/// entry from one generation and a row from another, so the check is the same
+/// one the crash tests use: every index entry resolves to a row that is there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_overlap_leaves_the_index_agreeing_with_the_table() {
+    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let table = common::users();
+
+    let first = writer(Arc::clone(&object_store)).await;
+    for id in 0..10 {
+        write(&first, id).await.unwrap();
+    }
+
+    // Both writers push concurrently, with no lease at all: the store alone
+    // has to hold the line.
+    let old = async move {
+        let mut fenced = 0;
+        for id in 10..40u64 {
+            if matches!(write(&first, id).await, Err(KernelError::WriterFenced)) {
+                fenced += 1;
+            }
+            tokio::task::yield_now().await;
+        }
+        fenced
+    };
+    let new = {
+        let object_store = Arc::clone(&object_store);
+        async move {
+            let second = writer(object_store).await;
+            for id in 200..230u64 {
+                let _ = write(&second, id).await;
+                tokio::task::yield_now().await;
+            }
+            second
+        }
+    };
+    let (fenced, second) = tokio::join!(old, new);
+    assert!(fenced > 0, "no overlap occurred");
+
+    // Every row is reachable by index scan and by table scan, identically.
+    let age = table.ordinal_of("age").expect("age");
+    let by_scan = ids(&second).await;
+    let txn = second.begin().await.unwrap();
+    let mut by_index: Vec<u64> = txn
+        .query(
+            &root(),
+            &table,
+            Expr::compare(age, slate_kernel::CmpOp::Ge, slate_tuple::Value::I64(18)),
+            ScanOrder::Ascending,
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| match r.values()[1] {
+            slate_tuple::Value::U64(id) => id,
+            ref other => panic!("id was {other:?}"),
+        })
+        .collect();
+    by_index.sort_unstable();
+    drop(txn);
+
+    assert_eq!(
+        by_scan, by_index,
+        "the index and the table disagreed after two writers overlapped"
+    );
+    let _ = second.backend().close().await;
+}

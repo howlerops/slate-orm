@@ -408,21 +408,89 @@ table against a small lookup). A join between two large sides, each with a
 correlated filter, is not measured and is where to look first if this ever does
 bite.
 
+## A crash underneath the storage engine
+
+`crates/slate-slatedb/tests/storage_crash.rs`
+
+`crash.rs` fails writes at the transaction boundary — the layer this project
+owns. This fails the *object store*, so SlateDB is interrupted midway through
+its own SSTs and manifest, which is what a killed process leaves behind. The
+claim is deliberately weak because it is the only one that can hold: committed
+data may be lost, but what survives must be coherent — no index entry pointing
+at a row that is not there, no unique slot occupied by nothing.
+
+Fault budgets are chosen against a **measured** figure (40 row writes cost 43
+object-store writes) rather than a guess, because a budget above the real count
+never fires and a case whose fault never fires tests nothing.
+
+### SlateDB hangs when the object store refuses writes
+
+Found because this file hung instead of failing. Driving SlateDB directly, with
+no record-layer code in the path, two hundred puts and a flush do not return —
+ever. A full disk, a revoked credential or a changed bucket policy therefore
+produces no error at all: the writer stops while still looking alive, which is
+the state an operator finds last.
+
+It cannot be fixed from here. What this layer can do is refuse to pass an
+unbounded wait to its callers, so `SlateStore::with_commit_timeout` turns it
+into `CommitTimedOut` — deliberately **not** retryable, because a timed-out
+commit may already have landed. The test fails if a future SlateDB returns an
+error instead, which is the right moment to reconsider the timeout.
+
+## Two writers at once
+
+`handover.rs` gained a minimal lease — a monotonic generation, and a rule that
+only the newest holder may write — so "two writers overlap" can be written down
+as a test. Both push concurrently across the takeover, and the store, not the
+lease, is the backstop: nothing the old writer commits after being fenced is
+visible, and the index still agrees with the table afterwards.
+
+## The cost model was calibrated against itself
+
+`crates/slate-slatedb/examples/cost_calibration.rs`
+
+Every performance number in this project came from multiplying the planner's
+cost by 2.2 ms — a figure from a *latency fixture*, not from storage. Measuring
+against an S3 server at 200,000 rows found the model wrong in both directions
+at once:
+
+| | predicted | actual GETs |
+|---|---:|---:|
+| full scan, 200,000 rows | 2001 | 25 |
+| 400 rows via index | 30 | 1217 |
+
+Scans were overcharged about **eighty times** (`SCAN_ROW_COST` assumed 100 rows
+per request; readahead delivers ~8,000). Index lookups were undercharged about
+**forty times**: a point read costs ~3 requests rather than 1, and
+`pipelined_read_cost` divided by concurrency depth — which is true of latency
+and false of work, and the fixture could only ever measure latency.
+
+The errors compounded in the same direction, and the planner acted on them. For
+`WHERE bucket = 7` it chose an index scan at cost 30 over a table scan at cost
+2001, and the plan it chose did **58x the object-store requests and took 9x
+longer** — 1,217 requests and 3.6 s against 21 and 0.4 s.
+
+Recalibrated from the measurements, the model now predicts 26 against 21 actual
+requests for the scan and 1201 against 1223 for the index, and picks the scan.
+ClickBench is unchanged at 70.1 s.
+
+### What that changes about indexes
+
+The consequence is counter-intuitive enough to state plainly: **an index earns
+its keep on absolute rows fetched, not on percentage selectivity.** Fetching
+`k` rows beats scanning `n` only when `n > 24000k`, so `k = 0.005n` never
+qualifies at any table size. Seven tests asserted the old rule — that a few
+percent was selective enough — and each was rewritten against the measurement
+rather than nudged: a nested loop now wins at a hundred million inner rows
+rather than a hundred thousand, and a small table is simply cheaper to scan
+whole. Covering indexes are unaffected, since they do no point reads at all.
+
 ## What is still not proven
 
 Stated plainly, because a document like this is otherwise an advertisement.
 Everything that was on this list a round ago has moved above it; what remains is
 what genuinely has not been done.
 
-- **A real crash, as opposed to an injected write failure.** `crash.rs` proves
-  the record layer never puts a row and its index entries in separate
-  transactions. It does not kill a process mid-`fsync` and restart it — that
-  boundary belongs to SlateDB, and taking it seriously means fault injection
-  inside the storage engine rather than above it.
-- **Two writers genuinely overlapping.** Handover is now covered from both
-  sides, but every case still has one writer active at a time. Two head nodes
-  issuing writes concurrently across a lease change needs a lease manager to
-  test against, and there is not one.
 - **A real fuzzer.** The untrusted-input suites are property tests with hostile
   generators, which is most of the value for a few seconds per run. They are not
   coverage-guided, so they will not find the input that needs eleven specific
