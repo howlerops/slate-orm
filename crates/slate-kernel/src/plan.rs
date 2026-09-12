@@ -43,12 +43,13 @@
 //! from existing. An index whose predicate is not an `Expr` is one the planner
 //! never chooses, which is the safe direction.
 //!
-//! An **expression** index still cannot be declared on the schema. Its key is a
-//! [`Scalar`](crate::scalar::Scalar), the `Predicate` seam produces a verdict
-//! rather than a value, and the write path would need the value to maintain the
-//! index at all. Declaring one on `TableDef` would promise maintenance that is
-//! not there, so it stays alongside the table as [`IndexFacts`] — planner-only,
-//! and said so.
+//! An **expression** index is declared the same way, through a second seam:
+//! [`slate_schema::Computed`] produces a value where `Predicate` produces a
+//! verdict, and the kernel implements it for
+//! [`Scalar`](crate::scalar::Scalar). The write path computes the key from the
+//! row, the planner downcasts back to a `Scalar` to match it against what a
+//! query computes, and an index whose expression is not a `Scalar` is
+//! maintained but never chosen — the same asymmetry, the same safe direction.
 
 use crate::exec::DEFAULT_PREFETCH;
 use crate::query::{AccessHint, SortKey};
@@ -157,71 +158,6 @@ pub const MAX_POINT_GETS: usize = 1024;
 /// whole table scan costs at a million rows — but it should not have to encode
 /// a hundred thousand key pairs to find that out.
 pub const MAX_INDEX_RANGES: usize = 1024;
-
-/// What one index knows about itself that [`IndexDef`] cannot say.
-///
-/// One property now, and it used to be two. A **partial** index — an entry only
-/// for the rows a predicate admits — moved onto [`IndexDef`] once there was
-/// something to move it for: the record store maintains those entries, and a
-/// predicate declared in two places would be two places to disagree.
-///
-/// What is left is the **expression** index, whose key holds a value computed
-/// from the row rather than read out of it — `lower(email)`, `length(url)`.
-/// That cannot move yet. `IndexDef` lives in `slate-schema`, a computed key is
-/// a [`Scalar`](crate::scalar::Scalar), and `Scalar` lives above it; the
-/// [`Predicate`](slate_schema::Predicate) seam that carries a partial index's
-/// predicate down has no counterpart for producing a value. And the write path
-/// would need one to maintain such an index, so declaring it on the schema
-/// would promise maintenance that is not there.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct IndexFact {
-    /// The value the index's key holds, when it is computed rather than read.
-    expression: Option<crate::scalar::Scalar>,
-}
-
-impl IndexFact {
-    /// The expression the index's key holds, for an expression index.
-    #[must_use]
-    pub const fn expression(&self) -> Option<&crate::scalar::Scalar> {
-        self.expression.as_ref()
-    }
-}
-
-/// The expression indexes on a table, by index id.
-///
-/// Empty by default, which is what every existing caller gets: an index with no
-/// fact recorded keys on its own columns.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct IndexFacts {
-    facts: std::collections::BTreeMap<IndexId, IndexFact>,
-}
-
-impl IndexFacts {
-    /// No index has anything extra to say.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Record that `index` keys on `expression` rather than on a column.
-    #[must_use]
-    pub fn computed(mut self, index: IndexId, expression: crate::scalar::Scalar) -> Self {
-        self.facts.entry(index).or_default().expression = Some(expression);
-        self
-    }
-
-    /// What is recorded about `index`, if anything.
-    #[must_use]
-    pub fn get(&self, index: IndexId) -> Option<&IndexFact> {
-        self.facts.get(&index)
-    }
-
-    /// Whether nothing has been recorded at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.facts.is_empty()
-    }
-}
 
 /// Which columns a query needs.
 ///
@@ -586,41 +522,6 @@ pub fn plan_hinted(
     hint: Option<AccessHint>,
     compute: &[crate::scalar::Scalar],
 ) -> Plan {
-    plan_annotated(
-        table,
-        predicate,
-        order,
-        projection,
-        stats,
-        limit,
-        sort,
-        hint,
-        compute,
-        &IndexFacts::new(),
-    )
-}
-
-/// [`plan_hinted`], told which indexes are partial and which key on an
-/// expression.
-///
-/// The one entry point that can choose a partial index, because it is the only
-/// one that knows an index *is* partial. Everything else delegates here with no
-/// facts at all, which is the same planner it always was: an index nothing has
-/// been recorded about holds every row of the table.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn plan_annotated(
-    table: &TableDef,
-    predicate: Arc<Expr>,
-    order: ScanOrder,
-    projection: &Projection,
-    stats: &TableStats,
-    limit: Option<usize>,
-    sort: &[SortKey],
-    hint: Option<AccessHint>,
-    compute: &[crate::scalar::Scalar],
-    facts: &IndexFacts,
-) -> Plan {
     let conjuncts = predicate.conjuncts();
 
     // A comparison against a null literal is Unknown for every row, so the
@@ -776,7 +677,7 @@ pub fn plan_annotated(
         // and that includes one the caller hinted at. A hint is advice about
         // which of several correct plans to take, never permission to read a
         // partial index that does not hold the rows asked for.
-        let Some(candidate) = match_index(&context, index, facts.get(index.id())) else {
+        let Some(candidate) = match_index(&context, index) else {
             continue;
         };
         considered += 1;
@@ -1427,11 +1328,7 @@ struct MatchContext<'a> {
     width: usize,
 }
 
-fn match_index(
-    cx: &MatchContext<'_>,
-    index: &IndexDef,
-    fact: Option<&IndexFact>,
-) -> Option<Candidate> {
+fn match_index(cx: &MatchContext<'_>, index: &IndexDef) -> Option<Candidate> {
     // A partial index holds entries only for the rows its predicate admits, so
     // using it for a query that reaches outside them does not return the wrong
     // *columns*, it returns the wrong *rows* — silently, and with no residual
@@ -1454,19 +1351,23 @@ fn match_index(
     if let Some(tenant) = cx.table.tenant_column() {
         key_columns.push((tenant, Direction::Asc));
     }
-    let expression = fact.and_then(IndexFact::expression);
-    match expression {
+    let computed = index.expression();
+    match computed {
         None => key_columns.extend(index.columns().iter().map(|c| (c.ordinal, c.direction))),
-        Some(expression) => {
+        Some(declared) => {
             // An expression index keys on a value the row does not contain, so
             // the only predicate it can serve is one over that same value —
             // which in this layer means the query computed it and named the
             // ordinal the computed value was appended at. A query that does not
             // compute it has nothing the index's keys could be matched against,
             // so the index is not a candidate rather than a full scan.
+            //
+            // An index whose expression is not a `Scalar` is in the same
+            // position as a partial index whose predicate is not an `Expr`:
+            // maintained, and never matched.
+            let expression = crate::record::index_expression(index)?;
             let position = cx.compute.iter().position(|scalar| scalar == expression)?;
-            let direction = index.columns().first()?.direction;
-            key_columns.push((Ordinal(cx.width + position), direction));
+            key_columns.push((Ordinal(cx.width + position), declared.direction()));
         }
     }
 
@@ -1494,7 +1395,7 @@ fn match_index(
         Vec::new()
     };
 
-    let covering = match expression {
+    let covering = match computed {
         None => covers(cx.table, index, cx.needed),
         // Never, for an expression index — and not because the entry holds too
         // little. It holds the computed value, which is what the query asked

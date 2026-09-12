@@ -84,6 +84,21 @@ pub enum SchemaError {
         index: String,
     },
 
+    /// An expression index computed a value of a type it did not declare.
+    #[error(
+        "index `{index}` on table `{table}` declares it produces {expected:?}, but computed {actual}"
+    )]
+    IndexValueTypeMismatch {
+        /// Table name.
+        table: String,
+        /// Index name.
+        index: String,
+        /// The type the index declared.
+        expected: slate_tuple::ValueType,
+        /// The type the expression actually produced.
+        actual: &'static str,
+    },
+
     /// An index was defined with no columns.
     #[error("index `{index}` on table `{table}` has no columns")]
     EmptyIndex {

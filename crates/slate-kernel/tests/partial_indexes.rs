@@ -26,9 +26,8 @@
 //! entry that should not be there: the planner would never choose the index for
 //! a query that would notice.
 //!
-//! Expression indexes remain planner-only, and are not maintained. Nothing
-//! writes one, so nothing declares one on a schema; they are stated as
-//! [`IndexFacts`] alongside the table.
+//! Expression indexes are declared and maintained the same way, through the
+//! `Computed` seam rather than the `Predicate` one.
 
 // Tests assert exact outcomes and are meant to panic when one is wrong.
 #![allow(
@@ -39,8 +38,8 @@
 )]
 
 use proptest::prelude::*;
-use slate_kernel::plan::{Access, IndexFacts, Projection, implies, plan_annotated, plan_with};
-use slate_kernel::{AccessHint, SortKey};
+use slate_kernel::plan::{Access, Projection, implies, plan_hinted, plan_with};
+use slate_kernel::{AccessHint, Query, SortKey};
 use slate_kernel::{CmpOp, ColumnStats, Expr, Scalar, ScanOrder, TableStats};
 use slate_schema::{IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -67,8 +66,13 @@ fn docs() -> TableDef {
                 .column("author")
                 .only_where(live()),
         )
-        // And what makes this one an expression index is the same.
-        .index(IndexDef::builder("by_lower_title", BY_LOWER_TITLE).column("title"))
+        // Keyed on a value the row does not hold. `Str` is declared because
+        // the decoder needs the type before it has a row to run `lower` on;
+        // `Row::validate` holds every write to it.
+        .index(
+            IndexDef::builder("by_lower_title", BY_LOWER_TITLE)
+                .expression(lower_title(), ValueType::Str),
+        )
         .build()
         .expect("valid schema")
 }
@@ -125,16 +129,8 @@ fn big() -> TableStats {
         .with_column(computed(), spread)
 }
 
-/// The one fact the schema still cannot state: which index keys on what.
-fn facts() -> IndexFacts {
-    IndexFacts::new().computed(
-        BY_LOWER_TITLE,
-        Scalar::Lower(Box::new(Scalar::Column(col("title")))),
-    )
-}
-
 fn plan_of(filter: Expr, compute: &[Scalar], projection: &Projection) -> Access {
-    plan_annotated(
+    plan_hinted(
         &docs(),
         Arc::new(filter),
         ScanOrder::Ascending,
@@ -144,7 +140,6 @@ fn plan_of(filter: Expr, compute: &[Scalar], projection: &Projection) -> Access 
         &[],
         None,
         compute,
-        &facts(),
     )
     .access
 }
@@ -196,7 +191,7 @@ fn a_query_outside_the_predicate_may_not() {
 /// API.
 #[test]
 fn a_hint_cannot_force_a_partial_index_that_does_not_cover_the_query() {
-    let plan = plan_annotated(
+    let plan = plan_hinted(
         &docs(),
         Arc::new(Expr::eq(col("author"), Value::U64(7))),
         ScanOrder::Ascending,
@@ -206,7 +201,6 @@ fn a_hint_cannot_force_a_partial_index_that_does_not_cover_the_query() {
         &[],
         Some(AccessHint::Index(LIVE_BY_AUTHOR)),
         &[],
-        &facts(),
     );
     assert!(
         !uses(&plan.access, LIVE_BY_AUTHOR),
@@ -264,7 +258,7 @@ fn the_estimate_reflects_how_much_of_the_table_the_index_holds() {
             },
         );
     let filter = Arc::new(live().and(Expr::eq(col("author"), Value::U64(3))));
-    let whole = plan_annotated(
+    let whole = plan_hinted(
         &docs(),
         Arc::clone(&filter),
         ScanOrder::Ascending,
@@ -274,9 +268,8 @@ fn the_estimate_reflects_how_much_of_the_table_the_index_holds() {
         &[],
         Some(AccessHint::Index(BY_TITLE)),
         &[],
-        &facts(),
     );
-    let partial = plan_annotated(
+    let partial = plan_hinted(
         &docs(),
         filter,
         ScanOrder::Ascending,
@@ -286,7 +279,6 @@ fn the_estimate_reflects_how_much_of_the_table_the_index_holds() {
         &[],
         Some(AccessHint::Index(LIVE_BY_AUTHOR)),
         &[],
-        &facts(),
     );
     assert!(
         partial.estimated_cost < whole.estimated_cost,
@@ -464,8 +456,17 @@ fn implication_holds_exactly_where_it_is_claimed_to() {
 
 // --- expression indexes ---------------------------------------------------
 
+/// `title`, by position: `docs()` names this expression, so resolving the
+/// column by name would recurse through `col`. Pinned below.
+const TITLE: Ordinal = Ordinal(2);
+
 fn lower_title() -> Scalar {
-    Scalar::Lower(Box::new(Scalar::Column(col("title"))))
+    Scalar::Lower(Box::new(Scalar::Column(TITLE)))
+}
+
+#[test]
+fn title_is_the_third_column() {
+    assert_eq!(TITLE, col("title"));
 }
 
 /// The computed value's ordinal: appended after the table's own columns.
@@ -584,7 +585,7 @@ fn an_expression_index_is_not_covering_even_for_a_key_only_projection() {
 #[test]
 fn an_expression_index_can_serve_an_order_by_on_the_expression() {
     let compute = vec![lower_title()];
-    let plan = plan_annotated(
+    let plan = plan_hinted(
         &docs(),
         Arc::new(Expr::compare(
             computed(),
@@ -598,7 +599,6 @@ fn an_expression_index_can_serve_an_order_by_on_the_expression() {
         &[SortKey::asc(computed()), SortKey::asc(col("id"))],
         None,
         &compute,
-        &facts(),
     );
     assert!(uses(&plan.access, BY_LOWER_TITLE), "{:?}", plan.access);
     assert!(
@@ -609,12 +609,14 @@ fn an_expression_index_can_serve_an_order_by_on_the_expression() {
 
 // --- nothing changes for an ordinary index --------------------------------
 
-/// With no facts recorded, the planner is the planner it always was.
+/// An ordinary index plans as it always did.
 ///
-/// The same query planned with and without an empty fact set has to produce the
-/// same access path, or every existing caller has quietly changed behaviour.
+/// Every entry point now sees partial and expression indexes, because they are
+/// on the schema rather than passed in alongside it. The same query through the
+/// short `plan_with` and the long `plan_hinted` must still produce the same
+/// access path, or existing callers have quietly changed behaviour.
 #[test]
-fn an_index_with_no_facts_plans_exactly_as_before() {
+fn an_ordinary_index_plans_exactly_as_before() {
     let filter = Expr::eq(col("title"), Value::Str("Moby Dick".to_owned()));
     let plain = plan_with(
         &docs(),
@@ -624,7 +626,7 @@ fn an_index_with_no_facts_plans_exactly_as_before() {
         &big(),
         None,
     );
-    let annotated = plan_annotated(
+    let annotated = plan_hinted(
         &docs(),
         Arc::new(filter),
         ScanOrder::Ascending,
@@ -634,7 +636,6 @@ fn an_index_with_no_facts_plans_exactly_as_before() {
         &[],
         None,
         &[],
-        &IndexFacts::new(),
     );
     assert_eq!(plain.access, annotated.access);
     assert!((plain.estimated_cost - annotated.estimated_cost).abs() < f64::EPSILON);
@@ -1352,4 +1353,344 @@ async fn a_row_joining_the_index_in_bulk_is_checked_against_the_slot_it_takes() 
         held,
         "the entry moved anyway"
     );
+}
+
+// --- expression index maintenance ------------------------------------------
+//
+// The entries hold a value no row contains, so the two ways this can go wrong
+// are the encode and the decode. A key written under `lower(title)` and read
+// back as something else is a scan that quietly returns the wrong rows, and the
+// only way to notice is to make the index and a table scan answer the same
+// question and compare.
+
+const NOTES: TableId = TableId(3);
+const BY_LOWER_BODY: IndexId = IndexId(30);
+const BY_BODY_LENGTH: IndexId = IndexId(31);
+
+/// `id`, `body`. By position, since the schema names expressions over them.
+const NOTE_ID: Ordinal = Ordinal(0);
+const BODY: Ordinal = Ordinal(1);
+
+fn lower_body() -> Scalar {
+    Scalar::Lower(Box::new(Scalar::Column(BODY)))
+}
+
+fn body_length() -> Scalar {
+    Scalar::Length(Box::new(Scalar::Column(BODY)))
+}
+
+fn notes() -> TableDef {
+    TableDef::builder("notes", NOTES)
+        .column("id", ValueType::U64)
+        // Nullable, so `lower(null)` and `length(null)` are reachable: an
+        // expression index has to hold those rows, because the query computing
+        // the same expression gets the same null and would expect to find them.
+        .nullable_column("body", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_lower_body", BY_LOWER_BODY)
+                .expression(lower_body(), ValueType::Str),
+        )
+        .index(
+            IndexDef::builder("by_body_length", BY_BODY_LENGTH)
+                .expression(body_length(), ValueType::I64),
+        )
+        .build()
+        .expect("valid schema")
+}
+
+#[test]
+fn the_note_ordinals_are_where_they_are_claimed_to_be() {
+    let table = notes();
+    assert_eq!(NOTE_ID, table.ordinal_of("id").unwrap());
+    assert_eq!(BODY, table.ordinal_of("body").unwrap());
+}
+
+fn note(id: u64, body: Option<&str>) -> Row {
+    Row::new(vec![
+        Value::U64(id),
+        body.map_or(Value::Null, |b| Value::Str(b.to_owned())),
+    ])
+}
+
+fn note_store() -> (RecordStore<MemoryStore>, MemoryStore) {
+    let kv = MemoryStore::new();
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL));
+    (RecordStore::new(kv.clone(), catalog, security), kv)
+}
+
+fn note_index_keys(kv: &MemoryStore, index: IndexId) -> BTreeSet<Vec<u8>> {
+    let table = notes();
+    let index = table.index(index).expect("the index exists");
+    let prefix = keys::index_prefix(&table, index, None);
+    kv.keys()
+        .into_iter()
+        .filter(|key| key.starts_with(&prefix))
+        .collect()
+}
+
+fn wanted_note_keys(index: IndexId, rows: &[Row]) -> BTreeSet<Vec<u8>> {
+    let table = notes();
+    let index = table.index(index).expect("the index exists");
+    rows.iter()
+        .map(|row| {
+            keys::index_entry(
+                &table,
+                index,
+                &index.key_values(row),
+                &row.primary_key_values(&table),
+            )
+            .key
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_expression_index_is_keyed_on_the_computed_value() {
+    let (store, kv) = note_store();
+    let table = notes();
+    let rows = [note(1, Some("Moby Dick")), note(2, None)];
+    let txn = store.begin().await.unwrap();
+    for row in &rows {
+        txn.insert(&root(), &table, row).await.unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    assert_eq!(
+        note_index_keys(&kv, BY_LOWER_BODY),
+        wanted_note_keys(BY_LOWER_BODY, &rows)
+    );
+    assert_eq!(
+        note_index_keys(&kv, BY_BODY_LENGTH),
+        wanted_note_keys(BY_BODY_LENGTH, &rows)
+    );
+
+    // And the key really is the *computed* value, not the column: an entry
+    // keyed on "Moby Dick" would compare equal to nothing the query asks for.
+    let index = table.index(BY_LOWER_BODY).unwrap();
+    let by_column = keys::index_entry(
+        &table,
+        index,
+        &[Value::Str("Moby Dick".to_owned())],
+        &[Value::U64(1)],
+    )
+    .key;
+    assert!(
+        !note_index_keys(&kv, BY_LOWER_BODY).contains(&by_column),
+        "the entry was keyed on the column rather than on lower() of it"
+    );
+}
+
+#[tokio::test]
+async fn changing_the_source_column_moves_the_entry() {
+    let (store, kv) = note_store();
+    let table = notes();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &note(1, Some("first")))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let before = note_index_keys(&kv, BY_LOWER_BODY);
+
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &note(1, Some("SECOND")))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let after = note_index_keys(&kv, BY_LOWER_BODY);
+    assert_eq!(
+        after,
+        wanted_note_keys(BY_LOWER_BODY, &[note(1, Some("SECOND"))])
+    );
+    assert_ne!(before, after, "the entry did not move");
+    assert_eq!(after.len(), 1, "the old entry is still there");
+}
+
+/// An update the *expression* does not notice must not rewrite the entry.
+///
+/// `lower("abc")` and `lower("ABC")` are the same key, so the index has nothing
+/// to do — and rewriting it anyway would invent a write-write conflict against
+/// any concurrent writer of a row sharing that slot, which is exactly what the
+/// unchanged-key shortcut exists to avoid. Whether the shortcut fires is not
+/// observable from here; that the entry is right afterwards is.
+#[tokio::test]
+async fn an_update_the_expression_does_not_notice_leaves_the_entry_alone() {
+    let (store, kv) = note_store();
+    let table = notes();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &note(1, Some("abc")))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let before = note_index_keys(&kv, BY_LOWER_BODY);
+
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &note(1, Some("ABC")))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(note_index_keys(&kv, BY_LOWER_BODY), before);
+    // The length index does not notice either; the body index would, if there
+    // were one, which is the point of checking a second expression at all.
+    assert_eq!(
+        note_index_keys(&kv, BY_BODY_LENGTH),
+        wanted_note_keys(BY_BODY_LENGTH, &[note(1, Some("ABC"))])
+    );
+}
+
+/// The oracle: reading through an expression index agrees with a table scan.
+///
+/// This is the test that covers the encode and the decode together. The index
+/// stores a value the row does not contain, under a declared type, in a key the
+/// scan bounds are built from — and the query computes the same expression per
+/// row on the other path. If any step of that disagrees, the two answers do.
+#[tokio::test]
+async fn an_expression_index_agrees_with_a_table_scan() {
+    let (store, _kv) = note_store();
+    let table = notes();
+    let bodies = [
+        Some("Alpha"),
+        Some("alpha"),
+        Some("BETA"),
+        Some("beta"),
+        Some("gamma"),
+        Some(""),
+        None,
+        Some("Delta"),
+        Some("delta"),
+        Some("epsilon"),
+    ];
+    let txn = store.begin().await.unwrap();
+    for (id, body) in bodies.iter().enumerate() {
+        txn.insert(&root(), &table, &note(id as u64, *body))
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let computed = Query::computed(&table, 0);
+    let cases = [
+        Expr::eq(computed, Value::Str("alpha".to_owned())),
+        Expr::eq(computed, Value::Str("delta".to_owned())),
+        Expr::eq(computed, Value::Str("nothing".to_owned())),
+        Expr::compare(computed, CmpOp::Ge, Value::Str("c".to_owned())),
+        Expr::compare(computed, CmpOp::Lt, Value::Str("c".to_owned())),
+        Expr::In {
+            column: computed,
+            values: vec![
+                Value::Str("beta".to_owned()),
+                Value::Str("gamma".to_owned()),
+            ],
+        },
+    ];
+
+    for filter in cases {
+        let mut through_index = Query::all().filter(filter.clone());
+        through_index.compute = vec![lower_body()];
+        through_index.hint = Some(AccessHint::Index(BY_LOWER_BODY));
+
+        let mut through_scan = Query::all().filter(filter.clone());
+        through_scan.compute = vec![lower_body()];
+        through_scan.hint = Some(AccessHint::TableScan);
+
+        let txn = store.begin().await.unwrap();
+        let plan = txn.explain(&root(), &table, &through_index).unwrap();
+        assert!(
+            plan.access.to_string().contains("by_lower_body"),
+            "the hint did not take: {} for {filter:?}",
+            plan.access
+        );
+
+        let mut indexed: Vec<Value> = txn
+            .execute(&root(), &table, &through_index)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.values()[NOTE_ID.0].clone())
+            .collect();
+        let mut scanned: Vec<Value> = txn
+            .execute(&root(), &table, &through_scan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.values()[NOTE_ID.0].clone())
+            .collect();
+        indexed.sort();
+        scanned.sort();
+        assert_eq!(indexed, scanned, "the two paths disagree on {filter:?}");
+    }
+}
+
+/// A declared type the expression does not produce is refused at the write.
+///
+/// The alternative is an entry encoded as one type and decoded as another,
+/// surfacing as a corrupt index at some later scan with nothing pointing back
+/// at the write that caused it.
+#[tokio::test]
+async fn a_wrong_declared_type_is_refused_where_it_is_written() {
+    const LIARS: TableId = TableId(4);
+    let table = TableDef::builder("liars", LIARS)
+        .column("id", ValueType::U64)
+        .column("body", ValueType::Str)
+        .primary_key(["id"])
+        // `lower(body)` is a string, whatever this says.
+        .index(IndexDef::builder("by_wrong", IndexId(40)).expression(
+            Scalar::Lower(Box::new(Scalar::Column(Ordinal(1)))),
+            ValueType::I64,
+        ))
+        .build()
+        .expect("the schema cannot know what the expression will produce");
+
+    let kv = MemoryStore::new();
+    let catalog = Catalog::from_tables([table.clone()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", LIARS, Action::ALL));
+    let store = RecordStore::new(kv.clone(), catalog, security);
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert(
+            &root(),
+            &table,
+            &Row::new(vec![Value::U64(1), Value::Str("x".to_owned())]),
+        )
+        .await;
+    assert!(refused.is_err(), "the write was accepted: {refused:?}");
+    txn.rollback();
+    assert!(kv.is_empty(), "the refused write left something behind");
+}
+
+/// An index that keys on neither columns nor an expression, or on both, is not
+/// a schema.
+#[test]
+fn an_index_keys_on_columns_or_on_an_expression_but_not_both() {
+    let both = TableDef::builder("both", TableId(5))
+        .column("id", ValueType::U64)
+        .column("body", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_both", IndexId(50))
+                .column("body")
+                .expression(
+                    Scalar::Lower(Box::new(Scalar::Column(Ordinal(1)))),
+                    ValueType::Str,
+                ),
+        )
+        .build();
+    assert!(both.is_err(), "an index cannot key on two things");
+
+    let neither = TableDef::builder("neither", TableId(6))
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .index(IndexDef::builder("by_nothing", IndexId(60)))
+        .build();
+    assert!(neither.is_err(), "an index has to key on something");
 }

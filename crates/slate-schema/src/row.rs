@@ -91,6 +91,32 @@ impl Row {
                 Some(_) => {}
             }
         }
+
+        // An expression index declares the type it produces, because the
+        // decoder needs it before it has a row to run the expression on. This
+        // is where the declaration is held to: an entry encoded as one type and
+        // decoded as another is a row that reads back as a corrupt index, at
+        // some later scan, with nothing pointing at the write that caused it.
+        // Refuse it here instead.
+        for index in table.indexes() {
+            let Some(expression) = index.expression() else {
+                continue;
+            };
+            let value = expression.value(self);
+            // Null is not a type, and an expression index holds nulls for the
+            // same reason a nullable column does: `lower(null)` is null, and an
+            // index that refused it would be an index missing rows.
+            if let Some(actual) = value.value_type()
+                && actual != expression.produces()
+            {
+                return Err(SchemaError::IndexValueTypeMismatch {
+                    table: table.name().to_owned(),
+                    index: index.name().to_owned(),
+                    expected: expression.produces(),
+                    actual: value.type_name(),
+                });
+            }
+        }
         Ok(())
     }
 

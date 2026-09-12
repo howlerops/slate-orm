@@ -162,8 +162,8 @@ pub fn index_entry(
     if let Some(tenant) = &tenant {
         encode_value_into(&mut key, tenant, Direction::Asc);
     }
-    for (value, column) in index_values.iter().zip(index.columns()) {
-        encode_value_into(&mut key, value, column.direction);
+    for (value, direction) in index_values.iter().zip(index.key_directions()) {
+        encode_value_into(&mut key, value, direction);
     }
 
     // A unique index only collides on duplicates if the primary key is out of
@@ -208,8 +208,11 @@ pub fn decode_index_entry(
         body = rest;
     }
 
-    let (index_values, rest) =
-        slate_tuple::decode_prefix_with(body, &table.index_key_types(index), &index.directions())?;
+    let (index_values, rest) = slate_tuple::decode_prefix_with(
+        body,
+        &table.index_key_types(index),
+        &index.key_directions(),
+    )?;
 
     // Where the primary key lives is decided by the same rule that built the
     // entry, so this stays in step with `index_entry`.

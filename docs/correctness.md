@@ -602,6 +602,35 @@ removing it and running the suite. Five failed immediately. The sixth — that
 bulk shortcut — passed, which is how it was found; the test that now covers it
 was written before the guard was believed.
 
+### The other seam: a key the row does not contain
+
+An **expression** index keys on `lower(body)` or `length(url)` — a value no
+column holds. That needs a second seam beside `Predicate`:
+`slate_schema::Computed` produces a value where `Predicate` produces a verdict,
+and the kernel implements it for `Scalar` exactly as it implements `Predicate`
+for `Expr`. So the same downcast gives the planner the expression back to match
+against what a query computes, and the same asymmetry applies: an index whose
+key is not a `Scalar` is maintained correctly and never chosen.
+
+One thing an expression index needs that a partial one does not: the *type* the
+expression produces, declared at the schema. Nothing can run the expression
+without a row, and the decoder needs the type before it has one. A declaration
+is a thing that can be wrong, so it is checked — every write evaluates the
+expression and refuses a value whose type is not the declared one. The
+alternative is an entry encoded as one type and decoded as another, which
+surfaces as a corrupt index at some later scan with nothing pointing back at the
+write that caused it. Nulls are exempt, because null is not a type and an index
+that refused `lower(null)` would be an index missing rows.
+
+The oracle here is a query rather than a key set, because the failure mode is
+the opposite way round from a partial index: nothing can put a *spurious* entry
+in an expression index, but the encode and the decode can disagree, and then a
+scan silently returns the wrong rows. So the test asks the same question of the
+index and of a table scan computing the same expression per row, over equality,
+range and `IN`, and requires the two to answer identically. Making
+`key_values`, `key_directions` or `index_key_types` ignore the expression each
+breaks it.
+
 ## The head node, and a lease checked against a wrong one
 
 `crates/slate-server/tests/`
@@ -649,12 +678,15 @@ what genuinely has not been done.
   against a real S3 server at 200,000 rows, which is what corrected it; the
   million-row runs are still in memory. Nothing has been measured at a size
   where compaction, tiering and a cold cache all matter at once.
-- **Expression indexes end to end.** The planner can use one; nothing
-  maintains one, and nothing can until there is a seam that produces a value
-  rather than a verdict. They are declared to the planner alongside the table
-  rather than on the schema, so that the schema never promises maintenance it
-  does not do. (Partial indexes, which had the same gap a round ago, are now
-  maintained — see above.)
+- **Statistics for a computed value.** `analyze` samples rows and builds
+  histograms per column; it does not evaluate an expression index's expression,
+  so the planner's estimate for one comes from whatever stats the caller
+  supplies. The decision is right, the number behind it is a guess.
+- **An expression index can never be covering.** Not because the entry holds
+  too little — it holds exactly the computed value — but because the executor
+  evaluates scalars from a row's own columns, and a row rebuilt from an index
+  entry has the source column null. Teaching it to take the value from the
+  entry it is already holding is a change to the executor, not to the planner.
 - **Partial indexes in the derive macro.** `#[derive(Record)]` cannot declare
   one; the schema builder can. A struct attribute for it is a small piece of
   work that has not been done.

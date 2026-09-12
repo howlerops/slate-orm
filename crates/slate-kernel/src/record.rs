@@ -42,6 +42,7 @@ use crate::plan::Projection;
 use crate::query::Query;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
+use crate::scalar::Scalar;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
@@ -97,6 +98,31 @@ impl slate_schema::Predicate for Expr {
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         Some(self)
     }
+}
+
+impl slate_schema::Computed for Scalar {
+    fn value(&self, row: &Row) -> Value {
+        self.evaluate(row)
+    }
+
+    /// So the planner can match the index's expression against what a query
+    /// computes. See [`slate_schema::Computed::as_any`].
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+}
+
+/// An expression index's key as a scalar, when it is one.
+///
+/// `None` for an index keyed on some other implementation of
+/// [`slate_schema::Computed`]. Such an index is maintained correctly — the
+/// write path only needs to run the expression — but the planner cannot match
+/// it against a query, so it is never chosen. That is the same asymmetry
+/// [`index_predicate`] has and the same safe direction: an unmatched index
+/// costs a scan.
+#[must_use]
+pub fn index_expression(index: &slate_schema::IndexDef) -> Option<&Scalar> {
+    index.expression()?.as_any()?.downcast_ref::<Scalar>()
 }
 
 /// A partial index's predicate as an expression, when it is one.
@@ -866,7 +892,7 @@ impl<'a> RecordTransaction<'a> {
                 if !index.admits(row) {
                     continue;
                 }
-                let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
+                let entry = keys::index_entry(table, index, &index.key_values(row), primary_key);
                 if entry.enforces_uniqueness && !slots.insert(entry.key) {
                     return Err(KernelError::UniqueViolation {
                         table: table.name().to_owned(),
@@ -963,7 +989,7 @@ impl<'a> RecordTransaction<'a> {
                 if !index.admits(row) {
                     continue;
                 }
-                let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
+                let entry = keys::index_entry(table, index, &index.key_values(row), primary_key);
                 if !entry.enforces_uniqueness {
                     continue;
                 }
@@ -975,7 +1001,7 @@ impl<'a> RecordTransaction<'a> {
                     .as_ref()
                     .filter(|old| index.admits(old))
                     .is_some_and(|old| {
-                        keys::index_entry(table, index, &old.index_values(index), primary_key).key
+                        keys::index_entry(table, index, &index.key_values(old), primary_key).key
                             == entry.key
                     });
                 if !unchanged {
@@ -1503,7 +1529,7 @@ impl<'a> RecordTransaction<'a> {
         keys::index_entry(
             table,
             index,
-            &row.index_values(index),
+            &index.key_values(row),
             &row.primary_key_values(table),
         )
     }

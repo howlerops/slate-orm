@@ -133,6 +133,85 @@ pub struct IndexColumn {
     pub direction: Direction,
 }
 
+/// Something that can compute a value from a row.
+///
+/// The counterpart of [`Predicate`] for an index *key*: `Predicate` says
+/// whether an index holds a row, this says what it holds it under. Same seam
+/// and the same reason — the expression language is `slate_kernel::Scalar`, and
+/// the kernel depends on this crate rather than the other way round, so an
+/// [`IndexDef`] cannot name it. The kernel implements this for `Scalar`; there
+/// is still one expression language and one evaluator.
+pub trait Computed: Send + Sync + 'static {
+    /// The value the index keys on for `row`.
+    ///
+    /// Total, and null where the computation cannot be done — `lower()` of a
+    /// number, arithmetic on a null. That is the answer the query evaluator
+    /// gives for the same expression, and it has to be: an index whose entries
+    /// disagreed with what a query computes would return rows no other access
+    /// path returns.
+    fn value(&self, row: &Row) -> Value;
+
+    /// The expression itself, for a caller that needs to read it rather than
+    /// run it — the planner, matching it against what a query computes. `None`
+    /// by default; see [`Predicate::as_any`], which is here for the same
+    /// reason and pays the same price.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
+}
+
+/// An index key computed from the row rather than read out of it.
+///
+/// `lower(email)`, `length(url)`: the only way to answer a query about such a
+/// value without computing it for every row of a scan.
+#[derive(Clone)]
+pub struct IndexExpression {
+    compute: Arc<dyn Computed>,
+    produces: ValueType,
+    direction: Direction,
+}
+
+impl core::fmt::Debug for IndexExpression {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("IndexExpression")
+            .field("produces", &self.produces)
+            .field("direction", &self.direction)
+            .finish_non_exhaustive()
+    }
+}
+
+impl IndexExpression {
+    /// What the expression computes for `row`.
+    #[must_use]
+    pub fn value(&self, row: &Row) -> Value {
+        self.compute.value(row)
+    }
+
+    /// The expression itself, for a caller that can read it.
+    #[must_use]
+    pub fn as_any(&self) -> Option<&dyn core::any::Any> {
+        self.compute.as_any()
+    }
+
+    /// The type the expression produces, as declared.
+    ///
+    /// Declared rather than inferred, because nothing here can run the
+    /// expression without a row and the decoder needs the type before it has
+    /// one. The write path checks each computed value against it rather than
+    /// trusting the declaration, so a wrong one is refused at the write that
+    /// would have made the entry undecodable, not at the read that finds it.
+    #[must_use]
+    pub const fn produces(&self) -> ValueType {
+        self.produces
+    }
+
+    /// The direction the value is stored in.
+    #[must_use]
+    pub const fn direction(&self) -> Direction {
+        self.direction
+    }
+}
+
 /// A secondary index.
 ///
 /// Index entries live in their own key prefix and are written in the same
@@ -155,6 +234,9 @@ pub struct IndexDef {
     unique: bool,
     /// Rows the index holds. `None` is every row.
     predicate: Option<Arc<dyn Predicate>>,
+    /// The computed key, when the index keys on a value the row does not hold.
+    /// Mutually exclusive with `columns`, which is then empty.
+    expression: Option<IndexExpression>,
 }
 
 impl core::fmt::Debug for IndexDef {
@@ -165,6 +247,7 @@ impl core::fmt::Debug for IndexDef {
             .field("columns", &self.columns)
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
+            .field("expression", &self.expression)
             .finish()
     }
 }
@@ -184,6 +267,10 @@ impl PartialEq for IndexDef {
             && self.columns == other.columns
             && self.unique == other.unique
             && self.predicate.is_some() == other.predicate.is_some()
+            && self.expression.as_ref().map(IndexExpression::produces)
+                == other.expression.as_ref().map(IndexExpression::produces)
+            && self.expression.as_ref().map(IndexExpression::direction)
+                == other.expression.as_ref().map(IndexExpression::direction)
     }
 }
 
@@ -199,6 +286,7 @@ impl IndexDef {
             columns: Vec::new(),
             unique: false,
             predicate: None,
+            expression: None,
         }
     }
 
@@ -221,6 +309,35 @@ impl IndexDef {
         self.predicate
             .as_ref()
             .is_none_or(|predicate| predicate.truth(row) == Some(true))
+    }
+
+    /// The computed key, for an expression index.
+    #[must_use]
+    pub const fn expression(&self) -> Option<&IndexExpression> {
+        self.expression.as_ref()
+    }
+
+    /// The values this index keys `row` under, in key order.
+    ///
+    /// The single place that knows whether an index reads its key out of the
+    /// row or computes it. Everything that builds or decodes an entry goes
+    /// through here and through [`IndexDef::key_directions`], so an expression
+    /// index is not a case each of them has to remember.
+    #[must_use]
+    pub fn key_values(&self, row: &Row) -> Vec<Value> {
+        match &self.expression {
+            Some(expression) => vec![expression.value(row)],
+            None => row.index_values(self),
+        }
+    }
+
+    /// The sort direction of each key term, in key order.
+    #[must_use]
+    pub fn key_directions(&self) -> Vec<Direction> {
+        match &self.expression {
+            Some(expression) => vec![expression.direction()],
+            None => self.columns.iter().map(|c| c.direction).collect(),
+        }
     }
 
     /// The index's id, which is also its key prefix.
@@ -248,6 +365,9 @@ impl IndexDef {
     }
 
     /// The sort direction of each indexed column, in key order.
+    ///
+    /// Empty for an expression index, which keys on no column; use
+    /// [`IndexDef::key_directions`] for the directions of the key itself.
     #[must_use]
     pub fn directions(&self) -> Vec<Direction> {
         self.columns.iter().map(|c| c.direction).collect()
@@ -262,6 +382,7 @@ pub struct IndexBuilder {
     columns: Vec<(String, Direction)>,
     unique: bool,
     predicate: Option<Arc<dyn Predicate>>,
+    expression: Option<IndexExpression>,
 }
 
 impl core::fmt::Debug for IndexBuilder {
@@ -272,6 +393,7 @@ impl core::fmt::Debug for IndexBuilder {
             .field("columns", &self.columns)
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
+            .field("expression", &self.expression)
             .finish()
     }
 }
@@ -324,6 +446,37 @@ impl IndexBuilder {
     #[must_use]
     pub fn only_where<P: Predicate>(mut self, predicate: P) -> Self {
         self.predicate = Some(Arc::new(predicate));
+        self
+    }
+
+    /// Key on a value computed from the row rather than on a column.
+    ///
+    /// `produces` is the type the expression yields, declared because nothing
+    /// here can run it without a row and the decoder needs the type before it
+    /// has one. The write path checks every computed value against it, so a
+    /// wrong declaration is refused at the write rather than found at the read.
+    ///
+    /// An expression index keys on exactly this one value: mixing it with
+    /// [`IndexBuilder::column`] is refused when the table is built, rather than
+    /// one of them silently winning.
+    #[must_use]
+    pub fn expression<C: Computed>(self, compute: C, produces: ValueType) -> Self {
+        self.expression_with(compute, produces, Direction::Asc)
+    }
+
+    /// [`IndexBuilder::expression`] with an explicit direction.
+    #[must_use]
+    pub fn expression_with<C: Computed>(
+        mut self,
+        compute: C,
+        produces: ValueType,
+        direction: Direction,
+    ) -> Self {
+        self.expression = Some(IndexExpression {
+            compute: Arc::new(compute),
+            produces,
+            direction,
+        });
         self
     }
 }
@@ -429,7 +582,10 @@ impl TableDef {
     /// The types of an index's columns, for decoding an index key.
     #[must_use]
     pub fn index_key_types(&self, index: &IndexDef) -> Vec<ValueType> {
-        self.key_types(&index.columns.iter().map(|c| c.ordinal).collect::<Vec<_>>())
+        match index.expression() {
+            Some(expression) => vec![expression.produces()],
+            None => self.key_types(&index.columns.iter().map(|c| c.ordinal).collect::<Vec<_>>()),
+        }
     }
 
     fn key_types(&self, ordinals: &[Ordinal]) -> Vec<ValueType> {
@@ -801,7 +957,9 @@ impl TableBuilder {
 
         let mut indexes: Vec<IndexDef> = Vec::with_capacity(self.indexes.len());
         for spec in &self.indexes {
-            if spec.columns.is_empty() {
+            // An index keys on columns or on an expression. Neither is nothing
+            // to look up by; both would be two answers to what its key holds.
+            if spec.columns.is_empty() == spec.expression.is_none() {
                 return Err(SchemaError::EmptyIndex {
                     table: table.clone(),
                     index: spec.name.clone(),
@@ -839,6 +997,7 @@ impl TableBuilder {
                 columns,
                 unique: spec.unique,
                 predicate: spec.predicate.clone(),
+                expression: spec.expression.clone(),
             });
         }
 
