@@ -318,6 +318,17 @@ predicate anyway, so it is the tenant whose key range the read will actually
 touch. Every read response says which view served it and at what sequence, so
 routing is visible rather than inferred.
 
+Saying so truthfully constrains the API. Asking the pool where a read went,
+after it has gone, is not the same question as asking where to send it: the
+round-robin counter has already moved, and the answer names a replica that
+served nothing. So `ReplicaPool::snapshot_from` returns the view *and* the store
+that opened it, out of one decision, and the head node keeps no catalog,
+security catalog or statistics of its own for reads — it reads them from the
+pool it already routes through. The earlier shape held a second copy with
+nothing but care keeping the two equal, which is the shape that already cost
+this project a latency fixture and a cost model disagreeing about rows per
+block.
+
 A transactional read is the one thing a takeover still interrupts, and that is
 inherent — it is a read of the writer's transaction. A client that must keep
 reading through a handover reads outside a transaction.

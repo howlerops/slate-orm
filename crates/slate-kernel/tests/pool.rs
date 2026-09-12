@@ -11,10 +11,10 @@ use async_trait::async_trait;
 use slate_kernel::error::Result;
 use slate_kernel::store::{KvReadStore, KvSnapshot};
 use slate_kernel::{
-    Freshness, KernelError, ReadToken, ReadWatermark, ReplicaPool, RoutingPolicy, SecurityCatalog,
-    memory::MemoryStore,
+    Freshness, KernelError, ReadToken, ReadWatermark, RecordSnapshot, RecordStore, ReplicaPool,
+    RoutingPolicy, SecurityCatalog, SecurityContext, memory::MemoryStore,
 };
-use slate_schema::{Catalog, TableDef, TableId};
+use slate_schema::{Catalog, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -88,6 +88,8 @@ fn table() -> TableDef {
     TableDef::builder("t", TableId(1))
         .column("tenant_id", ValueType::U64)
         .column("id", ValueType::U64)
+        // Carries which replica the row was written into; see `stocked`.
+        .column("marker", ValueType::U64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
         .build()
@@ -362,4 +364,150 @@ fn tenant_affinity_comes_from_the_key() {
         .build()
         .unwrap();
     assert_eq!(ReplicaPool::tenant_of(&unscoped, &[Value::U64(1)]), None);
+}
+
+// --- what a routed read reports about itself ------------------------------
+
+/// The one row every stocked replica holds, at the same key on each.
+const THE_KEY: [Value; 2] = [Value::U64(1), Value::U64(1)];
+
+/// A replica holding one row that says which replica it is.
+///
+/// Distinguishable contents are the whole design of the tests below. Replicas
+/// that answer identically make the assertion unfalsifiable: a reported name
+/// belonging to a store that served nothing reads exactly like a correct one,
+/// and only rows that differ can tell them apart.
+async fn stocked(name: &str, marker: u64) -> Arc<FakeReplica> {
+    let replica = FakeReplica::at(name, 10);
+    let store = RecordStore::new(
+        replica.backing.clone(),
+        Catalog::from_tables([table()]).expect("catalog"),
+        SecurityCatalog::new(),
+    );
+    let txn = store.begin().await.expect("begin");
+    txn.insert(
+        &SecurityContext::superuser(),
+        &table(),
+        &Row::new(vec![Value::U64(1), Value::U64(1), Value::U64(marker)]),
+    )
+    .await
+    .expect("insert");
+    txn.commit().await.expect("commit");
+    replica
+}
+
+/// The marker in the row this view can actually read.
+async fn marker_read_through(view: &RecordSnapshot<'_>) -> u64 {
+    let row = view
+        .get(&SecurityContext::superuser(), &table(), &THE_KEY)
+        .await
+        .expect("the read should succeed")
+        .expect("every stocked replica holds the row");
+    match row.values()[2] {
+        Value::U64(marker) => marker,
+        ref other => panic!("marker column held {other:?}"),
+    }
+}
+
+/// The property `snapshot_from` exists for: the store it names is the store
+/// whose bytes came back, not merely one that could plausibly have served.
+///
+/// Every replica holds the same key with a different marker, so a name that
+/// does not belong to the view is visible in the rows. Round-robin is the case
+/// that matters — it is the one where routing twice gives two answers — so the
+/// read carries no tenant.
+#[tokio::test]
+async fn the_store_a_snapshot_names_is_the_store_it_read_from() {
+    let names = ["a", "b", "c", "d"];
+    let mut replicas: Vec<Arc<dyn KvReadStore>> = Vec::new();
+    for (marker, name) in names.iter().enumerate() {
+        replicas.push(stocked(name, marker as u64).await);
+    }
+    let pool = pool(replicas);
+
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..12 {
+        let (view, store) = pool
+            .snapshot_from(Freshness::Any, None)
+            .await
+            .expect("a store should be chosen");
+        let marker = marker_read_through(&view).await;
+        assert_eq!(
+            names[marker as usize],
+            store.replica_name(),
+            "the snapshot read replica {} and reported {}",
+            names[marker as usize],
+            store.replica_name()
+        );
+        seen.insert(store.replica_name().to_owned());
+    }
+    assert_eq!(
+        seen.len(),
+        names.len(),
+        "every read landed on {seen:?}; a pool that never moved would satisfy the assertion above without proving anything"
+    );
+}
+
+/// Why the pairing has to come out of one call.
+///
+/// This is the bug `snapshot_from` removes, stated as behaviour: asking the
+/// pool a second time where a read should go is a *new* decision, and on the
+/// round-robin path it is a different one. Anything that opened a view and then
+/// asked would be reporting a replica that served nothing.
+#[tokio::test]
+async fn asking_where_a_read_went_after_the_fact_answers_about_somewhere_else() {
+    let pool = pool(vec![
+        FakeReplica::at("a", 10),
+        FakeReplica::at("b", 10),
+        FakeReplica::at("c", 10),
+    ]);
+
+    let served = {
+        let (_view, store) = pool
+            .snapshot_from(Freshness::Any, None)
+            .await
+            .expect("a store should be chosen");
+        store.replica_name().to_owned()
+    };
+    let asked_again = chosen(&pool, Freshness::Any, None).await;
+
+    assert_ne!(
+        served, asked_again,
+        "route() happened to repeat itself, so this test is no longer describing the hazard"
+    );
+}
+
+/// Affinity is the path where routing twice would have gone unnoticed: it is
+/// stable, so the wrong call gives the right answer until the day the pool
+/// falls back to round-robin. Pinning it here says the pairing holds on both
+/// paths, not just the one that would have caught a mistake.
+#[tokio::test]
+async fn a_tenanted_read_also_names_the_store_it_read_from() {
+    let names = ["a", "b", "c", "d"];
+    let mut replicas: Vec<Arc<dyn KvReadStore>> = Vec::new();
+    for (marker, name) in names.iter().enumerate() {
+        replicas.push(stocked(name, marker as u64).await);
+    }
+    let pool = pool(replicas);
+
+    let mut seen = std::collections::BTreeSet::new();
+    for id in 0..20u64 {
+        let (view, store) = pool
+            .snapshot_from(Freshness::Any, Some(&tenant(id)))
+            .await
+            .expect("a store should be chosen");
+        let marker = marker_read_through(&view).await;
+        assert_eq!(
+            names[marker as usize],
+            store.replica_name(),
+            "the snapshot read replica {} and reported {}",
+            names[marker as usize],
+            store.replica_name()
+        );
+        seen.insert(store.replica_name().to_owned());
+    }
+    assert!(
+        seen.len() > 1,
+        "twenty tenants all landed on {seen:?}; the assertion above never had to distinguish anything"
+    );
 }

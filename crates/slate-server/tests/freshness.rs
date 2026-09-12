@@ -13,6 +13,16 @@
 //! production. Requiring the stale answer to *be* stale is what says the token
 //! is carrying the weight.
 //!
+//! # Saying where a read went
+//!
+//! `served_by` is only worth carrying if it is true, and the tests that pin it
+//! use replicas with *different contents* on purpose. Four mirrors of one
+//! backing cannot tell a truthful name from a plausible one: with the same rows
+//! everywhere, a name read off a second routing decision — the round-robin
+//! counter having moved on in between — looks exactly like a name read off the
+//! first. Rows that say which replica wrote them are what makes the difference
+//! visible.
+//!
 //! # Affinity
 //!
 //! The kernel tests rendezvous placement. What is tested here is the head
@@ -37,7 +47,7 @@ use slate_kernel::error::Result as KernelResult;
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::store::KvSnapshot;
 use slate_kernel::{KernelError, KvReadStore};
-use slate_server::convert::{row_to_proto, value_to_proto};
+use slate_server::convert::{row_from_proto, row_to_proto, value_to_proto};
 use slate_server::leadership::Leadership;
 use slate_server::proto as pb;
 use slate_server::{Head, HeadConfig, MetadataIdentity};
@@ -515,4 +525,93 @@ async fn a_read_naming_an_unknown_transaction_fails_rather_than_falling_back() {
         .await
         .expect_err("an unknown transaction");
     assert_eq!(error.code(), Code::NotFound);
+}
+
+/// A replica holding one `docs` row whose `kind` is that replica's own name.
+///
+/// The point is distinguishability; see the module docs.
+async fn signed(name: &str) -> Arc<Mirror> {
+    let backing = Arc::new(MemoryStore::new());
+    let store = common::store(Arc::clone(&backing));
+    let txn = store.begin().await.unwrap();
+    txn.insert(
+        &slate_kernel::SecurityContext::superuser(),
+        &common::docs(),
+        &doc(1, name, 1, None),
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+    Mirror::new(name, backing)
+}
+
+/// The `kind` of the single row a response carried: the name of the replica
+/// that really answered.
+fn who_answered(rows: &[pb::Row]) -> String {
+    assert_eq!(rows.len(), 1, "each replica holds exactly one row");
+    match &row_from_proto(&rows[0]).unwrap().values()[1] {
+        Value::Str(kind) => kind.clone(),
+        other => panic!("kind column held {other:?}"),
+    }
+}
+
+/// The replica a response names must be the one whose rows it returned.
+///
+/// This is the guarantee the head node buys by routing and opening the view in
+/// one call. Reporting it from a second routing decision would name the *next*
+/// replica in the rotation, which is a lie that reads as plausible: the right
+/// shape, an existing replica, and a number an operator would act on.
+#[tokio::test]
+async fn a_response_names_the_replica_whose_rows_it_returned() {
+    let writer = Arc::new(MemoryStore::new());
+    let mut replicas: Vec<Arc<dyn KvReadStore>> = Vec::new();
+    for n in 0..4 {
+        replicas.push(signed(&format!("replica-{n}")).await);
+    }
+    let serving = leader_with(Arc::clone(&writer), replicas).await;
+    let mut client = serving.client().await;
+
+    // `docs` is not tenant-scoped, so these spread round-robin: the path where
+    // asking twice gives two answers.
+    let mut seen = BTreeSet::new();
+    for _ in 0..12 {
+        let (rows, served_by) =
+            drain(client.query(app(query(None))).await.unwrap().into_inner()).await;
+        let named = served_by.expect("served_by").replica;
+        let answered = who_answered(&rows);
+        assert_eq!(
+            answered, named,
+            "a streamed query returned {answered}'s row under the name {named}"
+        );
+        seen.insert(named);
+    }
+    assert_eq!(
+        seen.len(),
+        4,
+        "every read landed on {seen:?}; a pool that never moved would satisfy the assertion above without proving anything"
+    );
+
+    // The point read takes the other path — no spawned task, no stream — and
+    // has the same promise to keep.
+    for _ in 0..12 {
+        let answer = client
+            .get(app(pb::GetRequest {
+                transaction: String::new(),
+                table: "docs".to_owned(),
+                primary_key: Some(pb::Row {
+                    values: vec![value_to_proto(&Value::U64(1))],
+                }),
+                freshness: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let named = answer.served_by.expect("served_by").replica;
+        let row = answer.row.expect("every replica holds the row");
+        let answered = who_answered(core::slice::from_ref(&row));
+        assert_eq!(
+            answered, named,
+            "a point read returned {answered}'s row under the name {named}"
+        );
+    }
 }

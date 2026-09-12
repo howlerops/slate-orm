@@ -151,23 +151,70 @@ impl ReplicaPool {
     ///
     /// `affinity` is the tenant to key placement on; see
     /// [`ReplicaPool::tenant_of`] for getting it from a row's key values.
+    ///
+    /// Use [`ReplicaPool::snapshot_from`] if the caller has to say where the
+    /// read went; this one throws that away.
     pub async fn snapshot(
         &self,
         freshness: Freshness,
         affinity: Option<&Value>,
     ) -> Result<RecordSnapshot<'_>> {
+        self.snapshot_from(freshness, affinity)
+            .await
+            .map(|(snapshot, _)| snapshot)
+    }
+
+    /// Open a read view, and hand back the store that will serve it.
+    ///
+    /// The pairing is the whole point. [`ReplicaPool::snapshot`] gives a view
+    /// and no way to say where it came from, and asking afterwards with
+    /// [`ReplicaPool::route`] is not the same question: on the round-robin path
+    /// the counter has already moved, so the second call names a replica that
+    /// served nothing. Anything that reports routing onwards — the head node
+    /// stamps every read response with it, because a single replica quietly
+    /// serving the whole fleet is otherwise invisible — has to get the view and
+    /// the name out of one decision. This is that call.
+    ///
+    /// The alternative was `security()` and `statistics()` accessors alongside
+    /// [`ReplicaPool::catalog`], leaving each caller to assemble its own
+    /// [`RecordSnapshot`]. That closes the smaller half of the problem: the
+    /// state stops being stated twice, but the assembly is still copied out,
+    /// and the day a snapshot needs a fourth component every caller that built
+    /// its own is serving reads without it. Two accessors is also more added
+    /// surface than one method, for a caller that then has to write the same
+    /// four-argument constructor the pool already writes.
+    ///
+    /// The store comes back rather than only its name because the name is not
+    /// all a caller reports — `served_by` on the wire carries the view's
+    /// visible sequence too — and because returning the same
+    /// `&Arc<dyn KvReadStore>` that [`ReplicaPool::route`] returns keeps one
+    /// type for "the replica that served this" instead of inventing a second
+    /// that exists only to be converted. It does leave the caller able to open
+    /// another snapshot on that store, which is harmless: the hazard being
+    /// removed here is deciding *where* twice, not reading twice from the one
+    /// place already decided.
+    pub async fn snapshot_from(
+        &self,
+        freshness: Freshness,
+        affinity: Option<&Value>,
+    ) -> Result<(RecordSnapshot<'_>, &Arc<dyn KvReadStore>)> {
         let store = self.route(freshness, affinity).await?;
-        Ok(RecordSnapshot::over(
+        let snapshot = RecordSnapshot::over(
             store.snapshot().await?,
             &self.catalog,
             &self.security,
             &self.statistics,
-        ))
+        );
+        Ok((snapshot, store))
     }
 
     /// Choose the store that will serve a read.
     ///
-    /// Exposed so a caller can log or meter the decision.
+    /// Exposed so a caller can log or meter the decision — but only the
+    /// decision it is about to act on. Calling this to find out where an
+    /// already-open view came from asks the pool to decide again, and on the
+    /// round-robin path it decides differently; [`ReplicaPool::snapshot_from`]
+    /// is what pairs a view with the store that opened it.
     pub async fn route(
         &self,
         freshness: Freshness,

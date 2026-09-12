@@ -14,17 +14,22 @@
 //! writer, and they do fail on a takeover. A client that wants to keep reading
 //! through a handover reads outside a transaction.
 //!
-//! # The pool is used as a router, not as a reader
+//! # One call decides where a read goes and opens it
 //!
-//! [`ReplicaPool::snapshot`] would be the obvious call, and it is not used: it
-//! does not report which replica it picked, and asking a second time via
-//! [`ReplicaPool::route`] can name a *different* one, because the round-robin
-//! counter advances in between. Every read response carries `served_by` —
-//! routing is the thing an operator most needs to see, and a replica quietly
-//! serving everything is invisible without it — so this routes once and opens
-//! the snapshot itself. The cost is that the head node keeps its own catalog,
-//! security catalog and statistics rather than reaching into the pool's;
-//! [`HeadConfig`] hands the same values to both so they cannot drift.
+//! Every read response carries `served_by` — routing is the thing an operator
+//! most needs to see, and a replica quietly serving everything is invisible
+//! without it. Naming it truthfully means the routing decision and the view
+//! have to come out of the same call, because asking [`ReplicaPool::route`] a
+//! second time advances the round-robin counter and answers about a replica
+//! that served nothing. [`ReplicaPool::snapshot_from`] is that call.
+//!
+//! This node therefore keeps no catalog, security catalog or statistics of its
+//! own for reads: it reads them out of the pool it already routes through.
+//! [`HeadConfig`] states them once, on the way in. The previous shape had the
+//! head hold a second copy and assemble the [`RecordSnapshot`] itself, with
+//! nothing but care keeping the two statements equal — the same shape that
+//! already cost this project a latency fixture and a cost model that disagreed
+//! about rows per block.
 //!
 //! # Refusing before spending a round trip
 //!
@@ -67,7 +72,9 @@ const IN_TRANSACTION: &str = "writer (in transaction)";
 /// A struct rather than a long argument list because the catalog, the security
 /// catalog and the statistics each have to reach *both* the writer store and
 /// the replica pool. Passing them separately to each is a shape where handing
-/// one half a different catalog compiles and is undebuggable.
+/// one half a different catalog compiles and is undebuggable. This is the only
+/// place any of the three is stated: [`Head::new`] pours it into those two and
+/// keeps nothing back.
 #[derive(Debug, Clone)]
 pub struct HeadConfig {
     /// The tables this node serves.
@@ -118,27 +125,6 @@ impl HeadConfig {
     }
 }
 
-/// The three things a secured read view needs, in one clonable bundle.
-///
-/// Cloned into every spawned streaming task, which is why they are `Arc`s
-/// rather than borrows of the head node.
-#[derive(Debug, Clone)]
-struct Reads {
-    catalog: Arc<Catalog>,
-    security: Arc<SecurityCatalog>,
-    statistics: Arc<Statistics>,
-}
-
-impl Reads {
-    /// Open a secured view over an already-chosen store.
-    fn over<'a>(
-        &'a self,
-        snapshot: Box<dyn slate_kernel::KvSnapshot + Send + 'a>,
-    ) -> RecordSnapshot<'a> {
-        RecordSnapshot::over(snapshot, &self.catalog, &self.security, &self.statistics)
-    }
-}
-
 /// A head node.
 ///
 /// One writer store, a pool of replicas, a lease, and the rules for who may ask
@@ -146,7 +132,6 @@ impl Reads {
 /// hand pieces of it to spawned tasks — see [`crate::session`] for why the
 /// transaction path has to.
 pub struct Head<S> {
-    reads: Reads,
     pool: Arc<ReplicaPool>,
     writer: Arc<RecordStore<Arc<S>>>,
     leadership: Arc<Leadership>,
@@ -191,15 +176,10 @@ impl<S: KvStore + KvReadStore> Head<S> {
             .with_statistics(statistics.clone())
             .with_policy(routing)
             .with_writer(Arc::clone(&writer) as Arc<dyn KvReadStore>);
-        let store = RecordStore::new(Arc::clone(&writer), catalog.clone(), security.clone())
-            .with_statistics(statistics.clone());
+        let store =
+            RecordStore::new(Arc::clone(&writer), catalog, security).with_statistics(statistics);
 
         Self {
-            reads: Reads {
-                catalog: Arc::new(catalog),
-                security: Arc::new(security),
-                statistics: Arc::new(statistics),
-            },
             pool: Arc::new(pool),
             writer: Arc::new(store),
             leadership,
@@ -234,7 +214,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
     }
 
     fn table(&self, name: &str) -> Result<&TableDef, Status> {
-        self.reads.catalog.table_by_name(name).ok_or_else(|| {
+        self.pool.catalog().table_by_name(name).ok_or_else(|| {
             // `NOT_FOUND` rather than `INVALID_ARGUMENT`: the request is
             // well-formed, this catalog simply has no such table.
             Status::new(Code::NotFound, format!("no table named `{name}`"))
@@ -269,22 +249,22 @@ impl<S: KvStore + KvReadStore> Head<S> {
             .and_then(|_| context.principal().tenant.clone())
     }
 
-    /// Pick the view that will serve a read, and say which it is.
-    async fn route(
+    /// Open the view that will serve a read, and say truthfully where it came
+    /// from.
+    ///
+    /// One call into the pool, deliberately: see the module docs and
+    /// [`ReplicaPool::snapshot_from`].
+    async fn read_view(
         &self,
         freshness: Freshness,
         affinity: Option<&Value>,
-    ) -> Result<(Arc<dyn KvReadStore>, pb::ServedBy), Status> {
-        let store = self
+    ) -> Result<(RecordSnapshot<'_>, pb::ServedBy), Status> {
+        let (view, store) = self
             .pool
-            .route(freshness, affinity)
+            .snapshot_from(freshness, affinity)
             .await
             .map_err(|error| from_kernel(&error))?;
-        let served_by = pb::ServedBy {
-            replica: store.replica_name().to_owned(),
-            sequence: store.visible_sequence().unwrap_or(0),
-        };
-        Ok((Arc::clone(store), served_by))
+        Ok((view, served_by(store.as_ref())))
     }
 
     /// Run a write as its own transaction, retrying a conflict.
@@ -410,6 +390,17 @@ impl Write<'_> {
 
 /// The rows of a query, in batches.
 type RowStream = Pin<Box<dyn futures::Stream<Item = Result<pb::QueryResponse, Status>> + Send>>;
+
+/// Where a read went, in wire form.
+///
+/// The sequence is read off the same store that opened the view, so the pair is
+/// one view's account of itself rather than two answers stitched together.
+fn served_by(store: &dyn KvReadStore) -> pb::ServedBy {
+    pb::ServedBy {
+        replica: store.replica_name().to_owned(),
+        sequence: store.visible_sequence().unwrap_or(0),
+    }
+}
 
 /// What a read served inside a transaction reports.
 fn in_transaction() -> pb::ServedBy {
@@ -598,10 +589,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
         let freshness = freshness_from_proto(request.freshness.as_ref())?;
         let affinity = Self::affinity(table, &context);
-        let (store, served_by) = self.route(freshness, affinity.as_ref()).await?;
-
-        let snapshot = store.snapshot().await.map_err(|e| from_kernel(&e))?;
-        let view = self.reads.over(snapshot);
+        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
         let row = view
             .get(&context, table, &key)
             .await
@@ -641,34 +629,33 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
         let freshness = freshness_from_proto(request.freshness.as_ref())?;
         let affinity = Self::affinity(table, &context);
-        // Routed here rather than inside the task, so that a routing failure —
-        // no replica fresh enough, no writer to fall back to — is the status of
-        // the call rather than the first item of a stream that already looked
-        // as though it had started.
-        let (store, served_by) = self.route(freshness, affinity.as_ref()).await?;
-
         let (sender, receiver) = mpsc::channel(2);
         let (started, start) = oneshot::channel();
         let scan = Scan {
-            reads: self.reads.clone(),
+            pool: Arc::clone(&self.pool),
             table: table.id(),
             context,
             query,
             batch_size,
+            freshness,
+            affinity,
         };
 
-        // The snapshot and the cursor both borrow the store, so they live in a
-        // task that owns an `Arc` to it. Same reasoning as `session.rs`.
+        // The view and the cursor both borrow the pool, so they live in a task
+        // that owns an `Arc` to it. Same reasoning as `session.rs`.
         //
-        // The task reports back on `started` once it has a cursor, and the
-        // handler waits for that. Without it every failure before the first row
-        // — an access denial, a fenced writer, a predicate the planner refuses —
-        // would arrive as the first item of a stream that had already been
-        // accepted, which a client reads as a request that succeeded and then
-        // broke. They are failures of the call, and this is what lets them be
-        // reported as one.
+        // Routing happens in there too, which it did not before: naming the
+        // replica truthfully means routing and opening the view are one call,
+        // and the view cannot outlive the task. Nothing is lost by it. The task
+        // reports back on `started` once it has a cursor, and the handler waits
+        // for that, so a routing failure — no replica fresh enough, no writer to
+        // fall back to — is still the status of the call. Without `started`
+        // every failure before the first row (an access denial, a fenced
+        // writer, a predicate the planner refuses) would arrive as the first
+        // item of a stream that had already been accepted, which a client reads
+        // as a request that succeeded and then broke.
         tokio::spawn(async move {
-            scan.run(&store, &sender, started, served_by).await;
+            scan.run(&sender, started).await;
         });
 
         match start.await {
@@ -707,9 +694,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
         let freshness = freshness_from_proto(request.freshness.as_ref())?;
         let affinity = Self::affinity(table, &context);
-        let (store, served_by) = self.route(freshness, affinity.as_ref()).await?;
-        let snapshot = store.snapshot().await.map_err(|e| from_kernel(&e))?;
-        let view = self.reads.over(snapshot);
+        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
         let explanation = view
             .explain(&context, table, &query)
             .map_err(|e| from_kernel(&e))?;
@@ -765,18 +750,20 @@ fn replay(rows: Vec<Row>, served_by: pb::ServedBy, batch_size: usize) -> RowStre
     Box::pin(futures::stream::iter(messages))
 }
 
-/// Everything a streaming query needs after routing, owned by its task.
+/// Everything a streaming query needs, owned by its task.
 struct Scan {
-    reads: Reads,
+    pool: Arc<ReplicaPool>,
     table: TableId,
     context: SecurityContext,
     query: Query,
     batch_size: usize,
+    freshness: Freshness,
+    affinity: Option<Value>,
 }
 
 impl Scan {
-    /// Open the cursor, report whether that worked, then walk it into the
-    /// channel a batch at a time.
+    /// Route, open the cursor, report whether that worked, then walk it into
+    /// the channel a batch at a time.
     ///
     /// Deliberately not `collect`: a query with no limit can be the whole
     /// table, and materialising it in order to send it would put the client's
@@ -784,20 +771,22 @@ impl Scan {
     /// channel — a slow client stops the cursor rather than filling a buffer.
     async fn run(
         &self,
-        store: &Arc<dyn KvReadStore>,
         sender: &mpsc::Sender<Result<pb::QueryResponse, Status>>,
         started: oneshot::Sender<Result<(), Status>>,
-        served_by: pb::ServedBy,
     ) {
-        let snapshot = match store.snapshot().await {
-            Ok(snapshot) => snapshot,
+        let (view, store) = match self
+            .pool
+            .snapshot_from(self.freshness, self.affinity.as_ref())
+            .await
+        {
+            Ok(routed) => routed,
             Err(error) => {
                 let _ = started.send(Err(from_kernel(&error)));
                 return;
             }
         };
-        let view = self.reads.over(snapshot);
-        let Some(definition) = self.reads.catalog.table(self.table) else {
+        let served_by = served_by(store.as_ref());
+        let Some(definition) = self.pool.catalog().table(self.table) else {
             let _ = started.send(Err(from_kernel(&KernelError::UnknownTable(self.table))));
             return;
         };

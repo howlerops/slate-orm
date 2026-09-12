@@ -429,6 +429,68 @@ async fn explain_says_when_it_ignored_a_hint() {
     assert!(explained.warnings[0].contains("by_nothing"));
 }
 
+/// The planner behind a read uses the statistics the node was configured with.
+///
+/// `estimated_rows` is the visible end of them. Worth pinning because the read
+/// path no longer keeps its own copy of the statistics — it reads the replica
+/// pool's, which is the only place they are now stated — and the failure mode
+/// of getting that wrong is quiet: a node planning against `TableStats`'s
+/// assumed thousand rows while the operator believes it configured half a
+/// million produces plans that merely look wrong. This project has already paid
+/// for that shape once, with a latency fixture and a cost model that both
+/// stated rows per block and drifted.
+///
+/// The default-configured node is the control: without it, an assertion that
+/// the estimate is large would also pass on a node that ignored the
+/// configuration and happened to guess high.
+#[tokio::test]
+async fn a_read_is_planned_with_the_statistics_the_node_was_configured_with() {
+    use slate_kernel::{Statistics, TableStats};
+    use slate_server::{HeadConfig, MetadataIdentity};
+
+    async fn estimate(config: HeadConfig) -> f64 {
+        let leadership = slate_server::Leadership::new(Arc::new(common::AlwaysLeader::default()));
+        leadership.campaign().await;
+        let serving = common::serve(slate_server::Head::new(
+            config,
+            Arc::new(MemoryStore::new()),
+            Vec::new(),
+            leadership,
+            Arc::new(MetadataIdentity::trusting_the_caller_completely()),
+        ))
+        .await;
+        serving
+            .client()
+            .await
+            .explain(app(pb::ExplainRequest {
+                transaction: String::new(),
+                query: Some(docs_query()),
+                freshness: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .estimated_rows
+    }
+
+    let assumed = estimate(HeadConfig::new(common::catalog(), common::security())).await;
+    let configured = estimate(
+        HeadConfig::new(common::catalog(), common::security()).with_statistics(
+            Statistics::new().with(common::DOCS, TableStats::with_row_count(500_000)),
+        ),
+    )
+    .await;
+
+    assert!(
+        (assumed - 1_000.0).abs() < 1.0,
+        "the control node should be planning against the assumed thousand rows, not {assumed}"
+    );
+    assert!(
+        configured > 400_000.0,
+        "a full scan of a table configured at 500,000 rows was estimated at {configured}; the statistics did not reach the read path"
+    );
+}
+
 // --- writes and transactions ----------------------------------------------
 
 #[tokio::test]
