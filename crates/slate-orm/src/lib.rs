@@ -43,6 +43,135 @@ pub use field::{Field, FieldError};
 pub use record::{Record, RecordError};
 
 /// Derive [`Record`] for a struct. See the crate docs for the attributes.
+///
+/// # Partial indexes
+///
+/// `only_where(...)` on an index attribute holds a predicate, and the index
+/// then holds an entry only for the rows that predicate admits. It is written
+/// as an ordinary Rust expression in which every **field** of the struct names
+/// its own [`Ordinal`], because the ordinals are what
+/// [`IndexBuilder::only_where`](slate_schema::IndexBuilder::only_where) takes
+/// and resolving them from a name at runtime would mean building the table the
+/// predicate is part of.
+///
+/// ```
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "docs", id = 1)]
+/// #[record(index(
+///     name = "live_by_author",
+///     id = 11,
+///     columns("author"),
+///     only_where(Expr::is_null(deleted_at))
+/// ))]
+/// struct Doc {
+///     #[record(pk)]
+///     id: u64,
+///     author: u64,
+///     deleted_at: Option<i64>,
+/// }
+///
+/// let index = Doc::table().index(slate_orm::IndexId(11)).unwrap();
+/// assert!(index.predicate().is_some());
+/// ```
+///
+/// A name that is not a field of the struct does not compile. The predicate is
+/// the one attribute the macro cannot check itself — it is arbitrary Rust — so
+/// what protects a typo from becoming an index over the wrong column is that
+/// nothing else of that name is in scope:
+///
+/// ```compile_fail
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "docs", id = 1)]
+/// #[record(index(name = "live", id = 11, columns("author"),
+///                only_where(Expr::is_null(delted_at))))]
+/// struct Doc {
+///     #[record(pk)]
+///     id: u64,
+///     author: u64,
+///     deleted_at: Option<i64>,
+/// }
+/// ```
+///
+/// Nor does a predicate that is not an [`Expr`]. The builder accepts any
+/// [`Predicate`](slate_schema::Predicate) and the write path can run any of
+/// them, but the planner reads one only by downcasting it to `Expr` — so an
+/// index declared with anything else is not a broken index, it is one no query
+/// ever chooses. The macro pins the type rather than emit that:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+/// use slate_schema::{Predicate, Row};
+///
+/// struct Everything;
+/// impl Predicate for Everything {
+///     fn truth(&self, _row: &Row) -> Option<bool> {
+///         Some(true)
+///     }
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "docs", id = 1)]
+/// #[record(index(name = "live", id = 11, columns("author"),
+///                only_where(Everything)))]
+/// struct Doc {
+///     #[record(pk)]
+///     id: u64,
+///     author: u64,
+/// }
+/// ```
+///
+/// Two predicates on one index are refused rather than merged or last-wins,
+/// since either of those leaves a predicate in the source that reads as though
+/// it were in force and is not. Terms are combined with `Expr::and`.
+///
+/// ```compile_fail
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "docs", id = 1)]
+/// #[record(index(name = "live", id = 11, columns("author"),
+///                only_where(Expr::is_null(deleted_at)),
+///                only_where(Expr::eq(author, slate_orm::Value::U64(1)))))]
+/// struct Doc {
+///     #[record(pk)]
+///     id: u64,
+///     author: u64,
+///     deleted_at: Option<i64>,
+/// }
+/// ```
+///
+/// The same predicate handed straight to the builder is accepted, which is what
+/// makes the refusal above the macro's doing rather than the trait's:
+///
+/// ```
+/// use slate_orm::{IndexDef, IndexId, TableDef, TableId, ValueType};
+/// use slate_schema::{Predicate, Row};
+///
+/// struct Everything;
+/// impl Predicate for Everything {
+///     fn truth(&self, _row: &Row) -> Option<bool> {
+///         Some(true)
+///     }
+/// }
+///
+/// let table = TableDef::builder("docs", TableId(1))
+///     .column("id", ValueType::U64)
+///     .column("author", ValueType::U64)
+///     .primary_key(["id"])
+///     .index(
+///         IndexDef::builder("live", IndexId(11))
+///             .column("author")
+///             .only_where(Everything),
+///     )
+///     .build()
+///     .unwrap();
+/// // Maintained, and never planned for: the planner cannot read it.
+/// assert!(table.index(IndexId(11)).unwrap().predicate().unwrap().as_any().is_none());
+/// ```
 pub use slate_derive::Record;
 
 // The typed layer is not a wall around the kernel; re-export what a caller

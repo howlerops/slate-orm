@@ -20,6 +20,8 @@
 //! #[record(version = 3)]                  // schema version stamped on rows
 //! #[record(tenant = "tenant_id")]         // enables physical tenant scoping
 //! #[record(index(name = "by_a_b", id = 5, unique, columns("a", desc("b"))))]
+//! #[record(index(name = "live", id = 6, columns("a"),
+//!                only_where(Expr::is_null(deleted_at))))]
 //! ```
 //!
 //! On a field:
@@ -30,6 +32,34 @@
 //! #[record(added_in = 2)]                 // introduced at this schema version
 //! #[record(index(name = "by_email", id = 10, unique, desc))]
 //! ```
+//!
+//! # Partial indexes
+//!
+//! `only_where(...)` is the one attribute holding a Rust *expression* rather
+//! than a literal, and it exists because the two things a partial index's
+//! predicate needs are exactly the two things this macro is placed to give.
+//!
+//! The first is ordinals. `IndexBuilder::only_where` names columns by
+//! `Ordinal`, and a helper that resolved a name by building the table would
+//! recurse — building the table is what evaluates the predicate. So the
+//! expression is emitted with every **field** ident bound to its ordinal, and
+//! the macro knows those positions without building anything. Fields, not
+//! columns: `#[record(rename = "...")]` changes the stored name and not the
+//! name in the struct, and the struct is what the reader of this attribute is
+//! looking at. It is the same choice `COLUMNS` already makes.
+//!
+//! Binding the field names shadows anything of the same name in scope for the
+//! length of the expression. That is a real cost and it was accepted, because
+//! an `Ordinal` is neither callable nor arithmetic: the shadowing can turn a
+//! predicate into a type error, but not into a different predicate.
+//!
+//! The second is the type. `only_where` accepts any `Predicate`, and the
+//! planner only reads a predicate it can downcast to `slate_kernel::Expr` — so
+//! a predicate of some other type is not a broken index but a *silently
+//! unused* one, which is the failure this macro should not be able to emit.
+//! The expression is therefore pinned to `Expr` on the way in, making the
+//! mistake a mismatched-types error at the attribute rather than a plan that
+//! quietly never picks the index.
 
 #![forbid(unsafe_code)]
 
@@ -98,6 +128,11 @@ struct IndexSpec {
     id: u32,
     unique: bool,
     columns: Vec<IndexColumnSpec>,
+    /// The `only_where(...)` predicate, emitted verbatim. Held unparsed beyond
+    /// `syn::Expr` on purpose: the macro has no business knowing which
+    /// predicates `Expr` can express, and one that learned would have to be
+    /// taught again every time the kernel gains a form.
+    predicate: Option<syn::Expr>,
     span: Span,
 }
 
@@ -112,6 +147,7 @@ fn parse_index(
     let mut unique = false;
     let mut descending = false;
     let mut columns: Vec<IndexColumnSpec> = Vec::new();
+    let mut predicate: Option<syn::Expr> = None;
 
     meta.parse_nested_meta(|meta| {
         if meta.path.is_ident("name") {
@@ -128,9 +164,25 @@ fn parse_index(
             columns = Punctuated::<IndexColumnSpec, Token![,]>::parse_terminated(&content)?
                 .into_iter()
                 .collect();
+        } else if meta.path.is_ident("only_where") {
+            // Two of them would mean one predicate maintained and one ignored,
+            // and the ignored one would read like it were in force.
+            if predicate.is_some() {
+                return Err(meta.error("`only_where` given twice; an index has one predicate"));
+            }
+            let content;
+            parenthesized!(content in meta.input);
+            predicate = Some(content.parse()?);
+            if !content.is_empty() {
+                return Err(content.error(
+                    "`only_where` takes a single predicate expression; combine terms with \
+                     `Expr::and` rather than a comma",
+                ));
+            }
         } else {
             return Err(meta.error(
-                "unknown index option; expected `name`, `id`, `unique`, `desc` or `columns`",
+                "unknown index option; expected `name`, `id`, `unique`, `desc`, `columns` or \
+                 `only_where`",
             ));
         }
         Ok(())
@@ -174,6 +226,7 @@ fn parse_index(
         id,
         unique,
         columns,
+        predicate,
         span,
     })
 }
@@ -339,6 +392,23 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         quote! { builder = builder.tenant_column(#name); }
     });
 
+    // Every field ident bound to its ordinal, for a partial index's predicate
+    // to name columns by the name they have in the struct. Emitted per
+    // predicate rather than once around the whole table build, so a struct with
+    // no partial index carries none of it — and so the shadowing these
+    // bindings do reaches no further than the expression that asked for it.
+    let ordinal_bindings = {
+        let names = fields.iter().map(|f| &f.ident);
+        let ordinals = (0..fields.len()).map(|i| quote! { ::slate_orm::Ordinal(#i) });
+        quote! {
+            // A predicate names the columns it needs; the rest are here to be
+            // nameable, not to be used. Non-snake-case field names have already
+            // been reported on the struct itself.
+            #[allow(unused_variables, non_snake_case)]
+            let (#(#names,)*) = (#(#ordinals,)*);
+        }
+    };
+
     let index_stmts = indexes.iter().map(|spec| {
         let name = &spec.name;
         let id = spec.id;
@@ -351,6 +421,19 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         let unique = spec.unique.then(|| quote! { index = index.unique(); });
+        let predicate = spec.predicate.as_ref().map(|expr| {
+            // The annotation is the point, not the binding: `only_where` takes
+            // any `Predicate`, and one that is not an `Expr` is an index the
+            // planner can never read. Pinned here so that is a type error on
+            // the attribute instead of an index that silently goes unused.
+            quote! {
+                index = index.only_where({
+                    #ordinal_bindings
+                    let predicate: ::slate_orm::Expr = #expr;
+                    predicate
+                });
+            }
+        });
         quote! {
             builder = builder.index({
                 let mut index = ::slate_orm::IndexDef::builder(
@@ -359,6 +442,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 );
                 #(#columns)*
                 #unique
+                #predicate
                 index
             });
         }
