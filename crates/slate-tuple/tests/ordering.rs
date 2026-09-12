@@ -356,3 +356,67 @@ fn decode_rejects_malformed_input() {
         TupleError::TrailingBytes { .. }
     ));
 }
+
+/// Skipping must land in exactly the same place as decoding, for every type.
+///
+/// A skip that drifts by a byte does not fail loudly; it decodes the *next*
+/// column as garbage, which is why this is checked against the decoder rather
+/// than against hand-counted offsets.
+#[test]
+fn skipping_agrees_with_decoding() {
+    let values = [
+        Value::Null,
+        Value::Bool(true),
+        Value::Bool(false),
+        Value::I64(0),
+        Value::I64(-1),
+        Value::I64(i64::MIN),
+        Value::U64(u64::MAX),
+        Value::F64(-0.0),
+        Value::F64(f64::NAN),
+        Value::Str(String::new()),
+        Value::Str("with\0embedded\0nulls".into()),
+        Value::Bytes(Bytes::from_static(b"\xff\x00\xff")),
+        Value::Uuid(Uuid::from_u128(u128::MAX)),
+    ];
+
+    for direction in [Direction::Asc, Direction::Desc] {
+        for value in &values {
+            let encoded = encode_with(core::slice::from_ref(value), &[direction]);
+
+            let mut reading = TupleReader::new(&encoded);
+            reading.read_dynamic(direction).expect("decode");
+            let decoded_to = reading.position();
+
+            let mut skipping = TupleReader::new(&encoded);
+            skipping.skip(direction).expect("skip");
+            assert_eq!(
+                skipping.position(),
+                decoded_to,
+                "skip disagreed with decode for {value:?} ({direction:?})"
+            );
+            assert!(skipping.is_empty());
+        }
+    }
+}
+
+proptest! {
+    /// The same, over arbitrary tuples: skipping some elements and decoding
+    /// others must leave the reader wherever a full decode would have.
+    #[test]
+    fn skipping_and_decoding_can_be_mixed((values, dirs) in any_tuple(6)) {
+        let encoded = encode_with(&values, &dirs);
+        let mut reader = TupleReader::new(&encoded);
+        for (i, value) in values.iter().enumerate() {
+            let dir = dirs.get(i).copied().unwrap_or_default();
+            // Skip every other element, decode the rest.
+            if i % 2 == 0 {
+                reader.skip(dir)?;
+            } else {
+                let ty = value.value_type().unwrap_or(ValueType::I64);
+                prop_assert_eq!(&reader.read(ty, dir)?, value);
+            }
+        }
+        prop_assert!(reader.is_empty());
+    }
+}

@@ -20,7 +20,7 @@ use crate::stats::{POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, SORT_ROW_COST
 use crate::store::{KeyRange, ScanOrder};
 use crate::{expr::Expr, keys};
 use core::ops::Bound;
-use slate_schema::{IndexDef, IndexId, Ordinal, TableDef};
+use slate_schema::{ColumnSet, IndexDef, IndexId, Ordinal, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into, prefix_successor};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -76,6 +76,12 @@ pub enum Projection {
     /// Columns outside the list read back as [`Value::Null`], which is
     /// indistinguishable from a stored null — so a projected row is for a caller
     /// that knows what it asked for, not for round-tripping back into storage.
+    ///
+    /// Two sets of columns come back regardless: the primary key, which is
+    /// decoded from the row's key before its body is touched, and whatever the
+    /// predicate reads, which has to be decoded to evaluate it. Both are free by
+    /// the time the row is returned, so withholding them would cost work rather
+    /// than save it.
     Columns(Vec<Ordinal>),
 }
 
@@ -96,6 +102,15 @@ impl Projection {
     }
 }
 
+/// How selective the residual must be before it is worth decoding a row in two
+/// passes.
+///
+/// Splitting the decode costs one extra walk over every row and saves a full
+/// decode of every rejected one. A walk is roughly a third of a decode, so the
+/// split pays once the residual rejects about a third; half leaves margin for
+/// an estimate that is wrong in the usual direction.
+pub const FILTER_FIRST_SELECTIVITY: f64 = 0.5;
+
 /// A chosen access path plus the filter still to apply.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
@@ -112,6 +127,21 @@ pub struct Plan {
     /// Sorting the executor must do, because no access path produced the
     /// requested order. `None` means the rows arrive already ordered.
     pub sort: Option<Vec<SortKey>>,
+    /// Columns the residual predicate reads.
+    ///
+    /// A scan decodes these first and evaluates the filter before touching
+    /// anything else, so a row that will be rejected never pays for the columns
+    /// only its caller wanted.
+    pub predicate_columns: ColumnSet,
+    /// Columns the caller ends up seeing: the projection, plus the predicate's,
+    /// since those are decoded anyway.
+    pub output_columns: ColumnSet,
+    /// Whether to decode the predicate's columns first and the rest only for
+    /// rows that survive.
+    ///
+    /// Only worth it when the residual rejects enough rows to cover the extra
+    /// pass; see [`FILTER_FIRST_SELECTIVITY`].
+    pub filter_first: bool,
     /// Rows the planner expects this to return.
     pub estimated_rows: f64,
     /// Estimated cost, in object-storage round trips. See [`crate::stats`].
@@ -311,12 +341,26 @@ pub fn plan_full(
     let unsatisfiable = conjuncts.iter().any(|c| {
         matches!(c, Expr::Compare { value, .. } if value.is_null()) || matches!(c, Expr::False)
     });
+    let predicate_columns: ColumnSet = predicate.columns().into_iter().collect();
+    let mut output_columns = predicate_columns.clone();
+    match projection.columns() {
+        None => output_columns = ColumnSet::all(table.columns().len()),
+        Some(columns) => {
+            for column in columns {
+                output_columns.insert(*column);
+            }
+        }
+    }
+
     if unsatisfiable {
         return Plan {
             access: Access::Nothing,
             residual: predicate,
             order,
             sort: None,
+            predicate_columns,
+            output_columns,
+            filter_first: false,
             estimated_rows: 0.0,
             estimated_cost: 0.0,
         };
@@ -374,6 +418,17 @@ pub fn plan_full(
         ));
     }
 
+    // How much of what the access path admits the residual still rejects. Only
+    // worth splitting the decode in two when that is a real fraction.
+    let residual_selectivity = best.as_ref().map_or(1.0, |(candidate, ..)| {
+        if candidate.bound_selectivity > 0.0 {
+            (total_selectivity / candidate.bound_selectivity).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    });
+    let filter_first = residual_selectivity < FILTER_FIRST_SELECTIVITY;
+
     let (access, must_sort, estimated_rows, estimated_cost) = best.map_or_else(
         || {
             (
@@ -393,6 +448,9 @@ pub fn plan_full(
         residual: predicate,
         order,
         sort: must_sort.then(|| sort.to_vec()),
+        predicate_columns,
+        output_columns,
+        filter_first,
         estimated_rows,
         estimated_cost,
     }

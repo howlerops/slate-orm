@@ -33,11 +33,11 @@ fn as_bytes(bound: &Bound<Vec<u8>>) -> Bound<&[u8]> {
     }
 }
 
-type Committed = BTreeMap<Vec<u8>, Bytes>;
+type Committed = BTreeMap<Bytes, Bytes>;
 /// A transaction's view: shared by pointer, so beginning one is O(1).
 type Snapshot = Arc<Committed>;
 /// A buffered write: `Some` to put, `None` to delete.
-type Pending = BTreeMap<Vec<u8>, Option<Bytes>>;
+type Pending = BTreeMap<Bytes, Option<Bytes>>;
 
 #[derive(Debug, Default)]
 struct Shared {
@@ -45,7 +45,7 @@ struct Shared {
     /// Monotonic commit counter; also the version a transaction snapshots at.
     version: u64,
     /// Keys written by each commit, newest last, for conflict detection.
-    history: Vec<(u64, BTreeSet<Vec<u8>>)>,
+    history: Vec<(u64, BTreeSet<Bytes>)>,
     /// Snapshot versions of transactions still running, so history is only
     /// trimmed once no one can still need it.
     active: BTreeMap<u64, usize>,
@@ -110,7 +110,7 @@ impl MemoryStore {
     /// If another thread panicked while holding the store's lock.
     #[must_use]
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        self.locked(|s| s.committed.keys().cloned().collect())
+        self.locked(|s| s.committed.keys().map(|k| k.to_vec()).collect())
     }
 
     /// Every committed key and value, in key order. Intended for assertions
@@ -123,7 +123,7 @@ impl MemoryStore {
         self.locked(|s| {
             s.committed
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| (k.to_vec(), v.clone()))
                 .collect()
         })
     }
@@ -202,11 +202,26 @@ impl MemoryTransaction {
 
     /// The rows of `range`, with this transaction's own writes applied.
     ///
-    /// Materialises only the range asked for. Copying the whole map and then
-    /// filtering would be O(database) per scan, which turns every measurement
-    /// of the read path into a measurement of this function.
-    fn visible_range(&self, range: &KeyRange) -> Committed {
+    /// Materialises only the range asked for, and only merges when the
+    /// transaction has actually written into it. Keys are `Bytes`, so producing
+    /// a result copies no key bytes at all — the read path is measured through
+    /// this function, and it should be measuring the read path.
+    fn visible_range(&self, range: &KeyRange) -> Vec<KeyValue> {
         let bounds = (as_bytes(&range.start), as_bytes(&range.end));
+        let touched =
+            self.with_pending(|pending| pending.range::<[u8], _>(bounds).next().is_some());
+
+        if !touched {
+            return self
+                .base()
+                .range::<[u8], _>(bounds)
+                .map(|(key, value)| KeyValue {
+                    key: key.clone(),
+                    value: value.clone(),
+                })
+                .collect();
+        }
+
         let mut view: Committed = self
             .base()
             .range::<[u8], _>(bounds)
@@ -224,7 +239,9 @@ impl MemoryTransaction {
                 }
             }
         });
-        view
+        view.into_iter()
+            .map(|(key, value)| KeyValue { key, value })
+            .collect()
     }
 }
 
@@ -250,14 +267,7 @@ impl KvSnapshot for MemoryTransaction {
         range: KeyRange,
         order: ScanOrder,
     ) -> Result<Box<dyn KvIterator + Send + '_>> {
-        let mut items: Vec<KeyValue> = self
-            .visible_range(&range)
-            .into_iter()
-            .map(|(key, value)| KeyValue {
-                key: Bytes::from(key),
-                value,
-            })
-            .collect();
+        let mut items = self.visible_range(&range);
         if order == ScanOrder::Descending {
             items.reverse();
         }
@@ -270,12 +280,12 @@ impl KvSnapshot for MemoryTransaction {
 #[async_trait]
 impl KvTransaction for MemoryTransaction {
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.with_pending(|p| p.insert(key, Some(Bytes::from(value))));
+        self.with_pending(|p| p.insert(Bytes::from(key), Some(Bytes::from(value))));
         Ok(())
     }
 
     fn delete(&self, key: Vec<u8>) -> Result<()> {
-        self.with_pending(|p| p.insert(key, None));
+        self.with_pending(|p| p.insert(Bytes::from(key), None));
         Ok(())
     }
 

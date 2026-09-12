@@ -10,17 +10,17 @@ use crate::error::{KernelError, Result};
 use crate::expr::Expr;
 use crate::plan::{Access, Plan};
 use crate::query::{NullsOrder, SortKey};
-use crate::read::{self, IndexCursor, RowCursor};
+use crate::read::{self, IndexCursor, RawRow, RowCursor};
 use crate::store::KvSnapshot;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use slate_schema::{IndexDef, Row, TableDef};
+use slate_schema::{ColumnSet, IndexDef, Row, TableDef, decode_row_columns};
 use slate_tuple::Direction;
 use std::sync::Arc;
 
 /// Where a cursor's candidate rows come from.
 enum Source<'a> {
-    /// Rows read straight out of the table's key range.
+    /// Rows read straight out of the table's key range, still encoded.
     Rows(RowCursor<'a>),
     /// Primary keys read from an index, each fetched from the table.
     ///
@@ -30,7 +30,7 @@ enum Source<'a> {
     Index {
         cursor: IndexCursor<'a>,
         index: &'a IndexDef,
-        inflight: FuturesOrdered<BoxFuture<'a, Result<Option<Row>>>>,
+        inflight: FuturesOrdered<BoxFuture<'a, Result<Option<RawRow>>>>,
         exhausted: bool,
     },
     /// Rows assembled from index entries, with no table read at all.
@@ -65,6 +65,15 @@ pub struct QueryCursor<'a> {
     table: &'a TableDef,
     source: Source<'a>,
     residual: Arc<Expr>,
+    /// Two-phase decoding: filter on these, then materialise the rest.
+    ///
+    /// Skipping a column is advancing a cursor; decoding one can be an
+    /// allocation. On a scan that rejects most rows, the difference is most of
+    /// the work.
+    filter_columns: ColumnSet,
+    output_columns: ColumnSet,
+    /// Whether the output needs anything the filter did not already decode.
+    needs_second_phase: bool,
     prefetch: usize,
     limit: Option<usize>,
     offset: usize,
@@ -78,6 +87,53 @@ impl core::fmt::Debug for QueryCursor<'_> {
             .field("table", &self.table.name())
             .field("yielded", &self.yielded)
             .finish_non_exhaustive()
+    }
+}
+
+/// Decode `raw` far enough to filter it, then far enough to return it.
+///
+/// The first pass reads only what the predicate needs; the second runs only for
+/// rows that survived. A row the filter rejects never pays to decode the
+/// columns its caller asked for, which on a selective scan is most of the rows.
+///
+/// A free function rather than a method so the caller can hold a mutable borrow
+/// of the cursor's source while it runs.
+fn materialise(
+    table: &TableDef,
+    residual: &Expr,
+    filter_columns: &ColumnSet,
+    output_columns: &ColumnSet,
+    two_phase: bool,
+    raw: &RawRow,
+) -> Result<Option<Row>> {
+    // One pass when the residual is not expected to reject much: decoding the
+    // output columns anyway costs less than walking the row twice.
+    let first = if two_phase {
+        filter_columns
+    } else {
+        output_columns
+    };
+    let decoded = decode_row_columns(table, &raw.primary_key, &raw.body, wanted(first, table))?;
+    if !residual.admits(&decoded) {
+        return Ok(None);
+    }
+    if !two_phase {
+        return Ok(Some(decoded));
+    }
+    Ok(Some(decode_row_columns(
+        table,
+        &raw.primary_key,
+        &raw.body,
+        wanted(output_columns, table),
+    )?))
+}
+
+/// `None` when the set holds every column, so the decoder can stop asking.
+fn wanted<'a>(columns: &'a ColumnSet, table: &TableDef) -> Option<&'a ColumnSet> {
+    if columns.covers_all(table.columns().len()) {
+        None
+    } else {
+        Some(columns)
     }
 }
 
@@ -184,6 +240,10 @@ impl<'a> QueryCursor<'a> {
             snapshot,
             table,
             source,
+            needs_second_phase: plan.filter_first
+                && !plan.predicate_columns.contains_all(&plan.output_columns),
+            filter_columns: plan.predicate_columns,
+            output_columns: plan.output_columns,
             residual: plan.residual,
             prefetch: DEFAULT_PREFETCH,
             limit: None,
@@ -253,12 +313,105 @@ impl<'a> QueryCursor<'a> {
 
     /// The next row that passes the residual, ignoring the limit and offset.
     async fn next_admitted(&mut self) -> Result<Option<Row>> {
-        while let Some(row) = self.next_candidate().await? {
-            if self.residual.admits(&row) {
-                return Ok(Some(row));
+        // Both row-reading sources decode the same way: filter on the
+        // predicate's columns, then materialise the rest. Keeping that in one
+        // place is not only less code — having a projection honoured on a table
+        // scan and ignored on an index scan is exactly the kind of difference
+        // nobody notices until a plan changes.
+        let Self {
+            source,
+            table,
+            snapshot,
+            residual,
+            filter_columns,
+            output_columns,
+            needs_second_phase,
+            prefetch,
+            ..
+        } = self;
+
+        match source {
+            Source::Rows(cursor) => {
+                while let Some(raw) = cursor.next_raw().await? {
+                    if let Some(row) = materialise(
+                        table,
+                        residual,
+                        filter_columns,
+                        output_columns,
+                        *needs_second_phase,
+                        &raw,
+                    )? {
+                        return Ok(Some(row));
+                    }
+                }
+                Ok(None)
+            }
+            Source::Index {
+                cursor,
+                index,
+                inflight,
+                exhausted,
+            } => {
+                loop {
+                    // Keep the pipeline full. Reading the next key from the
+                    // index is a scan step and cheap; the row read it implies is
+                    // a round trip, so the reads are issued together and
+                    // collected in order.
+                    while !*exhausted && inflight.len() < *prefetch {
+                        match cursor.next().await? {
+                            Some((_, primary_key)) => {
+                                let snapshot = *snapshot;
+                                let table = *table;
+                                inflight.push_back(Box::pin(async move {
+                                    let body =
+                                        read::read_row_body(snapshot, table, &primary_key).await?;
+                                    Ok(body.map(|body| RawRow { primary_key, body }))
+                                }));
+                            }
+                            None => *exhausted = true,
+                        }
+                    }
+
+                    match inflight.next().await {
+                        Some(Ok(Some(raw))) => {
+                            if let Some(row) = materialise(
+                                table,
+                                residual,
+                                filter_columns,
+                                output_columns,
+                                *needs_second_phase,
+                                &raw,
+                            )? {
+                                return Ok(Some(row));
+                            }
+                        }
+                        Some(Err(error)) => return Err(error),
+                        // Index entries and rows are written in one transaction,
+                        // so on a point-in-time view an entry without a row means
+                        // the two have diverged on disk. On a replica that
+                        // follows the manifest it means only that the view
+                        // advanced between the two reads.
+                        Some(Ok(None)) => {
+                            if snapshot.is_point_in_time() {
+                                return Err(KernelError::CorruptIndexEntry {
+                                    table: table.name().to_owned(),
+                                    index: index.name().to_owned(),
+                                });
+                            }
+                        }
+                        None => return Ok(None),
+                    }
+                }
+            }
+            _ => {
+                while let Some(row) = self.next_candidate().await? {
+                    if self.residual.admits(&row) {
+                        return Ok(Some(row));
+                    }
+                }
+                Ok(None)
             }
         }
-        Ok(None)
     }
 
     async fn next_candidate(&mut self) -> Result<Option<Row>> {
@@ -266,7 +419,7 @@ impl<'a> QueryCursor<'a> {
             Source::Empty => Ok(None),
             Source::Sorted(rows) => Ok(rows.next()),
             Source::Point(row) => Ok(row.take()),
-            Source::Rows(cursor) => cursor.next().await,
+            Source::Rows(_) => unreachable!("handled by next_admitted"),
             Source::CoveringIndex { cursor, index } => {
                 // The entry already holds every column this query reads, so
                 // there is nothing to fetch. This is the whole point of a
@@ -281,50 +434,7 @@ impl<'a> QueryCursor<'a> {
                     &primary_key,
                 )))
             }
-            Source::Index {
-                cursor,
-                index,
-                inflight,
-                exhausted,
-            } => {
-                loop {
-                    // Keep the pipeline full. Reading the next key from the
-                    // index is a scan step and cheap; the row read it implies is
-                    // a round trip, so the reads are issued together and
-                    // collected in order.
-                    while !*exhausted && inflight.len() < self.prefetch {
-                        match cursor.next().await? {
-                            Some((_, primary_key)) => {
-                                let snapshot = self.snapshot;
-                                let table = self.table;
-                                inflight.push_back(Box::pin(async move {
-                                    read::read_row_unchecked(snapshot, table, &primary_key).await
-                                }));
-                            }
-                            None => *exhausted = true,
-                        }
-                    }
-
-                    match inflight.next().await {
-                        Some(Ok(Some(row))) => return Ok(Some(row)),
-                        Some(Err(error)) => return Err(error),
-                        // Index entries and rows are written in one
-                        // transaction, so on a point-in-time view an entry
-                        // without a row means the two have diverged on disk. On
-                        // a replica that follows the manifest it means only that
-                        // the view advanced between the two reads.
-                        Some(Ok(None)) => {
-                            if self.snapshot.is_point_in_time() {
-                                return Err(KernelError::CorruptIndexEntry {
-                                    table: self.table.name().to_owned(),
-                                    index: index.name().to_owned(),
-                                });
-                            }
-                        }
-                        None => return Ok(None),
-                    }
-                }
-            }
+            Source::Index { .. } => unreachable!("handled by next_admitted"),
         }
     }
 

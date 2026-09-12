@@ -28,13 +28,15 @@
 #![warn(missing_docs)]
 
 pub mod catalog;
+pub mod columns;
 pub mod error;
 pub mod row;
 pub mod table;
 
 pub use catalog::Catalog;
+pub use columns::ColumnSet;
 pub use error::{Result, SchemaError};
-pub use row::{Row, decode_row, encode_body};
+pub use row::{Row, decode_row, decode_row_columns, encode_body};
 pub use table::{
     ColumnDef, IndexBuilder, IndexColumn, IndexDef, IndexId, Ordinal, TableBuilder, TableDef,
     TableId,

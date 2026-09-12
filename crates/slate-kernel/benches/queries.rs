@@ -289,5 +289,42 @@ fn writes(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, planning, reads, writes);
+criterion_group!(benches, planning, scan_row_breakdown, reads, writes);
 criterion_main!(benches);
+
+/// Where the time in a scanned row actually goes.
+///
+/// A table scan is now the plan the cost model picks most often, so its
+/// per-row cost is the thing worth breaking down: iterator overhead, decoding
+/// the key, decoding the body, and evaluating the predicate.
+fn scan_row_breakdown(c: &mut Criterion) {
+    use slate_kernel::keys;
+    use slate_schema::{decode_row, encode_body};
+
+    let table = events();
+    let row = row(0, 1234);
+    let key = keys::row_key(&table, &row.primary_key_values(&table));
+    let body = encode_body(&table, &row);
+    let primary_key = row.primary_key_values(&table);
+
+    // A predicate that a scan would have to evaluate on every row.
+    let predicate = Expr::eq(column("kind"), Value::Str("kind-7".into())).and(Expr::compare(
+        column("at"),
+        CmpOp::Ge,
+        Value::I64(100),
+    ));
+
+    let mut group = c.benchmark_group("scan_row");
+    group.bench_function("decode_key", |b| {
+        b.iter(|| keys::decode_row_key(black_box(&table), black_box(&key)).expect("key"));
+    });
+    group.bench_function("decode_body", |b| {
+        b.iter(|| {
+            decode_row(black_box(&table), black_box(&primary_key), black_box(&body)).expect("row")
+        });
+    });
+    group.bench_function("evaluate_predicate", |b| {
+        b.iter(|| black_box(&predicate).admits(black_box(&row)));
+    });
+    group.finish();
+}

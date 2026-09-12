@@ -14,6 +14,7 @@ use crate::query::Query;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
+use bytes::Bytes;
 use slate_schema::{IndexDef, Ordinal, Row, TableDef, decode_row};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
@@ -36,6 +37,27 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         limit: None,
         offset: 0,
     }
+}
+
+/// A row as it is stored: its key already decoded, its body still bytes.
+///
+/// Kept undecoded so the executor can filter on a few columns before paying to
+/// materialise the rest.
+#[derive(Debug, Clone)]
+pub struct RawRow {
+    /// The primary key, decoded from the key.
+    pub primary_key: Vec<Value>,
+    /// The row body, still encoded.
+    pub body: Bytes,
+}
+
+/// Read a row's stored body without decoding it.
+pub(crate) async fn read_row_body(
+    snapshot: &dyn KvSnapshot,
+    table: &TableDef,
+    primary_key: &[Value],
+) -> Result<Option<Bytes>> {
+    snapshot.get(&keys::row_key(table, primary_key)).await
 }
 
 /// Read a row with no authorisation or policy applied.
@@ -221,13 +243,23 @@ impl core::fmt::Debug for RowCursor<'_> {
 }
 
 impl RowCursor<'_> {
-    /// The next row, or `None` at the end of the range.
-    pub async fn next(&mut self) -> Result<Option<Row>> {
+    /// The next row, still encoded.
+    pub async fn next_raw(&mut self) -> Result<Option<RawRow>> {
         let Some(kv) = self.inner.next().await? else {
             return Ok(None);
         };
-        let primary_key = keys::decode_row_key(self.table, &kv.key)?;
-        Ok(Some(decode_row(self.table, &primary_key, &kv.value)?))
+        Ok(Some(RawRow {
+            primary_key: keys::decode_row_key(self.table, &kv.key)?,
+            body: kv.value,
+        }))
+    }
+
+    /// The next row, fully decoded.
+    pub async fn next(&mut self) -> Result<Option<Row>> {
+        match self.next_raw().await? {
+            None => Ok(None),
+            Some(raw) => Ok(Some(decode_row(self.table, &raw.primary_key, &raw.body)?)),
+        }
     }
 
     /// Drain the cursor into a vector.

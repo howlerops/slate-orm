@@ -505,8 +505,65 @@ impl<'a> TupleReader<'a> {
     }
 
     /// Advance past the next element without materialising it.
+    ///
+    /// Genuinely without: decoding a value only to drop it allocated a `String`
+    /// or a `Bytes` per skipped column, which is the whole cost of skipping a
+    /// column a query does not read.
     pub fn skip(&mut self, direction: Direction) -> Result<()> {
-        self.read_dynamic(direction).map(|_| ())
+        let mask = direction.mask();
+        let start = self.pos;
+        let code = self.byte(mask)?;
+
+        if code == codes::NULL || code == codes::FALSE || code == codes::TRUE {
+            return Ok(());
+        }
+        if (codes::INT_MIN..=codes::INT_MAX).contains(&code) {
+            let len = if code > codes::INT_ZERO {
+                usize::from(code - codes::INT_ZERO)
+            } else {
+                usize::from(codes::INT_ZERO - code)
+            };
+            return self.advance(len);
+        }
+        match code {
+            codes::BYTES | codes::STR => self.skip_escaped(mask),
+            codes::F64 => self.advance(8),
+            codes::UUID => self.advance(16),
+            _ => Err(TupleError::UnknownTypeCode {
+                offset: start,
+                code,
+            }),
+        }
+    }
+
+    /// Move past `n` bytes, or report how many were missing.
+    fn advance(&mut self, n: usize) -> Result<()> {
+        let end = self.pos.checked_add(n).filter(|end| *end <= self.buf.len());
+        match end {
+            Some(end) => {
+                self.pos = end;
+                Ok(())
+            }
+            None => Err(TupleError::Truncated {
+                offset: self.pos,
+                needed: n - (self.buf.len() - self.pos.min(self.buf.len())),
+            }),
+        }
+    }
+
+    /// Move past a zero-escaped byte string without copying it.
+    fn skip_escaped(&mut self, mask: u8) -> Result<()> {
+        loop {
+            if self.byte(mask)? != codes::NUL {
+                continue;
+            }
+            let offset = self.pos - 1;
+            match self.byte(mask)? {
+                codes::NUL => return Ok(()),
+                codes::ESCAPE => {}
+                _ => return Err(TupleError::MalformedEscape { offset }),
+            }
+        }
     }
 }
 

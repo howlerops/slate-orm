@@ -4,6 +4,7 @@
 //! live in the key and are *not* repeated in the body: they are recovered by
 //! decoding the key, which costs less than storing them twice on every row.
 
+use crate::columns::ColumnSet;
 use crate::error::{Result, SchemaError};
 use crate::table::{IndexDef, Ordinal, TableDef};
 use slate_tuple::{TupleReader, Value, encode_value_into};
@@ -120,7 +121,7 @@ pub fn encode_body(table: &TableDef, row: &Row) -> Vec<u8> {
     for ordinal in table.body_columns() {
         encode_value_into(
             &mut out,
-            &row.value_or_null(ordinal),
+            &row.value_or_null(*ordinal),
             slate_tuple::Direction::Asc,
         );
     }
@@ -137,6 +138,24 @@ pub fn encode_body(table: &TableDef, row: &Row) -> Vec<u8> {
 /// builder only allows a later-added column to be nullable — and why a row from
 /// a *newer* schema than this build is an error rather than a guess.
 pub fn decode_row(table: &TableDef, primary_key: &[Value], body: &[u8]) -> Result<Row> {
+    decode_row_columns(table, primary_key, body, None)
+}
+
+/// Rebuild a row, decoding only the columns in `wanted`.
+///
+/// Columns outside the set are skipped rather than decoded, which for a string
+/// or a byte column is the difference between an allocation and advancing a
+/// cursor. Passing `None` decodes everything.
+///
+/// Skipped columns come back null, indistinguishable from a stored null — so
+/// this is for a caller that knows what it asked for. See
+/// [`Projection`](../slate_kernel/plan/enum.Projection.html).
+pub fn decode_row_columns(
+    table: &TableDef,
+    primary_key: &[Value],
+    body: &[u8],
+    wanted: Option<&ColumnSet>,
+) -> Result<Row> {
     let mut cursor = body.iter().copied();
     let format = cursor.next().ok_or_else(|| SchemaError::RowDecode {
         table: table.name().to_owned(),
@@ -175,11 +194,30 @@ pub fn decode_row(table: &TableDef, primary_key: &[Value], body: &[u8]) -> Resul
         });
     }
 
-    let payload = body.get(header_len..).unwrap_or_default();
-    let mut reader = TupleReader::new(payload);
     let mut values = vec![Value::Null; table.columns().len()];
 
-    for ordinal in table.body_columns() {
+    // Nothing wanted from the body: do not walk it at all. This is the shape of
+    // the filtering pass when a predicate only touches key columns, and walking
+    // the body to skip every field of it would be the whole cost of that pass.
+    if wanted.is_some_and(|wanted| {
+        !table
+            .body_columns()
+            .iter()
+            .any(|ordinal| wanted.contains(*ordinal))
+    }) {
+        for (ordinal, value) in table.primary_key().iter().zip(primary_key) {
+            if let Some(slot) = values.get_mut(ordinal.0) {
+                *slot = value.clone();
+            }
+        }
+        return Ok(Row::new(values));
+    }
+
+    let payload = body.get(header_len..).unwrap_or_default();
+    let mut reader = TupleReader::new(payload);
+    let mut decoded = 0;
+
+    for &ordinal in table.body_columns() {
         let Some(column) = table.column(ordinal) else {
             continue;
         };
@@ -194,6 +232,18 @@ pub fn decode_row(table: &TableDef, primary_key: &[Value], body: &[u8]) -> Resul
             }
             continue;
         }
+        decoded += 1;
+
+        if wanted.is_some_and(|wanted| !wanted.contains(ordinal)) {
+            reader
+                .skip(slate_tuple::Direction::Asc)
+                .map_err(|source| SchemaError::RowDecode {
+                    table: table.name().to_owned(),
+                    source,
+                })?;
+            continue;
+        }
+
         let value = reader
             .read(column.value_type(), slate_tuple::Direction::Asc)
             .map_err(|source| SchemaError::RowDecode {
@@ -209,7 +259,7 @@ pub fn decode_row(table: &TableDef, primary_key: &[Value], body: &[u8]) -> Resul
         return Err(SchemaError::RowDecode {
             table: table.name().to_owned(),
             source: slate_tuple::TupleError::TrailingBytes {
-                decoded: table.body_columns().len(),
+                decoded,
                 remaining: reader.remainder().len(),
             },
         });

@@ -165,6 +165,11 @@ pub struct TableDef {
     name: String,
     columns: Vec<ColumnDef>,
     primary_key: Vec<Ordinal>,
+    /// Columns stored in the row body, precomputed.
+    ///
+    /// Decoding a row walks this list, so building it per decode meant an
+    /// allocation on every row of every scan.
+    body_columns: Vec<Ordinal>,
     indexes: Vec<IndexDef>,
     tenant_column: Option<Ordinal>,
     schema_version: u32,
@@ -260,11 +265,8 @@ impl TableDef {
     /// Primary key columns are omitted: they are already in the key, and
     /// reconstructing them from it costs less than storing them twice.
     #[must_use]
-    pub fn body_columns(&self) -> Vec<Ordinal> {
-        (0..self.columns.len())
-            .map(Ordinal)
-            .filter(|o| !self.is_primary_key_column(*o))
-            .collect()
+    pub fn body_columns(&self) -> &[Ordinal] {
+        &self.body_columns
     }
 
     /// Every secondary index on the table.
@@ -502,11 +504,17 @@ impl TableBuilder {
             });
         }
 
+        let body_columns = (0..self.columns.len())
+            .map(Ordinal)
+            .filter(|o| !primary_key.contains(o))
+            .collect();
+
         Ok(TableDef {
             id: self.id,
             name: self.name,
             columns: self.columns,
             primary_key,
+            body_columns,
             indexes,
             tenant_column,
             schema_version: self.schema_version,
