@@ -9,6 +9,7 @@ use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
 use crate::keys::{self, IndexEntry};
+use crate::plan::Projection;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
@@ -239,7 +240,25 @@ impl<'a> RecordTransaction<'a> {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<QueryCursor<'q>> {
-        self.reads().query(context, table, filter, order).await
+        self.query_projected(context, table, filter, order, &Projection::All)
+            .await
+    }
+
+    /// [`RecordTransaction::query`], reading only the columns named.
+    ///
+    /// When an index holds every column the query touches, the row lookup is
+    /// skipped entirely. Columns outside the projection come back null.
+    pub async fn query_projected<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        filter: Expr,
+        order: ScanOrder,
+        projection: &Projection,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads()
+            .query(context, table, filter, order, projection)
+            .await
     }
 
     /// Read a row with no authorisation or policy applied, for the write paths
@@ -554,6 +573,22 @@ impl<'a> RecordSnapshot<'a> {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<QueryCursor<'q>> {
-        self.reads().query(context, table, filter, order).await
+        self.query_projected(context, table, filter, order, &Projection::All)
+            .await
+    }
+
+    /// [`RecordSnapshot::query`], reading only the columns named. See
+    /// [`RecordTransaction::query_projected`].
+    pub async fn query_projected<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        filter: Expr,
+        order: ScanOrder,
+        projection: &Projection,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads()
+            .query(context, table, filter, order, projection)
+            .await
     }
 }

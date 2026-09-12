@@ -262,6 +262,7 @@ async fn the_planner_uses_the_indexes_it_should() {
             Access::IndexScan {
                 index: by_value,
                 range: match_any(),
+                covering: false,
             },
         ),
         (
@@ -270,6 +271,7 @@ async fn the_planner_uses_the_indexes_it_should() {
             Access::IndexScan {
                 index: by_label,
                 range: match_any(),
+                covering: false,
             },
         ),
         (
@@ -287,12 +289,13 @@ async fn the_planner_uses_the_indexes_it_should() {
             Access::IndexScan {
                 index: by_region_value,
                 range: match_any(),
+                covering: false,
             },
         ),
         (
-            "a full key match stays on the table",
+            "a full key match is a point read, not a one-row scan",
             Expr::eq(region, Value::Str("eu".into())).and(Expr::eq(bucket, Value::I64(7))),
-            Access::TableScan { range: match_any() },
+            Access::PointGet { key: Vec::new() },
         ),
         (
             "an impossible predicate reads nothing",
@@ -305,6 +308,7 @@ async fn the_planner_uses_the_indexes_it_should() {
         let access = plan(&table, &filter, ScanOrder::Ascending).access;
         let ok = match (&expected, &access) {
             (Access::Nothing, Access::Nothing) => true,
+            (Access::PointGet { .. }, Access::PointGet { .. }) => true,
             (Access::TableScan { .. }, Access::TableScan { .. }) => true,
             (Access::IndexScan { index: a, .. }, Access::IndexScan { index: b, .. }) => a == b,
             _ => false,

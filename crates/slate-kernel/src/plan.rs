@@ -20,12 +20,22 @@ use crate::{expr::Expr, keys};
 use core::ops::Bound;
 use slate_schema::{IndexDef, IndexId, Ordinal, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into, prefix_successor};
+use std::collections::BTreeSet;
 
 use crate::expr::CmpOp;
 
 /// How the executor will reach the rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Access {
+    /// Fetch exactly one row by its primary key.
+    ///
+    /// Distinct from a one-row `TableScan` because it is a point read rather
+    /// than opening an iterator, and a point read is the cheapest thing the
+    /// storage layer does.
+    PointGet {
+        /// The full primary key, in key order.
+        key: Vec<Value>,
+    },
     /// Read rows directly from the table's key range.
     TableScan {
         /// The range to scan. Always within the table's own prefix.
@@ -37,9 +47,50 @@ pub enum Access {
         index: IndexId,
         /// The range to scan. Always within the index's own prefix.
         range: KeyRange,
+        /// Whether the index entry alone answers the query.
+        ///
+        /// When true the row lookup is skipped entirely, which is the
+        /// difference between one read per matching row and none. See
+        /// [`Projection`].
+        covering: bool,
     },
     /// The predicate cannot be satisfied; read nothing.
     Nothing,
+}
+
+/// Which columns a query needs.
+///
+/// Naming fewer columns is not only less data to carry: if an index holds all
+/// of them, the row itself never has to be read. That turns the dominant cost of
+/// an index scan — one point read per matching row — into nothing at all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Projection {
+    /// Every column of the table.
+    #[default]
+    All,
+    /// Only these columns.
+    ///
+    /// Columns outside the list read back as [`Value::Null`], which is
+    /// indistinguishable from a stored null — so a projected row is for a caller
+    /// that knows what it asked for, not for round-tripping back into storage.
+    Columns(Vec<Ordinal>),
+}
+
+impl Projection {
+    /// Nothing but the predicate's own columns, for counting.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self::Columns(Vec::new())
+    }
+
+    /// The columns this projection needs, or `None` for all of them.
+    #[must_use]
+    pub fn columns(&self) -> Option<&[Ordinal]> {
+        match self {
+            Self::All => None,
+            Self::Columns(columns) => Some(columns),
+        }
+    }
 }
 
 /// A chosen access path plus the filter still to apply.
@@ -86,6 +137,20 @@ impl Candidate {
 /// it.
 #[must_use]
 pub fn plan(table: &TableDef, predicate: &Expr, order: ScanOrder) -> Plan {
+    plan_projected(table, predicate, order, &Projection::All)
+}
+
+/// Choose an access path, given the columns the caller actually needs.
+///
+/// A narrower projection can make an index-only scan possible; see
+/// [`Projection`].
+#[must_use]
+pub fn plan_projected(
+    table: &TableDef,
+    predicate: &Expr,
+    order: ScanOrder,
+    projection: &Projection,
+) -> Plan {
     let conjuncts = predicate.conjuncts();
 
     // A comparison against a null literal is Unknown for every row, so the
@@ -120,9 +185,17 @@ pub fn plan(table: &TableDef, predicate: &Expr, order: ScanOrder) -> Plan {
         }
     };
 
+    // What the query needs to see: the projected columns plus whatever the
+    // predicate reads, since the predicate still has to be evaluated.
+    let mut needed: BTreeSet<Ordinal> = predicate.columns();
+    match projection.columns() {
+        None => needed.extend((0..table.columns().len()).map(Ordinal)),
+        Some(columns) => needed.extend(columns.iter().copied()),
+    }
+
     consider(match_primary_key(table, &constraints));
     for index in table.indexes() {
-        consider(match_index(table, index, &constraints));
+        consider(match_index(table, index, &constraints, &needed));
     }
 
     let access = best.map_or_else(
@@ -282,6 +355,24 @@ fn match_primary_key(table: &TableDef, constraints: &[(Ordinal, ColumnConstraint
         .iter()
         .map(|o| (*o, Direction::Asc))
         .collect();
+
+    // Every key column pinned to a value is a single row, so read it directly
+    // rather than opening a scan over a range that holds exactly one key.
+    let full_key: Option<Vec<Value>> = key_columns
+        .iter()
+        .map(|(ordinal, _)| constraints_for(constraints, *ordinal).and_then(|c| c.equals.clone()))
+        .collect();
+    if let Some(key) = full_key
+        && !key.is_empty()
+    {
+        return Candidate {
+            equality_columns: key.len(),
+            access: Access::PointGet { key },
+            has_range: false,
+            is_table_scan: true,
+        };
+    }
+
     let (range, equality_columns, has_range) =
         match_key(keys::table_prefix(table), &key_columns, constraints);
     Candidate {
@@ -292,10 +383,25 @@ fn match_primary_key(table: &TableDef, constraints: &[(Ordinal, ColumnConstraint
     }
 }
 
+/// Whether `index` holds every column in `needed`.
+///
+/// An index entry carries its own columns and the primary key, so those are
+/// what it can answer from.
+fn covers(table: &TableDef, index: &IndexDef, needed: &BTreeSet<Ordinal>) -> bool {
+    let available: BTreeSet<Ordinal> = index
+        .columns()
+        .iter()
+        .map(|c| c.ordinal)
+        .chain(table.primary_key().iter().copied())
+        .collect();
+    needed.is_subset(&available)
+}
+
 fn match_index(
     table: &TableDef,
     index: &IndexDef,
     constraints: &[(Ordinal, ColumnConstraints)],
+    needed: &BTreeSet<Ordinal>,
 ) -> Candidate {
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.
@@ -312,6 +418,7 @@ fn match_index(
         access: Access::IndexScan {
             index: index.id(),
             range,
+            covering: covers(table, index, needed),
         },
         equality_columns,
         has_range,

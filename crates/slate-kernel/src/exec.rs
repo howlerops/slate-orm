@@ -22,6 +22,13 @@ enum Source<'a> {
         cursor: IndexCursor<'a>,
         index: &'a IndexDef,
     },
+    /// Rows assembled from index entries, with no table read at all.
+    CoveringIndex {
+        cursor: IndexCursor<'a>,
+        index: &'a IndexDef,
+    },
+    /// A single row, fetched by primary key.
+    Point(Option<Row>),
     /// The plan proved there is nothing to read.
     Empty,
 }
@@ -45,6 +52,30 @@ impl core::fmt::Debug for QueryCursor<'_> {
     }
 }
 
+/// Rebuild a row from an index entry, leaving uncovered columns null.
+///
+/// Sound only when the planner has established that the query reads nothing
+/// outside the index and the primary key; see `Access::IndexScan::covering`.
+fn row_from_index_entry(
+    table: &TableDef,
+    index: &IndexDef,
+    indexed: &[slate_tuple::Value],
+    primary_key: &[slate_tuple::Value],
+) -> Row {
+    let mut values = vec![slate_tuple::Value::Null; table.columns().len()];
+    for (column, value) in index.columns().iter().zip(indexed) {
+        if let Some(slot) = values.get_mut(column.ordinal.0) {
+            *slot = value.clone();
+        }
+    }
+    for (ordinal, value) in table.primary_key().iter().zip(primary_key) {
+        if let Some(slot) = values.get_mut(ordinal.0) {
+            *slot = value.clone();
+        }
+    }
+    Row::new(values)
+}
+
 impl<'a> QueryCursor<'a> {
     /// Open a cursor for `plan` on `table`.
     pub(crate) async fn open(
@@ -54,17 +85,26 @@ impl<'a> QueryCursor<'a> {
     ) -> Result<Self> {
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
+            Access::PointGet { key } => {
+                Source::Point(read::read_row_unchecked(snapshot, table, key).await?)
+            }
             Access::TableScan { range } => {
                 Source::Rows(read::scan_rows(snapshot, table, range.clone(), plan.order).await?)
             }
-            Access::IndexScan { index, range } => {
+            Access::IndexScan {
+                index,
+                range,
+                covering,
+            } => {
                 let index = table
                     .index(*index)
                     .ok_or(KernelError::UnknownTable(table.id()))?;
-                Source::Index {
-                    cursor: read::scan_index(snapshot, table, index, range.clone(), plan.order)
-                        .await?,
-                    index,
+                let cursor =
+                    read::scan_index(snapshot, table, index, range.clone(), plan.order).await?;
+                if *covering {
+                    Source::CoveringIndex { cursor, index }
+                } else {
+                    Source::Index { cursor, index }
                 }
             }
         };
@@ -102,7 +142,22 @@ impl<'a> QueryCursor<'a> {
     async fn next_candidate(&mut self) -> Result<Option<Row>> {
         match &mut self.source {
             Source::Empty => Ok(None),
+            Source::Point(row) => Ok(row.take()),
             Source::Rows(cursor) => cursor.next().await,
+            Source::CoveringIndex { cursor, index } => {
+                // The entry already holds every column this query reads, so
+                // there is nothing to fetch. This is the whole point of a
+                // covering index: no read per matching row.
+                let Some((indexed, primary_key)) = cursor.next().await? else {
+                    return Ok(None);
+                };
+                Ok(Some(row_from_index_entry(
+                    self.table,
+                    index,
+                    &indexed,
+                    &primary_key,
+                )))
+            }
             Source::Index { cursor, index } => {
                 while let Some((_, primary_key)) = cursor.next().await? {
                     if let Some(row) =

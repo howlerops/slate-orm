@@ -458,7 +458,7 @@ async fn a_policy_holds_on_an_index_scan_too() {
 
     let secured_plan = slate_kernel::plan(&table, &secured, ScanOrder::Ascending);
     match &secured_plan.access {
-        slate_kernel::Access::IndexScan { index, range } => {
+        slate_kernel::Access::IndexScan { index, range, .. } => {
             let by_owner = table.index_by_name("by_owner").unwrap();
             assert_eq!(*index, by_owner.id());
             let tenant_prefix = slate_kernel::keys::index_prefix(

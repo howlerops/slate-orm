@@ -27,7 +27,7 @@ pub use error::{KernelError, Result, StorageError};
 pub use exec::QueryCursor;
 pub use expr::{CmpOp, Expr, Truth};
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
-pub use plan::{Access, Plan, plan};
+pub use plan::{Access, Plan, Projection, plan, plan_projected};
 pub use pool::{ReplicaPool, RoutingPolicy};
 pub use read::{IndexCursor, RowCursor};
 pub use record::{RecordSnapshot, RecordStore, RecordTransaction};

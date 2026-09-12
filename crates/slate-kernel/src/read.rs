@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
 use crate::keys;
-use crate::plan::plan;
+use crate::plan::{Projection, plan_projected};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use slate_schema::{IndexDef, Row, TableDef, decode_row};
@@ -64,10 +64,19 @@ impl<'a> SecuredReads<'a> {
         table: &'a TableDef,
         filter: Expr,
         order: ScanOrder,
+        projection: &Projection,
     ) -> Result<QueryCursor<'a>> {
         self.security.authorize(context, table, Action::Read)?;
+        // Conjoining the policy *before* planning is what lets it narrow the
+        // scan; it also means a policy on a column the index lacks correctly
+        // prevents an index-only scan rather than being skipped by one.
         let secured = filter.and(self.security.row_filter(context, table, Action::Read)?);
-        QueryCursor::open(self.snapshot, table, plan(table, &secured, order)).await
+        QueryCursor::open(
+            self.snapshot,
+            table,
+            plan_projected(table, &secured, order, projection),
+        )
+        .await
     }
 }
 

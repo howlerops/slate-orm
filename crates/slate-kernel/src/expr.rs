@@ -16,6 +16,7 @@
 
 use slate_schema::{Ordinal, Row};
 use slate_tuple::Value;
+use std::collections::BTreeSet;
 
 /// The result of evaluating a predicate under SQL's three-valued logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,5 +273,36 @@ impl Expr {
     #[must_use]
     pub fn admits(&self, row: &Row) -> bool {
         self.evaluate(row).admits()
+    }
+
+    /// Every column this predicate reads.
+    ///
+    /// An index-only scan is only sound if the predicate can be evaluated from
+    /// the index entry alone, so the planner needs this to decide whether the
+    /// row lookup can be skipped. Since the security filter is part of the
+    /// predicate, a policy on an uncovered column correctly prevents the
+    /// optimisation rather than being skipped by it.
+    #[must_use]
+    pub fn columns(&self) -> BTreeSet<Ordinal> {
+        let mut out = BTreeSet::new();
+        self.collect_columns(&mut out);
+        out
+    }
+
+    fn collect_columns(&self, out: &mut BTreeSet<Ordinal>) {
+        match self {
+            Self::True | Self::False => {}
+            Self::Compare { column, .. }
+            | Self::IsNull { column, .. }
+            | Self::In { column, .. } => {
+                out.insert(*column);
+            }
+            Self::And(parts) | Self::Or(parts) => {
+                for part in parts {
+                    part.collect_columns(out);
+                }
+            }
+            Self::Not(inner) => inner.collect_columns(out),
+        }
     }
 }
