@@ -233,3 +233,34 @@ async fn it_retries_a_conflict_and_re_reads() {
         "fewer attempts than writers"
     );
 }
+
+/// It may borrow the caller's locals, which is what makes it usable for the
+/// head node rather than only for closures over owned data.
+///
+/// The lifetime on the transaction is named, not higher-ranked. Quantifying it
+/// too (`&'t RecordTransaction<'t>`) compiles here and then forces every
+/// capture to be `'static`, which fails at the one call site the signature
+/// exists for — the head node's autocommit hands the body a `&SecurityContext`
+/// and a batch of rows it does not own. So this test captures by reference on
+/// purpose.
+#[tokio::test]
+async fn the_body_may_borrow_the_callers_locals() {
+    let store = store();
+    let context = root();
+    let rows = vec![note(1, "borrowed"), note(2, "also borrowed")];
+    // Neither of these is `'static`, and neither is cloned into the future.
+    let context = &context;
+    let rows = &rows;
+
+    store
+        .transact_boxed(move |txn| {
+            Box::pin(async move {
+                txn.insert_many(context, &table(), rows).await?;
+                Ok(())
+            })
+        })
+        .await
+        .expect("a body over borrowed locals");
+
+    assert_eq!(count(&store).await, 2);
+}

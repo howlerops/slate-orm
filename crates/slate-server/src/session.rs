@@ -525,18 +525,13 @@ async fn apply<S: KvStore>(
             reply,
         } => {
             let definition = table!(table, reply);
-            let mut affected = 0;
-            let mut outcome = Ok(());
-            for row in &rows {
-                // No `update_many` in the kernel, so this is a round trip per
-                // row. Noted rather than worked around: batching it belongs in
-                // the record store next to `insert_many`, not here.
-                if let Err(error) = transaction.update(&context, definition, row).await {
-                    outcome = Err(error);
-                    break;
-                }
-                affected += 1;
-            }
+            let affected = rows.len() as u64;
+            // `update_many` overlaps the reads that decide whether each row is
+            // there, the same as `insert_many`. It is also all-or-nothing,
+            // where the loop this replaces applied a prefix and then reported
+            // the error — a count the caller could not act on, since the
+            // transaction rolls back anyway.
+            let outcome = transaction.update_many(&context, definition, &rows).await;
             answer(reply, outcome.map(|()| affected))
         }
         Command::Delete {
@@ -548,6 +543,9 @@ async fn apply<S: KvStore>(
             let definition = table!(table, reply);
             let mut affected = 0;
             let mut outcome = Ok(());
+            // Still a round trip per key: batching a delete means unioning
+            // the foreign-key closures two keys can share, which is a different
+            // change from `update_many`. Recorded rather than assumed away.
             for key in &keys {
                 match transaction.delete(&context, definition, key).await {
                     // A row the policy hides deletes as absent, so a caller

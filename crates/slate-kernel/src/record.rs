@@ -335,12 +335,18 @@ impl<S: KvStore> RecordStore<S> {
     /// say — and there is no way to annotate around it. `transact.rs` shows the
     /// exact failure. This exists for that position and no other.
     ///
-    /// The cost is the one [`RecordStore::transact`] avoids: the returned
-    /// future may borrow the transaction and nothing else, so `operation`
-    /// cannot hand it references to the caller's locals. Move what it needs
-    /// into the closure and clone it into each `async move` — `operation` runs
-    /// once per attempt, so it has to be able to produce a fresh future
-    /// anyway.
+    /// The lifetime on the transaction is named, not higher-ranked
+    /// (`&'t RecordTransaction<'a>`, not `&'t RecordTransaction<'t>`), and the
+    /// difference is the whole usability of this function. Quantifying it too
+    /// compiles, and then forces every capture the body borrows to be
+    /// `'static` — which fails at the one call site this exists for, since the
+    /// head node's autocommit hands the body a `&SecurityContext` and a batch
+    /// of rows it does not own. As written the body may borrow the caller's
+    /// locals; they need only outlive the call.
+    ///
+    /// What does remain is that the closure is `Fn`, because it runs once per
+    /// attempt: the future cannot *move* out of it. Borrow the captures
+    /// (`let write = &write;`) or clone them per attempt.
     ///
     /// ```no_run
     /// # use slate_kernel::{KvStore, RecordStore, Result, SecurityContext};
@@ -348,17 +354,17 @@ impl<S: KvStore> RecordStore<S> {
     /// # async fn example<S: KvStore>(
     /// #     store: &RecordStore<S>, ctx: SecurityContext, table: TableDef, row: Row,
     /// # ) -> Result<()> {
+    /// let (ctx, table, row) = (&ctx, &table, &row);
     /// store
     ///     .transact_boxed(move |txn| {
-    ///         let (ctx, table, row) = (ctx.clone(), table.clone(), row.clone());
-    ///         Box::pin(async move { txn.insert(&ctx, &table, &row).await })
+    ///         Box::pin(async move { txn.insert(ctx, table, row).await })
     ///     })
     ///     .await
     /// # }
     /// ```
-    pub async fn transact_boxed<F, T>(&self, operation: F) -> Result<T>
+    pub async fn transact_boxed<'a, F, T>(&'a self, operation: F) -> Result<T>
     where
-        F: for<'t> Fn(&'t RecordTransaction<'t>) -> BoxFuture<'t, Result<T>>,
+        F: for<'t> Fn(&'t RecordTransaction<'a>) -> BoxFuture<'t, Result<T>>,
     {
         self.transact_boxed_tracked(operation)
             .await
@@ -366,9 +372,12 @@ impl<S: KvStore> RecordStore<S> {
     }
 
     /// [`RecordStore::transact_boxed`], also returning the commit's read token.
-    pub async fn transact_boxed_tracked<F, T>(&self, operation: F) -> Result<(T, Option<ReadToken>)>
+    pub async fn transact_boxed_tracked<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> Result<(T, Option<ReadToken>)>
     where
-        F: for<'t> Fn(&'t RecordTransaction<'t>) -> BoxFuture<'t, Result<T>>,
+        F: for<'t> Fn(&'t RecordTransaction<'a>) -> BoxFuture<'t, Result<T>>,
     {
         with_retries(self.retry, |_attempt| async {
             let txn = self.begin().await?;

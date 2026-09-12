@@ -50,7 +50,6 @@ use crate::status::{from_kernel, redirect};
 use slate_kernel::{
     Freshness, KernelError, KvReadStore, KvStore, Query, ReadToken, RecordSnapshot, RecordStore,
     RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog, SecurityContext, Statistics,
-    with_retries,
 };
 use slate_schema::{Catalog, Row, TableDef, TableId};
 use slate_tuple::Value;
@@ -288,20 +287,15 @@ impl<S: KvStore + KvReadStore> Head<S> {
         write: Write<'_>,
     ) -> Result<(u64, Option<ReadToken>), Status> {
         let writer = self.leader()?;
-        let outcome = with_retries(writer.retry_policy(), |_attempt| async {
-            let transaction = writer.begin().await?;
-            match write.apply(&transaction, context).await {
-                Ok(affected) => {
-                    let token = transaction.commit().await?;
-                    Ok((affected, token))
-                }
-                Err(error) => {
-                    transaction.rollback();
-                    Err(error)
-                }
-            }
-        })
-        .await;
+        // Borrowed, not moved: the closure is `Fn` because it runs once per
+        // retry, so each attempt's future takes a reference rather than the
+        // batch itself.
+        let write = &write;
+        let outcome = writer
+            .transact_boxed_tracked(move |transaction| {
+                Box::pin(async move { write.apply(transaction, context).await })
+            })
+            .await;
 
         match outcome {
             Ok(outcome) => Ok(outcome),
@@ -362,19 +356,22 @@ impl Write<'_> {
                 .upsert_many(context, table, rows)
                 .await
                 .map(|()| rows.len() as u64),
-            Self::Update { table, rows } => {
-                let mut affected = 0;
-                for row in *rows {
-                    // No `update_many` in the kernel, so this is a round trip
-                    // per row. Noted rather than worked around: batching it
-                    // belongs next to `insert_many` in the record store.
-                    transaction.update(context, table, row).await?;
-                    affected += 1;
-                }
-                Ok(affected)
-            }
+            // `update_many` reads whether each row exists in one wave, the
+            // same as `insert_many`, and refuses the whole batch if any of
+            // them is missing rather than applying a prefix.
+            Self::Update { table, rows } => transaction
+                .update_many(context, table, rows)
+                .await
+                .map(|()| rows.len() as u64),
             Self::Delete { table, keys } => {
                 let mut affected = 0;
+                // No `delete_many`, and not for want of noticing: a
+                // delete walks a foreign-key closure, and two keys in one
+                // batch can reach the same doomed row by different paths. A
+                // batch would have to union those closures before writing
+                // anything, which is a different piece of work from
+                // `update_many`'s one wave of reads — not the same change with
+                // a different name.
                 for key in *keys {
                     // A row the policy hides deletes as absent, so the count
                     // cannot be used to probe for one.
