@@ -39,6 +39,7 @@ use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Barrier;
 
 const COUNTERS: TableId = TableId(1);
 const TENANT: u128 = 3;
@@ -118,6 +119,21 @@ fn eager() -> RetryPolicy {
 /// both read `n` and both write `n + 1`, the final total is short — and nothing
 /// anywhere reports an error. This is the canonical lost update, and the whole
 /// reason a conflict check exists.
+///
+/// It runs in two phases, because "did the writers actually contend?" must not
+/// be left to the scheduler. The first phase holds every task at a barrier
+/// *after* it has read and *before* any of them writes, so the conflict is
+/// guaranteed by construction: exactly one of `TASKS` identical
+/// read-modify-writes may commit, and a store that lets a second one through
+/// has lost an update. The second phase then runs the same workload at full
+/// speed through the retry helper and checks the total to the unit.
+///
+/// An earlier version had no first phase and instead asserted that the retry
+/// counter ended above zero, as a guard against a vacuous run. That is a
+/// scheduling observation dressed up as a property: on a loaded machine the
+/// eight tasks can run one after another, nothing conflicts, and a *correct*
+/// store fails the test. It did, about one full-suite run in six. The barrier
+/// replaces the hope with a guarantee.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_increments_do_not_lose_updates() {
     const TASKS: usize = 8;
@@ -132,22 +148,75 @@ async fn concurrent_increments_do_not_lose_updates() {
         .unwrap();
     txn.commit().await.unwrap();
 
-    let retries = Arc::new(AtomicUsize::new(0));
+    // Phase one: everybody reads before anybody writes.
+    let barrier = Arc::new(Barrier::new(TASKS));
+    let mut racers = Vec::new();
+    for _ in 0..TASKS {
+        let store = Arc::clone(&store);
+        let barrier = Arc::clone(&barrier);
+        racers.push(tokio::spawn(async move {
+            let table = counters();
+            let txn = store.begin().await.unwrap();
+            let row = txn
+                .get(&root(), &table, &pk(1))
+                .await
+                .unwrap()
+                .expect("the counter exists");
+            let current = match row.values()[col("total").0] {
+                Value::I64(n) => n,
+                ref other => panic!("total was {other:?}"),
+            };
+            barrier.wait().await;
+            txn.update(&root(), &table, &counter(1, current + 1, "shared"))
+                .await?;
+            txn.commit().await.map(|_| ())
+        }));
+    }
+    // The barrier only releases once all `TASKS` tasks reach it, so a task that
+    // panics on the way there would strand the rest. The timeout turns that
+    // into a failed test rather than a hung suite.
+    let outcomes = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let mut outcomes = Vec::new();
+        for racer in racers {
+            outcomes.push(racer.await.unwrap());
+        }
+        outcomes
+    })
+    .await
+    .expect("a writer never reached the barrier");
+
+    let committed = outcomes.iter().filter(|o| o.is_ok()).count();
+    assert_eq!(
+        committed, 1,
+        "{committed} of {TASKS} writers committed the same read-modify-write"
+    );
+    // The other seven have to be refused *as conflicts*. A store that failed
+    // them for some unrelated reason would pass the count above while proving
+    // nothing about conflict detection.
+    for outcome in &outcomes {
+        match outcome {
+            Ok(()) | Err(KernelError::TransactionConflict) => {}
+            Err(other) => panic!("a loser was refused for the wrong reason: {other:?}"),
+        }
+    }
+    assert_eq!(
+        total(&store, 1).await,
+        1,
+        "one writer committed, but its increment is not there"
+    );
+
+    // Phase two: the same workload with the brakes off, through the retry
+    // helper. Whatever the tasks interleave into, the arithmetic is exact.
     let mut tasks = Vec::new();
     for _ in 0..TASKS {
         let store = Arc::clone(&store);
-        let retries = Arc::clone(&retries);
         tasks.push(tokio::spawn(async move {
             let table = counters();
             for _ in 0..PER_TASK {
-                with_retries(eager(), |attempt| {
+                with_retries(eager(), |_| {
                     let store = Arc::clone(&store);
                     let table = table.clone();
-                    let retries = Arc::clone(&retries);
                     async move {
-                        if attempt > 1 {
-                            retries.fetch_add(1, Ordering::Relaxed);
-                        }
                         let txn = store.begin().await?;
                         let row = txn
                             .get(&root(), &table, &pk(1))
@@ -172,18 +241,12 @@ async fn concurrent_increments_do_not_lose_updates() {
         task.await.unwrap();
     }
 
-    let expected = (TASKS * PER_TASK) as i64;
+    // One from the barrier round, then every increment of phase two.
+    let expected = 1 + (TASKS * PER_TASK) as i64;
     assert_eq!(
         total(&store, 1).await,
         expected,
         "{TASKS} tasks x {PER_TASK} increments lost or duplicated an update"
-    );
-
-    // If nothing ever retried, the tasks never actually overlapped and this
-    // test proved nothing about contention.
-    assert!(
-        retries.load(Ordering::Relaxed) > 0,
-        "no transaction ever conflicted, so the writers did not contend"
     );
 }
 

@@ -215,9 +215,17 @@ contention.
 Counting is the workload, deliberately: a counter incremented N times by C
 tasks must end at exactly N×C. A lost update shows up as a number too small and
 a double-apply as one too large, and a single integer is hard to satisfy by
-accident. Eight tasks × twenty-five increments on one row come out exact, and
-the test additionally asserts that **some transaction actually conflicted** —
-without that, tasks that never overlapped would pass while proving nothing.
+accident. Eight tasks × twenty-five increments on one row come out exact.
+
+The harder half is proving the writers *contended* at all, rather than running
+one after another and passing vacuously. That is settled by construction, not
+by observation: a first phase holds all eight tasks at a barrier after each has
+read the counter and before any of them writes, so all eight hold the same
+stale read when they are released. Exactly one may commit; the other seven must
+be refused, and refused **as conflicts** — a store that failed them for some
+unrelated reason would satisfy a bare count while proving nothing. Moving the
+write into a fresh transaction after the barrier, so the read no longer pins a
+serialisation point, lets five of the eight through and the test says so.
 
 Also checked: exactly one of sixteen racing writers takes a unique slot (not
 "one wins" with two writers, which a check-then-write race would also pass);
@@ -227,7 +235,9 @@ unique slot free; and a reader running alongside writers compares a table scan
 against an index scan in the same transaction, so a write becoming visible in
 two steps would show up as the two paths disagreeing.
 
-Run fifteen times over, no flakes.
+Run sixty times over at ten binaries in parallel on four cores, and ten
+full-suite runs. No flakes — see "When the tests are the flaky thing" for the
+one there used to be.
 
 ## Untrusted input
 
@@ -360,6 +370,21 @@ rates were measured across repeated runs, sample sizes raised to 400, and the
 bars set at 30–40% — five or more standard errors clear. A check that guards
 the generators must not be the flakiest thing in the suite, since a test that
 fails one run in twenty teaches people to rerun rather than to look.
+
+Then a fifth, of the same shape. The lost-update test guarded against a vacuous
+run by asserting that the retry counter ended above zero — "if nothing ever
+retried, the tasks never overlapped". On an unloaded machine that holds. Under
+the full crate suite, with twenty test binaries competing for four cores, the
+eight tasks can be scheduled one after another, nothing conflicts, and a
+*correct* store fails the test. It did, one full-suite run in six.
+
+The lesson is narrower than "avoid timing in tests" and worth stating exactly:
+a vacuity guard must be as deterministic as the property it guards. Asserting
+that contention *happened* is an observation about the scheduler; arranging for
+contention to be *unavoidable*, with a barrier, and then asserting what the
+store must do about it, is a property. The rewrite survives sixty runs at ten
+binaries in parallel on four cores, and ten full-suite runs, with no failures,
+where the old one failed reliably under the second condition.
 
 ## Correlated columns: wrong, and so far harmless
 
