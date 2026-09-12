@@ -50,6 +50,7 @@ pub use query::{AccessHint, NullsOrder, Query, SortKey};
 pub use read::{IndexCursor, RowCursor};
 pub use record::{
     BULK_READ_CONCURRENCY, DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction,
+    index_predicate,
 };
 pub use retry::{RetryPolicy, with_retries};
 pub use scalar::{Metric, Scalar, TimeUnit};

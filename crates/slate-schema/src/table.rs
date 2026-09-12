@@ -4,9 +4,11 @@
 //! calls to the same builders a hand-written schema uses, so there is one
 //! definition path and one set of validation rules.
 
-use crate::constraint::{CheckDef, ForeignKeyBuilder, ForeignKeyDef};
+use crate::constraint::{CheckDef, ForeignKeyBuilder, ForeignKeyDef, Predicate};
 use crate::error::{Result, SchemaError};
+use crate::row::Row;
 use slate_tuple::{Direction, Value, ValueType};
+use std::sync::Arc;
 
 /// Identifies a table within a catalog. Also the key prefix for its rows.
 ///
@@ -135,13 +137,57 @@ pub struct IndexColumn {
 ///
 /// Index entries live in their own key prefix and are written in the same
 /// transaction as the row they describe, so an index can never lag the table.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Partial indexes
+///
+/// An index built with [`IndexBuilder::only_where`] holds an entry only for the
+/// rows its predicate admits. That is the one index property the *reader* has
+/// to be told about rather than being free to ignore: every other property
+/// changes how rows are reached, and this one changes which rows are there to
+/// reach. The record store maintains it here — no entry for a row the predicate
+/// rejects, and the entry deleted when an update stops matching — and the
+/// planner refuses to read it unless it can prove the query lands inside.
+#[derive(Clone)]
 pub struct IndexDef {
     id: IndexId,
     name: String,
     columns: Vec<IndexColumn>,
     unique: bool,
+    /// Rows the index holds. `None` is every row.
+    predicate: Option<Arc<dyn Predicate>>,
 }
+
+impl core::fmt::Debug for IndexDef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("IndexDef")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("columns", &self.columns)
+            .field("unique", &self.unique)
+            .field("partial", &self.predicate.is_some())
+            .finish()
+    }
+}
+
+/// Two indexes are the same index when everything but the predicate matches,
+/// and both are partial or neither is.
+///
+/// A predicate is a Rust value behind a trait object and does not compare, the
+/// same limitation [`CheckDef`] has. Two indexes on one table cannot share a
+/// name, so this is a usable identity rather than a convenient fiction — but a
+/// schema whose partial index changed *predicate* and nothing else compares
+/// equal to the one it replaced, and a migration has to say so itself.
+impl PartialEq for IndexDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.columns == other.columns
+            && self.unique == other.unique
+            && self.predicate.is_some() == other.predicate.is_some()
+    }
+}
+
+impl Eq for IndexDef {}
 
 impl IndexDef {
     /// Start defining an index.
@@ -152,7 +198,29 @@ impl IndexDef {
             name: name.into(),
             columns: Vec::new(),
             unique: false,
+            predicate: None,
         }
+    }
+
+    /// The predicate restricting which rows the index holds, if it is partial.
+    #[must_use]
+    pub fn predicate(&self) -> Option<&dyn Predicate> {
+        self.predicate.as_deref()
+    }
+
+    /// Whether the index holds an entry for `row`.
+    ///
+    /// `true` for every row of an ordinary index. For a partial one the rule is
+    /// a `WHERE`'s and not a `CHECK`'s: **unknown does not admit.** A row whose
+    /// `deleted_at` is null is not in an index on `WHERE deleted_at > 0`,
+    /// because a scan of that index stands in for a scan filtered by the same
+    /// predicate, and that filter would have withheld the row. Getting this
+    /// backwards would put rows in the index that reading it must not return.
+    #[must_use]
+    pub fn admits(&self, row: &Row) -> bool {
+        self.predicate
+            .as_ref()
+            .is_none_or(|predicate| predicate.truth(row) == Some(true))
     }
 
     /// The index's id, which is also its key prefix.
@@ -187,12 +255,25 @@ impl IndexDef {
 }
 
 /// Builder for [`IndexDef`]. Column names are resolved when the table is built.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IndexBuilder {
     id: IndexId,
     name: String,
     columns: Vec<(String, Direction)>,
     unique: bool,
+    predicate: Option<Arc<dyn Predicate>>,
+}
+
+impl core::fmt::Debug for IndexBuilder {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("IndexBuilder")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("columns", &self.columns)
+            .field("unique", &self.unique)
+            .field("partial", &self.predicate.is_some())
+            .finish()
+    }
 }
 
 impl IndexBuilder {
@@ -210,9 +291,39 @@ impl IndexBuilder {
     }
 
     /// Mark the index unique.
+    ///
+    /// On a partial index this is uniqueness *among the rows it holds*, which
+    /// falls out of holding no entry for the others rather than being a second
+    /// rule: `only_where(active).unique()` is one active row per value and any
+    /// number of inactive ones. That is what a partial unique index is for.
     #[must_use]
     pub const fn unique(mut self) -> Self {
         self.unique = true;
+        self
+    }
+
+    /// Hold an entry only for the rows `predicate` admits.
+    ///
+    /// The predicate is evaluated against the whole row, so it may name columns
+    /// the index does not key on — `WHERE deleted_at IS NULL` on an index over
+    /// `author` is the common case, and the one worth having: a table that is
+    /// mostly deleted rows gets an index that is not.
+    ///
+    /// Named for what it does to the *index* rather than to a query. It is not
+    /// a filter the reader gets for free: the planner uses a partial index only
+    /// for queries it can prove land inside the predicate, and falls back to a
+    /// scan otherwise.
+    ///
+    /// # Naming columns in the predicate
+    ///
+    /// By [`Ordinal`], and the ordinals are positions in the table being built.
+    /// A helper that resolves a name by building the table — the obvious thing
+    /// to reach for, and what a test here did — recurses forever, because
+    /// building the table now evaluates this argument. Write the position, or
+    /// resolve names against a table built without the index.
+    #[must_use]
+    pub fn only_where<P: Predicate>(mut self, predicate: P) -> Self {
+        self.predicate = Some(Arc::new(predicate));
         self
     }
 }
@@ -727,6 +838,7 @@ impl TableBuilder {
                 name: spec.name.clone(),
                 columns,
                 unique: spec.unique,
+                predicate: spec.predicate.clone(),
             });
         }
 

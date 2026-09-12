@@ -564,14 +564,43 @@ descending walk reverses the list, and a descending index column is covered
 separately because sorting encoded bounds rather than literals is what makes
 that fall out).
 
-### What is not covered
+### Maintaining one, and why the tests read raw keys
 
-Execution of a partial index. Maintaining one partially — writing no entry for a
-row the predicate rejects, deleting one when an update stops matching — lives in
-the record store, and is not done. Nothing writes a partial index or reads one
-back; what is tested is the decision, which is the half with the sharp edge.
-Until the write path closes, `plan_annotated` is the only entry point that can
-choose a partial index, and no other caller passes it any facts.
+The other half is the write path, and it is now there: an insert the predicate
+rejects writes no entry, an update that stops matching deletes one, an update
+that starts matching writes one, and a delete of a row the index does not hold
+touches nothing. The predicate is declared on `IndexDef` and both halves read
+the same one — the writer runs it through the `slate_schema::Predicate` seam a
+`CHECK` already uses, the planner downcasts it back to an `Expr` to reason
+about. Two declarations of one predicate would put a silent wrong-answer bug one
+edit away.
+
+Those tests compare **raw keys**, not query results, and the reason is worth
+stating because it is not obvious. A *missing* entry shows up in a query: rows
+go absent. A *spurious* one never can. An index scan still evaluates the
+residual predicate on every row it fetches, and a row that should not be in a
+partial index is by definition one the predicate rejects — so the residual
+throws it away and the answer looks right, while the index quietly holds
+entries it should not. The only way to see it is to look at the keys. A proptest
+runs a generated sequence of inserts, upserts and deletes and compares the
+index's key set against a `Vec<Row>` model of the table filtered by the
+predicate.
+
+Two of the bugs the write path had to avoid were only visible on a **unique**
+partial index, and both are the same shape. A unique index's key omits the
+primary key — that is what makes two rows collide in it — so the entry a
+*rejected* row would have had is byte for byte the entry an admitted row really
+has. Computing it from the row being replaced or removed, without checking the
+predicate first, deletes somebody else's entry. And the bulk path's
+"this row already owns its slot, skip the check" shortcut is wrong for a row
+that was outside the index a moment ago: its owner never changed, so its slot
+looks unchanged, and it writes straight over the row that actually holds it —
+inside one transaction, where no write-write conflict can catch it.
+
+Every one of the six places the write path consults the predicate was checked by
+removing it and running the suite. Five failed immediately. The sixth — that
+bulk shortcut — passed, which is how it was found; the test that now covers it
+was written before the guard was believed.
 
 ## The head node, and a lease checked against a wrong one
 
@@ -620,8 +649,15 @@ what genuinely has not been done.
   against a real S3 server at 200,000 rows, which is what corrected it; the
   million-row runs are still in memory. Nothing has been measured at a size
   where compaction, tiering and a cold cache all matter at once.
-- **Partial indexes end to end.** The planner decides correctly which of them
-  it may use, and nothing maintains them. See the section above.
+- **Expression indexes end to end.** The planner can use one; nothing
+  maintains one, and nothing can until there is a seam that produces a value
+  rather than a verdict. They are declared to the planner alongside the table
+  rather than on the schema, so that the schema never promises maintenance it
+  does not do. (Partial indexes, which had the same gap a round ago, are now
+  maintained — see above.)
+- **Partial indexes in the derive macro.** `#[derive(Record)]` cannot declare
+  one; the schema builder can. A struct attribute for it is a small piece of
+  work that has not been done.
 - **Anything about the head node's performance.** Its correctness is tested;
   nothing in it has been benchmarked. The query stream's batch size and the
   lease's fifteen-second term are chosen by argument, not measurement.

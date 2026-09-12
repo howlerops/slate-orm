@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc f335a7265d2cc046f1f80a4f16ed3b0ae69a93300c6c55fa519b9071683bfb44 # shrinks to query = IsNull { column: Ordinal(4), negated: false }, index = Compare { column: Ordinal(3), op: Eq, value: I64(0) }
+cc cfc2c8f31f96aec252f0ffe55553e87ca430f660f5603a3ba8e95a816178b802 # shrinks to ops = [Put(2, "bob", "open"), Put(1, "bob", "closed"), Delete(1)]

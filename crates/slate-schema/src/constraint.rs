@@ -39,6 +39,24 @@ pub trait Predicate: Send + Sync + 'static {
     /// so collapsing it here would hand that decision to each implementor and
     /// give the two rules two places to drift apart.
     fn truth(&self, row: &Row) -> Option<bool>;
+
+    /// The predicate itself, for a caller that needs to *read* it rather than
+    /// run it. `None` by default, and by default is the honest answer.
+    ///
+    /// One caller needs this: the planner, deciding whether it may read a
+    /// partial index. That decision is an implication between two predicates —
+    /// does everything this query admits fall inside what the index holds — and
+    /// no amount of running either of them on rows answers it. It needs the
+    /// tree.
+    ///
+    /// Downcasting is the price of the seam. The alternative was to state a
+    /// partial index's predicate twice, once as something the write path can
+    /// run and once as something the planner can read, and two statements of
+    /// one rule drift. A predicate that declines to answer here is simply an
+    /// index the planner never chooses, which is the safe direction.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
 }
 
 /// A `CHECK` constraint: a predicate every stored row must satisfy.

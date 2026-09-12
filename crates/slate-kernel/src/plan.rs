@@ -29,14 +29,26 @@
 //!
 //! # Where partial and expression indexes are declared
 //!
-//! Not in [`IndexDef`], which is where they belong: `IndexDef` lives in
-//! `slate-schema`, and a predicate is an [`Expr`] and a computed key is a
-//! [`Scalar`](crate::scalar::Scalar) — both of which live *above* it in the
-//! dependency graph. Saying `IndexDef { predicate: Option<Expr> }` today is a
-//! dependency cycle, not a field. Until the expression language moves below the
-//! schema crate, the planner takes them alongside the table as [`IndexFacts`],
-//! so the decision logic — which is the part with the sharp edge — exists and
-//! is tested rather than waiting on a crate reshuffle.
+//! A partial index is declared on [`IndexDef`], where it belongs, and the
+//! record store maintains it: `IndexDef` lives in `slate-schema` and cannot
+//! name an [`Expr`], but it does not have to — it holds an
+//! `Arc<dyn slate_schema::Predicate>`, the same seam a `CHECK` uses, and the
+//! kernel implements that trait for `Expr`. The write path only needs to *run*
+//! the predicate, which the trait gives it. The planner needs to *read* it, and
+//! gets it back with a downcast.
+//!
+//! That downcast is the price of one declaration site rather than two. Stating
+//! a partial index's predicate twice — once for the writer to run, once for the
+//! planner to reason about — would put a silent wrong-answer bug one edit away
+//! from existing. An index whose predicate is not an `Expr` is one the planner
+//! never chooses, which is the safe direction.
+//!
+//! An **expression** index still cannot be declared on the schema. Its key is a
+//! [`Scalar`](crate::scalar::Scalar), the `Predicate` seam produces a verdict
+//! rather than a value, and the write path would need the value to maintain the
+//! index at all. Declaring one on `TableDef` would promise maintenance that is
+//! not there, so it stays alongside the table as [`IndexFacts`] — planner-only,
+//! and said so.
 
 use crate::exec::DEFAULT_PREFETCH;
 use crate::query::{AccessHint, SortKey};
@@ -146,35 +158,28 @@ pub const MAX_POINT_GETS: usize = 1024;
 /// a hundred thousand key pairs to find that out.
 pub const MAX_INDEX_RANGES: usize = 1024;
 
-/// What one index knows about itself that [`IndexDef`] cannot yet say.
+/// What one index knows about itself that [`IndexDef`] cannot say.
 ///
-/// Two properties a record layer's indexes carry and this one's schema does
-/// not:
+/// One property now, and it used to be two. A **partial** index — an entry only
+/// for the rows a predicate admits — moved onto [`IndexDef`] once there was
+/// something to move it for: the record store maintains those entries, and a
+/// predicate declared in two places would be two places to disagree.
 ///
-/// - a **partial** index has a predicate, and holds an entry only for the rows
-///   that predicate admits. `WHERE deleted_at IS NULL` over a table that is
-///   mostly deleted rows is a fraction of the entries and a fraction of the
-///   scan;
-/// - an **expression** index stores a value computed from the row rather than
-///   read out of it — `lower(email)`, `length(url)` — which is the only way to
-///   answer a query about that value without computing it per row.
-///
-/// See the module docs for why these are here and not on [`IndexDef`].
+/// What is left is the **expression** index, whose key holds a value computed
+/// from the row rather than read out of it — `lower(email)`, `length(url)`.
+/// That cannot move yet. `IndexDef` lives in `slate-schema`, a computed key is
+/// a [`Scalar`](crate::scalar::Scalar), and `Scalar` lives above it; the
+/// [`Predicate`](slate_schema::Predicate) seam that carries a partial index's
+/// predicate down has no counterpart for producing a value. And the write path
+/// would need one to maintain such an index, so declaring it on the schema
+/// would promise maintenance that is not there.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct IndexFact {
-    /// Rows the index holds. `None` means every row.
-    predicate: Option<Expr>,
     /// The value the index's key holds, when it is computed rather than read.
     expression: Option<crate::scalar::Scalar>,
 }
 
 impl IndexFact {
-    /// The predicate restricting which rows the index holds.
-    #[must_use]
-    pub const fn predicate(&self) -> Option<&Expr> {
-        self.predicate.as_ref()
-    }
-
     /// The expression the index's key holds, for an expression index.
     #[must_use]
     pub const fn expression(&self) -> Option<&crate::scalar::Scalar> {
@@ -182,10 +187,10 @@ impl IndexFact {
     }
 }
 
-/// The partial and expression indexes on a table, by index id.
+/// The expression indexes on a table, by index id.
 ///
 /// Empty by default, which is what every existing caller gets: an index with no
-/// fact recorded is an ordinary index over columns, holding every row.
+/// fact recorded keys on its own columns.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct IndexFacts {
     facts: std::collections::BTreeMap<IndexId, IndexFact>,
@@ -196,13 +201,6 @@ impl IndexFacts {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Record that `index` holds only the rows `predicate` admits.
-    #[must_use]
-    pub fn partial(mut self, index: IndexId, predicate: Expr) -> Self {
-        self.facts.entry(index).or_default().predicate = Some(predicate);
-        self
     }
 
     /// Record that `index` keys on `expression` rather than on a column.
@@ -1438,12 +1436,17 @@ fn match_index(
     // using it for a query that reaches outside them does not return the wrong
     // *columns*, it returns the wrong *rows* — silently, and with no residual
     // able to put them back. This is the gate; see the module docs.
-    let partial = fact.and_then(IndexFact::predicate);
-    if let Some(predicate) = partial
-        && !implies(cx.predicate, predicate)
-    {
-        return None;
-    }
+    let partial = match index.predicate() {
+        None => None,
+        Some(_) => match crate::record::index_predicate(index) {
+            Some(predicate) if implies(cx.predicate, predicate) => Some(predicate),
+            // Either the query was not shown to land inside the index, or the
+            // predicate is not an `Expr` and so nothing can be shown about it
+            // at all. Both mean the same thing here: the entries this index is
+            // missing are missing whichever it is.
+            _ => return None,
+        },
+    };
 
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.

@@ -90,6 +90,25 @@ impl slate_schema::Predicate for Expr {
             Truth::Unknown => None,
         }
     }
+
+    /// So the planner can read a partial index's predicate rather than only run
+    /// it. See [`slate_schema::Predicate::as_any`], and `plan::implies` for
+    /// what it is read for.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+}
+
+/// A partial index's predicate as an expression, when it is one.
+///
+/// An index whose predicate is some other implementation of
+/// [`slate_schema::Predicate`] — a closure, say — is one the planner cannot
+/// reason about, and this returns `None` for it. The caller must then treat the
+/// index as unusable rather than as unrestricted: the entries are missing
+/// either way.
+#[must_use]
+pub fn index_predicate(index: &slate_schema::IndexDef) -> Option<&Expr> {
+    index.predicate()?.as_any()?.downcast_ref::<Expr>()
 }
 
 /// A small deterministic generator, for sampling during `analyze`.
@@ -843,6 +862,10 @@ impl<'a> RecordTransaction<'a> {
         for index in table.indexes().iter().filter(|i| i.is_unique()) {
             let mut slots: HashSet<Vec<u8>> = HashSet::with_capacity(rows.len());
             for (row, primary_key) in rows.iter().zip(&primary_keys) {
+                // Two rows outside a partial index cannot collide inside it.
+                if !index.admits(row) {
+                    continue;
+                }
                 let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
                 if entry.enforces_uniqueness && !slots.insert(entry.key) {
                     return Err(KernelError::UniqueViolation {
@@ -936,16 +959,25 @@ impl<'a> RecordTransaction<'a> {
         for index in table.indexes().iter().filter(|i| i.is_unique()) {
             let mut pending: Vec<(Vec<u8>, &[Value])> = Vec::new();
             for ((row, primary_key), previous) in rows.iter().zip(primary_keys).zip(existing) {
+                // No entry, no slot to contend for.
+                if !index.admits(row) {
+                    continue;
+                }
                 let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
                 if !entry.enforces_uniqueness {
                     continue;
                 }
                 // An unchanged slot is already this row's, so there is nothing
-                // to check and nothing to read.
-                let unchanged = previous.as_ref().is_some_and(|old| {
-                    keys::index_entry(table, index, &old.index_values(index), primary_key).key
-                        == entry.key
-                });
+                // to check and nothing to read. A previous row the index did
+                // not hold owns no slot, so this row's is new even when the
+                // indexed values did not change.
+                let unchanged = previous
+                    .as_ref()
+                    .filter(|old| index.admits(old))
+                    .is_some_and(|old| {
+                        keys::index_entry(table, index, &old.index_values(index), primary_key).key
+                            == entry.key
+                    });
                 if !unchanged {
                     pending.push((entry.key, primary_key.as_slice()));
                 }
@@ -1202,8 +1234,14 @@ impl<'a> RecordTransaction<'a> {
     }
 
     /// Remove a row and every index entry that pointed at it.
+    ///
+    /// A partial index that does not hold the row is skipped rather than sent a
+    /// delete for a key that was never written. The delete would be harmless in
+    /// itself and is not harmless in a transaction: it writes the key, and so
+    /// conflicts with any concurrent writer of the row that really does own
+    /// that slot.
     fn remove_row(&self, table: &TableDef, row: &Row) -> Result<()> {
-        for index in table.indexes() {
+        for index in table.indexes().iter().filter(|index| index.admits(row)) {
             let entry = self.entry_for(table, index, row);
             self.txn.delete(entry.key)?;
         }
@@ -1391,30 +1429,42 @@ impl<'a> RecordTransaction<'a> {
         let primary_key = row.primary_key_values(table);
 
         for index in table.indexes() {
-            let new_entry = self.entry_for(table, index, row);
+            // A partial index holds an entry only for the rows its predicate
+            // admits, so both halves of an update are conditional and they are
+            // conditional separately. A row that stops matching has its entry
+            // deleted and no new one written; one that starts matching has an
+            // entry written and none to delete. Getting the second half wrong
+            // leaves an entry pointing at a row the index is not supposed to
+            // hold, which reading the index returns and every other access path
+            // does not.
+            let new_entry = index.admits(row).then(|| self.entry_for(table, index, row));
             let old_entry = previous
                 .as_ref()
+                .filter(|old| index.admits(old))
                 .map(|old| self.entry_for(table, index, old));
 
             // An index entry only needs touching when the row's indexed values
             // changed. Rewriting an unchanged key would add a spurious
             // write-write conflict against concurrent writers of other rows
             // that happen to share the slot.
-            if old_entry
-                .as_ref()
-                .is_some_and(|old| old.key == new_entry.key)
+            if let (Some(old), Some(new)) = (old_entry.as_ref(), new_entry.as_ref())
+                && old.key == new.key
             {
                 continue;
             }
 
-            if verify_unique && new_entry.enforces_uniqueness {
-                self.check_unique(table, index, &new_entry, &primary_key)
-                    .await?;
+            if verify_unique
+                && let Some(new) = new_entry.as_ref()
+                && new.enforces_uniqueness
+            {
+                self.check_unique(table, index, new, &primary_key).await?;
             }
             if let Some(old) = old_entry {
                 self.txn.delete(old.key)?;
             }
-            self.txn.put(new_entry.key, new_entry.value)?;
+            if let Some(new) = new_entry {
+                self.txn.put(new.key, new.value)?;
+            }
         }
 
         self.txn

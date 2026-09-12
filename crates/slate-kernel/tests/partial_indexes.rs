@@ -15,14 +15,20 @@
 //! several where a human can see the implication holds and the planner cannot.
 //! Missing one of those costs a table scan.
 //!
-//! # What is not here
+//! # Maintenance
 //!
-//! Execution. A partial index has to be *maintained* partially — an insert that
-//! does not match the predicate must write no entry, and an update that stops
-//! matching must delete one — and that lives in the record store, not the
-//! planner. Nothing here writes a partial index or reads one back; these are
-//! statements about the decision, and the decision is the half with the sharp
-//! edge. The other half is named in the report.
+//! The other half is here too, at the end of the file: a partial index has to
+//! be *maintained* partially — an insert that does not match the predicate
+//! writes no entry, an update that stops matching deletes one, one that starts
+//! matching writes one — and that lives in the record store. Those tests read
+//! the index back through a forced index scan and compare it against a table
+//! scan of the same predicate, which is the only comparison that can catch an
+//! entry that should not be there: the planner would never choose the index for
+//! a query that would notice.
+//!
+//! Expression indexes remain planner-only, and are not maintained. Nothing
+//! writes one, so nothing declares one on a schema; they are stated as
+//! [`IndexFacts`] alongside the table.
 
 // Tests assert exact outcomes and are meant to panic when one is wrong.
 #![allow(
@@ -54,10 +60,13 @@ fn docs() -> TableDef {
         .nullable_column("deleted_at", ValueType::I64)
         .primary_key(["id"])
         .index(IndexDef::builder("by_title", BY_TITLE).column("title"))
-        // Declared like any other index. What makes it partial is the fact
-        // recorded alongside it; see the module docs on `plan.rs` for why that
-        // is not a field on `IndexDef` yet.
-        .index(IndexDef::builder("live_by_author", LIVE_BY_AUTHOR).column("author"))
+        // Partial: declared on the schema, so the record store maintains it
+        // and the planner reads the same predicate the writes were filtered by.
+        .index(
+            IndexDef::builder("live_by_author", LIVE_BY_AUTHOR)
+                .column("author")
+                .only_where(live()),
+        )
         // And what makes this one an expression index is the same.
         .index(IndexDef::builder("by_lower_title", BY_LOWER_TITLE).column("title"))
         .build()
@@ -68,9 +77,22 @@ fn col(name: &str) -> Ordinal {
     docs().ordinal_of(name).expect("column exists")
 }
 
+/// `deleted_at`, by position rather than by name.
+///
+/// `col` resolves a name by building the table, and the table now names this
+/// predicate, so `live()` cannot go back through `col` without recursing
+/// forever. `deleted_at_is_the_fifth_column` below pins the constant, so a
+/// reordered schema fails a test rather than silently indexing something else.
+const DELETED_AT: Ordinal = Ordinal(4);
+
 /// `deleted_at IS NULL`: the commonest partial index there is.
 fn live() -> Expr {
-    Expr::is_null(col("deleted_at"))
+    Expr::is_null(DELETED_AT)
+}
+
+#[test]
+fn deleted_at_is_the_fifth_column() {
+    assert_eq!(DELETED_AT, col("deleted_at"));
 }
 
 /// A table large enough that an index is worth its point reads, with `author`
@@ -103,9 +125,9 @@ fn big() -> TableStats {
         .with_column(computed(), spread)
 }
 
-/// The facts under test: one partial index, one expression index.
+/// The one fact the schema still cannot state: which index keys on what.
 fn facts() -> IndexFacts {
-    IndexFacts::new().partial(LIVE_BY_AUTHOR, live()).computed(
+    IndexFacts::new().computed(
         BY_LOWER_TITLE,
         Scalar::Lower(Box::new(Scalar::Column(col("title")))),
     )
@@ -732,5 +754,602 @@ fn the_generators_produce_implications_to_check() {
         holds * 20 > total,
         "only {holds} of {total} generated pairs implied anything, so the \
          property above is mostly skipping"
+    );
+}
+
+// --- maintenance -----------------------------------------------------------
+//
+// The other half of a partial index, and the half that has to be checked
+// against raw keys rather than through a query. A *missing* entry shows up in a
+// query — rows go absent. A *spurious* one never can: the residual predicate
+// still runs on every row an index scan fetches, and a row that should not be
+// in the index is by definition one the predicate rejects, so the residual
+// throws it away and the answer looks right. The only way to see the entry that
+// should not be there is to look at the keys.
+
+use slate_kernel::memory::MemoryStore;
+use slate_kernel::{
+    Action, Grant, KernelError, RecordStore, SecurityCatalog, SecurityContext, keys,
+};
+use slate_schema::Catalog;
+use std::collections::BTreeSet;
+
+const TASKS: TableId = TableId(2);
+const OPEN_BY_OWNER: IndexId = IndexId(20);
+const ONE_OPEN_PER_OWNER: IndexId = IndexId(21);
+
+/// `id`, `owner`, `state`. By position, for the same reason `DELETED_AT` is.
+const ID: Ordinal = Ordinal(0);
+const OWNER: Ordinal = Ordinal(1);
+const STATE: Ordinal = Ordinal(2);
+
+/// The rows both partial indexes hold.
+fn open() -> Expr {
+    Expr::eq(STATE, Value::Str("open".into()))
+}
+
+fn tasks() -> TableDef {
+    TableDef::builder("tasks", TASKS)
+        .column("id", ValueType::U64)
+        .column("owner", ValueType::Str)
+        .column("state", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("open_by_owner", OPEN_BY_OWNER)
+                .column("owner")
+                .only_where(open()),
+        )
+        // Unique *among open tasks*: one owner may have any number of closed
+        // ones. This is what a partial unique index is for, and it works by
+        // holding no entry for the others rather than by a second rule.
+        .index(
+            IndexDef::builder("one_open_per_owner", ONE_OPEN_PER_OWNER)
+                .column("owner")
+                .unique()
+                .only_where(open()),
+        )
+        .build()
+        .expect("valid schema")
+}
+
+#[test]
+fn the_task_ordinals_are_where_they_are_claimed_to_be() {
+    let table = tasks();
+    assert_eq!(ID, table.ordinal_of("id").unwrap());
+    assert_eq!(OWNER, table.ordinal_of("owner").unwrap());
+    assert_eq!(STATE, table.ordinal_of("state").unwrap());
+}
+
+fn task(id: u64, owner: &str, state: &str) -> Row {
+    Row::new(vec![
+        Value::U64(id),
+        Value::Str(owner.to_owned()),
+        Value::Str(state.to_owned()),
+    ])
+}
+
+fn root() -> SecurityContext {
+    SecurityContext::superuser()
+}
+
+fn task_store() -> (RecordStore<MemoryStore>, MemoryStore) {
+    let kv = MemoryStore::new();
+    let catalog = Catalog::from_tables([tasks()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", TASKS, Action::ALL));
+    (
+        RecordStore::new(kv.clone(), catalog, security),
+        // The same store: `MemoryStore` is a handle, so this reads the keys the
+        // record layer is writing rather than a copy of them.
+        kv,
+    )
+}
+
+/// Every committed key under one index's prefix.
+fn index_keys(kv: &MemoryStore, index: IndexId) -> BTreeSet<Vec<u8>> {
+    let table = tasks();
+    let index = table.index(index).expect("the index exists");
+    let prefix = keys::index_prefix(&table, index, None);
+    kv.keys()
+        .into_iter()
+        .filter(|key| key.starts_with(&prefix))
+        .collect()
+}
+
+/// The keys the index *should* hold, given the rows that are in the table.
+fn wanted_keys(index: IndexId, rows: &[Row]) -> BTreeSet<Vec<u8>> {
+    let table = tasks();
+    let index = table.index(index).expect("the index exists");
+    rows.iter()
+        .filter(|row| index.admits(row))
+        .map(|row| {
+            keys::index_entry(
+                &table,
+                index,
+                &row.index_values(index),
+                &row.primary_key_values(&table),
+            )
+            .key
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_insert_the_predicate_rejects_writes_no_entry() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(index_keys(&kv, OPEN_BY_OWNER).len(), 1);
+    assert_eq!(
+        index_keys(&kv, OPEN_BY_OWNER),
+        wanted_keys(OPEN_BY_OWNER, &[task(1, "ann", "open")]),
+        "the closed task is in the index, or the open one is not"
+    );
+
+    // Both rows are still there. A partial index restricts the index, not the
+    // table, and confusing the two would be a far worse bug than an extra entry.
+    let txn = store.begin().await.unwrap();
+    assert!(
+        txn.get(&root(), &table, &[Value::U64(2)])
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn an_update_that_stops_matching_deletes_the_entry() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(index_keys(&kv, OPEN_BY_OWNER).len(), 1);
+
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &task(1, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    assert!(
+        index_keys(&kv, OPEN_BY_OWNER).is_empty(),
+        "closing a task left its entry behind"
+    );
+    assert!(
+        index_keys(&kv, ONE_OPEN_PER_OWNER).is_empty(),
+        "the unique slot was never released"
+    );
+}
+
+#[tokio::test]
+async fn an_update_that_starts_matching_writes_one() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert!(index_keys(&kv, OPEN_BY_OWNER).is_empty());
+
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(
+        index_keys(&kv, OPEN_BY_OWNER),
+        wanted_keys(OPEN_BY_OWNER, &[task(1, "ann", "open")]),
+        "reopening a task did not put it back in the index"
+    );
+}
+
+/// Reopening a task whose *owner* did not change still needs an entry.
+///
+/// The write path skips an index whose key is unchanged, to avoid inventing a
+/// write-write conflict. For a partial index "unchanged" has to mean the row
+/// was held before and is held now — a row that was outside the index owns no
+/// entry, however familiar its indexed values look.
+#[tokio::test]
+async fn the_unchanged_key_shortcut_does_not_skip_a_row_rejoining_the_index() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    for state in ["closed", "open"] {
+        let txn = store.begin().await.unwrap();
+        txn.update(&root(), &table, &task(1, "ann", state))
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+    }
+
+    assert_eq!(
+        index_keys(&kv, OPEN_BY_OWNER),
+        wanted_keys(OPEN_BY_OWNER, &[task(1, "ann", "open")]),
+        "the owner never changed, so the entry was skipped and never rewritten"
+    );
+}
+
+#[tokio::test]
+async fn a_partial_unique_index_constrains_only_the_rows_it_holds() {
+    let (store, kv) = task_store();
+    let table = tasks();
+
+    // Any number of closed tasks may share an owner.
+    let txn = store.begin().await.unwrap();
+    for id in 1..=3 {
+        txn.insert(&root(), &table, &task(id, "ann", "closed"))
+            .await
+            .expect("closed tasks are not unique per owner");
+    }
+    txn.commit().await.unwrap();
+    assert!(index_keys(&kv, ONE_OPEN_PER_OWNER).is_empty());
+
+    // One open one is fine.
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    // A second is not.
+    let txn = store.begin().await.unwrap();
+    let refused = txn.update(&root(), &table, &task(2, "ann", "open")).await;
+    assert!(
+        matches!(refused, Err(KernelError::UniqueViolation { .. })),
+        "a second open task for one owner was allowed: {refused:?}"
+    );
+}
+
+/// Closing the open task frees the slot for another.
+#[tokio::test]
+async fn the_unique_slot_is_released_when_a_row_leaves_the_index() {
+    let (store, _kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &task(1, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.update(&root(), &table, &task(2, "ann", "open"))
+        .await
+        .expect("the slot was not released by closing the first task");
+    txn.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn deleting_a_row_the_index_does_not_hold_leaves_the_others_alone() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "bob", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    txn.delete(&root(), &table, &[Value::U64(2)]).await.unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(
+        index_keys(&kv, OPEN_BY_OWNER),
+        wanted_keys(OPEN_BY_OWNER, &[task(1, "ann", "open")])
+    );
+}
+
+/// One operation of the generated sequence.
+#[derive(Debug, Clone)]
+enum Op {
+    Put(u64, &'static str, &'static str),
+    Delete(u64),
+}
+
+fn any_op() -> impl Strategy<Value = Op> {
+    let owners = prop_oneof![Just("ann"), Just("bob"), Just("cat")];
+    let states = prop_oneof![Just("open"), Just("closed"), Just("done")];
+    prop_oneof![
+        3 => (0..4u64, owners, states).prop_map(|(id, o, s)| Op::Put(id, o, s)),
+        1 => (0..4u64).prop_map(Op::Delete),
+    ]
+}
+
+/// After any sequence of writes, both indexes hold exactly the entries the
+/// predicate says they should.
+///
+/// The oracle is the key set, not a query, for the reason at the top of this
+/// section: a spurious entry is invisible through a query. The expected set is
+/// computed from a plain `Vec<Row>` maintained alongside — a second model of
+/// the table, which is the point.
+#[test]
+fn the_indexes_hold_exactly_the_rows_the_predicate_admits() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    proptest!(
+        ProptestConfig::with_cases(256),
+        |(ops in proptest::collection::vec(any_op(), 1..24))| {
+            runtime.block_on(async {
+                let (store, kv) = task_store();
+                let table = tasks();
+                // The model: what the table holds, by primary key.
+                let mut model: Vec<Row> = Vec::new();
+
+                for op in &ops {
+                    let txn = store.begin().await.unwrap();
+                    match op {
+                        Op::Put(id, owner, state) => {
+                            let row = task(*id, owner, state);
+                            // `upsert` rather than insert-or-update, so the
+                            // sequence never has to know what is already there.
+                            if txn.upsert(&root(), &table, &row).await.is_err() {
+                                txn.rollback();
+                                continue;
+                            }
+                            model.retain(|r| r.values()[ID.0] != Value::U64(*id));
+                            model.push(row);
+                        }
+                        Op::Delete(id) => {
+                            if txn.delete(&root(), &table, &[Value::U64(*id)]).await.is_err() {
+                                txn.rollback();
+                                continue;
+                            }
+                            model.retain(|r| r.values()[ID.0] != Value::U64(*id));
+                        }
+                    }
+                    if txn.commit().await.is_err() {
+                        // A refused commit changed nothing, so the model has
+                        // to be put back the way it was. Simpler to rebuild it
+                        // from storage than to undo one operation.
+                        continue;
+                    }
+                }
+
+                for index in [OPEN_BY_OWNER, ONE_OPEN_PER_OWNER] {
+                    prop_assert_eq!(
+                        index_keys(&kv, index),
+                        wanted_keys(index, &model),
+                        "index {:?} disagrees with the predicate after {:?}",
+                        index,
+                        ops
+                    );
+                }
+                Ok(())
+            })?;
+        }
+    );
+}
+
+/// The sequences have to actually put rows on both sides of the predicate.
+#[test]
+fn the_generated_sequences_reach_both_sides_of_the_predicate() {
+    let held = std::cell::RefCell::new(0usize);
+    let rejected = std::cell::RefCell::new(0usize);
+    proptest!(ProptestConfig::with_cases(256), |(ops in proptest::collection::vec(any_op(), 1..24))| {
+        for op in &ops {
+            if let Op::Put(_, _, state) = op {
+                if *state == "open" {
+                    *held.borrow_mut() += 1;
+                } else {
+                    *rejected.borrow_mut() += 1;
+                }
+            }
+        }
+    });
+    let (held, rejected) = (held.into_inner(), rejected.into_inner());
+    assert!(
+        held > 0 && rejected > 0,
+        "{held} rows inside the predicate and {rejected} outside; the oracle \
+         above needs both"
+    );
+}
+
+/// Removing a row the index does not hold must not delete somebody else's
+/// entry.
+///
+/// The sharp case, and the reason the write path checks the predicate on the
+/// row being *replaced or removed* rather than only on the row being written. A
+/// unique index's key omits the primary key — that is what makes two rows
+/// collide in it — so the entry a closed task *would* have had is byte for byte
+/// the entry the open task really has. Computing it from a row the index does
+/// not hold and deleting it takes the open task's entry with it.
+#[tokio::test]
+async fn removing_an_unheld_row_does_not_take_another_rows_unique_entry() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let held = index_keys(&kv, ONE_OPEN_PER_OWNER);
+    assert_eq!(held.len(), 1, "the open task should own the slot");
+
+    let txn = store.begin().await.unwrap();
+    txn.delete(&root(), &table, &[Value::U64(1)]).await.unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(
+        index_keys(&kv, ONE_OPEN_PER_OWNER),
+        held,
+        "deleting the closed task deleted the open task's index entry"
+    );
+}
+
+/// The same, for an update rather than a delete.
+#[tokio::test]
+async fn updating_an_unheld_row_does_not_take_another_rows_unique_entry() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let held = index_keys(&kv, ONE_OPEN_PER_OWNER);
+
+    // Closed to done: outside the index before and after, so it has no entry
+    // to move and none to delete.
+    let txn = store.begin().await.unwrap();
+    txn.update(&root(), &table, &task(1, "ann", "done"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    assert_eq!(
+        index_keys(&kv, ONE_OPEN_PER_OWNER),
+        held,
+        "a write to a row outside the index removed one that is inside it"
+    );
+}
+
+/// The bulk path has its own two unique checks, and both need the predicate.
+///
+/// `insert_many` checks for collisions *within* the batch before it reads
+/// anything, and then for collisions against storage. Neither sees a `TableDef`
+/// method that would apply the predicate for it, so both had to be told, and
+/// this is what tells them: three tasks for one owner, none of them open, is a
+/// batch a partial unique index has nothing to say about.
+#[tokio::test]
+async fn a_bulk_insert_does_not_invent_a_collision_outside_the_index() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert_many(
+        &root(),
+        &table,
+        &[
+            task(1, "ann", "closed"),
+            task(2, "ann", "done"),
+            task(3, "ann", "closed"),
+        ],
+    )
+    .await
+    .expect("three closed tasks for one owner collide in nothing");
+    txn.commit().await.unwrap();
+
+    assert!(index_keys(&kv, ONE_OPEN_PER_OWNER).is_empty());
+    assert_eq!(index_keys(&kv, OPEN_BY_OWNER).len(), 0);
+}
+
+/// And it still refuses a real one.
+#[tokio::test]
+async fn a_bulk_insert_still_refuses_a_collision_inside_the_index() {
+    let (store, _kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert_many(
+            &root(),
+            &table,
+            &[task(1, "ann", "open"), task(2, "ann", "open")],
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(KernelError::UniqueViolation { .. })),
+        "two open tasks for one owner were accepted in one batch: {refused:?}"
+    );
+}
+
+/// A batch that collides with a row already stored, rather than with itself.
+#[tokio::test]
+async fn a_bulk_insert_checks_the_index_against_storage_too() {
+    let (store, _kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert_many(&root(), &table, &[task(2, "ann", "open")])
+        .await;
+    assert!(
+        matches!(refused, Err(KernelError::UniqueViolation { .. })),
+        "a batch took a slot storage already held: {refused:?}"
+    );
+
+    // ...and a closed one in the same shape does not.
+    let txn = store.begin().await.unwrap();
+    txn.insert_many(&root(), &table, &[task(3, "ann", "closed")])
+        .await
+        .expect("a closed task cannot collide with an open one");
+    txn.commit().await.unwrap();
+}
+
+/// A row joining the index in a bulk write is a *new* slot, however familiar it
+/// looks.
+///
+/// The bulk unique check skips a row whose slot has not changed, on the grounds
+/// that it already owns it. For a partial index that reasoning needs the row to
+/// have been in the index before: a closed task that opens has the same owner
+/// it always had and so the same would-be key, and skipping the check on that
+/// resemblance writes over whichever row really holds the slot — silently, in
+/// the same transaction, where no write-write conflict can catch it.
+#[tokio::test]
+async fn a_row_joining_the_index_in_bulk_is_checked_against_the_slot_it_takes() {
+    let (store, kv) = task_store();
+    let table = tasks();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &task(1, "ann", "open"))
+        .await
+        .unwrap();
+    txn.insert(&root(), &table, &task(2, "ann", "closed"))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let held = index_keys(&kv, ONE_OPEN_PER_OWNER);
+    assert_eq!(held.len(), 1);
+
+    // Task 2's owner does not change; only its state does, from outside the
+    // index to inside it.
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .upsert_many(&root(), &table, &[task(2, "ann", "open")])
+        .await;
+    assert!(
+        matches!(refused, Err(KernelError::UniqueViolation { .. })),
+        "task 2 opened into a slot task 1 already holds: {refused:?}"
+    );
+    txn.rollback();
+
+    assert_eq!(
+        index_keys(&kv, ONE_OPEN_PER_OWNER),
+        held,
+        "the entry moved anyway"
     );
 }
