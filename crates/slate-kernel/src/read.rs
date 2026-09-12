@@ -7,10 +7,11 @@
 
 use crate::error::Result;
 use crate::exec::QueryCursor;
-use crate::expr::Expr;
 use crate::keys;
-use crate::plan::{Projection, plan_projected};
+use crate::plan::{Plan, plan_with};
+use crate::query::Query;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
+use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use slate_schema::{IndexDef, Row, TableDef, decode_row};
 use slate_tuple::Value;
@@ -40,6 +41,7 @@ pub(crate) async fn read_row_unchecked(
 pub(crate) struct SecuredReads<'a> {
     pub(crate) snapshot: &'a dyn KvSnapshot,
     pub(crate) security: &'a SecurityCatalog,
+    pub(crate) statistics: &'a Statistics,
 }
 
 impl<'a> SecuredReads<'a> {
@@ -57,26 +59,42 @@ impl<'a> SecuredReads<'a> {
             .filter(|row| filter.admits(row)))
     }
 
-    /// Plan and run a query with the caller's security filter folded in.
-    pub(crate) async fn query(
+    /// Plan `query` with the caller's security filter folded in.
+    pub(crate) fn plan(
         self,
         context: &SecurityContext,
-        table: &'a TableDef,
-        filter: Expr,
-        order: ScanOrder,
-        projection: &Projection,
-    ) -> Result<QueryCursor<'a>> {
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<Plan> {
         self.security.authorize(context, table, Action::Read)?;
         // Conjoining the policy *before* planning is what lets it narrow the
         // scan; it also means a policy on a column the index lacks correctly
         // prevents an index-only scan rather than being skipped by one.
-        let secured = filter.and(self.security.row_filter(context, table, Action::Read)?);
-        QueryCursor::open(
-            self.snapshot,
+        let secured =
+            query
+                .filter
+                .clone()
+                .and(self.security.row_filter(context, table, Action::Read)?);
+        Ok(plan_with(
             table,
-            plan_projected(table, &secured, order, projection),
-        )
-        .await
+            &secured,
+            query.order,
+            &query.projection,
+            &self.statistics.table(table),
+            query.planning_limit(),
+        ))
+    }
+
+    /// Plan and run a query with the caller's security filter folded in.
+    pub(crate) async fn execute(
+        self,
+        context: &SecurityContext,
+        table: &'a TableDef,
+        query: &Query,
+    ) -> Result<QueryCursor<'a>> {
+        let plan = self.plan(context, table, query)?;
+        let cursor = QueryCursor::open(self.snapshot, table, plan).await?;
+        Ok(cursor.with_window(query.limit, query.offset))
     }
 }
 

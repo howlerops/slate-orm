@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::security::SecurityCatalog;
+use crate::stats::Statistics;
 
 /// How a pool decides where a read goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,7 @@ pub struct ReplicaPool {
     writer: Option<Arc<dyn KvReadStore>>,
     catalog: Catalog,
     security: SecurityCatalog,
+    statistics: Statistics,
     policy: RoutingPolicy,
     next: AtomicUsize,
 }
@@ -108,9 +110,17 @@ impl ReplicaPool {
             writer: None,
             catalog,
             security,
+            statistics: Statistics::new(),
             policy: RoutingPolicy::default(),
             next: AtomicUsize::new(0),
         }
+    }
+
+    /// Supply table statistics for the planner. See [`Statistics`].
+    #[must_use]
+    pub fn with_statistics(mut self, statistics: Statistics) -> Self {
+        self.statistics = statistics;
+        self
     }
 
     /// Add the writer as a fallback.
@@ -151,6 +161,7 @@ impl ReplicaPool {
             store.snapshot().await?,
             &self.catalog,
             &self.security,
+            &self.statistics,
         ))
     }
 

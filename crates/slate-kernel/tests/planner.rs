@@ -1,0 +1,306 @@
+//! Statistics, cost, and being able to see what the planner decided.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+use slate_kernel::{
+    AccessSummary, Action, CmpOp, Expr, Grant, Query, RecordStore, ScanOrder, SecurityCatalog,
+    SecurityContext, Statistics, TableStats, memory::MemoryStore,
+};
+use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
+use slate_tuple::{Value, ValueType};
+
+const T: TableId = TableId(1);
+const ROWS: u64 = 400;
+
+fn table() -> TableDef {
+    TableDef::builder("events", T)
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .column("at", ValueType::I64)
+        .nullable_column("note", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("by_kind", IndexId(10)).column("kind"))
+        .index(IndexDef::builder("by_at", IndexId(11)).column("at"))
+        .build()
+        .expect("valid schema")
+}
+
+fn col(name: &str) -> Ordinal {
+    table().ordinal_of(name).expect("column exists")
+}
+
+fn row(id: u64) -> Row {
+    Row::new(vec![
+        Value::U64(id),
+        // Eight kinds, so an equality keeps an eighth of the table.
+        Value::Str(format!("kind-{}", id % 8)),
+        Value::I64(id as i64),
+        // A quarter of the rows have no note.
+        if id.is_multiple_of(4) {
+            Value::Null
+        } else {
+            Value::Str("note".to_owned())
+        },
+    ])
+}
+
+async fn store() -> RecordStore<MemoryStore> {
+    let catalog = Catalog::from_tables([table()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", T, Action::ALL));
+    let store = RecordStore::new(MemoryStore::new(), catalog, security);
+
+    let root = SecurityContext::superuser();
+    let txn = store.begin().await.unwrap();
+    for id in 0..ROWS {
+        txn.insert(&root, &table(), &row(id)).await.unwrap();
+    }
+    txn.commit().await.unwrap();
+    store
+}
+
+fn root() -> SecurityContext {
+    SecurityContext::superuser()
+}
+
+/// Statistics have to describe the data, or they are worse than none.
+#[tokio::test]
+async fn analyze_describes_the_table() {
+    let store = store().await;
+    let txn = store.begin().await.unwrap();
+    let stats = txn.analyze(&root(), &table()).await.unwrap();
+
+    assert_eq!(stats.row_count, ROWS);
+    assert_eq!(stats.column(col("kind")).distinct, 8);
+    // Every id is distinct.
+    assert_eq!(stats.column(col("id")).distinct, ROWS);
+    // A quarter of the notes are null.
+    let note = stats.column(col("note"));
+    assert!((note.null_fraction - 0.25).abs() < 0.001, "got {note:?}");
+    // And a null is not counted as a distinct value.
+    assert_eq!(note.distinct, 1);
+
+    // Selectivity follows from that: an eighth for `kind`.
+    assert!((stats.equality_selectivity(col("kind")) - 0.125).abs() < 0.001);
+}
+
+/// The estimate should land near the truth on a table it has actually seen.
+#[tokio::test]
+async fn estimates_track_reality_after_analyzing() {
+    let mut store = store().await;
+    let txn = store.begin().await.unwrap();
+    let stats = txn.analyze(&root(), &table()).await.unwrap();
+    drop(txn);
+    store.set_statistics(Statistics::new().with(T, stats));
+
+    let query = Query::all().filter(Expr::eq(col("kind"), Value::Str("kind-3".into())));
+    let txn = store.begin().await.unwrap();
+    let explained = txn.explain(&root(), &table(), &query).unwrap();
+    let actual = txn
+        .execute(&root(), &table(), &query)
+        .await
+        .unwrap()
+        .count()
+        .await
+        .unwrap();
+
+    assert_eq!(actual, (ROWS / 8) as usize);
+    let error = (explained.estimated_rows - actual as f64).abs() / actual as f64;
+    assert!(
+        error < 0.2,
+        "estimate {} was far from the actual {actual}",
+        explained.estimated_rows
+    );
+}
+
+/// The whole reason for the cost model: an index that would cost more than a
+/// scan must not be chosen.
+#[tokio::test]
+async fn an_index_that_costs_more_than_a_scan_is_not_chosen() {
+    let mut store = store().await;
+    let txn = store.begin().await.unwrap();
+    let stats = txn.analyze(&root(), &table()).await.unwrap();
+    drop(txn);
+    store.set_statistics(Statistics::new().with(T, stats));
+
+    // An eighth of 400 rows is 50 point reads, against scanning 400 — a bad
+    // trade when a read costs a round trip and a scanned row does not.
+    let query = Query::all().filter(Expr::eq(col("kind"), Value::Str("kind-3".into())));
+    let txn = store.begin().await.unwrap();
+    let explained = txn.explain(&root(), &table(), &query).unwrap();
+    assert_eq!(
+        explained.access,
+        AccessSummary::TableScan,
+        "expected a scan, got {explained}"
+    );
+
+    // Asking only for columns the index holds removes the point reads, and with
+    // them the reason to avoid the index.
+    let covered = query.clone().select([col("id"), col("kind")]);
+    let explained = txn.explain(&root(), &table(), &covered).unwrap();
+    assert!(
+        explained.is_index_only(),
+        "a covered query should use the index: {explained}"
+    );
+}
+
+#[tokio::test]
+async fn explain_names_the_path_and_shows_its_estimates() {
+    let store = store().await;
+    let txn = store.begin().await.unwrap();
+
+    let point = txn
+        .explain(
+            &root(),
+            &table(),
+            &Query::all().filter(Expr::eq(col("id"), Value::U64(7))),
+        )
+        .unwrap();
+    assert_eq!(point.access, AccessSummary::PointGet);
+    assert!(point.to_string().starts_with("Point Get on events"));
+
+    let scan = txn.explain(&root(), &table(), &Query::all()).unwrap();
+    assert_eq!(scan.access, AccessSummary::TableScan);
+    assert!(scan.estimated_cost > 0.0);
+
+    let counted = txn
+        .explain(
+            &root(),
+            &table(),
+            &Query::all()
+                .filter(Expr::eq(col("at"), Value::I64(3)))
+                .count_only(),
+        )
+        .unwrap();
+    assert!(
+        matches!(counted.access, AccessSummary::IndexOnlyScan { ref index } if index == "by_at"),
+        "got {counted}"
+    );
+
+    let windowed = txn
+        .explain(
+            &root(),
+            &table(),
+            &Query::all().limit(5).offset(10).descending(),
+        )
+        .unwrap();
+    let rendered = windowed.to_string();
+    assert!(rendered.contains("backwards"), "{rendered}");
+    assert!(rendered.contains("limit=5"), "{rendered}");
+    assert!(rendered.contains("offset=10"), "{rendered}");
+}
+
+#[tokio::test]
+async fn limit_and_offset_window_the_results() {
+    let store = store().await;
+    let txn = store.begin().await.unwrap();
+
+    let ids = |rows: Vec<Row>| -> Vec<u64> {
+        rows.into_iter()
+            .map(|r| match r.values()[0] {
+                Value::U64(v) => v,
+                ref other => panic!("id was {other:?}"),
+            })
+            .collect()
+    };
+
+    let page = txn
+        .execute(&root(), &table(), &Query::all().limit(3).offset(2))
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(ids(page), vec![2, 3, 4]);
+
+    // Descending, the same window comes from the other end.
+    let page = txn
+        .execute(
+            &root(),
+            &table(),
+            &Query::all().descending().limit(3).offset(2),
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(ids(page), vec![ROWS - 3, ROWS - 4, ROWS - 5]);
+
+    // An offset past the end yields nothing rather than failing.
+    let empty = txn
+        .execute(&root(), &table(), &Query::all().offset(10_000))
+        .await
+        .unwrap()
+        .count()
+        .await
+        .unwrap();
+    assert_eq!(empty, 0);
+}
+
+/// A query object should compose the same way the individual arguments did.
+#[tokio::test]
+async fn query_conditions_compose() {
+    let store = store().await;
+    let txn = store.begin().await.unwrap();
+
+    let query = Query::all()
+        .filter(Expr::compare(col("at"), CmpOp::Ge, Value::I64(100)))
+        .and(Expr::compare(col("at"), CmpOp::Lt, Value::I64(110)))
+        .order(ScanOrder::Ascending);
+
+    let matched = txn
+        .execute(&root(), &table(), &query)
+        .await
+        .unwrap()
+        .count()
+        .await
+        .unwrap();
+    assert_eq!(matched, 10);
+}
+
+/// Statistics gathered under a policy describe what the policy shows, which is
+/// why analysing as a restricted principal is documented as the wrong thing.
+#[tokio::test]
+async fn analyze_sees_only_what_the_caller_can() {
+    use slate_kernel::{Policy, Principal};
+
+    let catalog = Catalog::from_tables([table()]).expect("catalog");
+    let security = SecurityCatalog::new()
+        .grant(Grant::new("r", T, Action::ALL))
+        .policy(Policy::new("half", T, [Action::Read], |_: &_| {
+            Expr::compare(
+                table().ordinal_of("at").expect("column"),
+                CmpOp::Lt,
+                Value::I64(100),
+            )
+        }));
+    let store = RecordStore::new(MemoryStore::new(), catalog, security);
+
+    let root = SecurityContext::superuser();
+    let txn = store.begin().await.unwrap();
+    for id in 0..ROWS {
+        txn.insert(&root, &table(), &row(id)).await.unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let restricted = SecurityContext::new(Principal::new(Value::U64(1)).with_role("r"));
+    let txn = store.begin().await.unwrap();
+    assert_eq!(txn.analyze(&root, &table()).await.unwrap().row_count, ROWS);
+    assert_eq!(
+        txn.analyze(&restricted, &table()).await.unwrap().row_count,
+        100
+    );
+}
+
+#[test]
+fn assumed_statistics_are_used_when_nothing_is_known() {
+    let stats = TableStats::assumed();
+    assert_eq!(stats.row_count, 1_000);
+    // A column nobody has looked at still gets a usable guess.
+    assert!((stats.equality_selectivity(Ordinal(0)) - 0.009).abs() < 0.001);
+}

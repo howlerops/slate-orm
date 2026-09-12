@@ -15,8 +15,8 @@
 )]
 
 use slate_kernel::{
-    Access, Action, CmpOp, Expr, Grant, RecordStore, ScanOrder, SecurityCatalog, SecurityContext,
-    memory::MemoryStore, plan,
+    Access, Action, CmpOp, ColumnStats, Expr, Grant, Projection, RecordStore, ScanOrder,
+    SecurityCatalog, SecurityContext, TableStats, memory::MemoryStore, plan, plan_with,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value, ValueType};
@@ -242,7 +242,13 @@ async fn bounds_never_lose_rows() {
 }
 
 /// The equivalence test above would still pass if every plan were a table scan,
-/// so check separately that the planner really is choosing index paths.
+/// so check separately that the planner reaches for an index when an index is
+/// actually the cheaper thing.
+///
+/// These assertions are cost-based, which means they depend on the statistics.
+/// That is the point: the same predicate should get a different plan on a
+/// thousand rows than on a million, and a planner that always answered the same
+/// way would be the bug.
 #[tokio::test]
 async fn the_planner_uses_the_indexes_it_should() {
     let table = metrics();
@@ -255,71 +261,194 @@ async fn the_planner_uses_the_indexes_it_should() {
     let by_label = table.index_by_name("by_label_desc").unwrap().id();
     let by_region_value = table.index_by_name("by_region_value").unwrap().id();
 
-    let cases: Vec<(&str, Expr, Access)> = vec![
-        (
-            "equality on an indexed column uses that index",
-            Expr::eq(value, Value::F64(1.5)),
-            Access::IndexScan {
-                index: by_value,
-                range: match_any(),
-                covering: false,
-            },
-        ),
-        (
-            "IS NULL is a prefix like any other value",
-            Expr::is_null(label),
-            Access::IndexScan {
-                index: by_label,
-                range: match_any(),
-                covering: false,
-            },
-        ),
-        (
-            "a key prefix keeps the query on the table",
-            Expr::eq(region, Value::Str("eu".into())),
-            Access::TableScan { range: match_any() },
-        ),
-        (
-            "a composite index beats a one-column key prefix",
-            Expr::eq(region, Value::Str("eu".into())).and(Expr::compare(
-                value,
-                CmpOp::Lt,
-                Value::F64(3.0),
-            )),
-            Access::IndexScan {
-                index: by_region_value,
-                range: match_any(),
-                covering: false,
-            },
-        ),
-        (
-            "a full key match is a point read, not a one-row scan",
-            Expr::eq(region, Value::Str("eu".into())).and(Expr::eq(bucket, Value::I64(7))),
-            Access::PointGet { key: Vec::new() },
-        ),
-        (
-            "an impossible predicate reads nothing",
-            Expr::eq(label, Value::Null),
-            Access::Nothing,
-        ),
-    ];
+    // A large table where an equality is highly selective: an index scan reads
+    // a handful of rows, a table scan reads a million.
+    let large = TableStats::with_row_count(1_000_000).with_column(
+        value,
+        ColumnStats {
+            distinct: 100_000,
+            null_fraction: 0.0,
+        },
+    );
+    // A small table where the same column is *not* selective: forty-five point
+    // reads against two hundred scanned rows is a bad trade.
+    let small = TableStats::with_row_count(200).with_column(
+        value,
+        ColumnStats {
+            distinct: 4,
+            null_fraction: 0.0,
+        },
+    );
 
-    for (why, filter, expected) in cases {
-        let access = plan(&table, &filter, ScanOrder::Ascending).access;
-        let ok = match (&expected, &access) {
-            (Access::Nothing, Access::Nothing) => true,
-            (Access::PointGet { .. }, Access::PointGet { .. }) => true,
-            (Access::TableScan { .. }, Access::TableScan { .. }) => true,
-            (Access::IndexScan { index: a, .. }, Access::IndexScan { index: b, .. }) => a == b,
-            _ => false,
-        };
-        assert!(ok, "{why}: expected {expected:?}, got {access:?}");
+    let equality_on_value = Expr::eq(value, Value::F64(1.5));
+    match plan_with(
+        &table,
+        &equality_on_value,
+        ScanOrder::Ascending,
+        &Projection::All,
+        &large,
+        None,
+    )
+    .access
+    {
+        Access::IndexScan { index, .. } => assert_eq!(index, by_value),
+        other => panic!("a selective equality on a big table should use the index, got {other:?}"),
     }
+
+    // The same predicate where it selects a quarter of a small table.
+    assert!(
+        matches!(
+            plan_with(
+                &table,
+                &equality_on_value,
+                ScanOrder::Ascending,
+                &Projection::All,
+                &small,
+                None,
+            )
+            .access,
+            Access::TableScan { .. }
+        ),
+        "an unselective equality should lose to a scan"
+    );
+
+    // Unless the index covers the query, in which case there are no point reads
+    // to weigh at all.
+    match plan_with(
+        &table,
+        &equality_on_value,
+        ScanOrder::Ascending,
+        &Projection::Columns(vec![region, bucket, value]),
+        &small,
+        None,
+    )
+    .access
+    {
+        Access::IndexScan {
+            index, covering, ..
+        } => {
+            assert_eq!(index, by_value);
+            assert!(covering);
+        }
+        other => panic!("a covering index has no lookups to pay for, got {other:?}"),
+    }
+
+    // `IS NULL` is a prefix like any other value, so an index can serve it —
+    // given a table big enough and nulls rare enough for it to be worth doing.
+    let rare_nulls = TableStats::with_row_count(1_000_000).with_column(
+        label,
+        ColumnStats {
+            distinct: 1_000,
+            null_fraction: 0.000_01,
+        },
+    );
+    match plan_with(
+        &table,
+        &Expr::is_null(label),
+        ScanOrder::Ascending,
+        &Projection::All,
+        &rare_nulls,
+        None,
+    )
+    .access
+    {
+        Access::IndexScan { index, .. } => assert_eq!(index, by_label),
+        other => panic!("a rare null should be found through the index, got {other:?}"),
+    }
+
+    // A composite index whose leading column is pinned and whose second is
+    // ranged beats the one-column key prefix.
+    match plan_with(
+        &table,
+        &Expr::eq(region, Value::Str("eu".into())).and(Expr::compare(
+            value,
+            CmpOp::Lt,
+            Value::F64(3.0),
+        )),
+        ScanOrder::Ascending,
+        &Projection::Columns(vec![region, value, bucket]),
+        &large,
+        None,
+    )
+    .access
+    {
+        Access::IndexScan { index, .. } => assert_eq!(index, by_region_value),
+        other => panic!("expected the composite index, got {other:?}"),
+    }
+
+    // A full key match is a point read whatever the statistics say.
+    for stats in [&large, &small] {
+        assert!(matches!(
+            plan_with(
+                &table,
+                &Expr::eq(region, Value::Str("eu".into())).and(Expr::eq(bucket, Value::I64(7))),
+                ScanOrder::Ascending,
+                &Projection::All,
+                stats,
+                None,
+            )
+            .access,
+            Access::PointGet { .. }
+        ));
+    }
+
+    // An impossible predicate reads nothing.
+    assert!(matches!(
+        plan(&table, &Expr::eq(label, Value::Null), ScanOrder::Ascending).access,
+        Access::Nothing
+    ));
 }
 
-/// A placeholder range for cases where only the access *kind* is asserted.
-fn match_any() -> slate_kernel::KeyRange {
-    slate_kernel::KeyRange::all()
+/// A limit lowers the cost of every plan, but — with this cost model — it does
+/// not change which plan wins.
+///
+/// That is not an oversight, it falls out of the arithmetic: reading `L` rows
+/// through an index costs `L` point reads, and finding `L` matches by scanning
+/// costs `L / selectivity` rows, so both scale linearly in `L` and their ratio
+/// is whatever it was without the limit. The case where a limit genuinely flips
+/// the decision is `ORDER BY` with a limit, where an index supplies the order
+/// and a scan would have to sort everything first — which is a reason to want
+/// ordered plans, not a reason to weight limits.
+#[tokio::test]
+async fn a_limit_lowers_the_estimate_without_changing_the_choice() {
+    let table = metrics();
+    let value = col("value");
+    // A thousand rows match, so a limit of ten leaves most of them unread.
+    let stats = TableStats::with_row_count(1_000_000).with_column(
+        value,
+        ColumnStats {
+            distinct: 1_000,
+            null_fraction: 0.0,
+        },
+    );
+    let filter = Expr::eq(value, Value::F64(1.5));
+
+    let unlimited = plan_with(
+        &table,
+        &filter,
+        ScanOrder::Ascending,
+        &Projection::All,
+        &stats,
+        None,
+    );
+    let limited = plan_with(
+        &table,
+        &filter,
+        ScanOrder::Ascending,
+        &Projection::All,
+        &stats,
+        Some(10),
+    );
+
+    assert!(matches!(unlimited.access, Access::IndexScan { .. }));
+    assert!(matches!(limited.access, Access::IndexScan { .. }));
+    assert!(
+        limited.estimated_cost < unlimited.estimated_cost,
+        "a limit should make the plan cheaper: {} vs {}",
+        limited.estimated_cost,
+        unlimited.estimated_cost
+    );
+    assert!(limited.estimated_rows <= 10.0);
 }
 
 #[tokio::test]

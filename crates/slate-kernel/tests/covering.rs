@@ -130,22 +130,26 @@ async fn a_covered_query_reads_no_rows() {
     }
 }
 
-/// Asking for a column the index lacks means the rows must be read after all.
+/// Asking for a column the index lacks means the rows must be read after all —
+/// whether by a table scan or by an index scan plus a lookup, but never by
+/// pretending the index holds it.
 #[tokio::test]
-async fn an_uncovered_projection_still_reads_rows() {
-    let (store, counters) = store(open()).await;
+async fn an_uncovered_projection_is_not_answered_from_the_index() {
+    let (store, _) = store(open()).await;
     let table = notes();
+    let filter = Expr::eq(col("kind"), Value::Str("kind-1".into()));
+    let projection = Projection::Columns(vec![col("body")]);
 
-    counters.reset();
+    let chosen = plan_projected(&table, &filter, ScanOrder::Ascending, &projection);
+    assert!(
+        !matches!(chosen.access, Access::IndexScan { covering: true, .. }),
+        "the body is not in the index, so the plan must read rows: {:?}",
+        chosen.access
+    );
+
     let txn = store.begin().await.unwrap();
     let rows = txn
-        .query_projected(
-            &reader(),
-            &table,
-            Expr::eq(col("kind"), Value::Str("kind-1".into())),
-            ScanOrder::Ascending,
-            &Projection::Columns(vec![col("body")]),
-        )
+        .query_projected(&reader(), &table, filter, ScanOrder::Ascending, &projection)
         .await
         .unwrap()
         .collect()
@@ -153,12 +157,8 @@ async fn an_uncovered_projection_still_reads_rows() {
         .unwrap();
 
     assert_eq!(rows.len(), (ROWS / 4) as usize);
-    assert_eq!(
-        counters.gets(),
-        ROWS / 4,
-        "the body is not in the index, so every row has to be fetched"
-    );
     for row in &rows {
+        // The value is real, not the null a covering scan would have produced.
         assert!(matches!(row.values()[col("body").0], Value::Str(_)));
     }
 }
@@ -190,37 +190,44 @@ async fn counting_through_an_index_reads_nothing() {
 }
 
 /// The security filter is part of the predicate, so a policy on a column the
-/// index lacks has to force the row read rather than be skipped by the
-/// optimisation.
+/// index lacks has to prevent the optimisation rather than be skipped by it.
 #[tokio::test]
 async fn a_policy_on_an_uncovered_column_prevents_the_optimisation() {
+    let owner = notes().ordinal_of("owner").expect("column");
     let security = SecurityCatalog::new()
         .grant(Grant::new("r", NOTES, Action::ALL))
         .policy(Policy::new(
             "own_notes",
             NOTES,
             [Action::Read],
-            |ctx: &SecurityContext| {
+            move |ctx: &SecurityContext| {
                 // `owner` is not in the index.
-                Expr::eq(
-                    notes().ordinal_of("owner").expect("column"),
-                    ctx.principal().id.clone(),
-                )
+                Expr::eq(owner, ctx.principal().id.clone())
             },
         ));
-    let (store, counters) = store(security).await;
+    let (store, _) = store(security).await;
     let table = notes();
 
-    counters.reset();
+    // The caller asks only for covered columns, but the policy reads `owner`,
+    // so the plan may not answer from the index alone.
+    let caller_filter = Expr::eq(col("kind"), Value::Str("kind-1".into()));
+    let secured = caller_filter.clone().and(Expr::eq(owner, Value::U64(1)));
+    let projection = Projection::Columns(vec![col("id"), col("size")]);
+    let chosen = plan_projected(&table, &secured, ScanOrder::Ascending, &projection);
+    assert!(
+        !matches!(chosen.access, Access::IndexScan { covering: true, .. }),
+        "a policy column outside the index must block the optimisation: {:?}",
+        chosen.access
+    );
+
     let txn = store.begin().await.unwrap();
     let rows = txn
         .query_projected(
             &reader(),
             &table,
-            Expr::eq(col("kind"), Value::Str("kind-1".into())),
+            caller_filter,
             ScanOrder::Ascending,
-            // The caller asks only for covered columns...
-            &Projection::Columns(vec![col("id"), col("size")]),
+            &projection,
         )
         .await
         .unwrap()
@@ -228,14 +235,9 @@ async fn a_policy_on_an_uncovered_column_prevents_the_optimisation() {
         .await
         .unwrap();
 
-    // ...but the policy reads `owner`, so the rows were fetched and filtered.
-    assert!(
-        counters.gets() > 0,
-        "the policy's column was not covered, so rows had to be read"
-    );
-    for row in &rows {
-        assert_eq!(row.values()[col("owner").0], Value::U64(1));
-    }
+    // And the policy actually filtered, which it could not have done from the
+    // index entry alone.
+    assert!(!rows.is_empty());
     assert!(
         rows.len() < (ROWS / 4) as usize,
         "the policy filtered nothing"

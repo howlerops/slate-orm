@@ -7,16 +7,25 @@
 
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
+use crate::explain::Explanation;
 use crate::expr::Expr;
 use crate::keys::{self, IndexEntry};
 use crate::plan::Projection;
+use crate::query::Query;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
+use crate::stats::{ColumnStats, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
-use slate_schema::{Catalog, IndexDef, Row, TableDef, encode_body};
+use slate_schema::{Catalog, IndexDef, Ordinal, Row, TableDef, encode_body};
 use slate_tuple::Value;
+use std::collections::HashSet;
+
+/// A typed record store over a key-value backend.
+/// How many distinct values [`RecordTransaction::analyze`] counts per column
+/// before giving up and calling the column unique.
+pub const DISTINCT_TRACKING_LIMIT: usize = 10_000;
 
 /// A typed record store over a key-value backend.
 #[derive(Debug)]
@@ -25,6 +34,7 @@ pub struct RecordStore<S> {
     catalog: Catalog,
     security: SecurityCatalog,
     retry: RetryPolicy,
+    statistics: Statistics,
 }
 
 impl<S> RecordStore<S> {
@@ -38,7 +48,30 @@ impl<S> RecordStore<S> {
             catalog,
             security,
             retry: RetryPolicy::DEFAULT,
+            statistics: Statistics::new(),
         }
+    }
+
+    /// Supply table statistics for the planner.
+    ///
+    /// Without these every table is assumed to hold a thousand rows with a
+    /// hundred distinct values per column, which is wrong for any real table
+    /// but is at least a claim about *data* rather than about the shape of a
+    /// predicate. See [`Statistics`] and [`RecordTransaction::analyze`].
+    #[must_use]
+    pub fn with_statistics(mut self, statistics: Statistics) -> Self {
+        self.statistics = statistics;
+        self
+    }
+
+    /// The statistics the planner is using.
+    pub const fn statistics(&self) -> &Statistics {
+        &self.statistics
+    }
+
+    /// Replace the statistics, for example after re-analysing.
+    pub fn set_statistics(&mut self, statistics: Statistics) {
+        self.statistics = statistics;
     }
 
     /// Change how [`RecordStore::transact`] retries conflicts.
@@ -80,6 +113,7 @@ impl<S: KvReadStore> RecordStore<S> {
             snapshot: self.store.snapshot().await?,
             catalog: &self.catalog,
             security: &self.security,
+            statistics: &self.statistics,
         })
     }
 
@@ -161,6 +195,7 @@ impl<S: KvStore> RecordStore<S> {
             txn: self.store.begin().await?,
             catalog: &self.catalog,
             security: &self.security,
+            statistics: &self.statistics,
         })
     }
 }
@@ -173,6 +208,7 @@ pub struct RecordTransaction<'a> {
     txn: Box<dyn KvTransaction + Send + 'a>,
     catalog: &'a Catalog,
     security: &'a SecurityCatalog,
+    statistics: &'a Statistics,
 }
 
 impl core::fmt::Debug for RecordTransaction<'_> {
@@ -207,6 +243,7 @@ impl<'a> RecordTransaction<'a> {
         SecuredReads {
             snapshot: self.snapshot(),
             security: self.security,
+            statistics: self.statistics,
         }
     }
 
@@ -228,11 +265,21 @@ impl<'a> RecordTransaction<'a> {
         self.reads().get(context, table, primary_key).await
     }
 
-    /// Plan and run a query, with the caller's security filter folded in.
+    /// Run `query`, with the caller's security filter folded in.
     ///
-    /// The policy is conjoined onto `filter` *before* planning, so it can narrow
-    /// the scan as well as filter it, and it is re-evaluated on every candidate
-    /// row regardless.
+    /// The policy is conjoined onto the filter *before* planning, so it can
+    /// narrow the scan as well as filter it, and it is re-evaluated on every
+    /// candidate row regardless.
+    pub async fn execute<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        query: &Query,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads().execute(context, table, query).await
+    }
+
+    /// Every row matching `filter`, in `order`.
     pub async fn query<'q>(
         &'q self,
         context: &SecurityContext,
@@ -240,7 +287,7 @@ impl<'a> RecordTransaction<'a> {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<QueryCursor<'q>> {
-        self.query_projected(context, table, filter, order, &Projection::All)
+        self.execute(context, table, &Query::all().filter(filter).order(order))
             .await
     }
 
@@ -256,9 +303,95 @@ impl<'a> RecordTransaction<'a> {
         order: ScanOrder,
         projection: &Projection,
     ) -> Result<QueryCursor<'q>> {
-        self.reads()
-            .query(context, table, filter, order, projection)
-            .await
+        let mut query = Query::all().filter(filter).order(order);
+        query.projection = projection.clone();
+        self.execute(context, table, &query).await
+    }
+
+    /// The plan `query` would run under, without running it.
+    pub fn explain(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<Explanation> {
+        let plan = self.reads().plan(context, table, query)?;
+        Ok(Explanation::of(table, &plan, query))
+    }
+
+    /// Collect statistics for `table` by reading it.
+    ///
+    /// The planner needs to know how many rows a predicate selects, and there
+    /// is no way to know without looking. This is the equivalent of `ANALYZE`:
+    /// run it after a bulk load, and periodically after that.
+    ///
+    /// It is an ordinary read, so it sees what `context` is allowed to see.
+    /// Statistics gathered under a restrictive policy describe that slice
+    /// rather than the table, which would make the planner optimise for the
+    /// wrong shape — analyse as a superuser unless you mean otherwise.
+    ///
+    /// Distinct values are counted exactly up to
+    /// [`DISTINCT_TRACKING_LIMIT`]; a column with more than that is treated as
+    /// unique, which is the right answer for the identifiers and timestamps
+    /// that usually exceed it.
+    pub async fn analyze(&self, context: &SecurityContext, table: &TableDef) -> Result<TableStats> {
+        let column_count = table.columns().len();
+        let mut distinct: Vec<HashSet<Vec<u8>>> = vec![HashSet::new(); column_count];
+        let mut overflowed = vec![false; column_count];
+        let mut nulls = vec![0u64; column_count];
+        let mut row_count = 0u64;
+
+        let mut cursor = self.execute(context, table, &Query::all()).await?;
+        while let Some(row) = cursor.next().await? {
+            row_count += 1;
+            for (ordinal, value) in row.values().iter().enumerate() {
+                if value.is_null() {
+                    if let Some(count) = nulls.get_mut(ordinal) {
+                        *count += 1;
+                    }
+                    continue;
+                }
+                let Some(seen) = distinct.get_mut(ordinal) else {
+                    continue;
+                };
+                if overflowed.get(ordinal).copied().unwrap_or(false) {
+                    continue;
+                }
+                if seen.len() >= DISTINCT_TRACKING_LIMIT {
+                    // Stop counting and stop paying for the set.
+                    seen.clear();
+                    seen.shrink_to_fit();
+                    if let Some(flag) = overflowed.get_mut(ordinal) {
+                        *flag = true;
+                    }
+                    continue;
+                }
+                seen.insert(slate_tuple::encode(core::slice::from_ref(value)));
+            }
+        }
+
+        let mut stats = TableStats::with_row_count(row_count);
+        for ordinal in 0..column_count {
+            let null_count = nulls.get(ordinal).copied().unwrap_or(0);
+            let counted = distinct.get(ordinal).map_or(0, HashSet::len) as u64;
+            let distinct_values = if overflowed.get(ordinal).copied().unwrap_or(false) {
+                row_count.max(1)
+            } else {
+                counted.max(1)
+            };
+            stats = stats.with_column(
+                Ordinal(ordinal),
+                ColumnStats {
+                    distinct: distinct_values,
+                    null_fraction: if row_count == 0 {
+                        0.0
+                    } else {
+                        null_count as f64 / row_count as f64
+                    },
+                },
+            );
+        }
+        Ok(stats)
     }
 
     /// Read a row with no authorisation or policy applied, for the write paths
@@ -516,6 +649,7 @@ pub struct RecordSnapshot<'a> {
     snapshot: Box<dyn KvSnapshot + Send + 'a>,
     catalog: &'a Catalog,
     security: &'a SecurityCatalog,
+    statistics: &'a Statistics,
 }
 
 impl core::fmt::Debug for RecordSnapshot<'_> {
@@ -534,11 +668,13 @@ impl<'a> RecordSnapshot<'a> {
         snapshot: Box<dyn KvSnapshot + Send + 'a>,
         catalog: &'a Catalog,
         security: &'a SecurityCatalog,
+        statistics: &'a Statistics,
     ) -> Self {
         Self {
             snapshot,
             catalog,
             security,
+            statistics,
         }
     }
 
@@ -552,6 +688,7 @@ impl<'a> RecordSnapshot<'a> {
         SecuredReads {
             snapshot: self.snapshot.as_ref(),
             security: self.security,
+            statistics: self.statistics,
         }
     }
 
@@ -565,7 +702,17 @@ impl<'a> RecordSnapshot<'a> {
         self.reads().get(context, table, primary_key).await
     }
 
-    /// Plan and run a query, with the caller's security filter folded in.
+    /// Run `query`, with the caller's security filter folded in.
+    pub async fn execute<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        query: &Query,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads().execute(context, table, query).await
+    }
+
+    /// Every row matching `filter`, in `order`.
     pub async fn query<'q>(
         &'q self,
         context: &SecurityContext,
@@ -573,7 +720,7 @@ impl<'a> RecordSnapshot<'a> {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<QueryCursor<'q>> {
-        self.query_projected(context, table, filter, order, &Projection::All)
+        self.execute(context, table, &Query::all().filter(filter).order(order))
             .await
     }
 
@@ -587,8 +734,19 @@ impl<'a> RecordSnapshot<'a> {
         order: ScanOrder,
         projection: &Projection,
     ) -> Result<QueryCursor<'q>> {
-        self.reads()
-            .query(context, table, filter, order, projection)
-            .await
+        let mut query = Query::all().filter(filter).order(order);
+        query.projection = projection.clone();
+        self.execute(context, table, &query).await
+    }
+
+    /// The plan `query` would run under, without running it.
+    pub fn explain(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<Explanation> {
+        let plan = self.reads().plan(context, table, query)?;
+        Ok(Explanation::of(table, &plan, query))
     }
 }

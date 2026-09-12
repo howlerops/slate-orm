@@ -15,6 +15,7 @@
 //! provably enforce is a later optimisation, and one that has to be argued for
 //! rather than assumed.
 
+use crate::stats::{POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, TableStats};
 use crate::store::{KeyRange, ScanOrder};
 use crate::{expr::Expr, keys};
 use core::ops::Bound;
@@ -94,7 +95,7 @@ impl Projection {
 }
 
 /// A chosen access path plus the filter still to apply.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     /// How to reach candidate rows.
     pub access: Access,
@@ -103,6 +104,10 @@ pub struct Plan {
     pub residual: Expr,
     /// Direction to walk the access path in.
     pub order: ScanOrder,
+    /// Rows the planner expects this to return.
+    pub estimated_rows: f64,
+    /// Estimated cost, in object-storage round trips. See [`crate::stats`].
+    pub estimated_cost: f64,
 }
 
 /// What a predicate says about one column.
@@ -114,19 +119,58 @@ struct ColumnConstraints {
     ranges: Vec<(CmpOp, Value)>,
 }
 
-/// A candidate access path and how much of the predicate it absorbs.
+/// A candidate access path and what it is expected to cost.
 struct Candidate {
     access: Access,
-    equality_columns: usize,
-    has_range: bool,
-    is_table_scan: bool,
+    /// Fraction of the table the access path's bounds admit, before the
+    /// residual filters any further.
+    bound_selectivity: f64,
 }
 
 impl Candidate {
-    /// Higher is better. Equality columns dominate: each one multiplies the
-    /// selectivity, whereas a range only trims the ends.
-    fn score(&self) -> usize {
-        self.equality_columns * 2 + usize::from(self.has_range)
+    /// Estimated cost in round trips, and rows returned.
+    ///
+    /// `total_selectivity` is the whole predicate's; the ratio between it and
+    /// the bounds' is how much filtering still happens after reading, which is
+    /// what decides how many rows a limit makes the path touch.
+    fn estimate(
+        &self,
+        stats: &TableStats,
+        total_selectivity: f64,
+        limit: Option<usize>,
+    ) -> (f64, f64) {
+        if matches!(self.access, Access::Nothing) {
+            return (0.0, 0.0);
+        }
+        let rows = stats.row_count as f64;
+        if let Access::PointGet { .. } = self.access {
+            return (1.0f64.min(rows), POINT_READ_COST);
+        }
+
+        let admitted = (rows * self.bound_selectivity).max(1.0);
+        let mut returned = (rows * total_selectivity).max(0.0);
+        if let Some(limit) = limit {
+            returned = returned.min(limit as f64);
+        }
+
+        // How much of what the bounds admit still has to be looked at to
+        // produce `returned` rows. With no limit this is everything admitted.
+        let residual_selectivity = if self.bound_selectivity > 0.0 {
+            (total_selectivity / self.bound_selectivity).clamp(f64::MIN_POSITIVE, 1.0)
+        } else {
+            1.0
+        };
+        let touched = (returned / residual_selectivity).clamp(1.0, admitted);
+
+        let mut cost = SCAN_OPEN_COST + touched * SCAN_ROW_COST;
+        if let Access::IndexScan { covering, .. } = self.access
+            && !covering
+        {
+            // The row has to be read before the residual can even be evaluated,
+            // so this is per row touched, not per row returned.
+            cost += touched * POINT_READ_COST;
+        }
+        (returned, cost)
     }
 }
 
@@ -151,6 +195,31 @@ pub fn plan_projected(
     order: ScanOrder,
     projection: &Projection,
 ) -> Plan {
+    plan_with(
+        table,
+        predicate,
+        order,
+        projection,
+        &TableStats::assumed(),
+        None,
+    )
+}
+
+/// Choose an access path using known statistics and a row limit.
+///
+/// The statistics decide whether an index is worth its point reads; the limit
+/// decides how much of the chosen path will actually be walked. Both change the
+/// answer, so both belong in the decision rather than being discovered at
+/// execution time.
+#[must_use]
+pub fn plan_with(
+    table: &TableDef,
+    predicate: &Expr,
+    order: ScanOrder,
+    projection: &Projection,
+    stats: &TableStats,
+    limit: Option<usize>,
+) -> Plan {
     let conjuncts = predicate.conjuncts();
 
     // A comparison against a null literal is Unknown for every row, so the
@@ -163,25 +232,27 @@ pub fn plan_projected(
             access: Access::Nothing,
             residual: predicate.clone(),
             order,
+            estimated_rows: 0.0,
+            estimated_cost: 0.0,
         };
     }
 
     let constraints = collect_constraints(&conjuncts);
 
-    let mut best: Option<Candidate> = None;
+    let total_selectivity = stats.predicate_selectivity(predicate);
+
+    let mut best: Option<(Candidate, f64, f64)> = None;
     let mut consider = |candidate: Candidate| {
+        let (rows, cost) = candidate.estimate(stats, total_selectivity, limit);
         let better = match &best {
             None => true,
-            Some(current) => match candidate.score().cmp(&current.score()) {
-                core::cmp::Ordering::Greater => true,
-                // A table scan reaches the row directly; an index scan pays a
-                // point lookup per row. Break ties in the table's favour.
-                core::cmp::Ordering::Equal => candidate.is_table_scan && !current.is_table_scan,
-                core::cmp::Ordering::Less => false,
-            },
+            // Ties go to whichever is already chosen, so the order candidates
+            // are generated in decides them: the primary key first, then
+            // indexes in declaration order. Deterministic beats arbitrary.
+            Some((_, _, current)) => cost < *current,
         };
         if better {
-            best = Some(candidate);
+            best = Some((candidate, rows, cost));
         }
     };
 
@@ -193,22 +264,30 @@ pub fn plan_projected(
         Some(columns) => needed.extend(columns.iter().copied()),
     }
 
-    consider(match_primary_key(table, &constraints));
+    consider(match_primary_key(table, &constraints, stats));
     for index in table.indexes() {
-        consider(match_index(table, index, &constraints, &needed));
+        consider(match_index(table, index, &constraints, &needed, stats));
     }
 
-    let access = best.map_or_else(
-        || Access::TableScan {
-            range: KeyRange::prefix(&keys::table_prefix(table)),
+    let (access, estimated_rows, estimated_cost) = best.map_or_else(
+        || {
+            (
+                Access::TableScan {
+                    range: KeyRange::prefix(&keys::table_prefix(table)),
+                },
+                stats.row_count as f64,
+                SCAN_OPEN_COST + stats.row_count as f64 * SCAN_ROW_COST,
+            )
         },
-        |c| c.access,
+        |(candidate, rows, cost)| (candidate.access, rows, cost),
     );
 
     Plan {
         access,
         residual: predicate.clone(),
         order,
+        estimated_rows,
+        estimated_cost,
     }
 }
 
@@ -276,14 +355,21 @@ fn match_key(
     base: Vec<u8>,
     key_columns: &[(Ordinal, Direction)],
     constraints: &[(Ordinal, ColumnConstraints)],
-) -> (KeyRange, usize, bool) {
+    stats: &TableStats,
+) -> (KeyRange, f64) {
     let mut prefix = base;
     let mut equality_columns = 0;
+    let mut selectivity = 1.0f64;
 
     for (ordinal, direction) in key_columns {
         let Some(value) = constraints_for(constraints, *ordinal).and_then(|c| c.equals.clone())
         else {
             break;
+        };
+        selectivity *= if value.is_null() {
+            stats.column(*ordinal).null_fraction.max(f64::MIN_POSITIVE)
+        } else {
+            stats.equality_selectivity(*ordinal)
         };
         encode_value_into(&mut prefix, &value, *direction);
         equality_columns += 1;
@@ -305,9 +391,12 @@ fn match_key(
             for (op, value) in &ranges {
                 result = result.intersect(bound_for(&prefix, *op, value, direction));
             }
-            (result, equality_columns, true)
+            if let Some((ordinal, _)) = key_columns.get(equality_columns) {
+                selectivity *= stats.range_selectivity(*ordinal, ranges.len() == 1);
+            }
+            (result, selectivity)
         }
-        _ => (prefix_range, equality_columns, false),
+        _ => (prefix_range, selectivity),
     }
 }
 
@@ -349,7 +438,11 @@ fn empty_range(at: &[u8]) -> KeyRange {
     KeyRange::new(Bound::Included(at.to_vec()), Bound::Excluded(at.to_vec()))
 }
 
-fn match_primary_key(table: &TableDef, constraints: &[(Ordinal, ColumnConstraints)]) -> Candidate {
+fn match_primary_key(
+    table: &TableDef,
+    constraints: &[(Ordinal, ColumnConstraints)],
+    stats: &TableStats,
+) -> Candidate {
     let key_columns: Vec<(Ordinal, Direction)> = table
         .primary_key()
         .iter()
@@ -366,20 +459,16 @@ fn match_primary_key(table: &TableDef, constraints: &[(Ordinal, ColumnConstraint
         && !key.is_empty()
     {
         return Candidate {
-            equality_columns: key.len(),
             access: Access::PointGet { key },
-            has_range: false,
-            is_table_scan: true,
+            bound_selectivity: 1.0 / (stats.row_count.max(1) as f64),
         };
     }
 
-    let (range, equality_columns, has_range) =
-        match_key(keys::table_prefix(table), &key_columns, constraints);
+    let (range, bound_selectivity) =
+        match_key(keys::table_prefix(table), &key_columns, constraints, stats);
     Candidate {
         access: Access::TableScan { range },
-        equality_columns,
-        has_range,
-        is_table_scan: true,
+        bound_selectivity,
     }
 }
 
@@ -402,6 +491,7 @@ fn match_index(
     index: &IndexDef,
     constraints: &[(Ordinal, ColumnConstraints)],
     needed: &BTreeSet<Ordinal>,
+    stats: &TableStats,
 ) -> Candidate {
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.
@@ -412,7 +502,7 @@ fn match_index(
     key_columns.extend(index.columns().iter().map(|c| (c.ordinal, c.direction)));
 
     let base = keys::index_prefix(table, index, None);
-    let (range, equality_columns, has_range) = match_key(base, &key_columns, constraints);
+    let (range, bound_selectivity) = match_key(base, &key_columns, constraints, stats);
 
     Candidate {
         access: Access::IndexScan {
@@ -420,8 +510,6 @@ fn match_index(
             range,
             covering: covers(table, index, needed),
         },
-        equality_columns,
-        has_range,
-        is_table_scan: false,
+        bound_selectivity,
     }
 }

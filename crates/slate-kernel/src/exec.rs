@@ -40,6 +40,8 @@ pub struct QueryCursor<'a> {
     source: Source<'a>,
     residual: Expr,
     limit: Option<usize>,
+    offset: usize,
+    skipped: usize,
     yielded: usize,
 }
 
@@ -114,6 +116,8 @@ impl<'a> QueryCursor<'a> {
             source,
             residual: plan.residual,
             limit: None,
+            offset: 0,
+            skipped: 0,
             yielded: 0,
         })
     }
@@ -125,16 +129,31 @@ impl<'a> QueryCursor<'a> {
         self
     }
 
+    /// Apply a limit and an offset together.
+    #[must_use]
+    pub(crate) const fn with_window(mut self, limit: Option<usize>, offset: usize) -> Self {
+        self.limit = limit;
+        self.offset = offset;
+        self
+    }
+
     /// The next admitted row.
     pub async fn next(&mut self) -> Result<Option<Row>> {
         if self.limit.is_some_and(|l| self.yielded >= l) {
             return Ok(None);
         }
         while let Some(row) = self.next_candidate().await? {
-            if self.residual.admits(&row) {
-                self.yielded += 1;
-                return Ok(Some(row));
+            if !self.residual.admits(&row) {
+                continue;
             }
+            // An offset still has to find the rows it discards; there is no
+            // cheaper way to know which ones they are.
+            if self.skipped < self.offset {
+                self.skipped += 1;
+                continue;
+            }
+            self.yielded += 1;
+            return Ok(Some(row));
         }
         Ok(None)
     }

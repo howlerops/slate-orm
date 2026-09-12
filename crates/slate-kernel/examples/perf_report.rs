@@ -16,8 +16,8 @@
 use slate_kernel::latency::{LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Access, Action, CmpOp, Expr, Grant, Projection, RecordStore, ScanOrder, SecurityCatalog,
-    SecurityContext, plan_projected,
+    Action, CmpOp, Expr, Grant, Projection, Query, RecordStore, ScanOrder, SecurityCatalog,
+    SecurityContext, Statistics,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value, ValueType};
@@ -79,9 +79,24 @@ async fn main() {
         txn.commit().await.expect("commit");
     }
 
+    // Statistics first: without them the planner has to guess how many rows a
+    // predicate selects, and guessing structurally is what made it pick a plan
+    // 30x slower than the alternative.
+    let analyzed = {
+        let txn = loader.begin().await.expect("begin");
+        txn.analyze(&root, &table).await.expect("analyze")
+    };
+    println!(
+        "analyzed {} rows; kind has {} distinct values, at has {}\n",
+        analyzed.row_count,
+        analyzed.column(column("kind")).distinct,
+        analyzed.column(column("at")).distinct,
+    );
+
     let slow = LatencyStore::new(backing, LatencyProfile::object_storage());
     let counters = slow.counters();
-    let store = RecordStore::new(slow, catalog, security);
+    let store = RecordStore::new(slow, catalog, security)
+        .with_statistics(Statistics::new().with(EVENTS, analyzed));
 
     let tenant = Value::Uuid(Uuid::from_u128(0));
     let by_tenant = || Expr::eq(column("tenant_id"), tenant.clone());
@@ -93,58 +108,58 @@ async fn main() {
     // Counting needs no columns of its own, only the predicate's.
     let nothing = Projection::none();
 
-    struct Query<'a> {
+    struct Case<'a> {
         label: &'a str,
         filter: Expr,
         limit: Option<usize>,
         projection: &'a Projection,
     }
 
-    let queries = vec![
-        Query {
+    let cases = vec![
+        Case {
             label: "point get by primary key",
             filter: by_tenant().and(Expr::eq(column("id"), Value::U64(1234))),
             limit: None,
             projection: &all,
         },
-        Query {
+        Case {
             label: "whole tenant (2500 rows)",
             filter: by_tenant(),
             limit: None,
             projection: &all,
         },
-        Query {
+        Case {
             label: "indexed equality (~100 rows)",
             filter: by_tenant().and(kind_7()),
             limit: None,
             projection: &all,
         },
-        Query {
+        Case {
             label: "indexed equality, limit 10",
             filter: by_tenant().and(kind_7()),
             limit: Some(10),
             projection: &all,
         },
-        Query {
+        Case {
             label: "indexed range (~500 rows)",
             filter: by_tenant().and(early()),
             limit: None,
             projection: &all,
         },
-        Query {
+        Case {
             label: "unindexed filter (0 rows, full scan)",
             filter: by_tenant().and(Expr::eq(column("note"), Value::Str("never".into()))),
             limit: None,
             projection: &all,
         },
         // The same two queries, asking only for columns an index already holds.
-        Query {
+        Case {
             label: "covered: indexed equality, keys only",
             filter: by_tenant().and(kind_7()),
             limit: None,
             projection: &keys_only,
         },
-        Query {
+        Case {
             label: "covered: count over an index",
             filter: by_tenant().and(early()),
             limit: None,
@@ -158,46 +173,30 @@ async fn main() {
     );
     println!("{:-<118}", "");
 
-    for query in queries {
-        let access = plan_projected(
-            &table,
-            &query.filter,
-            ScanOrder::Ascending,
-            query.projection,
-        )
-        .access;
-        let described = match &access {
-            Access::PointGet { .. } => "point get".to_owned(),
-            Access::TableScan { .. } => "table scan".to_owned(),
-            Access::IndexScan {
-                index, covering, ..
-            } => {
-                let name = table
-                    .index(*index)
-                    .map_or("?", slate_schema::IndexDef::name);
-                let kind = if *covering { "index-only" } else { "index" };
-                format!("{kind} {name}")
-            }
-            Access::Nothing => "nothing".to_owned(),
-        };
+    for query in cases {
+        let mut request = Query::all()
+            .filter(query.filter)
+            .order(ScanOrder::Ascending);
+        request.projection = query.projection.clone();
+        if let Some(limit) = query.limit {
+            request = request.limit(limit);
+        }
 
         counters.reset();
         let started = Instant::now();
         let txn = store.begin().await.expect("begin");
-        let mut cursor = txn
-            .query_projected(
-                &root,
-                &table,
-                query.filter,
-                ScanOrder::Ascending,
-                query.projection,
-            )
+        let described = txn
+            .explain(&root, &table, &request)
+            .expect("explain")
+            .access
+            .to_string();
+        let rows = txn
+            .execute(&root, &table, &request)
             .await
-            .expect("query");
-        if let Some(limit) = query.limit {
-            cursor = cursor.limit(limit);
-        }
-        let rows = cursor.count().await.expect("count");
+            .expect("query")
+            .count()
+            .await
+            .expect("count");
         let elapsed = started.elapsed();
 
         println!(

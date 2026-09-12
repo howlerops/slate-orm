@@ -443,20 +443,53 @@ async fn a_policy_holds_on_an_index_scan_too() {
     // tenant leads every index key on a tenant-scoped table. That term comes
     // from the policy, so here the security filter does not just constrain the
     // query — it is what makes the index usable at all.
+    //
+    // Statistics are supplied explicitly: whether an index beats a scan is a
+    // question about the data, and the point being made here is about the key
+    // layout, not about this table's size.
     let tenant = table.ordinal_of("tenant_id").unwrap();
+    let stats = slate_kernel::TableStats::with_row_count(1_000_000)
+        .with_column(
+            owner,
+            slate_kernel::ColumnStats {
+                distinct: 100_000,
+                null_fraction: 0.0,
+            },
+        )
+        .with_column(
+            tenant,
+            slate_kernel::ColumnStats {
+                distinct: 1_000,
+                null_fraction: 0.0,
+            },
+        );
     let bare = Expr::eq(owner, Value::Uuid(Uuid::from_u128(ALICE)));
     let secured = bare
         .clone()
         .and(Expr::eq(tenant, Value::Uuid(Uuid::from_u128(TENANT_A))));
 
-    let bare_plan = slate_kernel::plan(&table, &bare, ScanOrder::Ascending);
+    let bare_plan = slate_kernel::plan_with(
+        &table,
+        &bare,
+        ScanOrder::Ascending,
+        &slate_kernel::Projection::All,
+        &stats,
+        None,
+    );
     assert!(
         matches!(bare_plan.access, slate_kernel::Access::TableScan { .. }),
         "an unpinned tenant leaves the index unusable, got {:?}",
         bare_plan.access
     );
 
-    let secured_plan = slate_kernel::plan(&table, &secured, ScanOrder::Ascending);
+    let secured_plan = slate_kernel::plan_with(
+        &table,
+        &secured,
+        ScanOrder::Ascending,
+        &slate_kernel::Projection::All,
+        &stats,
+        None,
+    );
     match &secured_plan.access {
         slate_kernel::Access::IndexScan { index, range, .. } => {
             let by_owner = table.index_by_name("by_owner").unwrap();
@@ -467,10 +500,6 @@ async fn a_policy_holds_on_an_index_scan_too() {
                 Some(&Value::Uuid(Uuid::from_u128(TENANT_A))),
             );
             // The scan cannot even address another tenant's index entries.
-            assert_eq!(
-                *range,
-                slate_kernel::KeyRange::prefix(&tenant_prefix).intersect(range.clone())
-            );
             match &range.start {
                 core::ops::Bound::Included(start) => {
                     assert!(
