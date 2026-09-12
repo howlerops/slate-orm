@@ -25,14 +25,30 @@
 //! then their orders. One outer row against ten thousand inner ones is
 //! precisely where the loop is right, and the planner picks it there.
 //!
+//! # Outer joins, and which algorithm can serve them
+//!
+//! All four join types are here. Three of them constrain nothing, but a right
+//! or full outer join has to return inner rows that matched *nothing*, and
+//! that is not a fact any single probe can establish — it is the absence of a
+//! match over the entire other side.
+//!
+//! A hash join already holds one side in memory, so it flags the buckets that
+//! were probed and hands out the rest once the streaming side runs out. A
+//! nested loop cannot: it only ever sees the inner rows some outer row asked
+//! for, and reading the rest to find out what it missed would be a hash join
+//! with extra steps. So the planner will not choose a loop for a right or full
+//! join, and refuses one that is forced.
+//!
+//! Which side a hash join builds is therefore a pure memory decision again —
+//! an unmatched built row is drained at the end rather than needing to have
+//! been the streaming side.
+//!
 //! # What is not here
 //!
 //! The join condition is equality between columns, and any other filter belongs
 //! to one side or the other. A predicate spanning both sides — `left.a <
 //! right.b` — has nowhere to live yet, because a row of a join has no single
-//! ordinal space. Right and full outer joins are also absent; a right join is a
-//! left join with the sides swapped, and writing that out is the caller's job
-//! for now.
+//! ordinal space.
 
 use crate::error::{KernelError, Result};
 use crate::expr::{CmpOp, Expr};
@@ -73,8 +89,31 @@ pub enum JoinType {
     /// Only rows that matched on both sides.
     #[default]
     Inner,
-    /// Every left row, with nulls where the right side had no match.
+    /// Every left row, with nothing on the right where none matched.
     Left,
+    /// Every right row, with nothing on the left where none matched.
+    Right,
+    /// Every row of both sides.
+    Full,
+}
+
+impl JoinType {
+    /// Whether an unmatched row of `side` still has to be returned.
+    #[must_use]
+    pub const fn preserves(self, side: Side) -> bool {
+        match (self, side) {
+            (Self::Inner, _) => false,
+            (Self::Full, _) => true,
+            (Self::Left, Side::Left) | (Self::Right, Side::Right) => true,
+            (Self::Left, Side::Right) | (Self::Right, Side::Left) => false,
+        }
+    }
+
+    /// Whether a row can come back with no left side at all.
+    #[must_use]
+    pub const fn may_drop_left(self) -> bool {
+        self.preserves(Side::Right)
+    }
 }
 
 /// One equality of the join condition: `left.column = right.column`.
@@ -162,6 +201,20 @@ impl Join {
     #[must_use]
     pub const fn left_outer(mut self) -> Self {
         self.join_type = JoinType::Left;
+        self
+    }
+
+    /// Keep every right row, matched or not.
+    #[must_use]
+    pub const fn right_outer(mut self) -> Self {
+        self.join_type = JoinType::Right;
+        self
+    }
+
+    /// Keep every row of both sides.
+    #[must_use]
+    pub const fn full_outer(mut self) -> Self {
+        self.join_type = JoinType::Full;
         self
     }
 
@@ -352,18 +405,22 @@ pub(crate) fn probe_floor(cost: f64) -> f64 {
     cost.max(POINT_READ_COST)
 }
 
-/// One row of a join: a row from each side, the right absent when a left outer
-/// join found no match.
+/// One row of a join: a row from each side, either absent when an outer join
+/// preserved a row that matched nothing.
 ///
-/// The two sides are kept apart rather than concatenated into one wide row.
-/// Concatenating would need an ordinal space belonging to neither table, and
-/// every caller would then have to know the left table's width to read a right
-/// column. Keeping them separate also lets each side decode into its own type.
+/// Both sides are optional because a full outer join needs both to be: it
+/// returns left rows with no right and right rows with no left. An inner or
+/// left join never produces an absent left, but the type does not try to say
+/// so — a shape that changes with the join type would be worse than an
+/// `Option` a caller can see is always `Some`.
+///
+/// The two sides are kept apart rather than concatenated into one wide row, so
+/// each decodes into its own type and neither has to know the other's width.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JoinedRow {
-    /// The left row. Always present.
-    pub left: Row,
-    /// The right row, if one matched.
+    /// The left row, if there was one.
+    pub left: Option<Row>,
+    /// The right row, if there was one.
     pub right: Option<Row>,
 }
 
@@ -372,21 +429,72 @@ impl JoinedRow {
     #[must_use]
     pub const fn matched(left: Row, right: Row) -> Self {
         Self {
-            left,
+            left: Some(left),
             right: Some(right),
         }
     }
 
-    /// A left row with no match.
+    /// A left row that matched nothing.
     #[must_use]
-    pub const fn unmatched(left: Row) -> Self {
-        Self { left, right: None }
+    pub const fn left_only(left: Row) -> Self {
+        Self {
+            left: Some(left),
+            right: None,
+        }
     }
 
-    /// Whether the right side matched.
+    /// A right row that matched nothing.
+    #[must_use]
+    pub const fn right_only(right: Row) -> Self {
+        Self {
+            left: None,
+            right: Some(right),
+        }
+    }
+
+    /// A pair, in the order the caller asked for rather than the order the
+    /// executor happened to have them in.
+    #[must_use]
+    pub fn pair(streamed: Row, stored: Row, streamed_side: Side) -> Self {
+        match streamed_side {
+            Side::Left => Self::matched(streamed, stored),
+            Side::Right => Self::matched(stored, streamed),
+        }
+    }
+
+    /// One unmatched row, on the side it came from.
+    #[must_use]
+    pub const fn only(row: Row, side: Side) -> Self {
+        match side {
+            Side::Left => Self::left_only(row),
+            Side::Right => Self::right_only(row),
+        }
+    }
+
+    /// Whether both sides are present.
     #[must_use]
     pub const fn is_matched(&self) -> bool {
-        self.right.is_some()
+        self.left.is_some() && self.right.is_some()
+    }
+
+    /// One side, if present.
+    #[must_use]
+    pub const fn side(&self, side: Side) -> Option<&Row> {
+        match side {
+            Side::Left => self.left.as_ref(),
+            Side::Right => self.right.as_ref(),
+        }
+    }
+}
+
+impl Side {
+    /// The other side.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
     }
 }
 
@@ -424,7 +532,7 @@ use crate::read::SecuredReads;
 use crate::security::SecurityContext;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Everything a nested loop needs to probe the inner side, owned so each probe
@@ -469,30 +577,46 @@ impl<'a> Probe<'a> {
     }
 }
 
-/// One probe side of a hash join: the rows read into memory, keyed by their
-/// join values.
+/// The built side of a hash join: the rows read into memory, keyed by their
+/// join values, each flagged once something probes it.
+///
+/// The flag is what makes a right or full outer join possible. A probe miss
+/// tells you a *streamed* row matched nothing straight away; a build row that
+/// matched nothing is only knowable once the probe side is exhausted, so it
+/// has to be remembered as you go and drained at the end.
 struct BuildTable {
     rows: HashMap<Vec<u8>, Vec<Row>>,
+    /// Buckets that something probed, by key. Held apart from the rows so a
+    /// bucket can be handed out by reference while this is written.
+    hit: HashSet<Vec<u8>>,
+    /// Rows dropped for having a null join value. They match nothing by
+    /// definition, but an outer join that preserves this side still owes them
+    /// to the caller.
+    nulls: Vec<Row>,
 }
 
 impl BuildTable {
     /// Read `cursor` fully, bucketing by `columns`.
     ///
-    /// Rows with a null join value are dropped here rather than stored under a
-    /// null key: they can never match, and a key holding a null is a bug
-    /// waiting to be written.
+    /// A row with a null join value goes to `nulls` rather than into a bucket
+    /// under a key containing one: it can never match, and a key holding a
+    /// null is a bug waiting to be written.
+    ///
+    /// `keep_unmatched` says whether those rows are owed to the caller at all.
+    /// An inner or one-sided join throws them away here rather than carrying
+    /// them through the whole probe.
     async fn build(
         cursor: &mut QueryCursor<'_>,
         columns: &[Ordinal],
         limit: usize,
         table: &TableDef,
+        keep_unmatched: bool,
     ) -> Result<Self> {
         let mut rows: HashMap<Vec<u8>, Vec<Row>> = HashMap::new();
+        let mut nulls = Vec::new();
         let mut held = 0usize;
         while let Some(row) = cursor.next().await? {
-            let Some(key) = join_values(&row, columns) else {
-                continue;
-            };
+            let key = join_values(&row, columns);
             held += 1;
             if held > limit {
                 return Err(KernelError::JoinBuildTooLarge {
@@ -500,13 +624,43 @@ impl BuildTable {
                     limit,
                 });
             }
-            rows.entry(key).or_default().push(row);
+            match key {
+                Some(key) => rows.entry(key).or_default().push(row),
+                None if keep_unmatched => nulls.push(row),
+                None => {}
+            }
         }
-        Ok(Self { rows })
+        Ok(Self {
+            rows,
+            hit: HashSet::new(),
+            nulls,
+        })
     }
 
     fn get(&self, key: &[u8]) -> Option<&[Row]> {
         self.rows.get(key).map(Vec::as_slice)
+    }
+
+    /// Note that something matched this bucket.
+    fn mark(&mut self, key: &[u8]) {
+        if !self.hit.contains(key) {
+            self.hit.insert(key.to_vec());
+        }
+    }
+
+    /// Every built row nothing matched, once probing is done.
+    ///
+    /// Buckets are all-or-nothing: a probe that matches a bucket matches every
+    /// row in it, because they all carry the same join values.
+    fn unmatched(&mut self) -> Vec<Row> {
+        let mut out = core::mem::take(&mut self.nulls);
+        for (key, bucket) in &mut self.rows {
+            if !self.hit.contains(key) {
+                out.append(bucket);
+            }
+        }
+        self.rows.clear();
+        out
     }
 }
 
@@ -524,6 +678,9 @@ enum State<'a> {
         /// row matching a thousand others does not copy a thousand rows to
         /// return the first.
         current: Option<(Row, Option<Vec<u8>>, usize)>,
+        /// Built rows nothing matched, handed out after the probe side runs
+        /// out. Empty unless the join preserves the built side.
+        draining: Option<std::vec::IntoIter<Row>>,
     },
     NestedLoop {
         outer: QueryCursor<'a>,
@@ -590,9 +747,14 @@ impl<'a> JoinCursor<'a> {
                     Side::Right => (right_table, &join.right, join.columns(Side::Right)),
                 };
                 let mut building = reads.execute(context, build_table, build_query).await?;
-                let built =
-                    BuildTable::build(&mut building, &build_columns, join.build_limit, build_table)
-                        .await?;
+                let built = BuildTable::build(
+                    &mut building,
+                    &build_columns,
+                    join.build_limit,
+                    build_table,
+                    join.join_type.preserves(build),
+                )
+                .await?;
                 let (probe_table, probe_query, probe_columns) = match build {
                     Side::Left => (right_table, &join.right, join.columns(Side::Right)),
                     Side::Right => (left_table, &join.left, join.columns(Side::Left)),
@@ -603,6 +765,7 @@ impl<'a> JoinCursor<'a> {
                     build_side: build,
                     probe_columns,
                     current: None,
+                    draining: None,
                 }
             }
         };
@@ -641,37 +804,54 @@ impl<'a> JoinCursor<'a> {
                 build_side,
                 probe_columns,
                 current,
+                draining,
             } => loop {
+                let probe_side = build_side.other();
+
+                // Built rows nothing matched, once the probe side is done.
+                if let Some(rows) = draining {
+                    return Ok(rows.next().map(|row| JoinedRow::only(row, *build_side)));
+                }
+
                 // Finish emitting the bucket the last streamed row matched.
                 if let Some((row, key, at)) = current {
                     let matched = key.as_deref().and_then(|k| built.get(k));
                     if let Some(next) = matched.and_then(|bucket| bucket.get(*at)) {
                         *at += 1;
                         let next = next.clone();
-                        return Ok(Some(match build_side {
-                            // The streamed row is the left one when the right
-                            // side was built, and the other way round when it
-                            // was not. Which side was built is a costing
-                            // decision; which side is `left` is the caller's.
-                            Side::Right => JoinedRow::matched(row.clone(), next),
-                            Side::Left => JoinedRow::matched(next, row.clone()),
-                        }));
+                        // Which side was built is a costing decision; which
+                        // side is `left` is the caller's, so the pair goes back
+                        // the way they asked for it.
+                        return Ok(Some(JoinedRow::pair(row.clone(), next, probe_side)));
                     }
-                    let unmatched = *at == 0;
+                    let missed = *at == 0;
                     let row = row.clone();
+                    if !missed && let Some(key) = key.clone() {
+                        built.mark(&key);
+                    }
                     *current = None;
-                    // Only a left outer join emits a row that found nothing,
-                    // and only when the left side is the one streaming.
-                    if unmatched && join_type == JoinType::Left && *build_side == Side::Right {
-                        return Ok(Some(JoinedRow::unmatched(row)));
+                    if missed && join_type.preserves(probe_side) {
+                        return Ok(Some(JoinedRow::only(row, probe_side)));
                     }
                     continue;
                 }
-                let Some(row) = probe.next().await? else {
-                    return Ok(None);
-                };
-                let key = join_values(&row, probe_columns);
-                *current = Some((row, key, 0));
+
+                match probe.next().await? {
+                    Some(row) => {
+                        let key = join_values(&row, probe_columns);
+                        *current = Some((row, key, 0));
+                    }
+                    None => {
+                        // A built row that matched nothing is only knowable
+                        // now: unlike a probe miss, it is the absence of an
+                        // event over the whole probe side.
+                        if join_type.preserves(*build_side) {
+                            *draining = Some(built.unmatched().into_iter());
+                            continue;
+                        }
+                        return Ok(None);
+                    }
+                }
             },
             State::NestedLoop {
                 outer,
@@ -699,8 +879,8 @@ impl<'a> JoinCursor<'a> {
                     Some(Err(error)) => return Err(error),
                     Some(Ok((left, matches))) => {
                         if matches.is_empty() {
-                            if join_type == JoinType::Left {
-                                return Ok(Some(JoinedRow::unmatched(left)));
+                            if join_type.preserves(Side::Left) {
+                                return Ok(Some(JoinedRow::left_only(left)));
                             }
                             continue;
                         }

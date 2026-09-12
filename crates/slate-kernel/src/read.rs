@@ -6,10 +6,10 @@
 //! that does not go through the secured reads in this module.
 
 use crate::aggregate::{Accumulators, Aggregate, Group};
-use crate::error::Result;
+use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
-use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, JoinType, Side};
+use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, Side};
 use crate::keys;
 use crate::plan::{Plan, Projection, plan_full};
 use crate::query::Query;
@@ -235,23 +235,38 @@ impl<'a> SecuredReads<'a> {
         ) + per_row;
 
         // Build the smaller side: the cost is the same either way — both sides
-        // are read once — so the choice is about memory, not round trips. A
-        // left outer join has no choice, since every left row must be emitted
-        // whether it matched or not, and only the streaming side can do that.
-        let build =
-            if join.join_type == JoinType::Left || left.estimated_rows <= right.estimated_rows {
-                Side::Right
-            } else {
-                Side::Left
-            };
+        // are read once — so the choice is about memory, not round trips. The
+        // join type does not constrain it, because an unmatched built row is
+        // drained once the probe side runs out rather than needing to have
+        // been the streaming side.
+        let build = if left.estimated_rows <= right.estimated_rows {
+            Side::Right
+        } else {
+            Side::Left
+        };
+
+        // A loop streams the left side and probes the right, so it learns
+        // which *left* rows matched nothing and never learns anything about a
+        // right row it did not fetch. Preserving the right side would mean
+        // reading all of it, which is a hash join with extra steps.
+        let loop_possible = !join.join_type.preserves(Side::Right);
 
         let (algorithm, estimated_cost) = match join.force {
             Some(forced @ JoinAlgorithm::Hash { .. }) => (forced, hash_cost),
+            Some(JoinAlgorithm::NestedLoop) if !loop_possible => {
+                return Err(KernelError::JoinNotSupported {
+                    reason: "a nested loop cannot preserve unmatched right rows; \
+                             a right or full outer join needs a hash join"
+                        .to_owned(),
+                });
+            }
             Some(JoinAlgorithm::NestedLoop) => (JoinAlgorithm::NestedLoop, loop_cost),
             // Ties go to the hash join: it reads each side once whatever the
             // estimate turns out to be, where a loop that was estimated at ten
             // outer rows and finds ten thousand costs ten thousand round trips.
-            None if loop_cost < hash_cost => (JoinAlgorithm::NestedLoop, loop_cost),
+            None if loop_possible && loop_cost < hash_cost => {
+                (JoinAlgorithm::NestedLoop, loop_cost)
+            }
             None => (JoinAlgorithm::Hash { build }, hash_cost),
         };
 

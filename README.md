@@ -235,6 +235,13 @@ carries its own row filter. A join cannot see a row either side's policy hides,
 because it never asks storage for rows — it asks two cursors that already
 applied their policies. That is structural, not careful.
 
+All four join types are here. A right or full outer join has to return inner
+rows that matched *nothing*, which is not a fact any single probe can establish
+— it is the absence of a match over the whole other side. A hash join already
+holds one side in memory, so it flags the buckets that were probed and drains
+the rest at the end; a nested loop cannot, so the planner will not choose one
+there and refuses one that is forced.
+
 The planner picks between a hash join and a nested loop by cost, and both
 directions are worth measuring, because the cost model makes a strong claim in
 each:
@@ -389,7 +396,8 @@ Built and tested:
 - [x] Cost-based planning with statistics, `analyze`, and `EXPLAIN`
 - [x] Projections and index-only scans; pipelined index lookups
 - [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
-- [x] Inner and left joins, hash or nested-loop by cost, both sides secured
+- [x] Inner, left, right and full outer joins, hash or nested-loop by cost,
+      both sides secured
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -401,8 +409,8 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Right and full outer joins; a join predicate spanning both sides; joining
-      more than two tables in one plan
+- [ ] A join predicate spanning both sides; joining more than two tables in one
+      plan
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)

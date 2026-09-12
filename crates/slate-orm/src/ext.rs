@@ -10,7 +10,7 @@ use crate::error::{OrmError, Result};
 use crate::record::Record;
 use async_trait::async_trait;
 use slate_kernel::{
-    Aggregate, Explanation, Expr, Group, Join, JoinExplanation, Projection, Query,
+    Aggregate, Explanation, Expr, Group, Join, JoinExplanation, KernelError, Projection, Query,
     RecordTransaction, ScanOrder, SecurityContext, TableStats,
 };
 use slate_schema::Ordinal;
@@ -112,14 +112,23 @@ pub trait Records {
     /// constant for each field, so a call site reads
     /// `Join::equating(Author::COLUMNS.id, Book::COLUMNS.author_id)`.
     ///
-    /// Both sides come back decoded. A left outer join yields `None` on the
-    /// right where nothing matched, which is why the right side is an
-    /// `Option` rather than a second `R`.
+    /// For an inner or left join, where the left side is always present. A
+    /// right or full outer join can return a row with no left side at all, so
+    /// this refuses one rather than inventing a record to put there — use
+    /// [`Records::outer_join_records`] for those.
     async fn join_records<L: Record, R: Record>(
         &self,
         context: &SecurityContext,
         join: &Join,
     ) -> Result<Vec<(L, Option<R>)>>;
+
+    /// [`Records::join_records`] for any join type, including the two that can
+    /// drop the left side.
+    async fn outer_join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<Vec<(Option<L>, Option<R>)>>;
 
     /// The plan a join would run under, without running it.
     fn explain_join_records<L: Record, R: Record>(
@@ -261,6 +270,13 @@ impl Records for RecordTransaction<'_> {
         context: &SecurityContext,
         join: &Join,
     ) -> Result<Vec<(L, Option<R>)>> {
+        if join.join_type.may_drop_left() {
+            return Err(OrmError::Kernel(KernelError::JoinNotSupported {
+                reason: "this join can return a row with no left side; \
+                         use outer_join_records"
+                    .to_owned(),
+            }));
+        }
         // Collected before decoding, not decoded as they arrive: a `Record` is
         // not required to be `Send`, so holding one across the next await
         // would make the whole future unsendable. Same reason as
@@ -273,8 +289,34 @@ impl Records for RecordTransaction<'_> {
         joined
             .iter()
             .map(|row| {
+                let left = row.left.as_ref().ok_or_else(|| {
+                    OrmError::Kernel(KernelError::JoinNotSupported {
+                        reason: "join returned a row with no left side".to_owned(),
+                    })
+                })?;
                 Ok((
-                    L::from_row(&row.left)?,
+                    L::from_row(left)?,
+                    row.right.as_ref().map(R::from_row).transpose()?,
+                ))
+            })
+            .collect()
+    }
+
+    async fn outer_join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<Vec<(Option<L>, Option<R>)>> {
+        let joined = self
+            .join(context, L::table(), R::table(), join)
+            .await?
+            .collect()
+            .await?;
+        joined
+            .iter()
+            .map(|row| {
+                Ok((
+                    row.left.as_ref().map(L::from_row).transpose()?,
                     row.right.as_ref().map(R::from_row).transpose()?,
                 ))
             })

@@ -149,10 +149,12 @@ fn titles(rows: &[slate_kernel::JoinedRow]) -> Vec<String> {
 fn names(rows: &[slate_kernel::JoinedRow]) -> Vec<String> {
     let mut out: Vec<String> = rows
         .iter()
-        .map(|r| match r.left.get(author_col("name")) {
-            Some(Value::Str(s)) => s.clone(),
-            other => format!("{other:?}"),
-        })
+        .map(
+            |r| match r.left.as_ref().and_then(|l| l.get(author_col("name"))) {
+                Some(Value::Str(s)) => s.clone(),
+                other => format!("{other:?}"),
+            },
+        )
         .collect();
     out.sort();
     out
@@ -205,10 +207,12 @@ async fn a_left_join_keeps_unmatched_rows() {
     let unmatched: Vec<String> = rows
         .iter()
         .filter(|r| !r.is_matched())
-        .map(|r| match r.left.get(book_col("title")) {
-            Some(Value::Str(s)) => s.clone(),
-            other => format!("{other:?}"),
-        })
+        .map(
+            |r| match r.left.as_ref().and_then(|l| l.get(book_col("title"))) {
+                Some(Value::Str(s)) => s.clone(),
+                other => format!("{other:?}"),
+            },
+        )
         .collect();
     let mut unmatched = unmatched;
     unmatched.sort();
@@ -236,9 +240,10 @@ async fn a_null_join_value_matches_nothing() {
             .collect()
             .await
             .unwrap();
-        let anonymous = rows
-            .iter()
-            .any(|r| r.left.get(book_col("title")) == Some(&Value::Str("Anonymous".to_owned())));
+        let anonymous = rows.iter().any(|r| {
+            r.left.as_ref().and_then(|l| l.get(book_col("title")))
+                == Some(&Value::Str("Anonymous".to_owned()))
+        });
         assert!(
             !anonymous,
             "a null author_id matched something under {algorithm:?}"
@@ -395,7 +400,10 @@ async fn a_join_does_not_cross_tenants() {
             .unwrap();
         assert_eq!(rows.len(), 1, "under {algorithm:?}");
         assert_eq!(
-            rows[0].left.get(author_col("name")),
+            rows[0]
+                .left
+                .as_ref()
+                .and_then(|l| l.get(author_col("name"))),
             Some(&Value::Str("Someone Else".to_owned())),
             "under {algorithm:?}"
         );
@@ -677,5 +685,214 @@ async fn a_loop_reads_less_than_a_scan_of_the_inner_side() {
         loop_rows * 10 < hash_rows,
         "the loop scanned {loop_rows} rows and the hash join {hash_rows}; \
          the loop is supposed to touch a small fraction of the inner table"
+    );
+}
+
+/// A right outer join keeps every right row. The hash join learns which built
+/// rows nothing matched only once the probe side is exhausted, so this is the
+/// case that exercises the drain.
+#[tokio::test]
+async fn a_right_join_keeps_unmatched_right_rows() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+
+    // authors RIGHT JOIN books: every book survives, including the orphan and
+    // the one with no author.
+    let join = on_author().right_outer();
+    let rows = txn
+        .join(&reader(1), &authors(), &books(), &join)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    assert_eq!(rows.len(), 5, "every book in the tenant");
+    assert!(
+        rows.iter().all(|r| r.right.is_some()),
+        "a right join must never drop the right side"
+    );
+    let mut orphaned: Vec<String> = rows
+        .iter()
+        .filter(|r| r.left.is_none())
+        .map(
+            |r| match r.right.as_ref().and_then(|b| b.get(book_col("title"))) {
+                Some(Value::Str(s)) => s.clone(),
+                other => format!("{other:?}"),
+            },
+        )
+        .collect();
+    orphaned.sort();
+    assert_eq!(orphaned, vec!["Anonymous", "Orphaned"]);
+}
+
+/// A full outer join keeps everything on both sides: the pairs, the left rows
+/// with no match, and the right rows with no match.
+#[tokio::test]
+async fn a_full_join_keeps_both_sides() {
+    let (store, _) = store(open()).await;
+
+    // Give one author no books at all, so there is a left row to preserve.
+    let write = store.begin().await.unwrap();
+    write
+        .insert(
+            &SecurityContext::superuser(),
+            &authors(),
+            &author(1, 3, "Nobody", "IE"),
+        )
+        .await
+        .unwrap();
+    write.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let rows = txn
+        .join(&reader(1), &authors(), &books(), &on_author().full_outer())
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    // 3 matched pairs + Nobody with no book + 2 books with no author.
+    assert_eq!(rows.len(), 6, "{rows:?}");
+    assert_eq!(rows.iter().filter(|r| r.is_matched()).count(), 3);
+    assert_eq!(
+        rows.iter().filter(|r| r.right.is_none()).count(),
+        1,
+        "the author with no books"
+    );
+    assert_eq!(
+        rows.iter().filter(|r| r.left.is_none()).count(),
+        2,
+        "the orphan and the null-author book"
+    );
+
+    // Every row has at least one side. A row with neither would be a bug that
+    // the counts above would not notice.
+    assert!(rows.iter().all(|r| r.left.is_some() || r.right.is_some()));
+}
+
+/// Building either side must give the same answer, for every join type. This
+/// is the property the planner's freedom to pick a build side rests on.
+#[tokio::test]
+async fn the_build_side_does_not_change_the_answer() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+
+    for join_type in ["inner", "left", "right", "full"] {
+        let base = match join_type {
+            "left" => on_author().left_outer(),
+            "right" => on_author().right_outer(),
+            "full" => on_author().full_outer(),
+            _ => on_author(),
+        };
+        let mut shapes = Vec::new();
+        for build in [Side::Right, Side::Left] {
+            let rows = txn
+                .join(
+                    &reader(1),
+                    &authors(),
+                    &books(),
+                    &base.clone().using(JoinAlgorithm::Hash { build }),
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            // Compared as a sorted multiset: a join promises no order, and
+            // which side is built is exactly what changes it.
+            let mut shape: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{:?}|{:?}",
+                        r.left.as_ref().and_then(|l| l.get(author_col("name"))),
+                        r.right.as_ref().and_then(|b| b.get(book_col("title")))
+                    )
+                })
+                .collect();
+            shape.sort();
+            shapes.push(shape);
+        }
+        assert_eq!(
+            shapes[0], shapes[1],
+            "{join_type} join disagreed with itself when the build side changed"
+        );
+    }
+}
+
+/// A nested loop cannot know which right rows nothing matched, so it must not
+/// be used for a join that has to return them — and saying so beats returning
+/// a quietly incomplete answer.
+#[tokio::test]
+async fn a_loop_is_refused_for_a_join_it_cannot_serve() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+
+    for base in [on_author().right_outer(), on_author().full_outer()] {
+        let err = txn
+            .join(
+                &reader(1),
+                &authors(),
+                &books(),
+                &base.clone().using(JoinAlgorithm::NestedLoop),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, KernelError::JoinNotSupported { .. }),
+            "got {err:?}"
+        );
+
+        // And the planner does not choose one on its own, even where the cost
+        // model would otherwise prefer it.
+        let narrow = base.left(Query::all().filter(Expr::eq(author_col("id"), Value::U64(1))));
+        let plan = txn
+            .explain_join(&reader(1), &authors(), &books(), &narrow)
+            .unwrap();
+        assert!(!plan.is_nested_loop(), "planner chose a loop: {plan}");
+    }
+}
+
+/// An outer join still cannot show a row a policy hides. The row is not
+/// "preserved as unmatched" either — it is simply not there, which is what
+/// keeps a full outer join from being a way to enumerate hidden rows.
+#[tokio::test]
+async fn an_outer_join_does_not_preserve_hidden_rows() {
+    let security = open().policy(Policy::new(
+        "uk_only",
+        AUTHORS,
+        Action::ALL,
+        |_: &SecurityContext| Expr::eq(author_col("country"), Value::Str("UK".into())),
+    ));
+    let (store, _) = store(security).await;
+    let txn = store.begin().await.unwrap();
+
+    let rows = txn
+        .join(&reader(1), &authors(), &books(), &on_author().full_outer())
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    // Only Iain is visible. His book pairs; every other book is preserved with
+    // no left side; Ursula appears nowhere at all — not even as an unmatched
+    // left row.
+    let names: Vec<String> = rows
+        .iter()
+        .filter_map(
+            |r| match r.left.as_ref().and_then(|l| l.get(author_col("name"))) {
+                Some(Value::Str(s)) => Some(s.clone()),
+                _ => None,
+            },
+        )
+        .collect();
+    assert_eq!(names, vec!["Iain"], "a hidden author surfaced: {names:?}");
+    assert_eq!(
+        rows.len(),
+        5,
+        "one pair plus four books with no visible author"
     );
 }

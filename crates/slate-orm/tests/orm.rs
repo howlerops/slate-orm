@@ -569,3 +569,52 @@ async fn typed_joins_decode_both_sides() {
     let plan = txn.explain_join_records::<User, Post>(&ctx, &on).unwrap();
     assert!(plan.estimated_cost > 0.0, "{plan}");
 }
+
+/// Right and full outer joins can return a row with no left side, so the typed
+/// layer offers a shape that admits it — and refuses the ergonomic one rather
+/// than inventing a record to fill the gap.
+#[tokio::test]
+async fn typed_outer_joins_admit_a_missing_side() {
+    let store = two_table_store();
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    txn.insert_records(&ctx, &[alice(1, 1)]).await.unwrap();
+    txn.insert_records(
+        &ctx,
+        &[
+            post(1, 100, Some(1), "attributed"),
+            post(1, 101, Some(9), "orphan"),
+        ],
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let on = Join::equating(User::COLUMNS.id, Post::COLUMNS.author_id);
+
+    let right: Vec<(Option<User>, Option<Post>)> = txn
+        .outer_join_records(&ctx, &on.clone().right_outer())
+        .await
+        .unwrap();
+    assert_eq!(right.len(), 2, "every post survives a right join");
+    let orphan = right
+        .iter()
+        .find(|(u, _)| u.is_none())
+        .expect("the orphan post kept its row");
+    assert_eq!(orphan.1.as_ref().unwrap().title, "orphan");
+
+    // The two-sided shape cannot represent that, and says so.
+    let err = txn
+        .join_records::<User, Post>(&ctx, &on.right_outer())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            slate_orm::OrmError::Kernel(slate_orm::KernelError::JoinNotSupported { .. })
+        ),
+        "got {err:?}"
+    );
+}

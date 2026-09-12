@@ -206,6 +206,8 @@ impl fmt::Display for JoinExplanation {
         let kind = match self.join_type {
             JoinType::Inner => "Inner",
             JoinType::Left => "Left",
+            JoinType::Right => "Right",
+            JoinType::Full => "Full",
         };
         match self.algorithm {
             JoinAlgorithm::Hash { build } => {
