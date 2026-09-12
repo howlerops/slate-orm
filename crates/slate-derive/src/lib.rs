@@ -373,7 +373,44 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let ident = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    // Ordinals are known here, so column references can be constants instead of
+    // a fallible name lookup at every call site. Writing a filter is the most
+    // common thing a caller does, and `table().ordinal_of("x").unwrap()` is a
+    // panic waiting in otherwise ordinary code.
+    let columns_ident = syn::Ident::new(&format!("{ident}Columns"), ident.span());
+    let visibility = &input.vis;
+    let column_docs = fields.iter().map(|f| {
+        let name = &f.column;
+        format!("Ordinal of the `{name}` column.")
+    });
+    let column_fields = idents.iter().zip(positions.iter()).map(|(name, index)| {
+        quote! { #name: ::slate_orm::Ordinal(#index) }
+    });
+    let column_decls = idents.iter().zip(column_docs).map(|(name, doc)| {
+        quote! {
+            #[doc = #doc]
+            pub #name: ::slate_orm::Ordinal
+        }
+    });
+    let columns_doc = format!("Column ordinals of [`{ident}`], for building predicates.");
+
     Ok(quote! {
+        #[doc = #columns_doc]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #visibility struct #columns_ident {
+            #(#column_decls,)*
+        }
+
+        impl #impl_generics #ident #ty_generics #where_clause {
+            #[doc = #columns_doc]
+            ///
+            /// Ordinals are fixed by the field order, so these are constants
+            /// rather than a name lookup that could fail.
+            pub const COLUMNS: #columns_ident = #columns_ident {
+                #(#column_fields,)*
+            };
+        }
+
         // The build below can only fail on a schema mistake in this derive's
         // own attributes, which is a programming error rather than a runtime
         // condition, so it reports itself loudly instead of widening every

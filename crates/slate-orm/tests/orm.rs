@@ -103,6 +103,31 @@ fn nullability_is_taken_from_the_type() {
     assert_eq!(<MaybeName as Field>::VALUE_TYPE, ValueType::Str);
 }
 
+/// Column ordinals are generated as constants, so building a predicate needs no
+/// fallible name lookup.
+#[test]
+fn generated_column_constants_agree_with_the_table() {
+    let table = User::table();
+    assert_eq!(
+        User::COLUMNS.tenant_id,
+        table.ordinal_of("tenant_id").unwrap()
+    );
+    assert_eq!(User::COLUMNS.id, table.ordinal_of("id").unwrap());
+    // The constant is named after the Rust field, the column after the rename.
+    assert_eq!(
+        User::COLUMNS.email,
+        table.ordinal_of("email_address").unwrap()
+    );
+    assert_eq!(
+        User::COLUMNS.nickname,
+        table.ordinal_of("nickname").unwrap()
+    );
+    assert_eq!(User::COLUMNS.bio, table.ordinal_of("bio").unwrap());
+
+    // And they are usable where an ordinal is expected.
+    let _ = Expr::eq(User::COLUMNS.age, Value::I64(30));
+}
+
 #[test]
 fn rows_round_trip_through_the_derived_codec() {
     let user = alice(1, 7);
