@@ -175,6 +175,26 @@ pub enum KernelError {
         reason: String,
     },
 
+    /// A predicate compared two columns that hold different types.
+    ///
+    /// [`Value`](slate_tuple::Value)'s order is type-first, which is what
+    /// makes the key encoding sortable, so such a comparison would order by
+    /// type and answer the same way for every row. Coercing instead would put
+    /// value comparison and encoding order out of step, and scan bounds are
+    /// derived from encoding order — so it is refused.
+    #[error(
+        "comparing {left:?} with {right:?} on `{at}`: they hold different types, \
+         so the comparison would order by type rather than by value"
+    )]
+    ComparisonTypeMismatch {
+        /// Where the comparison was written: a table, or a join of two.
+        at: String,
+        /// The column on the left of the operator.
+        left: slate_schema::Ordinal,
+        /// The column on the right of the operator.
+        right: slate_schema::Ordinal,
+    },
+
     /// A hash join's build side outgrew the memory it was allowed.
     ///
     /// Almost always a join condition that does not relate the two tables.

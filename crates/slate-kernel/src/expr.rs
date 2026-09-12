@@ -18,6 +18,37 @@ use slate_schema::{Ordinal, Row};
 use slate_tuple::Value;
 use std::collections::BTreeSet;
 
+/// Somewhere a predicate can look a column up.
+///
+/// A [`Row`] is the obvious one. The other is a row of a join, which has
+/// columns from several tables and so needs an ordinal space of its own; see
+/// [`crate::join::JoinSchema`].
+///
+/// This exists so there is exactly one evaluator. The three-valued logic below
+/// is a *security* property — `NOT (owner = :caller)` must not admit a row
+/// whose owner is null — and a second copy of it written for joined rows would
+/// be a second place for that to drift.
+pub trait Columns {
+    /// The value at `ordinal`, or `None` if there is no such column here.
+    ///
+    /// `None` and a stored null are deliberately not the same: a missing
+    /// column makes a comparison unknown, which is also what a null does, but
+    /// `IS NULL` distinguishes nothing between them and should not.
+    fn value(&self, ordinal: Ordinal) -> Option<&Value>;
+}
+
+impl Columns for Row {
+    fn value(&self, ordinal: Ordinal) -> Option<&Value> {
+        self.get(ordinal)
+    }
+}
+
+impl<T: Columns + ?Sized> Columns for &T {
+    fn value(&self, ordinal: Ordinal) -> Option<&Value> {
+        (**self).value(ordinal)
+    }
+}
+
 /// The result of evaluating a predicate under SQL's three-valued logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Truth {
@@ -113,6 +144,30 @@ pub enum Expr {
         /// The literal to compare against.
         value: Value,
     },
+    /// `left <op> right`, comparing two columns of the same row.
+    ///
+    /// Distinct from [`Expr::Compare`] because there is no literal: the
+    /// planner cannot turn this into a scan bound, since a bound needs a value
+    /// known before the row is read. It stays a residual filter, always.
+    ///
+    /// A join's cross-side condition is this, over a joined row's ordinal
+    /// space; within one table it is the ordinary `WHERE started < finished`.
+    ///
+    /// Both columns must have the same type. [`Value`]'s order is type-first —
+    /// that is what makes the key encoding sortable — so comparing an integer
+    /// column to a float one would compare the *types* and quietly answer the
+    /// same way for every row. Rather than coerce (which would put value
+    /// comparison and encoding order out of step, and scan bounds are derived
+    /// from encoding order) the mismatch is refused; see
+    /// [`Expr::column_type_conflict`].
+    CompareColumns {
+        /// The column on the left of the operator.
+        left: Ordinal,
+        /// The operator.
+        op: CmpOp,
+        /// The column on the right of the operator.
+        right: Ordinal,
+    },
     /// `column IS NULL`, or `IS NOT NULL` when negated.
     IsNull {
         /// The column being tested.
@@ -150,6 +205,13 @@ impl Expr {
     #[must_use]
     pub const fn compare(column: Ordinal, op: CmpOp, value: Value) -> Self {
         Self::Compare { column, op, value }
+    }
+
+    /// `left <op> right`, comparing two columns rather than a column and a
+    /// literal. See [`Expr::CompareColumns`].
+    #[must_use]
+    pub const fn compare_columns(left: Ordinal, op: CmpOp, right: Ordinal) -> Self {
+        Self::CompareColumns { left, op, right }
     }
 
     /// `column IS NULL`.
@@ -218,11 +280,20 @@ impl Expr {
     /// Evaluate against a row under three-valued logic.
     #[must_use]
     pub fn evaluate(&self, row: &Row) -> Truth {
+        self.evaluate_over(row)
+    }
+
+    /// Evaluate against anything that can produce a column value.
+    ///
+    /// The same evaluator [`Expr::evaluate`] uses; that one is the `Row` case,
+    /// kept as its own name because it is what nearly every call site wants.
+    #[must_use]
+    pub fn evaluate_over<C: Columns + ?Sized>(&self, row: &C) -> Truth {
         match self {
             Self::True => Truth::True,
             Self::False => Truth::False,
             Self::Compare { column, op, value } => {
-                let Some(actual) = row.get(*column) else {
+                let Some(actual) = row.value(*column) else {
                     return Truth::Unknown;
                 };
                 // A comparison touching a null is unknown, never false.
@@ -231,13 +302,26 @@ impl Expr {
                 }
                 Truth::from(op.apply(actual.cmp(value)))
             }
+            Self::CompareColumns { left, op, right } => {
+                let (Some(a), Some(b)) = (row.value(*left), row.value(*right)) else {
+                    return Truth::Unknown;
+                };
+                // Same rule as against a literal: a null on either side makes
+                // the comparison unknown. On a joined row that is what an
+                // outer join's missing side produces, so a condition touching
+                // it does not admit — which is the `ON` semantics wanted.
+                if a.is_null() || b.is_null() {
+                    return Truth::Unknown;
+                }
+                Truth::from(op.apply(a.cmp(b)))
+            }
             Self::IsNull { column, negated } => {
                 // `IS NULL` is the one test that is never unknown.
-                let is_null = row.get(*column).is_none_or(Value::is_null);
+                let is_null = row.value(*column).is_none_or(Value::is_null);
                 Truth::from(is_null != *negated)
             }
             Self::In { column, values } => {
-                let Some(actual) = row.get(*column) else {
+                let Some(actual) = row.value(*column) else {
                     return Truth::Unknown;
                 };
                 if actual.is_null() {
@@ -255,7 +339,7 @@ impl Expr {
             Self::And(parts) => {
                 let mut result = Truth::True;
                 for part in parts {
-                    match part.evaluate(row) {
+                    match part.evaluate_over(row) {
                         Truth::False => return Truth::False,
                         Truth::Unknown => result = Truth::Unknown,
                         Truth::True => {}
@@ -266,7 +350,7 @@ impl Expr {
             Self::Or(parts) => {
                 let mut result = Truth::False;
                 for part in parts {
-                    match part.evaluate(row) {
+                    match part.evaluate_over(row) {
                         Truth::True => return Truth::True,
                         Truth::Unknown => result = Truth::Unknown,
                         Truth::False => {}
@@ -274,7 +358,7 @@ impl Expr {
                 }
                 result
             }
-            Self::Not(inner) => inner.evaluate(row).negate(),
+            Self::Not(inner) => inner.evaluate_over(row).negate(),
         }
     }
 
@@ -282,6 +366,74 @@ impl Expr {
     #[must_use]
     pub fn admits(&self, row: &Row) -> bool {
         self.evaluate(row).admits()
+    }
+
+    /// Whether anything with columns passes this predicate.
+    #[must_use]
+    pub fn admits_over<C: Columns + ?Sized>(&self, row: &C) -> bool {
+        self.evaluate_over(row).admits()
+    }
+
+    /// The same predicate with every column ordinal put through `f`.
+    ///
+    /// A predicate written in one ordinal space, read in another. Used to move
+    /// a join's cross-side condition back into a single table's ordinals so
+    /// that table's statistics can be applied to it.
+    #[must_use]
+    pub fn map_columns(&self, f: &impl Fn(Ordinal) -> Ordinal) -> Self {
+        match self {
+            Self::True => Self::True,
+            Self::False => Self::False,
+            Self::Compare { column, op, value } => Self::Compare {
+                column: f(*column),
+                op: *op,
+                value: value.clone(),
+            },
+            Self::CompareColumns { left, op, right } => Self::CompareColumns {
+                left: f(*left),
+                op: *op,
+                right: f(*right),
+            },
+            Self::IsNull { column, negated } => Self::IsNull {
+                column: f(*column),
+                negated: *negated,
+            },
+            Self::In { column, values } => Self::In {
+                column: f(*column),
+                values: values.clone(),
+            },
+            Self::And(parts) => Self::And(parts.iter().map(|p| p.map_columns(f)).collect()),
+            Self::Or(parts) => Self::Or(parts.iter().map(|p| p.map_columns(f)).collect()),
+            Self::Not(inner) => Self::Not(Box::new(inner.map_columns(f))),
+        }
+    }
+
+    /// The first column comparison whose two sides have different types.
+    ///
+    /// `types` answers what a column holds; a column it does not know is
+    /// skipped rather than assumed to conflict. Only [`Expr::CompareColumns`]
+    /// is checked — everything else compares against a literal the caller
+    /// wrote next to the column, where a mismatch is visible at the call site.
+    #[must_use]
+    pub fn column_type_conflict(
+        &self,
+        types: &impl Fn(Ordinal) -> Option<slate_tuple::ValueType>,
+    ) -> Option<(Ordinal, Ordinal)> {
+        match self {
+            Self::True
+            | Self::False
+            | Self::Compare { .. }
+            | Self::IsNull { .. }
+            | Self::In { .. } => None,
+            Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
+                (Some(a), Some(b)) if a != b => Some((*left, *right)),
+                _ => None,
+            },
+            Self::And(parts) | Self::Or(parts) => {
+                parts.iter().find_map(|p| p.column_type_conflict(types))
+            }
+            Self::Not(inner) => inner.column_type_conflict(types),
+        }
     }
 
     /// Every column this predicate reads.
@@ -305,6 +457,10 @@ impl Expr {
             | Self::IsNull { column, .. }
             | Self::In { column, .. } => {
                 out.insert(*column);
+            }
+            Self::CompareColumns { left, right, .. } => {
+                out.insert(*left);
+                out.insert(*right);
             }
             Self::And(parts) | Self::Or(parts) => {
                 for part in parts {

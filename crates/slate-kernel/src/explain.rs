@@ -6,6 +6,7 @@
 //! the estimates — an estimate that is wildly wrong is usually the actual bug,
 //! and it is invisible without printing it.
 
+use crate::expr::Expr;
 use crate::join::{Join, JoinAlgorithm, JoinPlan, JoinType, Side};
 use crate::plan::{Access, Plan};
 use crate::query::Query;
@@ -167,6 +168,8 @@ pub struct JoinExplanation {
     pub limit: Option<usize>,
     /// The caller's offset on the joined result.
     pub offset: usize,
+    /// The condition over the joined row, if there is one.
+    pub having: Option<String>,
 }
 
 impl JoinExplanation {
@@ -182,6 +185,10 @@ impl JoinExplanation {
             estimated_cost: plan.estimated_cost,
             limit: join.limit,
             offset: join.offset,
+            having: match &join.having {
+                Expr::True => None,
+                other => Some(format!("{other:?}")),
+            },
         }
     }
 
@@ -231,6 +238,9 @@ impl fmt::Display for JoinExplanation {
             write!(f, " offset={}", self.offset)?;
         }
         writeln!(f, ")")?;
+        if let Some(having) = &self.having {
+            writeln!(f, "  on {having}")?;
+        }
         writeln!(f, "  -> {}", self.left)?;
         write!(f, "  -> {}", self.right)
     }

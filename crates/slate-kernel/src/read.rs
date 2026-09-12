@@ -9,7 +9,7 @@ use crate::aggregate::{Accumulators, Aggregate, Group};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
-use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, Side};
+use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, JoinSchema, Side};
 use crate::keys;
 use crate::plan::{Plan, Projection, plan_full};
 use crate::query::Query;
@@ -17,7 +17,7 @@ use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use bytes::Bytes;
-use slate_schema::{IndexDef, Ordinal, Row, TableDef, decode_row};
+use slate_schema::{ColumnDef, IndexDef, Ordinal, Row, TableDef, decode_row};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -113,6 +113,20 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<Plan> {
         self.security.authorize(context, table, Action::Read)?;
+        // A comparison between two columns of different types would order by
+        // type rather than by value and answer the same way for every row.
+        // Only the new variant can trip this, so no query that planned before
+        // stops planning now. See `Expr::CompareColumns`.
+        if let Some((a, b)) = query
+            .filter
+            .column_type_conflict(&|column| table.column(column).map(ColumnDef::value_type))
+        {
+            return Err(KernelError::ComparisonTypeMismatch {
+                at: table.name().to_owned(),
+                left: a,
+                right: b,
+            });
+        }
         // Conjoining the policy *before* planning is what lets it narrow the
         // scan; it also means a policy on a column the index lacks correctly
         // prevents an index-only scan rather than being skipped by one.
@@ -208,12 +222,14 @@ impl<'a> SecuredReads<'a> {
 
         let left_stats = self.statistics.table(left_table);
         let right_stats = self.statistics.table(right_table);
-        let estimated_rows = join::join_cardinality(
-            left.estimated_rows,
-            right.estimated_rows,
-            join::distinct_over(&left_stats, &join.columns(Side::Left)),
-            join::distinct_over(&right_stats, &join.columns(Side::Right)),
-        );
+        let schema = JoinSchema::of(left_table, right_table);
+        let estimated_rows =
+            join::join_cardinality(
+                left.estimated_rows,
+                right.estimated_rows,
+                join::distinct_over(&left_stats, &join.columns(Side::Left)),
+                join::distinct_over(&right_stats, &join.columns(Side::Right)),
+            ) * join::having_selectivity(schema, &join.having, &left_stats, &right_stats);
         let per_row = estimated_rows * join::JOIN_ROW_COST;
 
         // A probe is the right side read with the join equality bound to one

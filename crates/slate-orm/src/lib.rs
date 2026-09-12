@@ -49,10 +49,11 @@ pub use slate_derive::Record;
 // needs so they are not forced to depend on four crates to write a query.
 pub use slate_kernel::{
     Access, AccessSummary, Action, Aggregate, CmpOp, ColumnStats, Explanation, Expr, Grant, Group,
-    Join, JoinAlgorithm, JoinCursor, JoinExplanation, JoinKey, JoinType, JoinedRow, KernelError,
-    KeyRange, NullsOrder, Plan, Policy, Principal, Projection, Query, QueryCursor, RecordSnapshot,
-    RecordStore, RecordTransaction, ReplicaPool, RetryPolicy, ScanOrder, SecurityCatalog,
-    SecurityContext, Side, SortKey, Statistics, TableStats, Truth, latency, memory,
+    Join, JoinAlgorithm, JoinCursor, JoinExplanation, JoinKey, JoinSchema, JoinType, JoinedRow,
+    KernelError, KeyRange, NullsOrder, Plan, Policy, Principal, Projection, Query, QueryCursor,
+    RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RetryPolicy, ScanOrder,
+    SecurityCatalog, SecurityContext, Side, SortKey, Statistics, TableStats, Truth, latency,
+    memory,
 };
 pub use slate_schema::{
     Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Ordinal, Row, SchemaError, TableDef,

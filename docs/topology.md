@@ -164,9 +164,15 @@ loading, which is what the typed layer is for. The shape composes — a
 `JoinedRow` keeps each side's row intact rather than flattening them — so a
 third side is a planner problem rather than an executor one.
 
-Also absent: a predicate spanning both sides. A row of a join has no single
-ordinal space, so `left.a < right.b` has nowhere to live. Giving it one is a
-design decision, not an omission to fill in quietly.
+### Pushing a cross-side condition down
+
+A `having` conjunct that names only one side could become that side's filter,
+where the planner could turn it into scan bounds — and for a nested loop it
+could narrow each probe. That is sound for an `ON` condition on the inner side
+of an outer join, which is the case that usually makes such a rewrite unsafe.
+It is not done: the executor applies the whole condition per pair, and a caller
+who wants the narrowing can put the conjunct in that side's `Query`, which is
+what the docs tell them to do.
 
 ### Dropping redundant residual conjuncts
 

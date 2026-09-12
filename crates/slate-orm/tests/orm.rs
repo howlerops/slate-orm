@@ -10,7 +10,7 @@
 
 use slate_orm::{
     Action, Aggregate, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId, Join,
-    Query, Record, RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog,
+    JoinSchema, Query, Record, RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog,
     SecurityContext, SortKey, TableDef, TableId, Value, ValueType, memory::MemoryStore,
 };
 use uuid::Uuid;
@@ -617,4 +617,48 @@ async fn typed_outer_joins_admit_a_missing_side() {
         ),
         "got {err:?}"
     );
+}
+
+/// A condition spanning both record types, through the typed layer. The
+/// derive's `COLUMNS` give each table's ordinals; `JoinSchema` maps them into
+/// the one space a joined row has.
+#[tokio::test]
+async fn typed_joins_take_a_cross_side_condition() {
+    let store = two_table_store();
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    txn.insert_records(&ctx, &[alice(1, 1), alice(1, 2)])
+        .await
+        .unwrap();
+    txn.insert_records(
+        &ctx,
+        &[post(1, 100, Some(1), "one"), post(1, 200, Some(2), "two")],
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(User::table(), Post::table());
+    // Both u64: the post's id above the author's, which neither side can tell.
+    let join =
+        Join::equating(User::COLUMNS.id, Post::COLUMNS.author_id).having(Expr::compare_columns(
+            at.right(Post::COLUMNS.id),
+            slate_orm::CmpOp::Gt,
+            at.left(User::COLUMNS.id),
+        ));
+
+    let pairs: Vec<(User, Option<Post>)> = txn.join_records(&ctx, &join).await.unwrap();
+    assert_eq!(pairs.len(), 2, "100 > 1 and 200 > 2");
+
+    // Flip it and nothing survives, so the condition is really being applied.
+    let flipped =
+        Join::equating(User::COLUMNS.id, Post::COLUMNS.author_id).having(Expr::compare_columns(
+            at.right(Post::COLUMNS.id),
+            slate_orm::CmpOp::Lt,
+            at.left(User::COLUMNS.id),
+        ));
+    let none: Vec<(User, Option<Post>)> = txn.join_records(&ctx, &flipped).await.unwrap();
+    assert!(none.is_empty(), "{none:?}");
 }

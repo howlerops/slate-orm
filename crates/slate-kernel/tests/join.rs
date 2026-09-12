@@ -15,8 +15,8 @@
 use slate_kernel::latency::{IoCounters, LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Action, Expr, Grant, Join, JoinAlgorithm, JoinKey, KernelError, Policy, Principal, Query,
-    RecordStore, SecurityCatalog, SecurityContext, Side, Statistics, TableStats,
+    Action, CmpOp, Expr, Grant, Join, JoinAlgorithm, JoinKey, JoinSchema, KernelError, Policy,
+    Principal, Query, RecordStore, SecurityCatalog, SecurityContext, Side, Statistics, TableStats,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -31,6 +31,10 @@ fn authors() -> TableDef {
         .column("id", ValueType::U64)
         .column("name", ValueType::Str)
         .column("country", ValueType::Str)
+        // Paired with a book's publication year, this makes a comparison only
+        // a joined row can answer: was the book published in the author's
+        // lifetime?
+        .column("died", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
         .build()
@@ -44,6 +48,7 @@ fn books() -> TableDef {
         // Nullable so the join can be asked what it does with an unset key.
         .nullable_column("author_id", ValueType::U64)
         .column("title", ValueType::Str)
+        .column("published", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
         .index(IndexDef::builder("by_author", IndexId(20)).column("author_id"))
@@ -59,21 +64,23 @@ fn book_col(name: &str) -> Ordinal {
     books().ordinal_of(name).expect("column exists")
 }
 
-fn author(tenant: u64, id: u64, name: &str, country: &str) -> Row {
+fn author(tenant: u64, id: u64, name: &str, country: &str, died: i64) -> Row {
     Row::new(vec![
         Value::U64(tenant),
         Value::U64(id),
         Value::Str(name.to_owned()),
         Value::Str(country.to_owned()),
+        Value::I64(died),
     ])
 }
 
-fn book(tenant: u64, id: u64, author_id: Option<u64>, title: &str) -> Row {
+fn book(tenant: u64, id: u64, author_id: Option<u64>, title: &str, published: i64) -> Row {
     Row::new(vec![
         Value::U64(tenant),
         Value::U64(id),
         author_id.map_or(Value::Null, Value::U64),
         Value::Str(title.to_owned()),
+        Value::I64(published),
     ])
 }
 
@@ -98,6 +105,10 @@ fn reader(tenant: u64) -> SecurityContext {
 
 /// Two authors in tenant 1, one in tenant 2. Books: two for author 1, one for
 /// author 2, one orphaned, one with a null author.
+///
+/// Iain's one book is published after he died, so `published < died` is a
+/// cross-side condition that actually splits the data rather than being
+/// trivially true.
 async fn store(
     security: SecurityCatalog,
 ) -> (RecordStore<LatencyStore<MemoryStore>>, Arc<IoCounters>) {
@@ -108,19 +119,19 @@ async fn store(
 
     let txn = loader.begin().await.unwrap();
     for row in [
-        author(1, 1, "Ursula", "US"),
-        author(1, 2, "Iain", "UK"),
-        author(2, 1, "Someone Else", "FR"),
+        author(1, 1, "Ursula", "US", 2018),
+        author(1, 2, "Iain", "UK", 1980),
+        author(2, 1, "Someone Else", "FR", 1950),
     ] {
         txn.insert(&root, &authors(), &row).await.unwrap();
     }
     for row in [
-        book(1, 10, Some(1), "A Wizard of Earthsea"),
-        book(1, 11, Some(1), "The Dispossessed"),
-        book(1, 12, Some(2), "Consider Phlebas"),
-        book(1, 13, Some(99), "Orphaned"),
-        book(1, 14, None, "Anonymous"),
-        book(2, 10, Some(1), "Another Tenant's Book"),
+        book(1, 10, Some(1), "A Wizard of Earthsea", 1968),
+        book(1, 11, Some(1), "The Dispossessed", 1974),
+        book(1, 12, Some(2), "Consider Phlebas", 1987),
+        book(1, 13, Some(99), "Orphaned", 2000),
+        book(1, 14, None, "Anonymous", 1999),
+        book(2, 10, Some(1), "Another Tenant's Book", 1990),
     ] {
         txn.insert(&root, &books(), &row).await.unwrap();
     }
@@ -327,9 +338,7 @@ async fn a_policy_on_either_side_still_applies() {
             "early_books",
             BOOKS,
             Action::ALL,
-            |_: &SecurityContext| {
-                Expr::compare(book_col("id"), slate_kernel::CmpOp::Lt, Value::U64(12))
-            },
+            |_: &SecurityContext| Expr::compare(book_col("id"), CmpOp::Lt, Value::U64(12)),
         ));
     let (store, _) = store(security).await;
     let txn = store.begin().await.unwrap();
@@ -605,16 +614,20 @@ async fn a_loop_reads_less_than_a_scan_of_the_inner_side() {
 
     let txn = loader.begin().await.unwrap();
     for id in 1..=AUTHOR_COUNT {
-        txn.insert(&root, &authors(), &author(1, id, &format!("a{id}"), "US"))
-            .await
-            .unwrap();
+        txn.insert(
+            &root,
+            &authors(),
+            &author(1, id, &format!("a{id}"), "US", 2000),
+        )
+        .await
+        .unwrap();
     }
     for id in 1..=BOOK_COUNT {
         let by = (id % AUTHOR_COUNT) + 1;
         txn.insert(
             &root,
             &books(),
-            &book(1, 1_000 + id, Some(by), &format!("b{id}")),
+            &book(1, 1_000 + id, Some(by), &format!("b{id}"), 1990),
         )
         .await
         .unwrap();
@@ -738,7 +751,7 @@ async fn a_full_join_keeps_both_sides() {
         .insert(
             &SecurityContext::superuser(),
             &authors(),
-            &author(1, 3, "Nobody", "IE"),
+            &author(1, 3, "Nobody", "IE", 1990),
         )
         .await
         .unwrap();
@@ -894,5 +907,232 @@ async fn an_outer_join_does_not_preserve_hidden_rows() {
         rows.len(),
         5,
         "one pair plus four books with no visible author"
+    );
+}
+
+/// A condition spanning both sides: was the book published in the author's
+/// lifetime? Neither table can answer that alone, which is the whole point.
+#[tokio::test]
+async fn a_condition_can_span_both_sides() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(&authors(), &books());
+
+    let in_lifetime = || {
+        Expr::compare_columns(
+            at.right(book_col("published")),
+            CmpOp::Lt,
+            at.left(author_col("died")),
+        )
+    };
+
+    let rows = txn
+        .join(
+            &reader(1),
+            &authors(),
+            &books(),
+            &on_author().having(in_lifetime()),
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(
+        titles(&rows),
+        vec!["A Wizard of Earthsea", "The Dispossessed"],
+        "Consider Phlebas was published after its author died"
+    );
+
+    // Reversed, it selects exactly the complement.
+    let posthumous = Expr::compare_columns(
+        at.right(book_col("published")),
+        CmpOp::Gt,
+        at.left(author_col("died")),
+    );
+    let rows = txn
+        .join(
+            &reader(1),
+            &authors(),
+            &books(),
+            &on_author().having(posthumous),
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(titles(&rows), vec!["Consider Phlebas"]);
+}
+
+/// Every algorithm applies the condition the same way. A condition that one
+/// algorithm honoured and another ignored would make the planner's freedom to
+/// choose a correctness bug.
+#[tokio::test]
+async fn every_algorithm_applies_the_condition() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(&authors(), &books());
+    let condition = Expr::compare_columns(
+        at.right(book_col("published")),
+        CmpOp::Lt,
+        at.left(author_col("died")),
+    );
+
+    for algorithm in [
+        JoinAlgorithm::Hash { build: Side::Right },
+        JoinAlgorithm::Hash { build: Side::Left },
+        JoinAlgorithm::NestedLoop,
+    ] {
+        let rows = txn
+            .join(
+                &reader(1),
+                &authors(),
+                &books(),
+                &on_author().having(condition.clone()).using(algorithm),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            titles(&rows),
+            vec!["A Wizard of Earthsea", "The Dispossessed"],
+            "under {algorithm:?}"
+        );
+    }
+}
+
+/// The condition behaves like SQL's `ON`, not `WHERE`. A left row whose only
+/// candidates are all rejected is *unmatched*, not gone — the difference that
+/// trips people up in real SQL, so it had better be the difference here.
+#[tokio::test]
+async fn a_rejected_pair_leaves_an_unmatched_row_not_a_missing_one() {
+    let (store, _) = store(open()).await;
+    let at = JoinSchema::of(&authors(), &books());
+    // Iain's only book is posthumous, so he pairs with nothing.
+    let condition = Expr::compare_columns(
+        at.right(book_col("published")),
+        CmpOp::Lt,
+        at.left(author_col("died")),
+    );
+
+    for algorithm in [
+        JoinAlgorithm::Hash { build: Side::Right },
+        JoinAlgorithm::Hash { build: Side::Left },
+        JoinAlgorithm::NestedLoop,
+    ] {
+        let txn = store.begin().await.unwrap();
+        let rows = txn
+            .join(
+                &reader(1),
+                &authors(),
+                &books(),
+                &on_author()
+                    .left_outer()
+                    .having(condition.clone())
+                    .using(algorithm),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 3, "under {algorithm:?}: {rows:?}");
+        let unmatched: Vec<String> = rows
+            .iter()
+            .filter(|r| !r.is_matched())
+            .filter_map(
+                |r| match r.left.as_ref().and_then(|l| l.get(author_col("name"))) {
+                    Some(Value::Str(s)) => Some(s.clone()),
+                    _ => None,
+                },
+            )
+            .collect();
+        assert_eq!(
+            unmatched,
+            vec!["Iain"],
+            "an author whose every candidate was rejected must come back \
+             unmatched, not vanish, under {algorithm:?}"
+        );
+    }
+}
+
+/// An ordinal outside the joined space names no column. Reading it as null
+/// would turn a typo into a condition nobody wrote, so it is refused.
+#[tokio::test]
+async fn a_condition_outside_the_joined_space_is_refused() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+
+    let width = JoinSchema::of(&authors(), &books()).width();
+    let join = on_author().having(Expr::eq(Ordinal(width), Value::U64(1)));
+    let err = txn
+        .join(&reader(1), &authors(), &books(), &join)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, KernelError::JoinNotSupported { .. }),
+        "got {err:?}"
+    );
+}
+
+/// The planner accounts for the condition when estimating how many rows come
+/// back, and `EXPLAIN` shows the condition it is costing.
+#[tokio::test]
+async fn the_condition_shows_up_in_the_plan() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(&authors(), &books());
+
+    let plain = txn
+        .explain_join(&reader(1), &authors(), &books(), &on_author())
+        .unwrap();
+    assert!(plain.having.is_none(), "{plain}");
+
+    let filtered = txn
+        .explain_join(
+            &reader(1),
+            &authors(),
+            &books(),
+            &on_author().having(Expr::compare_columns(
+                at.right(book_col("published")),
+                CmpOp::Lt,
+                at.left(author_col("died")),
+            )),
+        )
+        .unwrap();
+    assert!(filtered.having.is_some(), "{filtered}");
+    assert!(
+        filtered.estimated_rows < plain.estimated_rows,
+        "a condition that rejects rows should lower the estimate: {} vs {}",
+        filtered.estimated_rows,
+        plain.estimated_rows
+    );
+}
+
+/// The same type rule holds for a join's condition, where a mismatch is easier
+/// to write because the two columns come from different schemas.
+#[tokio::test]
+async fn a_cross_side_comparison_between_types_is_refused() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(&authors(), &books());
+
+    // authors.name is Str; books.published is I64.
+    let join = on_author().having(Expr::compare_columns(
+        at.left(author_col("name")),
+        CmpOp::Lt,
+        at.right(book_col("published")),
+    ));
+    let err = txn
+        .join(&reader(1), &authors(), &books(), &join)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, KernelError::ComparisonTypeMismatch { .. }),
+        "got {err:?}"
     );
 }

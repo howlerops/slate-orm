@@ -506,3 +506,110 @@ async fn counting_matches_collecting() {
         .unwrap();
     assert_eq!(counted, brute_force(&filter).len());
 }
+
+/// Comparing two columns of the same row. It exists for a join's cross-side
+/// condition, but it is an ordinary single-table predicate too, and this is
+/// where its semantics are pinned down.
+#[tokio::test]
+async fn a_comparison_between_two_columns_is_a_residual_filter() {
+    let store = seeded().await;
+    let table = metrics();
+    let txn = store.begin().await.unwrap();
+
+    // Two string columns, both varying per row.
+    let filter = Expr::compare_columns(col("label"), CmpOp::Lt, col("region"));
+    let rows = txn
+        .query(
+            &SecurityContext::superuser(),
+            &table,
+            filter.clone(),
+            ScanOrder::Ascending,
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let expected: Vec<Row> = corpus()
+        .into_iter()
+        .filter(|r| match (r.get(col("label")), r.get(col("region"))) {
+            (Some(Value::Str(l)), Some(Value::Str(g))) => l < g,
+            _ => false,
+        })
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "the corpus must exercise both outcomes"
+    );
+    assert!(
+        expected.len() < corpus().len(),
+        "and must not be all of it either"
+    );
+    assert_eq!(rows.len(), expected.len());
+
+    // It can never be a scan bound — there is no literal to bound on — so the
+    // planner must fall back to a scan rather than deriving something wrong.
+    let plan = plan(&table, &filter, ScanOrder::Ascending);
+    assert!(
+        matches!(plan.access, Access::TableScan { .. }),
+        "got {:?}",
+        plan.access
+    );
+    // And both columns must be listed, or an index-only scan could skip one.
+    assert!(plan.predicate_columns.contains(col("label")));
+    assert!(plan.predicate_columns.contains(col("region")));
+}
+
+/// `Value`'s order is type-first, which is what makes the key encoding
+/// sortable. So comparing an integer column with a float one would compare the
+/// *types* and give the same answer for every row — a bug that returns a
+/// plausible number of rows. It is refused rather than answered.
+#[tokio::test]
+async fn comparing_columns_of_different_types_is_refused() {
+    let store = seeded().await;
+    let table = metrics();
+    let txn = store.begin().await.unwrap();
+
+    let err = txn
+        .query(
+            &SecurityContext::superuser(),
+            &table,
+            // bucket is I64, value is F64.
+            Expr::compare_columns(col("bucket"), CmpOp::Lt, col("value")),
+            ScanOrder::Ascending,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            slate_kernel::KernelError::ComparisonTypeMismatch { .. }
+        ),
+        "got {err:?}"
+    );
+
+    // Left to itself the comparison would have admitted every row, which is
+    // why silence here would be worse than an error.
+    let all = corpus().len();
+    let unchecked = Expr::compare_columns(col("bucket"), CmpOp::Lt, col("value"));
+    let admitted = corpus().iter().filter(|r| unchecked.admits(r)).count();
+    assert_eq!(
+        admitted, all,
+        "the type-first order admits everything, as the refusal assumes"
+    );
+}
+
+/// A null on either side makes it unknown, not false — the same rule as a
+/// comparison with a literal, and the same reason: a deny-style policy written
+/// with `NOT` must not admit the rows where the answer is not known.
+#[tokio::test]
+async fn a_null_makes_a_column_comparison_unknown() {
+    let with_null = row("eu", 1, 2.0, None);
+    let filter = Expr::compare_columns(col("label"), CmpOp::Lt, col("region"));
+
+    assert_eq!(filter.evaluate(&with_null), slate_kernel::Truth::Unknown);
+    assert!(!filter.admits(&with_null));
+    // And its negation is unknown too, so neither admits the row.
+    assert!(!Expr::Not(Box::new(filter)).admits(&with_null));
+}

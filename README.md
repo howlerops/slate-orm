@@ -242,6 +242,28 @@ holds one side in memory, so it flags the buckets that were probed and drains
 the rest at the end; a nested loop cannot, so the planner will not choose one
 there and refuses one that is forced.
 
+A condition only a formed pair can answer goes in `having`, over the ordinal
+space `JoinSchema` defines — the left table keeps its ordinals, the right
+table's shift past its width:
+
+```rust
+let at = JoinSchema::of(&authors, &books);
+let join = Join::equating(author_id, book_author_id).having(
+    Expr::compare_columns(at.right(published), CmpOp::Lt, at.left(died)),
+);
+```
+
+It is an ordinary `Expr`, so it goes through the same evaluator and the same
+three-valued logic the security filter uses — not a parallel expression type
+that would be a second place for those null semantics to drift. It behaves like
+SQL's `ON`: a left row whose every candidate is rejected comes back unmatched,
+not missing.
+
+Comparing two columns of *different* types is refused rather than answered.
+`Value`'s order is type-first — which is what makes the key encoding sortable —
+so an integer against a float would order by type and give the same answer for
+every row.
+
 The planner picks between a hash join and a nested loop by cost, and both
 directions are worth measuring, because the cost model makes a strong claim in
 each:
@@ -397,7 +419,7 @@ Built and tested:
 - [x] Projections and index-only scans; pipelined index lookups
 - [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
 - [x] Inner, left, right and full outer joins, hash or nested-loop by cost,
-      both sides secured
+      both sides secured; conditions spanning both sides
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -409,8 +431,7 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] A join predicate spanning both sides; joining more than two tables in one
-      plan
+- [ ] Joining more than two tables in one plan
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)

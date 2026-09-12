@@ -41,6 +41,14 @@ pub const SCAN_OPEN_COST: f64 = 1.0;
 pub const SCAN_ROW_COST: f64 = 0.01;
 /// Cost of one point read.
 pub const POINT_READ_COST: f64 = 1.0;
+/// How much of a table a comparison between two of its columns is expected to
+/// keep.
+///
+/// A third, the same as a one-sided range against a literal. Both are guesses;
+/// this one cannot be improved by a histogram, because the answer depends on
+/// how the two columns vary together and nothing here records that.
+pub const COLUMN_RANGE_SELECTIVITY: f64 = 0.33;
+
 /// Cost of one comparison level when sorting a row: CPU only, no I/O, so
 /// several orders of magnitude below a round trip.
 pub const SORT_ROW_COST: f64 = 0.000_02;
@@ -154,6 +162,23 @@ impl TableStats {
                     CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
                         self.range_selectivity(*column, true)
                     }
+                }
+            }
+            // Two columns compared with no literal in sight. There is no
+            // histogram that would help — that would need a joint
+            // distribution — so this is a guess, and an equality between two
+            // columns is guessed the way a join's is: one over the coarser
+            // of the two distinct counts.
+            Expr::CompareColumns { left, op, right } => {
+                let coarser = self
+                    .column(*left)
+                    .distinct
+                    .min(self.column(*right).distinct)
+                    .max(1) as f64;
+                match op {
+                    CmpOp::Eq => 1.0 / coarser,
+                    CmpOp::Ne => 1.0 - 1.0 / coarser,
+                    CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => COLUMN_RANGE_SELECTIVITY,
                 }
             }
             Expr::IsNull { column, negated } => {
