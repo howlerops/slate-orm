@@ -180,24 +180,82 @@ reported by the cursor rather than only estimated, because a step that was
 predicted at ten rows and produced ten thousand is the usual reason a chain is
 slow, and it is invisible otherwise.
 
+### The planner was picking the slower plan, and the harness hid it
+
+The cost model charged one round trip per point read. The executor has
+pipelined those since the index-scan work — sixteen in flight — so an index
+scan was overcharged sixteenfold, and the planner chose a table scan where the
+index was measurably faster:
+
+| | wall | model said |
+|---|---:|---:|
+| indexed equality, 100 rows, table scan | 57 ms | cost 26 ← chosen |
+| the same, forced through the index | **20 ms** | cost 102 |
+
+The first attempt at a fix was wrong, and the way it was wrong is the useful
+part. Dividing the measured wall time by the number of reads gave an apparent
+speedup of 6.6x, so the read charge was divided by six. But that figure came
+from comparing against a 1 ms round trip when the fixture's is 2.2 ms — the
+timer's resolution, not the model's. Probing the fixture directly settled it:
+**any number of concurrent reads complete in the time of one.**
+
+```
+   1 gets at once   2.23 ms      16 gets at once   2.17 ms
+   4 gets at once   2.18 ms      64 gets at once   2.25 ms
+```
+
+So the shape is waves, not a discount: `n` reads at depth `d` cost
+`ceil(n / d)` round trips. That predicts 7 waves for 100 reads and 32 for 500,
+and both matched the measurement exactly. It also explains why a small limit
+gains least — one read and sixteen both cost one wave — and the executor now
+caps its prefetch at the window rather than fetching sixteen rows to return
+ten.
+
+Then the harness itself, for the fourth time. With the wave model in place a
+`LIMIT 10` still measured worse through the index than the model said it
+should. Neither the model nor the engine was wrong: `SCAN_ROW_COST` of 0.01
+says a block holds a hundred rows, and the latency fixture was charging one
+block per 256. Every scan comparison had been confounded by that. Making them
+state the same number reconciled the two:
+
+| | model | measured |
+|---|---:|---:|
+| indexed equality, table scan | 26.0 | 57 ms |
+| indexed equality, index scan | 9.0 | 20 ms |
+| `LIMIT 10`, table scan | 3.5 | 7.3 ms |
+| `LIMIT 10`, index scan | 2.1 | 4.4 ms |
+
+Cost times 2.2 ms is the wall time, to within the timer, on every row. The
+model went from ranking two of these backwards to predicting all of them.
+
+The crossover moved with it: a non-covering index scan is now worth its
+lookups up to roughly **6%** of the table rather than 1%. Covering an index
+still matters far more here than on local disk — overlapping a round trip
+makes it cheaper, not making it at all is still free.
+
 ## Current numbers
+
+Wall times below are higher than earlier revisions of this document because
+the fixture now charges a block per hundred rows rather than per 256, matching
+what the cost model believes. The engine did not get slower; the measurement
+got honest.
 
 | query | rows | point reads | wall | plan |
 |---|---:|---:|---:|---|
 | point get by primary key | 1 | 1 | 2.3 ms | Point Get |
-| whole tenant | 2500 | 0 | 24 ms | Table Scan |
-| indexed equality | 100 | 0 | 24 ms | Table Scan |
-| indexed equality, limit 10 | 10 | 0 | 3.0 ms | Table Scan |
-| indexed range | 500 | 0 | 24 ms | Table Scan |
-| covered equality, keys only | 100 | 0 | 2.3 ms | Index Only Scan |
-| covered count | 500 | 0 | 4.8 ms | Index Only Scan |
+| whole tenant | 2500 | 0 | 58 ms | Table Scan |
+| indexed equality | 100 | 100 | 20 ms | Index Scan |
+| indexed equality, limit 10 | 10 | 10 | 4.4 ms | Index Scan |
+| indexed range | 500 | 0 | 58 ms | Table Scan |
+| covered equality, keys only | 100 | 0 | 4.5 ms | Index Only Scan |
+| covered count | 500 | 0 | 13 ms | Index Only Scan |
 
 | join | rows out | point reads | scanned | wall | plan |
 |---|---:|---:|---:|---:|---|
-| every actor to their events | 2500 | 0 | 3000 | 32 ms | Hash |
-| one actor's events | 5 | 6 | 5 | 6.7 ms | Nested Loop |
-| every team → actors → events | 2500 | 0 | 3010 | 36 ms | hash + hash |
-| one team → actors → events | 250 | 1 | 3000 | 32 ms | hash + hash |
+| every actor to their events | 2500 | 0 | 3000 | 76 ms | Hash |
+| one actor's events | 5 | 6 | 5 | 6.6 ms | Nested Loop |
+| every team → actors → events | 2500 | 0 | 3010 | 80 ms | hash + hash |
+| one team → actors → events | 250 | 1 | 3000 | 75 ms | hash + hash |
 
 | write | rows | point reads | wall |
 |---|---:|---:|---:|
@@ -215,12 +273,14 @@ slow, and it is invisible otherwise.
 
 ## Two results worth keeping
 
-**A non-covering index scan needs to select under about 1% of the rows a scan
-would touch to be worth using.** That falls out of the cost ratio — a point read
-is a round trip, a scanned row is a hundredth of one — and it is why so many
-plans above are table scans. It is not a quirk of the constants; it is what
-storage where every lookup is a network round trip implies, and it is why
-covering an index matters far more here than on local disk.
+**A non-covering index scan needs to select under about 6% of the rows a scan
+would touch to be worth using.** That falls out of the cost ratio — a scanned
+row is a hundredth of a round trip, and sixteen overlapped lookups are one — 
+and it is why the plans above split the way they do. It is not a quirk of the
+constants; it is what storage where every lookup is a network round trip
+implies once you are allowed to make sixteen at a time. Covering an index still
+matters far more here than on local disk: overlapping a round trip makes it
+cheaper, not making it at all is free.
 
 **A limit cannot change which plan wins; `ORDER BY` with a limit can.** Reading
 `L` rows through an index costs `L` point reads, and finding `L` matches by
@@ -240,5 +300,12 @@ and both flattered or distorted the results:
   O(database). Ranging the map directly took a 2500-row tenant scan from 14.5 ms
   to 1.6 ms — a 9× difference that was entirely fixture.
 
-It is worth stating plainly that the first two "findings" from this harness were
-both bugs in the harness.
+- `LatencyProfile` charged one block per 256 rows while the cost model's
+  `SCAN_ROW_COST` said a hundred. Nothing was wrong with either number on its
+  own; holding both at once meant every measurement of a scan against an
+  estimate was comparing two different beliefs.
+
+It is worth stating plainly that three of the first four "findings" from this
+harness were bugs in the harness. `examples/concurrency_probe.rs` exists
+because of the last one: when a plan measures worse than it costs, ask the
+fixture what it is actually charging before changing the planner.

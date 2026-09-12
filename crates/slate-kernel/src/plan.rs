@@ -15,8 +15,11 @@
 //! provably enforce is a later optimisation, and one that has to be argued for
 //! rather than assumed.
 
-use crate::query::SortKey;
-use crate::stats::{POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, SORT_ROW_COST, TableStats};
+use crate::exec::DEFAULT_PREFETCH;
+use crate::query::{AccessHint, SortKey};
+use crate::stats::{
+    POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, SORT_ROW_COST, TableStats, pipelined_read_cost,
+};
 use crate::store::{KeyRange, ScanOrder};
 use crate::{expr::Expr, keys};
 use core::ops::Bound;
@@ -160,6 +163,19 @@ struct ColumnConstraints<'a> {
     ranges: Vec<(CmpOp, &'a Value)>,
 }
 
+/// How deep the executor will pipeline, given what the caller asked for.
+///
+/// A window narrows it: fetching sixteen rows to return ten spends six round
+/// trips on rows that are discarded, so the cursor caps the prefetch at the
+/// window and the cost model has to agree, or it credits the plan with
+/// concurrency the executor will not use.
+fn prefetch_depth(limit: Option<usize>) -> usize {
+    match limit {
+        Some(limit) if limit > 0 => limit.min(DEFAULT_PREFETCH),
+        _ => DEFAULT_PREFETCH,
+    }
+}
+
 /// A candidate access path and what it is expected to cost.
 struct Candidate {
     access: Access,
@@ -240,8 +256,10 @@ impl Candidate {
             && !covering
         {
             // The row has to be read before the residual can even be evaluated,
-            // so this is per row touched, not per row returned.
-            cost += touched * POINT_READ_COST;
+            // so this is per row touched, not per row returned. Issued in
+            // waves, because the executor overlaps them — and at the same
+            // depth the executor will actually use, which a limit narrows.
+            cost += pipelined_read_cost(touched, prefetch_depth(limit));
         }
         if must_sort && matched > 1.0 {
             cost += matched * matched.log2() * SORT_ROW_COST;
@@ -334,6 +352,28 @@ pub fn plan_full(
     limit: Option<usize>,
     sort: &[SortKey],
 ) -> Plan {
+    plan_hinted(
+        table, predicate, order, projection, stats, limit, sort, None,
+    )
+}
+
+/// [`plan_full`], with an access path the caller insists on.
+///
+/// A hint narrows which candidates are considered; everything else — bounds,
+/// residual, costing — is unchanged, so a hinted plan is a real plan and not a
+/// second code path that could disagree with the first.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn plan_hinted(
+    table: &TableDef,
+    predicate: Arc<Expr>,
+    order: ScanOrder,
+    projection: &Projection,
+    stats: &TableStats,
+    limit: Option<usize>,
+    sort: &[SortKey],
+    hint: Option<AccessHint>,
+) -> Plan {
     let conjuncts = predicate.conjuncts();
 
     // A comparison against a null literal is Unknown for every row, so the
@@ -406,8 +446,21 @@ pub fn plan_full(
     };
 
     let ordered = !sort.is_empty();
-    consider(match_primary_key(table, &constraints, stats, ordered));
+    // A hint restricts the candidates rather than replacing the choice: the
+    // one that survives is still costed, bounded and given a residual the
+    // ordinary way.
+    let mut considered = 0usize;
+    if !matches!(hint, Some(AccessHint::Index(_))) {
+        considered += 1;
+        consider(match_primary_key(table, &constraints, stats, ordered));
+    }
     for index in table.indexes() {
+        if matches!(hint, Some(AccessHint::TableScan))
+            || matches!(hint, Some(AccessHint::Index(wanted)) if wanted != index.id())
+        {
+            continue;
+        }
+        considered += 1;
         consider(match_index(
             table,
             index,
@@ -416,6 +469,11 @@ pub fn plan_full(
             stats,
             ordered,
         ));
+    }
+    // An index hint naming an index that is gone leaves nothing to consider.
+    // Falling back beats refusing: a hint is advice.
+    if considered == 0 {
+        consider(match_primary_key(table, &constraints, stats, ordered));
     }
 
     // How much of what the access path admits the residual still rejects. Only

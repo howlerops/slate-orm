@@ -72,7 +72,7 @@ use crate::error::{KernelError, Result};
 use crate::expr::{CmpOp, Columns, Expr};
 use crate::plan::Plan;
 use crate::query::Query;
-use crate::stats::{POINT_READ_COST, SCAN_ROW_COST, TableStats};
+use crate::stats::{POINT_READ_COST, SCAN_ROW_COST, TableStats, pipelined_read_cost};
 use slate_schema::{ColumnDef, Ordinal, Row, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into};
 
@@ -506,8 +506,15 @@ pub(crate) fn hash_cost(left: &Plan, right: &Plan) -> f64 {
 }
 
 /// The cost of a nested-loop join: the outer scan, plus a probe per outer row.
+///
+/// The probes are overlapped [`PROBE_CONCURRENCY`] deep, the same as an index
+/// scan's row lookups, so they cost waves rather than one apiece. Without that
+/// the model overstates a loop by the same factor it overstated an index scan.
+/// The unit of a wave is a whole probe, not a round trip: a probe opens a scan
+/// and may read several rows.
 pub(crate) fn nested_loop_cost(left: &Plan, probe: &Plan) -> f64 {
-    left.estimated_cost + left.estimated_rows.max(0.0) * probe.estimated_cost
+    let waves = pipelined_read_cost(left.estimated_rows.max(0.0), PROBE_CONCURRENCY);
+    left.estimated_cost + waves * probe.estimated_cost
 }
 
 /// Bind the join equalities to a row's values, for planning or running a probe.

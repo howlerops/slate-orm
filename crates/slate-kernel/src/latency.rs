@@ -79,7 +79,12 @@ impl LatencyProfile {
             get: Duration::from_millis(1),
             scan_open: Duration::from_millis(1),
             scan_block: Duration::from_millis(1),
-            rows_per_block: 256,
+            // A hundred, because that is what the cost model believes: its
+            // `SCAN_ROW_COST` of 0.01 *is* one block fetch over a hundred
+            // rows. The two have to state the same number. When they did not,
+            // measurements against the fixture disagreed with the planner's
+            // estimates for reasons that had nothing to do with the planner.
+            rows_per_block: 100,
             commit: Duration::from_millis(2),
         }
     }

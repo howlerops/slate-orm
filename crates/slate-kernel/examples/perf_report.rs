@@ -291,6 +291,76 @@ async fn main() {
         );
     }
 
+    // Does the cost model's per-read charge match what the executor does? It
+    // charges one round trip per point read; the executor issues sixteen at a
+    // time. Forcing each path and timing both is the only way to know.
+    println!("\nforced access paths");
+    println!("{:-<118}", "");
+    let forced: Vec<(&str, Query)> = vec![
+        (
+            "indexed equality, table scan",
+            Query::all()
+                .filter(by_tenant().and(kind_7()))
+                .using_table_scan(),
+        ),
+        (
+            "indexed equality, forced by_kind",
+            Query::all()
+                .filter(by_tenant().and(kind_7()))
+                .using_index(IndexId(10)),
+        ),
+        (
+            "indexed equality limit 10, table scan",
+            Query::all()
+                .filter(by_tenant().and(kind_7()))
+                .limit(10)
+                .using_table_scan(),
+        ),
+        (
+            "indexed equality limit 10, forced index",
+            Query::all()
+                .filter(by_tenant().and(kind_7()))
+                .limit(10)
+                .using_index(IndexId(10)),
+        ),
+        (
+            "indexed range, table scan",
+            Query::all()
+                .filter(by_tenant().and(early()))
+                .using_table_scan(),
+        ),
+        (
+            "indexed range, forced by_at_desc",
+            Query::all()
+                .filter(by_tenant().and(early()))
+                .using_index(IndexId(12)),
+        ),
+    ];
+    for query in forced {
+        counters.reset();
+        let started = Instant::now();
+        let txn = store.begin().await.expect("begin");
+        let described = txn.explain(&root, &table, &query.1).expect("explain");
+        let rows = txn
+            .execute(&root, &table, &query.1)
+            .await
+            .expect("query")
+            .count()
+            .await
+            .expect("count");
+        println!(
+            "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}  cost={:.1} {}",
+            query.0,
+            rows,
+            counters.gets(),
+            counters.scans(),
+            counters.scan_rows(),
+            started.elapsed(),
+            described.estimated_cost,
+            described.access
+        );
+    }
+
     println!("\njoins");
     println!("{:-<118}", "");
     let on_actor = || Join::equating(actor_column("name"), column("actor"));

@@ -286,10 +286,22 @@ impl<'a> QueryCursor<'a> {
     }
 
     /// Apply a limit and an offset together.
+    ///
+    /// A known window also caps the prefetch. Overlapping reads is only free
+    /// while every read is one the caller will use: fetching sixteen rows to
+    /// return ten spends six round trips on rows that are discarded, which on
+    /// a small limit is most of the query. The cap is the whole window, since
+    /// an offset still has to fetch the rows it skips.
     #[must_use]
     pub(crate) const fn with_window(mut self, limit: Option<usize>, offset: usize) -> Self {
         self.limit = limit;
         self.offset = offset;
+        if let Some(limit) = limit {
+            let window = limit.saturating_add(offset);
+            if window > 0 && window < self.prefetch {
+                self.prefetch = window;
+            }
+        }
         self
     }
 

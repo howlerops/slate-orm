@@ -8,8 +8,8 @@
 )]
 
 use slate_kernel::{
-    AccessSummary, Action, CmpOp, Expr, Grant, Query, RecordStore, ScanOrder, SecurityCatalog,
-    SecurityContext, Statistics, TableStats, memory::MemoryStore,
+    AccessSummary, Action, CmpOp, ColumnStats, Expr, Grant, Query, RecordStore, ScanOrder,
+    SecurityCatalog, SecurityContext, Statistics, TableStats, memory::MemoryStore,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -303,4 +303,69 @@ fn assumed_statistics_are_used_when_nothing_is_known() {
     assert_eq!(stats.row_count, 1_000);
     // A column nobody has looked at still gets a usable guess.
     assert!((stats.equality_selectivity(Ordinal(0)) - 0.009).abs() < 0.001);
+}
+
+/// The cost model charges overlapped reads as waves, not one round trip each.
+///
+/// This is the difference between preferring a 58 ms table scan and a 20 ms
+/// index scan on the benchmark corpus. The executor has always pipelined; the
+/// model simply did not know.
+#[test]
+fn pipelined_reads_cost_waves_not_round_trips() {
+    use slate_kernel::stats::{POINT_READ_COST, pipelined_read_cost};
+
+    assert_eq!(pipelined_read_cost(0.0, 16), 0.0, "nothing to read");
+    // One read and a full wave of them cost the same: a wave is a round trip
+    // that nothing amortises, which is why a small limit gains least.
+    assert_eq!(pipelined_read_cost(1.0, 16), POINT_READ_COST);
+    assert_eq!(pipelined_read_cost(16.0, 16), POINT_READ_COST);
+    assert_eq!(pipelined_read_cost(17.0, 16), 2.0 * POINT_READ_COST);
+    assert_eq!(pipelined_read_cost(100.0, 16), 7.0 * POINT_READ_COST);
+    // A depth of zero would divide by nothing; it means "no overlap".
+    assert_eq!(pipelined_read_cost(4.0, 0), 4.0 * POINT_READ_COST);
+}
+
+/// A non-covering index scan is worth its lookups up to roughly 6% of the
+/// table, and not beyond. The old model put that boundary at about 1%, and so
+/// scanned whole tables to return a hundred rows.
+#[tokio::test]
+async fn an_index_wins_up_to_a_few_percent_of_the_table() {
+    let filter = || Expr::eq(col("kind"), Value::Str("kind-1".into()));
+    let with = |distinct: u64| {
+        TableStats::with_row_count(10_000).with_column(
+            col("kind"),
+            ColumnStats {
+                distinct,
+                null_fraction: 0.0,
+            },
+        )
+    };
+
+    // Selective: 500 distinct values over ten thousand rows means an equality
+    // keeps 0.2% of them, so the lookups pay for themselves.
+    let selective = store()
+        .await
+        .with_statistics(Statistics::new().with(T, with(500)));
+    let txn = selective.begin().await.unwrap();
+    let plan = txn
+        .explain(&root(), &table(), &Query::all().filter(filter()))
+        .unwrap();
+    assert!(
+        !matches!(plan.access, AccessSummary::TableScan),
+        "0.2% of the table should go through the index, got {plan}"
+    );
+
+    // Broad: two distinct values means half the table, far past the point
+    // where a lookup per row pays for itself.
+    let broad = store()
+        .await
+        .with_statistics(Statistics::new().with(T, with(2)));
+    let txn = broad.begin().await.unwrap();
+    let plan = txn
+        .explain(&root(), &table(), &Query::all().filter(filter()))
+        .unwrap();
+    assert!(
+        matches!(plan.access, AccessSummary::TableScan),
+        "half the table should be scanned, got {plan}"
+    );
 }

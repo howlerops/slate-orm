@@ -104,6 +104,22 @@ impl SortKey {
     }
 }
 
+/// An access path a caller insists on, instead of the cheapest one.
+///
+/// For measuring what the planner's alternatives would have cost, and for a
+/// caller who knows something the statistics do not. A hint that cannot be
+/// honoured — an index that does not exist, or one the projection is not
+/// covered by when a covering scan was asked for — is ignored rather than
+/// refused: a hint is advice, and a query that stops working because an index
+/// was renamed is worse than one that gets slower.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessHint {
+    /// Read the table's own key range, whatever an index would have offered.
+    TableScan,
+    /// Walk this index.
+    Index(slate_schema::IndexId),
+}
+
 /// A read request.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
@@ -119,6 +135,8 @@ pub struct Query {
     pub limit: Option<usize>,
     /// Rows to discard before returning any.
     pub offset: usize,
+    /// An access path to use instead of the cheapest one. See [`AccessHint`].
+    pub hint: Option<AccessHint>,
 }
 
 impl Default for Query {
@@ -138,6 +156,7 @@ impl Query {
             sort: Vec::new(),
             limit: None,
             offset: 0,
+            hint: None,
         }
     }
 
@@ -211,6 +230,20 @@ impl Query {
     #[must_use]
     pub const fn offset(mut self, offset: usize) -> Self {
         self.offset = offset;
+        self
+    }
+
+    /// Read through this index rather than the cheapest path.
+    #[must_use]
+    pub const fn using_index(mut self, index: slate_schema::IndexId) -> Self {
+        self.hint = Some(AccessHint::Index(index));
+        self
+    }
+
+    /// Read the table's own key range rather than the cheapest path.
+    #[must_use]
+    pub const fn using_table_scan(mut self) -> Self {
+        self.hint = Some(AccessHint::TableScan);
         self
     }
 

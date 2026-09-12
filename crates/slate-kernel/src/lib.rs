@@ -40,9 +40,9 @@ pub use join::{
     JoinedRow, PROBE_CONCURRENCY, Side,
 };
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
-pub use plan::{Access, Plan, Projection, plan, plan_full, plan_projected, plan_with};
+pub use plan::{Access, Plan, Projection, plan, plan_full, plan_hinted, plan_projected, plan_with};
 pub use pool::{ReplicaPool, RoutingPolicy};
-pub use query::{NullsOrder, Query, SortKey};
+pub use query::{AccessHint, NullsOrder, Query, SortKey};
 pub use read::{IndexCursor, RowCursor};
 pub use record::{
     BULK_READ_CONCURRENCY, DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction,

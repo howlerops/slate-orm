@@ -15,13 +15,22 @@
 //! | open a scan | 1.0 | one round trip |
 //! | one row from a scan | 0.01 | a block fetch amortised over its rows, plus decode |
 //! | one point read | 1.0 | a round trip that amortises over nothing |
+//! | `n` pipelined reads | `ceil(n/16)` | issued together, they land together |
 //!
-//! The ratio is what matters, and it has a blunt consequence: a
-//! non-covering index scan only beats a table scan when it selects under
-//! roughly 1% of the rows the scan would touch. That is not a quirk of the
-//! numbers, it is what storage where every lookup is a network round trip
-//! actually implies — and it is why covering an index matters so much more here
-//! than it would on local disk.
+//! `SCAN_ROW_COST` is a block fetch amortised over its rows: 0.01 says a block
+//! holds about a hundred. That belief has to be shared with anything measuring
+//! against the model — [`crate::latency::LatencyProfile`] states the same
+//! number, and when the two disagreed the planner looked wrong where it was
+//! not.
+//!
+//! The ratio decides when an index is worth using: a non-covering index scan
+//! beats a table scan while it selects under roughly 6% of the rows the scan
+//! would touch. Overlapping the row lookups is what makes that 6% rather than
+//! 1% — see [`pipelined_read_cost`].
+//!
+//! What does not change is that covering an index matters far more here than
+//! on local disk. Overlapping a round trip makes it cheaper; not making it at
+//! all is still free.
 //!
 //! # Estimates
 //!
@@ -39,8 +48,33 @@ use std::collections::BTreeMap;
 pub const SCAN_OPEN_COST: f64 = 1.0;
 /// Cost of one row pulled from an open scan.
 pub const SCAN_ROW_COST: f64 = 0.01;
-/// Cost of one point read.
+/// Cost of one point read, issued on its own and waited for.
 pub const POINT_READ_COST: f64 = 1.0;
+
+/// What `n` point reads cost when issued `depth` at a time.
+///
+/// An index scan does not wait for each row lookup in turn — it keeps
+/// [`crate::exec::DEFAULT_PREFETCH`] of them in flight, and a nested-loop join
+/// does the same with its probes. Charging each one a full round trip makes
+/// the model prefer a table scan where an index scan is measurably faster: on
+/// the benchmark corpus it picked a 22 ms plan over a 17 ms one.
+///
+/// The shape is waves, not a discount. Reads issued together land together, so
+/// `n` of them at depth `d` cost `ceil(n / d)` round trips — which is why a
+/// small limit does not get the full benefit: ten reads and one read both cost
+/// one wave, and one wave is a whole round trip that nothing amortises.
+///
+/// Measured against the latency fixture, where any number of concurrent reads
+/// complete in the time of one: 100 reads at depth 16 came to 7 waves and 500
+/// came to 32, both matching to within the timer's resolution.
+#[must_use]
+pub fn pipelined_read_cost(reads: f64, depth: usize) -> f64 {
+    if reads <= 0.0 {
+        return 0.0;
+    }
+    let depth = depth.max(1) as f64;
+    (reads / depth).ceil() * POINT_READ_COST
+}
 /// How much of a table a comparison between two of its columns is expected to
 /// keep.
 ///

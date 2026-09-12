@@ -12,7 +12,7 @@ use crate::exec::QueryCursor;
 use crate::expr::Expr;
 use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinKey, JoinPlan, JoinSchema, Side};
 use crate::keys;
-use crate::plan::{Plan, Projection, plan_full};
+use crate::plan::{Plan, Projection, plan_hinted};
 use crate::query::Query;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
@@ -39,6 +39,7 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         sort: Vec::new(),
         limit: None,
         offset: 0,
+        hint: query.hint,
     }
 }
 
@@ -136,7 +137,7 @@ impl<'a> SecuredReads<'a> {
             table,
             Action::Read,
         )?));
-        Ok(plan_full(
+        Ok(plan_hinted(
             table,
             secured,
             query.order,
@@ -144,6 +145,7 @@ impl<'a> SecuredReads<'a> {
             &self.statistics.table(table),
             query.planning_limit(),
             &query.sort,
+            query.hint,
         ))
     }
 

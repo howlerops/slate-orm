@@ -177,6 +177,19 @@ can make a scan slow but not wrong, and a mandatory security predicate is
 enforced by evaluation rather than by the planner having correctly turned it
 into a range.
 
+### Overlapped reads are cheaper, and the model has to know
+
+An index scan does not wait for each row lookup in turn — it keeps sixteen in
+flight — so `n` lookups cost `ceil(n / 16)` round trips, not `n`. The model
+charged them one apiece, which made it prefer a 57 ms table scan over a 20 ms
+index scan. Fixing that moved the crossover from about 1% of the table to about
+6%, and a plan's estimated cost is now within the timer's resolution of its
+measured wall time on every shape in the benchmark.
+
+A window narrows the pipeline: fetching sixteen rows to return ten spends six
+round trips on rows nobody sees, so the cursor caps its prefetch at
+`limit + offset` and the cost model uses the same depth.
+
 ### Index-only scans
 
 A query says which columns it needs. When an index holds all of them — its own
@@ -270,15 +283,15 @@ each:
 
 | | rows read | wall | plan |
 |---|---:|---:|---|
-| 500 actors ⋈ 2500 events | 3,000 | 32 ms | Hash |
-| the same, forced to a loop | 3,000 + 2,500 point reads | 153 ms | Nested Loop |
-| one actor's events | 5 | 6.7 ms | Nested Loop |
-| the same, forced to a hash | 2,500 | 30 ms | Hash |
+| 500 actors ⋈ 2500 events | 3,000 | 76 ms | Hash |
+| the same, forced to a loop | 3,000 + 2,500 point reads | 158 ms | Nested Loop |
+| one actor's events | 5 | 6.6 ms | Nested Loop |
+| the same, forced to a hash | 2,500 | 62 ms | Hash |
 
 A scanned row costs a hundredth of a round trip and a probe costs at least one,
-so a hash join wins the general case by 4.7×. But "one row against ten thousand"
+so a hash join wins the general case by 2.1×. But "one row against ten thousand"
 is what an ORM does all day — load a user, then their orders — and there the loop
-wins by 4.4×. The planner gets both right; `explain_join` says which it chose.
+wins by 9.4×. The planner gets both right; `explain_join` says which it chose.
 
 ### Chains of more than two tables
 
@@ -309,8 +322,8 @@ the accumulated set is bounded at every step rather than left to the allocator.
 thing to look at when a chain is slow and the estimate said it would not be:
 
 ```
-every team -> actors -> events   2500 rows   3 scans, 3010 rows read   36 ms   [10, 500, 2500]
-one team   -> actors -> events    250 rows   2 scans, 3000 rows read   32 ms   [1, 50, 250]
+every team -> actors -> events   2500 rows   3 scans, 3010 rows read   80 ms   [10, 500, 2500]
+one team   -> actors -> events    250 rows   2 scans, 3000 rows read   75 ms   [1, 50, 250]
 ```
 
 ### Schemas are code, and so are policies
