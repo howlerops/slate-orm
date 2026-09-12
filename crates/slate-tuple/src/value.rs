@@ -72,6 +72,12 @@ impl ValueType {
     }
 }
 
+impl core::fmt::Display for ValueType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 impl Value {
     /// The type tag of this value, or `None` for [`Value::Null`].
     ///

@@ -1,6 +1,6 @@
 [package]
 name = "slate-schema"
-description = "Schema and catalog metadata for slate-orm"
+description = "Schema and catalog metadata for the slate-orm record layer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,12 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+slate-tuple.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
