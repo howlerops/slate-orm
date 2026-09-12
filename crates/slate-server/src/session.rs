@@ -69,8 +69,15 @@ pub struct Limits {
     /// How many rows go in one message of a query stream.
     ///
     /// Framing costs per message and latency costs per batch, so this trades
-    /// one against the other. Not measured here; 256 is a guess that keeps a
-    /// wide row's batch well under a megabyte.
+    /// one against the other. Measured now (`slate-headbench`, see
+    /// `docs/performance.md`): throughput climbs to a batch of 64 and is flat
+    /// from there to 16,384, so the useful range is 64–1024 and 256 sits
+    /// inside it. What a larger batch buys is nothing and what it costs is the
+    /// first row — 370 µs at a batch of 1, 3.07 ms at 256, 37 ms at 16,384.
+    /// Left at 256 rather than lowered: there is a reproducible and
+    /// *unexplained* step in first-row latency around a batch of 125, and
+    /// retuning onto a cliff nobody understands is how a constant becomes
+    /// load-bearing by accident.
     pub rows_per_message: usize,
 }
 

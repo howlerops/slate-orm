@@ -627,7 +627,13 @@ Built and tested:
       object in the same bucket, terminal step-down on `WriterFenced`, reads
       routed by freshness and tenant affinity and stamped with which replica
       served them
-- [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
+- [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md)),
+      the head node included: a gRPC round trip costs ~120 µs of which the head
+      node's own work is 7–23 µs, so it is transport rather than conversion;
+      a streaming query pays ~43 µs more even for one row; batching a hundred
+      writes into one call is 15x; and a `Durable` commit is 101.10 ms flat,
+      three orders of magnitude above everything else, because that is
+      SlateDB's flush interval and not this repository's to change
 - [x] A planner oracle, an access-path security matrix, restart/durability
       tests over both substrates, write-failure injection above *and* below the
       storage engine, contention tests, untrusted-input suites and committed
@@ -662,9 +668,13 @@ Not built:
       out, and the plan chosen is unchanged in every shape tested, so this is
       not currently worth fixing
       (`cargo run --release -p slate-kernel --example correlation`)
-- [ ] Any performance number for the head node. Its correctness is tested;
-      nothing in it has been benchmarked, and the lease term and stream batch
-      size are argued rather than measured
+- [ ] The head node under *concurrency*. It is measured now, but every
+      measurement is one request at a time, so the per-stream channel and the
+      task-per-transaction design have never been under pressure
+- [ ] A reproducible ~2.3 ms step in first-row latency around a batch of 125.
+      It looked exactly like tokio's 128-operation cooperative budget; a 31-run
+      sweep then produced a fast run at 128, which that hypothesis forbids, so
+      it is recorded as unexplained rather than explained wrongly
 - [ ] Scale past 200,000 rows on real object storage, which is where the cost
       model was calibrated
 

@@ -1,0 +1,37 @@
+[package]
+name = "slate-headbench"
+description = "Benchmark harness for the slate-orm gRPC head node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-slatedb.workspace = true
+slate-tuple.workspace = true
+# The crate under measurement. A path dependency rather than a workspace one
+# because nothing else in the workspace depends on the head node.
+slate-server = { path = "../slate-server" }
+
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+uuid.workspace = true
+
+# Pinned to the versions the head node and the storage backend already use: an
+# `Arc<dyn ObjectStore>` built here has to be the same type the lease and
+# SlateDB accept, and a `tonic::Request` built here has to be the one the
+# generated client wants.
+object_store = "0.14"
+slatedb = { version = "0.16", default-features = false }
+tonic = "0.14"
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "net", "sync"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[lints]
+workspace = true

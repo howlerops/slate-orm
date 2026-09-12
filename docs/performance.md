@@ -10,6 +10,7 @@ not.
 ```sh
 cargo bench                                                   # criterion
 cargo run --release -p slate-kernel --example perf_report     # I/O counts
+cargo run --release -p slate-headbench --example head_report  # the head node
 ```
 
 Two profiles are used. `free` charges nothing and isolates CPU. `io` charges
@@ -521,3 +522,469 @@ It is worth stating plainly that three of the first four "findings" from this
 harness were bugs in the harness. `examples/concurrency_probe.rs` exists
 because of the last one: when a plan measures worse than it costs, ask the
 fixture what it is actually charging before changing the planner.
+
+## The head node, measured
+
+Everything above is the record layer as a library. `crates/slate-server` is the
+process that puts it behind a socket, and until now it was the one component
+here with no number attached to it at all — including the two constants it is
+tuned by, both of which say in their own doc comments that they were chosen by
+argument rather than measurement.
+
+`crates/slate-headbench` is the harness. It runs a **real head node on a
+loopback TCP socket over a real SlateDB**, and beside it an **in-process
+control** built from the same catalog, the same rules and the same stores
+(`harness::InProcess`) — the pool and the record store the head node itself
+holds, called the way its handlers call them, with no protobuf type constructed
+anywhere. The difference between the two is the head node.
+
+```sh
+cargo run --release -p slate-headbench --example head_report
+cargo run --release -p slate-headbench --example head_report -- stream lease
+
+# More runs when the machine is busy; a different batch sweep to chase a step.
+HEADBENCH_RUNS=21 cargo run --release -p slate-headbench --example head_report
+HEADBENCH_BATCHES=118,124,126,128 cargo run --release -p slate-headbench \
+    --example head_report -- stream
+```
+
+### Conditions, and why they are stated first
+
+Numbers below are the median of 21 runs with the full range beside them, taken
+on a 4-core Firecracker VM which **had up to three cargo builds running on it
+during development**. That is not an aside. Medians here move by a factor of
+two with what else is on the machine, and every measurement was repeated across
+load levels from 0.2 to 5.0 before anything was written down. Where a
+difference could not be told apart from that, it is reported as noise and no
+number is claimed. The run recorded here was taken at load 0.49 falling to
+0.24.
+
+The object store under SlateDB is in-memory. So the WAL, the memtable, the
+manifest and the replica reader are all real and a replica genuinely lags, but
+**there is no network under the object store**. Every place that changes what a
+number means is called out below.
+
+Two things the harness does that are not optional, both because it got them
+wrong first:
+
+- **The channel is warmed with 2,000 requests before anything is timed.** An
+  earlier version measured the empty RPC first and an insert last and reported
+  the insert as *cheaper than an empty call*, which cannot be true. HTTP/2 opens
+  with a small flow-control window and grows it. The floor is now measured again
+  at the *end* of the section as the check; the drift across the section is
+  0.6–5.1 µs, inside noise.
+- **Controls are measured before the workload that changes the data.** See the
+  replica finding below, which reversed once this was fixed.
+
+### 1. A request over gRPC costs about 130 µs, and it is almost all transport
+
+The same operation, over the wire and against the kernel directly. `Leadership`
+is the floor: it reads a watch channel, touches no storage and does not even
+authenticate, so it is what an empty round trip costs.
+
+| operation | over gRPC | in process | difference |
+|---|---:|---:|---:|
+| **empty RPC** (`Leadership`) | **119.3 µs** [111.1 – 347.5] | — | — |
+| get by primary key | 132.4 µs [125.7 – 144.9] | 2.92 µs [2.78 – 3.25] | 129.5 µs (45×) |
+| explain | 130.1 µs [125.8 – 137.3] | 1.53 µs [1.50 – 1.86] | 128.5 µs (85×) |
+| query returning 1 row | 166.9 µs [161.6 – 616.8] | 4.31 µs [4.11 – 4.73] | 162.6 µs (39×) |
+| insert 1 row, autocommit | 180.8 µs [168.7 – 629.2] | 49.9 µs [48.9 – 55.2] | 130.9 µs (3.6×) |
+
+The same thing over `MemoryStore`, with the storage term driven to nearly
+nothing, so that whatever is left is the head node:
+
+| operation | over gRPC | in process | difference |
+|---|---:|---:|---:|
+| empty RPC (`Leadership`) | 112.6 µs [109.8 – 127.2] | — | — |
+| get by primary key | 136.3 µs [118.1 – 768.0] | **472 ns** [470 – 580] | 135.8 µs (289×) |
+| explain | 131.1 µs [125.0 – 339.4] | 1.49 µs | 129.6 µs (88×) |
+| query returning 1 row | 157.6 µs [151.4 – 832.4] | 1.40 µs | 156.2 µs (112×) |
+| insert 1 row, autocommit | 131.0 µs [123.9 – 147.6] | 2.56 µs | 128.5 µs (51×) |
+
+**The head node's share of a `get` is 129.5 µs over SlateDB and 135.8 µs over
+`MemoryStore`.** Two backends whose own cost differs by a factor of six agree
+on the overhead to within 5%, which is the cross-check: the difference is a
+property of the head node, not of the storage under it.
+
+Now subtract both the floor and the storage, and what is left is the head
+node's own work — authenticating from transport metadata, the catalog name
+lookup, converting the request in and the response out:
+
+| | SlateDB arm | `MemoryStore` arm |
+|---|---:|---:|
+| get | 10.3 µs | 23.2 µs |
+| explain | 9.3 µs | 17.0 µs |
+| insert, autocommit | 11.6 µs | 15.8 µs |
+| query returning 1 row | **43.4 µs** | **43.6 µs** |
+
+So of the ~130 µs a request costs, **110–120 µs is the wire and roughly 10–23 µs
+is the head node's own work**. The two arms disagree by about as much as this
+harness can resolve at that scale — the two floors themselves differ by 6.6 µs —
+so treat the range, not either end, as the answer. The protobuf conversion layer
+that `convert.rs` spends hundreds of lines on is not where the time goes.
+
+The one shape that is different is the **streaming query, which costs ~43 µs
+of head-node work rather than ~10–23 µs even when it returns a single row**. It
+is also the one row of that table where the two backends agree to three
+significant figures — 43.4 µs and 43.6 µs — which is what a fixed per-call cost
+looks like. And it carries a much heavier tail: 167 µs median against a worst
+run of 617 µs, where a `get` in the same section ranged 126–145 µs, and on a
+loaded machine the same measurement reached 11 ms.
+
+That is the price of the design in `service.rs`: a query spawns a task, hands
+the routing result back over a `oneshot`, and streams rows through an
+`mpsc::channel(2)`. Three scheduler hand-offs where a `get` has none. The cost
+is measured; the attribution to those three is read off the code rather than
+measured separately.
+
+**What this does not measure.** The client is in the same process on the same
+four cores, so this is head node plus client stub plus loopback, with no real
+network. Against a client one datacentre hop away the transport term grows and
+the head node's 10–23 µs grows not at all — so 130 µs is an *upper* bound on the
+head node's share of a request and a *lower* bound on what a remote caller
+sees.
+
+### 2. Stream throughput saturates at a batch of about 64, and 256 is fine
+
+20,000 rows, whole-table scan, `Limits::rows_per_message` swept. The in-process
+floor — the same scan with no head node in front of it — is **22.5 ms
+(890,000 rows/s)**.
+
+Drain time is quoted as the **best of 21 runs** and first-row latency as the
+**median of 21**, for a reason given directly below: the drain column is
+bimodal and its median measures the machine, while the first-row column is
+stable and its best is bimodal. Both are printed by the harness.
+
+| batch | messages | drain, best of 21 | rows/s | first row, median |
+|---:|---:|---:|---:|---:|
+| 1 | 20,001 | 140.6 ms | 142,000 | 370 µs |
+| 8 | 2,501 | 64.1 ms | 312,000 | 398 µs |
+| 32 | 626 | 46.5 ms | 430,000 | 490 µs |
+| 64 | 314 | 79.7 ms | 251,000 | 631 µs |
+| 96 | 210 | 37.1 ms | 540,000 | 683 µs |
+| 112 | 180 | 37.5 ms | 533,000 | 674 µs |
+| 127 | 159 | 75.9 ms | 264,000 | **3.22 ms** |
+| 128 | 158 | 75.9 ms | 264,000 | 3.14 ms |
+| **256** | **80** | **75.9 ms** | **263,000** | **3.07 ms** |
+| 512 | 41 | 35.8 ms | 558,000 | 3.71 ms |
+| 1024 | 21 | 36.4 ms | 550,000 | 4.98 ms |
+| 4096 | 6 | 37.1 ms | 540,000 | 14.62 ms |
+| 16384 | 3 | 36.4 ms | 550,000 | 36.97 ms |
+
+Read the drain column with care. It is **bimodal at roughly 36 ms and 76 ms
+independent of batch size**, and which mode a run lands in varies between
+sweeps for the *same* batch size — batch 64 gave 36.1 ms in one sweep and
+79.7 ms in another. That is the machine, not the batch size. Taking the lowest
+value observed for each size across five sweeps gives the shape that survives:
+
+| batch | 1 | 8 | 32 | ≥64 |
+|---|---:|---:|---:|---:|
+| best drain, 20,000 rows | 66 ms | 50 ms | 45 ms | **34–38 ms** |
+
+**Throughput saturates by a batch of about 64 and does not improve again up to
+16,384.** Against the 22.5 ms in-process floor, streaming 20,000 rows over gRPC
+adds ~12 ms at batch ≥64 (**0.6 µs/row**) and ~43 ms at batch 1
+(**2.1 µs/row**). Per-message framing is real and it is paid off by 64.
+
+The other half of the trade is first-row latency, and it does *not* behave the
+way the comment beside the constant assumes. Above a batch of about 1,000 it
+grows with the batch, as producing that many rows must: 5.0 ms at 1,024,
+14.6 ms at 4,096, **37.0 ms at 16,384**. Below that there is a step that is not
+gradual at all.
+
+#### The step at 125 rows, which is honestly not explained
+
+First-row latency is flat at 620–680 µs up to a batch of 124 and jumps to
+~2.9 ms at 126. Located to the row:
+
+| batch | 118 | 120 | 122 | **124** | **126** | 127 | 128 | 130 | 140 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| first row, median | 624 µs | 659 µs | 678 µs | **675 µs** | **2.84 ms** | 3.32 ms | 2.96 ms | 2.92 ms | 3.25 ms |
+| the best run of 15 | 567 µs | 557 µs | 564 µs | 521 µs | 824 µs | 2.95 ms | 2.74 ms | 854 µs | 696 µs |
+
+The median steps cleanly between 124 and 126 and stays stepped. The best-run
+row is the interesting one: above the threshold it goes bimodal, with occasional
+runs at 700–860 µs among typical runs near 2.9 ms. Below the threshold there are
+no slow runs at all. The step is reproducible across five sweeps and is ~2.3 ms
+every time.
+
+The obvious suspect was tokio's cooperative-scheduling budget, which is exactly
+128 resource operations before a task is made to yield — and a batch that
+crosses it would make the streaming task yield before it can send its first
+message. The evidence half-supports that and half does not:
+
+- **For it:** the step is sharp, it sits within a few rows of 128, and above it
+  the distribution goes bimodal — occasional runs at 700–860 µs among typical
+  runs at 2.9 ms, which is what a task that *sometimes* gets rescheduled at once
+  looks like.
+- **Against it:** the step is **the same size on an idle machine as on one at
+  load 5**, and a yield-and-repark on an idle four-core box costs microseconds,
+  not 2.3 ms. Whatever the 2.3 ms is, it is not waiting for a busy core.
+
+An earlier draft of this section reported the step as a confirmed tokio-budget
+finding on three sweeps. Raising the repetition count produced a fast run at
+batch 128, which the hypothesis forbids, and the claim had to be withdrawn. It
+is recorded here as a reproducible, unattributed step, because the alternative
+was a tidy explanation the data does not carry.
+
+#### What that says about `rows_per_message = 256`
+
+**The constant is defensible and is not being changed.** It sits inside the
+flat region for throughput: the difference between 64 and 256 is entirely
+inside the machine's bimodality, and nothing above 64 buys anything. Its stated
+rationale — keeping a wide row's batch under a megabyte — is the binding one,
+and nothing here contradicts it. These rows work out at roughly fifty bytes of
+protobuf each — counted off the schema, not measured — so a 256-row message here
+is well under 20 KB, while a 4 KB row would put the same message at 1 MB
+exactly, which is the case the constant was chosen for.
+
+What the measurement adds is the range the constant should stay in, which
+nobody knew: **64 at the bottom** (below it, per-message framing costs real
+throughput — batch 1 is 2× slower) and **about 1,000 at the top** (above it,
+time to first row grows with the batch and reaches 37 ms at 16,384).
+
+There is one argument for a *lower* value that this harness raises and
+deliberately does not act on. A batch of 112 delivers its first row in 674 µs
+where 256 takes 3.07 ms, at identical throughput — 2.4 ms of latency for
+nothing. But the boundary is at a *row count* only on this fixture; it is
+plainly a proxy for some operation or byte count, so it would move with row
+width, with the backend and with the query shape. Tuning 256 down to 112 would
+be fitting a constant to one synthetic corpus, which is the mistake
+`SCAN_ROW_COST` and the block-size mismatch already cost this project twice.
+The step should be explained before the constant is moved.
+
+### 3. Autocommit against an explicit transaction: the answer is the flush
+
+Two arms, because the answer is entirely different depending on one setting
+that is not the head node's.
+
+**At `Durability::Visible`**, where a commit returns as soon as the write is
+visible, the difference is exactly the RPC count:
+
+| | per row | total |
+|---|---:|---:|
+| 1 row, autocommit (1 RPC) | 174.1 µs [167.3 – 622.4] | — |
+| 1 row, begin + insert + commit (3 RPCs) | 505.2 µs [470.4 µs – 1.35 ms] | — |
+| 100 rows, one autocommit call | **11.6 µs** [10.1 – 451.2] | 1.16 ms |
+| 100 rows, txn + 100 insert calls | 177.8 µs [167.5 – 617.9] | 17.8 ms |
+| 100 rows, txn + 1 insert call | 14.5 µs [12.7 – 19.8] | 1.45 ms |
+
+Wrapping a single write in a transaction costs **331 µs (2.9×)**, which is two
+extra round trips at the ~130 µs each section 1 measured — the two measurements
+agree, which is the point of quoting both. And a row written one RPC at a time
+costs 178 µs against 11.6 µs written in a batch: **15× for the same hundred
+rows**, all of it round trips, none of it storage.
+
+**At `Durability::Durable`**, the default, none of that is visible at all:
+
+| | per row |
+|---|---:|
+| 1 row, autocommit | 101.10 ms [100.99 – 101.25] |
+| 1 row, begin + insert + commit | 101.17 ms [101.04 – 101.35] |
+| 100 rows, any of the three shapes | 1.01 ms |
+
+Every durable commit costs **101 ms, with a range of 0.3%**. That is SlateDB's
+`flush_interval`, which defaults to 100 ms: a durable commit waits for the next
+scheduled WAL flush, and the wait dominates everything else by three orders of
+magnitude. The transaction question becomes unanswerable — 69 µs apart, inside
+noise — because both shapes commit exactly once.
+
+The finding is the one that falls out of that: **a durable commit costs a flush
+interval, so the only thing that matters is how many rows share one.** A
+hundred rows in one commit is 1.01 ms per row against 101 ms per row one at a
+time — a **100× difference**, and the number is not a property of the head node
+or of the record layer. It is `flush_interval`, and a deployment that writes
+row-at-a-time durably should be looking at that setting before anything in this
+repository.
+
+### 4. Routing is free; the freshness wait is the manifest poll
+
+Three following replicas over the same object store, `manifest_poll_interval`
+50 ms, tenant-scoped table so affinity has something to key on. Sanity first,
+because a routing benchmark that is quietly reading from the wrong place is
+worthless: `Freshness::Any` was served by `replica-c`, `Freshness::Latest` by
+`writer`, `AtLeast(2)` by `replica-c`, and every read asserted that it found
+its row.
+
+**The decision itself:**
+
+| | |
+|---|---:|
+| `pool.route`, tenant affinity (rendezvous hashing) | **103 ns** [100 – 105] |
+| `pool.route`, round robin | 27 ns [26 – 28] |
+
+Rendezvous hashing costs 76 ns more than round robin. Against a request that
+costs 130 µs that is **0.06%** — the cache-locality argument in
+[`topology.md`](topology.md) does not have to justify itself against a routing
+cost, because there is not one.
+
+**The read, at each freshness:**
+
+| | over gRPC |
+|---|---:|
+| `Freshness::Any` (a replica) | 134.0 µs [129.6 – 356.3] |
+| `Freshness::Latest` (the writer) | 135.8 µs [127.9 – 351.0] |
+| `AtLeast(a sequence already reached)` | 133.0 µs [129.4 – 348.4] |
+| the same read in process, no gRPC | **3.91 µs** [3.84 – 4.09] |
+
+All three are the same read. **Proving freshness against a replica that has
+already caught up costs nothing measurable** (1.0 µs, inside noise), and so
+does choosing a replica over the writer (1.8 µs, inside noise). The head node's
+share is 130.1 µs, the same figure as every other unary RPC in this document.
+
+**The case the replica has to catch up** — commit durably, then immediately
+demand that sequence:
+
+| | |
+|---|---:|
+| `AtLeast(a sequence just committed)` | **28.3 ms** [5.4 – 43.6] |
+| the same read with nothing to wait for | 133.0 µs |
+| fell back to the writer | **0 times in 176** |
+
+A read that has to wait costs **213× one that does not**, and the distribution
+is what it should be: roughly uniform between 5 ms and 44 ms against a 50 ms
+manifest poll, because the commit lands at a uniformly random point in the
+replica's polling cycle. **The freshness wait is half a manifest poll interval
+on average, and that is a configuration value, not a code cost.** A deployment
+that finds read-your-writes too slow should look at
+`DbReaderOptions::manifest_poll_interval` first; the 250 ms `catch_up` budget in
+`RoutingPolicy` never came close to expiring, so no read was pushed onto the
+writer.
+
+#### A replica that has just taken writes reads 2.4× slower
+
+This one is here because the harness got it wrong first and the wrong version
+was more interesting than the right one.
+
+The in-process control for the replica read was originally measured *after* the
+catch-up loop above, which commits 176 times. It came out at 107 µs against the
+writer's 2.9 µs, and the obvious story — "reading from a replica costs 25× more
+than the writer's memtable, because a replica reads object storage" — was wrong.
+Measured before those commits, the same read is **3.91 µs**: a replica read and
+a writer read cost the same.
+
+What the 176 commits actually did is worth its own line, measured directly by
+repeating the gRPC read after them:
+
+| `Freshness::Any` over gRPC | |
+|---|---:|
+| before the catch-up loop | 134.0 µs [129.6 – 356.3] |
+| after 176 durable commits | **327.4 µs** [304.7 – 388.1] |
+
+**2.4×**, and it is not the head node — it is a replica with 176 commits' worth
+of un-compacted recent state to consult on every read. That is a real property
+of a following replica under write load and it is invisible unless the
+measurement is ordered deliberately.
+
+### 5. A renewal is one conditional PUT; the term is a failover budget
+
+| | |
+|---|---:|
+| cold acquire | **1 GET + 1 conditional PUT** |
+| one renewal | **0 GET + 1 conditional PUT** |
+| `lease.renew`, in-memory object store | 756 ns [719 – 1020] |
+| `lease.observe` (read only) | 568 ns [562 – 638] |
+| `Leadership::is_leader` (the write-path check) | **17 ns** [15 – 18] |
+
+The request counts are the numbers that travel; the clock is against an
+in-memory object store, so it is the compare-and-set, the encode/decode and the
+mutex, with the network — which is all of the cost in a bucket — removed.
+
+A renewal is a *single* conditional write: the client keeps the object version
+it last saw, so it does not re-read. Against the 5 s renewal interval that
+`Cadence::for_term` derives from the 15 s term, the local cost is
+**0.000015% of the interval**. And the check that runs on every write —
+`Leadership::is_leader`, which is what makes a fenced node's refusal local
+rather than a round trip into a dead store — is **17 ns**. Neither of these is
+a reason to choose any particular term.
+
+Renewing does not disturb serving either. At **250× the real renewal rate** (a
+60 ms term renewing every 20 ms) a `get` was 154.4 µs against 143.1 µs with no
+renewal running: inside noise. At the real rate the effect is 1/250th of
+something already unmeasurable.
+
+**So what does the term actually buy, and cost?** It buys tolerance of renewals
+that do not arrive. It costs how long a *crashed* leader keeps its successor
+out, because a process that dies cannot release — and that had never been
+measured:
+
+| term | takeover after a crash (tight poll) | at the real campaign cadence | after a graceful release |
+|---|---:|---:|---:|
+| 300 ms | 300.8 ms | 303.5 ms | 3.8 µs |
+| 600 ms | 601.9 ms | 604.1 ms | 2.9 µs |
+| 1.2 s | 1.20 s | 1.20 s | 3.1 µs |
+
+**Takeover after a crash costs exactly the term**, and the successor's own
+campaign interval (`term / 3`) is added on top of it. A holder that releases
+hands over in the time of one conditional write — 3 µs here, one round trip in
+a bucket — which confirms what [`topology.md`](topology.md) claims for the
+`release` on a clean shutdown, and is a five-orders-of-magnitude difference
+between a graceful restart and a crash.
+
+At the default 15 s term this is **up to 15 s of refused writes after a crash,
+plus up to 5 s before the successor next campaigns**. That sentence is
+arithmetic from the mechanism above rather than a measurement; three terms an
+order of magnitude apart all took exactly their term, and nothing in the
+mechanism is nonlinear.
+
+#### Is 15 seconds sensible? Half the question is answerable here
+
+The half that is: **the term is not paying for renewal cost.** A renewal is one
+conditional PUT and the cadence gives it 5 seconds to complete. Even a very bad
+object store does not need 5 seconds for a single conditional write, and the
+term tolerates two consecutive failures on top of that. The margin is large.
+
+The half that is not: **how long a conditional PUT to real object storage
+actually takes at the tail.** This harness measures it against an in-memory
+store, where it is 756 ns. On S3 it is tens of milliseconds typically and can be
+seconds at the tail under throttling, and that tail is exactly what the term
+exists to survive. Nothing here measures it, so nothing here says how much
+margin is needed.
+
+What the measurement does establish is the price list, which was missing:
+
+| term | tolerates a renewal stall of | worst-case write outage after a crash |
+|---:|---:|---:|
+| 15 s (current) | up to ~10 s across two failures | ~20 s |
+| 5 s | up to ~3.3 s across two failures | ~6.7 s |
+
+**No change is proposed.** Choosing between those rows needs the conditional-PUT
+tail latency of the deployment's object store, which is a measurement to take
+against MinIO or a real bucket, and it belongs beside the existing S3 work in
+`slate-slatedb` rather than in a guess here. What should not survive is the
+current position, which is that 15 s is a "starting point" with nothing
+attached: it is now a starting point with a 20-second failover attached to it,
+and that is the number an operator has to agree to.
+
+### What was boring, and is reported as boring
+
+Four things were measured, came back with no difference, and are worth as much
+as the findings:
+
+- **Tenant-affinity routing against round robin**: 76 ns apart, 0.06% of a
+  request.
+- **Proving freshness against a replica that is already caught up**: 1.0 µs,
+  inside noise. The token costs nothing when it does not have to wait.
+- **A replica read against a writer read**: 1.8 µs, inside noise.
+- **Lease renewal against serving reads**: inside noise at 250× the real
+  renewal rate.
+
+And one constant was examined and left alone: `rows_per_message = 256` is
+inside the range the measurements support, and the one argument for lowering it
+rests on a threshold nobody can yet explain.
+
+### What could not be measured here
+
+- **Real object-store latency**, anywhere. The in-memory store removes the
+  network, which is most of what a lease renewal, a durable commit and a replica
+  read cost in a bucket. Every conclusion above that touches storage is about
+  request *counts* and *shapes*, not their wall time in production.
+- **A remote client.** Client and server share four cores and a loopback
+  socket, so the 130 µs transport term includes the client stub and excludes the
+  network.
+- **Concurrency.** Every measurement is one request at a time. What the head
+  node costs under a hundred concurrent callers — where the `mpsc::channel(2)`
+  per stream and the one-task-per-transaction design in `session.rs` would
+  actually be under pressure — is not measured, and is the obvious next
+  benchmark.
+- **The 2.3 ms step at a batch of 125 rows.** Reproducible, and unexplained.

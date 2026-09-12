@@ -219,9 +219,18 @@ const MAGIC: &str = "slate-lease v1";
 ///
 /// Long enough that a renewal can fail twice before the term ends, short
 /// enough that a crashed head node does not block its successor for a
-/// noticeable time. Not measured against a real deployment — it is a starting
-/// point, and the renewal cadence in [`crate::leadership`] is derived from it
-/// rather than chosen separately so the two cannot drift apart.
+/// noticeable time. The renewal cadence in [`crate::leadership`] is derived
+/// from it rather than chosen separately, so the two cannot drift apart.
+///
+/// What it costs is now measured (`slate-headbench`, see
+/// `docs/performance.md`), and it is not the renewal: a renewal is one
+/// conditional PUT with no GET, against a five-second budget. What the term
+/// buys is the failover window — takeover after a crash takes *exactly* the
+/// term (measured at 300, 600 and 1200 ms terms, landing within 0.3%), so 15 s
+/// means up to 15 s of refused writes plus up to 5 s before the successor
+/// campaigns. A graceful release costs 3 µs instead. Still not changed:
+/// trading that window down needs conditional-PUT tail latency against a real
+/// bucket, and an in-memory object store cannot tell you that.
 pub const DEFAULT_TERM: Duration = Duration::from_secs(15);
 
 /// A lease held as a single object in the same storage the database uses.

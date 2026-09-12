@@ -3333,6 +3333,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate-headbench"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "object_store",
+ "slate-kernel",
+ "slate-schema",
+ "slate-server",
+ "slate-slatedb",
+ "slate-tuple",
+ "slatedb",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "uuid",
+]
+
+[[package]]
 name = "slate-kernel"
 version = "0.0.1"
 dependencies = [
