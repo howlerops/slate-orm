@@ -8,8 +8,9 @@
 use crate::aggregate::{Aggregate, Group};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
-use crate::explain::Explanation;
+use crate::explain::{Explanation, JoinExplanation};
 use crate::expr::Expr;
+use crate::join::{Join, JoinCursor};
 use crate::keys::{self, IndexEntry};
 use crate::plan::Projection;
 use crate::query::Query;
@@ -325,6 +326,36 @@ impl<'a> RecordTransaction<'a> {
     ) -> Result<Explanation> {
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
+    }
+
+    /// Join two tables on equal columns.
+    ///
+    /// Each side is read through its own secured plan, so each is authorised
+    /// and each carries its own row filter. A join does not widen what the
+    /// caller can see; it is two reads the caller could already have made.
+    ///
+    /// The planner picks a hash join or a nested loop by cost. See
+    /// [`crate::join`].
+    pub async fn join<'q>(
+        &'q self,
+        context: &SecurityContext,
+        left: &'q TableDef,
+        right: &'q TableDef,
+        join: &Join,
+    ) -> Result<JoinCursor<'q>> {
+        self.reads().join(context, left, right, join).await
+    }
+
+    /// The plan `join` would run under, without running it.
+    pub fn explain_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+    ) -> Result<JoinExplanation> {
+        let plan = self.reads().plan_join(context, left, right, join)?;
+        Ok(JoinExplanation::of(left, right, &plan, join))
     }
 
     /// Compute `aggregates` over the rows `query` selects.
@@ -1005,6 +1036,36 @@ impl<'a> RecordSnapshot<'a> {
     ) -> Result<Explanation> {
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
+    }
+
+    /// Join two tables on equal columns.
+    ///
+    /// Each side is read through its own secured plan, so each is authorised
+    /// and each carries its own row filter. A join does not widen what the
+    /// caller can see; it is two reads the caller could already have made.
+    ///
+    /// The planner picks a hash join or a nested loop by cost. See
+    /// [`crate::join`].
+    pub async fn join<'q>(
+        &'q self,
+        context: &SecurityContext,
+        left: &'q TableDef,
+        right: &'q TableDef,
+        join: &Join,
+    ) -> Result<JoinCursor<'q>> {
+        self.reads().join(context, left, right, join).await
+    }
+
+    /// The plan `join` would run under, without running it.
+    pub fn explain_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+    ) -> Result<JoinExplanation> {
+        let plan = self.reads().plan_join(context, left, right, join)?;
+        Ok(JoinExplanation::of(left, right, &plan, join))
     }
 
     /// Compute `aggregates` over the rows `query` selects.

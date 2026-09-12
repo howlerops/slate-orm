@@ -6,6 +6,7 @@
 //! the estimates — an estimate that is wildly wrong is usually the actual bug,
 //! and it is invisible without printing it.
 
+use crate::join::{Join, JoinAlgorithm, JoinPlan, JoinType, Side};
 use crate::plan::{Access, Plan};
 use crate::query::Query;
 use crate::store::ScanOrder;
@@ -139,5 +140,96 @@ impl fmt::Display for Explanation {
             write!(f, " offset={}", self.offset)?;
         }
         f.write_str(")")
+    }
+}
+
+/// How a join will be run: the algorithm, and each side's own plan.
+///
+/// Both sides are shown because a join's cost is almost entirely its sides'.
+/// A join that looks expensive is usually a side that is, and printing only
+/// the algorithm would hide it.
+#[derive(Debug, Clone)]
+pub struct JoinExplanation {
+    /// How the sides are combined.
+    pub algorithm: JoinAlgorithm,
+    /// Which rows survive.
+    pub join_type: JoinType,
+    /// How the left side is read.
+    pub left: Explanation,
+    /// How the right side is read. For a nested loop this is the shape of one
+    /// probe, not a plan run once.
+    pub right: Explanation,
+    /// Joined rows the planner expects.
+    pub estimated_rows: f64,
+    /// Estimated cost in object-storage round trips.
+    pub estimated_cost: f64,
+    /// The caller's limit on the joined result, if any.
+    pub limit: Option<usize>,
+    /// The caller's offset on the joined result.
+    pub offset: usize,
+}
+
+impl JoinExplanation {
+    /// Describe `plan`.
+    #[must_use]
+    pub fn of(left: &TableDef, right: &TableDef, plan: &JoinPlan, join: &Join) -> Self {
+        Self {
+            algorithm: plan.algorithm,
+            join_type: join.join_type,
+            left: Explanation::of(left, &plan.left, &join.left),
+            right: Explanation::of(right, &plan.right, &join.right),
+            estimated_rows: plan.estimated_rows,
+            estimated_cost: plan.estimated_cost,
+            limit: join.limit,
+            offset: join.offset,
+        }
+    }
+
+    /// Whether the planner chose to probe the inner side per outer row.
+    #[must_use]
+    pub const fn is_nested_loop(&self) -> bool {
+        matches!(self.algorithm, JoinAlgorithm::NestedLoop)
+    }
+
+    /// The side read into memory, for a hash join.
+    #[must_use]
+    pub const fn build_side(&self) -> Option<Side> {
+        match self.algorithm {
+            JoinAlgorithm::Hash { build } => Some(build),
+            JoinAlgorithm::NestedLoop => None,
+        }
+    }
+}
+
+impl fmt::Display for JoinExplanation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self.join_type {
+            JoinType::Inner => "Inner",
+            JoinType::Left => "Left",
+        };
+        match self.algorithm {
+            JoinAlgorithm::Hash { build } => {
+                let side = match build {
+                    Side::Left => "left",
+                    Side::Right => "right",
+                };
+                write!(f, "Hash {kind} Join (build {side})")?;
+            }
+            JoinAlgorithm::NestedLoop => write!(f, "Nested Loop {kind} Join")?,
+        }
+        write!(
+            f,
+            "  (rows={:.0} cost={:.2}",
+            self.estimated_rows, self.estimated_cost
+        )?;
+        if let Some(limit) = self.limit {
+            write!(f, " limit={limit}")?;
+        }
+        if self.offset > 0 {
+            write!(f, " offset={}", self.offset)?;
+        }
+        writeln!(f, ")")?;
+        writeln!(f, "  -> {}", self.left)?;
+        write!(f, "  -> {}", self.right)
     }
 }

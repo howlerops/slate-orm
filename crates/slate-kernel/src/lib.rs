@@ -13,6 +13,7 @@ pub mod error;
 pub mod exec;
 pub mod explain;
 pub mod expr;
+pub mod join;
 pub mod keys;
 pub mod latency;
 pub mod memory;
@@ -30,8 +31,12 @@ pub mod token;
 pub use aggregate::{Aggregate, Group};
 pub use error::{KernelError, Result, StorageError};
 pub use exec::QueryCursor;
-pub use explain::{AccessSummary, Explanation};
+pub use explain::{AccessSummary, Explanation, JoinExplanation};
 pub use expr::{CmpOp, Expr, Truth};
+pub use join::{
+    DEFAULT_BUILD_LIMIT, Join, JoinAlgorithm, JoinCursor, JoinKey, JoinPlan, JoinType, JoinedRow,
+    PROBE_CONCURRENCY, Side,
+};
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
 pub use plan::{Access, Plan, Projection, plan, plan_full, plan_projected, plan_with};
 pub use pool::{ReplicaPool, RoutingPolicy};

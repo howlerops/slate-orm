@@ -155,6 +155,19 @@ been tried.
 Those reads are independent and could be issued together. Small, safe,
 unmeasured — and worth less than the batch case, which is done.
 
+### Joins beyond two tables
+
+A join is two secured cursors combined; three tables would be a tree of them,
+and the planner would then have to choose a join order, which is the part of
+query optimisation that actually needs a search. Two tables covers association
+loading, which is what the typed layer is for. The shape composes — a
+`JoinedRow` keeps each side's row intact rather than flattening them — so a
+third side is a planner problem rather than an executor one.
+
+Also absent: a predicate spanning both sides. A row of a join has no single
+ordinal space, so `left.a < right.b` has nowhere to live. Giving it one is a
+design decision, not an omission to fill in quietly.
+
 ### Dropping redundant residual conjuncts
 
 The planner keeps every conjunct in the residual and re-checks it per row, even

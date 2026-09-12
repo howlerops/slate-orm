@@ -162,6 +162,34 @@ pub enum KernelError {
         /// The index scanned.
         index: String,
     },
+
+    /// A join asked for something the executor does not offer.
+    ///
+    /// Refused at plan time rather than answered approximately: a join that
+    /// silently ignored part of its condition would return more rows than it
+    /// was asked for, and on a table under a row policy "more rows" is the
+    /// failure that matters.
+    #[error("join not supported: {reason}")]
+    JoinNotSupported {
+        /// What was asked for, and why it cannot be run.
+        reason: String,
+    },
+
+    /// A hash join's build side outgrew the memory it was allowed.
+    ///
+    /// Almost always a join condition that does not relate the two tables.
+    /// Reported rather than absorbed, because the alternative to reporting is
+    /// being killed by the allocator.
+    #[error(
+        "join build side exceeded {limit} rows on table `{table}`; \
+         check the join condition, or raise the limit"
+    )]
+    JoinBuildTooLarge {
+        /// The table being read into memory.
+        table: String,
+        /// The limit that was passed.
+        limit: usize,
+    },
 }
 
 impl KernelError {

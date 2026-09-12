@@ -136,6 +136,35 @@ Duplicate detection is not weakened by this: a caller still gets
 error at commit. Validation and intra-batch collision detection run first, so a
 batch that cannot be written spends no I/O at all.
 
+### Joins, and a cost model that has to be right in both directions
+
+Everything was single-table. Adding joins meant choosing between a hash join —
+two scans, no probes — and a nested loop, one probe per outer row. The cost
+model's constants decide it: a scanned row is a hundredth of a round trip and a
+probe is at least one, so the loop wins only when the outer side is smaller than
+roughly a hundredth of the inner one.
+
+That is a strong claim in both directions, so both were measured, with each
+algorithm forced against the case it should lose:
+
+| | rows read | wall | chosen |
+|---|---:|---:|---|
+| 500 actors ⋈ 2500 events, hash | 3,000 scanned | 32 ms | yes |
+| the same, forced to a loop | 3,000 scanned + 2,500 point reads | 153 ms | |
+| one actor's events, loop | 5 scanned + 6 point reads | 6.7 ms | yes |
+| the same, forced to a hash | 2,500 scanned | 30 ms | |
+
+Hash wins the general case by 4.7×, the loop wins the single-outer-row case by
+4.4×, and the planner picks correctly in both. The second case is not a corner:
+"load one record, then its children" is what an ORM does all day.
+
+Two things fall out of the constants rather than being tuned. Probes are
+overlapped sixteen at a time — issued serially, a loop's latency would be the
+sum of its probes, which is the mistake the index scan and the bulk write path
+each had to be talked out of. And the hash build side is bounded, because a join
+condition that does not relate the two tables is otherwise a way to be killed by
+the allocator rather than told what is wrong.
+
 ## Current numbers
 
 | query | rows | point reads | wall | plan |
@@ -147,6 +176,11 @@ batch that cannot be written spends no I/O at all.
 | indexed range | 500 | 0 | 24 ms | Table Scan |
 | covered equality, keys only | 100 | 0 | 2.3 ms | Index Only Scan |
 | covered count | 500 | 0 | 4.8 ms | Index Only Scan |
+
+| join | rows out | point reads | scanned | wall | plan |
+|---|---:|---:|---:|---:|---|
+| every actor to their events | 2500 | 0 | 3000 | 32 ms | Hash |
+| one actor's events | 5 | 6 | 5 | 6.7 ms | Nested Loop |
 
 | write | rows | point reads | wall |
 |---|---:|---:|---:|

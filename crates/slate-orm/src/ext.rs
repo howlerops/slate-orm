@@ -10,8 +10,8 @@ use crate::error::{OrmError, Result};
 use crate::record::Record;
 use async_trait::async_trait;
 use slate_kernel::{
-    Aggregate, Explanation, Expr, Group, Projection, Query, RecordTransaction, ScanOrder,
-    SecurityContext, TableStats,
+    Aggregate, Explanation, Expr, Group, Join, JoinExplanation, Projection, Query,
+    RecordTransaction, ScanOrder, SecurityContext, TableStats,
 };
 use slate_schema::Ordinal;
 use slate_tuple::Value;
@@ -105,6 +105,28 @@ pub trait Records {
         context: &SecurityContext,
         query: &Query,
     ) -> Result<u64>;
+
+    /// Join two record types and decode both sides.
+    ///
+    /// The join condition names columns, and the derive generates a `COLUMNS`
+    /// constant for each field, so a call site reads
+    /// `Join::equating(Author::COLUMNS.id, Book::COLUMNS.author_id)`.
+    ///
+    /// Both sides come back decoded. A left outer join yields `None` on the
+    /// right where nothing matched, which is why the right side is an
+    /// `Option` rather than a second `R`.
+    async fn join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<Vec<(L, Option<R>)>>;
+
+    /// The plan a join would run under, without running it.
+    fn explain_join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<JoinExplanation>;
 
     /// Compute aggregates over the rows a query matches.
     async fn aggregate_records<R: Record>(
@@ -232,6 +254,40 @@ impl Records for RecordTransaction<'_> {
             .collect()
             .await?;
         rows.iter().map(R::from_row).map(|r| Ok(r?)).collect()
+    }
+
+    async fn join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<Vec<(L, Option<R>)>> {
+        // Collected before decoding, not decoded as they arrive: a `Record` is
+        // not required to be `Send`, so holding one across the next await
+        // would make the whole future unsendable. Same reason as
+        // [`Records::query_records`].
+        let joined = self
+            .join(context, L::table(), R::table(), join)
+            .await?
+            .collect()
+            .await?;
+        joined
+            .iter()
+            .map(|row| {
+                Ok((
+                    L::from_row(&row.left)?,
+                    row.right.as_ref().map(R::from_row).transpose()?,
+                ))
+            })
+            .collect()
+    }
+
+    fn explain_join_records<L: Record, R: Record>(
+        &self,
+        context: &SecurityContext,
+        join: &Join,
+    ) -> Result<JoinExplanation> {
+        self.explain_join(context, L::table(), R::table(), join)
+            .map_err(OrmError::from)
     }
 
     async fn count_records<R: Record>(

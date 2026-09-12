@@ -9,7 +9,7 @@
 )]
 
 use slate_orm::{
-    Action, Aggregate, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId,
+    Action, Aggregate, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId, Join,
     Query, Record, RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog,
     SecurityContext, SortKey, TableDef, TableId, Value, ValueType, memory::MemoryStore,
 };
@@ -481,4 +481,91 @@ async fn typed_bulk_writes_keep_their_checks() {
         ),
         "got {err:?}"
     );
+}
+
+/// A record type for the other side of a join.
+#[derive(Debug, Clone, PartialEq, Record)]
+#[record(table = "posts", id = 2)]
+struct Post {
+    #[record(pk)]
+    tenant_id: Uuid,
+    #[record(pk)]
+    id: u64,
+    #[record(index(name = "posts_by_author", id = 20))]
+    author_id: Option<u64>,
+    title: String,
+}
+
+fn post(tenant: u128, id: u64, author: Option<u64>, title: &str) -> Post {
+    Post {
+        tenant_id: Uuid::from_u128(tenant),
+        id,
+        author_id: author,
+        title: title.to_owned(),
+    }
+}
+
+fn two_table_store() -> RecordStore<MemoryStore> {
+    let catalog =
+        Catalog::from_tables([User::table().clone(), Post::table().clone()]).expect("catalog");
+    RecordStore::new(
+        MemoryStore::new(),
+        catalog,
+        SecurityCatalog::new()
+            .grant(Grant::new("member", User::table().id(), Action::ALL))
+            .grant(Grant::new("member", Post::table().id(), Action::ALL)),
+    )
+}
+
+/// The typed layer joins two record types and decodes both sides, including
+/// the absent right side of a left outer join.
+#[tokio::test]
+async fn typed_joins_decode_both_sides() {
+    let store = two_table_store();
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    txn.insert_records(&ctx, &[alice(1, 1), alice(1, 2)])
+        .await
+        .unwrap();
+    txn.insert_records(
+        &ctx,
+        &[
+            post(1, 100, Some(1), "first"),
+            post(1, 101, Some(1), "second"),
+            post(1, 102, None, "unattributed"),
+        ],
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let on = Join::equating(User::COLUMNS.id, Post::COLUMNS.author_id);
+
+    let inner: Vec<(User, Option<Post>)> = txn.join_records(&ctx, &on).await.unwrap();
+    let mut titles: Vec<String> = inner
+        .iter()
+        .map(|(_, p)| p.as_ref().unwrap().title.clone())
+        .collect();
+    titles.sort();
+    assert_eq!(titles, vec!["first", "second"]);
+    assert!(inner.iter().all(|(u, _)| u.id == 1));
+
+    // Every user, matched or not: user 2 wrote nothing.
+    let outer: Vec<(User, Option<Post>)> = txn
+        .join_records(&ctx, &on.clone().left_outer())
+        .await
+        .unwrap();
+    assert_eq!(outer.len(), 3);
+    let unmatched: Vec<u64> = outer
+        .iter()
+        .filter(|(_, p)| p.is_none())
+        .map(|(u, _)| u.id)
+        .collect();
+    assert_eq!(unmatched, vec![2], "a post with no author must not match");
+
+    // And the plan is reportable through the typed layer too.
+    let plan = txn.explain_join_records::<User, Post>(&ctx, &on).unwrap();
+    assert!(plan.estimated_cost > 0.0, "{plan}");
 }

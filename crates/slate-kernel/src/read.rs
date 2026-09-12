@@ -8,6 +8,8 @@
 use crate::aggregate::{Accumulators, Aggregate, Group};
 use crate::error::Result;
 use crate::exec::QueryCursor;
+use crate::expr::Expr;
+use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, JoinType, Side};
 use crate::keys;
 use crate::plan::{Plan, Projection, plan_full};
 use crate::query::Query;
@@ -185,6 +187,93 @@ impl<'a> SecuredReads<'a> {
                 values: accumulators.finish(),
             })
             .collect())
+    }
+
+    /// Choose how to join two tables.
+    ///
+    /// Both sides are planned through [`SecuredReads::plan`], so both are
+    /// authorised and both carry their own row filter before anything is
+    /// costed. A join is not a privileged read; it is two of them.
+    pub(crate) fn plan_join(
+        self,
+        context: &SecurityContext,
+        left_table: &TableDef,
+        right_table: &TableDef,
+        join: &Join,
+    ) -> Result<JoinPlan> {
+        join.validate(left_table, right_table)?;
+
+        let left = self.plan(context, left_table, &join.left)?;
+        let right = self.plan(context, right_table, &join.right)?;
+
+        let left_stats = self.statistics.table(left_table);
+        let right_stats = self.statistics.table(right_table);
+        let estimated_rows = join::join_cardinality(
+            left.estimated_rows,
+            right.estimated_rows,
+            join::distinct_over(&left_stats, &join.columns(Side::Left)),
+            join::distinct_over(&right_stats, &join.columns(Side::Right)),
+        );
+        let per_row = estimated_rows * join::JOIN_ROW_COST;
+
+        // A probe is the right side read with the join equality bound to one
+        // outer row. Costing it needs a plan, and a plan needs a literal; the
+        // literal does not matter, because equality selectivity comes from the
+        // column's distinct count rather than from the value.
+        let mut probe_query = join.right.clone();
+        probe_query.filter = core::mem::replace(&mut probe_query.filter, Expr::True)
+            .and(join::probe_shape(&join.on));
+        let probe = self.plan(context, right_table, &probe_query)?;
+
+        let hash_cost = join::hash_cost(&left, &right) + per_row;
+        let loop_cost = join::nested_loop_cost(
+            &left,
+            &Plan {
+                estimated_cost: join::probe_floor(probe.estimated_cost),
+                ..probe.clone()
+            },
+        ) + per_row;
+
+        // Build the smaller side: the cost is the same either way — both sides
+        // are read once — so the choice is about memory, not round trips. A
+        // left outer join has no choice, since every left row must be emitted
+        // whether it matched or not, and only the streaming side can do that.
+        let build =
+            if join.join_type == JoinType::Left || left.estimated_rows <= right.estimated_rows {
+                Side::Right
+            } else {
+                Side::Left
+            };
+
+        let (algorithm, estimated_cost) = match join.force {
+            Some(forced @ JoinAlgorithm::Hash { .. }) => (forced, hash_cost),
+            Some(JoinAlgorithm::NestedLoop) => (JoinAlgorithm::NestedLoop, loop_cost),
+            // Ties go to the hash join: it reads each side once whatever the
+            // estimate turns out to be, where a loop that was estimated at ten
+            // outer rows and finds ten thousand costs ten thousand round trips.
+            None if loop_cost < hash_cost => (JoinAlgorithm::NestedLoop, loop_cost),
+            None => (JoinAlgorithm::Hash { build }, hash_cost),
+        };
+
+        Ok(JoinPlan {
+            algorithm,
+            left,
+            right,
+            estimated_rows,
+            estimated_cost,
+        })
+    }
+
+    /// Plan and run a join.
+    pub(crate) async fn join(
+        self,
+        context: &SecurityContext,
+        left_table: &'a TableDef,
+        right_table: &'a TableDef,
+        join: &Join,
+    ) -> Result<JoinCursor<'a>> {
+        let plan = self.plan_join(context, left_table, right_table, join)?;
+        JoinCursor::open(self, context, left_table, right_table, join, &plan).await
     }
 
     /// Plan and run a query with the caller's security filter folded in.

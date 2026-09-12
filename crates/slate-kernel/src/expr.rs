@@ -192,6 +192,15 @@ impl Expr {
         }
     }
 
+    /// Conjoin a list, folding away the trivial cases.
+    ///
+    /// An empty list is [`Expr::True`]: nothing to require is satisfied by
+    /// everything, which is what makes this composable.
+    #[must_use]
+    pub fn all<I: IntoIterator<Item = Self>>(parts: I) -> Self {
+        parts.into_iter().fold(Self::True, Self::and)
+    }
+
     /// The top-level conjuncts of this predicate.
     ///
     /// A predicate that is not a conjunction is its own single conjunct. The

@@ -16,8 +16,8 @@
 use slate_kernel::latency::{LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Action, CmpOp, Expr, Grant, Projection, Query, RecordStore, ScanOrder, SecurityCatalog,
-    SecurityContext, Statistics,
+    Action, CmpOp, Expr, Grant, Join, JoinAlgorithm, Projection, Query, RecordStore, ScanOrder,
+    SecurityCatalog, SecurityContext, Side, Statistics,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value, ValueType};
@@ -25,8 +25,10 @@ use std::time::Instant;
 use uuid::Uuid;
 
 const EVENTS: TableId = TableId(1);
+const ACTORS: TableId = TableId(2);
 const TENANTS: u128 = 4;
 const ROWS_PER_TENANT: u64 = 2_500;
+const ACTOR_COUNT: u64 = 500;
 
 fn events() -> TableDef {
     TableDef::builder("events", EVENTS)
@@ -43,6 +45,30 @@ fn events() -> TableDef {
         .index(IndexDef::builder("by_at_desc", IndexId(12)).column_with("at", Direction::Desc))
         .build()
         .expect("valid schema")
+}
+
+/// The other side of the join: one row per actor named in `events`.
+fn actors() -> TableDef {
+    TableDef::builder("actors", ACTORS)
+        .column("tenant_id", ValueType::Uuid)
+        .column("name", ValueType::Str)
+        .column("team", ValueType::Str)
+        .primary_key(["tenant_id", "name"])
+        .tenant_column("tenant_id")
+        .build()
+        .expect("valid schema")
+}
+
+fn actor_column(name: &str) -> Ordinal {
+    actors().ordinal_of(name).expect("column exists")
+}
+
+fn actor_row(tenant: u128, id: u64) -> Row {
+    Row::new(vec![
+        Value::Uuid(Uuid::from_u128(tenant)),
+        Value::Str(format!("actor-{id}")),
+        Value::Str(format!("team-{}", id % 10)),
+    ])
 }
 
 fn column(name: &str) -> Ordinal {
@@ -63,8 +89,11 @@ fn row(tenant: u128, id: u64) -> Row {
 #[tokio::main]
 async fn main() {
     let table = events();
-    let catalog = Catalog::from_tables([table.clone()]).expect("catalog");
-    let security = SecurityCatalog::new().grant(Grant::new("bench", EVENTS, Action::ALL));
+    let actor_table = actors();
+    let catalog = Catalog::from_tables([table.clone(), actor_table.clone()]).expect("catalog");
+    let security = SecurityCatalog::new()
+        .grant(Grant::new("bench", EVENTS, Action::ALL))
+        .grant(Grant::new("bench", ACTORS, Action::ALL));
     let root = SecurityContext::superuser();
 
     let backing = MemoryStore::new();
@@ -78,13 +107,25 @@ async fn main() {
         }
         txn.commit().await.expect("commit");
     }
+    for tenant in 0..TENANTS {
+        let txn = loader.begin().await.expect("begin");
+        for id in 0..ACTOR_COUNT {
+            txn.insert(&root, &actor_table, &actor_row(tenant, id))
+                .await
+                .expect("insert");
+        }
+        txn.commit().await.expect("commit");
+    }
 
     // Statistics first: without them the planner has to guess how many rows a
     // predicate selects, and guessing structurally is what made it pick a plan
     // 30x slower than the alternative.
-    let analyzed = {
+    let (analyzed, actors_analyzed) = {
         let txn = loader.begin().await.expect("begin");
-        txn.analyze(&root, &table).await.expect("analyze")
+        (
+            txn.analyze(&root, &table).await.expect("analyze"),
+            txn.analyze(&root, &actor_table).await.expect("analyze"),
+        )
     };
     println!(
         "analyzed {} rows; kind has {} distinct values, at has {}\n",
@@ -95,8 +136,11 @@ async fn main() {
 
     let slow = LatencyStore::new(backing, LatencyProfile::object_storage());
     let counters = slow.counters();
-    let store = RecordStore::new(slow, catalog, security)
-        .with_statistics(Statistics::new().with(EVENTS, analyzed));
+    let store = RecordStore::new(slow, catalog, security).with_statistics(
+        Statistics::new()
+            .with(EVENTS, analyzed)
+            .with(ACTORS, actors_analyzed),
+    );
 
     let tenant = Value::Uuid(Uuid::from_u128(0));
     let by_tenant = || Expr::eq(column("tenant_id"), tenant.clone());
@@ -208,6 +252,73 @@ async fn main() {
             counters.scan_rows(),
             elapsed,
             described
+        );
+    }
+
+    println!("\njoins");
+    println!("{:-<118}", "");
+    let on_actor = || Join::equating(actor_column("name"), column("actor"));
+    let one_actor = || {
+        Query::all().filter(
+            Expr::eq(actor_column("tenant_id"), tenant.clone())
+                .and(Expr::eq(actor_column("name"), Value::Str("actor-7".into()))),
+        )
+    };
+    let joins: Vec<(&str, Join)> = vec![
+        (
+            "every actor to their events (hash)",
+            on_actor()
+                .left(Query::all().filter(Expr::eq(actor_column("tenant_id"), tenant.clone())))
+                .right(Query::all().filter(by_tenant())),
+        ),
+        (
+            "every actor to events, forced loop",
+            on_actor()
+                .left(Query::all().filter(Expr::eq(actor_column("tenant_id"), tenant.clone())))
+                .right(Query::all().filter(by_tenant()))
+                .using(JoinAlgorithm::NestedLoop),
+        ),
+        (
+            "one actor's events (planner's choice)",
+            on_actor()
+                .left(one_actor())
+                .right(Query::all().filter(by_tenant())),
+        ),
+        (
+            "one actor's events, forced hash",
+            on_actor()
+                .left(one_actor())
+                .right(Query::all().filter(by_tenant()))
+                .using(JoinAlgorithm::Hash { build: Side::Right }),
+        ),
+    ];
+    for (label, join) in joins {
+        counters.reset();
+        let started = Instant::now();
+        let txn = store.begin().await.expect("begin");
+        let described = txn
+            .explain_join(&root, &actor_table, &table, &join)
+            .expect("explain");
+        let algorithm = match described.algorithm {
+            JoinAlgorithm::NestedLoop => "Nested Loop".to_owned(),
+            JoinAlgorithm::Hash { build } => format!("Hash (build {build:?})"),
+        };
+        let rows = txn
+            .join(&root, &actor_table, &table, &join)
+            .await
+            .expect("join")
+            .count()
+            .await
+            .expect("count");
+        println!(
+            "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}  {}",
+            label,
+            rows,
+            counters.gets(),
+            counters.scans(),
+            counters.scan_rows(),
+            started.elapsed(),
+            algorithm
         );
     }
 

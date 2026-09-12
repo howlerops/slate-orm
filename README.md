@@ -220,6 +220,37 @@ produces, and a requested order is satisfied when it is a prefix of that. When
 nothing produces it the result is materialised and sorted, and the cost model
 knows a sort must see every matching row before returning the first.
 
+### Joins
+
+```rust
+let join = Join::equating(Author::COLUMNS.id, Book::COLUMNS.author_id)
+    .left(Query::all().filter(Expr::eq(country, Value::Str("UK".into()))));
+
+let pairs: Vec<(Author, Option<Book>)> = txn.join_records(&ctx, &join).await?;
+```
+
+A join is **two secured reads**, not one privileged one. Each side is planned
+through the same path a single-table query uses, so each is authorised and each
+carries its own row filter. A join cannot see a row either side's policy hides,
+because it never asks storage for rows — it asks two cursors that already
+applied their policies. That is structural, not careful.
+
+The planner picks between a hash join and a nested loop by cost, and both
+directions are worth measuring, because the cost model makes a strong claim in
+each:
+
+| | rows read | wall | plan |
+|---|---:|---:|---|
+| 500 actors ⋈ 2500 events | 3,000 | 32 ms | Hash |
+| the same, forced to a loop | 3,000 + 2,500 point reads | 153 ms | Nested Loop |
+| one actor's events | 5 | 6.7 ms | Nested Loop |
+| the same, forced to a hash | 2,500 | 30 ms | Hash |
+
+A scanned row costs a hundredth of a round trip and a probe costs at least one,
+so a hash join wins the general case by 4.7×. But "one row against ten thousand"
+is what an ORM does all day — load a user, then their orders — and there the loop
+wins by 4.4×. The planner gets both right; `explain_join` says which it chose.
+
 ### Schemas are code, and so are policies
 
 No dynamic DDL. A table is defined once through a builder that validates
@@ -358,6 +389,7 @@ Built and tested:
 - [x] Cost-based planning with statistics, `analyze`, and `EXPLAIN`
 - [x] Projections and index-only scans; pipelined index lookups
 - [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
+- [x] Inner and left joins, hash or nested-loop by cost, both sides secured
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -369,7 +401,8 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Joins — everything today is single-table
+- [ ] Right and full outer joins; a join predicate spanning both sides; joining
+      more than two tables in one plan
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)
