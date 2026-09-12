@@ -3004,6 +3004,7 @@ dependencies = [
  "bytes",
  "criterion",
  "futures",
+ "regex",
  "slate-schema",
  "slate-tuple",
  "thiserror 2.0.20",

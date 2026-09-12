@@ -194,7 +194,14 @@ pub fn decode_row_columns(
         });
     }
 
-    let mut values = vec![Value::Null; table.columns().len()];
+    // Built by repetition rather than `vec![Value::Null; n]`, which fills by
+    // *cloning* the null once per column. That was free while `Value::clone`
+    // still inlined, and stopped being free the moment the enum grew a variant
+    // big enough that it did not: a hundred and five out-of-line clone calls
+    // per row, which callgrind put at 10% of the whole benchmark.
+    let mut values: Vec<Value> = core::iter::repeat_with(|| Value::Null)
+        .take(table.columns().len())
+        .collect();
 
     // Nothing wanted from the body: do not walk it at all. This is the shape of
     // the filtering pass when a predicate only touches key columns, and walking

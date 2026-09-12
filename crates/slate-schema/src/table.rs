@@ -445,6 +445,7 @@ impl TableBuilder {
                     column: name.clone(),
                 });
             }
+            reject_vector(&self.columns, ordinal, table.as_str(), "primary key", name)?;
             primary_key.push(ordinal);
         }
 
@@ -491,6 +492,7 @@ impl TableBuilder {
                         column: name.clone(),
                     });
                 }
+                reject_vector(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
                 columns.push(IndexColumn {
                     ordinal,
                     direction: *direction,
@@ -520,4 +522,30 @@ impl TableBuilder {
             schema_version: self.schema_version,
         })
     }
+}
+
+/// Refuse a vector column in a key or an index.
+///
+/// A vector orders totally, so it can be stored and grouped, but that order is
+/// not its similarity — two nearby embeddings need not sort near each other.
+/// An index on one would answer no question worth asking and a range over one
+/// would mean nothing, so this is a schema error rather than a slow query.
+fn reject_vector(
+    columns: &[ColumnDef],
+    ordinal: Ordinal,
+    table: &str,
+    key: &str,
+    column: &str,
+) -> Result<()> {
+    if columns
+        .get(ordinal.0)
+        .is_some_and(|c| c.value_type() == ValueType::Vector)
+    {
+        return Err(SchemaError::VectorInKey {
+            table: table.to_owned(),
+            key: key.to_owned(),
+            column: column.to_owned(),
+        });
+    }
+    Ok(())
 }

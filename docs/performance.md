@@ -396,6 +396,32 @@ Evaluating against the values as a plain slice instead took Q30 to **2.95 s**,
 and the forty-two-query set from 167.7 s to 75.2 s. The fix was to let the
 evaluator read a `[Value]` rather than insisting on a `Row`.
 
+### Two ways a clone stops being free
+
+The last round found the same shape twice more, in places nothing here would
+have thought to look. Both are recorded in full in
+[`docs/clickbench.md`](clickbench.md); the short versions:
+
+- **A cached `Regex` was handed out by clone.** A `Regex` owns the scratch
+  space its matcher needs, so a clone starts with none and rebuilds it on
+  first use. Cloning cost 0.15 µs; *matching on the clone* cost 7.0 µs against
+  0.6 µs for one held across rows. Sharing an `Arc<Regex>` took ClickBench's
+  Q29 from 10.52 s to **3.12 s**.
+
+- **Adding an enum variant made every query 50% slower.** `Value::Vector`
+  pushed `Value::clone` past the inlining threshold, and the row decoder began
+  each row with `vec![Value::Null; 105]` — which fills by cloning. A hundred
+  and five out-of-line calls per row, on a dataset containing no vectors.
+  Building the vector by repetition took the suite from 104 s back to
+  **69.70 s**, now with all 43 queries rather than 42.
+
+The second is the one worth internalising. `Value` did not change size, two
+microbenchmarks of the codec came back *identical*, and the suite had grown a
+query — so every cheap check said nothing was wrong. What found it was building
+the previous commit in a worktree and running both binaries alternately on the
+same machine, then callgrind: instructions up 5.7%, wall time up 49%, and one
+symbol in the new profile that was absent from the old.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

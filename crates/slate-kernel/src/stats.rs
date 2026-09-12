@@ -389,12 +389,26 @@ impl TableStats {
                 column,
                 pattern,
                 negated,
+                insensitive,
             } => {
                 let matched = match crate::expr::like_prefix(pattern) {
-                    Some(prefix) => self.prefix_selectivity(*column, &prefix),
-                    None => LIKE_SELECTIVITY,
+                    // A case-insensitive prefix is not one span of the
+                    // keyspace, so the histogram cannot answer it.
+                    Some(prefix) if !*insensitive => self.prefix_selectivity(*column, &prefix),
+                    _ => LIKE_SELECTIVITY,
                 };
                 if *negated { 1.0 - matched } else { matched }
+            }
+            // A regular expression says nothing about where its matches sort,
+            // whatever it is anchored on — `^abc` is a prefix, but so is
+            // `^(a|b)`, and telling them apart means understanding the syntax
+            // rather than reading it.
+            Expr::Matches { negated, .. } => {
+                if *negated {
+                    1.0 - LIKE_SELECTIVITY
+                } else {
+                    LIKE_SELECTIVITY
+                }
             }
             Expr::IsNull { column, negated } => {
                 let fraction = self.column(*column).null_fraction;

@@ -252,6 +252,40 @@ produces, and a requested order is satisfied when it is a prefix of that. When
 nothing produces it the result is materialised and sorted, and the cost model
 knows a sort must see every matching row before returning the first.
 
+### Patterns and vectors
+
+```rust
+// LIKE, ILIKE, and a regular expression. An anchored pattern becomes scan
+// bounds; the rest are filters.
+Expr::like(url, "https://example.com/%");
+Expr::ilike(title, "%Rust%");
+Expr::matches(referer, r"^https?://(?:www\.)?([^/]+)/");
+```
+
+Nearest-neighbour search is not a separate engine. A distance is an ordinary
+computed value, so k-NN is `ORDER BY` a distance with a `LIMIT`, and the
+bounded heap that serves every other `ORDER BY ... LIMIT` serves this one:
+
+```rust
+let distance = Query::computed(&table, 0);
+let query = Query::all()
+    .filter(Expr::eq(tenant, Value::Str("acme".into())))
+    .computing([Scalar::column(embedding).distance(target, Metric::Cosine)])
+    .sort_by([SortKey::asc(distance)])
+    .limit(10);
+```
+
+Because it is an ordinary query, a filter, row-level security and a projection
+all apply to it without the search path learning what they are — a tenant
+cannot be shown its neighbour's nearest neighbours.
+
+This is exact search, not an approximate index: it reads every row the filter
+admits. That is the right trade at the scale a filter leaves behind, and the
+wrong one for unfiltered search over a very large table. A vector is refused in
+a primary key or an index, at schema-definition time, because its order is
+deterministic but says nothing about similarity — an index on one would sort
+correctly and answer nothing.
+
 ### Joins
 
 ```rust
@@ -433,9 +467,9 @@ let store = SlateStore::open_s3(
   latency model, in I/O counts as well as milliseconds.
 - `crates/slate-slatedb/examples/scan_tuning.rs` — scans against a real S3
   server, counting object-store requests.
-- `crates/slate-clickbench` — the 43 official ClickBench queries, as far as
-  this engine can express them — 42 of 43, with every independently checkable
-  answer verified against the same data read through `pyarrow`. Not comparable
+- `crates/slate-clickbench` — the 43 official ClickBench queries, all 43 of
+  which run, with every independently checkable answer verified against the
+  same data read through `pyarrow`. Not comparable
   to published ClickBench scores; run because it is an adversarial workload
   nobody here designed for. See
   [`docs/clickbench.md`](docs/clickbench.md), which also covers the pgrust
@@ -498,7 +532,13 @@ Built and tested:
 - [x] Projections and index-only scans; pipelined index lookups
 - [x] Aggregates including `COUNT(DISTINCT)`, `GROUP BY`, `ORDER BY`,
       `LIMIT`/`OFFSET`
-- [x] `LIKE`, with an anchored pattern becoming scan bounds rather than a filter
+- [x] `LIKE` and `ILIKE`, with an anchored pattern becoming scan bounds
+      rather than a filter
+- [x] Regular expressions (`~`, `~*`, `REGEXP_REPLACE`) on a linear-time
+      engine, because a pattern is caller input
+- [x] Vectors and similarity search: `L2`, cosine and inner-product
+      distance as an ordinary computed value, so k-NN is `ORDER BY`
+      distance with a `LIMIT` and needs no separate search path
 - [x] Scalar expressions — arithmetic, `length`, `CASE WHEN`, `COALESCE`,
       `DATE_TRUNC`, `extract` — computed per row and addressed by ordinal, so
       grouping, sorting and aggregation take them without changing

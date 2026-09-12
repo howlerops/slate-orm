@@ -662,10 +662,14 @@ fn collect_constraints<'a>(conjuncts: &[&'a Expr]) -> Vec<(Ordinal, ColumnConstr
             // of the keyspace: every value starting with `abc` sorts between
             // `abc` and the first thing above it. An unanchored pattern says
             // nothing about where its matches are and stays a residual.
+            // Only a case-sensitive pattern: `ILIKE 'abc%'` also matches
+            // `ABC…`, which does not sort next to `abc…`, so there is no one
+            // range that holds every match.
             Expr::Like {
                 column,
                 pattern,
                 negated: false,
+                insensitive: false,
             } => {
                 if let Some(prefix) = crate::expr::like_prefix(pattern) {
                     let i = entry(*column, &mut out);

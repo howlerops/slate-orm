@@ -29,6 +29,70 @@ use crate::expr::{Columns, Expr};
 use slate_schema::Ordinal;
 use slate_tuple::Value;
 
+/// How to measure the distance between two vectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Metric {
+    /// Straight-line distance. Smaller is nearer.
+    L2,
+    /// Squared straight-line distance.
+    ///
+    /// Ranks identically to [`Metric::L2`] — the square root is monotonic — and
+    /// skips the square root per row. For ordering, which is what a k-NN search
+    /// does, this is the one to use.
+    L2Squared,
+    /// One minus cosine similarity, so smaller is nearer and identical
+    /// directions are zero. The usual metric for text embeddings, which
+    /// encode meaning in direction rather than magnitude.
+    Cosine,
+    /// The negated dot product, negated so that — like the others — smaller is
+    /// nearer. Correct for embeddings already normalised to unit length, where
+    /// it ranks the same as cosine for less work.
+    NegativeInnerProduct,
+}
+
+impl Metric {
+    /// Measure between two vectors of the same length.
+    #[must_use]
+    pub fn between(self, a: &[f32], b: &[f32]) -> Option<f64> {
+        if a.len() != b.len() {
+            return None;
+        }
+        match self {
+            Self::L2 => Some(Self::L2Squared.between(a, b)?.sqrt()),
+            Self::L2Squared => Some(
+                a.iter()
+                    .zip(b)
+                    .map(|(x, y)| {
+                        let d = f64::from(*x) - f64::from(*y);
+                        d * d
+                    })
+                    .sum(),
+            ),
+            Self::NegativeInnerProduct => Some(
+                -a.iter()
+                    .zip(b)
+                    .map(|(x, y)| f64::from(*x) * f64::from(*y))
+                    .sum::<f64>(),
+            ),
+            Self::Cosine => {
+                let mut dot = 0.0f64;
+                let mut left = 0.0f64;
+                let mut right = 0.0f64;
+                for (x, y) in a.iter().zip(b) {
+                    let (x, y) = (f64::from(*x), f64::from(*y));
+                    dot += x * y;
+                    left += x * x;
+                    right += y * y;
+                }
+                let magnitude = (left * right).sqrt();
+                // A zero vector has no direction, so its cosine distance to
+                // anything is undefined rather than zero.
+                (magnitude > 0.0).then(|| 1.0 - dot / magnitude)
+            }
+        }
+    }
+}
+
 /// A part of a timestamp, for [`Scalar::Extract`] and [`Scalar::DateTrunc`].
 ///
 /// Timestamps here are seconds since the epoch held in an integer column,
@@ -117,6 +181,47 @@ pub enum Scalar {
     },
     /// The first argument that is not null, or null.
     Coalesce(Vec<Scalar>),
+    /// How far apart two vectors are.
+    ///
+    /// This is what makes nearest-neighbour search a query rather than a
+    /// feature: compute the distance to a query vector, order by it, take the
+    /// first `k`. The bounded top-N sort already keeps only `k` rows, so a
+    /// k-NN search over a million embeddings holds `k` of them, not a million.
+    ///
+    /// Exact, and by brute force — every row's distance is computed. There is
+    /// no vector index, so this is linear in the table. That is the same thing
+    /// pgvector does before an `ivfflat` or `hnsw` index is built, and it is
+    /// honest about what it costs.
+    ///
+    /// Null when either side is not a vector, or when the two have different
+    /// numbers of dimensions: comparing a 768-dimension embedding to a
+    /// 1536-dimension one is a mistake, not a distance.
+    Distance {
+        /// One vector.
+        left: Box<Scalar>,
+        /// The other, usually a literal query vector.
+        right: Box<Scalar>,
+        /// How to measure.
+        metric: Metric,
+    },
+    /// Every match of a regular expression replaced.
+    ///
+    /// Capture groups are referred to as `\1`, which is what SQL's
+    /// `REGEXP_REPLACE` uses and what queries in the wild are written with. A
+    /// literal `$` is escaped rather than read as the regex crate's own group
+    /// syntax — the two conventions cannot both be honoured, and following
+    /// SQL is the one that makes a copied query mean what it says.
+    ///
+    /// A pattern that does not compile yields null rather than failing the
+    /// query, the same choice [`Expr::Matches`](crate::Expr::Matches) makes.
+    RegexpReplace {
+        /// The text to rewrite.
+        value: Box<Scalar>,
+        /// The pattern to find.
+        pattern: String,
+        /// What to put in its place.
+        replacement: String,
+    },
 }
 
 impl From<Ordinal> for Scalar {
@@ -128,6 +233,12 @@ impl From<Ordinal> for Scalar {
 impl From<Value> for Scalar {
     fn from(value: Value) -> Self {
         Self::Literal(value)
+    }
+}
+
+impl From<Vec<f32>> for Scalar {
+    fn from(value: Vec<f32>) -> Self {
+        Self::Literal(Value::Vector(value))
     }
 }
 
@@ -233,6 +344,30 @@ impl Scalar {
         }
     }
 
+    /// How far `self` is from `other`, by `metric`.
+    #[must_use]
+    pub fn distance(self, other: impl Into<Self>, metric: Metric) -> Self {
+        Self::Distance {
+            left: Box::new(self),
+            right: Box::new(other.into()),
+            metric,
+        }
+    }
+
+    /// `regexp_replace(self, pattern, replacement)`.
+    #[must_use]
+    pub fn regexp_replace(
+        self,
+        pattern: impl Into<String>,
+        replacement: impl Into<String>,
+    ) -> Self {
+        Self::RegexpReplace {
+            value: Box::new(self),
+            pattern: pattern.into(),
+            replacement: replacement.into(),
+        }
+    }
+
     /// Compute this over a row.
     #[must_use]
     pub fn evaluate<C: Columns + ?Sized>(&self, row: &C) -> Value {
@@ -328,6 +463,41 @@ impl Scalar {
                 }
                 Value::Null
             }
+            Self::Distance {
+                left,
+                right,
+                metric,
+            } => {
+                let (Value::Vector(a), Value::Vector(b)) =
+                    (left.evaluate(row), right.evaluate(row))
+                else {
+                    return Value::Null;
+                };
+                metric.between(&a, &b).map_or(Value::Null, Value::F64)
+            }
+            Self::RegexpReplace {
+                value,
+                pattern,
+                replacement,
+            } => {
+                let Value::Str(text) = value.evaluate(row) else {
+                    return Value::Null;
+                };
+                // Through the same cache the predicate uses, which hands back
+                // a shared regex rather than a clone: compiling per row is what
+                // made ClickBench's regex query take a minute, and matching on
+                // a fresh clone is most of what was left. Rewriting the
+                // replacement here is not worth hoisting — it measured 16ms
+                // per million rows against seconds for the match.
+                let Ok(regex) = crate::expr::compile(pattern, false) else {
+                    return Value::Null;
+                };
+                Value::Str(
+                    regex
+                        .replace_all(&text, backreferences(replacement).as_str())
+                        .into_owned(),
+                )
+            }
         }
     }
 
@@ -355,6 +525,11 @@ impl Scalar {
                     part.collect_columns(out);
                 }
             }
+            Self::RegexpReplace { value, .. } => value.collect_columns(out),
+            Self::Distance { left, right, .. } => {
+                left.collect_columns(out);
+                right.collect_columns(out);
+            }
             Self::Case {
                 branches,
                 otherwise,
@@ -375,4 +550,38 @@ impl Scalar {
         self.collect_columns(&mut out);
         out
     }
+}
+
+/// Rewrite SQL's `\1` capture references into the `$1` the regex crate wants.
+///
+/// Accepting both is not indulgence: `REGEXP_REPLACE` in every SQL dialect is
+/// written with backslashes, and a replacement that silently inserted the
+/// literal text `\1` into every row would be the kind of wrong answer that
+/// looks like a right one. A doubled backslash is an escaped backslash and is
+/// left alone.
+#[must_use]
+pub fn backreferences(replacement: &str) -> String {
+    let mut out = String::with_capacity(replacement.len());
+    let mut chars = replacement.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.peek() {
+                Some(d) if d.is_ascii_digit() => {
+                    out.push('$');
+                    out.push(*d);
+                    chars.next();
+                }
+                Some('\\') => {
+                    out.push('\\');
+                    chars.next();
+                }
+                _ => out.push('\\'),
+            },
+            // A literal `$` in the replacement would otherwise be read as the
+            // start of a group reference.
+            '$' => out.push_str("$$"),
+            other => out.push(other),
+        }
+    }
+    out
 }

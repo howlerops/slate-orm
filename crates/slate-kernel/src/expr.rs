@@ -14,9 +14,11 @@
 //! logic, `NOT (owner = :caller)` would be *true* for a row whose owner is null,
 //! and a deny-style policy would leak exactly the rows nobody owns.
 
+use core::cell::RefCell;
 use slate_schema::{Ordinal, Row};
 use slate_tuple::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 /// Somewhere a predicate can look a column up.
 ///
@@ -202,6 +204,34 @@ pub enum Expr {
         pattern: String,
         /// Whether the test is inverted, for `NOT LIKE`.
         negated: bool,
+        /// Whether case is ignored, for `ILIKE`.
+        ///
+        /// A case-insensitive pattern cannot become scan bounds even when it
+        /// is anchored: `ILIKE 'abc%'` matches `ABC…` too, and those do not
+        /// sort next to `abc…` in a case-sensitive keyspace. It stays a
+        /// residual, and the planner does not pretend otherwise.
+        insensitive: bool,
+    },
+    /// `column ~ pattern`, a regular-expression match.
+    ///
+    /// The syntax is the [`regex`] crate's, which is deliberate: it has no
+    /// backtracking and matches in time linear in the input, so a pattern
+    /// arriving from a caller cannot be turned into a denial of service the
+    /// way a PCRE-style engine can. It gives up backreferences and lookaround
+    /// for that, which is the right trade here.
+    ///
+    /// A pattern that does not compile matches nothing rather than failing the
+    /// query — the same choice `LIKE` makes for a value of the wrong type.
+    /// [`Expr::regex_error`] reports one before it is run.
+    Matches {
+        /// The column being matched.
+        column: Ordinal,
+        /// The pattern.
+        pattern: String,
+        /// Whether the test is inverted.
+        negated: bool,
+        /// Whether case is ignored.
+        insensitive: bool,
     },
     /// `column IN (values)`.
     In {
@@ -249,6 +279,7 @@ impl Expr {
             column,
             pattern: pattern.into(),
             negated: false,
+            insensitive: false,
         }
     }
 
@@ -259,6 +290,70 @@ impl Expr {
             column,
             pattern: pattern.into(),
             negated: true,
+            insensitive: false,
+        }
+    }
+
+    /// `column ILIKE pattern`: the same wildcards, ignoring case.
+    #[must_use]
+    pub fn ilike(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Like {
+            column,
+            pattern: pattern.into(),
+            negated: false,
+            insensitive: true,
+        }
+    }
+
+    /// `column NOT ILIKE pattern`.
+    #[must_use]
+    pub fn not_ilike(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Like {
+            column,
+            pattern: pattern.into(),
+            negated: true,
+            insensitive: true,
+        }
+    }
+
+    /// `column ~ pattern`. See [`Expr::Matches`].
+    #[must_use]
+    pub fn matches(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Matches {
+            column,
+            pattern: pattern.into(),
+            negated: false,
+            insensitive: false,
+        }
+    }
+
+    /// `column ~* pattern`: a regular expression, ignoring case.
+    #[must_use]
+    pub fn matches_insensitive(column: Ordinal, pattern: impl Into<String>) -> Self {
+        Self::Matches {
+            column,
+            pattern: pattern.into(),
+            negated: false,
+            insensitive: true,
+        }
+    }
+
+    /// The first pattern in this predicate that will not compile.
+    ///
+    /// A bad pattern matches nothing at evaluation time, because failing a
+    /// query part-way through a scan is worse than returning no rows. This
+    /// lets a caller find out before running anything.
+    #[must_use]
+    pub fn regex_error(&self) -> Option<String> {
+        match self {
+            Self::Matches {
+                pattern,
+                insensitive,
+                ..
+            } => compile(pattern, *insensitive).err().map(|e| e.to_string()),
+            Self::And(parts) | Self::Or(parts) => parts.iter().find_map(Self::regex_error),
+            Self::Not(inner) => inner.regex_error(),
+            _ => None,
         }
     }
 
@@ -367,6 +462,7 @@ impl Expr {
                 column,
                 pattern,
                 negated,
+                insensitive,
             } => {
                 let Some(actual) = row.value(*column) else {
                     return Truth::Unknown;
@@ -376,7 +472,28 @@ impl Expr {
                 let Value::Str(text) = actual else {
                     return Truth::Unknown;
                 };
-                Truth::from(like_matches(text, pattern) != *negated)
+                let matched = if *insensitive {
+                    like_matches(&text.to_lowercase(), &pattern.to_lowercase())
+                } else {
+                    like_matches(text, pattern)
+                };
+                Truth::from(matched != *negated)
+            }
+            Self::Matches {
+                column,
+                pattern,
+                negated,
+                insensitive,
+            } => {
+                let Some(Value::Str(text)) = row.value(*column) else {
+                    return Truth::Unknown;
+                };
+                // A pattern that does not compile matches nothing, rather than
+                // failing the query half way through a scan.
+                let Ok(regex) = compile(pattern, *insensitive) else {
+                    return Truth::from(*negated);
+                };
+                Truth::from(regex.is_match(text) != *negated)
             }
             Self::IsNull { column, negated } => {
                 // `IS NULL` is the one test that is never unknown.
@@ -461,10 +578,23 @@ impl Expr {
                 column,
                 pattern,
                 negated,
+                insensitive,
             } => Self::Like {
                 column: f(*column),
                 pattern: pattern.clone(),
                 negated: *negated,
+                insensitive: *insensitive,
+            },
+            Self::Matches {
+                column,
+                pattern,
+                negated,
+                insensitive,
+            } => Self::Matches {
+                column: f(*column),
+                pattern: pattern.clone(),
+                negated: *negated,
+                insensitive: *insensitive,
             },
             Self::IsNull { column, negated } => Self::IsNull {
                 column: f(*column),
@@ -497,7 +627,8 @@ impl Expr {
             | Self::Compare { .. }
             | Self::IsNull { .. }
             | Self::In { .. }
-            | Self::Like { .. } => None,
+            | Self::Like { .. }
+            | Self::Matches { .. } => None,
             Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
                 (Some(a), Some(b)) if a != b => Some((*left, *right)),
                 _ => None,
@@ -529,7 +660,8 @@ impl Expr {
             Self::Compare { column, .. }
             | Self::IsNull { column, .. }
             | Self::In { column, .. }
-            | Self::Like { column, .. } => {
+            | Self::Like { column, .. }
+            | Self::Matches { column, .. } => {
                 out.insert(*column);
             }
             Self::CompareColumns { left, right, .. } => {
@@ -641,4 +773,63 @@ pub fn like_prefix(pattern: &str) -> Option<String> {
         }
     }
     (!prefix.is_empty()).then_some(prefix)
+}
+
+thread_local! {
+    /// Compiled patterns, per thread, one map per case-sensitivity.
+    ///
+    /// A scan evaluates the same pattern on every row, and compiling one is
+    /// not free: ClickBench's regex query spent sixty-six seconds doing it a
+    /// million times.
+    ///
+    /// Thread-local rather than global so there is no lock on the hot path,
+    /// and bounded because the key is caller-supplied — an unbounded map keyed
+    /// on a pattern is a slow memory leak for anything generating queries.
+    ///
+    /// Two maps rather than one keyed by `(String, bool)` so that a lookup can
+    /// borrow the pattern: a tuple key has to be built, and allocating a
+    /// `String` per row to find a cache entry is most of what the cache saves.
+    static SENSITIVE: RefCell<HashMap<String, Arc<regex::Regex>>> =
+        RefCell::new(HashMap::new());
+    /// The case-insensitive half of [`SENSITIVE`], with the same rules.
+    static INSENSITIVE: RefCell<HashMap<String, Arc<regex::Regex>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// How many compiled patterns a thread keeps before starting over.
+const PATTERN_CACHE: usize = 64;
+
+/// Compile a pattern, honouring case-insensitivity, reusing recent work.
+///
+/// Returns an [`Arc`] rather than a `Regex` because handing out clones is a
+/// trap: a `Regex` owns the scratch space its matcher needs, so a clone starts
+/// with none and rebuilds it on first use. Cloning itself is cheap — 0.15µs —
+/// but *matching on a fresh clone* measured 7.0µs against 0.6µs for a regex
+/// held across rows, eleven times slower and by far the largest cost in the
+/// query. Sharing one compiled regex keeps that scratch space warm.
+pub(crate) fn compile(pattern: &str, insensitive: bool) -> Result<Arc<regex::Regex>, regex::Error> {
+    let cache = if insensitive {
+        &INSENSITIVE
+    } else {
+        &SENSITIVE
+    };
+    cache.with(|cache| {
+        if let Some(found) = cache.borrow().get(pattern) {
+            return Ok(Arc::clone(found));
+        }
+        let compiled = Arc::new(
+            regex::RegexBuilder::new(pattern)
+                .case_insensitive(insensitive)
+                .build()?,
+        );
+        let mut cache = cache.borrow_mut();
+        // Cleared wholesale rather than evicted one at a time: a query uses a
+        // handful of patterns, so reaching the cap means the workload changed,
+        // and tracking recency to serve that would cost more than recompiling.
+        if cache.len() >= PATTERN_CACHE {
+            cache.clear();
+        }
+        cache.insert(pattern.to_owned(), Arc::clone(&compiled));
+        Ok(compiled)
+    })
 }

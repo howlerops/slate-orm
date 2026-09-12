@@ -47,6 +47,22 @@ fn any_value() -> impl Strategy<Value = Value> {
         ]
         .prop_map(Value::F64),
         any::<[u8; 16]>().prop_map(|b| Value::Uuid(Uuid::from_bytes(b))),
+        // Vectors are length-prefixed rather than terminated, so they exercise
+        // a different path through every property here — including the
+        // prefix-freeness one, where a length prefix is the whole argument for
+        // the encoding being safe.
+        proptest::collection::vec(
+            prop_oneof![
+                Just(f32::NAN),
+                Just(f32::INFINITY),
+                Just(f32::NEG_INFINITY),
+                Just(0.0f32),
+                Just(-0.0f32),
+                any::<f32>()
+            ],
+            0..6
+        )
+        .prop_map(Value::Vector),
     ]
 }
 
@@ -245,6 +261,8 @@ fn cross_type_order_is_the_documented_rank() {
         Value::F64(f64::NEG_INFINITY),
         Value::F64(f64::NAN),
         Value::Uuid(Uuid::nil()),
+        Value::Vector(Vec::new()),
+        Value::Vector(vec![f32::NEG_INFINITY]),
     ];
     for pair in ascending.windows(2) {
         let (lo, hi) = (&pair[0], &pair[1]);

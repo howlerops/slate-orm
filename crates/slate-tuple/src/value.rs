@@ -34,6 +34,19 @@ pub enum Value {
     F64(f64),
     /// UUID, ordered by its 16 big-endian bytes.
     Uuid(Uuid),
+    /// A dense vector of 32-bit floats, for embeddings.
+    ///
+    /// Ordered by length and then element-wise, which is deterministic and
+    /// total but not *meaningful*: nothing about a vector's position in that
+    /// order says anything about its similarity to another. The order exists
+    /// so a vector can be grouped, deduplicated and stored, not so it can be
+    /// ranged over — and the schema layer refuses a vector in a key or an
+    /// index for exactly that reason.
+    ///
+    /// Nearness is a [`Scalar`](../slate_kernel/scalar/enum.Scalar.html)
+    /// computed per row, and nearest-neighbour search is `ORDER BY` that with
+    /// a `LIMIT`.
+    Vector(Vec<f32>),
 }
 
 /// The type tag of a [`Value`], used to drive schema-directed decoding.
@@ -54,6 +67,8 @@ pub enum ValueType {
     F64,
     /// See [`Value::Uuid`].
     Uuid,
+    /// See [`Value::Vector`].
+    Vector,
 }
 
 impl ValueType {
@@ -68,6 +83,7 @@ impl ValueType {
             Self::U64 => "u64",
             Self::F64 => "f64",
             Self::Uuid => "uuid",
+            Self::Vector => "vector",
         }
     }
 }
@@ -94,6 +110,7 @@ impl Value {
             Self::U64(_) => Some(ValueType::U64),
             Self::F64(_) => Some(ValueType::F64),
             Self::Uuid(_) => Some(ValueType::Uuid),
+            Self::Vector(_) => Some(ValueType::Vector),
         }
     }
 
@@ -126,6 +143,7 @@ impl Value {
             Self::I64(_) | Self::U64(_) => 4,
             Self::F64(_) => 5,
             Self::Uuid(_) => 6,
+            Self::Vector(_) => 7,
         }
     }
 
@@ -151,6 +169,23 @@ impl Ord for Value {
             (Self::Bytes(a), Self::Bytes(b)) => a.cmp(b),
             (Self::Str(a), Self::Str(b)) => a.as_bytes().cmp(b.as_bytes()),
             (Self::Uuid(a), Self::Uuid(b)) => a.as_bytes().cmp(b.as_bytes()),
+            // Length first so the encoding, which is length-prefixed, sorts
+            // the same way. Element-wise after that, with NaN handled as it is
+            // for a lone double so two vectors that encode alike compare alike.
+            (Self::Vector(a), Self::Vector(b)) => a.len().cmp(&b.len()).then_with(|| {
+                for (x, y) in a.iter().zip(b) {
+                    let ordering = match (x.is_nan(), y.is_nan()) {
+                        (true, true) => Ordering::Equal,
+                        (true, false) => Ordering::Greater,
+                        (false, true) => Ordering::Less,
+                        (false, false) => x.total_cmp(y),
+                    };
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                }
+                Ordering::Equal
+            }),
             // NaN is canonicalised on encode, so all NaNs are one value here.
             (Self::F64(a), Self::F64(b)) => match (a.is_nan(), b.is_nan()) {
                 (true, true) => Ordering::Equal,

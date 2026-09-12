@@ -97,6 +97,7 @@ mod codes {
     pub(super) const INT_MAX: u8 = INT_ZERO + 8;
     pub(super) const F64: u8 = 0x21;
     pub(super) const UUID: u8 = 0x22;
+    pub(super) const VECTOR: u8 = 0x23;
 
     pub(super) const NUL: u8 = 0x00;
     pub(super) const ESCAPE: u8 = 0xFF;
@@ -118,6 +119,31 @@ fn f64_to_ordered(v: f64) -> u64 {
     } else {
         !bits
     }
+}
+
+/// [`f64_to_ordered`] for a 32-bit float.
+///
+/// The same trick at half the width: flip the sign bit of a positive, invert
+/// a negative, so the unsigned bit patterns sort as the floats do.
+fn f32_to_ordered(v: f32) -> u32 {
+    const SIGN: u32 = 1 << 31;
+    let bits = if v.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        v.to_bits()
+    };
+    if bits & SIGN == 0 { bits ^ SIGN } else { !bits }
+}
+
+/// Inverse of [`f32_to_ordered`].
+fn ordered_to_f32(ordered: u32) -> f32 {
+    const SIGN: u32 = 1 << 31;
+    let bits = if ordered & SIGN == 0 {
+        !ordered
+    } else {
+        ordered ^ SIGN
+    };
+    f32::from_bits(bits)
 }
 
 /// Inverse of [`f64_to_ordered`].
@@ -251,6 +277,19 @@ pub fn encode_value_into(out: &mut Vec<u8>, value: &Value, direction: Direction)
             sink.push(codes::F64);
             sink.extend(&f64_to_ordered(*v).to_be_bytes());
         }
+        Value::Vector(elements) => {
+            sink.push(codes::VECTOR);
+            // Length-prefixed rather than terminated. A vector's elements are
+            // fixed width, so the count is enough to know where it ends —
+            // which makes the encoding prefix-free without needing an escape,
+            // and makes the byte order match the value order: shorter first,
+            // then element-wise.
+            let count = u32::try_from(elements.len()).unwrap_or(u32::MAX);
+            sink.extend(&count.to_be_bytes());
+            for element in elements.iter().take(count as usize) {
+                sink.extend(&f32_to_ordered(*element).to_be_bytes());
+            }
+        }
         Value::Uuid(u) => {
             sink.push(codes::UUID);
             sink.extend(u.as_bytes());
@@ -348,6 +387,16 @@ impl<'a> TupleReader<'a> {
         let out = slice.iter().map(|b| b ^ mask).collect();
         self.pos = end;
         Ok(out)
+    }
+
+    /// A big-endian `u32`, for a vector's element count.
+    fn take_u32(&mut self, mask: u8) -> Result<u32> {
+        let raw = self.take(4, mask)?;
+        let mut be = [0u8; 4];
+        for (slot, b) in be.iter_mut().zip(raw) {
+            *slot = b;
+        }
+        Ok(u32::from_be_bytes(be))
     }
 
     fn read_escaped(&mut self, mask: u8) -> Result<Vec<u8>> {
@@ -452,6 +501,7 @@ impl<'a> TupleReader<'a> {
             codes::STR => "string",
             codes::F64 => "f64",
             codes::UUID => "uuid",
+            codes::VECTOR => "vector",
             _ => {
                 return Err(TupleError::UnknownTypeCode {
                     offset: start,
@@ -467,6 +517,7 @@ impl<'a> TupleReader<'a> {
                 | (codes::STR, ValueType::Str)
                 | (codes::F64, ValueType::F64)
                 | (codes::UUID, ValueType::Uuid)
+                | (codes::VECTOR, ValueType::Vector)
         );
         if !matches {
             return Err(TupleError::TypeMismatch {
@@ -532,6 +583,19 @@ impl<'a> TupleReader<'a> {
                 }
                 Ok(Value::Uuid(Uuid::from_bytes(be)))
             }
+            codes::VECTOR => {
+                let count = self.take_u32(mask)?;
+                let mut elements = Vec::with_capacity(count.min(1 << 16) as usize);
+                for _ in 0..count {
+                    let raw = self.take(4, mask)?;
+                    let mut be = [0u8; 4];
+                    for (slot, b) in be.iter_mut().zip(raw) {
+                        *slot = b;
+                    }
+                    elements.push(ordered_to_f32(u32::from_be_bytes(be)));
+                }
+                Ok(Value::Vector(elements))
+            }
             _ => Err(TupleError::UnknownTypeCode {
                 offset: start,
                 code,
@@ -564,6 +628,10 @@ impl<'a> TupleReader<'a> {
             codes::BYTES | codes::STR => self.skip_escaped(mask),
             codes::F64 => self.advance(8),
             codes::UUID => self.advance(16),
+            codes::VECTOR => {
+                let count = self.take_u32(mask)?;
+                self.advance(count as usize * 4)
+            }
             _ => Err(TupleError::UnknownTypeCode {
                 offset: start,
                 code,

@@ -24,6 +24,27 @@ pub enum SchemaError {
         column: String,
     },
 
+    /// A vector column was used in a key or an index.
+    ///
+    /// A vector has a total order so it can be stored, grouped and
+    /// deduplicated, but that order says nothing about similarity: two nearby
+    /// embeddings need not sort near each other. An index on one would
+    /// therefore answer no question worth asking, and a range over one would
+    /// be meaningless. Nearest-neighbour search is `ORDER BY` a distance with
+    /// a `LIMIT`, not a key range.
+    #[error(
+        "`{key}` on table `{table}` uses vector column `{column}`: a vector's \
+         order is not its similarity, so it cannot be a key"
+    )]
+    VectorInKey {
+        /// The table being defined.
+        table: String,
+        /// Which key or index.
+        key: String,
+        /// The offending column.
+        column: String,
+    },
+
     /// A table was defined without a primary key.
     #[error("table `{table}` has no primary key")]
     MissingPrimaryKey {

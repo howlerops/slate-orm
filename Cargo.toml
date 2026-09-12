@@ -30,6 +30,10 @@ bytes = "1"
 futures = "0.3"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
+# Chosen for its linear-time guarantee rather than its features: a pattern is
+# caller input, and an engine that can backtrack catastrophically turns one
+# into a denial of service.
+regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 # proc-macro

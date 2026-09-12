@@ -96,55 +96,54 @@ benchmark written by whoever wrote the engine.
 comparable to any published ClickBench score** — those are 100M rows on
 dedicated hardware — and lining them up beside one would be dishonest.
 
-**42 of 43 queries run.** The one that does not, Q29, needs `REGEXP_REPLACE`
-— a regular-expression engine, which is a dependency rather than a feature of
-this layer, and one query is not a reason to take one on.
+**All 43 queries run.**
 
 | Q | wall | scanned | answer |
 |---:|---:|---:|---|
-| 1 `COUNT(*)` | 1.09 s | 1,000,000 | 1000000 |
-| 2 `COUNT(*) WHERE AdvEngineID <> 0` | 1.51 s | 1,000,000 | 14174 |
-| 3 `SUM/COUNT/AVG` | 1.41 s | 1,000,000 | 80778 / 1000000 / 1604.09 |
-| 4 `AVG(UserID)` | 0.96 s | 1,000,000 | 1.948e18 |
-| 5 `COUNT(DISTINCT UserID)` | 1.08 s | 1,000,000 | 79842 |
-| 6 `COUNT(DISTINCT SearchPhrase)` | 1.66 s | 1,000,000 | 18316 |
-| 7 `MIN/MAX(EventDate)` | 1.02 s | 1,000,000 | 15901, 15901 |
-| 8 group by AdvEngineID | 1.30 s | 1,000,000 | 5 groups |
-| 9 distinct users per region | 1.60 s | 1,000,000 | 1242 groups |
-| 10 five aggregates per region | 1.41 s | 1,000,000 | 1242 groups |
-| 11 distinct users per phone model | 1.44 s | 1,000,000 | 30 groups |
-| 12 …per (phone, model) | 1.33 s | 1,000,000 | 59 groups |
-| 13 group by SearchPhrase | 1.46 s | 1,000,000 | 18315 groups |
-| 14 distinct users per SearchPhrase | 1.51 s | 1,000,000 | 18315 groups |
-| 15 group by (engine, phrase) | 1.47 s | 1,000,000 | 19300 groups |
-| 16 group by UserID | 1.10 s | 1,000,000 | 79842 groups |
-| 17 group by (UserID, phrase) | 1.62 s | 1,000,000 | 98484 groups |
-| 18 same, unordered | 1.59 s | 1,000,000 | 98484 groups |
-| 19 `extract(minute FROM EventTime)` in the key | 2.84 s | 1,000,000 | 387401 groups |
-| 20 `WHERE UserID = …` | **0.01 s** | 0 | — |
-| 21 `COUNT(*) WHERE URL LIKE '%google%'` | 2.47 s | 1,000,000 | 95 |
-| 22 group by phrase, URL matched | 2.51 s | 1,000,000 | 1 group |
-| 23 two `LIKE`s and a distinct count | 3.06 s | 1,000,000 | 53 groups |
-| 24 `SELECT *` … order by, limit 10 | 2.58 s | 1,000,000 | 10 rows |
-| 25 order by EventTime limit 10 | 1.58 s | 1,000,000 | 10 rows |
-| 26 order by SearchPhrase limit 10 | 1.52 s | 1,000,000 | 10 rows |
-| 27 order by two columns limit 10 | 1.44 s | 1,000,000 | 10 rows |
-| 28 `AVG(length(URL))` … `HAVING COUNT(*) > 100000` | 1.84 s | 1,000,000 | 2 groups |
-| 30 ninety `SUM(width + n)` | 2.95 s | 1,000,000 | 1604089590, 1605089590 |
-| 31 group by (engine, IP) | 2.01 s | 1,000,000 | 22830 groups |
-| 32 group by (WatchID, IP), filtered | 2.08 s | 1,000,000 | 69354 groups |
-| 33 …unfiltered | **4.74 s** | 1,000,000 | **1,000,000 groups** |
-| 34 group by URL | 3.09 s | 1,000,000 | 275494 groups |
-| 35 `GROUP BY 1, URL` | 3.61 s | 1,000,000 | 275494 groups |
-| 36 `GROUP BY ClientIP, ClientIP - 1, - 2, - 3` | 1.91 s | 1,000,000 | 68330 groups |
-| 37 URL page views, July 2013 | 1.15 s | **413,825** | 171171 groups |
-| 38 Title page views | 0.78 s | **413,825** | 26185 groups |
-| 39 with `OFFSET 1000` | 0.61 s | **413,825** | 7385 groups |
-| 40 `CASE WHEN … THEN Referer ELSE ''` | 2.28 s | **413,825** | 242387 groups |
-| 41 with `IN (-1, 6)` | 0.68 s | **413,825** | 23599 groups |
-| 42 with `OFFSET 10000` | 0.65 s | **413,825** | 7006 groups |
-| 43 `DATE_TRUNC('minute', EventTime)` | 0.70 s | **413,825** | **1440 groups** |
-| | **75.22 s** | | 42 of 43 |
+| 1 `COUNT(*)` | 0.78 s | 1,000,000 | 1000000 |
+| 2 `COUNT(*) WHERE AdvEngineID <> 0` | 1.10 s | 1,000,000 | 14174 |
+| 3 `SUM/COUNT/AVG` | 1.17 s | 1,000,000 | 80778 / 1000000 / 1604.09 |
+| 4 `AVG(UserID)` | 0.79 s | 1,000,000 | 1.948e18 |
+| 5 `COUNT(DISTINCT UserID)` | 0.91 s | 1,000,000 | 79842 |
+| 6 `COUNT(DISTINCT SearchPhrase)` | 1.26 s | 1,000,000 | 18316 |
+| 7 `MIN/MAX(EventDate)` | 0.83 s | 1,000,000 | 15901, 15901 |
+| 8 group by AdvEngineID | 1.14 s | 1,000,000 | 5 groups |
+| 9 distinct users per region | 1.27 s | 1,000,000 | 1242 groups |
+| 10 five aggregates per region | 1.37 s | 1,000,000 | 1242 groups |
+| 11 distinct users per phone model | 1.21 s | 1,000,000 | 30 groups |
+| 12 …per (phone, model) | 1.21 s | 1,000,000 | 59 groups |
+| 13 group by SearchPhrase | 1.31 s | 1,000,000 | 18315 groups |
+| 14 distinct users per SearchPhrase | 1.37 s | 1,000,000 | 18315 groups |
+| 15 group by (engine, phrase) | 1.39 s | 1,000,000 | 19300 groups |
+| 16 group by UserID | 1.03 s | 1,000,000 | 79842 groups |
+| 17 group by (UserID, phrase) | 1.61 s | 1,000,000 | 98484 groups |
+| 18 same, unordered | 1.53 s | 1,000,000 | 98484 groups |
+| 19 `extract(minute FROM EventTime)` in the key | 2.25 s | 1,000,000 | 387401 groups |
+| 20 `WHERE UserID = …` | **0.08 s** | 0 | — |
+| 21 `COUNT(*) WHERE URL LIKE '%google%'` | 2.58 s | 1,000,000 | 95 |
+| 22 group by phrase, URL matched | 2.45 s | 1,000,000 | 1 group |
+| 23 two `LIKE`s and a distinct count | 3.03 s | 1,000,000 | 53 groups |
+| 24 `SELECT *` … order by, limit 10 | 2.70 s | 1,000,000 | 10 rows |
+| 25 order by EventTime limit 10 | 1.50 s | 1,000,000 | 10 rows |
+| 26 order by SearchPhrase limit 10 | 1.29 s | 1,000,000 | 10 rows |
+| 27 order by two columns limit 10 | 1.27 s | 1,000,000 | 10 rows |
+| 28 `AVG(length(URL))` … `HAVING COUNT(*) > 100000` | 1.93 s | 1,000,000 | 2 groups |
+| 29 `REGEXP_REPLACE` … `HAVING COUNT(*) > 100000` | 3.12 s | 1,000,000 | 2 groups |
+| 30 ninety `SUM(width + n)` | 3.00 s | 1,000,000 | 1604089590, 1605089590 |
+| 31 group by (engine, IP) | 1.91 s | 1,000,000 | 22830 groups |
+| 32 group by (WatchID, IP), filtered | 2.11 s | 1,000,000 | 69354 groups |
+| 33 …unfiltered | **5.27 s** | 1,000,000 | **1,000,000 groups** |
+| 34 group by URL | 3.21 s | 1,000,000 | 275494 groups |
+| 35 `GROUP BY 1, URL` | 2.99 s | 1,000,000 | 275494 groups |
+| 36 `GROUP BY ClientIP, ClientIP - 1, - 2, - 3` | 1.50 s | 1,000,000 | 68330 groups |
+| 37 URL page views, July 2013 | 1.16 s | **413,825** | 171171 groups |
+| 38 Title page views | 0.72 s | **413,825** | 26185 groups |
+| 39 with `OFFSET 1000` | 0.51 s | **413,825** | 7385 groups |
+| 40 `CASE WHEN … THEN Referer ELSE ''` | 2.20 s | **413,825** | 242387 groups |
+| 41 with `IN (-1, 6)` | 0.58 s | **413,825** | 23599 groups |
+| 42 with `OFFSET 10000` | 0.54 s | **413,825** | 7006 groups |
+| 43 `DATE_TRUNC('minute', EventTime)` | 0.55 s | **413,825** | **1440 groups** |
+| | **69.70 s** | | 43 of 43 |
 
 ### The answers are right, not just fast
 
@@ -278,6 +277,101 @@ beginning with the encoding of `abc` minus its terminator, so the matches are
 one contiguous span. The test that matters there is the one asserting a bound
 never loses a row, across every pattern shape including escapes and a
 `\u{1f600}` prefix — a bound that is too narrow drops rows silently.
+
+### The last query: a regex, and two ways to be slow with one
+
+Q29 rewrites every `Referer` with `REGEXP_REPLACE` and groups by the result. It
+was the one query left unrun, on the reasoning that a regular-expression engine
+is a dependency rather than a feature of this layer. That was the wrong call for
+a simple reason: `LIKE` was already here, and a pattern is caller input either
+way, so the question was never whether to match untrusted patterns but which
+engine does it. The `regex` crate was chosen for its linear-time guarantee —
+an engine that can backtrack catastrophically turns a caller-supplied pattern
+into a denial of service.
+
+Turning it on cost **66.11 s** for that one query, because the pattern was
+compiled once per row. A thread-local cache took it to **10.52 s**.
+
+The interesting half is what was left. Q28 is the same query without the regex
+and runs in 1.93 s, so the regex was still costing eight seconds over a million
+rows — far more than matching should. The cache was handing back a **clone**:
+
+| per call | |
+|---|---:|
+| clone a `Regex` and drop it | 0.15 µs |
+| match on a regex held across rows | 0.6 µs |
+| match on a fresh clone | **7.0 µs** |
+
+A `Regex` owns the scratch space its matcher needs, so a clone starts with none
+and rebuilds it the first time it is used. Cloning is cheap; *using* a clone is
+eleven times slower than using a shared one. Handing out an `Arc<Regex>`
+instead took Q29 to **3.12 s** — within 1.2 s of the same query without the
+regex, which is the cost of actually matching a million strings.
+
+Rewriting `\1` into the replacement syntax the crate wants stayed per-row: it
+measured 16 ms per million rows against seconds for the match, and hoisting it
+would have meant storing the rewritten form in a public field, where it would
+read as the wrong syntax to anyone who looked.
+
+### A 50% regression from adding an enum variant
+
+Adding `Value::Vector` made **every query in the benchmark about 50% slower**.
+Not the vector ones — all of them, including `SELECT COUNT(*)`, on a dataset
+with no vectors in it. The suite went from 68 s to 104 s.
+
+It was nearly missed. The suite had grown a query and the machine is shared, so
+"a bit slower" had two innocent explanations available. What settled it was
+building the previous commit in a worktree and running the two binaries
+alternately, on the same machine, in the same minute:
+
+| | Q1 | 43 queries |
+|---|---:|---:|
+| previous commit | 0.20 s | 11.6 s (42 queries) |
+| with vectors | 0.30 s | 18.9 s |
+
+Then the diagnosis went wrong twice. `Value` was the same size afterwards — 40
+bytes, still set by `Bytes` — so layout was not it. A decode microbenchmark and
+a skip microbenchmark both came back *identical*, which looked like proof the
+codec was innocent, and it was not proof of anything: those benchmarks decoded
+and skipped, and the regression was in neither.
+
+Callgrind found it in one run. Instructions rose only 5.7% while wall time rose
+49%, and one symbol appeared in the new profile that was absent from the old:
+
+```
+2,394,003,996 (10.32%)  <slate_tuple::value::Value as core::clone::Clone>::clone
+```
+
+`Value::clone` used to be inlined into the row decoder. Adding a variant
+holding a `Vec<f32>` made the generated `clone` big enough that LLVM stopped
+inlining it — and the row decoder began every row with
+
+```rust
+let mut values = vec![Value::Null; table.columns().len()];
+```
+
+which fills by **cloning**. A hundred and five out-of-line clone calls per row,
+to produce a hundred and five nulls. Building the vector by repetition instead
+removed them:
+
+| | Q1 | 43 queries |
+|---|---:|---:|
+| previous commit | 0.20 s | 11.6 s (42 queries) |
+| with vectors | 0.30 s | 18.9 s |
+| after the fix | **0.17 s** | **11.6 s (43 queries)** |
+
+At full scale that is **69.70 s for 43 queries**, against 75.22 s for 42 before
+any of this — faster than the baseline, with one more query in it.
+
+Three things are worth keeping from that:
+
+- `vec![value; n]` fills by cloning. For a cheap `Copy`-like value that is free
+  only while the clone inlines, and nothing warns when it stops.
+- A microbenchmark that comes back identical has not exonerated the code. It
+  has only exonerated the path it measured. Both of mine measured the wrong one.
+- An A/B against the previous commit, built and run on the same machine at the
+  same time, is the only measurement that can distinguish a regression from a
+  busy afternoon. It cost two builds.
 
 ### `analyze` is slow on a wide table
 

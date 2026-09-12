@@ -336,6 +336,11 @@ pub(crate) fn runnable() -> Vec<Runnable> {
             sql: "SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) FROM hits WHERE CounterID = 62 AND … GROUP BY M ORDER BY M LIMIT 10 OFFSET 1000",
             note: None,
         },
+        Runnable {
+            number: 29,
+            sql: "SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '\\1') AS k, AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer <> '' GROUP BY k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25",
+            note: Some("ORDER BY on the aggregate is done over the groups"),
+        },
     ];
     // Sorted, so the results table reads in ClickBench's order however the
     // list happens to be maintained.
@@ -477,6 +482,32 @@ pub(crate) async fn run(
                 0,
                 // HAVING COUNT(*) > 100000: one grouping column, so the count
                 // is the second aggregate at ordinal 1 + 1.
+                Expr::compare(Group::aggregate(1, 1), CmpOp::Gt, Value::U64(100_000)),
+            )
+            .await
+        }
+        29 => {
+            let host = Query::computed(table, 0);
+            let length = Query::computed(table, 1);
+            grouped_computing(
+                txn,
+                ctx,
+                table,
+                not_empty("Referer"),
+                vec![
+                    Scalar::column(col("Referer"))
+                        .regexp_replace(r"^https?://(?:www\.)?([^/]+)/.*$", r"\1"),
+                    Scalar::column(col("Referer")).length(),
+                ],
+                &[host],
+                &[
+                    Aggregate::Avg(length),
+                    Aggregate::Count,
+                    Aggregate::Min(col("Referer")),
+                ],
+                Some(0),
+                25,
+                0,
                 Expr::compare(Group::aggregate(1, 1), CmpOp::Gt, Value::U64(100_000)),
             )
             .await
