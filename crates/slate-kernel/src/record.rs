@@ -47,6 +47,7 @@ use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
+use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{
     Catalog, ForeignKeyDef, IndexDef, Ordinal, PartialRow, ReferentialAction, Row, SchemaError,
@@ -324,6 +325,67 @@ impl<S: KvStore> RecordStore<S> {
         .await
     }
 
+    /// [`RecordStore::transact`] for a caller the `AsyncFn` bound cannot serve.
+    ///
+    /// Inside a `#[async_trait]` method the trait's own futures are boxed with
+    /// a `Send` bound, and the compiler cannot prove `Send` for a
+    /// higher-ranked future built over a borrowed transaction. It reports
+    /// "implementation of `Send` is not general enough", pointing at the
+    /// method signature and naming a type the caller never wrote — `&'0 u64`,
+    /// say — and there is no way to annotate around it. `transact.rs` shows the
+    /// exact failure. This exists for that position and no other.
+    ///
+    /// The cost is the one [`RecordStore::transact`] avoids: the returned
+    /// future may borrow the transaction and nothing else, so `operation`
+    /// cannot hand it references to the caller's locals. Move what it needs
+    /// into the closure and clone it into each `async move` — `operation` runs
+    /// once per attempt, so it has to be able to produce a fresh future
+    /// anyway.
+    ///
+    /// ```no_run
+    /// # use slate_kernel::{KvStore, RecordStore, Result, SecurityContext};
+    /// # use slate_schema::{Row, TableDef};
+    /// # async fn example<S: KvStore>(
+    /// #     store: &RecordStore<S>, ctx: SecurityContext, table: TableDef, row: Row,
+    /// # ) -> Result<()> {
+    /// store
+    ///     .transact_boxed(move |txn| {
+    ///         let (ctx, table, row) = (ctx.clone(), table.clone(), row.clone());
+    ///         Box::pin(async move { txn.insert(&ctx, &table, &row).await })
+    ///     })
+    ///     .await
+    /// # }
+    /// ```
+    pub async fn transact_boxed<F, T>(&self, operation: F) -> Result<T>
+    where
+        F: for<'t> Fn(&'t RecordTransaction<'t>) -> BoxFuture<'t, Result<T>>,
+    {
+        self.transact_boxed_tracked(operation)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    /// [`RecordStore::transact_boxed`], also returning the commit's read token.
+    pub async fn transact_boxed_tracked<F, T>(&self, operation: F) -> Result<(T, Option<ReadToken>)>
+    where
+        F: for<'t> Fn(&'t RecordTransaction<'t>) -> BoxFuture<'t, Result<T>>,
+    {
+        with_retries(self.retry, |_attempt| async {
+            let txn = self.begin().await?;
+            match operation(&txn).await {
+                Ok(value) => {
+                    let token = txn.commit().await?;
+                    Ok((value, token))
+                }
+                Err(error) => {
+                    txn.rollback();
+                    Err(error)
+                }
+            }
+        })
+        .await
+    }
+
     /// Begin a record-level transaction.
     ///
     /// Prefer [`RecordStore::transact`], which handles the conflict retry that
@@ -335,6 +397,34 @@ impl<S: KvStore> RecordStore<S> {
             security: &self.security,
             statistics: &self.statistics,
         })
+    }
+}
+
+/// What a bulk write does about a primary key that is, or is not, taken.
+///
+/// One code path serves all three, because everything else about them is the
+/// same — the same validation, the same batched reads, the same all-or-nothing
+/// rule — and three copies of that would be three places for a check to go
+/// missing from one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BulkMode {
+    /// `insert_many`: a taken key is a duplicate.
+    Insert,
+    /// `upsert_many`: a taken key is replaced, a free one is filled.
+    Upsert,
+    /// `update_many`: a taken key is replaced, a free one is an error.
+    Update,
+}
+
+impl BulkMode {
+    /// Whether the batch may create a row that was not there.
+    const fn may_insert(self) -> bool {
+        matches!(self, Self::Insert | Self::Upsert)
+    }
+
+    /// Whether the batch may overwrite a row that was.
+    const fn may_replace(self) -> bool {
+        matches!(self, Self::Upsert | Self::Update)
     }
 }
 
@@ -837,7 +927,8 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         rows: &[Row],
     ) -> Result<()> {
-        self.write_many(context, table, rows, false).await
+        self.write_many(context, table, rows, BulkMode::Insert)
+            .await
     }
 
     /// Insert or replace many rows.
@@ -850,7 +941,30 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         rows: &[Row],
     ) -> Result<()> {
-        self.write_many(context, table, rows, true).await
+        self.write_many(context, table, rows, BulkMode::Upsert)
+            .await
+    }
+
+    /// Replace many rows, failing if any of them is not there.
+    ///
+    /// As [`RecordTransaction::update_many`]'s single-row counterpart: the
+    /// row's own primary key says which row is being replaced, so an update
+    /// never moves a row to a different key. What the batch buys is the same
+    /// thing `insert_many` buys — the reads that decide whether each row exists
+    /// are issued together, rather than one round trip per row.
+    ///
+    /// A batch is one statement, so a single missing row fails the whole thing
+    /// rather than updating the rest. Anything else would leave the caller
+    /// holding an error and a partially applied change with no way to tell
+    /// which rows landed.
+    pub async fn update_many(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        rows: &[Row],
+    ) -> Result<()> {
+        self.write_many(context, table, rows, BulkMode::Update)
+            .await
     }
 
     async fn write_many(
@@ -858,13 +972,19 @@ impl<'a> RecordTransaction<'a> {
         context: &SecurityContext,
         table: &TableDef,
         rows: &[Row],
-        replace: bool,
+        mode: BulkMode,
     ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
-        self.security.authorize(context, table, Action::Insert)?;
-        if replace {
+        // An update writes no new key, so it needs no `Insert`. Asking for one
+        // would make `update_many` refuse callers the single-row `update`
+        // serves, which is a behaviour difference between two spellings of the
+        // same operation.
+        if mode.may_insert() {
+            self.security.authorize(context, table, Action::Insert)?;
+        }
+        if mode.may_replace() {
             self.security.authorize(context, table, Action::Update)?;
         }
 
@@ -935,21 +1055,31 @@ impl<'a> RecordTransaction<'a> {
         let mut previous_rows = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
             let previous = existing.get(index).and_then(Clone::clone);
-            if previous.is_some() {
-                if !replace {
+            match (&previous, mode) {
+                (Some(_), BulkMode::Insert) => {
                     return Err(KernelError::DuplicatePrimaryKey {
                         table: table.name().to_owned(),
                     });
                 }
-                if let Some(current) = &previous
-                    && !self
-                        .security
-                        .permits_row(context, table, Action::Update, current)?
-                {
+                // Not there to replace. The same error a hidden row gets, and
+                // deliberately: which of the two it was is exactly what a
+                // policy exists not to tell the caller.
+                (None, BulkMode::Update) => {
                     return Err(KernelError::RowNotFound {
                         table: table.name().to_owned(),
                     });
                 }
+                (Some(current), BulkMode::Upsert | BulkMode::Update) => {
+                    if !self
+                        .security
+                        .permits_row(context, table, Action::Update, current)?
+                    {
+                        return Err(KernelError::RowNotFound {
+                            table: table.name().to_owned(),
+                        });
+                    }
+                }
+                (None, BulkMode::Insert | BulkMode::Upsert) => {}
             }
             let action = if previous.is_some() {
                 Action::Update
