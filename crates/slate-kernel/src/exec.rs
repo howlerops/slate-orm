@@ -9,7 +9,8 @@
 use crate::error::{KernelError, Result};
 use crate::expr::Expr;
 use crate::plan::{Access, Plan};
-use crate::record::{IndexCursor, RecordTransaction, RowCursor};
+use crate::read::{self, IndexCursor, RowCursor};
+use crate::store::KvSnapshot;
 use slate_schema::{IndexDef, Row, TableDef};
 
 /// Where a cursor's candidate rows come from.
@@ -27,7 +28,7 @@ enum Source<'a> {
 
 /// A cursor over the rows a plan admits.
 pub struct QueryCursor<'a> {
-    txn: &'a RecordTransaction<'a>,
+    snapshot: &'a dyn KvSnapshot,
     table: &'a TableDef,
     source: Source<'a>,
     residual: Expr,
@@ -47,29 +48,28 @@ impl core::fmt::Debug for QueryCursor<'_> {
 impl<'a> QueryCursor<'a> {
     /// Open a cursor for `plan` on `table`.
     pub(crate) async fn open(
-        txn: &'a RecordTransaction<'a>,
+        snapshot: &'a dyn KvSnapshot,
         table: &'a TableDef,
         plan: Plan,
     ) -> Result<Self> {
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
             Access::TableScan { range } => {
-                Source::Rows(txn.scan_rows(table, range.clone(), plan.order).await?)
+                Source::Rows(read::scan_rows(snapshot, table, range.clone(), plan.order).await?)
             }
             Access::IndexScan { index, range } => {
                 let index = table
                     .index(*index)
                     .ok_or(KernelError::UnknownTable(table.id()))?;
                 Source::Index {
-                    cursor: txn
-                        .scan_index(table, index, range.clone(), plan.order)
+                    cursor: read::scan_index(snapshot, table, index, range.clone(), plan.order)
                         .await?,
                     index,
                 }
             }
         };
         Ok(Self {
-            txn,
+            snapshot,
             table,
             source,
             residual: plan.residual,
@@ -104,19 +104,25 @@ impl<'a> QueryCursor<'a> {
             Source::Empty => Ok(None),
             Source::Rows(cursor) => cursor.next().await,
             Source::Index { cursor, index } => {
-                let Some((_, primary_key)) = cursor.next().await? else {
-                    return Ok(None);
-                };
-                // Index entries and rows are written in one transaction, so an
-                // entry without a row means the two have diverged on disk.
-                self.txn
-                    .read_row_unchecked(self.table, &primary_key)
-                    .await?
-                    .ok_or_else(|| KernelError::CorruptIndexEntry {
-                        table: self.table.name().to_owned(),
-                        index: index.name().to_owned(),
-                    })
-                    .map(Some)
+                while let Some((_, primary_key)) = cursor.next().await? {
+                    if let Some(row) =
+                        read::read_row_unchecked(self.snapshot, self.table, &primary_key).await?
+                    {
+                        return Ok(Some(row));
+                    }
+                    // Index entries and rows are written in one transaction, so
+                    // on a point-in-time view an entry without a row means the
+                    // two have diverged on disk. On a replica that follows the
+                    // manifest it means only that the view advanced between the
+                    // two reads, and skipping is correct.
+                    if self.snapshot.is_point_in_time() {
+                        return Err(KernelError::CorruptIndexEntry {
+                            table: self.table.name().to_owned(),
+                            index: index.name().to_owned(),
+                        });
+                    }
+                }
+                Ok(None)
             }
         }
     }

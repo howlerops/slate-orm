@@ -70,6 +70,14 @@ pub fn record_store(backend: SlateStore) -> RecordStore<SlateStore> {
     RecordStore::new(backend, catalog, security())
 }
 
+/// The same, over a backend shared with a replica pool.
+pub fn record_store_shared(
+    backend: std::sync::Arc<SlateStore>,
+) -> RecordStore<std::sync::Arc<SlateStore>> {
+    let catalog = Catalog::from_tables([users()]).expect("catalog");
+    RecordStore::new(backend, catalog, security())
+}
+
 pub fn user(tenant: u128, id: u64, email: &str, nickname: Option<&str>, age: i64) -> Row {
     Row::new(vec![
         Value::Uuid(Uuid::from_u128(tenant)),

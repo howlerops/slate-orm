@@ -21,8 +21,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod reader;
 #[cfg(feature = "aws")]
 pub mod s3;
+
+pub use reader::{ReplicaMode, SlateReader};
 #[cfg(feature = "aws")]
 pub use s3::S3Config;
 
@@ -30,12 +33,14 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use core::ops::Bound;
 use slate_kernel::error::{KernelError, Result, StorageError};
-use slate_kernel::store::{KeyRange, KeyValue, KvIterator, KvStore, KvTransaction, ScanOrder};
+use slate_kernel::store::{
+    KeyRange, KeyValue, KvIterator, KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder,
+};
 use slatedb::config::ScanOptions;
 use slatedb::object_store::{ObjectStore, path::Path};
 use slatedb::{
-    ByteRangeBounds, Db, DbIterator, DbTransaction, DbTransactionOps, ErrorKind, IsolationLevel,
-    IterationOrder,
+    ByteRangeBounds, CloseReason, Db, DbIterator, DbTransaction, DbTransactionOps, ErrorKind,
+    IsolationLevel, IterationOrder,
 };
 use std::sync::Arc;
 
@@ -61,13 +66,15 @@ pub enum Durability {
     Visible,
 }
 
-/// Convert a SlateDB error, preserving the one kind the kernel acts on.
-fn convert(error: slatedb::Error) -> KernelError {
-    // A conflict is a retry signal, not a failure; everything else is opaque.
-    if error.kind() == ErrorKind::Transaction {
-        KernelError::TransactionConflict
-    } else {
-        KernelError::Storage(StorageError::new(error))
+/// Convert a SlateDB error, preserving the two kinds the kernel acts on.
+pub(crate) fn convert(error: slatedb::Error) -> KernelError {
+    match error.kind() {
+        // A conflict is a retry signal, not a failure.
+        ErrorKind::Transaction => KernelError::TransactionConflict,
+        // Fencing means another writer took over. Retrying past this is a split
+        // brain still trying to write, so it has to be terminal and distinct.
+        ErrorKind::Closed(CloseReason::Fenced) => KernelError::WriterFenced,
+        _ => KernelError::Storage(StorageError::new(error)),
     }
 }
 
@@ -76,7 +83,7 @@ fn convert(error: slatedb::Error) -> KernelError {
 /// A local newtype because [`ByteRangeBounds`] is only implemented for the std
 /// range types, none of which can express an arbitrary pair of bounds, and
 /// SlateDB's own `BytesRange` is private.
-struct Bounds {
+pub(crate) struct Bounds {
     start: Bound<Vec<u8>>,
     end: Bound<Vec<u8>>,
 }
@@ -190,6 +197,25 @@ impl SlateStore {
 }
 
 #[async_trait]
+impl KvReadStore for SlateStore {
+    async fn snapshot(&self) -> Result<Box<dyn KvSnapshot + Send + '_>> {
+        // The writer reads through a transaction like everything else, so a
+        // read served here sees exactly what a read-write path would.
+        Ok(self.begin().await?)
+    }
+
+    fn visible_sequence(&self) -> Option<u64> {
+        Some(self.db.status().durable_seq)
+    }
+
+    fn replica_name(&self) -> &str {
+        // The writer is always current, so routing never needs to distinguish
+        // it from a replica by name.
+        "writer"
+    }
+}
+
+#[async_trait]
 impl KvStore for SlateStore {
     async fn begin(&self) -> Result<Box<dyn KvTransaction + Send + '_>> {
         let txn = self.db.begin(self.isolation).await.map_err(convert)?;
@@ -215,7 +241,7 @@ impl core::fmt::Debug for SlateTransaction {
 }
 
 #[async_trait]
-impl KvTransaction for SlateTransaction {
+impl KvSnapshot for SlateTransaction {
     async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         self.txn.get(key).await.map_err(convert)
     }
@@ -239,7 +265,10 @@ impl KvTransaction for SlateTransaction {
             .map_err(convert)?;
         Ok(Box::new(SlateIterator { iter }))
     }
+}
 
+#[async_trait]
+impl KvTransaction for SlateTransaction {
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         DbTransactionOps::put(&self.txn, key, value).map_err(convert)
     }
@@ -248,17 +277,17 @@ impl KvTransaction for SlateTransaction {
         DbTransactionOps::delete(&self.txn, key).map_err(convert)
     }
 
-    async fn commit(self: Box<Self>) -> Result<()> {
+    async fn commit(self: Box<Self>) -> Result<Option<u64>> {
         let durability = self.durability;
-        let handle = self.txn.commit().await.map_err(convert)?;
         // `commit` returns None for an empty batch, and otherwise a handle that
         // has been applied but not necessarily flushed.
-        if durability == Durability::Durable
-            && let Some(handle) = handle
-        {
+        let Some(handle) = self.txn.commit().await.map_err(convert)? else {
+            return Ok(None);
+        };
+        if durability == Durability::Durable {
             handle.await_durable().await.map_err(convert)?;
         }
-        Ok(())
+        Ok(Some(handle.seqnum()))
     }
 
     fn rollback(self: Box<Self>) {

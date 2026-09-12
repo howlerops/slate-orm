@@ -10,7 +10,9 @@
 //! whole map when it begins.
 
 use crate::error::{KernelError, Result};
-use crate::store::{KeyRange, KeyValue, KvIterator, KvStore, KvTransaction, ScanOrder};
+use crate::store::{
+    KeyRange, KeyValue, KvIterator, KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::collections::{BTreeMap, BTreeSet};
@@ -109,6 +111,20 @@ impl MemoryStore {
         })
     }
 
+    /// Start a transaction against a copy of the current committed state.
+    async fn open(&self) -> MemoryTransaction {
+        let (snapshot, version) = self.locked(|s| {
+            s.register(s.version);
+            (s.committed.clone(), s.version)
+        });
+        MemoryTransaction {
+            shared: Arc::clone(&self.shared),
+            snapshot,
+            started_at: version,
+            pending: Mutex::new(Pending::new()),
+        }
+    }
+
     fn locked<T>(&self, f: impl FnOnce(&mut Shared) -> T) -> T {
         // A poisoned lock means a test already failed inside a critical
         // section; surfacing the original panic is more useful than masking it.
@@ -119,18 +135,24 @@ impl MemoryStore {
 }
 
 #[async_trait]
+impl KvReadStore for MemoryStore {
+    async fn snapshot(&self) -> Result<Box<dyn KvSnapshot + Send + '_>> {
+        Ok(Box::new(self.open().await))
+    }
+
+    fn visible_sequence(&self) -> Option<u64> {
+        Some(self.locked(|s| s.version))
+    }
+
+    fn replica_name(&self) -> &str {
+        "memory"
+    }
+}
+
+#[async_trait]
 impl KvStore for MemoryStore {
     async fn begin(&self) -> Result<Box<dyn KvTransaction + Send + '_>> {
-        let (snapshot, version) = self.locked(|s| {
-            s.register(s.version);
-            (s.committed.clone(), s.version)
-        });
-        Ok(Box::new(MemoryTransaction {
-            shared: Arc::clone(&self.shared),
-            snapshot,
-            started_at: version,
-            pending: Mutex::new(Pending::new()),
-        }))
+        Ok(Box::new(self.open().await))
     }
 }
 
@@ -179,7 +201,7 @@ impl Drop for MemoryTransaction {
 }
 
 #[async_trait]
-impl KvTransaction for MemoryTransaction {
+impl KvSnapshot for MemoryTransaction {
     async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         if let Some(pending) = self.with_pending(|p| p.get(key).cloned()) {
             return Ok(pending);
@@ -208,7 +230,10 @@ impl KvTransaction for MemoryTransaction {
             items: items.into_iter(),
         }))
     }
+}
 
+#[async_trait]
+impl KvTransaction for MemoryTransaction {
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.with_pending(|p| p.insert(key, Some(Bytes::from(value))));
         Ok(())
@@ -219,10 +244,10 @@ impl KvTransaction for MemoryTransaction {
         Ok(())
     }
 
-    async fn commit(self: Box<Self>) -> Result<()> {
+    async fn commit(self: Box<Self>) -> Result<Option<u64>> {
         let pending = self.with_pending(core::mem::take);
         if pending.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         #[allow(clippy::expect_used)]
@@ -255,7 +280,7 @@ impl KvTransaction for MemoryTransaction {
         shared
             .history
             .push((version, pending.into_keys().collect()));
-        Ok(())
+        Ok(Some(version))
     }
 
     fn rollback(self: Box<Self>) {

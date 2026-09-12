@@ -113,6 +113,37 @@ pub enum KernelError {
         table: String,
     },
 
+    /// Another writer has taken over; this one is no longer the writer.
+    ///
+    /// Terminal, and deliberately distinct from [`KernelError::TransactionConflict`].
+    /// A single-writer deployment fences the previous writer when a new one
+    /// starts, so a process that retried through this would be a split brain
+    /// still trying to write. It must stop instead.
+    #[error("this writer has been fenced by a newer one and must stop")]
+    WriterFenced,
+
+    /// A read replica has not caught up to the sequence the caller requires.
+    ///
+    /// Raised rather than served stale, so that read-your-writes is a promise
+    /// the caller can rely on. The usual response is to retry on another
+    /// replica or fall back to the writer.
+    #[error("replica `{replica}` is at sequence {visible}, behind the required {required}")]
+    ReplicaTooStale {
+        /// Which replica.
+        replica: String,
+        /// Sequence the caller needs to see.
+        required: u64,
+        /// Sequence the replica currently reflects.
+        visible: u64,
+    },
+
+    /// No store in the pool could serve the read.
+    #[error("no replica available: {reason}")]
+    NoReplicaAvailable {
+        /// Why routing failed.
+        reason: &'static str,
+    },
+
     /// A stored index entry pointed at a row key that would not decode.
     ///
     /// This means the index and the table disagree, which the record store
@@ -124,6 +155,19 @@ pub enum KernelError {
         /// The index scanned.
         index: String,
     },
+}
+
+impl KernelError {
+    /// Whether retrying the whole transaction could succeed.
+    ///
+    /// Only a conflict qualifies. A constraint violation, an access denial or a
+    /// decode failure will fail identically on every attempt, and
+    /// [`KernelError::WriterFenced`] will fail forever by design — retrying any
+    /// of them turns a clear error into a hang.
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        matches!(self, Self::TransactionConflict)
+    }
 }
 
 /// Convenience alias for kernel results.

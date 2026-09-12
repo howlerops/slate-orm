@@ -14,6 +14,9 @@ slate-schema.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
+# Only for the retry helper's backoff. The whole stack is async on tokio
+# already, so this adds no new runtime requirement.
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 tokio.workspace = true

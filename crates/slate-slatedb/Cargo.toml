@@ -13,6 +13,9 @@ slate-kernel.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 slatedb = { version = "0.16", default-features = false }
+# For replica catch-up waits; SlateDB already requires a tokio runtime.
+tokio = { workspace = true, features = ["time"] }
+uuid.workspace = true
 
 [features]
 default = ["aws"]
@@ -23,7 +26,6 @@ aws = ["slatedb/aws"]
 slate-schema.workspace = true
 slate-tuple.workspace = true
 tokio = { workspace = true, features = ["net"] }
-uuid.workspace = true
 # A real S3 server, in process: the S3 code path is exercised for real in CI
 # without a Docker service container.
 s3s = "0.14"

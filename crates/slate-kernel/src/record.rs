@@ -9,10 +9,12 @@ use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
 use crate::keys::{self, IndexEntry};
-use crate::plan::plan;
+use crate::read::{self, SecuredReads};
+use crate::retry::{RetryPolicy, with_retries};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
-use crate::store::{KeyRange, KvIterator, KvStore, KvTransaction, ScanOrder};
-use slate_schema::{Catalog, IndexDef, Row, TableDef, decode_row, encode_body};
+use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
+use crate::token::ReadToken;
+use slate_schema::{Catalog, IndexDef, Row, TableDef, encode_body};
 use slate_tuple::Value;
 
 /// A typed record store over a key-value backend.
@@ -21,9 +23,10 @@ pub struct RecordStore<S> {
     store: S,
     catalog: Catalog,
     security: SecurityCatalog,
+    retry: RetryPolicy,
 }
 
-impl<S: KvStore> RecordStore<S> {
+impl<S> RecordStore<S> {
     /// Create a record store over `store`, serving `catalog` under `security`.
     ///
     /// An empty [`SecurityCatalog`] denies every non-superuser action, so a
@@ -33,7 +36,20 @@ impl<S: KvStore> RecordStore<S> {
             store,
             catalog,
             security,
+            retry: RetryPolicy::DEFAULT,
         }
+    }
+
+    /// Change how [`RecordStore::transact`] retries conflicts.
+    #[must_use]
+    pub const fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// The retry policy [`RecordStore::transact`] uses.
+    pub const fn retry_policy(&self) -> RetryPolicy {
+        self.retry
     }
 
     /// The catalog this store serves.
@@ -50,8 +66,95 @@ impl<S: KvStore> RecordStore<S> {
     pub const fn backend(&self) -> &S {
         &self.store
     }
+}
+
+impl<S: KvReadStore> RecordStore<S> {
+    /// Open a read-only view.
+    ///
+    /// Available for any backend that can be read, including a replica that
+    /// cannot be written. The security checks are the same ones the writer
+    /// applies, because both go through the same read layer.
+    pub async fn snapshot(&self) -> Result<RecordSnapshot<'_>> {
+        Ok(RecordSnapshot {
+            snapshot: self.store.snapshot().await?,
+            catalog: &self.catalog,
+            security: &self.security,
+        })
+    }
+
+    /// The highest sequence number this backend's reads are guaranteed to
+    /// include, when it tracks one. See [`KvReadStore::visible_sequence`].
+    pub fn visible_sequence(&self) -> Option<u64> {
+        self.store.visible_sequence()
+    }
+}
+
+impl<S: KvStore> RecordStore<S> {
+    /// Run `operation` in a transaction, retrying it if it loses a conflict.
+    ///
+    /// This is the intended way to write. Conflicts are ordinary here — a unique
+    /// index is enforced by two writers colliding on one key — so the retry loop
+    /// belongs in one place rather than at every call site.
+    ///
+    /// `operation` may run more than once and gets a fresh transaction each
+    /// time, so it must do its own reading rather than close over values read
+    /// earlier: a retry that reused the previous snapshot would commit a
+    /// decision made from data that has since changed. It should also avoid
+    /// side effects outside the transaction, for the same reason.
+    ///
+    /// ```no_run
+    /// # use slate_kernel::{KvStore, RecordStore, Result, SecurityContext};
+    /// # use slate_schema::{Row, TableDef};
+    /// # async fn example<S: KvStore>(
+    /// #     store: &RecordStore<S>, ctx: &SecurityContext, table: &TableDef, row: &Row,
+    /// # ) -> Result<()> {
+    /// store
+    ///     .transact(async |txn| txn.insert(ctx, table, row).await)
+    ///     .await
+    /// # }
+    /// ```
+    pub async fn transact<F, T>(&self, operation: F) -> Result<T>
+    where
+        // `AsyncFn` rather than a boxed-future bound: the body borrows the
+        // transaction it is handed *and* the caller's locals, and a
+        // `for<'t> Fn(&'t _) -> BoxFuture<'t, _>` bound forces those locals to
+        // be `'static`, which makes the helper unusable for the case it exists
+        // to serve.
+        F: AsyncFn(&RecordTransaction<'_>) -> Result<T>,
+    {
+        self.transact_tracked(operation)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    /// [`RecordStore::transact`], also returning the commit's read token.
+    ///
+    /// Use this when the caller will read its own write back from a replica;
+    /// the token is what a replica checks before serving that read.
+    pub async fn transact_tracked<F, T>(&self, operation: F) -> Result<(T, Option<ReadToken>)>
+    where
+        F: AsyncFn(&RecordTransaction<'_>) -> Result<T>,
+    {
+        with_retries(self.retry, |_attempt| async {
+            let txn = self.begin().await?;
+            match operation(&txn).await {
+                Ok(value) => {
+                    let token = txn.commit().await?;
+                    Ok((value, token))
+                }
+                Err(error) => {
+                    txn.rollback();
+                    Err(error)
+                }
+            }
+        })
+        .await
+    }
 
     /// Begin a record-level transaction.
+    ///
+    /// Prefer [`RecordStore::transact`], which handles the conflict retry that
+    /// a correct writer needs anyway.
     pub async fn begin(&self) -> Result<RecordTransaction<'_>> {
         Ok(RecordTransaction {
             txn: self.store.begin().await?,
@@ -98,6 +201,19 @@ impl<'a> RecordTransaction<'a> {
         self.txn.as_ref()
     }
 
+    /// The read half of this transaction, sharing its snapshot.
+    fn reads(&self) -> SecuredReads<'_> {
+        SecuredReads {
+            snapshot: self.snapshot(),
+            security: self.security,
+        }
+    }
+
+    /// This transaction viewed as a plain snapshot.
+    fn snapshot(&self) -> &(dyn KvSnapshot + 'a) {
+        self.txn.as_ref()
+    }
+
     /// Read one row by primary key.
     ///
     /// A row the caller's policy hides reads as absent, so this cannot be used
@@ -108,29 +224,32 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         primary_key: &[Value],
     ) -> Result<Option<Row>> {
-        self.security.authorize(context, table, Action::Read)?;
-        let filter = self.security.row_filter(context, table, Action::Read)?;
-        Ok(self
-            .read_row_unchecked(table, primary_key)
-            .await?
-            .filter(|row| filter.admits(row)))
+        self.reads().get(context, table, primary_key).await
     }
 
-    /// Read a row with no authorisation or policy applied.
+    /// Plan and run a query, with the caller's security filter folded in.
     ///
-    /// Internal: the executor uses it to follow an index entry it has already
-    /// earned the right to read, and the write paths use it to see the row they
-    /// are about to replace. Every public entry point applies the policy.
-    pub(crate) async fn read_row_unchecked(
+    /// The policy is conjoined onto `filter` *before* planning, so it can narrow
+    /// the scan as well as filter it, and it is re-evaluated on every candidate
+    /// row regardless.
+    pub async fn query<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        filter: Expr,
+        order: ScanOrder,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads().query(context, table, filter, order).await
+    }
+
+    /// Read a row with no authorisation or policy applied, for the write paths
+    /// that need to see the row they are about to replace.
+    async fn read_row_unchecked(
         &self,
         table: &TableDef,
         primary_key: &[Value],
     ) -> Result<Option<Row>> {
-        let key = keys::row_key(table, primary_key);
-        let Some(body) = self.txn.get(&key).await? else {
-            return Ok(None);
-        };
-        Ok(Some(decode_row(table, primary_key, &body)?))
+        read::read_row_unchecked(self.snapshot(), table, primary_key).await
     }
 
     /// Insert a row, failing if its primary key is already taken.
@@ -282,23 +401,6 @@ impl<'a> RecordTransaction<'a> {
         }
     }
 
-    /// Plan and run a query, with the caller's security filter folded in.
-    ///
-    /// This is the only way to read more than one row. The policy is conjoined
-    /// onto `filter` *before* planning, so it can narrow the scan as well as
-    /// filter it, and it is re-evaluated on every candidate row regardless.
-    pub async fn query<'q>(
-        &'q self,
-        context: &SecurityContext,
-        table: &'q TableDef,
-        filter: Expr,
-        order: ScanOrder,
-    ) -> Result<QueryCursor<'q>> {
-        self.security.authorize(context, table, Action::Read)?;
-        let secured = filter.and(self.security.row_filter(context, table, Action::Read)?);
-        QueryCursor::open(self, table, plan(table, &secured, order)).await
-    }
-
     /// Write a row and reconcile its index entries against `previous`.
     async fn write_row(&self, table: &TableDef, row: &Row, previous: Option<Row>) -> Result<()> {
         let primary_key = row.primary_key_values(table);
@@ -371,42 +473,13 @@ impl<'a> RecordTransaction<'a> {
         )
     }
 
-    /// Scan rows of `table` over `range`, with no policy applied.
-    ///
-    /// Internal: the executor calls this with bounds the planner derived from an
-    /// already-secured predicate. Callers go through
-    /// [`RecordTransaction::query`].
-    pub(crate) async fn scan_rows(
-        &self,
-        table: &'a TableDef,
-        range: KeyRange,
-        order: ScanOrder,
-    ) -> Result<RowCursor<'_>> {
-        Ok(RowCursor {
-            inner: self.txn.scan(range, order).await?,
-            table,
-        })
-    }
-
-    /// Scan `index` over `range`, with no policy applied. Internal, as with
-    /// [`RecordTransaction::scan_rows`].
-    pub(crate) async fn scan_index(
-        &self,
-        table: &'a TableDef,
-        index: &'a IndexDef,
-        range: KeyRange,
-        order: ScanOrder,
-    ) -> Result<IndexCursor<'_>> {
-        Ok(IndexCursor {
-            inner: self.txn.scan(range, order).await?,
-            table,
-            index,
-        })
-    }
-
     /// Commit every buffered write atomically.
-    pub async fn commit(self) -> Result<()> {
-        self.txn.commit().await
+    ///
+    /// Returns the sequence the writes landed at, or `None` if there were none.
+    /// Pass it to a later read as [`Freshness::AtLeast`] to read your own
+    /// writes back from a replica.
+    pub async fn commit(self) -> Result<Option<ReadToken>> {
+        Ok(self.txn.commit().await?.map(ReadToken::new))
     }
 
     /// Discard every buffered write.
@@ -415,72 +488,72 @@ impl<'a> RecordTransaction<'a> {
     }
 }
 
-/// A cursor over decoded rows.
-pub struct RowCursor<'a> {
-    inner: Box<dyn KvIterator + Send + 'a>,
-    table: &'a TableDef,
+/// A read-only view of a [`RecordStore`].
+///
+/// This is what a read replica serves. It has no write methods at all rather
+/// than write methods that fail, so routing a read to a replica cannot
+/// accidentally become an attempt to write to one.
+pub struct RecordSnapshot<'a> {
+    snapshot: Box<dyn KvSnapshot + Send + 'a>,
+    catalog: &'a Catalog,
+    security: &'a SecurityCatalog,
 }
 
-impl core::fmt::Debug for RowCursor<'_> {
+impl core::fmt::Debug for RecordSnapshot<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RowCursor")
-            .field("table", &self.table.name())
-            .finish_non_exhaustive()
+        f.debug_struct("RecordSnapshot").finish_non_exhaustive()
     }
 }
 
-impl RowCursor<'_> {
-    /// The next row, or `None` at the end of the range.
-    pub async fn next(&mut self) -> Result<Option<Row>> {
-        let Some(kv) = self.inner.next().await? else {
-            return Ok(None);
-        };
-        let primary_key = keys::decode_row_key(self.table, &kv.key)?;
-        Ok(Some(decode_row(self.table, &primary_key, &kv.value)?))
-    }
-
-    /// Drain the cursor into a vector.
-    pub async fn collect(mut self) -> Result<Vec<Row>> {
-        let mut out = Vec::new();
-        while let Some(row) = self.next().await? {
-            out.push(row);
+impl<'a> RecordSnapshot<'a> {
+    /// Wrap a raw snapshot as a secured read view.
+    ///
+    /// For a router that picks the underlying store per read; see
+    /// [`crate::pool::ReplicaPool`].
+    #[must_use]
+    pub fn over(
+        snapshot: Box<dyn KvSnapshot + Send + 'a>,
+        catalog: &'a Catalog,
+        security: &'a SecurityCatalog,
+    ) -> Self {
+        Self {
+            snapshot,
+            catalog,
+            security,
         }
-        Ok(out)
-    }
-}
-
-/// A cursor over decoded index entries.
-pub struct IndexCursor<'a> {
-    inner: Box<dyn KvIterator + Send + 'a>,
-    table: &'a TableDef,
-    index: &'a IndexDef,
-}
-
-impl core::fmt::Debug for IndexCursor<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("IndexCursor")
-            .field("index", &self.index.name())
-            .finish_non_exhaustive()
-    }
-}
-
-impl IndexCursor<'_> {
-    /// The next entry as `(indexed values, primary key)`.
-    pub async fn next(&mut self) -> Result<Option<(Vec<Value>, Vec<Value>)>> {
-        let Some(kv) = self.inner.next().await? else {
-            return Ok(None);
-        };
-        Ok(Some(keys::decode_index_entry(
-            self.table, self.index, &kv.key, &kv.value,
-        )?))
     }
 
-    /// Drain the cursor into a vector.
-    pub async fn collect(mut self) -> Result<Vec<(Vec<Value>, Vec<Value>)>> {
-        let mut out = Vec::new();
-        while let Some(entry) = self.next().await? {
-            out.push(entry);
+    /// The catalog this view resolves tables against.
+    #[must_use]
+    pub const fn catalog(&self) -> &'a Catalog {
+        self.catalog
+    }
+
+    fn reads(&self) -> SecuredReads<'_> {
+        SecuredReads {
+            snapshot: self.snapshot.as_ref(),
+            security: self.security,
         }
-        Ok(out)
+    }
+
+    /// Read one row by primary key, subject to the caller's policy.
+    pub async fn get(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        primary_key: &[Value],
+    ) -> Result<Option<Row>> {
+        self.reads().get(context, table, primary_key).await
+    }
+
+    /// Plan and run a query, with the caller's security filter folded in.
+    pub async fn query<'q>(
+        &'q self,
+        context: &SecurityContext,
+        table: &'q TableDef,
+        filter: Expr,
+        order: ScanOrder,
+    ) -> Result<QueryCursor<'q>> {
+        self.reads().query(context, table, filter, order).await
     }
 }
