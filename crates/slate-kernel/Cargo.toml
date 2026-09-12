@@ -13,6 +13,8 @@ slate-tuple.workspace = true
 slate-schema.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
+# For overlapping the point reads an index scan implies.
+futures.workspace = true
 thiserror.workspace = true
 # Only for the retry helper's backoff. The whole stack is async on tokio
 # already, so this adds no new runtime requirement.

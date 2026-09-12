@@ -17,6 +17,7 @@ use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use slate_schema::{IndexDef, Ordinal, Row, TableDef, decode_row};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Restrict a query to the columns an aggregation actually reads.
 ///
@@ -91,14 +92,14 @@ impl<'a> SecuredReads<'a> {
         // Conjoining the policy *before* planning is what lets it narrow the
         // scan; it also means a policy on a column the index lacks correctly
         // prevents an index-only scan rather than being skipped by one.
-        let secured =
-            query
-                .filter
-                .clone()
-                .and(self.security.row_filter(context, table, Action::Read)?);
+        let secured = Arc::new(query.filter.clone().and(self.security.row_filter(
+            context,
+            table,
+            Action::Read,
+        )?));
         Ok(plan_full(
             table,
-            &secured,
+            secured,
             query.order,
             &query.projection,
             &self.statistics.table(table),

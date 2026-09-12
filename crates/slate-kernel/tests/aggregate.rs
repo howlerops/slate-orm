@@ -322,7 +322,7 @@ fn order_by_with_a_limit_prefers_an_ordered_index() {
     let plan_it = |limit: Option<usize>| {
         plan_full(
             &table,
-            &Expr::True,
+            std::sync::Arc::new(Expr::True),
             ScanOrder::Ascending,
             &Projection::All,
             &stats,

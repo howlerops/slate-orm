@@ -23,6 +23,7 @@ use core::ops::Bound;
 use slate_schema::{IndexDef, IndexId, Ordinal, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into, prefix_successor};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use crate::expr::CmpOp;
 
@@ -102,7 +103,10 @@ pub struct Plan {
     pub access: Access,
     /// The predicate to evaluate on every candidate. See the module docs: this
     /// is the authority, the bounds are only a shortcut.
-    pub residual: Expr,
+    ///
+    /// Shared rather than owned: it is the query's own predicate, deep-cloning
+    /// it per plan copied every string literal in the tree for no reason.
+    pub residual: Arc<Expr>,
     /// Direction to walk the access path in.
     pub order: ScanOrder,
     /// Sorting the executor must do, because no access path produced the
@@ -115,12 +119,15 @@ pub struct Plan {
 }
 
 /// What a predicate says about one column.
+///
+/// Borrows its literals from the predicate. Cloning them copied every string in
+/// the query on every plan, to read them once and throw them away.
 #[derive(Debug, Default, Clone)]
-struct ColumnConstraints {
+struct ColumnConstraints<'a> {
     /// A value the column must equal, including `IS NULL` as "equals null".
-    equals: Option<Value>,
+    equals: Option<&'a Value>,
     /// Range comparisons on the column.
-    ranges: Vec<(CmpOp, Value)>,
+    ranges: Vec<(CmpOp, &'a Value)>,
 }
 
 /// A candidate access path and what it is expected to cost.
@@ -260,7 +267,25 @@ pub fn plan_with(
     stats: &TableStats,
     limit: Option<usize>,
 ) -> Plan {
-    plan_full(table, predicate, order, projection, stats, limit, &[])
+    plan_full(
+        table,
+        Arc::new(predicate.clone()),
+        order,
+        projection,
+        stats,
+        limit,
+        &[],
+    )
+}
+
+/// What a query needs to be able to read.
+///
+/// `All` is kept as a case rather than expanded into a set: it is the common
+/// one, and materialising every column's ordinal per query to then ask whether
+/// an index covers them is work with a known answer.
+enum Needed {
+    All,
+    Some(BTreeSet<Ordinal>),
 }
 
 /// Choose an access path, given everything the query asks for.
@@ -272,7 +297,7 @@ pub fn plan_with(
 #[allow(clippy::too_many_arguments)]
 pub fn plan_full(
     table: &TableDef,
-    predicate: &Expr,
+    predicate: Arc<Expr>,
     order: ScanOrder,
     projection: &Projection,
     stats: &TableStats,
@@ -289,7 +314,7 @@ pub fn plan_full(
     if unsatisfiable {
         return Plan {
             access: Access::Nothing,
-            residual: predicate.clone(),
+            residual: predicate,
             order,
             sort: None,
             estimated_rows: 0.0,
@@ -299,7 +324,7 @@ pub fn plan_full(
 
     let constraints = collect_constraints(&conjuncts);
 
-    let total_selectivity = stats.predicate_selectivity(predicate);
+    let total_selectivity = stats.predicate_selectivity(&predicate);
 
     // Columns the bounds pin to a single value are already constant across the
     // result, so ordering by them is free.
@@ -327,15 +352,26 @@ pub fn plan_full(
 
     // What the query needs to see: the projected columns plus whatever the
     // predicate reads, since the predicate still has to be evaluated.
-    let mut needed: BTreeSet<Ordinal> = predicate.columns();
-    match projection.columns() {
-        None => needed.extend((0..table.columns().len()).map(Ordinal)),
-        Some(columns) => needed.extend(columns.iter().copied()),
-    }
+    let needed = match projection.columns() {
+        None => Needed::All,
+        Some(columns) => {
+            let mut set = predicate.columns();
+            set.extend(columns.iter().copied());
+            Needed::Some(set)
+        }
+    };
 
-    consider(match_primary_key(table, &constraints, stats));
+    let ordered = !sort.is_empty();
+    consider(match_primary_key(table, &constraints, stats, ordered));
     for index in table.indexes() {
-        consider(match_index(table, index, &constraints, &needed, stats));
+        consider(match_index(
+            table,
+            index,
+            &constraints,
+            &needed,
+            stats,
+            ordered,
+        ));
     }
 
     let (access, must_sort, estimated_rows, estimated_cost) = best.map_or_else(
@@ -354,7 +390,7 @@ pub fn plan_full(
 
     Plan {
         access,
-        residual: predicate.clone(),
+        residual: predicate,
         order,
         sort: must_sort.then(|| sort.to_vec()),
         estimated_rows,
@@ -362,9 +398,9 @@ pub fn plan_full(
     }
 }
 
-fn collect_constraints(conjuncts: &[&Expr]) -> Vec<(Ordinal, ColumnConstraints)> {
-    let mut out: Vec<(Ordinal, ColumnConstraints)> = Vec::new();
-    let entry = |ordinal: Ordinal, out: &mut Vec<(Ordinal, ColumnConstraints)>| -> usize {
+fn collect_constraints<'a>(conjuncts: &[&'a Expr]) -> Vec<(Ordinal, ColumnConstraints<'a>)> {
+    let mut out: Vec<(Ordinal, ColumnConstraints<'a>)> = Vec::new();
+    let entry = |ordinal: Ordinal, out: &mut Vec<(Ordinal, ColumnConstraints<'a>)>| -> usize {
         match out.iter().position(|(o, _)| *o == ordinal) {
             Some(i) => i,
             None => {
@@ -380,9 +416,9 @@ fn collect_constraints(conjuncts: &[&Expr]) -> Vec<(Ordinal, ColumnConstraints)>
                 let i = entry(*column, &mut out);
                 if let Some((_, c)) = out.get_mut(i) {
                     match op {
-                        CmpOp::Eq => c.equals = Some(value.clone()),
+                        CmpOp::Eq => c.equals = Some(value),
                         CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-                            c.ranges.push((*op, value.clone()));
+                            c.ranges.push((*op, value));
                         }
                         // `<>` selects everything but one point, which is not a
                         // range; it stays a residual filter.
@@ -398,7 +434,7 @@ fn collect_constraints(conjuncts: &[&Expr]) -> Vec<(Ordinal, ColumnConstraints)>
             } => {
                 let i = entry(*column, &mut out);
                 if let Some((_, c)) = out.get_mut(i) {
-                    c.equals = Some(Value::Null);
+                    c.equals = Some(&Value::Null);
                 }
             }
             _ => {}
@@ -407,10 +443,10 @@ fn collect_constraints(conjuncts: &[&Expr]) -> Vec<(Ordinal, ColumnConstraints)>
     out
 }
 
-fn constraints_for(
-    constraints: &[(Ordinal, ColumnConstraints)],
+fn constraints_for<'c, 'a>(
+    constraints: &'c [(Ordinal, ColumnConstraints<'a>)],
     ordinal: Ordinal,
-) -> Option<&ColumnConstraints> {
+) -> Option<&'c ColumnConstraints<'a>> {
     constraints
         .iter()
         .find(|(o, _)| *o == ordinal)
@@ -425,7 +461,7 @@ fn constraints_for(
 fn match_key(
     base: Vec<u8>,
     key_columns: &[(Ordinal, Direction)],
-    constraints: &[(Ordinal, ColumnConstraints)],
+    constraints: &[(Ordinal, ColumnConstraints<'_>)],
     stats: &TableStats,
 ) -> (KeyRange, f64) {
     let mut prefix = base;
@@ -433,8 +469,7 @@ fn match_key(
     let mut selectivity = 1.0f64;
 
     for (ordinal, direction) in key_columns {
-        let Some(value) = constraints_for(constraints, *ordinal).and_then(|c| c.equals.clone())
-        else {
+        let Some(value) = constraints_for(constraints, *ordinal).and_then(|c| c.equals) else {
             break;
         };
         selectivity *= if value.is_null() {
@@ -442,7 +477,7 @@ fn match_key(
         } else {
             stats.equality_selectivity(*ordinal)
         };
-        encode_value_into(&mut prefix, &value, *direction);
+        encode_value_into(&mut prefix, value, *direction);
         equality_columns += 1;
     }
 
@@ -511,8 +546,9 @@ fn empty_range(at: &[u8]) -> KeyRange {
 
 fn match_primary_key(
     table: &TableDef,
-    constraints: &[(Ordinal, ColumnConstraints)],
+    constraints: &[(Ordinal, ColumnConstraints<'_>)],
     stats: &TableStats,
+    ordered: bool,
 ) -> Candidate {
     let key_columns: Vec<(Ordinal, Direction)> = table
         .primary_key()
@@ -524,7 +560,7 @@ fn match_primary_key(
     // rather than opening a scan over a range that holds exactly one key.
     let full_key: Option<Vec<Value>> = key_columns
         .iter()
-        .map(|(ordinal, _)| constraints_for(constraints, *ordinal).and_then(|c| c.equals.clone()))
+        .map(|(ordinal, _)| constraints_for(constraints, *ordinal).and_then(|c| c.equals.cloned()))
         .collect();
     if let Some(key) = full_key
         && !key.is_empty()
@@ -542,7 +578,7 @@ fn match_primary_key(
     Candidate {
         access: Access::TableScan { range },
         bound_selectivity,
-        natural_order: key_columns,
+        natural_order: if ordered { key_columns } else { Vec::new() },
     }
 }
 
@@ -550,22 +586,26 @@ fn match_primary_key(
 ///
 /// An index entry carries its own columns and the primary key, so those are
 /// what it can answer from.
-fn covers(table: &TableDef, index: &IndexDef, needed: &BTreeSet<Ordinal>) -> bool {
-    let available: BTreeSet<Ordinal> = index
-        .columns()
-        .iter()
-        .map(|c| c.ordinal)
-        .chain(table.primary_key().iter().copied())
-        .collect();
-    needed.is_subset(&available)
+fn covers(table: &TableDef, index: &IndexDef, needed: &Needed) -> bool {
+    // Scanning two short slices beats building a set per index per query; both
+    // are a handful of entries and this runs on every plan.
+    let holds = |ordinal: Ordinal| {
+        index.columns().iter().any(|c| c.ordinal == ordinal)
+            || table.primary_key().contains(&ordinal)
+    };
+    match needed {
+        Needed::All => (0..table.columns().len()).map(Ordinal).all(holds),
+        Needed::Some(columns) => columns.iter().copied().all(holds),
+    }
 }
 
 fn match_index(
     table: &TableDef,
     index: &IndexDef,
-    constraints: &[(Ordinal, ColumnConstraints)],
-    needed: &BTreeSet<Ordinal>,
+    constraints: &[(Ordinal, ColumnConstraints<'_>)],
+    needed: &Needed,
     stats: &TableStats,
+    ordered: bool,
 ) -> Candidate {
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.
@@ -580,9 +620,15 @@ fn match_index(
 
     // Index entries end with the primary key, so an index scan is ordered by
     // its own columns and then by the key — which is what makes it a total
-    // order rather than a partial one.
-    let mut natural_order = key_columns.clone();
-    natural_order.extend(table.primary_key().iter().map(|o| (*o, Direction::Asc)));
+    // order rather than a partial one. Only worth computing if anything asked
+    // for an order.
+    let natural_order = if ordered {
+        let mut order = key_columns.clone();
+        order.extend(table.primary_key().iter().map(|o| (*o, Direction::Asc)));
+        order
+    } else {
+        Vec::new()
+    };
 
     Candidate {
         access: Access::IndexScan {

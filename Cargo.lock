@@ -2465,6 +2465,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "criterion",
+ "futures",
  "slate-schema",
  "slate-tuple",
  "thiserror 2.0.20",

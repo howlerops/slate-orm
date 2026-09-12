@@ -35,7 +35,7 @@
 
 use crate::error::{KernelError, Result};
 use slate_schema::{IndexDef, TableDef};
-use slate_tuple::{Direction, Value, encode, encode_value_into, encode_with, prefix_successor};
+use slate_tuple::{Direction, Value, encode, encode_value_into, prefix_successor};
 
 /// Keyspace discriminator for row entries.
 const ROW_SPACE: u8 = 0x01;
@@ -45,11 +45,30 @@ const INDEX_SPACE: u8 = 0x02;
 /// Length of a `<space byte><id : u32 BE>` header.
 const HEADER_LEN: usize = 1 + 4;
 
+/// Rough size of one encoded value, for sizing a key buffer up front.
+///
+/// Keys are built on every read and every write, and a key that outgrows its
+/// buffer pays a reallocation and a copy. Over-reserving a few bytes is the
+/// cheaper mistake.
+const VALUE_SIZE_GUESS: usize = 12;
+
 fn header(space: u8, id: u32) -> Vec<u8> {
-    let mut out = Vec::with_capacity(HEADER_LEN);
+    header_sized(space, id, 0)
+}
+
+/// A header in a buffer with room for `values` more encoded values.
+fn header_sized(space: u8, id: u32, values: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_LEN + values * VALUE_SIZE_GUESS);
     out.push(space);
     out.extend_from_slice(&id.to_be_bytes());
     out
+}
+
+/// Append `values` to `out`, all ascending.
+fn append(out: &mut Vec<u8>, values: &[Value]) {
+    for value in values {
+        encode_value_into(out, value, Direction::Asc);
+    }
 }
 
 /// The prefix covering every row of `table`.
@@ -71,10 +90,14 @@ pub fn table_tenant_prefix(table: &TableDef, tenant: &Value) -> Option<Vec<u8>> 
 }
 
 /// The key of one row.
+///
+/// Built into a single buffer: composing it from a prefix and a separately
+/// encoded tuple allocated twice and copied once, on every read and every
+/// write.
 #[must_use]
 pub fn row_key(table: &TableDef, primary_key: &[Value]) -> Vec<u8> {
-    let mut out = table_prefix(table);
-    out.extend_from_slice(&encode(primary_key));
+    let mut out = header_sized(ROW_SPACE, table.id().0, primary_key.len());
+    append(&mut out, primary_key);
     out
 }
 
@@ -131,8 +154,17 @@ pub fn index_entry(
     primary_key: &[Value],
 ) -> IndexEntry {
     let tenant = tenant_value(table, primary_key);
-    let mut key = index_prefix(table, index, tenant.as_ref());
-    key.extend_from_slice(&encode_with(index_values, &index.directions()));
+    let mut key = header_sized(
+        INDEX_SPACE,
+        index.id().0,
+        index_values.len() + primary_key.len() + 1,
+    );
+    if let Some(tenant) = &tenant {
+        encode_value_into(&mut key, tenant, Direction::Asc);
+    }
+    for (value, column) in index_values.iter().zip(index.columns()) {
+        encode_value_into(&mut key, value, column.direction);
+    }
 
     // A unique index only collides on duplicates if the primary key is out of
     // the key. Nulls never collide, so a null in the indexed values puts it
@@ -145,7 +177,7 @@ pub fn index_entry(
             enforces_uniqueness,
         }
     } else {
-        key.extend_from_slice(&encode(primary_key));
+        append(&mut key, primary_key);
         IndexEntry {
             key,
             value: Vec::new(),

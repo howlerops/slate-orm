@@ -12,17 +12,26 @@ use crate::plan::{Access, Plan};
 use crate::query::{NullsOrder, SortKey};
 use crate::read::{self, IndexCursor, RowCursor};
 use crate::store::KvSnapshot;
+use futures::future::BoxFuture;
+use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{IndexDef, Row, TableDef};
 use slate_tuple::Direction;
+use std::sync::Arc;
 
 /// Where a cursor's candidate rows come from.
 enum Source<'a> {
     /// Rows read straight out of the table's key range.
     Rows(RowCursor<'a>),
     /// Primary keys read from an index, each fetched from the table.
+    ///
+    /// The fetches are overlapped rather than done one at a time: each is a
+    /// round trip, and a hundred of them in sequence is a hundred round trips
+    /// of waiting. See [`DEFAULT_PREFETCH`].
     Index {
         cursor: IndexCursor<'a>,
         index: &'a IndexDef,
+        inflight: FuturesOrdered<BoxFuture<'a, Result<Option<Row>>>>,
+        exhausted: bool,
     },
     /// Rows assembled from index entries, with no table read at all.
     CoveringIndex {
@@ -37,12 +46,26 @@ enum Source<'a> {
     Empty,
 }
 
+/// How many row reads an index scan keeps in flight at once.
+///
+/// Each read is a round trip, so issuing them one at a time makes a scan's
+/// latency the sum of its lookups. Overlapping them makes it roughly the
+/// slowest of each batch instead.
+///
+/// The number is a compromise. Too low and the waiting dominates; too high and
+/// a query with a small limit fetches rows it will discard, and a burst of
+/// concurrent requests each opens a pile of connections. Sixteen keeps the
+/// waste bounded — at most fifteen wasted reads per cursor — while removing
+/// most of the serialisation.
+pub const DEFAULT_PREFETCH: usize = 16;
+
 /// A cursor over the rows a plan admits.
 pub struct QueryCursor<'a> {
     snapshot: &'a dyn KvSnapshot,
     table: &'a TableDef,
     source: Source<'a>,
-    residual: Expr,
+    residual: Arc<Expr>,
+    prefetch: usize,
     limit: Option<usize>,
     offset: usize,
     skipped: usize,
@@ -148,7 +171,12 @@ impl<'a> QueryCursor<'a> {
                 if *covering {
                     Source::CoveringIndex { cursor, index }
                 } else {
-                    Source::Index { cursor, index }
+                    Source::Index {
+                        cursor,
+                        index,
+                        inflight: FuturesOrdered::new(),
+                        exhausted: false,
+                    }
                 }
             }
         };
@@ -157,6 +185,7 @@ impl<'a> QueryCursor<'a> {
             table,
             source,
             residual: plan.residual,
+            prefetch: DEFAULT_PREFETCH,
             limit: None,
             offset: 0,
             skipped: 0,
@@ -174,7 +203,7 @@ impl<'a> QueryCursor<'a> {
             rows.sort_by(|a, b| compare_rows(a, b, &keys));
             cursor.source = Source::Sorted(rows.into_iter());
             // The residual has already been applied to every row.
-            cursor.residual = Expr::True;
+            cursor.residual = Arc::new(Expr::True);
         }
         Ok(cursor)
     }
@@ -183,6 +212,16 @@ impl<'a> QueryCursor<'a> {
     #[must_use]
     pub const fn limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
+        self
+    }
+
+    /// Change how many row reads are kept in flight. See [`DEFAULT_PREFETCH`].
+    ///
+    /// One disables overlapping entirely, which is what a caller wants when the
+    /// cost of a wasted read is higher than the latency it saves.
+    #[must_use]
+    pub const fn prefetch(mut self, prefetch: usize) -> Self {
+        self.prefetch = if prefetch == 0 { 1 } else { prefetch };
         self
     }
 
@@ -242,26 +281,49 @@ impl<'a> QueryCursor<'a> {
                     &primary_key,
                 )))
             }
-            Source::Index { cursor, index } => {
-                while let Some((_, primary_key)) = cursor.next().await? {
-                    if let Some(row) =
-                        read::read_row_unchecked(self.snapshot, self.table, &primary_key).await?
-                    {
-                        return Ok(Some(row));
+            Source::Index {
+                cursor,
+                index,
+                inflight,
+                exhausted,
+            } => {
+                loop {
+                    // Keep the pipeline full. Reading the next key from the
+                    // index is a scan step and cheap; the row read it implies is
+                    // a round trip, so the reads are issued together and
+                    // collected in order.
+                    while !*exhausted && inflight.len() < self.prefetch {
+                        match cursor.next().await? {
+                            Some((_, primary_key)) => {
+                                let snapshot = self.snapshot;
+                                let table = self.table;
+                                inflight.push_back(Box::pin(async move {
+                                    read::read_row_unchecked(snapshot, table, &primary_key).await
+                                }));
+                            }
+                            None => *exhausted = true,
+                        }
                     }
-                    // Index entries and rows are written in one transaction, so
-                    // on a point-in-time view an entry without a row means the
-                    // two have diverged on disk. On a replica that follows the
-                    // manifest it means only that the view advanced between the
-                    // two reads, and skipping is correct.
-                    if self.snapshot.is_point_in_time() {
-                        return Err(KernelError::CorruptIndexEntry {
-                            table: self.table.name().to_owned(),
-                            index: index.name().to_owned(),
-                        });
+
+                    match inflight.next().await {
+                        Some(Ok(Some(row))) => return Ok(Some(row)),
+                        Some(Err(error)) => return Err(error),
+                        // Index entries and rows are written in one
+                        // transaction, so on a point-in-time view an entry
+                        // without a row means the two have diverged on disk. On
+                        // a replica that follows the manifest it means only that
+                        // the view advanced between the two reads.
+                        Some(Ok(None)) => {
+                            if self.snapshot.is_point_in_time() {
+                                return Err(KernelError::CorruptIndexEntry {
+                                    table: self.table.name().to_owned(),
+                                    index: index.name().to_owned(),
+                                });
+                            }
+                        }
+                        None => return Ok(None),
                     }
                 }
-                Ok(None)
             }
         }
     }
