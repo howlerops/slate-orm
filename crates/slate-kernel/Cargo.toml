@@ -1,6 +1,6 @@
 [package]
 name = "slate-kernel"
-description = "Record layer kernel: keyspace, record store, executor, RLS/RBAC"
+description = "Record layer kernel: keyspace, record store, executor and security enforcement"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+slate-tuple.workspace = true
+slate-schema.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
