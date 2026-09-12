@@ -3004,6 +3004,7 @@ dependencies = [
  "bytes",
  "criterion",
  "futures",
+ "proptest",
  "regex",
  "slate-schema",
  "slate-tuple",

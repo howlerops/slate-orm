@@ -207,6 +207,15 @@ impl MemoryTransaction {
     /// a result copies no key bytes at all — the read path is measured through
     /// this function, and it should be measuring the read path.
     fn visible_range(&self, range: &KeyRange) -> Vec<KeyValue> {
+        // `BTreeMap::range` panics when the bounds run backwards, and a range
+        // is caller input by the time it reaches a store. The planner already
+        // turns contradictory bounds into `Access::Nothing`, so this should be
+        // unreachable through it — but a store that panics on a bad range is
+        // one bug away from being a denial of service, and returning nothing
+        // is what an empty range means anyway.
+        if range.is_empty() {
+            return Vec::new();
+        }
         let bounds = (as_bytes(&range.start), as_bytes(&range.end));
         let touched =
             self.with_pending(|pending| pending.range::<[u8], _>(bounds).next().is_some());

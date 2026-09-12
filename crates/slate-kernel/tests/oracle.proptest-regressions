@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d21ca2db79100a8c6b892ba390732a7128acc73e799b4e02d8394b7f5eaac034 # shrinks to query = Query { filter: Like { column: Ordinal(1), pattern: "kind-0%", negated: false, insensitive: false }, order: Ascending, projection: Columns([Ordinal(0)]), sort: [SortKey { column: Ordinal(0), direction: Asc, nulls: First }], limit: None, offset: 0, hint: None, compute: [] }
+cc f49556ea4b46524362dac42b7c7a8cee5bf78d6408e1837be8121e1f42acdcb8 # shrinks to query = Query { filter: And([Like { column: Ordinal(1), pattern: "%1", negated: false, insensitive: false }, Compare { column: Ordinal(0), op: Eq, value: U64(1) }]), order: Ascending, projection: Columns([Ordinal(0)]), sort: [SortKey { column: Ordinal(0), direction: Asc, nulls: First }], limit: None, offset: 0, hint: None, compute: [] }
+cc 43e401af2b36fb08a4e1d1d23b14b430f8dd5ebb98d9eff66090da0e4fa2b449 # shrinks to query = Query { filter: And([Compare { column: Ordinal(0), op: Gt, value: U64(28) }, Compare { column: Ordinal(0), op: Lt, value: U64(0) }, Compare { column: Ordinal(1), op: Eq, value: Str("kind-0") }]), order: Ascending, projection: All, sort: [SortKey { column: Ordinal(0), direction: Asc, nulls: First }], limit: None, offset: 0, hint: None, compute: [] }

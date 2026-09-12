@@ -617,6 +617,18 @@ pub fn plan_hinted(
         |(candidate, must_sort, rows, cost)| (candidate.access, must_sort, rows, cost),
     );
 
+    // Contradictory bounds are an empty range, not a scan of one. `id > 28 AND
+    // id < 0` is legal and selects nothing, and the bounds derived from it run
+    // backwards — which a store is entitled to treat as a programming error
+    // (`BTreeMap::range` panics on it). Saying `Nothing` is both the correct
+    // answer and the cheapest way to reach it.
+    let access = match &access {
+        Access::TableScan { range } | Access::IndexScan { range, .. } if range.is_empty() => {
+            Access::Nothing
+        }
+        _ => access,
+    };
+
     Plan {
         access,
         residual: predicate,

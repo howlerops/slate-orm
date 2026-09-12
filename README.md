@@ -493,6 +493,19 @@ Tests are written around guarantees rather than API surface:
   brute-force filtering returns, across a spread of predicate shapes and both
   scan orders. It was verified to have teeth by breaking `<=` into `<` and
   confirming it caught the lost boundary row.
+- A **planner oracle** generates random queries and requires every access path
+  to agree: the planner's choice, a forced table scan, and each index in turn
+  must return identical rows. An optimiser that changes the answer is not
+  optimising. It found three bugs on its first run — see
+  [`docs/correctness.md`](docs/correctness.md).
+- Row-level security is checked as a **matrix**, once per access path, rather
+  than as a set of scenarios: a policy honoured by the table scan and skipped
+  by the k-NN search is a leak, and the paths that skip it are the ones added
+  last. Every single-table path is one row of that table.
+- A store is closed and reopened to prove rows, index entries, tombstones and
+  tenant isolation all survive a restart — including that a covering scan and
+  a table scan still agree afterwards, which is how an index that came back in
+  a different state from its table would show up.
 - The security suite is written around what a caller *cannot* do: probe for
   hidden rows via error codes, reach another tenant by asking explicitly, escape
   a policy by updating out of it, or leak null-valued rows through a negated
@@ -552,6 +565,10 @@ Built and tested:
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
+- [x] A planner oracle, an access-path security matrix and restart/durability
+      tests ([`docs/correctness.md`](docs/correctness.md)), which between them
+      found a covering scan and a point get ignoring the projection, and a
+      panic on contradictory bounds
 
 Not built:
 
@@ -560,8 +577,6 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Regular expressions, the one thing ClickBench still asks for that is not
-      here — a dependency rather than a feature of this layer
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent
 - [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x

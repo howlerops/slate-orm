@@ -25,6 +25,9 @@ tokio = { workspace = true, features = ["time"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 uuid.workspace = true
 criterion.workspace = true
+# For the planner oracle: the interesting queries are the ones nobody would
+# think to write down.
+proptest.workspace = true
 
 [[bench]]
 name = "queries"

@@ -263,18 +263,33 @@ fn compare_rows(left: &Row, right: &Row, keys: &[SortKey]) -> core::cmp::Orderin
 ///
 /// Sound only when the planner has established that the query reads nothing
 /// outside the index and the primary key; see `Access::IndexScan::covering`.
+///
+/// `wanted` is the query's output columns, and filling in anything else would
+/// be a bug rather than a bonus: an index entry often carries columns the
+/// caller did not ask for, and handing those back makes the contents of a row
+/// depend on which access path the planner chose. Found by the planner oracle,
+/// which caught `by_kind_size` returning `size` on a query that projected only
+/// the primary key, where a table scan returned null for it.
 fn row_from_index_entry(
     table: &TableDef,
     index: &IndexDef,
     indexed: &[slate_tuple::Value],
     primary_key: &[slate_tuple::Value],
+    wanted: &ColumnSet,
 ) -> Row {
-    let mut values = vec![slate_tuple::Value::Null; table.columns().len()];
+    let mut values: Vec<slate_tuple::Value> = core::iter::repeat_with(|| slate_tuple::Value::Null)
+        .take(table.columns().len())
+        .collect();
     for (column, value) in index.columns().iter().zip(indexed) {
+        if !wanted.contains(column.ordinal) {
+            continue;
+        }
         if let Some(slot) = values.get_mut(column.ordinal.0) {
             *slot = value.clone();
         }
     }
+    // The primary key arrives decoded whatever the projection says, exactly as
+    // it does on every other path.
     for (ordinal, value) in table.primary_key().iter().zip(primary_key) {
         if let Some(slot) = values.get_mut(ordinal.0) {
             *slot = value.clone();
@@ -299,9 +314,9 @@ impl<'a> QueryCursor<'a> {
     ) -> Result<Self> {
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
-            Access::PointGet { key } => {
-                Source::Point(read::read_row_unchecked(snapshot, table, key).await?)
-            }
+            Access::PointGet { key } => Source::Point(
+                read::read_row_projected(snapshot, table, key, &plan.output_columns).await?,
+            ),
             Access::PointGets { keys } => Source::Points {
                 keys: keys.clone().into_iter(),
                 inflight: FuturesOrdered::new(),
@@ -634,6 +649,7 @@ impl<'a> QueryCursor<'a> {
                     index,
                     &indexed,
                     &primary_key,
+                    &self.output_columns,
                 )))
             }
             Source::Index { .. } | Source::Points { .. } => {

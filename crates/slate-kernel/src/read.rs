@@ -82,6 +82,30 @@ pub(crate) async fn read_row_unchecked(
     Ok(Some(decode_row(table, primary_key, &body)?))
 }
 
+/// [`read_row_unchecked`], decoding only the columns the query asked for.
+///
+/// A point get used to decode every column regardless of the projection, which
+/// made a row's contents depend on whether the planner reached it by key or by
+/// index. The planner oracle caught it: the same query returned five populated
+/// columns through a point get and two through an index scan.
+pub(crate) async fn read_row_projected(
+    snapshot: &dyn KvSnapshot,
+    table: &TableDef,
+    primary_key: &[Value],
+    wanted: &slate_schema::ColumnSet,
+) -> Result<Option<Row>> {
+    let key = keys::row_key(table, primary_key);
+    let Some(body) = snapshot.get(&key).await? else {
+        return Ok(None);
+    };
+    Ok(Some(slate_schema::decode_row_columns(
+        table,
+        primary_key,
+        &body,
+        Some(wanted),
+    )?))
+}
+
 /// The read half of the record layer, bound to one snapshot.
 ///
 /// `Copy` so a caller can hand it out by value and still return cursors that
