@@ -9,6 +9,17 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+slate-derive.workspace = true
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-tuple.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

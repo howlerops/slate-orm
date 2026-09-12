@@ -2255,6 +2255,17 @@ dependencies = [
 [[package]]
 name = "slate-orm"
 version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "slate-derive",
+ "slate-kernel",
+ "slate-schema",
+ "slate-tuple",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "slate-schema"
