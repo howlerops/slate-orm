@@ -114,12 +114,27 @@ question with a known answer.
 Still above where it started. That is the right trade: the model it pays for is
 what turned a 1.1-second query into 23 ms.
 
-### Every insert still does a read
+### Every insert did a read, and waited for it
 
-Unchanged. The duplicate-key check costs a round trip per row, so a 100-row load
-spends 100 of them. A bulk path that skips the check — and lets the write-write
-conflict catch a genuine duplicate instead — is the obvious next thing, and is
-not done.
+The duplicate-key check costs a round trip per row. A hundred-row load spent a
+hundred of them, one after another, before writing anything: 222 ms to insert
+100 rows.
+
+The obvious fix was to drop the check and let the write-write conflict catch a
+genuine duplicate. That was not needed. The reads are not the problem — waiting
+for each one is. `insert_many` and `upsert_many` issue them concurrently
+(`BULK_READ_CONCURRENCY = 32`), batch the unique-index probes the same way, and
+then write. The same number of reads, in a fraction of the wall time:
+
+| | before | after |
+|---|---:|---:|
+| insert 100 rows | 222 ms, 100 reads | 13 ms, 100 reads |
+| insert 1000 rows | — | 82 ms, 1000 reads |
+
+Duplicate detection is not weakened by this: a caller still gets
+`DuplicatePrimaryKey` or `UniqueViolation` naming the index, not a conflict
+error at commit. Validation and intra-batch collision detection run first, so a
+batch that cannot be written spends no I/O at all.
 
 ## Current numbers
 
@@ -132,6 +147,13 @@ not done.
 | indexed range | 500 | 0 | 24 ms | Table Scan |
 | covered equality, keys only | 100 | 0 | 2.3 ms | Index Only Scan |
 | covered count | 500 | 0 | 4.8 ms | Index Only Scan |
+
+| write | rows | point reads | wall |
+|---|---:|---:|---:|
+| insert 1 row | 1 | 1 | 5.4 ms |
+| insert 100 rows, one at a time | 100 | 100 | 223 ms |
+| insert 100 rows, batched | 100 | 100 | 13 ms |
+| insert 1000 rows, batched | 1000 | 1000 | 82 ms |
 
 | operation | before | now |
 |---|---:|---:|

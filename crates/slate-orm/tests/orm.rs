@@ -425,3 +425,60 @@ async fn typed_queries_always_read_whole_rows() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0], alice(1, 1), "a projected read lost fields");
 }
+
+/// Bulk writes go through the typed layer with the same detection a
+/// row-at-a-time insert gets — and are still bounded by policy.
+#[tokio::test]
+async fn typed_bulk_writes_keep_their_checks() {
+    let store = store();
+    let ctx = context(1);
+
+    let batch: Vec<User> = (1..=20u64).map(|id| alice(1, id)).collect();
+    let txn = store.begin().await.unwrap();
+    txn.insert_records(&ctx, &batch).await.unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let found: Vec<User> = txn.query_records(&ctx, &Query::all()).await.unwrap();
+    assert_eq!(found.len(), 20);
+    assert_eq!(
+        txn.get_record::<User>(&ctx, &alice(1, 7).primary_key())
+            .await
+            .unwrap(),
+        Some(alice(1, 7))
+    );
+
+    // A key already stored is still a duplicate, not a silent overwrite.
+    let err = txn.insert_records(&ctx, &[alice(1, 3)]).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            slate_orm::OrmError::Kernel(slate_orm::KernelError::DuplicatePrimaryKey { .. })
+        ),
+        "got {err:?}"
+    );
+
+    // Upsert replaces instead.
+    let mut renamed = alice(1, 3);
+    renamed.role = "admin".to_owned();
+    txn.upsert_records(&ctx, &[renamed.clone()]).await.unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    assert_eq!(
+        txn.get_record::<User>(&ctx, &renamed.primary_key())
+            .await
+            .unwrap(),
+        Some(renamed)
+    );
+
+    // Another tenant's rows cannot be written through this context.
+    let err = txn.insert_records(&ctx, &[alice(2, 1)]).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            slate_orm::OrmError::Kernel(slate_orm::KernelError::RowCheckFailed { .. })
+        ),
+        "got {err:?}"
+    );
+}

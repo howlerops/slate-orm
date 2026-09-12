@@ -148,10 +148,12 @@ skip SSTs that cannot contain the key. Given that tenant prefixes are already a
 first-class part of the layout, this looks like a good fit and has simply not
 been tried.
 
-### Concurrent unique checks
+### Concurrent unique checks on the single-row path
 
-A write with several unique indexes does one read per index before writing.
-Those are independent and could be issued together. Small, safe, unmeasured.
+`insert_many` overlaps its unique-index reads across the batch, but a single
+`insert` with several unique indexes still does one read per index, serially.
+Those reads are independent and could be issued together. Small, safe,
+unmeasured — and worth less than the batch case, which is done.
 
 ### Dropping redundant residual conjuncts
 
@@ -162,14 +164,6 @@ mandatory security predicate is enforced by evaluation rather than by the
 planner having correctly turned it into a range. Dropping the redundant ones is
 a real optimisation, but it moves security correctness into the planner and so
 needs an argument, not just a benchmark.
-
-### A bulk-write path
-
-Every insert reads first, to tell a duplicate primary key from a new one. A
-hundred-row load therefore spends a hundred round trips before writing anything.
-A bulk path could skip the check and let the write-write conflict catch a
-genuine duplicate — the guarantee does not depend on the read, which exists only
-to produce a better error. This is the largest untouched item the profile shows.
 
 ## Failure modes
 

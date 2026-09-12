@@ -19,6 +19,7 @@ use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::{ColumnStats, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
+use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{Catalog, IndexDef, Ordinal, Row, TableDef, encode_body};
 use slate_tuple::Value;
 use std::collections::HashSet;
@@ -27,6 +28,12 @@ use std::collections::HashSet;
 /// How many distinct values [`RecordTransaction::analyze`] counts per column
 /// before giving up and calling the column unique.
 pub const DISTINCT_TRACKING_LIMIT: usize = 10_000;
+
+/// How many rows of a bulk write are looked up at once.
+///
+/// The same trade as the read path's prefetch: enough to hide the round trips,
+/// not so many that one batch monopolises the connection pool.
+pub const BULK_READ_CONCURRENCY: usize = 32;
 
 /// A typed record store over a key-value backend.
 #[derive(Debug)]
@@ -539,6 +546,195 @@ impl<'a> RecordTransaction<'a> {
         self.write_row(table, row, existing).await
     }
 
+    /// Insert many rows, failing if any primary key is already taken.
+    ///
+    /// The same checks as [`RecordTransaction::insert`], but the reads they
+    /// need are issued together rather than one at a time. A single insert
+    /// costs a round trip to tell a duplicate key from a new one; a thousand
+    /// inserts should not cost a thousand round trips of waiting.
+    ///
+    /// Rows are checked against each other as well as against storage — two
+    /// rows in one batch sharing a primary key is a duplicate too, and would
+    /// otherwise be silently resolved by whichever was written last.
+    pub async fn insert_many(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        rows: &[Row],
+    ) -> Result<()> {
+        self.write_many(context, table, rows, false).await
+    }
+
+    /// Insert or replace many rows.
+    ///
+    /// As [`RecordTransaction::insert_many`], except an existing row is
+    /// replaced rather than refused.
+    pub async fn upsert_many(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        rows: &[Row],
+    ) -> Result<()> {
+        self.write_many(context, table, rows, true).await
+    }
+
+    async fn write_many(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        rows: &[Row],
+        replace: bool,
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        self.security.authorize(context, table, Action::Insert)?;
+        if replace {
+            self.security.authorize(context, table, Action::Update)?;
+        }
+
+        // Validate everything before reading anything: a batch that cannot be
+        // written should not spend round trips discovering that.
+        let mut primary_keys = Vec::with_capacity(rows.len());
+        let mut seen: HashSet<Vec<u8>> = HashSet::with_capacity(rows.len());
+        for row in rows {
+            row.validate(table)?;
+            let primary_key = row.primary_key_values(table);
+            if !seen.insert(keys::row_key(table, &primary_key)) {
+                return Err(KernelError::DuplicatePrimaryKey {
+                    table: table.name().to_owned(),
+                });
+            }
+            primary_keys.push(primary_key);
+        }
+
+        // Two rows in one batch can also collide on a unique index, which no
+        // amount of reading storage would reveal.
+        for index in table.indexes().iter().filter(|i| i.is_unique()) {
+            let mut slots: HashSet<Vec<u8>> = HashSet::with_capacity(rows.len());
+            for (row, primary_key) in rows.iter().zip(&primary_keys) {
+                let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
+                if entry.enforces_uniqueness && !slots.insert(entry.key) {
+                    return Err(KernelError::UniqueViolation {
+                        table: table.name().to_owned(),
+                        index: index.name().to_owned(),
+                    });
+                }
+            }
+        }
+
+        let existing = self.read_rows_concurrently(table, &primary_keys).await?;
+        self.check_unique_slots(table, rows, &primary_keys, &existing)
+            .await?;
+
+        for (index, row) in rows.iter().enumerate() {
+            let previous = existing.get(index).and_then(Clone::clone);
+            if previous.is_some() {
+                if !replace {
+                    return Err(KernelError::DuplicatePrimaryKey {
+                        table: table.name().to_owned(),
+                    });
+                }
+                if let Some(current) = &previous
+                    && !self
+                        .security
+                        .permits_row(context, table, Action::Update, current)?
+                {
+                    return Err(KernelError::RowNotFound {
+                        table: table.name().to_owned(),
+                    });
+                }
+            }
+            let action = if previous.is_some() {
+                Action::Update
+            } else {
+                Action::Insert
+            };
+            self.check_row(context, table, action, row)?;
+            self.write_row_with(table, row, previous, false).await?;
+        }
+        Ok(())
+    }
+
+    /// Check every unique slot a batch would occupy, in one round of reads.
+    ///
+    /// Doing this per row inside the write loop costs a round trip per row per
+    /// unique index, which is the cost the bulk path exists to avoid. As with
+    /// the single-row path, the read is for the error message rather than the
+    /// guarantee: two writers racing for one slot write the same key and the
+    /// store settles it.
+    async fn check_unique_slots(
+        &self,
+        table: &TableDef,
+        rows: &[Row],
+        primary_keys: &[Vec<Value>],
+        existing: &[Option<Row>],
+    ) -> Result<()> {
+        for index in table.indexes().iter().filter(|i| i.is_unique()) {
+            let mut pending: Vec<(Vec<u8>, &[Value])> = Vec::new();
+            for ((row, primary_key), previous) in rows.iter().zip(primary_keys).zip(existing) {
+                let entry = keys::index_entry(table, index, &row.index_values(index), primary_key);
+                if !entry.enforces_uniqueness {
+                    continue;
+                }
+                // An unchanged slot is already this row's, so there is nothing
+                // to check and nothing to read.
+                let unchanged = previous.as_ref().is_some_and(|old| {
+                    keys::index_entry(table, index, &old.index_values(index), primary_key).key
+                        == entry.key
+                });
+                if !unchanged {
+                    pending.push((entry.key, primary_key.as_slice()));
+                }
+            }
+
+            for chunk in pending.chunks(BULK_READ_CONCURRENCY) {
+                let mut inflight = FuturesOrdered::new();
+                for (key, _) in chunk {
+                    inflight.push_back(self.txn.get(key));
+                }
+                let mut position = 0;
+                while let Some(found) = inflight.next().await {
+                    let owner = found?;
+                    if let Some(stored) = owner {
+                        let holder = slate_tuple::decode(&stored, &table.primary_key_types())?;
+                        let expected = chunk.get(position).map(|(_, pk)| *pk).unwrap_or_default();
+                        if holder != expected {
+                            return Err(KernelError::UniqueViolation {
+                                table: table.name().to_owned(),
+                                index: index.name().to_owned(),
+                            });
+                        }
+                    }
+                    position += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Read many rows at once, keeping the results in the order asked for.
+    ///
+    /// Each read is a round trip; issuing them together is the difference
+    /// between a batch costing one wait and costing one per row.
+    async fn read_rows_concurrently(
+        &self,
+        table: &TableDef,
+        primary_keys: &[Vec<Value>],
+    ) -> Result<Vec<Option<Row>>> {
+        let mut out = Vec::with_capacity(primary_keys.len());
+        for chunk in primary_keys.chunks(BULK_READ_CONCURRENCY) {
+            let mut inflight = FuturesOrdered::new();
+            for primary_key in chunk {
+                inflight.push_back(self.read_row_unchecked(table, primary_key));
+            }
+            while let Some(row) = inflight.next().await {
+                out.push(row?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Delete a row and every index entry that pointed at it.
     ///
     /// Returns whether a row was there to delete.
@@ -604,6 +800,18 @@ impl<'a> RecordTransaction<'a> {
 
     /// Write a row and reconcile its index entries against `previous`.
     async fn write_row(&self, table: &TableDef, row: &Row, previous: Option<Row>) -> Result<()> {
+        self.write_row_with(table, row, previous, true).await
+    }
+
+    /// Write a row, optionally trusting that its unique slots have already been
+    /// checked — which a bulk write does, in one batch, before writing anything.
+    async fn write_row_with(
+        &self,
+        table: &TableDef,
+        row: &Row,
+        previous: Option<Row>,
+        verify_unique: bool,
+    ) -> Result<()> {
         let primary_key = row.primary_key_values(table);
 
         for index in table.indexes() {
@@ -623,7 +831,7 @@ impl<'a> RecordTransaction<'a> {
                 continue;
             }
 
-            if new_entry.enforces_uniqueness {
+            if verify_unique && new_entry.enforces_uniqueness {
                 self.check_unique(table, index, &new_entry, &primary_key)
                     .await?;
             }

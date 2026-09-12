@@ -37,7 +37,9 @@ pub use plan::{Access, Plan, Projection, plan, plan_full, plan_projected, plan_w
 pub use pool::{ReplicaPool, RoutingPolicy};
 pub use query::{NullsOrder, Query, SortKey};
 pub use read::{IndexCursor, RowCursor};
-pub use record::{DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction};
+pub use record::{
+    BULK_READ_CONCURRENCY, DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction,
+};
 pub use retry::{RetryPolicy, with_retries};
 pub use security::{
     Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,

@@ -358,6 +358,8 @@ Built and tested:
 - [x] Cost-based planning with statistics, `analyze`, and `EXPLAIN`
 - [x] Projections and index-only scans; pipelined index lookups
 - [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
+- [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
+      unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
 
 Not built:
@@ -368,8 +370,6 @@ Not built:
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
 - [ ] Joins — everything today is single-table
-- [ ] A bulk-write path: every insert still does a read for the duplicate-key
-      check, so a 100-row load spends 100 round trips before writing anything
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)

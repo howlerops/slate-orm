@@ -50,6 +50,27 @@ pub trait Records {
         record: &R,
     ) -> Result<()>;
 
+    /// Insert many records, failing if any primary key is taken.
+    ///
+    /// The duplicate-key and unique-index reads are overlapped rather than
+    /// done one row at a time, so the batch costs a handful of round trips
+    /// instead of one per row. Detection is unchanged: a taken key still
+    /// reports `DuplicatePrimaryKey`, and a collision inside the batch itself
+    /// is caught before anything is written.
+    async fn insert_records<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        records: &[R],
+    ) -> Result<()>;
+
+    /// Insert or replace many records, overlapping the reads as
+    /// [`insert_records`](Records::insert_records) does.
+    async fn upsert_records<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        records: &[R],
+    ) -> Result<()>;
+
     /// Delete by primary key, reporting whether anything was removed.
     async fn delete_record<R: Record>(
         &self,
@@ -152,6 +173,28 @@ impl Records for RecordTransaction<'_> {
         record: &R,
     ) -> Result<()> {
         self.upsert(context, R::table(), &record.to_row())
+            .await
+            .map_err(OrmError::from)
+    }
+
+    async fn insert_records<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        records: &[R],
+    ) -> Result<()> {
+        let rows: Vec<_> = records.iter().map(Record::to_row).collect();
+        self.insert_many(context, R::table(), &rows)
+            .await
+            .map_err(OrmError::from)
+    }
+
+    async fn upsert_records<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        records: &[R],
+    ) -> Result<()> {
+        let rows: Vec<_> = records.iter().map(Record::to_row).collect();
+        self.upsert_many(context, R::table(), &rows)
             .await
             .map_err(OrmError::from)
     }

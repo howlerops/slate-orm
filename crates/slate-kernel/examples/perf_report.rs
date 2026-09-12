@@ -214,7 +214,10 @@ async fn main() {
     println!("\nwrites");
     println!("{:-<118}", "");
     let mut next_id = 1_000_000u64;
-    for (label, batch) in [("insert 1 row", 1u64), ("insert 100 rows", 100)] {
+    for (label, batch) in [
+        ("insert 1 row", 1u64),
+        ("insert 100 rows, one at a time", 100),
+    ] {
         counters.reset();
         let started = Instant::now();
         let txn = store.begin().await.expect("begin");
@@ -228,6 +231,33 @@ async fn main() {
         println!(
             "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}",
             label,
+            batch,
+            counters.gets(),
+            counters.scans(),
+            counters.scan_rows(),
+            started.elapsed()
+        );
+    }
+
+    // The same work, with the reads issued together instead of in turn.
+    for batch in [100u64, 1000] {
+        let rows: Vec<_> = (0..batch)
+            .map(|_| {
+                let r = row(0, next_id);
+                next_id += 1;
+                r
+            })
+            .collect();
+        counters.reset();
+        let started = Instant::now();
+        let txn = store.begin().await.expect("begin");
+        txn.insert_many(&root, &table, &rows)
+            .await
+            .expect("insert_many");
+        txn.commit().await.expect("commit");
+        println!(
+            "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}",
+            format!("insert {batch} rows, batched"),
             batch,
             counters.gets(),
             counters.scans(),
