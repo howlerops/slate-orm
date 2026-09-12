@@ -509,6 +509,15 @@ Tests are written around guarantees rather than API surface:
 - **Untrusted input** — arbitrary bytes into the decoder, and caller-supplied
   `LIKE` patterns and regexes — must return an error rather than panic, hang or
   overflow the stack.
+- The oracle extends to **joins, chains and aggregates**: four join types
+  against three algorithms, a three-table chain against a hand-written triple
+  loop, and grouping against a fold written out over the rows. Each also runs
+  over a **tenant-scoped table with a composite key and mixed-direction
+  indexes**, since the single-column case exercises none of the keyspace code
+  that matters.
+- **Writer handover** is covered on both sides of the takeover, and replicas
+  are read from while the writer commits — a replica may lag, but the state it
+  serves must be one the database was actually in.
 - Row-level security is checked as a **matrix**, once per access path, rather
   than as a set of scenarios: a policy honoured by the table scan and skipped
   by the k-NN search is a leak, and the paths that skip it are the ones added

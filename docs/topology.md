@@ -109,6 +109,19 @@ writer that retried past that would be a split brain looping forever, so
 `WriterFenced` is a distinct error and is not retryable. A head node should
 shut down on it.
 
+**A fenced writer cannot read either**, which is worth knowing before designing
+a handover around it. `begin` returns `WriterFenced` before a transaction
+exists, so reads in flight on the old writer fail alongside its writes — a
+takeover is an interruption, not a graceful drain. That is defensible, since a
+fenced writer's view is arbitrarily stale and it has no way to say how stale.
+The consequence is that anything which must keep serving *through* a handover
+has to be reading from a replica, which makes the read/write split above a
+requirement rather than a preference. `handover.rs` pins this, along with the
+cases either side of a takeover: a transaction opened before it is still
+fenced at commit, fencing survives repeated attempts, the new writer inherits
+the old one's rows *and* its unique index entries, and a chain of handovers
+fences every earlier generation rather than only the last.
+
 What is *not* handled: leadership. SlateDB fences, but it does not elect. If two
 processes both try to be the writer, they will take turns fencing each other and
 neither will make progress. Something outside the database has to hold a lease —

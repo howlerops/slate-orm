@@ -472,7 +472,7 @@ async fn a_nested_loop_refuses_a_right_outer_join() {
 #[test]
 fn the_generated_joins_produce_a_range_of_sizes() {
     let collected = std::cell::RefCell::new(Vec::new());
-    proptest!(ProptestConfig::with_cases(96), |((kind, left, right, _l, _o) in any_join())| {
+    proptest!(ProptestConfig::with_cases(400), |((kind, left, right, _l, _o) in any_join())| {
         collected
             .borrow_mut()
             .push(brute_force(kind, &left, &right).len());
@@ -486,8 +486,10 @@ fn the_generated_joins_produce_a_range_of_sizes() {
         "{empty} of {} generated joins were empty",
         sizes.len()
     );
+    // Observed around 65%; the bar is 40%, far enough out that this cannot
+    // fail on an unlucky sample.
     assert!(
-        big * 2 > sizes.len(),
+        big * 5 > sizes.len() * 2,
         "only {big} of {} generated joins had more than five rows",
         sizes.len()
     );

@@ -265,6 +265,102 @@ crate's 10 MiB compiled-size limit, not any length check that could be put on
 the pattern string. That limit is a property of the engine rather than of this
 code, so it is pinned here where swapping the engine would fail.
 
+## Joins, chains and aggregates
+
+`crates/slate-kernel/tests/join_oracle.rs`, `aggregate_oracle.rs`
+
+The single-table oracle above was soaked at 25,000 cases and found nothing —
+which is the useful result, because it says the *generators* were the limit
+rather than the case count. More of the same shapes finds nothing; different
+shapes is the only way forward.
+
+**Joins.** Four join types against hash-build-left, hash-build-right and
+nested-loop, all required to agree, and all required to match a nested loop
+written out over the rows. Rows are compared as multisets: a join has no
+inherent order and the three algorithms genuinely produce different ones, so
+demanding an order would test the implementation instead of the semantics.
+
+It surfaced something on the first run that turned out to be correct: a nested
+loop cannot serve a right or full outer join, because it streams the left side
+and never sees a right row that matched nothing. The engine refuses with a
+clear error rather than returning the inner-join rows and a short answer. The
+refusal is now pinned by name, because a later change that "supports" the
+combination by quietly falling back to a hash join would pass every other test
+in the file.
+
+**Chains.** A three-table chain must match a hand-written triple loop, and a
+one-step chain must match the equivalent two-way join — the two paths exist for
+different reasons and must not have drifted apart.
+
+**Aggregates.** Grouping is checked against a fold written out over the rows,
+across every aggregate including `COUNT(DISTINCT)`, and separately required to
+be identical down every access path. That second property is the important one:
+an index path that left a grouping column undecoded would group everything
+under null and return a plausible wrong answer, which is precisely the `ORDER
+BY` bug wearing different clothes. The fold's `match` is deliberately
+exhaustive, so adding an `Aggregate` variant fails to compile here rather than
+going untested.
+
+## Harder schemas
+
+`crates/slate-kernel/tests/oracle_schemas.rs`
+
+Every oracle above uses a single-column `u64` primary key, which is the easy
+case: one value, one direction, no prefix. The load-bearing keyspace code is in
+the shapes that were not covered — a tenant-scoped table where every key
+carries a prefix, a three-column primary key where a predicate can pin part of
+it, and a composite index with mixed ascending and descending columns, where a
+bound for the descending column has to be built inverted.
+
+The same differential property, over that schema, plus one specific to it:
+no access path, on any index, in either direction, may return another tenant's
+row. Twelve thousand cases, nothing found.
+
+## Writer handover
+
+`crates/slate-slatedb/tests/handover.rs`
+
+Fencing was tested as a sequence — commit, take over, commit again, observe the
+error. The cases that decide whether a head node can be replaced safely are
+either side of that: a transaction opened *before* the takeover (fenced at
+commit), whether fencing is terminal across repeated attempts (it is), whether
+the new writer inherits the old one's unique index entries (it does), and a
+chain of four handovers where each takeover must fence every earlier generation.
+
+**One finding, and it changes an operational recommendation.** A fenced writer
+cannot read either: `begin` returns `WriterFenced` before a transaction exists.
+This was written expecting the opposite, on the reasoning that a head node
+stepping down would want to drain its in-flight queries. It cannot. That is
+defensible — a fenced writer's view is arbitrarily stale and it has no way to
+say how stale — but it means a takeover is an interruption, not a graceful
+drain, and anything that must keep serving *through* a handover has to be
+reading from a replica. `docs/topology.md` now says so.
+
+## Replicas under load
+
+`crates/slate-slatedb/tests/replica.rs`
+
+Reads through the pool while the writer commits. The property is not that a
+reader sees the newest data — a replica lags by design — but that whatever it
+sees is a state the database was actually in. Row ids are written in order, so
+the ids a replica returns must be a contiguous prefix from zero: any gap means
+it served a later write without an earlier one. Twelve concurrent readers,
+half routed by tenant affinity and half round-robin, each waiting on a commit
+token, all see the full result.
+
+## When the tests are the flaky thing
+
+Four of the generator-quality checks above — the ones asserting that generated
+predicates are not all-or-nothing — were written with thresholds at 50% against
+observed rates of 51–75%. One of them duly failed on an unlucky sample.
+
+That is worth recording rather than quietly fixing, because it is the same
+mistake in a new place: a threshold picked by eye rather than measured. The
+rates were measured across repeated runs, sample sizes raised to 400, and the
+bars set at 30–40% — five or more standard errors clear. A check that guards
+the generators must not be the flakiest thing in the suite, since a test that
+fails one run in twenty teaches people to rerun rather than to look.
+
 ## Correlated columns: wrong, and so far harmless
 
 `crates/slate-kernel/examples/correlation.rs`
@@ -323,13 +419,10 @@ what genuinely has not been done.
   transactions. It does not kill a process mid-`fsync` and restart it — that
   boundary belongs to SlateDB, and taking it seriously means fault injection
   inside the storage engine rather than above it.
-- **Writer fencing during a live handover.** Fencing is tested against a real
-  instance, but as a sequence: writer A, then writer B, then A discovers it is
-  fenced. Two writers genuinely overlapping across a lease change, with
-  in-flight transactions on both, is not exercised.
-- **The reader pool under load.** Routing is tested on its properties and
-  replicas are tested for correctness, but nothing runs a pool hot enough for
-  lag, eviction and affinity to interact.
+- **Two writers genuinely overlapping.** Handover is now covered from both
+  sides, but every case still has one writer active at a time. Two head nodes
+  issuing writes concurrently across a lease change needs a lease manager to
+  test against, and there is not one.
 - **A real fuzzer.** The untrusted-input suites are property tests with hostile
   generators, which is most of the value for a few seconds per run. They are not
   coverage-guided, so they will not find the input that needs eleven specific

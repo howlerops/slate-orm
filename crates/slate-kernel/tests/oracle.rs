@@ -489,13 +489,16 @@ async fn contradictory_bounds_return_nothing() {
 ///
 /// A property suite whose predicates all select zero rows passes every check
 /// and proves nothing, so this asserts the corpus is being exercised.
+/// Enough cases that the observed rate is stable to a couple of percent.
+const SAMPLE: u32 = 400;
+
 #[test]
 fn the_generated_queries_select_a_range_of_row_counts() {
     let rt = runtime();
     let store = rt.block_on(seeded());
     let counts = std::cell::RefCell::new(Vec::new());
 
-    proptest!(ProptestConfig::with_cases(64), |(filter in any_filter())| {
+    proptest!(ProptestConfig::with_cases(SAMPLE), |(filter in any_filter())| {
         let query = Query::all().filter(filter);
         counts.borrow_mut().push(rt.block_on(run(&store, &query)).len());
     });
@@ -504,8 +507,12 @@ fn the_generated_queries_select_a_range_of_row_counts() {
     let empty = counts.iter().filter(|n| **n == 0).count();
     let full = counts.iter().filter(|n| **n == ROWS as usize).count();
     let middling = counts.len() - empty - full;
+    // Observed around 70%. The bar is 40%, which is more than five standard
+    // errors away at this sample size — a generator-quality check that fires
+    // one run in twenty is worse than no check, because it teaches people to
+    // rerun the suite.
     assert!(
-        middling * 2 > counts.len(),
+        middling * 5 > counts.len() * 2,
         "most generated predicates should select some but not all rows; \
          got {empty} empty, {full} full, {middling} in between of {}",
         counts.len()

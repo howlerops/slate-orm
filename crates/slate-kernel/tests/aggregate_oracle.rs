@@ -446,7 +446,7 @@ fn the_generated_groupings_are_not_degenerate() {
     let store = rt.block_on(seeded());
     let seen = std::cell::RefCell::new(Vec::new());
 
-    proptest!(ProptestConfig::with_cases(96), |(
+    proptest!(ProptestConfig::with_cases(400), |(
         filter in any_filter(),
         grouping in any_grouping(),
     )| {
@@ -483,8 +483,9 @@ fn the_generated_groupings_are_not_degenerate() {
         "only {multi_group} of {} cases produced more than one group",
         seen.len()
     );
+    // Observed at essentially 100%; the bar is 70%.
     assert!(
-        multi_row * 2 > seen.len(),
+        multi_row * 10 > seen.len() * 7,
         "only {multi_row} of {} cases had groups with more than one row",
         seen.len()
     );
