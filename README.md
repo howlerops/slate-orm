@@ -61,6 +61,7 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-slatedb` | SlateDB backend, S3-compatible storage, read replicas |
 | `slate-derive` | `#[derive(Record)]` and generated column constants |
 | `slate-orm` | Typed surface; re-exports the rest |
+| `slate-server` | gRPC head node, writer leadership over an object-store lease |
 
 No `unsafe` anywhere (`#![forbid(unsafe_code)]` in every crate).
 
@@ -597,30 +598,52 @@ Built and tested:
 - [x] `IN` over a primary key as a set of overlapped reads, not a scan
 - [x] Equi-depth histograms, so a range estimate knows which range it is
 - [x] Scan readahead on the SlateDB backend: 31x fewer object-store requests
-- [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
-      unique-index reads (100 rows in 13 ms, down from 223 ms)
+- [x] Bulk writes: `insert_many`/`upsert_many`/`update_many` overlap the
+      duplicate-key and unique-index reads (100 rows in 13 ms, down from 223 ms)
+- [x] Schema constraints and migrations: `DEFAULT`, `CHECK`, foreign keys with
+      referential actions, column drop and rename
+- [x] `IN` over a *secondary* index as one range per value rather than one
+      range spanning them all
+- [x] Partial indexes — an entry only for the rows a predicate admits, declared
+      on the schema, maintained by the record store, and read by the planner
+      only for queries it can *prove* land inside the predicate
+- [x] Expression indexes — a key computed from the row (`lower(email)`,
+      `length(url)`) rather than read out of it
+- [x] A gRPC head node with writer leadership: a compare-and-set lease on one
+      object in the same bucket, terminal step-down on `WriterFenced`, reads
+      routed by freshness and tenant affinity and stamped with which replica
+      served them
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
 - [x] A planner oracle, an access-path security matrix, restart/durability
-      tests over both substrates, write-failure injection, contention tests and
-      untrusted-input suites ([`docs/correctness.md`](docs/correctness.md)),
-      which between them found a covering scan and a point get ignoring the
-      projection, and a panic on contradictory bounds
+      tests over both substrates, write-failure injection above *and* below the
+      storage engine, contention tests, untrusted-input suites and committed
+      plan snapshots ([`docs/correctness.md`](docs/correctness.md)), which
+      between them found a covering scan and a point get ignoring the
+      projection, a panic on contradictory bounds, a vector that encoded but
+      would not decode, and a cost model wrong by three orders of magnitude
 
 Not built:
 
-- [ ] gRPC head node — the single-writer server the topology above describes
-- [ ] Writer leadership: SlateDB fences but does not elect, so a lease has to
-      come from outside the database
-- [ ] Python, Go and TypeScript SDKs, which need the head node first
-- [ ] Migrations beyond additive nullable columns (no column drop or rename)
+- [ ] Python, Go and TypeScript SDKs
+- [ ] Joins, aggregates and computed columns on the wire — each needs an
+      ordinal space or a grouping model of its own in the protocol, and half of
+      one would be worse than none
+- [ ] Maintenance for an expression index is there; **statistics** for one are
+      not. `analyze` does not evaluate the expression, so the planner's estimate
+      for such an index is whatever the caller supplies
+- [ ] An expression index can never be covering: the executor evaluates scalars
+      from a row's own columns, and a row rebuilt from an index entry has the
+      source column null
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent. Measured: estimates run up to 20x
       out, and the plan chosen is unchanged in every shape tested, so this is
       not currently worth fixing
       (`cargo run --release -p slate-kernel --example correlation`)
-- [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x
-      against the 26x the primary-key case bought, so it waits
-- [ ] Partial and expression indexes; foreign keys; `DEFAULT` and `CHECK`
+- [ ] Any performance number for the head node. Its correctness is tested;
+      nothing in it has been benchmarked, and the lease term and stream batch
+      size are argued rather than measured
+- [ ] Scale past 200,000 rows on real object storage, which is where the cost
+      model was calibrated
 
 ## License
 

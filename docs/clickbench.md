@@ -145,13 +145,15 @@ dedicated hardware — and lining them up beside one would be dishonest.
 | 43 `DATE_TRUNC('minute', EventTime)` | 0.55 s | **413,825** | **1440 groups** |
 | | **69.70 s** | | 43 of 43 |
 
-Re-measured at **69.53 s** and **70.15 s** on two runs after the planner gained
-multi-range `IN` scans and partial indexes, on the same machine. Neither shape
-appears in ClickBench — its one `IN` is on an unindexed column, and there are no
-partial indexes — so the point of re-running was to find out whether the change
-to `match_index` cost anything on the paths that *are* exercised. It did not:
-the spread between the three numbers is about 1%, which is the run-to-run noise
-of this harness.
+Re-measured three times on the same machine as the planner and the write path
+changed underneath it — **69.53 s**, **70.15 s**, **67.82 s** against the 69.70 s
+recorded. None of the new shapes appears in ClickBench: its one `IN` is on an
+unindexed column, and there are no partial or expression indexes. The point of
+re-running was the paths that *are* exercised — a restructured `match_index`,
+and a write path that now asks each index whether it holds the row and how it
+keys it, once per row per index, on a million-row load. Neither shows: the four
+numbers span about 3%, which is this harness's run-to-run noise, and the load
+time (12.0 s, 13.4 s, 13.2 s) does not move either.
 
 ### The harness said "not run: Q29" while running Q29
 
