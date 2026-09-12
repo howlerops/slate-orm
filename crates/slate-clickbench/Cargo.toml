@@ -1,0 +1,21 @@
+[package]
+name = "slate-clickbench"
+description = "ClickBench against the slate-orm record layer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-tuple.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+parquet = "56"
+arrow = "56"
+
+[lints]
+workspace = true

@@ -16,6 +16,7 @@ use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{ColumnSet, IndexDef, Row, TableDef, decode_row_columns};
 use slate_tuple::{Direction, Value};
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 /// Where a cursor's candidate rows come from.
@@ -68,6 +69,35 @@ enum Source<'a> {
 /// waste bounded — at most fifteen wasted reads per cursor — while removing
 /// most of the serialisation.
 pub const DEFAULT_PREFETCH: usize = 16;
+
+/// A row carrying the order it is ranked by, so a heap can compare two.
+///
+/// The keys are shared rather than copied per row: a heap of ten thousand
+/// would otherwise hold ten thousand copies of the same `ORDER BY`.
+struct Ranked {
+    row: Row,
+    keys: Arc<[SortKey]>,
+}
+
+impl PartialEq for Ranked {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == core::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Ranked {}
+
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Ranked {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        compare_rows(&self.row, &other.row, &self.keys)
+    }
+}
 
 /// A cursor over the rows a plan admits.
 pub struct QueryCursor<'a> {
@@ -210,11 +240,17 @@ fn row_from_index_entry(
 }
 
 impl<'a> QueryCursor<'a> {
-    /// Open a cursor for `plan` on `table`.
+    /// Open a cursor for `plan` on `table`, returning at most `limit` rows
+    /// after discarding `offset`.
+    ///
+    /// The window is taken here rather than applied afterwards because a sort
+    /// needs it: sorting to return ten rows should not hold a million.
     pub(crate) async fn open(
         snapshot: &'a dyn KvSnapshot,
         table: &'a TableDef,
         plan: Plan,
+        limit: Option<usize>,
+        offset: usize,
     ) -> Result<Self> {
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
@@ -271,16 +307,55 @@ impl<'a> QueryCursor<'a> {
         // collected and sorted. This is the one place the cursor stops being a
         // stream: nothing can be returned until everything has been read.
         if let Some(keys) = plan.sort {
-            let mut rows = Vec::new();
-            while let Some(row) = cursor.next_admitted().await? {
-                rows.push(row);
-            }
-            rows.sort_by(|a, b| compare_rows(a, b, &keys));
+            let window = limit.map(|limit| limit.saturating_add(offset));
+            let rows = match window {
+                // `ORDER BY … LIMIT k` needs the best k, not every row in
+                // order. Keeping k costs O(n log k) against O(n log n), but
+                // the reason to do it is memory: sorting a million rows to
+                // return ten holds a million decoded rows, and on a wide
+                // table that is gigabytes to produce a handful.
+                Some(window) if window > 0 => {
+                    cursor.top_n(window, Arc::from(keys.as_slice())).await?
+                }
+                Some(_) => Vec::new(),
+                None => {
+                    let mut rows = Vec::new();
+                    while let Some(row) = cursor.next_admitted().await? {
+                        rows.push(row);
+                    }
+                    rows.sort_by(|a, b| compare_rows(a, b, &keys));
+                    rows
+                }
+            };
             cursor.source = Source::Sorted(rows.into_iter());
             // The residual has already been applied to every row.
             cursor.residual = Arc::new(Expr::True);
         }
         Ok(cursor)
+    }
+
+    /// The `window` rows that sort first, in order.
+    ///
+    /// A bounded max-heap: push, and once it is over capacity drop the worst.
+    /// What is left is the best `window`, which pop out worst-first and are
+    /// reversed.
+    async fn top_n(&mut self, window: usize, keys: Arc<[SortKey]>) -> Result<Vec<Row>> {
+        let mut heap: BinaryHeap<Ranked> = BinaryHeap::with_capacity(window + 1);
+        while let Some(row) = self.next_admitted().await? {
+            heap.push(Ranked {
+                row,
+                keys: Arc::clone(&keys),
+            });
+            if heap.len() > window {
+                heap.pop();
+            }
+        }
+        let mut rows: Vec<Row> = Vec::with_capacity(heap.len());
+        while let Some(ranked) = heap.pop() {
+            rows.push(ranked.row);
+        }
+        rows.reverse();
+        Ok(rows)
     }
 
     /// Stop after `limit` rows.

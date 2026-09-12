@@ -427,7 +427,8 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<QueryCursor<'a>> {
         let plan = self.plan(context, table, query)?;
-        let cursor = QueryCursor::open(self.snapshot, table, plan).await?;
+        let cursor =
+            QueryCursor::open(self.snapshot, table, plan, query.limit, query.offset).await?;
         Ok(cursor.with_window(query.limit, query.offset))
     }
 }

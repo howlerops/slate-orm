@@ -340,6 +340,31 @@ here rather than retuned, because retuning it against one synthetic corpus of
 220-byte rows would be fitting to this fixture the way the block-size mismatch
 above already caught us once.
 
+### ClickBench found a bug in `ORDER BY`, and then found where the time went
+
+Running an adversarial workload — see [clickbench.md](clickbench.md) — turned
+up a correctness bug first. **A column the sort orders by was never decoded**
+unless the projection or the predicate already named it. An undecoded column
+reads back as null, so every row compared equal and the sort silently did
+nothing, returning rows in whatever order the scan produced. The same hole let
+an index-only scan be chosen over an index that does not hold the sort column.
+
+Then the performance question, where the first answer was wrong. `SELECT
+SearchPhrase … ORDER BY EventTime LIMIT 10` took 4.5-5.5 s against a 0.92 s
+plain scan, and the obvious suspect was the sort: the executor collected every
+matching row, sorted it, and returned ten. A bounded heap fixed exactly that
+and moved the clock by almost nothing — 47.2 s to 44.9 s over the whole set.
+
+The cost was `Projection::All`: decoding all 105 columns of every surviving row
+to return one of them. Naming the column took Q25 from 4.29 s to 1.53 s, and
+the set from 44.9 s to 36.4 s.
+
+Both changes stay, for different reasons. The projection is the time. The
+bounded heap is the memory — sorting to return ten rows used to hold every
+surviving row decoded, which on a wide table is gigabytes to produce a handful.
+And the projection could only be applied *because* the sort column now gets
+decoded: the correctness bug was hiding the performance one.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because

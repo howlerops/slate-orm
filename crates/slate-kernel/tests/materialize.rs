@@ -308,3 +308,48 @@ async fn scan_direction_does_not_affect_decoding() {
     backwards.sort_by_key(|r| format!("{:?}", r.values()[0]));
     assert_eq!(forwards, backwards);
 }
+
+/// Sorting by a column the projection does not name must still sort.
+///
+/// The projection decides what is decoded, and a column nobody decoded reads
+/// back as null — so ordering by one compares null to null for every row and
+/// silently does nothing. Found by running ClickBench, where
+/// `SELECT SearchPhrase … ORDER BY EventTime` is an ordinary shape.
+#[tokio::test]
+async fn a_sort_column_outside_the_projection_is_still_decoded() {
+    let store = store().await;
+    let table = table();
+    let txn = store.begin().await.unwrap();
+
+    // Project one column, order by a different one.
+    let query = Query::all()
+        .select([col("kind")])
+        .sort_by([SortKey::desc(col("size"))]);
+    let rows = txn
+        .execute(&root(), &table, &query)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let sizes: Vec<i64> = rows
+        .iter()
+        .filter_map(|r| match r.get(col("size")) {
+            Some(Value::I64(n)) => Some(*n),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sizes.len(), rows.len(), "the sort column has to be decoded");
+    assert!(
+        sizes.windows(2).all(|w| w[0] >= w[1]),
+        "not in descending order: {sizes:?}"
+    );
+
+    // And the projected column is there too, or the projection was ignored.
+    assert!(
+        rows.iter()
+            .all(|r| !matches!(r.get(col("kind")), Some(Value::Null))),
+        "the projected column went missing"
+    );
+}

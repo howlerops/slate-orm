@@ -417,6 +417,14 @@ pub fn plan_hinted(
             for column in columns {
                 output_columns.insert(*column);
             }
+            // A column the sort orders by has to be decoded even when the
+            // caller did not ask to see it. Leaving it out does not fail: it
+            // reads back as null, every row compares equal, and the result
+            // comes out in whatever order the scan happened to produce. A
+            // wrong order that looks like an order is worse than an error.
+            for key in sort {
+                output_columns.insert(key.column);
+            }
         }
     }
 
@@ -469,6 +477,10 @@ pub fn plan_hinted(
         Some(columns) => {
             let mut set = predicate.columns();
             set.extend(columns.iter().copied());
+            // Same reason as `output_columns`: an index that does not hold the
+            // sort column cannot answer the query on its own, however well it
+            // covers the projection.
+            set.extend(sort.iter().map(|key| key.column));
             Needed::Some(set)
         }
     };

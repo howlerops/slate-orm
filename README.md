@@ -427,6 +427,18 @@ let store = SlateStore::open_s3(
 .await?;
 ```
 
+## Benchmarks
+
+- `crates/slate-kernel/examples/perf_report.rs` — query shapes against a
+  latency model, in I/O counts as well as milliseconds.
+- `crates/slate-slatedb/examples/scan_tuning.rs` — scans against a real S3
+  server, counting object-store requests.
+- `crates/slate-clickbench` — the 43 official ClickBench queries, as far as
+  this engine can express them. Not comparable to published ClickBench scores;
+  run because it is an adversarial workload nobody here designed for. See
+  [`docs/clickbench.md`](docs/clickbench.md), which also covers the pgrust
+  review.
+
 ## Testing
 
 ```sh
