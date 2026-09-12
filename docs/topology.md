@@ -333,6 +333,120 @@ A transactional read is the one thing a takeover still interrupts, and that is
 inherent — it is a read of the writer's transaction. A client that must keep
 reading through a handover reads outside a transaction.
 
+### Naming a column when the row comes from more than one place
+
+Joins, chains, aggregates and computed columns are the four things the kernel
+could do and the wire could not, and the reason they were held back is that
+each appears to need an ordinal space of its own. A joined row's columns come
+from several tables. A computed value occupies a slot no table declares. A
+grouped row is its keys followed by its aggregates. Three shapes, and three
+ad-hoc encodings would have been worse than none.
+
+There is one encoding. **A column reference names a producer and an index
+inside it** — `ColumnRef`:
+
+```proto
+message ColumnRef {
+  uint32 input = 1;            // which table of this request, counting from 0
+  oneof of {
+    uint32 column = 2;         // an ordinal that input's table declares
+    uint32 computed = 3;       // the nth value the query for it computes
+    uint32 group_key = 4;      // the nth GROUP BY key
+    uint32 aggregate = 5;      // the nth aggregate
+  }
+}
+```
+
+Every place the protocol used to carry a bare `uint32 column` now carries one
+of these, so the single-table case is the degenerate one — `input 0`, kind
+`column` — rather than a second scheme sitting beside the first. The server
+resolves it into the flat ordinal the kernel evaluates against.
+
+That last part is the point. The kernel's own model *is* flat: `JoinSchema`
+packs a joined row by table width, `Query::computed` puts the `i`th computed
+value at `width + i`, and a group is `key.len() + n`. A client could do the
+same arithmetic — and to do it, it would need every table's width.
+
+#### What was rejected, and what it would have cost
+
+- **Flat ordinals, computed by the client.** The kernel's model lifted
+  verbatim. It needs widths this protocol deliberately does not publish, and
+  the day a column is added to an earlier table every reference past it points
+  somewhere else, with no error anywhere. That is the "same query, different
+  answer" shape this project treats as the worst kind of bug, and it would
+  arrive during a migration rather than during a test run.
+- **A fixed stride** — input *i*'s column *c* at `i × 1024 + c`. Removes the
+  width lookup and replaces it with a hard limit on table width that wraps
+  silently past it. `ColumnRef` is this idea with an unbounded stride, which
+  is the whole of the difference.
+- **Qualified names** (`books.title`). Rejected twice over: the protocol
+  addresses columns by ordinal precisely so a predicate needs no fallible name
+  lookup — the derive macro generates the constants — and a self-join has two
+  inputs sharing one table name. An input is a *position*, which a self-join
+  distinguishes and a name cannot.
+- **A separate expression type per shape** — `JoinExpr`, `GroupExpr`. The
+  kernel refuses this for its own `having`, on the grounds that it would be a
+  second place for three-valued null semantics to be got wrong. On the wire it
+  would have been a third.
+- **A `Describe` RPC** publishing the catalog so a client could do the
+  arithmetic. It puts the schema on the wire, which the `.proto`'s opening
+  comment refuses, and it turns every query into either two round trips or a
+  cache that can go stale — a stale width being a silently re-pointed
+  predicate again.
+
+#### Two refusals it makes decidable
+
+This is where the choice earns more than tidiness. Both of these are *kind*
+mismatches rather than ordinals that happen to fall in range, so both can be
+refused with a message that says which:
+
+- **`HAVING` on a column that is not grouped.** SQL's "column must appear in
+  the GROUP BY clause". Under flat ordinals, ordinal 2 of a grouped predicate
+  is a perfectly legitimate group key and there is nothing to detect.
+- **A computed value named from across a join.** The kernel's joined space is
+  packed by *declared* table width, so a computed value has no slot in it and
+  a flat ordinal naming one would land on the next table's first column. The
+  reference is refused with the reason; the computed value is still returned in
+  its own input's row and can still be used in that input's own filter.
+
+#### What a multi-table read means for routing and freshness
+
+A join is *n* secured reads of **one** snapshot. The head node routes once,
+opens one view, and reads every input through it. So:
+
+- there is one `served_by` in the whole response, not one per table;
+- the freshness a client asked for applies to the entire result — a token
+  satisfied for one table and not another is not a state the database was ever
+  in;
+- affinity is the principal's tenant if *any* input is tenant-scoped, since
+  that is the key prefix the read will touch.
+
+Doing otherwise would mean two calls into the pool, two views at two
+sequences, and nothing truthful to put in `served_by` — the same constraint
+that made `ReplicaPool::snapshot_from` return the view and the store together.
+
+#### One request shape, two kernel paths
+
+`JoinQuery` is a list of inputs joined in order. Two inputs become a kernel
+`Join` and three or more become a `Chain`. That is a dispatch rather than a
+difference the client sees: the kernel's two-table join can choose *which*
+side to hold in memory and a chain step cannot, because its earlier rows are
+already there.
+
+Three things a join input may not carry, refused rather than ignored, because
+the kernel documents them as ignored and a client setting one would be relying
+on an accident: a `sort` (which would not order the join), a `limit` and an
+`offset` (which would change the answer rather than shorten it). `JoinQuery`
+carries the limit and offset that do apply. An algorithm may be forced, and
+unlike an index hint it is not advice — a nested loop cannot preserve
+unmatched rows of the second input, so asking for one on a right or full outer
+join is an error rather than a quiet fallback to a hash join.
+
+`build_limit` may be lowered by a client and not raised: the server's limit is
+what stops a mistyped join key becoming an out-of-memory kill, and a limit the
+client can raise is not a limit. Raising it is clamped and reported as a
+warning rather than refused.
+
 ### Two things the wire format refuses to guess
 
 An identity never appears in a request body. The `.proto` has no principal
@@ -348,10 +462,46 @@ it appears in.
 ### What was tested
 
 - **The wire conversion round trip**, as a property over generated values,
-  predicates and whole queries: converting out and back must be the identity.
-  A damaged wire form is fed back in to show the comparison is sharp enough to
-  notice a dropped `ILIKE` flag, and the generators are separately asserted to
-  reach every variant.
+  predicates, computed values, aggregates and whole queries: converting out and
+  back must be the identity. A damaged wire form is fed back in twice, to show
+  the comparison is sharp enough to notice a dropped `ILIKE` flag and a
+  `DATE_TRUNC` moved from hours to minutes, and the generators are separately
+  asserted to reach every variant — sixteen of them for `Scalar`, whose match
+  is exhaustive so a new kernel variant fails to compile rather than going
+  untested.
+- **That the wire's arithmetic is the kernel's.** `ColumnRef` exists so a
+  client never computes an offset; the server still does, and a unit test
+  requires every resolution to land exactly where `JoinSchema` and
+  `Query::computed` put it. A mismatch there would put a predicate on the wrong
+  table with no error anywhere.
+- **An oracle for joins, chains, aggregates and computed columns**, which is
+  the strongest test in the crate. The same kernel `Join`, `Chain` or grouped
+  query is run in process *and* converted to its wire form and asked over a
+  socket, and the two must return identical rows. Ninety-six two-table cases —
+  four join types against the planner's choice and each forced algorithm,
+  across six request shapes — plus a three-table chain, a self-join whose
+  second step joins back to the *first* input, every aggregate function,
+  grouping by a computed value, `HAVING` over a key and over an aggregate, and
+  a case per `Scalar` shape a string or integer column can reach. Rows are
+  compared as multisets, since a join has no inherent order and the three
+  algorithms genuinely produce different ones. Where the kernel refuses a
+  combination the wire must refuse it too: a fallback to a hash join for a
+  forced nested loop on a right outer join would return the inner rows and a
+  short answer, which no assertion about rows would ever catch.
+- **A row-level-security matrix for multi-table reads**, in the shape
+  `rls_matrix.rs` established: every join type against every algorithm is one
+  cell, plus the chain, the aggregate and the explanation, and every failure is
+  collected before anything is asserted. Three policies of three different
+  shapes, so a policy applied to the wrong input removes a different set of
+  rows rather than the same one; a hidden row on the inner side makes the outer
+  row *unmatched* rather than missing, so the join is not an existence oracle;
+  a second tenant holds a row owned by the same principal id. The control runs
+  the same join in process as a superuser and requires the forbidden rows to
+  appear, since nothing on the wire can produce one and without it every cell
+  could be passing because the rows were never there. And the explanation is
+  checked separately from the rows, because a join can return the right rows
+  for the wrong reason when two policies happen to overlap: each input's plan
+  must carry its *own* policy in its residual and not the other's.
 - **A query differential over gRPC.** Every filter, sort, limit and offset in
   the sweep is run under the planner's choice and under each index forced, and
   all of them must agree with a filter and comparator written out again in the
@@ -374,9 +524,16 @@ it appears in.
 
 ### Not built
 
-- **Joins, chains, aggregates and computed columns on the wire.** Each needs an
-  ordinal space or a grouping model of its own in the schema, and half of one
-  would be worse than none.
+- **A grouped join.** The kernel groups over a single-table cursor and has no
+  grouped join; offering one here would mean a second implementation of
+  grouping living in the head node, over rows it had already streamed — which
+  is exactly where the projection narrowing that lets `COUNT(*)` read no
+  columns at all would be lost.
+- **`ORDER BY` over groups**, and therefore a limit on them. Same reason: the
+  kernel has no ordering over groups, so a comparator written in the head node
+  would be a second statement of the sort rules with nothing to be an oracle
+  against. Groups come back in the kernel's own order, ascending by encoded
+  key, and all of them come back.
 - **A read-only transaction pinned to a replica.** `ReplicaMode::Pinned` is the
   right substrate for a consistent multi-read export, and the session type for
   it is not a write transaction.

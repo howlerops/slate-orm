@@ -27,15 +27,18 @@
 
 mod common;
 
-use common::docs;
+use common::{authors, books, docs};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree as _;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
-use slate_kernel::{CmpOp, Expr, Projection, ScanOrder};
+use slate_kernel::{
+    Aggregate, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar, ScanOrder, TimeUnit,
+};
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
+    Input, Space, aggregate_from_proto, aggregate_to_proto, column_ref, computed_ref,
     expr_from_proto, expr_to_proto, query_from_proto, query_to_proto, row_from_proto, row_to_proto,
-    value_from_proto, value_to_proto,
+    scalar_from_proto, scalar_to_proto, value_from_proto, value_to_proto,
 };
 use slate_server::proto as pb;
 use slate_tuple::{Direction, Value};
@@ -192,7 +195,9 @@ proptest! {
 
     #[test]
     fn a_predicate_survives_the_round_trip(expr in any_expr()) {
-        let back = expr_from_proto(&expr_to_proto(&expr))
+        let table = docs();
+        let space = Space::table(&table);
+        let back = expr_from_proto(&space, &expr_to_proto(&space, &expr))
             .expect("a predicate this server produced must be one it can read");
         prop_assert_eq!(&back, &expr, "converting {:?} out and back changed it", expr);
     }
@@ -333,13 +338,15 @@ fn collect_variants(expr: &Expr, into: &mut BTreeSet<&'static str>) {
 /// teeth.
 #[test]
 fn the_round_trip_notices_a_dropped_flag() {
+    let table = docs();
+    let space = Space::table(&table);
     let expr = Expr::ilike(Ordinal(1), "abc%");
-    let mut wire = expr_to_proto(&expr);
+    let mut wire = expr_to_proto(&space, &expr);
     match &mut wire.node {
         Some(pb::expr::Node::Like(like)) => like.insensitive = false,
         other => panic!("ILIKE did not convert to a Like node: {other:?}"),
     }
-    let damaged = expr_from_proto(&wire).expect("still a valid predicate");
+    let damaged = expr_from_proto(&space, &wire).expect("still a valid predicate");
     assert_ne!(
         damaged, expr,
         "the round trip cannot tell ILIKE from LIKE, so it would not catch losing the flag"
@@ -373,20 +380,23 @@ fn a_uuid_of_the_wrong_length_is_refused() {
 #[test]
 fn an_unspecified_comparison_operator_is_refused() {
     // Defaulting it would make a malformed comparison quietly mean equality.
+    let table = docs();
     let wire = pb::Expr {
         node: Some(pb::expr::Node::Compare(pb::Compare {
-            column: 0,
+            column: Some(column_ref(0, 0)),
             op: pb::CmpOp::Unspecified as i32,
             value: Some(value_to_proto(&Value::U64(1))),
         })),
     };
-    let error = expr_from_proto(&wire).expect_err("must be refused");
+    let error = expr_from_proto(&Space::table(&table), &wire).expect_err("must be refused");
     assert_eq!(error.code(), tonic::Code::InvalidArgument);
 }
 
 #[test]
 fn an_expression_with_no_node_is_refused() {
-    let error = expr_from_proto(&pb::Expr { node: None }).expect_err("must be refused");
+    let table = docs();
+    let error = expr_from_proto(&Space::table(&table), &pb::Expr { node: None })
+        .expect_err("must be refused");
     assert_eq!(error.code(), tonic::Code::InvalidArgument);
 }
 
@@ -442,4 +452,380 @@ fn an_absent_freshness_means_any_replica_will_do() {
         Freshness::Any,
         "`latest: false` is not a request for the writer"
     );
+}
+
+// --- computed values ------------------------------------------------------
+
+fn any_metric() -> impl Strategy<Value = Metric> {
+    prop_oneof![
+        Just(Metric::L2),
+        Just(Metric::L2Squared),
+        Just(Metric::Cosine),
+        Just(Metric::NegativeInnerProduct),
+    ]
+}
+
+fn any_unit() -> impl Strategy<Value = TimeUnit> {
+    prop_oneof![
+        Just(TimeUnit::Second),
+        Just(TimeUnit::Minute),
+        Just(TimeUnit::Hour),
+        Just(TimeUnit::Day),
+    ]
+}
+
+/// Every [`Scalar`] variant, including the two that carry an enum whose
+/// default would be a different answer rather than an error.
+fn any_scalar() -> impl Strategy<Value = Scalar> {
+    let leaf = prop_oneof![
+        any_ordinal().prop_map(Scalar::Column),
+        any_value().prop_map(Scalar::Literal),
+    ];
+    leaf.prop_recursive(3, 24, 3, |inner| {
+        prop_oneof![
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Scalar::Add(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Scalar::Sub(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Scalar::Mul(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Scalar::Div(Box::new(a), Box::new(b))),
+            inner.clone().prop_map(|a| Scalar::Length(Box::new(a))),
+            prop::collection::vec(inner.clone(), 0..3).prop_map(Scalar::Concat),
+            inner.clone().prop_map(|a| Scalar::Lower(Box::new(a))),
+            inner.clone().prop_map(|a| Scalar::Upper(Box::new(a))),
+            (any_unit(), inner.clone()).prop_map(|(unit, value)| Scalar::Extract {
+                unit,
+                value: Box::new(value)
+            }),
+            (any_unit(), inner.clone()).prop_map(|(unit, value)| Scalar::DateTrunc {
+                unit,
+                value: Box::new(value)
+            }),
+            (
+                prop::collection::vec((any_expr(), inner.clone()), 0..2),
+                inner.clone()
+            )
+                .prop_map(|(branches, otherwise)| Scalar::Case {
+                    branches,
+                    otherwise: Box::new(otherwise)
+                }),
+            prop::collection::vec(inner.clone(), 0..3).prop_map(Scalar::Coalesce),
+            (inner.clone(), inner.clone(), any_metric()).prop_map(|(left, right, metric)| {
+                Scalar::Distance {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    metric,
+                }
+            }),
+            (inner, ".{0,6}", ".{0,6}").prop_map(|(value, pattern, replacement)| {
+                Scalar::RegexpReplace {
+                    value: Box::new(value),
+                    pattern,
+                    replacement,
+                }
+            }),
+        ]
+    })
+}
+
+fn any_aggregate() -> impl Strategy<Value = Aggregate> {
+    prop_oneof![
+        Just(Aggregate::Count),
+        any_ordinal().prop_map(Aggregate::CountColumn),
+        any_ordinal().prop_map(Aggregate::Min),
+        any_ordinal().prop_map(Aggregate::Max),
+        any_ordinal().prop_map(Aggregate::Sum),
+        any_ordinal().prop_map(Aggregate::Avg),
+        any_ordinal().prop_map(Aggregate::CountDistinct),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    #[test]
+    fn a_computed_value_survives_the_round_trip(scalar in any_scalar()) {
+        let table = docs();
+        let space = Space::table(&table);
+        let back = scalar_from_proto(&space, &scalar_to_proto(&space, &scalar))
+            .expect("a computed value this server produced must be one it can read");
+        prop_assert_eq!(&back, &scalar, "converting {:?} out and back changed it", scalar);
+    }
+
+    #[test]
+    fn an_aggregate_survives_the_round_trip(aggregate in any_aggregate()) {
+        let table = docs();
+        let space = Space::table(&table);
+        let back = aggregate_from_proto(&space, &aggregate_to_proto(&space, aggregate))
+            .expect("an aggregate this server produced must be one it can read");
+        prop_assert_eq!(back, aggregate);
+    }
+}
+
+/// A generator that never produces a `Distance` proves nothing about vectors
+/// while passing every case — the codec bug this project already found.
+#[test]
+fn the_scalar_generator_reaches_every_variant() {
+    let mut seen = BTreeSet::new();
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let strategy = any_scalar();
+    for _ in 0..800 {
+        collect_scalars(
+            &strategy.new_tree(&mut runner).expect("a scalar").current(),
+            &mut seen,
+        );
+    }
+    let expected: BTreeSet<&str> = [
+        "column",
+        "literal",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "length",
+        "concat",
+        "lower",
+        "upper",
+        "extract",
+        "date_trunc",
+        "case",
+        "coalesce",
+        "distance",
+        "regexp_replace",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(seen, expected, "some Scalar variants were never generated");
+}
+
+fn collect_scalars(scalar: &Scalar, into: &mut BTreeSet<&'static str>) {
+    // Exhaustive on purpose: `Scalar` is not `#[non_exhaustive]`, so a new
+    // kernel variant fails to compile here rather than going untested.
+    match scalar {
+        Scalar::Column(_) => {
+            into.insert("column");
+        }
+        Scalar::Literal(_) => {
+            into.insert("literal");
+        }
+        Scalar::Add(a, b) => {
+            into.insert("add");
+            collect_scalars(a, into);
+            collect_scalars(b, into);
+        }
+        Scalar::Sub(a, b) => {
+            into.insert("sub");
+            collect_scalars(a, into);
+            collect_scalars(b, into);
+        }
+        Scalar::Mul(a, b) => {
+            into.insert("mul");
+            collect_scalars(a, into);
+            collect_scalars(b, into);
+        }
+        Scalar::Div(a, b) => {
+            into.insert("div");
+            collect_scalars(a, into);
+            collect_scalars(b, into);
+        }
+        Scalar::Length(a) => {
+            into.insert("length");
+            collect_scalars(a, into);
+        }
+        Scalar::Concat(parts) => {
+            into.insert("concat");
+            for part in parts {
+                collect_scalars(part, into);
+            }
+        }
+        Scalar::Lower(a) => {
+            into.insert("lower");
+            collect_scalars(a, into);
+        }
+        Scalar::Upper(a) => {
+            into.insert("upper");
+            collect_scalars(a, into);
+        }
+        Scalar::Extract { value, .. } => {
+            into.insert("extract");
+            collect_scalars(value, into);
+        }
+        Scalar::DateTrunc { value, .. } => {
+            into.insert("date_trunc");
+            collect_scalars(value, into);
+        }
+        Scalar::Case {
+            branches,
+            otherwise,
+        } => {
+            into.insert("case");
+            for (_, then) in branches {
+                collect_scalars(then, into);
+            }
+            collect_scalars(otherwise, into);
+        }
+        Scalar::Coalesce(parts) => {
+            into.insert("coalesce");
+            for part in parts {
+                collect_scalars(part, into);
+            }
+        }
+        Scalar::Distance { left, right, .. } => {
+            into.insert("distance");
+            collect_scalars(left, into);
+            collect_scalars(right, into);
+        }
+        Scalar::RegexpReplace { value, .. } => {
+            into.insert("regexp_replace");
+            collect_scalars(value, into);
+        }
+    }
+}
+
+/// Proof that the computed-value round trip is sharp enough to see a changed
+/// unit.
+///
+/// `TIME_UNIT_MINUTE` and `TIME_UNIT_HOUR` are one integer apart on the wire
+/// and produce plausible numbers for different questions, which is exactly the
+/// failure a round trip that only compared shapes would let through.
+#[test]
+fn the_round_trip_notices_a_changed_time_unit() {
+    let table = docs();
+    let space = Space::table(&table);
+    let scalar = Scalar::column(Ordinal(2)).date_trunc(TimeUnit::Hour);
+    let mut wire = scalar_to_proto(&space, &scalar);
+    match &mut wire.node {
+        Some(pb::scalar::Node::DateTrunc(part)) => {
+            part.unit = pb::TimeUnit::Minute as i32;
+        }
+        other => panic!("date_trunc did not convert to a DateTrunc node: {other:?}"),
+    }
+    let damaged = scalar_from_proto(&space, &wire).expect("still a valid computed value");
+    assert_ne!(
+        damaged, scalar,
+        "the round trip cannot tell an hour from a minute"
+    );
+}
+
+// --- the ordinal model ----------------------------------------------------
+
+/// The wire's arithmetic is the kernel's arithmetic.
+///
+/// `ColumnRef` exists so the client never computes an offset. The server still
+/// has to, and this is the check that it computes the same one `JoinSchema`
+/// does — a mismatch would put a predicate on the wrong table with no error
+/// anywhere.
+#[test]
+fn a_column_reference_resolves_to_the_ordinal_the_kernel_would_use() {
+    let (a, b) = (authors(), books());
+    let space = Space::joined(vec![Input::new(&a, 0), Input::new(&b, 0)], 2);
+    let kernel = JoinSchema::of(&a, &b);
+
+    for ordinal in 0..a.columns().len() {
+        assert_eq!(
+            space
+                .resolve(Some(&column_ref(0, ordinal)), "a test")
+                .unwrap(),
+            kernel.left(Ordinal(ordinal)),
+        );
+    }
+    for ordinal in 0..b.columns().len() {
+        assert_eq!(
+            space
+                .resolve(Some(&column_ref(1, ordinal)), "a test")
+                .unwrap(),
+            kernel.right(Ordinal(ordinal)),
+            "input 1's column {ordinal} did not land where JoinSchema puts it"
+        );
+    }
+    // And back again, which is what `join_to_proto` relies on.
+    assert_eq!(
+        space.unresolve(kernel.right(Ordinal(3))),
+        column_ref(1, 3),
+        "an ordinal in the joined space did not come back as the input that owns it"
+    );
+}
+
+/// A computed value's slot is the one the kernel's `Query::computed` names.
+#[test]
+fn a_computed_reference_resolves_where_query_computed_puts_it() {
+    let table = docs();
+    let space = Space::input(&table, 2, 0);
+    for at in 0..2 {
+        assert_eq!(
+            space.resolve(Some(&computed_ref(0, at)), "a test").unwrap(),
+            Query::computed(&table, at),
+        );
+    }
+    // One past the end is refused rather than read as a column of some other
+    // table, which is the whole reason this is a kind and not an ordinal.
+    assert!(
+        space.resolve(Some(&computed_ref(0, 2)), "a test").is_err(),
+        "a computed value the query does not compute must be refused"
+    );
+}
+
+/// A chain row carries one entry per input, whatever length the kernel's row
+/// happens to be.
+///
+/// A client reads a joined row positionally, so a row shorter than the chain
+/// would shift every input past the gap rather than error — which is worse
+/// than any wrong value, because nothing anywhere would say so.
+#[test]
+fn a_chain_row_is_padded_to_one_entry_per_input() {
+    use slate_kernel::ChainRow;
+    use slate_server::convert::chain_row_values;
+
+    let row = ChainRow::start(slate_schema::Row::new(vec![Value::U64(1)]));
+    let padded = chain_row_values(&row, 3);
+    assert_eq!(padded.len(), 3, "a one-table row was not padded to three");
+    assert!(padded[0].is_some());
+    assert_eq!(padded[1], None);
+    assert_eq!(padded[2], None);
+}
+
+/// A grouped predicate addresses keys and aggregates, and nothing else.
+#[test]
+fn a_grouped_space_refuses_a_raw_column() {
+    let space = Space::groups(2, 3);
+    assert_eq!(
+        space
+            .resolve(
+                Some(&pb::ColumnRef {
+                    input: 0,
+                    of: Some(pb::column_ref::Of::Aggregate(2)),
+                }),
+                "a test"
+            )
+            .unwrap(),
+        Ordinal(4),
+        "the third aggregate of a two-key group is ordinal 4"
+    );
+    let error = space
+        .resolve(Some(&column_ref(0, 0)), "the HAVING condition")
+        .expect_err("a raw column is not addressable over groups");
+    assert!(
+        error.message().contains("not grouped"),
+        "{}",
+        error.message()
+    );
+}
+
+/// A query that computes values survives the round trip, including a computed
+/// value read by a later one, by the filter and by the sort.
+#[test]
+fn a_query_with_computed_values_survives_the_round_trip() {
+    let table = docs();
+    let first = Query::computed(&table, 0);
+    let second = Query::computed(&table, 1);
+    let query = Query::all()
+        .computing([
+            Scalar::column(Ordinal(2)) + 1i64,
+            Scalar::column(first) * 2i64,
+        ])
+        .filter(Expr::compare(second, CmpOp::Gt, Value::I64(0)))
+        .sort_by([SortKey::desc(first)]);
+
+    let wire = query_to_proto(&table, &query);
+    let (back, warnings) = query_from_proto(&wire, &table).expect("readable");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(back, query);
 }

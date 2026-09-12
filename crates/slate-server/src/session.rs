@@ -42,12 +42,13 @@
 //! gets, because "that transaction exists but is not yours" is a fact worth
 //! not disclosing.
 
+use crate::convert::{GroupedRead, MultiRead, chain_row_values, two_tables};
 use crate::leadership::Leadership;
 use crate::status::from_kernel;
 use slate_kernel::security::Principal;
 use slate_kernel::{
-    Explanation, KernelError, KvStore, Query, ReadToken, RecordStore, RecordTransaction,
-    SecurityContext,
+    ChainCursor, ChainPlan, Explanation, Group, JoinCursor, JoinExplanation, KernelError, KvStore,
+    Query, ReadToken, RecordStore, RecordTransaction, SecurityContext,
 };
 use slate_schema::{Row, TableDef, TableId};
 use slate_tuple::Value;
@@ -80,6 +81,67 @@ impl Default for Limits {
             idle_timeout: Duration::from_secs(30),
             rows_per_message: 256,
         }
+    }
+}
+
+/// One row of a multi-table read: one entry per input, in request order.
+///
+/// `None` where an outer join preserved something that matched nothing. The
+/// two kernel cursors spell that differently — a `JoinedRow` has a left and a
+/// right, a `ChainRow` has however many tables it has reached — so both are
+/// flattened to this shape once, here, rather than at each of the two call
+/// sites that would otherwise have to agree.
+pub type MultiRow = Vec<Option<Row>>;
+
+/// How a multi-table read will be run.
+///
+/// Two shapes because the kernel has two: a two-table join can choose which
+/// side to hold in memory, and a chain cannot. See [`MultiRead`].
+#[derive(Debug)]
+pub enum MultiExplanation {
+    /// A two-table join.
+    Join(Box<JoinExplanation>),
+    /// Three or more tables.
+    Chain(Box<ChainPlan>),
+}
+
+/// A cursor over either kernel shape, handing out [`MultiRow`]s.
+///
+/// The padding matters and is easy to miss: a right outer step of a chain
+/// preserves a row of a later table with every earlier one absent, and the
+/// kernel represents that as a *shorter* `ChainRow`. A client reading its
+/// inputs positionally has to find each one where it declared it, so the row
+/// is padded to the full width here.
+#[derive(Debug)]
+pub enum MultiCursor<'a> {
+    /// A two-table join.
+    /// Boxed because a `JoinCursor` holds a hash table's worth of state and a
+    /// `ChainCursor` holds an iterator, so the enum would otherwise be the
+    /// size of the larger everywhere it is moved.
+    Join(Box<JoinCursor<'a>>),
+    /// A chain, and how many inputs its rows must be padded to.
+    Chain(ChainCursor, usize),
+}
+
+impl MultiCursor<'_> {
+    /// The next row, flattened.
+    pub async fn next(&mut self) -> Result<Option<MultiRow>, KernelError> {
+        match self {
+            Self::Join(cursor) => Ok(cursor.next().await?.map(|row| vec![row.left, row.right])),
+            Self::Chain(cursor, inputs) => Ok(cursor
+                .next()
+                .await?
+                .map(|row| chain_row_values(&row, *inputs))),
+        }
+    }
+
+    /// Drain into a vector.
+    pub async fn collect(mut self) -> Result<Vec<MultiRow>, KernelError> {
+        let mut out = Vec::new();
+        while let Some(row) = self.next().await? {
+            out.push(row);
+        }
+        Ok(out)
     }
 }
 
@@ -125,6 +187,23 @@ enum Command {
         table: TableId,
         query: Box<Query>,
         reply: oneshot::Sender<Result<Explanation, KernelError>>,
+    },
+    MultiRead {
+        context: Box<SecurityContext>,
+        tables: Vec<TableId>,
+        read: Box<MultiRead>,
+        reply: oneshot::Sender<Result<Vec<MultiRow>, KernelError>>,
+    },
+    ExplainMulti {
+        context: Box<SecurityContext>,
+        tables: Vec<TableId>,
+        read: Box<MultiRead>,
+        reply: oneshot::Sender<Result<MultiExplanation, KernelError>>,
+    },
+    Aggregate {
+        context: Box<SecurityContext>,
+        read: Box<GroupedRead>,
+        reply: oneshot::Sender<Result<Vec<Group>, KernelError>>,
     },
     Commit {
         reply: oneshot::Sender<Result<Option<ReadToken>, KernelError>>,
@@ -384,6 +463,62 @@ impl Sessions {
         .map_err(|error| from_kernel(&error))
     }
 
+    /// Run a join or a chain in an open transaction.
+    ///
+    /// Collected rather than streamed, for the same reason a transactional
+    /// query is: a cursor borrows the transaction, and streaming one out of the
+    /// task would put that borrow back where it cannot go.
+    pub async fn multi_read(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        tables: Vec<TableId>,
+        read: MultiRead,
+    ) -> Result<Vec<MultiRow>, Status> {
+        self.dispatch(id, context, |reply| Command::MultiRead {
+            context: Box::new(context.clone()),
+            tables,
+            read: Box::new(read),
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
+    /// Explain a join or a chain in an open transaction.
+    pub async fn explain_multi(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        tables: Vec<TableId>,
+        read: MultiRead,
+    ) -> Result<MultiExplanation, Status> {
+        self.dispatch(id, context, |reply| Command::ExplainMulti {
+            context: Box::new(context.clone()),
+            tables,
+            read: Box::new(read),
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
+    /// Compute aggregates, per group, in an open transaction.
+    pub async fn aggregate(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        read: GroupedRead,
+    ) -> Result<Vec<Group>, Status> {
+        self.dispatch(id, context, |reply| Command::Aggregate {
+            context: Box::new(context.clone()),
+            read: Box::new(read),
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
     /// Commit, returning the sequence the writes landed at.
     pub async fn commit(
         &self,
@@ -593,6 +728,68 @@ async fn apply<S: KvStore>(
             let outcome = transaction.explain(&context, definition, &query);
             answer(reply, outcome)
         }
+        Command::MultiRead {
+            context,
+            tables,
+            read,
+            reply,
+        } => {
+            let definitions = match resolve_all(store, &tables) {
+                Ok(definitions) => definitions,
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                    return None;
+                }
+            };
+            let outcome = match open_multi(transaction, &context, &definitions, &read).await {
+                Ok(cursor) => cursor.collect().await,
+                Err(error) => Err(error),
+            };
+            answer(reply, outcome)
+        }
+        Command::ExplainMulti {
+            context,
+            tables,
+            read,
+            reply,
+        } => {
+            let definitions = match resolve_all(store, &tables) {
+                Ok(definitions) => definitions,
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                    return None;
+                }
+            };
+            let outcome = match &*read {
+                MultiRead::Join(join) => two_tables(&definitions).and_then(|(left, right)| {
+                    transaction
+                        .explain_join(&context, left, right, join)
+                        .map(|plan| MultiExplanation::Join(Box::new(plan)))
+                }),
+                MultiRead::Chain(chain) => transaction
+                    .explain_chain(&context, &definitions, chain)
+                    .map(|plan| MultiExplanation::Chain(Box::new(plan))),
+            };
+            answer(reply, outcome)
+        }
+        Command::Aggregate {
+            context,
+            read,
+            reply,
+        } => {
+            let definition = table!(read.table, reply);
+            let outcome = transaction
+                .group_by_having(
+                    &context,
+                    definition,
+                    &read.query,
+                    &read.group,
+                    &read.aggregates,
+                    &read.having,
+                )
+                .await;
+            answer(reply, outcome)
+        }
         // Handled by the loop, which has to consume the transaction.
         Command::Commit { .. } | Command::Rollback { .. } => None,
     }
@@ -622,6 +819,41 @@ fn resolve<S: KvStore>(store: &RecordStore<S>, id: TableId) -> Result<&TableDef,
         .catalog()
         .table(id)
         .ok_or(KernelError::UnknownTable(id))
+}
+
+/// Every table of a multi-table read, in the order the request declared them.
+fn resolve_all<'s, S: KvStore>(
+    store: &'s RecordStore<S>,
+    tables: &[TableId],
+) -> Result<Vec<&'s TableDef>, KernelError> {
+    tables.iter().map(|id| resolve(store, *id)).collect()
+}
+
+/// Open the right kernel cursor for a multi-table read.
+///
+/// Two tables go through `join`, which can choose which side to hold in
+/// memory; more go through `chain`, which cannot. Written once here and once
+/// in `service.rs` for the replica path, because the two take different
+/// receivers — a transaction and a snapshot — and there is no trait over the
+/// pair to share.
+async fn open_multi<'t>(
+    transaction: &'t RecordTransaction<'_>,
+    context: &SecurityContext,
+    tables: &[&'t TableDef],
+    read: &MultiRead,
+) -> Result<MultiCursor<'t>, KernelError> {
+    match read {
+        MultiRead::Join(join) => {
+            let (left, right) = two_tables(tables)?;
+            Ok(MultiCursor::Join(Box::new(
+                transaction.join(context, left, right, join).await?,
+            )))
+        }
+        MultiRead::Chain(chain) => Ok(MultiCursor::Chain(
+            transaction.chain(context, tables, chain).await?,
+            tables.len(),
+        )),
+    }
 }
 
 /// Tell leadership if the storage layer says another writer has taken over.

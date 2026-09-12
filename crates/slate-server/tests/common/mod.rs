@@ -18,8 +18,8 @@
 
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Action, Expr, Grant, KvReadStore, KvStore, Policy, RecordStore, SecurityCatalog,
-    SecurityContext,
+    Action, CmpOp, Expr, Grant, KvReadStore, KvStore, Policy, Principal, RecordStore,
+    SecurityCatalog, SecurityContext,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Row, TableDef, TableId};
 use slate_server::leadership::Leadership;
@@ -38,6 +38,9 @@ use tonic::transport::Channel;
 
 pub const DOCS: TableId = TableId(1);
 pub const USERS: TableId = TableId(2);
+pub const AUTHORS: TableId = TableId(3);
+pub const BOOKS: TableId = TableId(4);
+pub const SALES: TableId = TableId(5);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
@@ -71,8 +74,70 @@ pub fn users() -> TableDef {
         .expect("valid schema")
 }
 
+/// Three tenant-scoped tables that join into a chain, each with a policy of a
+/// *different* shape.
+///
+/// Different shapes on purpose: a matrix where every side's policy is
+/// `owner = me` would pass while a join applied one side's filter to both, and
+/// that is exactly the bug worth catching. Here the first side hides rows by
+/// owner, the second by a value comparison and the third by another, so a
+/// policy applied to the wrong side changes which rows disappear.
+pub fn authors() -> TableDef {
+    TableDef::builder("authors", AUTHORS)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("owner", ValueType::U64)
+        .column("name", ValueType::Str)
+        .column("country", ValueType::Str)
+        // An integer column on this side too, so a cross-side condition has
+        // two columns of the same type to compare. `Value`'s order is
+        // type-first, so the kernel refuses a comparison across types and a
+        // join condition written between a string and an integer would test
+        // the refusal rather than the join.
+        .column("born", ValueType::I64)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(IndexDef::builder("by_country", IndexId(1)).column("country"))
+        .build()
+        .expect("valid schema")
+}
+
+pub fn books() -> TableDef {
+    TableDef::builder("books", BOOKS)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("author_id", ValueType::U64)
+        .column("title", ValueType::Str)
+        .column("year", ValueType::I64)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(IndexDef::builder("by_author", IndexId(1)).column("author_id"))
+        .build()
+        .expect("valid schema")
+}
+
+pub fn sales() -> TableDef {
+    TableDef::builder("sales", SALES)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("book_id", ValueType::U64)
+        .column("units", ValueType::I64)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(IndexDef::builder("by_book", IndexId(1)).column("book_id"))
+        .build()
+        .expect("valid schema")
+}
+
 pub fn catalog() -> Catalog {
-    Catalog::from_tables([docs(), users()]).expect("catalog")
+    Catalog::from_tables([docs(), users(), authors(), books(), sales()]).expect("catalog")
+}
+
+/// The ordinal of a column of one of the fixture tables, by name.
+pub fn at(table: &TableDef, column: &str) -> slate_schema::Ordinal {
+    table
+        .ordinal_of(column)
+        .unwrap_or_else(|| panic!("`{}` has no column `{column}`", table.name()))
 }
 
 /// Grants for the `app` role, plus a row policy on `users`: a caller sees only
@@ -90,6 +155,32 @@ pub fn security() -> SecurityCatalog {
                 Expr::eq(owner, context.principal().id.clone())
             },
         ))
+        .grant(Grant::new("app", AUTHORS, Action::ALL))
+        .grant(Grant::new("app", BOOKS, Action::ALL))
+        .grant(Grant::new("app", SALES, Action::ALL))
+        // Hides rows by who owns them.
+        .policy(Policy::new(
+            "own_authors",
+            AUTHORS,
+            Action::ALL,
+            |context: &SecurityContext| {
+                Expr::eq(at(&authors(), "owner"), context.principal().id.clone())
+            },
+        ))
+        // Hides rows by a value, so a policy applied to the wrong side of a
+        // join removes a different set of rows rather than the same one.
+        .policy(Policy::new(
+            "modern_books",
+            BOOKS,
+            Action::ALL,
+            |_: &SecurityContext| Expr::compare(at(&books(), "year"), CmpOp::Ge, Value::I64(2000)),
+        ))
+        .policy(Policy::new(
+            "real_sales",
+            SALES,
+            Action::ALL,
+            |_: &SecurityContext| Expr::compare(at(&sales(), "units"), CmpOp::Gt, Value::I64(0)),
+        ))
 }
 
 pub fn doc(id: u64, kind: &str, size: i64, note: Option<&str>) -> Row {
@@ -98,6 +189,36 @@ pub fn doc(id: u64, kind: &str, size: i64, note: Option<&str>) -> Row {
         Value::Str(kind.to_owned()),
         Value::I64(size),
         note.map_or(Value::Null, |n| Value::Str(n.to_owned())),
+    ])
+}
+
+pub fn author(tenant: u64, id: u64, owner: u64, name: &str, country: &str, born: i64) -> Row {
+    Row::new(vec![
+        Value::U64(tenant),
+        Value::U64(id),
+        Value::U64(owner),
+        Value::Str(name.to_owned()),
+        Value::Str(country.to_owned()),
+        Value::I64(born),
+    ])
+}
+
+pub fn book(tenant: u64, id: u64, author_id: u64, title: &str, year: i64) -> Row {
+    Row::new(vec![
+        Value::U64(tenant),
+        Value::U64(id),
+        Value::U64(author_id),
+        Value::Str(title.to_owned()),
+        Value::I64(year),
+    ])
+}
+
+pub fn sale(tenant: u64, id: u64, book_id: u64, units: i64) -> Row {
+    Row::new(vec![
+        Value::U64(tenant),
+        Value::U64(id),
+        Value::U64(book_id),
+        Value::I64(units),
     ])
 }
 
@@ -358,10 +479,10 @@ pub fn doc_ids(rows: &[pb::Row]) -> Vec<u64> {
         .collect()
 }
 
-/// A query over `docs` with everything defaulted.
-pub fn docs_query() -> pb::Query {
+/// A query over `table` with everything defaulted.
+pub fn plain_query(table: &str) -> pb::Query {
     pb::Query {
-        table: "docs".to_owned(),
+        table: table.to_owned(),
         filter: None,
         order: pb::ScanOrder::Ascending as i32,
         projection: None,
@@ -369,5 +490,58 @@ pub fn docs_query() -> pb::Query {
         limit: None,
         offset: 0,
         hint: None,
+        compute: Vec::new(),
     }
+}
+
+/// A query over `docs` with everything defaulted.
+pub fn docs_query() -> pb::Query {
+    plain_query("docs")
+}
+
+/// The identity [`app_in`] attaches, built in process.
+///
+/// The oracle tests need the *same* context on both sides: the point is that
+/// gRPC and the kernel answer identically, and they cannot if they are running
+/// as different principals. Built here rather than in each test so the two
+/// statements of one identity sit next to each other.
+pub fn app_context(id: u64, tenant: u64) -> SecurityContext {
+    SecurityContext::new(
+        Principal::new(Value::U64(id))
+            .with_tenant(Value::U64(tenant))
+            .with_role("app"),
+    )
+}
+
+/// Collect a join stream into rows, and the `served_by` its header carried.
+pub async fn drain_joined(
+    stream: tonic::Streaming<pb::JoinResponse>,
+) -> (Vec<pb::JoinedRow>, Option<pb::ServedBy>) {
+    let mut stream = stream;
+    let mut rows = Vec::new();
+    let mut served_by = None;
+    while let Some(message) = stream.message().await.expect("a join message") {
+        if served_by.is_none() {
+            served_by = message.served_by.clone();
+        }
+        rows.extend(message.rows);
+    }
+    (rows, served_by)
+}
+
+/// Collect an aggregate stream into groups, and the `served_by` its header
+/// carried.
+pub async fn drain_groups(
+    stream: tonic::Streaming<pb::AggregateResponse>,
+) -> (Vec<pb::Group>, Option<pb::ServedBy>) {
+    let mut stream = stream;
+    let mut groups = Vec::new();
+    let mut served_by = None;
+    while let Some(message) = stream.message().await.expect("an aggregate message") {
+        if served_by.is_none() {
+            served_by = message.served_by.clone();
+        }
+        groups.extend(message.groups);
+    }
+    (groups, served_by)
 }

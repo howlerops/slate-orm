@@ -717,6 +717,36 @@ range and `IN`, and requires the two to answer identically. Making
 `key_values`, `key_directions` or `index_key_types` ignore the expression each
 breaks it.
 
+## The wire says the same thing the kernel does, or it is wrong
+
+A second query surface is a second place for an answer to come from, and the
+only way to know it agrees is to ask both. `slate-server/tests/multi.rs` builds
+a kernel `Join`, `Chain` or grouped query, runs it in process, converts the
+same value to its wire form, asks it over a real socket, and requires the two
+to return identical rows. 96 two-table cases — four join types by four
+algorithm choices by six request shapes, of which 84 return rows, measured
+rather than assumed — plus a three-table chain, a self-join whose second step
+joins back to its first input, every aggregate function, grouping by a computed
+value, `HAVING` over both a key and an aggregate, and a case per scalar shape a
+string or integer column can reach.
+
+The oracle is what makes the protocol's refusals meaningful rather than
+decorative, because a refusal that should have been an answer shows up here as
+a disagreement. It also catches the failure that motivated the reference model:
+a client that computed flat ordinals from table widths would keep passing every
+test until a column was added to an early table, at which point every later
+reference would point one column left and the wire would quietly answer a
+different question. Naming a producer and an index inside it makes that
+unrepresentable rather than unlikely.
+
+`tests/rls_join.rs` is the access-path matrix again, for the shape that has
+more than one access path per row: 14 cells over three policies of three
+different shapes, failures collected before asserting so one run names all of
+them, and a control that runs the same join in process as a superuser and
+requires the forbidden rows to actually appear — without it the matrix would
+pass just as well against a join that returned nothing. Making the join handler
+read as a superuser fails three of its six tests.
+
 ## The head node, and a lease checked against a wrong one
 
 `crates/slate-server/tests/`

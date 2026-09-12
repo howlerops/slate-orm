@@ -615,6 +615,14 @@ Built and tested:
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,
       or a row's contents would depend on the plan that fetched it
+- [x] Joins, aggregates, `GROUP BY`/`HAVING` and computed columns on the wire.
+      A column reference names a *producer* and an index inside it — an input's
+      column, the nth computed value, the nth group key, the nth aggregate —
+      and the server does every piece of arithmetic. The client never adds a
+      table width to anything, so a column added to an earlier table cannot
+      silently re-point a later reference, and two refusals the flat model
+      cannot express (`HAVING` on an ungrouped column, a computed value named
+      from across a join) become kind mismatches rather than in-range ordinals
 - [x] A gRPC head node with writer leadership: a compare-and-set lease on one
       object in the same bucket, terminal step-down on `WriterFenced`, reads
       routed by freshness and tenant affinity and stamped with which replica
@@ -631,9 +639,15 @@ Built and tested:
 Not built:
 
 - [ ] Python, Go and TypeScript SDKs
-- [ ] Joins, aggregates and computed columns on the wire — each needs an
-      ordinal space or a grouping model of its own in the protocol, and half of
-      one would be worse than none
+- [ ] A grouped *join*, and `ORDER BY`/`LIMIT` over groups. Both are kernel
+      gaps rather than wire gaps — the kernel groups over a single-table cursor
+      and has no ordering over groups — so building either into the head node
+      would be a second implementation of grouping or of sorting, with nothing
+      to be an oracle against
+- [ ] The wire's deep-nesting refusal is inherited rather than written: a
+      pathologically nested expression is stopped by prost's decode recursion
+      limit, and the conversion functions themselves recurse without a depth
+      counter of their own
 - [ ] The planner oracle does not generate expression indexes or compute lists.
       The covering path over one is proved by hand-written differentials — whole
       rows, every projection, forced index against forced table scan, reads

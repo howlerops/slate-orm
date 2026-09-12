@@ -86,16 +86,50 @@
 //! # }
 //! ```
 //!
+//! # One way to name a column, for every shape of row
+//!
+//! Joins, chains, aggregates and computed columns are all on the wire, and
+//! between them they need three ordinal spaces: a joined row's columns come
+//! from several tables, a computed value sits in a slot no table declares, and
+//! a grouped row is its keys followed by its aggregates. The kernel packs all
+//! three flat, by table width.
+//!
+//! The wire does not. A [`ColumnRef`](proto::ColumnRef) names a *producer* and
+//! an index inside it — input 2's column 3, the first computed value, the
+//! second aggregate — and [`convert::Space`] turns that into the kernel's flat
+//! ordinal. The client never adds a width to anything, which matters for two
+//! reasons beyond tidiness: this protocol deliberately does not publish table
+//! widths, and an ordinal computed from one is silently re-pointed the day a
+//! column is added to an earlier table.
+//!
+//! It also makes two refusals decidable that a flat ordinal makes
+//! undecidable. A `HAVING` naming a column that is not grouped is a *kind*
+//! mismatch rather than an ordinal that happens to be in range; so is a
+//! computed value named from across a join, which the kernel's joined space
+//! has no slot for. Both are refused with a message that says which.
+//!
+//! A join is one routing decision and one snapshot, however many tables it
+//! reads, so every response still carries exactly one `served_by` and the
+//! freshness a client asked for applies to the whole result. Two views would
+//! be a join across two points in time.
+//!
 //! # What is not here
 //!
-//! No joins, chains, aggregates or computed columns on the wire, though the
-//! kernel has all four. Each needs an ordinal space or a grouping model of its
-//! own in the schema, and half of one would be worse than none. No read-only
-//! transaction pinned to a replica, which [`ReplicaMode::Pinned`] would make
-//! possible and which is the right way to serve a consistent multi-read export
-//! — it needs a session type that is not a write transaction. No TLS or
-//! connection limits: those belong to whatever fronts the server, and inventing
-//! a second place to configure them makes the deployment worse.
+//! No grouped join: the kernel groups over a single-table cursor, and
+//! aggregating a join here would mean a second implementation of grouping in
+//! the head node — over rows it had already streamed, losing the projection
+//! narrowing that lets `COUNT(*)` read no columns at all. No `ORDER BY` over
+//! groups either, for the same reason: the kernel has no ordering over groups
+//! to be an oracle against, and a comparator written here would be a second
+//! statement of the sort rules. Groups come back in the kernel's own order,
+//! ascending by encoded key.
+//!
+//! No read-only transaction pinned to a replica, which [`ReplicaMode::Pinned`]
+//! would make possible and which is the right way to serve a consistent
+//! multi-read export — it needs a session type that is not a write
+//! transaction. No TLS or connection limits: those belong to whatever fronts
+//! the server, and inventing a second place to configure them makes the
+//! deployment worse.
 //!
 //! [`ReplicaMode::Pinned`]: https://docs.rs/slate-slatedb
 

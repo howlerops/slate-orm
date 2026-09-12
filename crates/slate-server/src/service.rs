@@ -39,17 +39,20 @@
 
 use crate::auth::Authenticator;
 use crate::convert::{
-    explanation_to_proto, freshness_from_proto, query_from_proto, row_from_proto, row_to_proto,
+    MultiRead, aggregate_from_proto_query, chain_plan_to_proto, explanation_to_proto,
+    freshness_from_proto, group_to_proto, join_explanation_to_proto, join_from_proto,
+    multi_row_to_proto, query_from_proto, row_from_proto, row_to_proto, two_tables,
     values_from_proto,
 };
 use crate::leadership::{Leadership, Standing};
 use crate::proto as pb;
 use crate::proto::records_server::{Records, RecordsServer};
-use crate::session::{Limits, Sessions};
+use crate::session::{Limits, MultiCursor, MultiExplanation, MultiRow, Sessions};
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
-    Freshness, KernelError, KvReadStore, KvStore, Query, ReadToken, RecordSnapshot, RecordStore,
-    RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog, SecurityContext, Statistics,
+    Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken, RecordSnapshot,
+    RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog, SecurityContext,
+    Statistics,
 };
 use slate_schema::{Catalog, Row, TableDef, TableId};
 use slate_tuple::Value;
@@ -188,6 +191,23 @@ impl<S: KvStore + KvReadStore> Head<S> {
         }
     }
 
+    /// A table this node serves, by id.
+    ///
+    /// A consistency check rather than a lookup — the name was resolved
+    /// against this same catalog a moment ago — but the alternative is an
+    /// index into a catalog that has to be assumed to match.
+    fn definition(&self, id: TableId) -> Result<&TableDef, Status> {
+        self.pool
+            .catalog()
+            .table(id)
+            .ok_or_else(|| from_kernel(&KernelError::UnknownTable(id)))
+    }
+
+    /// Every table of a multi-table read, in request order.
+    fn definitions(&self, ids: &[TableId]) -> Result<Vec<&TableDef>, Status> {
+        ids.iter().map(|id| self.definition(*id)).collect()
+    }
+
     /// Where this node stands with respect to writing.
     #[must_use]
     pub fn leadership(&self) -> &Arc<Leadership> {
@@ -243,9 +263,23 @@ impl<S: KvStore + KvReadStore> Head<S> {
     /// the read is not permitted to reach, and would send the read to a replica
     /// caching somebody else's data.
     fn affinity(table: &TableDef, context: &SecurityContext) -> Option<Value> {
-        table
-            .tenant_column()
-            .and_then(|_| context.principal().tenant.clone())
+        Self::affinity_over(&[table], context)
+    }
+
+    /// The tenant a read over several tables should be routed by.
+    ///
+    /// The same rule, applied to the set: if *any* input is tenant-scoped, the
+    /// principal's tenant is the prefix the read will touch on that input, and
+    /// keeping it on one replica is what keeps that range warm. A join of a
+    /// tenant-scoped table to a shared lookup table still routes by tenant,
+    /// because the tenant-scoped side is the one whose working set is large
+    /// enough for locality to matter.
+    fn affinity_over(tables: &[&TableDef], context: &SecurityContext) -> Option<Value> {
+        tables
+            .iter()
+            .any(|table| table.tenant_column().is_some())
+            .then(|| context.principal().tenant.clone())
+            .flatten()
     }
 
     /// Open the view that will serve a read, and say truthfully where it came
@@ -703,6 +737,187 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         )))
     }
 
+    type JoinStream = JoinedStream;
+
+    /// A join or a chain: one request shape, two kernel paths.
+    ///
+    /// Every input is planned and read through the same secured path a
+    /// single-table query uses, so each is authorised and each carries its own
+    /// row filter. Nothing here reads a row; it reads cursors that have already
+    /// applied their policies, which is why a join cannot see what a query
+    /// could not.
+    ///
+    /// One snapshot serves every input. That is what makes `served_by`
+    /// singular and honest: the whole result is read at one sequence from one
+    /// view, rather than each table being read wherever it happened to be
+    /// fresh enough.
+    async fn join(
+        &self,
+        request: Request<pb::JoinRequest>,
+    ) -> Result<Response<Self::JoinStream>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let Some(wire) = request.join else {
+            return Err(Status::new(Code::InvalidArgument, "no join given"));
+        };
+        // The warnings — an unusable hint, a build limit that was clamped —
+        // are dropped here for the same reason `Query` drops them: a stream
+        // has no header to put them in that a client would have to read, and
+        // inventing one would make every client parse a field it does not
+        // want. `ExplainJoin` returns them, which is where a client goes to
+        // find out why its request did not do what it expected.
+        let (tables, read, _warnings) = join_from_proto(&wire, self.pool.catalog())?;
+        let definitions = self.definitions(&tables)?;
+        let batch_size = self.limits.rows_per_message.max(1);
+
+        if !request.transaction.is_empty() {
+            let rows = self
+                .sessions
+                .multi_read(&request.transaction, &context, tables, read)
+                .await?;
+            return Ok(Response::new(replay_joined(
+                rows,
+                in_transaction(),
+                batch_size,
+            )));
+        }
+
+        let freshness = freshness_from_proto(request.freshness.as_ref())?;
+        let affinity = Self::affinity_over(&definitions, &context);
+        let (sender, receiver) = mpsc::channel(2);
+        let (started, start) = oneshot::channel();
+        let scan = MultiScan {
+            pool: Arc::clone(&self.pool),
+            tables,
+            context,
+            read,
+            batch_size,
+            freshness,
+            affinity,
+        };
+
+        // Same shape as `Scan`, and for the same reasons: the cursor borrows
+        // the view, the view borrows the pool, and the routing decision has to
+        // come out of the same call that opens the view. `started` keeps a
+        // failure before the first row — an access denial, a nested loop that
+        // cannot preserve unmatched rows, a build side too large — the status
+        // of the call rather than the first item of a stream the client has
+        // already been told succeeded.
+        tokio::spawn(async move {
+            scan.run(&sender, started).await;
+        });
+
+        match start.await {
+            Ok(Ok(())) => Ok(Response::new(Box::pin(ReceiverStream::new(receiver)))),
+            Ok(Err(status)) => Err(status),
+            Err(_) => Err(Status::new(
+                Code::Internal,
+                "the join task ended before it started",
+            )),
+        }
+    }
+
+    type AggregateStream = GroupStream;
+
+    /// Aggregates over one table, optionally per group.
+    ///
+    /// Not streamed from a cursor, because the kernel does not have one to
+    /// stream: grouping folds every matching row before any group is final, so
+    /// the result is a vector by the time it exists. It is still sent in
+    /// batches, so a query with a million groups is not one message.
+    async fn aggregate(
+        &self,
+        request: Request<pb::AggregateRequest>,
+    ) -> Result<Response<Self::AggregateStream>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let Some(wire) = request.aggregate else {
+            return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
+        };
+        // Warnings are dropped, as on `Query` and `Join`; see `join` above.
+        let (read, _warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
+        let batch_size = self.limits.rows_per_message.max(1);
+
+        if !request.transaction.is_empty() {
+            let groups = self
+                .sessions
+                .aggregate(&request.transaction, &context, read)
+                .await?;
+            return Ok(Response::new(replay_groups(
+                groups,
+                in_transaction(),
+                batch_size,
+            )));
+        }
+
+        let freshness = freshness_from_proto(request.freshness.as_ref())?;
+        let table = self.definition(read.table)?;
+        let affinity = Self::affinity(table, &context);
+        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+        let groups = view
+            .group_by_having(
+                &context,
+                table,
+                &read.query,
+                &read.group,
+                &read.aggregates,
+                &read.having,
+            )
+            .await
+            .map_err(|e| from_kernel(&e))?;
+
+        Ok(Response::new(replay_groups(groups, served_by, batch_size)))
+    }
+
+    async fn explain_join(
+        &self,
+        request: Request<pb::ExplainJoinRequest>,
+    ) -> Result<Response<pb::JoinExplainResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let Some(wire) = request.join else {
+            return Err(Status::new(Code::InvalidArgument, "no join given"));
+        };
+        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
+        let definitions = self.definitions(&tables)?;
+
+        if !request.transaction.is_empty() {
+            let explanation = self
+                .sessions
+                .explain_multi(&request.transaction, &context, tables, read.clone())
+                .await?;
+            return Ok(Response::new(multi_explanation_to_proto(
+                &explanation,
+                &definitions,
+                &read,
+                warnings,
+                in_transaction(),
+            )));
+        }
+
+        let freshness = freshness_from_proto(request.freshness.as_ref())?;
+        let affinity = Self::affinity_over(&definitions, &context);
+        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+        let explanation = match &read {
+            MultiRead::Join(join) => two_tables(&definitions).and_then(|(left, right)| {
+                view.explain_join(&context, left, right, join)
+                    .map(|plan| MultiExplanation::Join(Box::new(plan)))
+            }),
+            MultiRead::Chain(chain) => view
+                .explain_chain(&context, &definitions, chain)
+                .map(|plan| MultiExplanation::Chain(Box::new(plan))),
+        }
+        .map_err(|e| from_kernel(&e))?;
+
+        Ok(Response::new(multi_explanation_to_proto(
+            &explanation,
+            &definitions,
+            &read,
+            warnings,
+            served_by,
+        )))
+    }
+
     async fn leadership(
         &self,
         _request: Request<pb::LeadershipRequest>,
@@ -841,6 +1056,197 @@ impl Scan {
         if !batch.is_empty() {
             let _ = sender
                 .send(Ok(pb::QueryResponse {
+                    rows: batch,
+                    served_by: None,
+                }))
+                .await;
+        }
+    }
+}
+
+/// The joined rows of a join or chain, in batches.
+type JoinedStream = Pin<Box<dyn futures::Stream<Item = Result<pb::JoinResponse, Status>> + Send>>;
+
+/// The groups of an aggregate, in batches.
+type GroupStream =
+    Pin<Box<dyn futures::Stream<Item = Result<pb::AggregateResponse, Status>> + Send>>;
+
+/// Turn joined rows already in memory into the same stream shape a live join
+/// gives.
+fn replay_joined(rows: Vec<MultiRow>, served_by: pb::ServedBy, batch_size: usize) -> JoinedStream {
+    let mut messages = vec![Ok(pb::JoinResponse {
+        rows: Vec::new(),
+        served_by: Some(served_by),
+    })];
+    for batch in rows.chunks(batch_size) {
+        messages.push(Ok(pb::JoinResponse {
+            rows: batch.iter().map(|row| multi_row_to_proto(row)).collect(),
+            served_by: None,
+        }));
+    }
+    Box::pin(futures::stream::iter(messages))
+}
+
+/// The same, for groups.
+fn replay_groups(groups: Vec<Group>, served_by: pb::ServedBy, batch_size: usize) -> GroupStream {
+    let mut messages = vec![Ok(pb::AggregateResponse {
+        groups: Vec::new(),
+        served_by: Some(served_by),
+    })];
+    for batch in groups.chunks(batch_size) {
+        messages.push(Ok(pb::AggregateResponse {
+            groups: batch.iter().map(group_to_proto).collect(),
+            served_by: None,
+        }));
+    }
+    Box::pin(futures::stream::iter(messages))
+}
+
+/// Either kernel explanation in its wire form.
+fn multi_explanation_to_proto(
+    explanation: &MultiExplanation,
+    tables: &[&TableDef],
+    read: &MultiRead,
+    warnings: Vec<String>,
+    served_by: pb::ServedBy,
+) -> pb::JoinExplainResponse {
+    match (explanation, read) {
+        (MultiExplanation::Join(plan), _) => {
+            join_explanation_to_proto(plan, warnings, Some(served_by))
+        }
+        (MultiExplanation::Chain(plan), MultiRead::Chain(chain)) => {
+            chain_plan_to_proto(plan, tables, chain, warnings, Some(served_by))
+        }
+        // The two are built from the same request a few lines apart, so this
+        // is unreachable rather than a case worth handling. It is written as
+        // an empty explanation rather than a panic, on the principle that a
+        // head node should not be able to bring itself down over a mismatch
+        // it can describe.
+        (MultiExplanation::Chain(plan), MultiRead::Join(_)) => pb::JoinExplainResponse {
+            inputs: Vec::new(),
+            estimated_rows: plan.estimated_rows,
+            estimated_cost: plan.estimated_cost,
+            display: String::new(),
+            warnings,
+            served_by: Some(served_by),
+        },
+    }
+}
+
+/// Everything a streaming join needs, owned by its task.
+struct MultiScan {
+    pool: Arc<ReplicaPool>,
+    tables: Vec<TableId>,
+    context: SecurityContext,
+    read: MultiRead,
+    batch_size: usize,
+    freshness: Freshness,
+    affinity: Option<Value>,
+}
+
+impl MultiScan {
+    /// Route once, open every input through that one view, and walk the joined
+    /// rows into the channel a batch at a time.
+    ///
+    /// Routing once is the load-bearing part. Two calls into the pool would
+    /// give two views at two sequences, and a join across them would be a
+    /// result the database was never in — and `served_by` would have nothing
+    /// truthful to report.
+    async fn run(
+        &self,
+        sender: &mpsc::Sender<Result<pb::JoinResponse, Status>>,
+        started: oneshot::Sender<Result<(), Status>>,
+    ) {
+        let (view, store) = match self
+            .pool
+            .snapshot_from(self.freshness, self.affinity.as_ref())
+            .await
+        {
+            Ok(routed) => routed,
+            Err(error) => {
+                let _ = started.send(Err(from_kernel(&error)));
+                return;
+            }
+        };
+        let served_by = served_by(store.as_ref());
+
+        let mut definitions = Vec::with_capacity(self.tables.len());
+        for id in &self.tables {
+            match self.pool.catalog().table(*id) {
+                Some(table) => definitions.push(table),
+                None => {
+                    let _ = started.send(Err(from_kernel(&KernelError::UnknownTable(*id))));
+                    return;
+                }
+            }
+        }
+
+        let opened = match &self.read {
+            MultiRead::Join(join) => match two_tables(&definitions) {
+                Ok((left, right)) => view
+                    .join(&self.context, left, right, join)
+                    .await
+                    .map(|cursor| MultiCursor::Join(Box::new(cursor))),
+                Err(error) => Err(error),
+            },
+            MultiRead::Chain(chain) => view
+                .chain(&self.context, &definitions, chain)
+                .await
+                .map(|cursor| MultiCursor::Chain(cursor, definitions.len())),
+        };
+        let mut cursor = match opened {
+            Ok(cursor) => cursor,
+            Err(error) => {
+                let _ = started.send(Err(from_kernel(&error)));
+                return;
+            }
+        };
+        if started.send(Ok(())).is_err() {
+            return;
+        }
+
+        // The first message carries `served_by` and no rows, so a client learns
+        // where its read went even when the result is empty.
+        if sender
+            .send(Ok(pb::JoinResponse {
+                rows: Vec::new(),
+                served_by: Some(served_by),
+            }))
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let mut batch = Vec::with_capacity(self.batch_size);
+        loop {
+            match cursor.next().await {
+                Ok(Some(row)) => batch.push(multi_row_to_proto(&row)),
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = sender.send(Err(from_kernel(&error))).await;
+                    return;
+                }
+            }
+            if batch.len() >= self.batch_size {
+                let rows = core::mem::replace(&mut batch, Vec::with_capacity(self.batch_size));
+                if sender
+                    .send(Ok(pb::JoinResponse {
+                        rows,
+                        served_by: None,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    // The client hung up. Returning here is the point: an
+                    // abandoned join should stop reading object storage.
+                    return;
+                }
+            }
+        }
+        if !batch.is_empty() {
+            let _ = sender
+                .send(Ok(pb::JoinResponse {
                     rows: batch,
                     served_by: None,
                 }))

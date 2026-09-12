@@ -14,19 +14,35 @@
 //! one side and forgotten on the other, which is the failure this module exists
 //! to have.
 //!
-//! # What is not on the wire
+//! # One ordinal space, resolved here rather than by the client
 //!
-//! [`Scalar`](slate_kernel::Scalar) computed columns, joins, chains and
-//! aggregates all exist in the kernel and none of them are here. That is a
-//! scope decision, not an oversight: each needs an ordinal space or a grouping
-//! model of its own on the wire, and shipping half of one would be worse than
-//! shipping none. A client that needs them today can compute over the rows a
-//! query returns.
+//! The kernel addresses everything by a flat ordinal: a joined row packs its
+//! tables by width, a computed value sits after its table's own columns, a
+//! group is its keys followed by its aggregates. Three shapes, one arithmetic
+//! — and every term of that arithmetic is a table width, which is exactly what
+//! this protocol refuses to publish.
+//!
+//! So the wire does not carry flat ordinals. It carries [`pb::ColumnRef`],
+//! which names a producer and an index inside it, and [`Space`] turns one into
+//! the ordinal the kernel wants. The client never adds a width to anything, and
+//! a column added to an early table cannot silently re-point a predicate over a
+//! later one. The `.proto` records the alternatives that were rejected.
+//!
+//! Two refusals fall out of the same choice rather than needing a rule of their
+//! own: a `HAVING` naming an ungrouped column, and a cross-input condition
+//! naming a computed value the joined space has no slot for. Both are *kind*
+//! mismatches here, where a flat ordinal would have made them indistinguishable
+//! from a legitimate reference that happened to land in range.
 
 use crate::proto as pb;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
-use slate_kernel::{CmpOp, Explanation, Expr, Freshness, Projection, ReadToken, ScanOrder};
-use slate_schema::{Ordinal, Row, TableDef};
+use slate_kernel::{
+    Aggregate, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group, Join,
+    JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric, Projection, ReadToken,
+    ScanOrder, Side, TimeUnit,
+};
+use slate_kernel::{Chain, ChainPlan, ChainRow, Scalar};
+use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value};
 use tonic::Status;
 use uuid::Uuid;
@@ -117,6 +133,326 @@ pub fn row_from_proto(row: &pb::Row) -> Result<Row, Status> {
     Ok(Row::new(values_from_proto(row)?))
 }
 
+// --- column references ----------------------------------------------------
+
+/// One input of a read: the table it reads, and how many values it computes.
+#[derive(Debug, Clone, Copy)]
+pub struct Input<'t> {
+    table: &'t TableDef,
+    computed: usize,
+}
+
+impl<'t> Input<'t> {
+    /// An input reading `table` and computing `computed` extra values.
+    #[must_use]
+    pub const fn new(table: &'t TableDef, computed: usize) -> Self {
+        Self { table, computed }
+    }
+
+    fn width(self) -> usize {
+        self.table.columns().len()
+    }
+}
+
+/// The shape of the rows a predicate, sort key, projection or aggregate is
+/// written against, and the resolution of a [`pb::ColumnRef`] into it.
+///
+/// Three shapes, because there are three ways a row gets built here, and each
+/// is a concatenation of producers. Keeping them one type rather than three is
+/// what lets a single [`Expr`] serve all of them — the kernel's arrangement,
+/// and the reason three-valued logic has exactly one implementation.
+#[derive(Debug)]
+pub struct Space<'t> {
+    shape: Shape<'t>,
+}
+
+#[derive(Debug)]
+enum Shape<'t> {
+    /// One input, addressed in its own table's ordinals. `index` is the
+    /// position a reference has to name — zero for a plain query, and the
+    /// input's own position inside a join, so that one numbering serves the
+    /// whole request.
+    Local { input: Input<'t>, index: usize },
+    /// Several inputs, packed exactly as [`JoinSchema`] packs them.
+    ///
+    /// `visible` is how many of them the expression being converted may name.
+    /// A condition on the third input may read the first two and itself; it
+    /// may not read the fourth, which has not been read yet and would evaluate
+    /// as null rather than failing.
+    Joined {
+        inputs: Vec<Input<'t>>,
+        visible: usize,
+    },
+    /// A grouped result: the keys, then the aggregates.
+    Groups { keys: usize, aggregates: usize },
+}
+
+impl<'t> Space<'t> {
+    /// A single-table query with no computed values.
+    #[must_use]
+    pub const fn table(table: &'t TableDef) -> Self {
+        Self::input(table, 0, 0)
+    }
+
+    /// The `index`th input of a request, reading `table` and computing
+    /// `computed` values.
+    #[must_use]
+    pub const fn input(table: &'t TableDef, computed: usize, index: usize) -> Self {
+        Self {
+            shape: Shape::Local {
+                input: Input::new(table, computed),
+                index,
+            },
+        }
+    }
+
+    /// The joined space over `inputs`, of which the first `visible` may be
+    /// named.
+    #[must_use]
+    pub const fn joined(inputs: Vec<Input<'t>>, visible: usize) -> Self {
+        Self {
+            shape: Shape::Joined { inputs, visible },
+        }
+    }
+
+    /// A grouped result of `keys` grouping columns and `aggregates`
+    /// aggregates.
+    #[must_use]
+    pub const fn groups(keys: usize, aggregates: usize) -> Self {
+        Self {
+            shape: Shape::Groups { keys, aggregates },
+        }
+    }
+
+    /// Where each input starts, for a joined space.
+    fn offset(inputs: &[Input<'t>], index: usize) -> usize {
+        inputs.iter().take(index).map(|i| i.width()).sum()
+    }
+
+    /// The ordinal `reference` names, or a refusal saying why it names none.
+    ///
+    /// `what` is the part of the request being converted, so a message can say
+    /// *where* the bad reference was as well as what was wrong with it. A
+    /// predicate on a column that does not exist is otherwise a query that
+    /// silently matches nothing, which is the one diagnosis nothing else in the
+    /// system will ever offer.
+    pub fn resolve(
+        &self,
+        reference: Option<&pb::ColumnRef>,
+        what: &str,
+    ) -> Result<Ordinal, Status> {
+        use pb::column_ref::Of;
+        let Some(reference) = reference else {
+            return Err(bad(format!("{what} names no column")));
+        };
+        let Some(of) = &reference.of else {
+            // Same reasoning as an unset `Value.kind`: proto3 cannot tell an
+            // unset field from a zero one, so defaulting this to "column 0"
+            // would turn a client built against a newer schema into a query
+            // about the wrong column.
+            return Err(bad(format!(
+                "{what} has a column reference with no kind set; name a column, \
+                 a computed value, a group key or an aggregate"
+            )));
+        };
+        let asked = reference.input as usize;
+        match &self.shape {
+            Shape::Local { input, index } => match of {
+                Of::Column(column) => {
+                    Self::check_input(asked, *index, what)?;
+                    let column = *column as usize;
+                    if column >= input.width() {
+                        return Err(bad(format!(
+                            "{what} names column {column} of table `{}`, which has {} columns",
+                            input.table.name(),
+                            input.width()
+                        )));
+                    }
+                    Ok(Ordinal(column))
+                }
+                Of::Computed(at) => {
+                    Self::check_input(asked, *index, what)?;
+                    let at = *at as usize;
+                    if at >= input.computed {
+                        // Also the rule that a computed value may only read
+                        // earlier ones: converting the `i`th is done in a space
+                        // that knows about `i` of them, so naming itself or a
+                        // later one lands here.
+                        return Err(bad(format!(
+                            "{what} names computed value {at}, and only {} are \
+                             available at that point",
+                            input.computed
+                        )));
+                    }
+                    Ok(Ordinal(input.width() + at))
+                }
+                Of::GroupKey(_) | Of::Aggregate(_) => Err(bad(format!(
+                    "{what} names a group key or an aggregate, but it is evaluated \
+                     over rows rather than over groups"
+                ))),
+            },
+            Shape::Joined { inputs, visible } => match of {
+                Of::Column(column) => {
+                    if asked >= *visible {
+                        return Err(bad(format!(
+                            "{what} names input {asked}, which is not read by that point; \
+                             {visible} inputs are available there"
+                        )));
+                    }
+                    let input = inputs.get(asked).ok_or_else(|| {
+                        bad(format!(
+                            "{what} names input {asked}, but the request has {}",
+                            inputs.len()
+                        ))
+                    })?;
+                    let column = *column as usize;
+                    if column >= input.width() {
+                        return Err(bad(format!(
+                            "{what} names column {column} of table `{}`, which has {} columns",
+                            input.table.name(),
+                            input.width()
+                        )));
+                    }
+                    Ok(Ordinal(Self::offset(inputs, asked) + column))
+                }
+                // The kernel's joined space is packed by *declared* table
+                // width, so a computed value — which sits past its table's
+                // declared columns — has no slot in it. Reading it as a flat
+                // ordinal would land on the next table's first column and
+                // answer a different question. It is refused rather than
+                // supported, because supporting it is a kernel change.
+                Of::Computed(at) => Err(bad(format!(
+                    "{what} names computed value {at} of input {asked}; a computed value \
+                     is not addressable across inputs, because the joined ordinal space \
+                     is packed by declared table width and has no slot for one. Put the \
+                     condition in that input's own filter."
+                ))),
+                Of::GroupKey(_) | Of::Aggregate(_) => Err(bad(format!(
+                    "{what} names a group key or an aggregate, but it is evaluated \
+                     over joined rows rather than over groups"
+                ))),
+            },
+            Shape::Groups { keys, aggregates } => match of {
+                Of::GroupKey(at) => {
+                    Self::check_input(asked, 0, what)?;
+                    let at = *at as usize;
+                    if at >= *keys {
+                        return Err(bad(format!(
+                            "{what} names group key {at}, and the query groups by {keys}"
+                        )));
+                    }
+                    Ok(Ordinal(at))
+                }
+                Of::Aggregate(at) => {
+                    Self::check_input(asked, 0, what)?;
+                    let at = *at as usize;
+                    if at >= *aggregates {
+                        return Err(bad(format!(
+                            "{what} names aggregate {at}, and the query has {aggregates}"
+                        )));
+                    }
+                    Ok(Ordinal(keys + at))
+                }
+                // SQL's "column must appear in the GROUP BY clause", and the
+                // reason `ColumnRef` distinguishes kinds at all: a flat
+                // ordinal here would have been a legitimate group key.
+                Of::Column(_) | Of::Computed(_) => Err(bad(format!(
+                    "{what} names a column that is not grouped; a condition over groups \
+                     may only name a group key or an aggregate"
+                ))),
+            },
+        }
+    }
+
+    /// A reference that must name a stored column, for the two places where
+    /// nothing else can work: a join equality and a projection.
+    ///
+    /// A join key is compared against stored values through the index, and a
+    /// projection decides which stored columns are decoded — a computed value
+    /// is neither, and comes back regardless.
+    pub fn resolve_stored_column(
+        &self,
+        reference: Option<&pb::ColumnRef>,
+        what: &str,
+    ) -> Result<Ordinal, Status> {
+        if let Some(pb::column_ref::Of::Computed(at)) = reference.and_then(|r| r.of.as_ref()) {
+            return Err(bad(format!(
+                "{what} names computed value {at}; only a stored column can appear there"
+            )));
+        }
+        self.resolve(reference, what)
+    }
+
+    fn check_input(asked: usize, expected: usize, what: &str) -> Result<(), Status> {
+        if asked == expected {
+            return Ok(());
+        }
+        Err(bad(format!(
+            "{what} names input {asked}, and is evaluated over input {expected}"
+        )))
+    }
+
+    /// The wire form of an ordinal in this space.
+    ///
+    /// Total, like every outbound conversion. An ordinal this space has no slot
+    /// for comes out as a plain column reference, which the inbound direction
+    /// then refuses — that keeps "a column past the end of the table" a refusal
+    /// rather than a panic on the way out.
+    #[must_use]
+    pub fn unresolve(&self, ordinal: Ordinal) -> pb::ColumnRef {
+        match &self.shape {
+            Shape::Local { input, index } => {
+                let width = input.width();
+                if ordinal.0 >= width && ordinal.0 < width + input.computed {
+                    return computed_ref(*index, ordinal.0 - width);
+                }
+                column_ref(*index, ordinal.0)
+            }
+            Shape::Joined { inputs, .. } => {
+                let mut at = 0;
+                for (index, input) in inputs.iter().enumerate() {
+                    if ordinal.0 >= at && ordinal.0 < at + input.width() {
+                        return column_ref(index, ordinal.0 - at);
+                    }
+                    at += input.width();
+                }
+                column_ref(0, ordinal.0)
+            }
+            Shape::Groups { keys, .. } => {
+                if ordinal.0 < *keys {
+                    return reference(pb::column_ref::Of::GroupKey(ordinal.0 as u32));
+                }
+                reference(pb::column_ref::Of::Aggregate((ordinal.0 - keys) as u32))
+            }
+        }
+    }
+}
+
+fn reference(of: pb::column_ref::Of) -> pb::ColumnRef {
+    pb::ColumnRef {
+        input: 0,
+        of: Some(of),
+    }
+}
+
+/// A reference to a stored column of one input.
+#[must_use]
+pub fn column_ref(input: usize, ordinal: usize) -> pb::ColumnRef {
+    pb::ColumnRef {
+        input: input as u32,
+        of: Some(pb::column_ref::Of::Column(ordinal as u32)),
+    }
+}
+
+/// A reference to the `at`th value one input computes.
+#[must_use]
+pub fn computed_ref(input: usize, at: usize) -> pb::ColumnRef {
+    pb::ColumnRef {
+        input: input as u32,
+        of: Some(pb::column_ref::Of::Computed(at as u32)),
+    }
+}
+
 // --- predicates -----------------------------------------------------------
 
 const fn op_to_proto(op: CmpOp) -> pb::CmpOp {
@@ -146,35 +482,25 @@ fn op_from_proto(op: i32) -> Result<CmpOp, Status> {
     }
 }
 
-const fn ordinal_to_proto(ordinal: Ordinal) -> u32 {
-    // Ordinals are column positions in a table, so the truncation this cast
-    // could in principle perform needs a table four billion columns wide.
-    ordinal.0 as u32
-}
-
-const fn ordinal_from_proto(ordinal: u32) -> Ordinal {
-    Ordinal(ordinal as usize)
-}
-
-/// A predicate in its wire form.
+/// A predicate in its wire form, addressed against `space`.
 #[must_use]
-pub fn expr_to_proto(expr: &Expr) -> pb::Expr {
+pub fn expr_to_proto(space: &Space<'_>, expr: &Expr) -> pb::Expr {
     use pb::expr::Node;
     let node = match expr {
         Expr::True => Node::Literal(true),
         Expr::False => Node::Literal(false),
         Expr::Compare { column, op, value } => Node::Compare(pb::Compare {
-            column: ordinal_to_proto(*column),
+            column: Some(space.unresolve(*column)),
             op: op_to_proto(*op) as i32,
             value: Some(value_to_proto(value)),
         }),
         Expr::CompareColumns { left, op, right } => Node::CompareColumns(pb::CompareColumns {
-            left: ordinal_to_proto(*left),
+            left: Some(space.unresolve(*left)),
             op: op_to_proto(*op) as i32,
-            right: ordinal_to_proto(*right),
+            right: Some(space.unresolve(*right)),
         }),
         Expr::IsNull { column, negated } => Node::IsNull(pb::IsNull {
-            column: ordinal_to_proto(*column),
+            column: Some(space.unresolve(*column)),
             negated: *negated,
         }),
         Expr::Like {
@@ -183,7 +509,7 @@ pub fn expr_to_proto(expr: &Expr) -> pb::Expr {
             negated,
             insensitive,
         } => Node::Like(pb::Like {
-            column: ordinal_to_proto(*column),
+            column: Some(space.unresolve(*column)),
             pattern: pattern.clone(),
             negated: *negated,
             insensitive: *insensitive,
@@ -194,22 +520,22 @@ pub fn expr_to_proto(expr: &Expr) -> pb::Expr {
             negated,
             insensitive,
         } => Node::Matches(pb::Matches {
-            column: ordinal_to_proto(*column),
+            column: Some(space.unresolve(*column)),
             pattern: pattern.clone(),
             negated: *negated,
             insensitive: *insensitive,
         }),
         Expr::In { column, values } => Node::InList(pb::InList {
-            column: ordinal_to_proto(*column),
+            column: Some(space.unresolve(*column)),
             values: values.iter().map(value_to_proto).collect(),
         }),
         Expr::And(parts) => Node::Conjunction(pb::ExprList {
-            exprs: parts.iter().map(expr_to_proto).collect(),
+            exprs: parts.iter().map(|e| expr_to_proto(space, e)).collect(),
         }),
         Expr::Or(parts) => Node::Disjunction(pb::ExprList {
-            exprs: parts.iter().map(expr_to_proto).collect(),
+            exprs: parts.iter().map(|e| expr_to_proto(space, e)).collect(),
         }),
-        Expr::Not(inner) => Node::Negation(Box::new(expr_to_proto(inner))),
+        Expr::Not(inner) => Node::Negation(Box::new(expr_to_proto(space, inner))),
         // `Expr` is `#[non_exhaustive]`. A predicate this server cannot
         // represent must not become `True`, which would widen the result — and
         // on a table under a policy, widening is the failure that matters. It
@@ -220,46 +546,51 @@ pub fn expr_to_proto(expr: &Expr) -> pb::Expr {
     pb::Expr { node: Some(node) }
 }
 
-/// A wire predicate as the kernel's.
-pub fn expr_from_proto(expr: &pb::Expr) -> Result<Expr, Status> {
+/// A wire predicate as the kernel's, resolved against `space`.
+pub fn expr_from_proto(space: &Space<'_>, expr: &pb::Expr) -> Result<Expr, Status> {
+    expr_named(space, expr, "the predicate")
+}
+
+/// [`expr_from_proto`], with a name for the part of the request it came from.
+pub fn expr_named(space: &Space<'_>, expr: &pb::Expr, what: &str) -> Result<Expr, Status> {
     use pb::expr::Node;
     let Some(node) = &expr.node else {
-        return Err(bad("an expression arrived with no node set"));
+        return Err(bad(format!("{what} has an expression with no node set")));
     };
     Ok(match node {
         Node::Literal(true) => Expr::True,
         Node::Literal(false) => Expr::False,
         Node::Compare(compare) => Expr::Compare {
-            column: ordinal_from_proto(compare.column),
+            column: space.resolve(compare.column.as_ref(), what)?,
             op: op_from_proto(compare.op)?,
             value: match &compare.value {
                 Some(value) => value_from_proto(value)?,
-                None => return Err(bad("a comparison arrived with no value")),
+                None => return Err(bad(format!("{what} has a comparison with no value"))),
             },
         },
         Node::CompareColumns(compare) => Expr::CompareColumns {
-            left: ordinal_from_proto(compare.left),
+            left: space.resolve(compare.left.as_ref(), what)?,
             op: op_from_proto(compare.op)?,
-            right: ordinal_from_proto(compare.right),
+            right: space.resolve(compare.right.as_ref(), what)?,
         },
         Node::IsNull(is_null) => Expr::IsNull {
-            column: ordinal_from_proto(is_null.column),
+            column: space.resolve(is_null.column.as_ref(), what)?,
             negated: is_null.negated,
         },
         Node::Like(like) => Expr::Like {
-            column: ordinal_from_proto(like.column),
+            column: space.resolve(like.column.as_ref(), what)?,
             pattern: like.pattern.clone(),
             negated: like.negated,
             insensitive: like.insensitive,
         },
         Node::Matches(matches) => Expr::Matches {
-            column: ordinal_from_proto(matches.column),
+            column: space.resolve(matches.column.as_ref(), what)?,
             pattern: matches.pattern.clone(),
             negated: matches.negated,
             insensitive: matches.insensitive,
         },
         Node::InList(in_list) => Expr::In {
-            column: ordinal_from_proto(in_list.column),
+            column: space.resolve(in_list.column.as_ref(), what)?,
             values: in_list
                 .values
                 .iter()
@@ -269,17 +600,320 @@ pub fn expr_from_proto(expr: &pb::Expr) -> Result<Expr, Status> {
         Node::Conjunction(list) => Expr::And(
             list.exprs
                 .iter()
-                .map(expr_from_proto)
+                .map(|e| expr_named(space, e, what))
                 .collect::<Result<_, _>>()?,
         ),
         Node::Disjunction(list) => Expr::Or(
             list.exprs
                 .iter()
-                .map(expr_from_proto)
+                .map(|e| expr_named(space, e, what))
                 .collect::<Result<_, _>>()?,
         ),
-        Node::Negation(inner) => Expr::Not(Box::new(expr_from_proto(inner)?)),
+        Node::Negation(inner) => Expr::Not(Box::new(expr_named(space, inner, what)?)),
     })
+}
+
+// --- computed values ------------------------------------------------------
+
+const fn unit_to_proto(unit: TimeUnit) -> pb::TimeUnit {
+    match unit {
+        TimeUnit::Second => pb::TimeUnit::Second,
+        TimeUnit::Minute => pb::TimeUnit::Minute,
+        TimeUnit::Hour => pb::TimeUnit::Hour,
+        TimeUnit::Day => pb::TimeUnit::Day,
+    }
+}
+
+fn unit_from_proto(unit: i32) -> Result<TimeUnit, Status> {
+    match pb::TimeUnit::try_from(unit) {
+        Ok(pb::TimeUnit::Second) => Ok(TimeUnit::Second),
+        Ok(pb::TimeUnit::Minute) => Ok(TimeUnit::Minute),
+        Ok(pb::TimeUnit::Hour) => Ok(TimeUnit::Hour),
+        Ok(pb::TimeUnit::Day) => Ok(TimeUnit::Day),
+        // There is no unit that is a safe guess: truncating to the wrong one
+        // returns a plausible timestamp for a different question.
+        Ok(pb::TimeUnit::Unspecified) | Err(_) => Err(bad(format!(
+            "time unit {unit} is not one this server knows"
+        ))),
+    }
+}
+
+const fn metric_to_proto(metric: Metric) -> pb::Metric {
+    match metric {
+        Metric::L2 => pb::Metric::L2,
+        Metric::L2Squared => pb::Metric::L2Squared,
+        Metric::Cosine => pb::Metric::Cosine,
+        Metric::NegativeInnerProduct => pb::Metric::NegativeInnerProduct,
+    }
+}
+
+fn metric_from_proto(metric: i32) -> Result<Metric, Status> {
+    match pb::Metric::try_from(metric) {
+        Ok(pb::Metric::L2) => Ok(Metric::L2),
+        Ok(pb::Metric::L2Squared) => Ok(Metric::L2Squared),
+        Ok(pb::Metric::Cosine) => Ok(Metric::Cosine),
+        Ok(pb::Metric::NegativeInnerProduct) => Ok(Metric::NegativeInnerProduct),
+        // Cosine and L2 rank differently, so a default would silently answer a
+        // different nearest-neighbour question.
+        Ok(pb::Metric::Unspecified) | Err(_) => Err(bad(format!(
+            "distance metric {metric} is not one this server knows"
+        ))),
+    }
+}
+
+/// A computed value in its wire form.
+///
+/// The match is exhaustive on purpose. [`Scalar`] is not `#[non_exhaustive]`,
+/// so a new kernel variant fails to compile here rather than silently going
+/// unrepresentable on the wire — the same reason the kernel's own aggregate
+/// oracle spells out every `Aggregate`.
+#[must_use]
+pub fn scalar_to_proto(space: &Space<'_>, scalar: &Scalar) -> pb::Scalar {
+    use pb::scalar::Node;
+    let pair = |left: &Scalar, right: &Scalar| {
+        Box::new(pb::ScalarPair {
+            left: Some(Box::new(scalar_to_proto(space, left))),
+            right: Some(Box::new(scalar_to_proto(space, right))),
+        })
+    };
+    let node = match scalar {
+        Scalar::Column(ordinal) => Node::Column(space.unresolve(*ordinal)),
+        Scalar::Literal(value) => Node::Literal(value_to_proto(value)),
+        Scalar::Add(a, b) => Node::Add(pair(a, b)),
+        Scalar::Sub(a, b) => Node::Sub(pair(a, b)),
+        Scalar::Mul(a, b) => Node::Mul(pair(a, b)),
+        Scalar::Div(a, b) => Node::Div(pair(a, b)),
+        Scalar::Length(inner) => Node::Length(Box::new(scalar_to_proto(space, inner))),
+        Scalar::Concat(parts) => Node::Concat(pb::ScalarList {
+            scalars: parts.iter().map(|s| scalar_to_proto(space, s)).collect(),
+        }),
+        Scalar::Lower(inner) => Node::Lower(Box::new(scalar_to_proto(space, inner))),
+        Scalar::Upper(inner) => Node::Upper(Box::new(scalar_to_proto(space, inner))),
+        Scalar::Extract { unit, value } => Node::Extract(Box::new(pb::TimePart {
+            unit: unit_to_proto(*unit) as i32,
+            value: Some(Box::new(scalar_to_proto(space, value))),
+        })),
+        Scalar::DateTrunc { unit, value } => Node::DateTrunc(Box::new(pb::TimePart {
+            unit: unit_to_proto(*unit) as i32,
+            value: Some(Box::new(scalar_to_proto(space, value))),
+        })),
+        Scalar::Case {
+            branches,
+            otherwise,
+        } => Node::Case(Box::new(pb::Case {
+            branches: branches
+                .iter()
+                .map(|(when, then)| pb::CaseBranch {
+                    when: Some(expr_to_proto(space, when)),
+                    then: Some(scalar_to_proto(space, then)),
+                })
+                .collect(),
+            otherwise: Some(Box::new(scalar_to_proto(space, otherwise))),
+        })),
+        Scalar::Coalesce(parts) => Node::Coalesce(pb::ScalarList {
+            scalars: parts.iter().map(|s| scalar_to_proto(space, s)).collect(),
+        }),
+        Scalar::Distance {
+            left,
+            right,
+            metric,
+        } => Node::Distance(Box::new(pb::Distance {
+            left: Some(Box::new(scalar_to_proto(space, left))),
+            right: Some(Box::new(scalar_to_proto(space, right))),
+            metric: metric_to_proto(*metric) as i32,
+        })),
+        Scalar::RegexpReplace {
+            value,
+            pattern,
+            replacement,
+        } => Node::RegexpReplace(Box::new(pb::RegexpReplace {
+            value: Some(Box::new(scalar_to_proto(space, value))),
+            pattern: pattern.clone(),
+            replacement: replacement.clone(),
+        })),
+    };
+    pb::Scalar { node: Some(node) }
+}
+
+/// A wire computed value as the kernel's, resolved against `space`.
+pub fn scalar_from_proto(space: &Space<'_>, scalar: &pb::Scalar) -> Result<Scalar, Status> {
+    scalar_named(space, scalar, "a computed value")
+}
+
+fn scalar_named(space: &Space<'_>, scalar: &pb::Scalar, what: &str) -> Result<Scalar, Status> {
+    use pb::scalar::Node;
+    let Some(node) = &scalar.node else {
+        return Err(bad(format!("{what} arrived with no node set")));
+    };
+    let one = |inner: &Option<Box<pb::Scalar>>| -> Result<Box<Scalar>, Status> {
+        match inner {
+            Some(inner) => Ok(Box::new(scalar_named(space, inner, what)?)),
+            None => Err(bad(format!("{what} is missing an operand"))),
+        }
+    };
+    let pair = |p: &pb::ScalarPair| -> Result<(Box<Scalar>, Box<Scalar>), Status> {
+        Ok((one(&p.left)?, one(&p.right)?))
+    };
+    Ok(match node {
+        Node::Column(reference) => Scalar::Column(space.resolve(Some(reference), what)?),
+        Node::Literal(value) => Scalar::Literal(value_from_proto(value)?),
+        Node::Add(p) => {
+            let (a, b) = pair(p)?;
+            Scalar::Add(a, b)
+        }
+        Node::Sub(p) => {
+            let (a, b) = pair(p)?;
+            Scalar::Sub(a, b)
+        }
+        Node::Mul(p) => {
+            let (a, b) = pair(p)?;
+            Scalar::Mul(a, b)
+        }
+        Node::Div(p) => {
+            let (a, b) = pair(p)?;
+            Scalar::Div(a, b)
+        }
+        Node::Length(inner) => Scalar::Length(Box::new(scalar_named(space, inner, what)?)),
+        Node::Concat(list) => Scalar::Concat(
+            list.scalars
+                .iter()
+                .map(|s| scalar_named(space, s, what))
+                .collect::<Result<_, _>>()?,
+        ),
+        Node::Lower(inner) => Scalar::Lower(Box::new(scalar_named(space, inner, what)?)),
+        Node::Upper(inner) => Scalar::Upper(Box::new(scalar_named(space, inner, what)?)),
+        Node::Extract(part) => Scalar::Extract {
+            unit: unit_from_proto(part.unit)?,
+            value: one(&part.value)?,
+        },
+        Node::DateTrunc(part) => Scalar::DateTrunc {
+            unit: unit_from_proto(part.unit)?,
+            value: one(&part.value)?,
+        },
+        Node::Case(case) => {
+            let mut branches = Vec::with_capacity(case.branches.len());
+            for branch in &case.branches {
+                let when = match &branch.when {
+                    Some(when) => expr_named(space, when, what)?,
+                    None => return Err(bad(format!("{what} has a CASE branch with no condition"))),
+                };
+                let then = match &branch.then {
+                    Some(then) => scalar_named(space, then, what)?,
+                    None => return Err(bad(format!("{what} has a CASE branch with no result"))),
+                };
+                branches.push((when, then));
+            }
+            Scalar::Case {
+                branches,
+                // Required rather than defaulted to null: `CASE` with no
+                // `ELSE` is written by sending an explicit null literal, so an
+                // absent field is a client that forgot rather than one that
+                // meant null.
+                otherwise: one(&case.otherwise)?,
+            }
+        }
+        Node::Coalesce(list) => Scalar::Coalesce(
+            list.scalars
+                .iter()
+                .map(|s| scalar_named(space, s, what))
+                .collect::<Result<_, _>>()?,
+        ),
+        Node::Distance(distance) => Scalar::Distance {
+            left: one(&distance.left)?,
+            right: one(&distance.right)?,
+            metric: metric_from_proto(distance.metric)?,
+        },
+        Node::RegexpReplace(replace) => Scalar::RegexpReplace {
+            value: one(&replace.value)?,
+            pattern: replace.pattern.clone(),
+            replacement: replace.replacement.clone(),
+        },
+    })
+}
+
+// --- aggregates -----------------------------------------------------------
+
+/// An aggregate in its wire form.
+///
+/// Exhaustive for the same reason [`scalar_to_proto`] is: a new `Aggregate`
+/// variant should fail to compile here rather than reach the wire as something
+/// else.
+#[must_use]
+pub fn aggregate_to_proto(space: &Space<'_>, aggregate: Aggregate) -> pb::Aggregate {
+    use pb::AggregateFunction as F;
+    let (function, column) = match aggregate {
+        Aggregate::Count => (F::Count, None),
+        Aggregate::CountColumn(c) => (F::CountColumn, Some(c)),
+        Aggregate::Min(c) => (F::Min, Some(c)),
+        Aggregate::Max(c) => (F::Max, Some(c)),
+        Aggregate::Sum(c) => (F::Sum, Some(c)),
+        Aggregate::Avg(c) => (F::Avg, Some(c)),
+        Aggregate::CountDistinct(c) => (F::CountDistinct, Some(c)),
+    };
+    pb::Aggregate {
+        function: function as i32,
+        column: column.map(|c| space.unresolve(c)),
+    }
+}
+
+/// A wire aggregate as the kernel's.
+pub fn aggregate_from_proto(
+    space: &Space<'_>,
+    aggregate: &pb::Aggregate,
+) -> Result<Aggregate, Status> {
+    use pb::AggregateFunction as F;
+    let what = "an aggregate";
+    let function = pb::AggregateFunction::try_from(aggregate.function).map_err(|_| {
+        bad(format!(
+            "aggregate function {} is not one this server knows",
+            aggregate.function
+        ))
+    })?;
+    // Resolved once, and only where a column is wanted: `COUNT(*)` with a
+    // column set is a client that meant `COUNT(column)`, which is a different
+    // number on a nullable column, so it is refused rather than ignored.
+    let column = |required: bool| -> Result<Option<Ordinal>, Status> {
+        match (&aggregate.column, required) {
+            (Some(reference), true) => Ok(Some(space.resolve(Some(reference), what)?)),
+            (None, true) => Err(bad(
+                "an aggregate other than COUNT(*) needs the column it reads",
+            )),
+            (Some(_), false) => Err(bad(
+                "COUNT(*) reads no column; use COUNT_COLUMN to count non-null values of one",
+            )),
+            (None, false) => Ok(None),
+        }
+    };
+    Ok(match function {
+        F::Count => {
+            column(false)?;
+            Aggregate::Count
+        }
+        F::CountColumn => Aggregate::CountColumn(required(column(true)?)?),
+        F::Min => Aggregate::Min(required(column(true)?)?),
+        F::Max => Aggregate::Max(required(column(true)?)?),
+        F::Sum => Aggregate::Sum(required(column(true)?)?),
+        F::Avg => Aggregate::Avg(required(column(true)?)?),
+        F::CountDistinct => Aggregate::CountDistinct(required(column(true)?)?),
+        // Defaulting would return a plausible number for a question nobody
+        // asked, which is the worst shape an aggregate bug can take.
+        F::Unspecified => {
+            return Err(bad("an aggregate arrived with no function set"));
+        }
+    })
+}
+
+fn required(column: Option<Ordinal>) -> Result<Ordinal, Status> {
+    column.ok_or_else(|| bad("an aggregate is missing the column it reads"))
+}
+
+/// A group in its wire form.
+#[must_use]
+pub fn group_to_proto(group: &Group) -> pb::Group {
+    pb::Group {
+        key: group.key.iter().map(value_to_proto).collect(),
+        values: group.values.iter().map(value_to_proto).collect(),
+    }
 }
 
 // --- queries --------------------------------------------------------------
@@ -293,9 +927,25 @@ pub fn expr_from_proto(expr: &pb::Expr) -> Result<Expr, Status> {
 /// versions of the schema.
 #[must_use]
 pub fn query_to_proto(table: &TableDef, query: &Query) -> pb::Query {
+    query_to_proto_at(table, query, 0)
+}
+
+/// [`query_to_proto`] for the `index`th input of a multi-table read.
+#[must_use]
+pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Query {
+    // Each computed value is written in the space that exists where it is
+    // evaluated: the ones before it, and no more. That is the same rule the
+    // inbound direction enforces, stated once on each side.
+    let compute = query
+        .compute
+        .iter()
+        .enumerate()
+        .map(|(at, scalar)| scalar_to_proto(&Space::input(table, at, index), scalar))
+        .collect();
+    let space = Space::input(table, query.compute.len(), index);
     pb::Query {
         table: table.name().to_owned(),
-        filter: Some(expr_to_proto(&query.filter)),
+        filter: Some(expr_to_proto(&space, &query.filter)),
         order: match query.order {
             ScanOrder::Ascending => pb::ScanOrder::Ascending as i32,
             ScanOrder::Descending => pb::ScanOrder::Descending as i32,
@@ -307,14 +957,14 @@ pub fn query_to_proto(table: &TableDef, query: &Query) -> pb::Query {
             },
             Projection::Columns(columns) => pb::Projection {
                 all_columns: false,
-                columns: columns.iter().map(|c| ordinal_to_proto(*c)).collect(),
+                columns: columns.iter().map(|c| space.unresolve(*c)).collect(),
             },
         }),
         sort: query
             .sort
             .iter()
             .map(|key| pb::SortKey {
-                column: ordinal_to_proto(key.column),
+                column: Some(space.unresolve(key.column)),
                 direction: match key.direction {
                     Direction::Asc => pb::SortDirection::Asc as i32,
                     Direction::Desc => pb::SortDirection::Desc as i32,
@@ -337,7 +987,7 @@ pub fn query_to_proto(table: &TableDef, query: &Query) -> pb::Query {
                 ),
             }),
         }),
-        // Computed columns are not on the wire; see the module docs.
+        compute,
     }
 }
 
@@ -352,16 +1002,37 @@ pub fn query_from_proto(
     query: &pb::Query,
     table: &TableDef,
 ) -> Result<(Query, Vec<String>), Status> {
+    query_from_proto_at(query, table, 0)
+}
+
+/// [`query_from_proto`] for the `index`th input of a multi-table read, whose
+/// column references carry that index.
+pub fn query_from_proto_at(
+    query: &pb::Query,
+    table: &TableDef,
+    index: usize,
+) -> Result<(Query, Vec<String>), Status> {
     let mut warnings = Vec::new();
-    let width = table.columns().len();
+
+    // Computed values first, and one at a time: the `i`th is converted in a
+    // space holding the `i` before it, so it can read an earlier one and
+    // cannot read itself or a later one. A single space over all of them would
+    // let a client write a cycle the executor would evaluate as null.
+    let mut compute = Vec::with_capacity(query.compute.len());
+    for (at, scalar) in query.compute.iter().enumerate() {
+        let space = Space::input(table, at, index);
+        compute.push(scalar_named(
+            &space,
+            scalar,
+            &format!("computed value {at}"),
+        )?);
+    }
+    let space = Space::input(table, compute.len(), index);
 
     let filter = match &query.filter {
-        Some(filter) => expr_from_proto(filter)?,
+        Some(filter) => expr_named(&space, filter, "the filter")?,
         None => Expr::True,
     };
-    for column in filter.columns() {
-        check_ordinal(column, width, table, "the filter")?;
-    }
 
     let order = match pb::ScanOrder::try_from(query.order) {
         Ok(pb::ScanOrder::Ascending) => ScanOrder::Ascending,
@@ -380,9 +1051,7 @@ pub fn query_from_proto(
         Some(projection) => {
             let mut columns = Vec::with_capacity(projection.columns.len());
             for column in &projection.columns {
-                let ordinal = ordinal_from_proto(*column);
-                check_ordinal(ordinal, width, table, "the projection")?;
-                columns.push(ordinal);
+                columns.push(space.resolve_stored_column(Some(column), "the projection")?);
             }
             Projection::Columns(columns)
         }
@@ -390,8 +1059,7 @@ pub fn query_from_proto(
 
     let mut sort = Vec::with_capacity(query.sort.len());
     for key in &query.sort {
-        let column = ordinal_from_proto(key.column);
-        check_ordinal(column, width, table, "the sort")?;
+        let column = space.resolve(key.column.as_ref(), "the sort")?;
         let direction = match pb::SortDirection::try_from(key.direction) {
             Ok(pb::SortDirection::Asc) => Direction::Asc,
             Ok(pb::SortDirection::Desc) => Direction::Desc,
@@ -442,33 +1110,545 @@ pub fn query_from_proto(
             limit: query.limit.map(|limit| limit as usize),
             offset: query.offset as usize,
             hint,
-            compute: Vec::new(),
+            compute,
         },
         warnings,
     ))
 }
 
-/// Refuse an ordinal that is not a column of the table.
+/// Refuse the parts of a `Query` that have no meaning where it is being used.
 ///
-/// The kernel treats a missing column as unknown rather than as an error,
-/// which is right for evaluation — a joined row genuinely has columns some
-/// predicates do not reach. At the wire boundary it is a client bug, and one
-/// worth naming: a predicate on ordinal 12 of a nine-column table silently
-/// matches nothing, and nothing else in the system will ever say why.
-fn check_ordinal(
-    ordinal: Ordinal,
-    width: usize,
-    table: &TableDef,
-    what: &str,
-) -> Result<(), Status> {
-    if ordinal.0 < width {
-        return Ok(());
+/// The kernel documents a join side's `sort`, `limit` and `offset` as ignored,
+/// and an aggregate's input narrows the projection to exactly the columns the
+/// aggregates read. Ignoring a field a client set is how a request comes to
+/// mean something other than what was written, so each is refused and the
+/// message says where the setting does belong.
+fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Status> {
+    if !query.sort.is_empty() {
+        return Err(bad(format!(
+            "{what} has a sort, which would not order the result; {instead}"
+        )));
     }
-    Err(bad(format!(
-        "{what} names column {} of table `{}`, which has {width} columns",
-        ordinal.0,
-        table.name()
-    )))
+    if query.limit.is_some() {
+        return Err(bad(format!(
+            "{what} has a limit, which would change the answer rather than shorten it; {instead}"
+        )));
+    }
+    if query.offset != 0 {
+        return Err(bad(format!(
+            "{what} has an offset, which would change the answer rather than skip rows; {instead}"
+        )));
+    }
+    Ok(())
+}
+
+// --- joins and chains -----------------------------------------------------
+
+/// A multi-table read, as the kernel takes it.
+///
+/// Two tables become a [`Join`] and more become a [`Chain`], which is a
+/// dispatch rather than a difference in the request: the wire has one shape for
+/// both because a chain step and a two-table join are the same idea. The split
+/// exists because the kernel's two-table join can choose *which* side to hold
+/// in memory, and a chain step cannot — its earlier rows are already there.
+#[derive(Debug, Clone)]
+pub enum MultiRead {
+    /// Exactly two tables.
+    Join(Box<Join>),
+    /// Three or more.
+    Chain(Box<Chain>),
+}
+
+/// A multi-table read as the kernel's, with the tables it names.
+///
+/// The tables come back as ids rather than definitions so the caller can look
+/// them up in whichever catalog is going to serve the read — the pool's for a
+/// replica read, the writer store's for one inside a transaction. Handing back
+/// borrowed definitions would tie the request to the catalog that parsed it.
+pub fn join_from_proto(
+    wire: &pb::JoinQuery,
+    catalog: &Catalog,
+) -> Result<(Vec<TableId>, MultiRead, Vec<String>), Status> {
+    if wire.inputs.len() < 2 {
+        return Err(bad(format!(
+            "a join needs at least two inputs, and this one has {}; \
+             a single-table read is a Query",
+            wire.inputs.len()
+        )));
+    }
+
+    // Resolve every table first: the ordinal spaces below are built from their
+    // widths, so a name that does not resolve has to fail before anything is
+    // converted against a space that is missing an input.
+    let mut tables = Vec::with_capacity(wire.inputs.len());
+    for (index, input) in wire.inputs.iter().enumerate() {
+        let query = input
+            .query
+            .as_ref()
+            .ok_or_else(|| bad(format!("input {index} has no query")))?;
+        let table = catalog.table_by_name(&query.table).ok_or_else(|| {
+            // `NOT_FOUND` is what a single-table read gives for an unknown
+            // table, and the same reasoning applies: the request is
+            // well-formed, this catalog simply has no such table.
+            Status::not_found(format!("no table named `{}`", query.table))
+        })?;
+        tables.push(table);
+    }
+    let shapes: Vec<Input<'_>> = wire
+        .inputs
+        .iter()
+        .zip(&tables)
+        .map(|(input, table)| {
+            Input::new(table, input.query.as_ref().map_or(0, |q| q.compute.len()))
+        })
+        .collect();
+
+    let mut warnings = Vec::new();
+    let mut queries = Vec::with_capacity(wire.inputs.len());
+    let mut steps = Vec::with_capacity(wire.inputs.len() - 1);
+
+    for (index, (input, table)) in wire.inputs.iter().zip(&tables).enumerate() {
+        let table = *table;
+        let wire_query = input
+            .query
+            .as_ref()
+            .ok_or_else(|| bad(format!("input {index} has no query")))?;
+        refuse_unused(
+            wire_query,
+            &format!("input {index} (`{}`)", table.name()),
+            "put them on the join itself",
+        )?;
+        let (query, mut hints) = query_from_proto_at(wire_query, table, index)?;
+        warnings.append(&mut hints);
+
+        if index == 0 {
+            if !input.on.is_empty() {
+                return Err(bad(
+                    "input 0 has a join condition, and there is nothing before it to join to",
+                ));
+            }
+            queries.push(query);
+            continue;
+        }
+
+        // The earlier side is named in the space of everything read before
+        // this input; the near side in this input's own ordinals. Both are the
+        // same `ColumnRef`, resolved against different spaces — which is what
+        // makes "join back to any earlier input" free rather than a feature.
+        let earlier_space = Space::joined(shapes.clone(), index);
+        let own_space = Space::input(table, 0, index);
+        let mut on = Vec::with_capacity(input.on.len());
+        for key in &input.on {
+            let left = earlier_space
+                .resolve_stored_column(key.earlier.as_ref(), "a join equality's earlier side")?;
+            let right =
+                own_space.resolve_stored_column(key.own.as_ref(), "a join equality's own side")?;
+            on.push(JoinKey::new(left, right));
+        }
+
+        // `having` may read this input as well as the earlier ones: it is
+        // checked on a formed pair, so the new row exists by then.
+        let having_space = Space::joined(shapes.clone(), index + 1);
+        let having = match &input.having {
+            Some(having) => expr_named(&having_space, having, "the join condition")?,
+            None => Expr::True,
+        };
+
+        steps.push(Step {
+            query,
+            on,
+            join_type: join_type_from_proto(input.join_type)?,
+            having,
+            force: algorithm_from_proto(input.force.as_ref())?,
+        });
+    }
+
+    let limit = wire.limit.map(|limit| limit as usize);
+    let offset = wire.offset as usize;
+    let build_limit = build_limit_from_proto(wire.build_limit, &mut warnings);
+
+    let read = if shapes.len() == 2 {
+        let step = steps.remove(0);
+        let mut join = Join::on(step.on)
+            .left(queries.remove(0))
+            .right(step.query)
+            .having(step.having)
+            .build_limit(build_limit);
+        join.join_type = step.join_type;
+        join.limit = limit;
+        join.offset = offset;
+        join.force = step.force;
+        MultiRead::Join(Box::new(join))
+    } else {
+        let mut chain = Chain::from(queries.remove(0))
+            .offset(offset)
+            .build_limit(build_limit);
+        chain.limit = limit;
+        for step in steps {
+            let mut next = JoinStep::on(step.on).query(step.query).having(step.having);
+            next.join_type = step.join_type;
+            next.force = step.force;
+            chain = chain.join(next);
+        }
+        MultiRead::Chain(Box::new(chain))
+    };
+
+    Ok((tables.iter().map(|t| t.id()).collect(), read, warnings))
+}
+
+/// The first two tables of a multi-table read.
+///
+/// [`join_from_proto`] refuses fewer than two inputs, so this cannot fail in
+/// practice. It is written as a refusal rather than an index so the invariant
+/// is enforced where it is used rather than remembered — a head node should not
+/// be able to panic on a request shape.
+pub fn two_tables<'t>(
+    tables: &[&'t TableDef],
+) -> Result<(&'t TableDef, &'t TableDef), slate_kernel::KernelError> {
+    match tables {
+        [left, right, ..] => Ok((*left, *right)),
+        _ => Err(slate_kernel::KernelError::JoinNotSupported {
+            reason: format!(
+                "a join needs two tables and this one names {}",
+                tables.len()
+            ),
+        }),
+    }
+}
+
+/// One converted input past the first, before it is known whether the read is
+/// a two-table join or a chain.
+struct Step {
+    query: Query,
+    on: Vec<JoinKey>,
+    join_type: JoinType,
+    having: Expr,
+    force: Option<JoinAlgorithm>,
+}
+
+/// A build limit a client may lower and not raise.
+///
+/// The server's own limit is what stops a mistyped join key turning into an
+/// out-of-memory kill, and a limit the client sets is not one. Clamping rather
+/// than refusing, with a warning, because a client asking for *more* memory is
+/// making a request the server is entitled to decline quietly — where refusing
+/// would fail a query that will run perfectly well within the real limit.
+fn build_limit_from_proto(asked: Option<u64>, warnings: &mut Vec<String>) -> usize {
+    let Some(asked) = asked else {
+        return DEFAULT_BUILD_LIMIT;
+    };
+    let asked = usize::try_from(asked).unwrap_or(usize::MAX);
+    if asked > DEFAULT_BUILD_LIMIT {
+        warnings.push(format!(
+            "build limit lowered from {asked} to this node's limit of {DEFAULT_BUILD_LIMIT}"
+        ));
+        return DEFAULT_BUILD_LIMIT;
+    }
+    asked
+}
+
+fn join_type_from_proto(join_type: i32) -> Result<JoinType, Status> {
+    match pb::JoinType::try_from(join_type) {
+        // Inner is a genuine default rather than a refusal: SQL spells an
+        // inner join as plain `JOIN`, and it is what `JoinType::default()` is.
+        Ok(pb::JoinType::Inner) => Ok(JoinType::Inner),
+        Ok(pb::JoinType::Left) => Ok(JoinType::Left),
+        Ok(pb::JoinType::Right) => Ok(JoinType::Right),
+        Ok(pb::JoinType::Full) => Ok(JoinType::Full),
+        Err(_) => Err(bad(format!(
+            "join type {join_type} is not one this server knows"
+        ))),
+    }
+}
+
+const fn join_type_to_proto(join_type: JoinType) -> pb::JoinType {
+    match join_type {
+        JoinType::Inner => pb::JoinType::Inner,
+        JoinType::Left => pb::JoinType::Left,
+        JoinType::Right => pb::JoinType::Right,
+        JoinType::Full => pb::JoinType::Full,
+    }
+}
+
+fn algorithm_from_proto(
+    algorithm: Option<&pb::JoinAlgorithm>,
+) -> Result<Option<JoinAlgorithm>, Status> {
+    let Some(algorithm) = algorithm.and_then(|a| a.algorithm.as_ref()) else {
+        return Ok(None);
+    };
+    Ok(match algorithm {
+        pb::join_algorithm::Algorithm::HashBuild(side) => match pb::Side::try_from(*side) {
+            Ok(pb::Side::Left) => Some(JoinAlgorithm::Hash { build: Side::Left }),
+            Ok(pb::Side::Right) => Some(JoinAlgorithm::Hash { build: Side::Right }),
+            Err(_) => {
+                return Err(bad(format!("side {side} is not one this server knows")));
+            }
+        },
+        pb::join_algorithm::Algorithm::NestedLoop(true) => Some(JoinAlgorithm::NestedLoop),
+        // Same reasoning as `Freshness.latest: false`: a client that zeroed
+        // the message is not asking for a nested loop.
+        pb::join_algorithm::Algorithm::NestedLoop(false) => None,
+    })
+}
+
+#[must_use]
+fn algorithm_to_proto(algorithm: JoinAlgorithm) -> pb::JoinAlgorithm {
+    let algorithm = match algorithm {
+        JoinAlgorithm::Hash { build } => pb::join_algorithm::Algorithm::HashBuild(match build {
+            Side::Left => pb::Side::Left as i32,
+            Side::Right => pb::Side::Right as i32,
+        }),
+        JoinAlgorithm::NestedLoop => pb::join_algorithm::Algorithm::NestedLoop(true),
+    };
+    pb::JoinAlgorithm {
+        algorithm: Some(algorithm),
+    }
+}
+
+/// A two-table join in its wire form.
+#[must_use]
+pub fn join_to_proto(left: &TableDef, right: &TableDef, join: &Join) -> pb::JoinQuery {
+    let shapes = vec![
+        Input::new(left, join.left.compute.len()),
+        Input::new(right, join.right.compute.len()),
+    ];
+    // A two-table join's equalities are each in their own table's ordinals,
+    // and the left table's offset in the joined space is zero — so the same
+    // `unresolve` serves both this and the chain case below.
+    let earlier = Space::joined(shapes.clone(), 1);
+    let own = Space::input(right, 0, 1);
+    pb::JoinQuery {
+        inputs: vec![
+            pb::JoinInput {
+                query: Some(query_to_proto_at(left, &join.left, 0)),
+                on: Vec::new(),
+                join_type: pb::JoinType::Inner as i32,
+                having: None,
+                force: None,
+            },
+            pb::JoinInput {
+                query: Some(query_to_proto_at(right, &join.right, 1)),
+                on: join
+                    .on
+                    .iter()
+                    .map(|key| pb::JoinOn {
+                        earlier: Some(earlier.unresolve(key.left)),
+                        own: Some(own.unresolve(key.right)),
+                    })
+                    .collect(),
+                join_type: join_type_to_proto(join.join_type) as i32,
+                having: Some(expr_to_proto(&Space::joined(shapes, 2), &join.having)),
+                force: join.force.map(algorithm_to_proto),
+            },
+        ],
+        limit: join.limit.map(|limit| limit as u64),
+        offset: join.offset as u64,
+        build_limit: Some(join.build_limit as u64),
+    }
+}
+
+/// A chain in its wire form.
+#[must_use]
+pub fn chain_to_proto(tables: &[&TableDef], chain: &Chain) -> pb::JoinQuery {
+    let shapes: Vec<Input<'_>> = tables
+        .iter()
+        .enumerate()
+        .map(|(index, table)| {
+            let computed = match index.checked_sub(1) {
+                None => chain.first.compute.len(),
+                Some(step) => chain.steps.get(step).map_or(0, |s| s.query.compute.len()),
+            };
+            Input::new(table, computed)
+        })
+        .collect();
+
+    let mut inputs = Vec::with_capacity(tables.len());
+    if let Some(first) = tables.first() {
+        inputs.push(pb::JoinInput {
+            query: Some(query_to_proto_at(first, &chain.first, 0)),
+            on: Vec::new(),
+            join_type: pb::JoinType::Inner as i32,
+            having: None,
+            force: None,
+        });
+    }
+    for (at, (step, table)) in chain.steps.iter().zip(tables.iter().skip(1)).enumerate() {
+        let index = at + 1;
+        let earlier = Space::joined(shapes.clone(), index);
+        let own = Space::input(table, 0, index);
+        inputs.push(pb::JoinInput {
+            query: Some(query_to_proto_at(table, &step.query, index)),
+            on: step
+                .on
+                .iter()
+                .map(|key| pb::JoinOn {
+                    earlier: Some(earlier.unresolve(key.left)),
+                    own: Some(own.unresolve(key.right)),
+                })
+                .collect(),
+            join_type: join_type_to_proto(step.join_type) as i32,
+            having: Some(expr_to_proto(
+                &Space::joined(shapes.clone(), index + 1),
+                &step.having,
+            )),
+            force: step.force.map(algorithm_to_proto),
+        });
+    }
+
+    pb::JoinQuery {
+        inputs,
+        limit: chain.limit.map(|limit| limit as u64),
+        offset: chain.offset as u64,
+        build_limit: Some(chain.build_limit as u64),
+    }
+}
+
+/// A chain row flattened to one entry per input, padded where the kernel's
+/// row is shorter.
+///
+/// The padding is defensive, and deliberately so. A `ChainRow` that has been
+/// through every step is as long as the chain, and a right outer step that
+/// preserves a row of a later table fills in the earlier ones — so today the
+/// two lengths always agree. A client reads its inputs *positionally*, though,
+/// and a shorter row would silently shift every input past the gap rather than
+/// error, which is the worst shape this could fail in. So the width comes from
+/// the request rather than from the row, and
+/// `a_chain_row_is_padded_to_one_entry_per_input` pins it.
+#[must_use]
+pub fn chain_row_values(row: &ChainRow, inputs: usize) -> Vec<Option<Row>> {
+    (0..inputs).map(|at| row.at(at).cloned()).collect()
+}
+
+/// One row of a multi-table read in its wire form.
+///
+/// Takes the row already flattened to one entry per input — `None` where an
+/// outer join preserved something that matched nothing — because the two
+/// kernel cursors spell that differently and the wire should not. See
+/// [`crate::session::MultiCursor`], which does the flattening and the padding
+/// a chain needs.
+#[must_use]
+pub fn multi_row_to_proto(row: &[Option<Row>]) -> pb::JoinedRow {
+    pb::JoinedRow {
+        inputs: row
+            .iter()
+            .map(|row| pb::JoinedInput {
+                row: row.as_ref().map(row_to_proto),
+            })
+            .collect(),
+    }
+}
+
+// --- aggregate queries ----------------------------------------------------
+
+/// What an aggregate request asks for, as the kernel takes it.
+#[derive(Debug)]
+pub struct GroupedRead {
+    /// The table it reads.
+    pub table: TableId,
+    /// Which rows.
+    pub query: Query,
+    /// The grouping columns, empty for one group over everything.
+    pub group: Vec<Ordinal>,
+    /// The aggregates, in request order.
+    pub aggregates: Vec<Aggregate>,
+    /// Which groups survive, over the group's own ordinal space.
+    pub having: Expr,
+}
+
+/// An aggregate request as the kernel's.
+pub fn aggregate_from_proto_query(
+    wire: &pb::AggregateQuery,
+    catalog: &Catalog,
+) -> Result<(GroupedRead, Vec<String>), Status> {
+    let input = wire
+        .input
+        .as_ref()
+        .ok_or_else(|| bad("an aggregate request has no input query"))?;
+    let table = catalog
+        .table_by_name(&input.table)
+        .ok_or_else(|| Status::not_found(format!("no table named `{}`", input.table)))?;
+
+    refuse_unused(
+        input,
+        "an aggregate's input",
+        "there is no ordering over groups to limit; see the crate docs",
+    )?;
+    if input.projection.is_some() {
+        // The kernel narrows the projection to exactly the columns the
+        // aggregates read, which is what lets an index answer `COUNT(*)`
+        // without touching a row. Honouring a client's projection would
+        // silently undo that; ignoring it silently is worse.
+        return Err(bad(
+            "an aggregate's input must not set a projection: it is narrowed to the \
+             columns the aggregates and grouping read, which is what lets an index \
+             answer without reading a row",
+        ));
+    }
+
+    let (query, warnings) = query_from_proto_at(input, table, 0)?;
+    let space = Space::input(table, query.compute.len(), 0);
+
+    if wire.aggregates.is_empty() {
+        return Err(bad(
+            "an aggregate request with no aggregates is a query; use Query",
+        ));
+    }
+    let aggregates = wire
+        .aggregates
+        .iter()
+        .map(|aggregate| aggregate_from_proto(&space, aggregate))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut group = Vec::with_capacity(wire.group_by.len());
+    for column in &wire.group_by {
+        group.push(space.resolve(Some(column), "a grouping column")?);
+    }
+
+    // `having` reads the group, not a row, so it is resolved against the group
+    // space — which is what turns "column must appear in the GROUP BY clause"
+    // into a refusal instead of a silent null.
+    let group_space = Space::groups(group.len(), aggregates.len());
+    let having = match &wire.having {
+        Some(having) => expr_named(&group_space, having, "the HAVING condition")?,
+        None => Expr::True,
+    };
+
+    Ok((
+        GroupedRead {
+            table: table.id(),
+            query,
+            group,
+            aggregates,
+            having,
+        },
+        warnings,
+    ))
+}
+
+/// An aggregate request in its wire form.
+#[must_use]
+pub fn aggregate_to_proto_query(
+    table: &TableDef,
+    query: &Query,
+    group: &[Ordinal],
+    aggregates: &[Aggregate],
+    having: &Expr,
+) -> pb::AggregateQuery {
+    let space = Space::input(table, query.compute.len(), 0);
+    let group_space = Space::groups(group.len(), aggregates.len());
+    let mut input = query_to_proto_at(table, query, 0);
+    // The projection is the kernel's to choose here, and the inbound direction
+    // refuses one, so it must not be sent.
+    input.projection = None;
+    pb::AggregateQuery {
+        input: Some(input),
+        group_by: group.iter().map(|c| space.unresolve(*c)).collect(),
+        aggregates: aggregates
+            .iter()
+            .map(|a| aggregate_to_proto(&space, *a))
+            .collect(),
+        having: Some(expr_to_proto(&group_space, having)),
+    }
 }
 
 // --- freshness ------------------------------------------------------------
@@ -522,6 +1702,112 @@ pub fn explanation_to_proto(
         sorts: explanation.sorts,
         index_only: explanation.is_index_only(),
         display: explanation.to_string(),
+        warnings,
+        served_by,
+    }
+}
+
+/// A two-table join's plan in its wire form.
+///
+/// The second input's estimates are the join's own, because a two-table join
+/// has one step and its accumulated rows *are* the result. A chain reports each
+/// step separately; see [`chain_plan_to_proto`].
+#[must_use]
+pub fn join_explanation_to_proto(
+    explanation: &JoinExplanation,
+    warnings: Vec<String>,
+    served_by: Option<pb::ServedBy>,
+) -> pb::JoinExplainResponse {
+    pb::JoinExplainResponse {
+        inputs: vec![
+            pb::JoinInputPlan {
+                plan: Some(explanation_to_proto(&explanation.left, Vec::new(), None)),
+                join_type: pb::JoinType::Inner as i32,
+                algorithm: None,
+                estimated_rows: explanation.left.estimated_rows,
+                estimated_cost: explanation.left.estimated_cost,
+            },
+            pb::JoinInputPlan {
+                plan: Some(explanation_to_proto(&explanation.right, Vec::new(), None)),
+                join_type: join_type_to_proto(explanation.join_type) as i32,
+                algorithm: Some(algorithm_to_proto(explanation.algorithm)),
+                estimated_rows: explanation.estimated_rows,
+                estimated_cost: explanation.estimated_cost,
+            },
+        ],
+        estimated_rows: explanation.estimated_rows,
+        estimated_cost: explanation.estimated_cost,
+        display: explanation.to_string(),
+        warnings,
+        served_by,
+    }
+}
+
+/// A chain's plan in its wire form.
+#[must_use]
+pub fn chain_plan_to_proto(
+    plan: &ChainPlan,
+    tables: &[&TableDef],
+    chain: &Chain,
+    warnings: Vec<String>,
+    served_by: Option<pb::ServedBy>,
+) -> pb::JoinExplainResponse {
+    let Some(first_table) = tables.first() else {
+        // Unreachable: a chain plan comes from a chain that named its tables.
+        // Answered as an empty explanation rather than a panic, on the
+        // principle that a head node should not be able to bring itself down
+        // over a shape it can describe.
+        return pb::JoinExplainResponse {
+            inputs: Vec::new(),
+            estimated_rows: plan.estimated_rows,
+            estimated_cost: plan.estimated_cost,
+            display: String::new(),
+            warnings,
+            served_by,
+        };
+    };
+    let first = Explanation::of(first_table, &plan.first, &chain.first);
+    let mut display = format!("Chain\n  -> {first}");
+    let mut inputs = vec![pb::JoinInputPlan {
+        plan: Some(explanation_to_proto(&first, Vec::new(), None)),
+        join_type: pb::JoinType::Inner as i32,
+        algorithm: None,
+        estimated_rows: plan.first.estimated_rows,
+        estimated_cost: plan.first.estimated_cost,
+    }];
+    for (at, step) in plan.steps.iter().enumerate() {
+        let Some(table) = tables.get(at + 1) else {
+            break;
+        };
+        let Some(request) = chain.steps.get(at) else {
+            break;
+        };
+        let explanation = Explanation::of(table, &step.plan, &request.query);
+        // Written out here rather than taken from a `Display` impl, because
+        // `ChainPlan` has none — and a chain's shape is the one thing an
+        // operator reads first, so it is worth a line per step.
+        display.push_str(&format!(
+            "\n  -> {} step {}: {explanation}",
+            match step.algorithm {
+                JoinAlgorithm::Hash { .. } => "Hash",
+                JoinAlgorithm::NestedLoop => "Nested Loop",
+            },
+            at + 1
+        ));
+        inputs.push(pb::JoinInputPlan {
+            plan: Some(explanation_to_proto(&explanation, Vec::new(), None)),
+            join_type: join_type_to_proto(request.join_type) as i32,
+            algorithm: Some(algorithm_to_proto(step.algorithm)),
+            estimated_rows: step.estimated_rows,
+            estimated_cost: step.estimated_cost,
+        });
+    }
+
+    pb::JoinExplainResponse {
+        inputs,
+        estimated_rows: plan.estimated_rows,
+        estimated_cost: plan.estimated_cost,
+        display,
         warnings,
         served_by,
     }

@@ -32,7 +32,7 @@ use common::{app, app_in, doc, doc_ids, docs_query, drain, serving_leader, user}
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{CmpOp, Expr};
 use slate_schema::Ordinal;
-use slate_server::convert::{expr_to_proto, row_to_proto, value_to_proto};
+use slate_server::convert::{Space, column_ref, expr_to_proto, row_to_proto, value_to_proto};
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
 use slate_tuple::Value;
@@ -151,7 +151,7 @@ struct Sort {
 
 fn sort_key(column: Ordinal, descending: bool) -> pb::SortKey {
     pb::SortKey {
-        column: column.0 as u32,
+        column: Some(column_ref(0, column.0)),
         direction: if descending {
             pb::SortDirection::Desc as i32
         } else {
@@ -248,7 +248,7 @@ async fn every_access_path_agrees_with_an_oracle_written_out_by_hand() {
 
                 for (path, hint) in access_paths() {
                     let query = pb::Query {
-                        filter: Some(expr_to_proto(&filter.wire)),
+                        filter: Some(expr_to_proto(&Space::table(&common::docs()), &filter.wire)),
                         sort: sort.keys.clone(),
                         limit,
                         offset,
@@ -324,10 +324,13 @@ async fn a_projection_returns_the_named_columns_and_the_key() {
         .query(app(pb::QueryRequest {
             transaction: String::new(),
             query: Some(pb::Query {
-                filter: Some(expr_to_proto(&Expr::eq(ID, Value::U64(7)))),
+                filter: Some(expr_to_proto(
+                    &Space::table(&common::docs()),
+                    &Expr::eq(ID, Value::U64(7)),
+                )),
                 projection: Some(pb::Projection {
                     all_columns: false,
-                    columns: vec![KIND.0 as u32],
+                    columns: vec![column_ref(0, KIND.0)],
                 }),
                 ..docs_query()
             }),
@@ -367,15 +370,15 @@ async fn explain_reports_the_path_and_whether_it_reads_rows() {
         .explain(app(pb::ExplainRequest {
             transaction: String::new(),
             query: Some(pb::Query {
-                filter: Some(expr_to_proto(&Expr::eq(
-                    KIND,
-                    Value::Str("kind-1".to_owned()),
-                ))),
+                filter: Some(expr_to_proto(
+                    &Space::table(&common::docs()),
+                    &Expr::eq(KIND, Value::Str("kind-1".to_owned())),
+                )),
                 // `by_kind` holds the kind and the primary key, so this needs
                 // no row read at all.
                 projection: Some(pb::Projection {
                     all_columns: false,
-                    columns: vec![ID.0 as u32, KIND.0 as u32],
+                    columns: vec![column_ref(0, ID.0), column_ref(0, KIND.0)],
                 }),
                 hint: Some(pb::AccessHint {
                     path: Some(pb::access_hint::Path::Index("by_kind".to_owned())),
