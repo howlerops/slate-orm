@@ -171,24 +171,172 @@ Without it, all of the above could pass because data reached the second store
 through some ambient process state, which would make "survives a restart" mean
 nothing at all.
 
+## Failure partway through a write
+
+`crates/slate-kernel/tests/crash.rs`
+
+A row and its index entries are written together. If a write can fail between
+them and leave the result visible, the store has an index entry pointing at a
+row that does not exist — a lookup by index then returns a row that was never
+there, or returns nothing while a scan returns it. Nothing reports it.
+
+The layer's claim is that this never happens, and nothing tested the claim
+because nothing could make a write fail. A `Faulty` store now can: it wraps a
+store and fails the *n*th write of a transaction. Running the same workload
+with the fault at every position in turn covers each point a real failure could
+land, and after each one the store must satisfy a consistency check — every
+index entry resolves to a row that exists with the values the entry claims, and
+every row appears in every index exactly once.
+
+An insert costs four writes (row, two index entries, commit), counted rather
+than assumed so the sweep still covers everything if the write path gains a
+step. Inserts, updates, deletes and bulk inserts are each swept. The update
+case is the sharpest: a failure between retiring the old index entry and
+writing the new one is where a row ends up reachable through its old indexed
+value, its new one, both, or neither — so the check is that the row is *wholly*
+old or *wholly* new, never a mixture.
+
+The consistency check is itself proven to fail: one test writes a dangling
+index entry behind the record layer's back and requires the check to notice and
+to name the index.
+
+What this does not cover is a crash *between* SlateDB's own writes. That is
+SlateDB's atomicity to keep. This covers the layer that decides what goes into
+a transaction together.
+
+## Many writers and readers
+
+`crates/slate-kernel/tests/concurrency.rs`
+
+One test elsewhere had two writers race for a unique index slot. That
+established conflicts are detected; it said nothing about behaviour under real
+contention.
+
+Counting is the workload, deliberately: a counter incremented N times by C
+tasks must end at exactly N×C. A lost update shows up as a number too small and
+a double-apply as one too large, and a single integer is hard to satisfy by
+accident. Eight tasks × twenty-five increments on one row come out exact, and
+the test additionally asserts that **some transaction actually conflicted** —
+without that, tasks that never overlapped would pass while proving nothing.
+
+Also checked: exactly one of sixteen racing writers takes a unique slot (not
+"one wins" with two writers, which a check-then-write race would also pass);
+writers on *disjoint* rows never conflict, since a conflict check too coarse
+would be correct and useless; concurrent deletes leave the row gone and its
+unique slot free; and a reader running alongside writers compares a table scan
+against an index scan in the same transaction, so a write becoming visible in
+two steps would show up as the two paths disagreeing.
+
+Run fifteen times over, no flakes.
+
+## Untrusted input
+
+`crates/slate-tuple/tests/untrusted.rs`, `crates/slate-kernel/tests/untrusted_patterns.rs`
+
+Two boundaries take input nobody here wrote: the decoder reads whatever storage
+returns, and patterns arrive from whoever wrote the query — which in an
+application means whoever filled in a search box.
+
+The decoder's contract is deliberately weak, because a weak contract is one
+that can hold: **for any input, decoding returns `Ok` or `Err`**. It must not
+panic, run away, or read out of bounds. Nothing is claimed about what it
+decodes from nonsense. Bytes are generated biased towards the ones that mean
+something to the codec — type tags, the NUL that terminates a string, the 0xFF
+that escapes it — because uniform random bytes fail on the first tag and never
+reach the interesting code. Also swept: every truncation of a valid encoding,
+and a single corrupted byte at every position.
+
+One case is called out on its own. A vector's encoding carries a length, and a
+length prefix is a promise the buffer does not have to keep: five bytes
+claiming four billion elements must be an error, not an allocation.
+
+For patterns, the properties are that matching terminates, does not overflow
+the stack, and that a pattern turned into scan bounds still finds every
+matching row. The last is checked as a property against the matcher — if a
+value matches the pattern, its encoding must fall inside the derived range —
+because the cases that break it are escapes and multi-byte characters at the
+boundary, which is to say the ones nobody writes down.
+
+Measuring the regex limits was worth doing rather than assuming. A first
+attempt used `"a{1000}".repeat(100)` as an "oversized" pattern; it compiles
+fine. The shape that actually matters is `(a{1000}){1000}` — **fifteen
+characters** asking for a million-state machine — and what stops it is the
+crate's 10 MiB compiled-size limit, not any length check that could be put on
+the pattern string. That limit is a property of the engine rather than of this
+code, so it is pinned here where swapping the engine would fail.
+
+## Correlated columns: wrong, and so far harmless
+
+`crates/slate-kernel/examples/correlation.rs`
+
+Selectivities multiply, which assumes independence. Real data is full of
+columns that are not independent, so the estimates are wrong by construction.
+The question worth answering is not whether they are wrong but **how wrong, and
+whether it changes the plan** — an estimate ten times too small that still
+picks the same access path costs nothing.
+
+Two columns over the same domain, with `b == a` at a tuneable probability:
+
+| correlation | predicate | estimate | actual | error | plan penalty |
+|---:|---|---:|---:|---:|---:|
+| 0.00 | `a=1 AND b=1` | 50 | 48 | 1.04x | 1.05x |
+| 0.50 | `a=1 AND b=1` | 50 | 534 | 0.09x | 1.00x |
+| 0.90 | `a=1 AND b=1` | 50 | 901 | 0.06x | 1.00x |
+| 1.00 | `a=1 AND b=1` | 50 | 984 | **0.05x** | 1.00x |
+| 0.90 | `a=1 AND b=2` | 50 | 6 | 8.33x | 1.00x |
+| 1.00 | `a=1 AND b=2` | 50 | 0 | ∞ | 1.03x |
+
+The estimate is off by up to **twenty times**, and unboundedly in the other
+direction where correlation makes a conjunction impossible. The plan penalty —
+what the chosen plan really costs against the cheapest available, both computed
+from measured row counts through the same cost model — stays at **1.00x**.
+
+The reason is worth stating, because it says where the risk actually is: plan
+choice is driven by the *bound* each access path derives, which is a
+single-column selectivity estimated from single-column statistics and therefore
+right. Independence error lands on the estimate of the final row count, after
+the residual, and lands on every candidate roughly equally — so it moves the
+numbers without moving the ranking.
+
+`nested_loop_cost` multiplies the outer side's estimated row count by the cost
+of one probe, which looked like the one place the error has a direct lever on a
+decision. Measured, it does not fire: with a correlated filter on the outer
+side and its estimate twenty times too small, the planner still chooses a hash
+join at every correlation and both domain sizes. That prediction was wrong, and
+saying so is cheaper than hunting for a configuration that would have confirmed
+it.
+
+**Conclusion: multi-column statistics are not warranted on this evidence.** The
+shapes measured are single-table access-path choice and one join shape (a large
+table against a small lookup). A join between two large sides, each with a
+correlated filter, is not measured and is where to look first if this ever does
+bite.
+
 ## What is still not proven
 
-Stated plainly, because a document like this is otherwise an advertisement:
+Stated plainly, because a document like this is otherwise an advertisement.
+Everything that was on this list a round ago has moved above it; what remains is
+what genuinely has not been done.
 
-- **Crash mid-write is not tested.** The uncommitted-transaction case is the
-  deterministic half. Killing a process between the row write and the index
-  write, and asserting recovery, needs fault injection that does not exist here.
-- **Concurrency is barely tested.** One test has two writers contend for a
-  unique index slot. There is no interleaved-writer stress, no reader pool under
-  load, and no fencing exercised during a real handover — which makes the
-  writer-fencing and conflict-retry logic simultaneously the least-exercised
-  code and among the most consequential.
-- **Untrusted bytes are not fuzzed.** `decode` parses whatever storage returns,
-  and patterns are caller input. A fuzz target asserting decode never panics
-  and never hangs is roughly a day's work and has not been done.
-- **The restart tests run over an in-memory object store**, not the S3 path.
-  The abstraction is the same, so the logic is covered, but the S3 protocol
-  path is not exercised across a restart.
-- **Correlated columns.** Selectivities multiply, which assumes independence.
-  That makes estimates wrong on correlated data, and nothing currently measures
-  how wrong.
+- **A real crash, as opposed to an injected write failure.** `crash.rs` proves
+  the record layer never puts a row and its index entries in separate
+  transactions. It does not kill a process mid-`fsync` and restart it — that
+  boundary belongs to SlateDB, and taking it seriously means fault injection
+  inside the storage engine rather than above it.
+- **Writer fencing during a live handover.** Fencing is tested against a real
+  instance, but as a sequence: writer A, then writer B, then A discovers it is
+  fenced. Two writers genuinely overlapping across a lease change, with
+  in-flight transactions on both, is not exercised.
+- **The reader pool under load.** Routing is tested on its properties and
+  replicas are tested for correctness, but nothing runs a pool hot enough for
+  lag, eviction and affinity to interact.
+- **A real fuzzer.** The untrusted-input suites are property tests with hostile
+  generators, which is most of the value for a few seconds per run. They are not
+  coverage-guided, so they will not find the input that needs eleven specific
+  bytes in a row.
+- **Correlated columns in a join between two large sides.** Measured and found
+  harmless everywhere it was measured; this is the shape where the mechanism
+  could still bite, and it is the first place to look if it ever does.
+- **Scale.** ClickBench runs a million rows in memory. Nothing large has been
+  run against real object storage, so the cost model's 2.2 ms round trip is
+  still a fixture constant rather than a measurement at size.

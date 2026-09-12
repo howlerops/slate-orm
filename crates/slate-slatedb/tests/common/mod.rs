@@ -15,6 +15,8 @@
     unreachable_pub
 )]
 
+pub mod restart;
+
 use slate_kernel::{
     Action, Expr, Grant, KernelError, Policy, Principal, RecordStore, ScanOrder, SecurityCatalog,
     SecurityContext,

@@ -498,6 +498,17 @@ Tests are written around guarantees rather than API surface:
   must return identical rows. An optimiser that changes the answer is not
   optimising. It found three bugs on its first run — see
   [`docs/correctness.md`](docs/correctness.md).
+- **Write failures are injected at every position** a transaction writes, and
+  after each the store must still satisfy a full index/row consistency check.
+  A row and its index entries land together or not at all.
+- **Contention is tested by counting.** Eight tasks incrementing one row must
+  total exactly the number of increments — a lost update is a number too small,
+  a double-apply one too large — and the test also asserts that transactions
+  really did conflict, since tasks that never overlapped would pass while
+  proving nothing.
+- **Untrusted input** — arbitrary bytes into the decoder, and caller-supplied
+  `LIKE` patterns and regexes — must return an error rather than panic, hang or
+  overflow the stack.
 - Row-level security is checked as a **matrix**, once per access path, rather
   than as a set of scenarios: a policy honoured by the table scan and skipped
   by the k-NN search is a leak, and the paths that skip it are the ones added
@@ -505,7 +516,9 @@ Tests are written around guarantees rather than API surface:
 - A store is closed and reopened to prove rows, index entries, tombstones and
   tenant isolation all survive a restart — including that a covering scan and
   a table scan still agree afterwards, which is how an index that came back in
-  a different state from its table would show up.
+  a different state from its table would show up. These run over the S3
+  protocol as well as in memory, since reopening is exactly where a backend's
+  manifest handling could differ.
 - The security suite is written around what a caller *cannot* do: probe for
   hidden rows via error codes, reach another tenant by asking explicitly, escape
   a policy by updating out of it, or leak null-valued rows through a negated
@@ -565,10 +578,11 @@ Built and tested:
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
-- [x] A planner oracle, an access-path security matrix and restart/durability
-      tests ([`docs/correctness.md`](docs/correctness.md)), which between them
-      found a covering scan and a point get ignoring the projection, and a
-      panic on contradictory bounds
+- [x] A planner oracle, an access-path security matrix, restart/durability
+      tests over both substrates, write-failure injection, contention tests and
+      untrusted-input suites ([`docs/correctness.md`](docs/correctness.md)),
+      which between them found a covering scan and a point get ignoring the
+      projection, and a panic on contradictory bounds
 
 Not built:
 
@@ -578,7 +592,10 @@ Not built:
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
 - [ ] Correlated column statistics — selectivities still multiply, which
-      assumes the columns are independent
+      assumes the columns are independent. Measured: estimates run up to 20x
+      out, and the plan chosen is unchanged in every shape tested, so this is
+      not currently worth fixing
+      (`cargo run --release -p slate-kernel --example correlation`)
 - [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x
       against the 26x the primary-key case bought, so it waits
 - [ ] Partial and expression indexes; foreign keys; `DEFAULT` and `CHECK`
