@@ -41,6 +41,9 @@ pub const SCAN_OPEN_COST: f64 = 1.0;
 pub const SCAN_ROW_COST: f64 = 0.01;
 /// Cost of one point read.
 pub const POINT_READ_COST: f64 = 1.0;
+/// Cost of one comparison level when sorting a row: CPU only, no I/O, so
+/// several orders of magnitude below a round trip.
+pub const SORT_ROW_COST: f64 = 0.000_02;
 
 /// What is known about one column's contents.
 #[derive(Debug, Clone, Copy, PartialEq)]

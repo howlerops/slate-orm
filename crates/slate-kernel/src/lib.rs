@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod aggregate;
 pub mod error;
 pub mod exec;
 pub mod explain;
@@ -26,14 +27,15 @@ pub mod stats;
 pub mod store;
 pub mod token;
 
+pub use aggregate::{Aggregate, Group};
 pub use error::{KernelError, Result, StorageError};
 pub use exec::QueryCursor;
 pub use explain::{AccessSummary, Explanation};
 pub use expr::{CmpOp, Expr, Truth};
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
-pub use plan::{Access, Plan, Projection, plan, plan_projected, plan_with};
+pub use plan::{Access, Plan, Projection, plan, plan_full, plan_projected, plan_with};
 pub use pool::{ReplicaPool, RoutingPolicy};
-pub use query::Query;
+pub use query::{NullsOrder, Query, SortKey};
 pub use read::{IndexCursor, RowCursor};
 pub use record::{DISTINCT_TRACKING_LIMIT, RecordSnapshot, RecordStore, RecordTransaction};
 pub use retry::{RetryPolicy, with_retries};

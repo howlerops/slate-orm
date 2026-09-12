@@ -5,6 +5,7 @@
 //! index builder to fall behind and no repair path to get wrong: either the
 //! whole write lands or none of it does.
 
+use crate::aggregate::{Aggregate, Group};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::explain::Explanation;
@@ -317,6 +318,54 @@ impl<'a> RecordTransaction<'a> {
     ) -> Result<Explanation> {
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
+    }
+
+    /// Compute `aggregates` over the rows `query` selects.
+    ///
+    /// The projection is narrowed to exactly the columns the aggregates read,
+    /// so an index holding them answers without reading any row —
+    /// `COUNT(*)` reads no columns at all.
+    pub async fn aggregate(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Value>> {
+        self.reads()
+            .aggregate(context, table, query, aggregates)
+            .await
+    }
+
+    /// Rows matching `query`, counted.
+    pub async fn count(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<u64> {
+        let values = self
+            .aggregate(context, table, query, &[Aggregate::Count])
+            .await?;
+        Ok(match values.first() {
+            Some(Value::U64(n)) => *n,
+            _ => 0,
+        })
+    }
+
+    /// Compute `aggregates` per distinct combination of `group`, ordered by
+    /// the grouping columns.
+    pub async fn group_by(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .group_by(context, table, query, group, aggregates)
+            .await
     }
 
     /// Collect statistics for `table` by reading it.
@@ -748,5 +797,53 @@ impl<'a> RecordSnapshot<'a> {
     ) -> Result<Explanation> {
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
+    }
+
+    /// Compute `aggregates` over the rows `query` selects.
+    ///
+    /// The projection is narrowed to exactly the columns the aggregates read,
+    /// so an index holding them answers without reading any row —
+    /// `COUNT(*)` reads no columns at all.
+    pub async fn aggregate(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Value>> {
+        self.reads()
+            .aggregate(context, table, query, aggregates)
+            .await
+    }
+
+    /// Rows matching `query`, counted.
+    pub async fn count(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<u64> {
+        let values = self
+            .aggregate(context, table, query, &[Aggregate::Count])
+            .await?;
+        Ok(match values.first() {
+            Some(Value::U64(n)) => *n,
+            _ => 0,
+        })
+    }
+
+    /// Compute `aggregates` per distinct combination of `group`, ordered by
+    /// the grouping columns.
+    pub async fn group_by(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .group_by(context, table, query, group, aggregates)
+            .await
     }
 }

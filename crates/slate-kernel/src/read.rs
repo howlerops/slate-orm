@@ -5,16 +5,37 @@
 //! here too, so a replica cannot be a way around them: there is no read path
 //! that does not go through the secured reads in this module.
 
+use crate::aggregate::{Accumulators, Aggregate, Group};
 use crate::error::Result;
 use crate::exec::QueryCursor;
 use crate::keys;
-use crate::plan::{Plan, plan_with};
+use crate::plan::{Plan, Projection, plan_full};
 use crate::query::Query;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
-use slate_schema::{IndexDef, Row, TableDef, decode_row};
+use slate_schema::{IndexDef, Ordinal, Row, TableDef, decode_row};
 use slate_tuple::Value;
+use std::collections::BTreeMap;
+
+/// Restrict a query to the columns an aggregation actually reads.
+///
+/// This is where the win is: `COUNT(*)` needs no columns, so any usable index
+/// can answer it without touching a row. A limit or offset is dropped, since
+/// aggregating a windowed subset of an unordered result is not a meaningful
+/// request.
+fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query {
+    let mut columns = Aggregate::columns(aggregates);
+    columns.extend(group.iter().copied());
+    Query {
+        filter: query.filter.clone(),
+        order: query.order,
+        projection: Projection::Columns(columns.into_iter().collect()),
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    }
+}
 
 /// Read a row with no authorisation or policy applied.
 ///
@@ -75,14 +96,72 @@ impl<'a> SecuredReads<'a> {
                 .filter
                 .clone()
                 .and(self.security.row_filter(context, table, Action::Read)?);
-        Ok(plan_with(
+        Ok(plan_full(
             table,
             &secured,
             query.order,
             &query.projection,
             &self.statistics.table(table),
             query.planning_limit(),
+            &query.sort,
         ))
+    }
+
+    /// Compute `aggregates` over the rows `query` selects.
+    pub(crate) async fn aggregate(
+        self,
+        context: &SecurityContext,
+        table: &'a TableDef,
+        query: &Query,
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Value>> {
+        let mut cursor = self
+            .execute(context, table, &narrowed(query, aggregates, &[]))
+            .await?;
+        let mut accumulators = Accumulators::new(aggregates);
+        while let Some(row) = cursor.next().await? {
+            accumulators.push(&row)?;
+        }
+        Ok(accumulators.finish())
+    }
+
+    /// Compute `aggregates` per distinct combination of `group`.
+    pub(crate) async fn group_by(
+        self,
+        context: &SecurityContext,
+        table: &'a TableDef,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Group>> {
+        let mut cursor = self
+            .execute(context, table, &narrowed(query, aggregates, group))
+            .await?;
+
+        // Grouped in a map rather than by sorting first: the input is not
+        // ordered by the grouping columns in general, and requiring that would
+        // mean sorting every row to save a hash lookup per row.
+        let mut groups: BTreeMap<Vec<Value>, Accumulators> = BTreeMap::new();
+        while let Some(row) = cursor.next().await? {
+            let key: Vec<Value> = group
+                .iter()
+                .map(|c| row.get(*c).cloned().unwrap_or(Value::Null))
+                .collect();
+            groups
+                .entry(key)
+                .or_insert_with(|| Accumulators::new(aggregates))
+                .push(&row)?;
+        }
+
+        // `BTreeMap` gives group order for free, and a deterministic result is
+        // worth more than the constant factor a hash map would save.
+        Ok(groups
+            .into_iter()
+            .map(|(key, accumulators)| Group {
+                key,
+                values: accumulators.finish(),
+            })
+            .collect())
     }
 
     /// Plan and run a query with the caller's security filter folded in.

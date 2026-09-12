@@ -144,6 +144,13 @@ pub enum KernelError {
         reason: &'static str,
     },
 
+    /// A sum or average was asked for over a column that does not add up.
+    #[error("cannot total a column of type {found}")]
+    NotSummable {
+        /// The type actually present.
+        found: &'static str,
+    },
+
     /// A stored index entry pointed at a row key that would not decode.
     ///
     /// This means the index and the table disagree, which the record store

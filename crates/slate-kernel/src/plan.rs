@@ -15,7 +15,8 @@
 //! provably enforce is a later optimisation, and one that has to be argued for
 //! rather than assumed.
 
-use crate::stats::{POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, TableStats};
+use crate::query::SortKey;
+use crate::stats::{POINT_READ_COST, SCAN_OPEN_COST, SCAN_ROW_COST, SORT_ROW_COST, TableStats};
 use crate::store::{KeyRange, ScanOrder};
 use crate::{expr::Expr, keys};
 use core::ops::Bound;
@@ -104,6 +105,9 @@ pub struct Plan {
     pub residual: Expr,
     /// Direction to walk the access path in.
     pub order: ScanOrder,
+    /// Sorting the executor must do, because no access path produced the
+    /// requested order. `None` means the rows arrive already ordered.
+    pub sort: Option<Vec<SortKey>>,
     /// Rows the planner expects this to return.
     pub estimated_rows: f64,
     /// Estimated cost, in object-storage round trips. See [`crate::stats`].
@@ -125,6 +129,32 @@ struct Candidate {
     /// Fraction of the table the access path's bounds admit, before the
     /// residual filters any further.
     bound_selectivity: f64,
+    /// The order rows come out in, as `(column, stored direction)`.
+    natural_order: Vec<(Ordinal, Direction)>,
+}
+
+impl Candidate {
+    /// Whether walking this path in `order` already produces `sort`.
+    ///
+    /// A requested order is satisfied when it is a prefix of what the path
+    /// produces. Columns pinned to a single value by the bounds are skipped:
+    /// ordering by a column that can only hold one value is a no-op, and
+    /// missing that would sort a great many results that were already in order.
+    fn satisfies(&self, sort: &[SortKey], order: ScanOrder, pinned: &BTreeSet<Ordinal>) -> bool {
+        let mut produced = self
+            .natural_order
+            .iter()
+            .filter(|(column, _)| !pinned.contains(column));
+        for key in sort.iter().filter(|k| !pinned.contains(&k.column)) {
+            let Some((column, stored)) = produced.next() else {
+                return false;
+            };
+            if *column != key.column || !key.matches_storage(*stored, order) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Candidate {
@@ -138,6 +168,7 @@ impl Candidate {
         stats: &TableStats,
         total_selectivity: f64,
         limit: Option<usize>,
+        must_sort: bool,
     ) -> (f64, f64) {
         if matches!(self.access, Access::Nothing) {
             return (0.0, 0.0);
@@ -148,8 +179,13 @@ impl Candidate {
         }
 
         let admitted = (rows * self.bound_selectivity).max(1.0);
-        let mut returned = (rows * total_selectivity).max(0.0);
-        if let Some(limit) = limit {
+        let matched = (rows * total_selectivity).max(0.0);
+        // A sort has to see every matching row before it can return the first,
+        // so a limit stops being a reason to read less.
+        let mut returned = matched;
+        if let Some(limit) = limit
+            && !must_sort
+        {
             returned = returned.min(limit as f64);
         }
 
@@ -170,6 +206,10 @@ impl Candidate {
             // so this is per row touched, not per row returned.
             cost += touched * POINT_READ_COST;
         }
+        if must_sort && matched > 1.0 {
+            cost += matched * matched.log2() * SORT_ROW_COST;
+        }
+        let returned = limit.map_or(returned, |limit| returned.min(limit as f64));
         (returned, cost)
     }
 }
@@ -220,6 +260,25 @@ pub fn plan_with(
     stats: &TableStats,
     limit: Option<usize>,
 ) -> Plan {
+    plan_full(table, predicate, order, projection, stats, limit, &[])
+}
+
+/// Choose an access path, given everything the query asks for.
+///
+/// `sort` is what makes an ordered index worth more than its point reads: a
+/// path that already produces the requested order streams, and one that does
+/// not has to materialise every matching row before returning the first.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn plan_full(
+    table: &TableDef,
+    predicate: &Expr,
+    order: ScanOrder,
+    projection: &Projection,
+    stats: &TableStats,
+    limit: Option<usize>,
+    sort: &[SortKey],
+) -> Plan {
     let conjuncts = predicate.conjuncts();
 
     // A comparison against a null literal is Unknown for every row, so the
@@ -232,6 +291,7 @@ pub fn plan_with(
             access: Access::Nothing,
             residual: predicate.clone(),
             order,
+            sort: None,
             estimated_rows: 0.0,
             estimated_cost: 0.0,
         };
@@ -241,18 +301,27 @@ pub fn plan_with(
 
     let total_selectivity = stats.predicate_selectivity(predicate);
 
-    let mut best: Option<(Candidate, f64, f64)> = None;
+    // Columns the bounds pin to a single value are already constant across the
+    // result, so ordering by them is free.
+    let pinned: BTreeSet<Ordinal> = constraints
+        .iter()
+        .filter(|(_, c)| c.equals.is_some())
+        .map(|(ordinal, _)| *ordinal)
+        .collect();
+
+    let mut best: Option<(Candidate, bool, f64, f64)> = None;
     let mut consider = |candidate: Candidate| {
-        let (rows, cost) = candidate.estimate(stats, total_selectivity, limit);
+        let must_sort = !sort.is_empty() && !candidate.satisfies(sort, order, &pinned);
+        let (rows, cost) = candidate.estimate(stats, total_selectivity, limit, must_sort);
         let better = match &best {
             None => true,
             // Ties go to whichever is already chosen, so the order candidates
             // are generated in decides them: the primary key first, then
             // indexes in declaration order. Deterministic beats arbitrary.
-            Some((_, _, current)) => cost < *current,
+            Some((_, _, _, current)) => cost < *current,
         };
         if better {
-            best = Some((candidate, rows, cost));
+            best = Some((candidate, must_sort, rows, cost));
         }
     };
 
@@ -269,23 +338,25 @@ pub fn plan_with(
         consider(match_index(table, index, &constraints, &needed, stats));
     }
 
-    let (access, estimated_rows, estimated_cost) = best.map_or_else(
+    let (access, must_sort, estimated_rows, estimated_cost) = best.map_or_else(
         || {
             (
                 Access::TableScan {
                     range: KeyRange::prefix(&keys::table_prefix(table)),
                 },
+                !sort.is_empty(),
                 stats.row_count as f64,
                 SCAN_OPEN_COST + stats.row_count as f64 * SCAN_ROW_COST,
             )
         },
-        |(candidate, rows, cost)| (candidate.access, rows, cost),
+        |(candidate, must_sort, rows, cost)| (candidate.access, must_sort, rows, cost),
     );
 
     Plan {
         access,
         residual: predicate.clone(),
         order,
+        sort: must_sort.then(|| sort.to_vec()),
         estimated_rows,
         estimated_cost,
     }
@@ -461,6 +532,8 @@ fn match_primary_key(
         return Candidate {
             access: Access::PointGet { key },
             bound_selectivity: 1.0 / (stats.row_count.max(1) as f64),
+            // One row is ordered by anything.
+            natural_order: Vec::new(),
         };
     }
 
@@ -469,6 +542,7 @@ fn match_primary_key(
     Candidate {
         access: Access::TableScan { range },
         bound_selectivity,
+        natural_order: key_columns,
     }
 }
 
@@ -504,6 +578,12 @@ fn match_index(
     let base = keys::index_prefix(table, index, None);
     let (range, bound_selectivity) = match_key(base, &key_columns, constraints, stats);
 
+    // Index entries end with the primary key, so an index scan is ordered by
+    // its own columns and then by the key — which is what makes it a total
+    // order rather than a partial one.
+    let mut natural_order = key_columns.clone();
+    natural_order.extend(table.primary_key().iter().map(|o| (*o, Direction::Asc)));
+
     Candidate {
         access: Access::IndexScan {
             index: index.id(),
@@ -511,5 +591,6 @@ fn match_index(
             covering: covers(table, index, needed),
         },
         bound_selectivity,
+        natural_order,
     }
 }

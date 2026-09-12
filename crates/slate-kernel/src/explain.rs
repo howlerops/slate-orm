@@ -31,6 +31,11 @@ pub struct Explanation {
     pub limit: Option<usize>,
     /// The caller's offset.
     pub offset: usize,
+    /// Whether the executor must materialise and sort the whole result.
+    ///
+    /// The expensive part is not the comparison but the materialisation: a
+    /// sorted plan cannot return its first row until it has found its last.
+    pub sorts: bool,
 }
 
 /// The access path, in terms a reader recognises.
@@ -97,6 +102,7 @@ impl Explanation {
             estimated_cost: plan.estimated_cost,
             limit: query.limit,
             offset: query.offset,
+            sorts: plan.sort.is_some(),
         }
     }
 
@@ -105,10 +111,19 @@ impl Explanation {
     pub const fn is_index_only(&self) -> bool {
         matches!(self.access, AccessSummary::IndexOnlyScan { .. })
     }
+
+    /// Whether the plan streams, rather than buffering everything first.
+    #[must_use]
+    pub const fn streams(&self) -> bool {
+        !self.sorts
+    }
 }
 
 impl fmt::Display for Explanation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.sorts {
+            f.write_str("Sort -> ")?;
+        }
         write!(
             f,
             "{} on {}  (rows={:.0} cost={:.2}",

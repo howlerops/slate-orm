@@ -9,9 +9,11 @@
 use crate::error::{KernelError, Result};
 use crate::expr::Expr;
 use crate::plan::{Access, Plan};
+use crate::query::{NullsOrder, SortKey};
 use crate::read::{self, IndexCursor, RowCursor};
 use crate::store::KvSnapshot;
 use slate_schema::{IndexDef, Row, TableDef};
+use slate_tuple::Direction;
 
 /// Where a cursor's candidate rows come from.
 enum Source<'a> {
@@ -29,6 +31,8 @@ enum Source<'a> {
     },
     /// A single row, fetched by primary key.
     Point(Option<Row>),
+    /// Rows already read, sorted, and waiting to be handed out.
+    Sorted(std::vec::IntoIter<Row>),
     /// The plan proved there is nothing to read.
     Empty,
 }
@@ -52,6 +56,44 @@ impl core::fmt::Debug for QueryCursor<'_> {
             .field("yielded", &self.yielded)
             .finish_non_exhaustive()
     }
+}
+
+/// Order two rows by `keys`, which is the comparison `ORDER BY` asks for.
+///
+/// [`Value`](slate_tuple::Value) already has a total order matching the storage
+/// encoding, where nulls sort below everything; the only extra work is
+/// respecting a caller who wants them at the other end.
+fn compare_rows(left: &Row, right: &Row, keys: &[SortKey]) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+
+    for key in keys {
+        let a = left.get(key.column);
+        let b = right.get(key.column);
+        let (Some(a), Some(b)) = (a, b) else { continue };
+
+        let ordering = match (a.is_null(), b.is_null()) {
+            (true, true) => Ordering::Equal,
+            (true, false) | (false, true) => {
+                let nulls_low = matches!(key.nulls, NullsOrder::First);
+                let a_first = a.is_null() == nulls_low;
+                // Null placement is absolute, so it is not flipped by the
+                // direction the values are sorted in.
+                return if a_first {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+            (false, false) => match key.direction {
+                Direction::Asc => a.cmp(b),
+                Direction::Desc => b.cmp(a),
+            },
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
 }
 
 /// Rebuild a row from an index entry, leaving uncovered columns null.
@@ -110,7 +152,7 @@ impl<'a> QueryCursor<'a> {
                 }
             }
         };
-        Ok(Self {
+        let mut cursor = Self {
             snapshot,
             table,
             source,
@@ -119,7 +161,22 @@ impl<'a> QueryCursor<'a> {
             offset: 0,
             skipped: 0,
             yielded: 0,
-        })
+        };
+
+        // No access path produced the requested order, so the rows have to be
+        // collected and sorted. This is the one place the cursor stops being a
+        // stream: nothing can be returned until everything has been read.
+        if let Some(keys) = plan.sort {
+            let mut rows = Vec::new();
+            while let Some(row) = cursor.next_admitted().await? {
+                rows.push(row);
+            }
+            rows.sort_by(|a, b| compare_rows(a, b, &keys));
+            cursor.source = Source::Sorted(rows.into_iter());
+            // The residual has already been applied to every row.
+            cursor.residual = Expr::True;
+        }
+        Ok(cursor)
     }
 
     /// Stop after `limit` rows.
@@ -142,10 +199,7 @@ impl<'a> QueryCursor<'a> {
         if self.limit.is_some_and(|l| self.yielded >= l) {
             return Ok(None);
         }
-        while let Some(row) = self.next_candidate().await? {
-            if !self.residual.admits(&row) {
-                continue;
-            }
+        while let Some(row) = self.next_admitted().await? {
             // An offset still has to find the rows it discards; there is no
             // cheaper way to know which ones they are.
             if self.skipped < self.offset {
@@ -158,9 +212,20 @@ impl<'a> QueryCursor<'a> {
         Ok(None)
     }
 
+    /// The next row that passes the residual, ignoring the limit and offset.
+    async fn next_admitted(&mut self) -> Result<Option<Row>> {
+        while let Some(row) = self.next_candidate().await? {
+            if self.residual.admits(&row) {
+                return Ok(Some(row));
+            }
+        }
+        Ok(None)
+    }
+
     async fn next_candidate(&mut self) -> Result<Option<Row>> {
         match &mut self.source {
             Source::Empty => Ok(None),
+            Source::Sorted(rows) => Ok(rows.next()),
             Source::Point(row) => Ok(row.take()),
             Source::Rows(cursor) => cursor.next().await,
             Source::CoveringIndex { cursor, index } => {
