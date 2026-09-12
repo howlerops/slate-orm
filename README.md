@@ -487,6 +487,7 @@ Built and tested:
       both sides secured; conditions spanning both sides
 - [x] Chains of three or more tables, in the order written, with per-step plans
 - [x] `IN` over a primary key as a set of overlapped reads, not a scan
+- [x] Equi-depth histograms, so a range estimate knows which range it is
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -498,8 +499,8 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Histograms, so a range estimate is better than a fixed guess; correlated
-      column statistics
+- [ ] Correlated column statistics — selectivities still multiply, which
+      assumes the columns are independent
 - [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x
       against the 26x the primary-key case bought, so it waits
 - [ ] Partial and expression indexes; foreign keys; `DEFAULT` and `CHECK`

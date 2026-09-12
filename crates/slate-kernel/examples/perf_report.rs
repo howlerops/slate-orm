@@ -356,6 +356,20 @@ async fn main() {
                 .using_index(IndexId(10)),
         ),
         (
+            "narrow range (0.4% of rows), planner",
+            Query::all().filter(by_tenant().and(Expr::compare(
+                column("at"),
+                CmpOp::Lt,
+                Value::I64(10),
+            ))),
+        ),
+        (
+            "narrow range, forced by_at_desc",
+            Query::all()
+                .filter(by_tenant().and(Expr::compare(column("at"), CmpOp::Lt, Value::I64(10))))
+                .using_index(IndexId(12)),
+        ),
+        (
             "indexed range, table scan",
             Query::all()
                 .filter(by_tenant().and(early()))

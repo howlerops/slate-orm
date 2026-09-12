@@ -51,7 +51,7 @@ pub use retry::{RetryPolicy, with_retries};
 pub use security::{
     Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
 };
-pub use stats::{ColumnStats, Statistics, TableStats};
+pub use stats::{ColumnStats, Histogram, Statistics, TableStats};
 pub use store::{
     KeyRange, KeyValue, KvIterator, KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder,
 };

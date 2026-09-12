@@ -257,6 +257,42 @@ the index. A cheaper plan that is sometimes not cheaper has to be a candidate,
 not a substitution. The test that caught it asserts a large set goes back to
 scanning.
 
+### The planner could not tell a narrow range from a broad one
+
+`range_selectivity` was a flat third, ignoring the literal, so `at < 10` and
+`at < 500` both costed 61.2. On a range selecting 0.4% of the corpus the
+planner scanned all 2500 rows:
+
+| | wall | model said |
+|---|---:|---:|
+| range over 0.4% of rows, table scan | 57.9 ms | cost 26 ← chosen |
+| the same, forced through the index | **4.5 ms** | cost 61.2 |
+
+`analyze` now builds an equi-depth histogram per column — buckets of equal
+population, so a column with a long tail spends its resolution where the rows
+are — from a reservoir sample. Reservoir rather than the first ten thousand
+rows, because a scan arrives in key order and any column correlated with the
+key would otherwise be described by one end of its own range. The generator is
+deterministic and unseeded, so analysing the same data twice gives the same
+statistics: a planner whose choices move between runs is one nobody can reason
+about.
+
+| | before | after |
+|---|---:|---:|
+| narrow range, chosen plan | Table Scan, 57.9 ms | **Index Scan, 4.5 ms** |
+| narrow range, model cost | 61.2 | 3.2 |
+| broad range, model cost | 61.2 | 36.9 |
+
+Twelve times faster on the narrow one, and the broad one still correctly
+scans — the model can now tell them apart at all, which it could not before.
+The broad range's corrected estimate of 36.9 predicts 83 ms against 83 ms
+measured.
+
+Resolution is the bucket and no further. Interpolating inside one would need
+arithmetic on `Value`, which is a closed type holding strings and uuids as
+well as numbers, and sixty-four buckets already resolves to about 1.5% against
+a crossover near 6%.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because
@@ -275,6 +311,7 @@ got honest.
 | covered count | 500 | 0 | 13 ms | Index Only Scan |
 | 10 keys by primary key | 10 | 10 | 2.3 ms | Point Gets |
 | 200 keys by primary key | 200 | 200 | 30 ms | Point Gets |
+| range over 0.4% of rows | 10 | 10 | 4.5 ms | Index Scan |
 
 | join | rows out | point reads | scanned | wall | plan |
 |---|---:|---:|---:|---:|---|

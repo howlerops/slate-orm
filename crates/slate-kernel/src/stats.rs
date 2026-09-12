@@ -42,6 +42,7 @@
 
 use crate::expr::{CmpOp, Expr};
 use slate_schema::{Ordinal, TableDef, TableId};
+use slate_tuple::Value;
 use std::collections::BTreeMap;
 
 /// Cost of opening a scan, in round trips.
@@ -108,12 +109,103 @@ impl Default for ColumnStats {
     }
 }
 
+/// Buckets holding roughly equal numbers of rows, describing how one column's
+/// values are spread.
+///
+/// Without one, a range predicate gets a fixed guess and the planner cannot
+/// tell `at < 10` from `at < 500` — on the benchmark corpus that meant
+/// scanning 2500 rows in 58 ms to return the ten an index finds in 4.5 ms.
+///
+/// Equi-depth rather than equi-width: buckets of equal *population*, so a
+/// column with a long tail spends its resolution where the rows are. The
+/// bounds are quantiles of a sample, so bucket `i` covers roughly
+/// `1/buckets` of the table whatever the shape of the data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Histogram {
+    /// Bucket boundaries, sorted. `buckets + 1` of them: bucket `i` holds
+    /// values in `bounds[i] ..= bounds[i + 1]`.
+    bounds: Vec<Value>,
+}
+
+/// Buckets a histogram is built with.
+///
+/// Sixty-four puts the resolution at about 1.5% of the table, which is fine
+/// against a crossover that sits near 6% and an estimate that is a sample
+/// anyway.
+pub const HISTOGRAM_BUCKETS: usize = 64;
+
+/// Values sampled per column when building a histogram.
+///
+/// Bounded because `analyze` reads the whole table and cannot hold all of it.
+pub const HISTOGRAM_SAMPLE: usize = 10_000;
+
+impl Histogram {
+    /// Build from observed values, which need not be sorted.
+    ///
+    /// `None` when there is too little to describe: one distinct value is not
+    /// a distribution, and a histogram claiming otherwise would be worse than
+    /// the fixed guess it replaces.
+    #[must_use]
+    pub fn from_values(mut values: Vec<Value>) -> Option<Self> {
+        values.retain(|v| !v.is_null());
+        if values.len() < HISTOGRAM_BUCKETS {
+            return None;
+        }
+        values.sort();
+        if values.first() == values.last() {
+            return None;
+        }
+        let mut bounds = Vec::with_capacity(HISTOGRAM_BUCKETS + 1);
+        for i in 0..=HISTOGRAM_BUCKETS {
+            // Quantile i/buckets, clamped so the last index is in range.
+            let at = (i * (values.len() - 1)) / HISTOGRAM_BUCKETS;
+            if let Some(value) = values.get(at) {
+                bounds.push(value.clone());
+            }
+        }
+        (bounds.len() > 1).then_some(Self { bounds })
+    }
+
+    /// The fraction of rows below `value`, in `0.0..=1.0`.
+    ///
+    /// Resolved to the bucket and no further. Interpolating inside a bucket
+    /// would need arithmetic on [`Value`], which is a closed type holding
+    /// strings and uuids as well as numbers; the midpoint is honest about what
+    /// the histogram actually knows.
+    #[must_use]
+    pub fn fraction_below(&self, value: &Value) -> f64 {
+        let buckets = self.bounds.len().saturating_sub(1);
+        if buckets == 0 {
+            return 0.5;
+        }
+        match self.bounds.binary_search(value) {
+            // Exactly on a boundary: everything before that bucket.
+            Ok(index) => (index as f64 / buckets as f64).clamp(0.0, 1.0),
+            Err(0) => 0.0,
+            Err(index) if index > buckets => 1.0,
+            // Inside bucket `index - 1`; call it half way through.
+            Err(index) => ((index as f64 - 0.5) / buckets as f64).clamp(0.0, 1.0),
+        }
+    }
+
+    /// The bucket boundaries.
+    #[must_use]
+    pub fn bounds(&self) -> &[Value] {
+        &self.bounds
+    }
+}
+
 /// What is known about one table's contents.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableStats {
     /// Rows in the table.
     pub row_count: u64,
     columns: BTreeMap<Ordinal, ColumnStats>,
+    /// How each column's values are spread, where that has been measured.
+    ///
+    /// Held apart from [`ColumnStats`] so that stays small and `Copy`: a
+    /// histogram is a hundred values and is read on far fewer paths.
+    histograms: BTreeMap<Ordinal, Histogram>,
 }
 
 impl Default for TableStats {
@@ -133,6 +225,7 @@ impl TableStats {
         Self {
             row_count: 1_000,
             columns: BTreeMap::new(),
+            histograms: BTreeMap::new(),
         }
     }
 
@@ -142,6 +235,7 @@ impl TableStats {
         Self {
             row_count,
             columns: BTreeMap::new(),
+            histograms: BTreeMap::new(),
         }
     }
 
@@ -150,6 +244,19 @@ impl TableStats {
     pub fn with_column(mut self, ordinal: Ordinal, stats: ColumnStats) -> Self {
         self.columns.insert(ordinal, stats);
         self
+    }
+
+    /// Record how a column's values are spread.
+    #[must_use]
+    pub fn with_histogram(mut self, ordinal: Ordinal, histogram: Histogram) -> Self {
+        self.histograms.insert(ordinal, histogram);
+        self
+    }
+
+    /// How `ordinal`'s values are spread, if that has been measured.
+    #[must_use]
+    pub fn histogram(&self, ordinal: Ordinal) -> Option<&Histogram> {
+        self.histograms.get(&ordinal)
     }
 
     /// What is known about `ordinal`, or the default.
@@ -167,16 +274,47 @@ impl TableStats {
         ((1.0 - stats.null_fraction) / distinct).clamp(f64::MIN_POSITIVE, 1.0)
     }
 
-    /// The fraction a range comparison is expected to keep.
+    /// The fraction a range comparison is expected to keep, knowing nothing
+    /// about where the value falls.
     ///
-    /// A fixed guess. Estimating it properly needs a histogram, which is the
-    /// next thing to add here and is not needed to stop the planner making the
-    /// mistake this module exists to prevent.
+    /// The fallback for a column with no histogram. It cannot tell `at < 10`
+    /// from `at < 500`, which is the whole reason [`Histogram`] exists.
     #[must_use]
     pub fn range_selectivity(&self, ordinal: Ordinal, one_sided: bool) -> f64 {
         let stats = self.column(ordinal);
         let base = if one_sided { 0.33 } else { 0.1 };
         (base * (1.0 - stats.null_fraction)).clamp(f64::MIN_POSITIVE, 1.0)
+    }
+
+    /// The fraction `bounds` keeps, using the column's histogram if there is
+    /// one and [`TableStats::range_selectivity`] if there is not.
+    ///
+    /// Nulls never satisfy a comparison, so whatever the bounds keep is
+    /// scaled by the fraction of rows that are not null.
+    #[must_use]
+    pub fn bounded_selectivity(&self, ordinal: Ordinal, bounds: &[(CmpOp, &Value)]) -> f64 {
+        let Some(histogram) = self.histogram(ordinal) else {
+            return self.range_selectivity(ordinal, bounds.len() == 1);
+        };
+        // Start with everything and narrow by each bound. Two bounds on one
+        // column are an interval, and an interval is what is left after
+        // cutting from both ends.
+        let mut low = 0.0f64;
+        let mut high = 1.0f64;
+        for (op, value) in bounds {
+            if value.is_null() {
+                return 0.0;
+            }
+            let at = histogram.fraction_below(value);
+            match op {
+                CmpOp::Lt | CmpOp::Le => high = high.min(at),
+                CmpOp::Gt | CmpOp::Ge => low = low.max(at),
+                CmpOp::Eq => return self.equality_selectivity(ordinal),
+                CmpOp::Ne => return 1.0 - self.equality_selectivity(ordinal),
+            }
+        }
+        let not_null = 1.0 - self.column(ordinal).null_fraction;
+        ((high - low).max(0.0) * not_null).clamp(f64::MIN_POSITIVE, 1.0)
     }
 
     /// The fraction of rows a whole predicate is expected to keep.
@@ -194,7 +332,7 @@ impl TableStats {
                     CmpOp::Eq => self.equality_selectivity(*column),
                     CmpOp::Ne => 1.0 - self.equality_selectivity(*column),
                     CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-                        self.range_selectivity(*column, true)
+                        self.bounded_selectivity(*column, &[(*op, value)])
                     }
                 }
             }

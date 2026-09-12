@@ -18,7 +18,7 @@ use crate::query::Query;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
-use crate::stats::{ColumnStats, Statistics, TableStats};
+use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
 use futures::stream::{FuturesOrdered, StreamExt as _};
@@ -26,7 +26,6 @@ use slate_schema::{Catalog, IndexDef, Ordinal, Row, TableDef, encode_body};
 use slate_tuple::Value;
 use std::collections::HashSet;
 
-/// A typed record store over a key-value backend.
 /// How many distinct values [`RecordTransaction::analyze`] counts per column
 /// before giving up and calling the column unique.
 pub const DISTINCT_TRACKING_LIMIT: usize = 10_000;
@@ -36,6 +35,34 @@ pub const DISTINCT_TRACKING_LIMIT: usize = 10_000;
 /// The same trade as the read path's prefetch: enough to hide the round trips,
 /// not so many that one batch monopolises the connection pool.
 pub const BULK_READ_CONCURRENCY: usize = 32;
+
+/// A small deterministic generator, for sampling during `analyze`.
+///
+/// Deterministic because statistics that move between runs make plans that
+/// move between runs. Not for anything that needs to be unpredictable: this
+/// picks which rows describe a column, and nothing else.
+struct Xorshift(u64);
+
+impl Xorshift {
+    const fn new() -> Self {
+        // Any non-zero seed will do; a fixed one makes `analyze` reproducible.
+        Self(0x2545_F491_4F6C_DD1D)
+    }
+
+    const fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    /// A value in `0..bound`, or zero when there is no room.
+    const fn below(&mut self, bound: u64) -> u64 {
+        if bound == 0 { 0 } else { self.next() % bound }
+    }
+}
 
 /// A typed record store over a key-value backend.
 #[derive(Debug)]
@@ -452,7 +479,17 @@ impl<'a> RecordTransaction<'a> {
         let mut distinct: Vec<HashSet<Vec<u8>>> = vec![HashSet::new(); column_count];
         let mut overflowed = vec![false; column_count];
         let mut nulls = vec![0u64; column_count];
+        let mut samples: Vec<Vec<Value>> = vec![Vec::new(); column_count];
         let mut row_count = 0u64;
+        // Reservoir sampling, so the sample describes the whole table rather
+        // than its first ten thousand rows. That distinction matters here
+        // because a scan arrives in key order, and any column correlated with
+        // the key would otherwise be described by one end of its own range.
+        //
+        // The generator is deterministic and unseeded on purpose: analysing
+        // the same data twice gives the same statistics, and a planner whose
+        // choices move between runs is one nobody can reason about.
+        let mut rng = Xorshift::new();
 
         let mut cursor = self.execute(context, table, &Query::all()).await?;
         while let Some(row) = cursor.next().await? {
@@ -481,6 +518,31 @@ impl<'a> RecordTransaction<'a> {
                 }
                 seen.insert(slate_tuple::encode(core::slice::from_ref(value)));
             }
+
+            // Sampled separately from the distinct count, which stops early on
+            // a high-cardinality column; a histogram wants values from
+            // exactly those.
+            for (ordinal, value) in row.values().iter().enumerate() {
+                if value.is_null() {
+                    continue;
+                }
+                let Some(reservoir) = samples.get_mut(ordinal) else {
+                    continue;
+                };
+                if reservoir.len() < HISTOGRAM_SAMPLE {
+                    reservoir.push(value.clone());
+                } else {
+                    // Algorithm R: the nth row replaces a held value with
+                    // probability sample/n, which keeps every row equally
+                    // likely to be in the sample.
+                    let at = rng.below(row_count);
+                    if let Ok(at) = usize::try_from(at)
+                        && let Some(slot) = reservoir.get_mut(at)
+                    {
+                        *slot = value.clone();
+                    }
+                }
+            }
         }
 
         let mut stats = TableStats::with_row_count(row_count);
@@ -503,6 +565,11 @@ impl<'a> RecordTransaction<'a> {
                     },
                 },
             );
+            if let Some(sample) = samples.get_mut(ordinal)
+                && let Some(histogram) = Histogram::from_values(core::mem::take(sample))
+            {
+                stats = stats.with_histogram(Ordinal(ordinal), histogram);
+            }
         }
         Ok(stats)
     }

@@ -657,7 +657,10 @@ fn match_key(
                 result = result.intersect(bound_for(&prefix, *op, value, direction));
             }
             if let Some((ordinal, _)) = key_columns.get(equality_columns) {
-                selectivity *= stats.range_selectivity(*ordinal, ranges.len() == 1);
+                // Through the histogram where there is one, so the bounds a
+                // scan gets and the rows the planner expects from them come
+                // from the same belief about the data.
+                selectivity *= stats.bounded_selectivity(*ordinal, &ranges);
             }
             (result, selectivity)
         }
