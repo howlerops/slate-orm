@@ -15,7 +15,7 @@ use crate::store::KvSnapshot;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{ColumnSet, IndexDef, Row, TableDef, decode_row_columns};
-use slate_tuple::Direction;
+use slate_tuple::{Direction, Value};
 use std::sync::Arc;
 
 /// Where a cursor's candidate rows come from.
@@ -40,6 +40,16 @@ enum Source<'a> {
     },
     /// A single row, fetched by primary key.
     Point(Option<Row>),
+    /// Several rows, fetched by primary key and overlapped.
+    ///
+    /// The reads go out together for the same reason an index scan's do: each
+    /// is a round trip, and a set of them issued in turn is a set of round
+    /// trips waited for in turn.
+    Points {
+        keys: std::vec::IntoIter<Vec<Value>>,
+        inflight: FuturesOrdered<BoxFuture<'a, Result<Option<RawRow>>>>,
+        exhausted: bool,
+    },
     /// Rows already read, sorted, and waiting to be handed out.
     Sorted(std::vec::IntoIter<Row>),
     /// The plan proved there is nothing to read.
@@ -211,6 +221,11 @@ impl<'a> QueryCursor<'a> {
             Access::PointGet { key } => {
                 Source::Point(read::read_row_unchecked(snapshot, table, key).await?)
             }
+            Access::PointGets { keys } => Source::Points {
+                keys: keys.clone().into_iter(),
+                inflight: FuturesOrdered::new(),
+                exhausted: false,
+            },
             Access::TableScan { range } => {
                 Source::Rows(read::scan_rows(snapshot, table, range.clone(), plan.order).await?)
             }
@@ -358,6 +373,48 @@ impl<'a> QueryCursor<'a> {
                 }
                 Ok(None)
             }
+            Source::Points {
+                keys,
+                inflight,
+                exhausted,
+            } => {
+                loop {
+                    while !*exhausted && inflight.len() < *prefetch {
+                        match keys.next() {
+                            Some(primary_key) => {
+                                let snapshot = *snapshot;
+                                let table = *table;
+                                inflight.push_back(Box::pin(async move {
+                                    let body =
+                                        read::read_row_body(snapshot, table, &primary_key).await?;
+                                    Ok(body.map(|body| RawRow { primary_key, body }))
+                                }));
+                            }
+                            None => *exhausted = true,
+                        }
+                    }
+                    match inflight.next().await {
+                        Some(Ok(Some(raw))) => {
+                            if let Some(row) = materialise(
+                                table,
+                                residual,
+                                filter_columns,
+                                output_columns,
+                                *needs_second_phase,
+                                &raw,
+                            )? {
+                                return Ok(Some(row));
+                            }
+                        }
+                        Some(Err(error)) => return Err(error),
+                        // A key with no row. Unlike an index entry pointing at
+                        // nothing, this is ordinary: the caller named a key,
+                        // and nothing says it has to exist.
+                        Some(Ok(None)) => {}
+                        None => return Ok(None),
+                    }
+                }
+            }
             Source::Index {
                 cursor,
                 index,
@@ -446,7 +503,9 @@ impl<'a> QueryCursor<'a> {
                     &primary_key,
                 )))
             }
-            Source::Index { .. } => unreachable!("handled by next_admitted"),
+            Source::Index { .. } | Source::Points { .. } => {
+                unreachable!("handled by next_admitted")
+            }
         }
     }
 

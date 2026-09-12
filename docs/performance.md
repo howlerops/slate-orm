@@ -233,6 +233,30 @@ lookups up to roughly **6%** of the table rather than 1%. Covering an index
 still matters far more here than on local disk — overlapping a round trip
 makes it cheaper, not making it at all is still free.
 
+### An `IN` over the key was a table scan
+
+Loading ten records by primary key scanned all 2500 rows to find them, because
+`IN` was only ever a residual filter. It is a set of reads, and the executor
+already knows how to overlap those:
+
+| keys | before | after | model | measured per unit cost |
+|---:|---:|---:|---:|---:|
+| 10 | 58.8 ms | 2.3 ms | 1.0 | 2.30 ms |
+| 50 | 59.3 ms | 8.1 ms | 4.0 | 2.03 ms |
+| 200 | 59.7 ms | 30.1 ms | 13.0 | 2.31 ms |
+
+Twenty-six times faster at ten keys, and the estimate tracks the clock to
+within a few percent at every size — which is the wave model from the previous
+section paying off a second time.
+
+The mistake worth recording: the first version returned the point-get set
+*instead of* the primary key's scan rather than alongside it. Four hundred keys
+cost twenty-five waves against the scan's three, so with the scan withdrawn the
+planner had only the reads and an unrelated index to choose between, and picked
+the index. A cheaper plan that is sometimes not cheaper has to be a candidate,
+not a substitution. The test that caught it asserts a large set goes back to
+scanning.
+
 ## Current numbers
 
 Wall times below are higher than earlier revisions of this document because
@@ -249,6 +273,8 @@ got honest.
 | indexed range | 500 | 0 | 58 ms | Table Scan |
 | covered equality, keys only | 100 | 0 | 4.5 ms | Index Only Scan |
 | covered count | 500 | 0 | 13 ms | Index Only Scan |
+| 10 keys by primary key | 10 | 10 | 2.3 ms | Point Gets |
+| 200 keys by primary key | 200 | 200 | 30 ms | Point Gets |
 
 | join | rows out | point reads | scanned | wall | plan |
 |---|---:|---:|---:|---:|---|

@@ -57,6 +57,11 @@ pub enum AccessSummary {
         /// Index name.
         index: String,
     },
+    /// Several rows by primary key, read together.
+    PointGets {
+        /// How many keys.
+        keys: usize,
+    },
     /// Provably empty.
     Nothing,
 }
@@ -68,6 +73,7 @@ impl fmt::Display for AccessSummary {
             Self::TableScan => f.write_str("Table Scan"),
             Self::IndexScan { index } => write!(f, "Index Scan using {index}"),
             Self::IndexOnlyScan { index } => write!(f, "Index Only Scan using {index}"),
+            Self::PointGets { keys } => write!(f, "Point Gets ({keys} keys)"),
             Self::Nothing => f.write_str("Result (nothing)"),
         }
     }
@@ -92,6 +98,7 @@ impl Explanation {
                     AccessSummary::IndexScan { index: name }
                 }
             }
+            Access::PointGets { keys } => AccessSummary::PointGets { keys: keys.len() },
             Access::Nothing => AccessSummary::Nothing,
         };
 

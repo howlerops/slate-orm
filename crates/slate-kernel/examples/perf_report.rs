@@ -294,6 +294,38 @@ async fn main() {
     // Does the cost model's per-read charge match what the executor does? It
     // charges one round trip per point read; the executor issues sixteen at a
     // time. Forcing each path and timing both is the only way to know.
+    println!("\nreading a set of keys");
+    println!("{:-<118}", "");
+    for n in [10usize, 50, 200] {
+        let ids: Vec<Value> = (0..n as u64).map(|i| Value::U64(i * 7)).collect();
+        let query = Query::all().filter(by_tenant().and(Expr::In {
+            column: column("id"),
+            values: ids,
+        }));
+        counters.reset();
+        let started = Instant::now();
+        let txn = store.begin().await.expect("begin");
+        let described = txn.explain(&root, &table, &query).expect("explain");
+        let rows = txn
+            .execute(&root, &table, &query)
+            .await
+            .expect("query")
+            .count()
+            .await
+            .expect("count");
+        println!(
+            "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}  cost={:.1} {}",
+            format!("{n} keys by primary key"),
+            rows,
+            counters.gets(),
+            counters.scans(),
+            counters.scan_rows(),
+            started.elapsed(),
+            described.estimated_cost,
+            described.access
+        );
+    }
+
     println!("\nforced access paths");
     println!("{:-<118}", "");
     let forced: Vec<(&str, Query)> = vec![

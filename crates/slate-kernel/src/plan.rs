@@ -60,9 +60,26 @@ pub enum Access {
         /// [`Projection`].
         covering: bool,
     },
+    /// Fetch several rows by primary key, all at once.
+    ///
+    /// What `IN` over a key becomes. Distinct from a scan because the rows are
+    /// read directly and concurrently — loading ten records by id is one wave
+    /// of round trips, where scanning for them is the whole table.
+    PointGets {
+        /// The keys to read, in key order.
+        keys: Vec<Vec<Value>>,
+    },
     /// The predicate cannot be satisfied; read nothing.
     Nothing,
 }
+
+/// How many keys an `IN` may become before it stays a filter.
+///
+/// Each one is a key held in the plan and a read issued by the executor. Past
+/// some size the reads cost more than scanning the table would, and the cost
+/// model says so on its own — but it should not have to build a hundred
+/// thousand keys to find that out.
+pub const MAX_POINT_GETS: usize = 1024;
 
 /// Which columns a query needs.
 ///
@@ -161,6 +178,8 @@ struct ColumnConstraints<'a> {
     equals: Option<&'a Value>,
     /// Range comparisons on the column.
     ranges: Vec<(CmpOp, &'a Value)>,
+    /// Values from an `IN`, any one of which the column may equal.
+    any_of: Option<&'a [Value]>,
 }
 
 /// How deep the executor will pipeline, given what the caller asked for.
@@ -229,6 +248,15 @@ impl Candidate {
         let rows = stats.row_count as f64;
         if let Access::PointGet { .. } = self.access {
             return (1.0f64.min(rows), POINT_READ_COST);
+        }
+        if let Access::PointGets { keys } = &self.access {
+            // Every key is read whether the residual keeps it or not, so the
+            // cost is the whole set; the rows returned are what survives.
+            let asked = keys.len() as f64;
+            let kept = (rows * total_selectivity).clamp(0.0, asked);
+            let returned = limit.map_or(kept, |limit| kept.min(limit as f64));
+            let reads = pipelined_read_cost(asked, prefetch_depth(limit));
+            return (returned, reads);
         }
 
         let admitted = (rows * self.bound_selectivity).max(1.0);
@@ -453,6 +481,9 @@ pub fn plan_hinted(
     if !matches!(hint, Some(AccessHint::Index(_))) {
         considered += 1;
         consider(match_primary_key(table, &constraints, stats, ordered));
+        if let Some(candidate) = match_point_gets(table, &constraints, stats) {
+            consider(candidate);
+        }
     }
     for index in table.indexes() {
         if matches!(hint, Some(AccessHint::TableScan))
@@ -540,6 +571,18 @@ fn collect_constraints<'a>(conjuncts: &[&'a Expr]) -> Vec<(Ordinal, ColumnConstr
                         // range; it stays a residual filter.
                         CmpOp::Ne => {}
                     }
+                }
+            }
+            // An `IN` pins the column to one of several values. It is not a
+            // range — the values need not be adjacent — so it becomes several
+            // reads rather than one wider one.
+            Expr::In { column, values } if !values.is_empty() => {
+                let i = entry(*column, &mut out);
+                if let Some((_, c)) = out.get_mut(i) {
+                    // Two `IN`s on one column would have to be intersected;
+                    // the first is kept and the rest stay residual, which is
+                    // narrower than nothing and always correct.
+                    c.any_of.get_or_insert(values.as_slice());
                 }
             }
             // `IS NULL` is a prefix like any other value, because null has its
@@ -696,6 +739,92 @@ fn match_primary_key(
         bound_selectivity,
         natural_order: if ordered { key_columns } else { Vec::new() },
     }
+}
+
+/// Reading several rows by key, when an `IN` pins the whole key.
+///
+/// A candidate of its own rather than something `match_primary_key` returns
+/// instead of a scan. A set of reads is not always cheaper than the scan it
+/// replaces — twenty keys are, four hundred are not — so both have to be on
+/// the table for the cost model to choose between them. Returning only this
+/// one hid the better plan and let an unrelated index win by default.
+fn match_point_gets(
+    table: &TableDef,
+    constraints: &[(Ordinal, ColumnConstraints<'_>)],
+    stats: &TableStats,
+) -> Option<Candidate> {
+    let key_columns: Vec<(Ordinal, Direction)> = table
+        .primary_key()
+        .iter()
+        .map(|o| (*o, Direction::Asc))
+        .collect();
+    let keys = point_get_set(&key_columns, constraints)?;
+    let count = keys.len() as f64;
+    Some(Candidate {
+        access: Access::PointGets { keys },
+        bound_selectivity: (count / stats.row_count.max(1) as f64).clamp(0.0, 1.0),
+        // Read in key order, but a caller wanting an order should say so; a
+        // set of reads is not an access path anything can be ordered by.
+        natural_order: Vec::new(),
+    })
+}
+
+/// The full primary keys an `IN` pins down, if it pins them all.
+///
+/// Every key column must be fixed: all but one by an equality, and exactly one
+/// by an `IN`. Two `IN`s would be a cross product, which grows faster than it
+/// is worth and is left to the scan.
+///
+/// The keys come back sorted, so the reads go out in key order and a caller
+/// walking the result sees the same order a scan would have given.
+fn point_get_set(
+    key_columns: &[(Ordinal, Direction)],
+    constraints: &[(Ordinal, ColumnConstraints<'_>)],
+) -> Option<Vec<Vec<Value>>> {
+    if key_columns.is_empty() {
+        return None;
+    }
+    let mut fixed: Vec<Option<Value>> = Vec::with_capacity(key_columns.len());
+    let mut varying: Option<(usize, &[Value])> = None;
+    for (position, (ordinal, _)) in key_columns.iter().enumerate() {
+        let constraint = constraints_for(constraints, *ordinal)?;
+        if let Some(value) = constraint.equals {
+            fixed.push(Some(value.clone()));
+            continue;
+        }
+        // A second `IN` on the key: not handled, so this is not a point-get
+        // set and the scan paths take it.
+        if varying.is_some() {
+            return None;
+        }
+        varying = Some((position, constraint.any_of?));
+        fixed.push(None);
+    }
+
+    let (position, values) = varying?;
+    if values.is_empty() || values.len() > MAX_POINT_GETS {
+        return None;
+    }
+    let mut keys: Vec<Vec<Value>> = values
+        .iter()
+        .map(|value| {
+            let mut key = fixed.clone();
+            if let Some(slot) = key.get_mut(position) {
+                *slot = Some(value.clone());
+            }
+            key.into_iter().flatten().collect()
+        })
+        .collect();
+    // Every key must have come out whole. A short one would be a prefix, and
+    // reading a prefix as a key is how you read the wrong row.
+    if keys.iter().any(|key| key.len() != key_columns.len()) {
+        return None;
+    }
+    // Sorted and deduplicated: `IN (1, 1, 2)` is two rows, not three, and a
+    // duplicate key would return the same row twice.
+    keys.sort();
+    keys.dedup();
+    Some(keys)
 }
 
 /// Whether `index` holds every column in `needed`.

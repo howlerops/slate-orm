@@ -177,6 +177,25 @@ can make a scan slow but not wrong, and a mandatory security predicate is
 enforced by evaluation rather than by the planner having correctly turned it
 into a range.
 
+### Reading a set of keys
+
+`WHERE id IN (…)` over a primary key becomes the reads it actually is, issued
+together, rather than a scan looking for them:
+
+| keys | before | after | model says | measured per unit cost |
+|---:|---:|---:|---:|---:|
+| 10 | 58.8 ms | **2.3 ms** | 1.0 | 2.30 ms |
+| 50 | 59.3 ms | **8.1 ms** | 4.0 | 2.03 ms |
+| 200 | 59.7 ms | **30.1 ms** | 13.0 | 2.31 ms |
+
+Loading a set of records by id is the commonest thing an ORM does after
+loading one, and it was scanning the whole table to do it.
+
+The set is a *candidate*, not a replacement: four hundred keys cost twenty-five
+waves where the scan they replace costs three, so the cost model has to be able
+to choose the scan. Offering only the reads hid the better plan and let an
+unrelated index win by default — which is what the test caught.
+
 ### Overlapped reads are cheaper, and the model has to know
 
 An index scan does not wait for each row lookup in turn — it keeps sixteen in
@@ -467,6 +486,7 @@ Built and tested:
 - [x] Inner, left, right and full outer joins, hash or nested-loop by cost,
       both sides secured; conditions spanning both sides
 - [x] Chains of three or more tables, in the order written, with per-step plans
+- [x] `IN` over a primary key as a set of overlapped reads, not a scan
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -480,7 +500,8 @@ Not built:
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
-- [ ] `IN` as multiple index ranges (today it is a residual filter)
+- [ ] `IN` on a *secondary* index as several index ranges — worth about 1.6x
+      against the 26x the primary-key case bought, so it waits
 - [ ] Partial and expression indexes; foreign keys; `DEFAULT` and `CHECK`
 
 ## License
