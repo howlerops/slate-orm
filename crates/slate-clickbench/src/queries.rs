@@ -47,16 +47,18 @@ pub(crate) struct Unsupported {
     pub(crate) needs: &'static str,
 }
 
-/// The one that still does not run.
+/// None, since Q29 was closed.
 ///
-/// `REGEXP_REPLACE` needs a regular-expression engine, which is a dependency
-/// rather than a feature of this layer, and one query is not a reason to take
-/// one on. Everything else the other eighteen needed — scalar expressions,
-/// `HAVING`, `COUNT(DISTINCT)`, `LIKE` — is built.
-pub(crate) const UNSUPPORTED: &[Unsupported] = &[Unsupported {
-    number: 29,
-    needs: "REGEXP_REPLACE, length(), HAVING",
-}];
+/// It is kept rather than deleted because it is the mechanism that made "we ran
+/// the ones we could" honest, and the next query this engine cannot run should
+/// land here rather than quietly not appearing.
+///
+/// It was itself briefly dishonest in the other direction: Q29 stayed listed
+/// here after the regex engine landed, so every run printed "Not run: Q29"
+/// directly underneath Q29's own timing, and claimed 43 of 43 in the same
+/// breath. A list of what is missing is only worth having if something notices
+/// when it stops being true.
+pub(crate) const UNSUPPORTED: &[Unsupported] = &[];
 
 fn s(text: &str) -> Value {
     Value::Str(text.to_owned())

@@ -145,6 +145,29 @@ dedicated hardware — and lining them up beside one would be dishonest.
 | 43 `DATE_TRUNC('minute', EventTime)` | 0.55 s | **413,825** | **1440 groups** |
 | | **69.70 s** | | 43 of 43 |
 
+Re-measured at **69.53 s** and **70.15 s** on two runs after the planner gained
+multi-range `IN` scans and partial indexes, on the same machine. Neither shape
+appears in ClickBench — its one `IN` is on an unindexed column, and there are no
+partial indexes — so the point of re-running was to find out whether the change
+to `match_index` cost anything on the paths that *are* exercised. It did not:
+the spread between the three numbers is about 1%, which is the run-to-run noise
+of this harness.
+
+### The harness said "not run: Q29" while running Q29
+
+Small, and worth writing down because of where it was. `queries::UNSUPPORTED` is
+the list that makes "we ran the ones we could" honest by naming the ones we
+could not. Q29 stayed on it after the regex engine landed and closed it, so
+every run printed the query's timing in the table and then, forty lines later,
+listed it as not run — in the same output that claimed 43 of 43.
+
+Nothing checked the two against each other. They are now consistent because the
+list is empty rather than because anything reconciles them, which is worth being
+plain about: the next query that cannot run has to be added by hand, and if it
+is ever removed by hand the same way, this happens again. What made it visible
+was reading the whole output rather than the total, which is the only reason to
+print the whole output.
+
 ### The answers are right, not just fast
 
 A benchmark that reports only timings cannot be checked, and a wrong answer

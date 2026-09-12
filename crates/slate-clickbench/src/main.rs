@@ -109,9 +109,13 @@ async fn main() {
         queries::runnable().len()
     );
 
-    println!("\nNot run, and what each would need:");
-    for missing in queries::UNSUPPORTED {
-        println!("  Q{:<3} {}", missing.number, missing.needs);
+    if queries::UNSUPPORTED.is_empty() {
+        println!("\nNot run: none.");
+    } else {
+        println!("\nNot run, and what each would need:");
+        for missing in queries::UNSUPPORTED {
+            println!("  Q{:<3} {}", missing.number, missing.needs);
+        }
     }
 
     println!("\nNotes on how some queries are expressed:");
