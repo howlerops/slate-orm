@@ -181,6 +181,238 @@ pub enum SchemaError {
         format: u8,
     },
 
+    /// Two names in one table — current or retired by a rename — refer to
+    /// different columns, so neither can be resolved unambiguously.
+    #[error("`{name}` names more than one column of table `{table}`")]
+    AmbiguousColumnName {
+        /// The table being defined.
+        table: String,
+        /// The name that resolves two ways.
+        name: String,
+    },
+
+    /// A column was dropped in a version at or before the one that added it.
+    #[error(
+        "column `{column}` on table `{table}` is dropped in version {dropped_in} \
+         but only added in {added_in}"
+    )]
+    ColumnDroppedBeforeAdded {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+        /// The version the column was added in.
+        added_in: u32,
+        /// The version the drop claims.
+        dropped_in: u32,
+    },
+
+    /// A column was dropped in a version the table has not reached.
+    ///
+    /// The encoder writes at the table's current version, so a drop ahead of it
+    /// would leave the column still being written while the schema says it is
+    /// gone.
+    #[error(
+        "column `{column}` on table `{table}` is dropped in version {dropped_in}, \
+         but the table is at schema version {schema_version}"
+    )]
+    ColumnDroppedInFutureVersion {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+        /// The version the drop claims.
+        dropped_in: u32,
+        /// The table's declared schema version.
+        schema_version: u32,
+    },
+
+    /// A dropped column was used in a key, an index or a foreign key.
+    ///
+    /// A dropped column holds nothing, so a key over one would index a column
+    /// of nulls — and in a primary key, give every row the same identity.
+    #[error("`{key}` on table `{table}` uses dropped column `{column}`")]
+    DroppedColumnInKey {
+        /// The table being defined.
+        table: String,
+        /// Which key, index or foreign key.
+        key: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// A default was declared on a dropped column, where it can never apply.
+    #[error("dropped column `{column}` on table `{table}` cannot have a default")]
+    DroppedColumnHasDefault {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// A column's default was declared as null.
+    ///
+    /// "No default" already means "null when unset", so a null default is that
+    /// written out at length and is refused to keep one meaning per state.
+    #[error("column `{column}` on table `{table}` cannot have a null default")]
+    NullDefault {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// A row carried a value for a column that has been dropped.
+    ///
+    /// The value would not be stored. Refused rather than discarded, because a
+    /// silently dropped value looks exactly like one that was written.
+    #[error("column `{column}` on table `{table}` is dropped and must be null in a row")]
+    DroppedColumnValue {
+        /// The table the row belongs to.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// Two `CHECK` constraints on the same table share a name.
+    #[error("table `{table}` declares check `{check}` more than once")]
+    DuplicateCheck {
+        /// The table being defined.
+        table: String,
+        /// The repeated name.
+        check: String,
+    },
+
+    /// Two foreign keys on the same table share a name.
+    #[error("table `{table}` declares foreign key `{foreign_key}` more than once")]
+    DuplicateForeignKey {
+        /// The table being defined.
+        table: String,
+        /// The repeated name.
+        foreign_key: String,
+    },
+
+    /// A foreign key was defined with no columns.
+    #[error("foreign key `{foreign_key}` on table `{table}` has no columns")]
+    EmptyForeignKey {
+        /// The table being defined.
+        table: String,
+        /// The offending constraint.
+        foreign_key: String,
+    },
+
+    /// A foreign key points at a table the catalog does not contain.
+    #[error("foreign key `{foreign_key}` on table `{table}` references unknown table {parent:?}")]
+    UnknownForeignKeyParent {
+        /// The referencing table.
+        table: String,
+        /// The offending constraint.
+        foreign_key: String,
+        /// The table id that could not be resolved.
+        parent: crate::table::TableId,
+    },
+
+    /// A foreign key names a different number of columns from the parent's
+    /// primary key.
+    ///
+    /// The referenced columns are always the parent's whole primary key, so a
+    /// partial reference would have to invent the rest of the key.
+    #[error(
+        "foreign key `{foreign_key}` on table `{table}` names {actual} column(s), \
+         but the primary key of `{parent}` has {expected}"
+    )]
+    ForeignKeyWidthMismatch {
+        /// The referencing table.
+        table: String,
+        /// The offending constraint.
+        foreign_key: String,
+        /// The referenced table.
+        parent: String,
+        /// Length of the parent's primary key.
+        expected: usize,
+        /// Number of columns the constraint names.
+        actual: usize,
+    },
+
+    /// A foreign key column's type differs from the parent key column it
+    /// references.
+    ///
+    /// The child's values are encoded into a parent row key, so a type
+    /// mismatch would look up a key that no row can ever have.
+    #[error(
+        "foreign key `{foreign_key}` on table `{table}` column `{column}` holds {actual}, \
+         but the matching primary key column of `{parent}` holds {expected}"
+    )]
+    ForeignKeyTypeMismatch {
+        /// The referencing table.
+        table: String,
+        /// The offending constraint.
+        foreign_key: String,
+        /// The referenced table.
+        parent: String,
+        /// The referencing column.
+        column: String,
+        /// The parent key column's type.
+        expected: ValueType,
+        /// The referencing column's type.
+        actual: ValueType,
+    },
+
+    /// A row failed a `CHECK` constraint.
+    #[error("row violates check `{check}` on table `{table}`")]
+    CheckViolation {
+        /// The table written to.
+        table: String,
+        /// The constraint that refused the row.
+        check: String,
+    },
+
+    /// A write referenced a parent row that is not there.
+    ///
+    /// A parent row the caller's policy hides is not there *for them*, and
+    /// reports identically to one that does not exist — otherwise the
+    /// constraint would answer "does this row exist?" for rows they cannot
+    /// read.
+    #[error(
+        "foreign key `{foreign_key}` on table `{table}`: \
+         table `{parent}` has no such row, or none this caller can read"
+    )]
+    ForeignKeyViolation {
+        /// The referencing table.
+        table: String,
+        /// The constraint that refused the row.
+        foreign_key: String,
+        /// The referenced table.
+        parent: String,
+    },
+
+    /// A delete was refused because rows still reference the row deleted.
+    #[error(
+        "cannot delete from `{table}`: rows in `{child}` still reference it \
+         through foreign key `{foreign_key}`"
+    )]
+    ForeignKeyRestricted {
+        /// The table being deleted from.
+        table: String,
+        /// The table still referencing it.
+        child: String,
+        /// The constraint that refused the delete.
+        foreign_key: String,
+    },
+
+    /// A cascading delete would remove more rows than the limit allows.
+    ///
+    /// Reported rather than absorbed: the whole cascade is held in memory and
+    /// committed atomically, so an unbounded one is bounded by the allocator
+    /// instead.
+    #[error("deleting from `{table}` would cascade to more than {limit} rows")]
+    CascadeTooLarge {
+        /// The table the delete started at.
+        table: String,
+        /// The limit that was passed.
+        limit: usize,
+    },
+
     /// A column was added in a later schema version without being nullable, so
     /// rows written before it cannot be read back.
     #[error(

@@ -1,5 +1,6 @@
 //! A set of tables, checked for id and name collisions.
 
+use crate::constraint::ForeignKeyDef;
 use crate::error::{Result, SchemaError};
 use crate::table::{TableDef, TableId};
 
@@ -19,12 +20,14 @@ impl Catalog {
         Self { tables: Vec::new() }
     }
 
-    /// Build a catalog from tables, rejecting duplicate ids or names.
+    /// Build a catalog from tables, rejecting duplicate ids or names and
+    /// checking every foreign key against the table it points at.
     pub fn from_tables<I: IntoIterator<Item = TableDef>>(tables: I) -> Result<Self> {
         let mut catalog = Self::new();
         for table in tables {
             catalog.insert(table)?;
         }
+        catalog.validate_foreign_keys()?;
         Ok(catalog)
     }
 
@@ -63,5 +66,81 @@ impl Catalog {
     #[must_use]
     pub fn tables(&self) -> &[TableDef] {
         &self.tables
+    }
+
+    /// Every foreign key pointing at `parent`, with the table that declares it.
+    ///
+    /// A delete has to ask this of the whole catalog: a table does not know who
+    /// references it, and a reference nobody looked for is a dangling row.
+    #[must_use]
+    pub fn referencing(&self, parent: TableId) -> Vec<(&TableDef, &ForeignKeyDef)> {
+        self.tables
+            .iter()
+            .flat_map(|table| {
+                table
+                    .foreign_keys()
+                    .iter()
+                    .filter(move |key| key.parent() == parent)
+                    .map(move |key| (table, key))
+            })
+            .collect()
+    }
+
+    /// Check every foreign key against the primary key it references.
+    ///
+    /// Not done by [`TableBuilder::build`](crate::TableBuilder::build), which
+    /// cannot: the parent may not exist yet when the child is defined, and
+    /// insisting it did would mean no table could reference itself or take part
+    /// in a cycle. [`Catalog::from_tables`] runs this once every table is in;
+    /// call it yourself after building a catalog with [`Catalog::insert`].
+    pub fn validate_foreign_keys(&self) -> Result<()> {
+        for table in &self.tables {
+            for key in table.foreign_keys() {
+                let parent = self.table(key.parent()).ok_or_else(|| {
+                    SchemaError::UnknownForeignKeyParent {
+                        table: table.name().to_owned(),
+                        foreign_key: key.name().to_owned(),
+                        parent: key.parent(),
+                    }
+                })?;
+
+                // The reference is to the parent's whole primary key, because
+                // that is what makes the check a point read. A partial one
+                // would have to invent the rest of the key.
+                let parent_key = parent.primary_key();
+                if key.columns().len() != parent_key.len() {
+                    return Err(SchemaError::ForeignKeyWidthMismatch {
+                        table: table.name().to_owned(),
+                        foreign_key: key.name().to_owned(),
+                        parent: parent.name().to_owned(),
+                        expected: parent_key.len(),
+                        actual: key.columns().len(),
+                    });
+                }
+
+                for (child_ordinal, parent_ordinal) in key.columns().iter().zip(parent_key) {
+                    let (Some(child_column), Some(parent_column)) =
+                        (table.column(*child_ordinal), parent.column(*parent_ordinal))
+                    else {
+                        continue;
+                    };
+                    // The child's values are encoded into a parent row key, so
+                    // a type mismatch would look up a key no row can have —
+                    // the constraint would refuse every write rather than
+                    // enforce anything.
+                    if child_column.value_type() != parent_column.value_type() {
+                        return Err(SchemaError::ForeignKeyTypeMismatch {
+                            table: table.name().to_owned(),
+                            foreign_key: key.name().to_owned(),
+                            parent: parent.name().to_owned(),
+                            column: child_column.name().to_owned(),
+                            expected: parent_column.value_type(),
+                            actual: child_column.value_type(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

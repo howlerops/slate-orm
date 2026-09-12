@@ -58,6 +58,19 @@ impl Row {
             });
         }
         for (column, value) in table.columns().iter().zip(&self.values) {
+            // A dropped column keeps its ordinal so nothing after it shifts,
+            // but nothing is written for it. Refusing a value here rather than
+            // discarding it is the difference between a caller finding out and
+            // a caller watching a field vanish between write and read.
+            if column.is_dropped() {
+                if value.is_null() {
+                    continue;
+                }
+                return Err(SchemaError::DroppedColumnValue {
+                    table: table.name().to_owned(),
+                    column: column.name().to_owned(),
+                });
+            }
             match value.value_type() {
                 None => {
                     if !column.is_nullable() {
@@ -118,7 +131,10 @@ pub fn encode_body(table: &TableDef, row: &Row) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(ROW_FORMAT_V1);
     out.extend_from_slice(&table.schema_version().to_be_bytes());
-    for ordinal in table.body_columns() {
+    // `stored_columns` rather than `body_columns`: a dropped column is not
+    // written any more, though rows written before the drop still carry it and
+    // the decoder still has to walk past those bytes.
+    for ordinal in table.stored_columns() {
         encode_value_into(
             &mut out,
             &row.value_or_null(*ordinal),
@@ -130,13 +146,32 @@ pub fn encode_body(table: &TableDef, row: &Row) -> Vec<u8> {
 
 /// Rebuild a full row from its decoded primary key and its stored body.
 ///
+// The decoder walks columns in ordinal order, so a version predicate has to be
+// evaluated per column rather than folded into the list once.
+/// Whether a body written at `version` carries bytes for `column`.
+///
+/// The two edges are independent: a column added later is not there yet, and a
+/// column dropped earlier is there no longer. A column both added and dropped
+/// before `version` is not there — the drop is the later fact.
+fn present_at(column: &crate::ColumnDef, version: u32) -> bool {
+    column.added_in() <= version && column.dropped_in().is_none_or(|at| version < at)
+}
+
 /// # Schema evolution
 ///
-/// A body written at version `v` carries only the columns whose
-/// [`ColumnDef::added_in`](crate::ColumnDef::added_in) is at most `v`, in
-/// ordinal order. Columns added after `v` read back as null, which is why the
-/// builder only allows a later-added column to be nullable — and why a row from
-/// a *newer* schema than this build is an error rather than a guess.
+/// A body written at version `v` carries exactly the columns present at `v`:
+/// added at or before it, and not dropped at or before it. Everything else is
+/// reconstructed rather than read.
+///
+/// - A column added *after* `v` reads back as its
+///   [default](crate::ColumnDef::default_value), or as null if it has none —
+///   which is why the builder requires a later-added column to be one or the
+///   other.
+/// - A column dropped at or before `v` was never written, and one dropped after
+///   it was, so its bytes are skipped. Either way it reads back as null: a
+///   dropped column holds nothing.
+/// - A row from a *newer* schema than this build is an error rather than a
+///   guess.
 pub fn decode_row(table: &TableDef, primary_key: &[Value], body: &[u8]) -> Result<Row> {
     decode_row_columns(table, primary_key, body, None)
 }
@@ -206,6 +241,12 @@ pub fn decode_row_columns(
     // Nothing wanted from the body: do not walk it at all. This is the shape of
     // the filtering pass when a predicate only touches key columns, and walking
     // the body to skip every field of it would be the whole cost of that pass.
+    //
+    // Sound only because the columns it skips are ones the caller said it does
+    // not want. A column reconstructed rather than read — one added after this
+    // row was written, which takes its default — is skipped on the same
+    // grounds and comes back null like every other unwanted column, which is
+    // the same answer the walk below gives.
     if wanted.is_some_and(|wanted| {
         !table
             .body_columns()
@@ -228,20 +269,42 @@ pub fn decode_row_columns(
         let Some(column) = table.column(ordinal) else {
             continue;
         };
-        if column.added_in() > written_version {
-            // Not present in this row; the builder guaranteed it is nullable.
-            if !column.is_nullable() {
-                return Err(SchemaError::IncompatibleSchemaEvolution {
-                    table: table.name().to_owned(),
-                    column: column.name().to_owned(),
-                    written: written_version,
-                });
+        if !present_at(column, written_version) {
+            // Nothing to read. A column dropped by now leaves its slot null; a
+            // column not yet added takes its default, and must have one or be
+            // nullable — checked at build time, re-checked here because a
+            // stored row is the one input the builder never saw.
+            if column.dropped_in().is_none_or(|at| written_version < at) {
+                match column.default_value() {
+                    // Only when the caller asked for it, so a default behaves
+                    // exactly like a stored value: outside the projection both
+                    // come back null, and the fast path above stays sound.
+                    Some(default) => {
+                        if wanted.is_none_or(|wanted| wanted.contains(ordinal))
+                            && let Some(slot) = values.get_mut(ordinal.0)
+                        {
+                            *slot = default.clone();
+                        }
+                    }
+                    None if !column.is_nullable() => {
+                        return Err(SchemaError::IncompatibleSchemaEvolution {
+                            table: table.name().to_owned(),
+                            column: column.name().to_owned(),
+                            written: written_version,
+                        });
+                    }
+                    None => {}
+                }
             }
             continue;
         }
         decoded += 1;
 
-        if wanted.is_some_and(|wanted| !wanted.contains(ordinal)) {
+        // A column dropped since this row was written is still in its bytes.
+        // Skipping is not optional: the next column's value starts where this
+        // one ends, so leaving the cursor put would decode every following
+        // column out of the wrong bytes.
+        if column.is_dropped() || wanted.is_some_and(|wanted| !wanted.contains(ordinal)) {
             reader
                 .skip(slate_tuple::Direction::Asc)
                 .map_err(|source| SchemaError::RowDecode {
@@ -279,4 +342,91 @@ pub fn decode_row_columns(
     }
 
     Ok(Row::new(values))
+}
+
+/// A row with a column left *unset* rather than null.
+///
+/// `Row` is full width by construction, so it has no way to say "I did not
+/// supply this" — and `DEFAULT` is precisely a rule about columns nobody
+/// supplied. Reading a null as "unset" was the alternative and was rejected: it
+/// takes away the ability to store a null in a defaulted nullable column, which
+/// is a thing SQL lets you do and a thing an application does mean sometimes.
+///
+/// ```
+/// # use slate_schema::{PartialRow, TableDef, TableId};
+/// # use slate_tuple::{Value, ValueType};
+/// let items = TableDef::builder("items", TableId(1))
+///     .column("id", ValueType::U64)
+///     .column("status", ValueType::Str)
+///     .primary_key(["id"])
+///     .default_for("status", Value::Str("new".into()))
+///     .build()?;
+///
+/// let row = PartialRow::for_table(&items)
+///     .set(items.ordinal_of("id").unwrap(), Value::U64(1))
+///     .into_row(&items)?;
+///
+/// assert_eq!(row.values()[1], Value::Str("new".into()));
+/// # Ok::<(), slate_schema::SchemaError>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialRow {
+    values: Vec<Option<Value>>,
+}
+
+impl PartialRow {
+    /// A row of `table`'s width with every column unset.
+    #[must_use]
+    pub fn for_table(table: &TableDef) -> Self {
+        Self {
+            values: vec![None; table.columns().len()],
+        }
+    }
+
+    /// Supply a column's value.
+    ///
+    /// Setting the same column twice keeps the last value, as an assignment
+    /// does. An ordinal outside the table is ignored here and caught by
+    /// [`PartialRow::into_row`], which knows the table's width.
+    #[must_use]
+    pub fn set(mut self, ordinal: Ordinal, value: Value) -> Self {
+        if let Some(slot) = self.values.get_mut(ordinal.0) {
+            *slot = Some(value);
+        }
+        self
+    }
+
+    /// Whether a value has been supplied for `ordinal`.
+    #[must_use]
+    pub fn is_set(&self, ordinal: Ordinal) -> bool {
+        self.values.get(ordinal.0).is_some_and(Option::is_some)
+    }
+
+    /// Fill the unset columns and validate the result.
+    ///
+    /// An unset column takes its [default](crate::ColumnDef::default_value), or
+    /// null if it has none — so an unset column that is neither nullable nor
+    /// defaulted fails as [`SchemaError::UnexpectedNull`], which is the same
+    /// error the same row would get if it had been written out in full.
+    pub fn into_row(self, table: &TableDef) -> Result<Row> {
+        if self.values.len() != table.columns().len() {
+            return Err(SchemaError::ColumnCountMismatch {
+                table: table.name().to_owned(),
+                expected: table.columns().len(),
+                actual: self.values.len(),
+            });
+        }
+        let values = table
+            .columns()
+            .iter()
+            .zip(self.values)
+            .map(|(column, supplied)| match supplied {
+                Some(value) => value,
+                None => column.default_value().cloned().unwrap_or(Value::Null),
+            })
+            .collect();
+        let row = Row::new(values);
+        row.validate(table)?;
+        Ok(row)
+    }
 }

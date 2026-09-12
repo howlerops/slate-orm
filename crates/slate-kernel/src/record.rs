@@ -4,13 +4,38 @@
 //! so an index can never lag the table it describes. There is no background
 //! index builder to fall behind and no repair path to get wrong: either the
 //! whole write lands or none of it does.
+//!
+//! Constraints live under the same rule. A `CHECK` is evaluated before the row
+//! is written, and a cascading delete puts every row it removes into the *same*
+//! transaction as the delete that caused it — a cascade that committed
+//! separately would leave the window in which a child points at a parent that
+//! is already gone.
+//!
+//! # Foreign keys and row-level security
+//!
+//! A foreign key check reads another table, which makes it a place a caller
+//! could learn about rows they cannot see. Two rules keep that shut, and they
+//! point in opposite directions on purpose:
+//!
+//! - **Checking a reference is an ordinary secured read.** The parent row is
+//!   read through the same path [`RecordTransaction::get`] uses, so a row the
+//!   caller's policy hides is not there for them. Hidden and absent produce the
+//!   same [`SchemaError::ForeignKeyViolation`], so the constraint answers no
+//!   question the caller could not already answer. The cost is real and is the
+//!   safe direction: a policy that hides the parents also stops the children
+//!   being written.
+//! - **Finding the rows that reference a row being deleted is not.** Integrity
+//!   is not relative to who is asking — a child a policy hid from the deleter
+//!   would be left pointing at nothing, which is the corruption the constraint
+//!   exists to prevent. That scan therefore ignores row policy, and what it
+//!   discloses is bounded rather than absent: see [`RecordTransaction::delete`].
 
 use crate::aggregate::{Aggregate, Group};
 use crate::chain::{Chain, ChainCursor, ChainPlan};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::explain::{Explanation, JoinExplanation};
-use crate::expr::Expr;
+use crate::expr::{Expr, Truth};
 use crate::join::{Join, JoinCursor, JoinSchema};
 use crate::keys::{self, IndexEntry};
 use crate::plan::Projection;
@@ -22,7 +47,10 @@ use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableSt
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use slate_schema::{Catalog, IndexDef, Ordinal, Row, TableDef, encode_body};
+use slate_schema::{
+    Catalog, ForeignKeyDef, IndexDef, Ordinal, PartialRow, ReferentialAction, Row, SchemaError,
+    TableDef, encode_body,
+};
 use slate_tuple::Value;
 use std::collections::HashSet;
 
@@ -35,6 +63,34 @@ pub const DISTINCT_TRACKING_LIMIT: usize = 10_000;
 /// The same trade as the read path's prefetch: enough to hide the round trips,
 /// not so many that one batch monopolises the connection pool.
 pub const BULK_READ_CONCURRENCY: usize = 32;
+
+/// How many rows one delete may cascade to before it is refused.
+///
+/// A cascade is held in memory and committed atomically, so the alternative to
+/// a limit is being bounded by the allocator. Termination is not what this
+/// guards — a row is scheduled at most once, so a cycle in the reference graph
+/// stops on its own — it is size.
+pub const CASCADE_LIMIT: usize = 10_000;
+
+/// `Expr` is what a `CHECK` is written in.
+///
+/// The schema crate cannot name [`Expr`] — the kernel depends on it, not the
+/// other way round — so it declares what a check needs of a predicate and this
+/// supplies it. One expression language, one evaluator, one set of null rules.
+///
+/// The three-valued result is passed through rather than collapsed here.
+/// `CHECK` accepts an unknown and `WHERE` withholds it, and
+/// [`CheckDef::satisfied_by`](slate_schema::CheckDef::satisfied_by) is the one
+/// place that difference is written down.
+impl slate_schema::Predicate for Expr {
+    fn truth(&self, row: &Row) -> Option<bool> {
+        match self.evaluate(row) {
+            Truth::True => Some(true),
+            Truth::False => Some(false),
+            Truth::Unknown => None,
+        }
+    }
+}
 
 /// A small deterministic generator, for sampling during `analyze`.
 ///
@@ -606,6 +662,9 @@ impl<'a> RecordTransaction<'a> {
     }
 
     /// Insert a row, failing if its primary key is already taken.
+    ///
+    /// A column with a `DEFAULT` is filled in by [`PartialRow`] before the row
+    /// gets here — see [`RecordTransaction::insert_partial`].
     pub async fn insert(
         &self,
         context: &SecurityContext,
@@ -615,6 +674,9 @@ impl<'a> RecordTransaction<'a> {
         self.security.authorize(context, table, Action::Insert)?;
         row.validate(table)?;
         self.check_row(context, table, Action::Insert, row)?;
+        // Before the reads: a row that no `CHECK` accepts should not cost a
+        // round trip to find that out.
+        check_constraints(table, row)?;
 
         let primary_key = row.primary_key_values(table);
         if self
@@ -626,7 +688,24 @@ impl<'a> RecordTransaction<'a> {
                 table: table.name().to_owned(),
             });
         }
+        self.check_foreign_keys(context, table, row, None, &HashSet::new())
+            .await?;
         self.write_row(table, row, None).await
+    }
+
+    /// Insert a row, supplying each unset column's `DEFAULT`.
+    ///
+    /// This is the only place a default can be applied, because it is the only
+    /// place that knows a column was *not supplied* — a [`Row`] is full width
+    /// and its nulls are values a caller meant.
+    pub async fn insert_partial(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        row: PartialRow,
+    ) -> Result<()> {
+        let row = row.into_row(table)?;
+        self.insert(context, table, &row).await
     }
 
     /// Replace an existing row, failing if there is nothing to replace.
@@ -654,6 +733,9 @@ impl<'a> RecordTransaction<'a> {
         // The row the update leaves behind must also be one the caller could
         // have written, or a policy could be escaped by editing your way out.
         self.check_row(context, table, Action::Update, row)?;
+        check_constraints(table, row)?;
+        self.check_foreign_keys(context, table, row, Some(&existing), &HashSet::new())
+            .await?;
         self.write_row(table, row, Some(existing)).await
     }
 
@@ -688,6 +770,9 @@ impl<'a> RecordTransaction<'a> {
             });
         }
         self.check_row(context, table, action, row)?;
+        check_constraints(table, row)?;
+        self.check_foreign_keys(context, table, row, existing.as_ref(), &HashSet::new())
+            .await?;
         self.write_row(table, row, existing).await
     }
 
@@ -768,10 +853,37 @@ impl<'a> RecordTransaction<'a> {
             }
         }
 
+        // Every `CHECK` before any read, for the same reason the single-row
+        // path does it: a batch that cannot be written should not spend round
+        // trips discovering that.
+        for row in rows {
+            check_constraints(table, row)?;
+        }
+
         let existing = self.read_rows_concurrently(table, &primary_keys).await?;
         self.check_unique_slots(table, rows, &primary_keys, &existing)
             .await?;
 
+        let mut parents = self.visible_parents(context, table, rows).await?;
+        // A batch may reference itself — a comment thread loaded in one go, an
+        // org chart — and those parents are not in storage yet. The batch's own
+        // keys count, which is the whole batch being one statement. They are
+        // not policy-checked as parents because they do not need to be: each is
+        // a row this same caller is writing, and `check_row` below already
+        // requires every one of them to be a row they may have written.
+        if table
+            .foreign_keys()
+            .iter()
+            .any(|key| key.parent() == table.id())
+        {
+            parents.extend(primary_keys.iter().map(|key| keys::row_key(table, key)));
+        }
+
+        // Everything about every row is decided before any of it is written.
+        // A check that failed halfway would leave a prefix of the batch
+        // buffered, and a caller that committed anyway — having seen the error
+        // and treated it as "some of this worked" — would land it.
+        let mut previous_rows = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
             let previous = existing.get(index).and_then(Clone::clone);
             if previous.is_some() {
@@ -796,6 +908,12 @@ impl<'a> RecordTransaction<'a> {
                 Action::Insert
             };
             self.check_row(context, table, action, row)?;
+            self.check_foreign_keys(context, table, row, previous.as_ref(), &parents)
+                .await?;
+            previous_rows.push(previous);
+        }
+
+        for (row, previous) in rows.iter().zip(previous_rows) {
             self.write_row_with(table, row, previous, false).await?;
         }
         Ok(())
@@ -883,6 +1001,31 @@ impl<'a> RecordTransaction<'a> {
     /// Delete a row and every index entry that pointed at it.
     ///
     /// Returns whether a row was there to delete.
+    ///
+    /// # Foreign keys
+    ///
+    /// Rows referencing this one are dealt with in the *same transaction*:
+    /// [`ReferentialAction::Restrict`] refuses the delete, and
+    /// [`ReferentialAction::Cascade`] deletes them too, transitively, up to
+    /// [`CASCADE_LIMIT`] rows. There is no window in which a child points at a
+    /// parent that has gone.
+    ///
+    /// The search for referencing rows deliberately **ignores row-level
+    /// security**, and it has to: a child hidden from the deleter is still a
+    /// child, and skipping it would either leave a dangling reference or make
+    /// `RESTRICT` pass while the thing it guards is true. Integrity is not
+    /// relative to who is asking.
+    ///
+    /// What that discloses, stated plainly rather than waved away: a caller who
+    /// may delete a parent can learn from a `RESTRICT` refusal that *something*
+    /// references it, including rows their policy hides, and a `CASCADE` can
+    /// remove rows they cannot read. Two things bound it. A cascade requires
+    /// the caller to hold delete on the referencing table, so it cannot reach a
+    /// table they have no business writing to at all. And when the child is
+    /// tenant-scoped its foreign key carries the tenant — the parent's key
+    /// begins with it — so the search is confined to the caller's own tenant by
+    /// the key encoding rather than by a filter. What is left is deliberate:
+    /// the schema author declared this consequence when they wrote `CASCADE`.
     pub async fn delete(
         &self,
         context: &SecurityContext,
@@ -896,12 +1039,300 @@ impl<'a> RecordTransaction<'a> {
         let Some(existing) = existing else {
             return Ok(false);
         };
+
+        // Nothing is written until the whole consequence is known. Deleting as
+        // the graph is walked would leave a half-applied delete behind for a
+        // caller that ignored the error and committed anyway, and would make a
+        // `RESTRICT` further out depend on the order the walk happened to take.
+        let doomed = self.deletion_closure(context, table, existing).await?;
+        for (owner, row) in &doomed {
+            self.remove_row(owner, row)?;
+        }
+        Ok(true)
+    }
+
+    /// Every row a delete of `row` removes, itself first.
+    ///
+    /// Two passes rather than one. The first follows `CASCADE` edges to a fixed
+    /// point; the second checks every `RESTRICT` edge against the result. Doing
+    /// them together would make the answer depend on traversal order — a row
+    /// that blocks the delete when it is met before the cascade reaches it, and
+    /// does not when it is met after.
+    async fn deletion_closure<'t>(
+        &'t self,
+        context: &SecurityContext,
+        table: &'t TableDef,
+        row: Row,
+    ) -> Result<Vec<(&'t TableDef, Row)>> {
+        if self.catalog.referencing(table.id()).is_empty() {
+            return Ok(vec![(table, row)]);
+        }
+
+        // Authorised from the *schema*, before a single row is read. Doing it
+        // per table as the walk reaches one would make the grant a caller needs
+        // depend on which children happen to exist — and an `AccessDenied` that
+        // only appears when there is something to cascade to is an existence
+        // oracle wearing a different error code.
+        for reachable in self.cascade_reachable(table) {
+            self.security
+                .authorize(context, reachable, Action::Delete)?;
+        }
+
+        // The one read in this file that is deliberately unpoliced; see the
+        // note on `delete`. Named here rather than threaded in, so that a grep
+        // for `superuser` lands on the comment explaining why.
+        let unpoliced = SecurityContext::superuser();
+
+        let mut scheduled: HashSet<Vec<u8>> =
+            HashSet::from([keys::row_key(table, &row.primary_key_values(table))]);
+        let mut closure: Vec<(&'t TableDef, Row)> = vec![(table, row)];
+
+        let mut at = 0;
+        while at < closure.len() {
+            let Some((parent, parent_key)) = closure
+                .get(at)
+                .map(|(parent, row)| (*parent, row.primary_key_values(parent)))
+            else {
+                break;
+            };
+            at += 1;
+
+            for (child, foreign_key) in self.catalog.referencing(parent.id()) {
+                if foreign_key.on_delete() != ReferentialAction::Cascade {
+                    continue;
+                }
+                for found in self
+                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .await?
+                {
+                    let key = keys::row_key(child, &found.primary_key_values(child));
+                    // Scheduling a row at most once is what makes a cycle in
+                    // the reference graph terminate. A self-referencing table
+                    // is an ordinary schema, not a pathological one.
+                    if !scheduled.insert(key) {
+                        continue;
+                    }
+                    if closure.len() >= CASCADE_LIMIT {
+                        return Err(SchemaError::CascadeTooLarge {
+                            table: table.name().to_owned(),
+                            limit: CASCADE_LIMIT,
+                        }
+                        .into());
+                    }
+                    closure.push((child, found));
+                }
+            }
+        }
+
+        for (parent, row) in &closure {
+            let parent_key = row.primary_key_values(parent);
+            for (child, foreign_key) in self.catalog.referencing(parent.id()) {
+                if foreign_key.on_delete() != ReferentialAction::Restrict {
+                    continue;
+                }
+                for found in self
+                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .await?
+                {
+                    // A referencing row that is itself being deleted does not
+                    // block: the reference goes away with it.
+                    let key = keys::row_key(child, &found.primary_key_values(child));
+                    if !scheduled.contains(&key) {
+                        return Err(SchemaError::ForeignKeyRestricted {
+                            table: parent.name().to_owned(),
+                            child: child.name().to_owned(),
+                            foreign_key: foreign_key.name().to_owned(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+
+        Ok(closure)
+    }
+
+    /// Every table a cascade from `table` could reach, `table` excluded.
+    ///
+    /// From the catalog alone: which tables have rows in them is not part of
+    /// the answer, so neither is which grants the caller turns out to need.
+    fn cascade_reachable(&self, table: &TableDef) -> Vec<&'a TableDef> {
+        let mut seen = vec![table.id()];
+        let mut out: Vec<&'a TableDef> = Vec::new();
+        let mut at = 0;
+        while let Some(parent) = seen.get(at).copied() {
+            at += 1;
+            for (child, foreign_key) in self.catalog.referencing(parent) {
+                if foreign_key.on_delete() != ReferentialAction::Cascade
+                    || seen.contains(&child.id())
+                {
+                    continue;
+                }
+                seen.push(child.id());
+                out.push(child);
+            }
+        }
+        out
+    }
+
+    /// The rows of `child` whose foreign key holds `parent_key`.
+    ///
+    /// An ordinary planned read, so an index on the referencing columns makes
+    /// this a range rather than a scan — which is the difference between a
+    /// cascade costing one scan per parent row and costing rather less.
+    async fn referencing_rows<'t>(
+        &'t self,
+        context: &SecurityContext,
+        child: &'t TableDef,
+        foreign_key: &ForeignKeyDef,
+        parent_key: &[Value],
+    ) -> Result<Vec<Row>> {
+        let filter = Expr::all(
+            foreign_key
+                .columns()
+                .iter()
+                .zip(parent_key)
+                .map(|(ordinal, value)| Expr::eq(*ordinal, value.clone())),
+        );
+        self.reads()
+            .execute(context, child, &Query::all().filter(filter))
+            .await?
+            .collect()
+            .await
+    }
+
+    /// Remove a row and every index entry that pointed at it.
+    fn remove_row(&self, table: &TableDef, row: &Row) -> Result<()> {
         for index in table.indexes() {
-            let entry = self.entry_for(table, index, &existing);
+            let entry = self.entry_for(table, index, row);
             self.txn.delete(entry.key)?;
         }
-        self.txn.delete(keys::row_key(table, primary_key))?;
-        Ok(true)
+        self.txn
+            .delete(keys::row_key(table, &row.primary_key_values(table)))?;
+        Ok(())
+    }
+
+    /// Refuse a row that references a parent that is not there.
+    ///
+    /// `previous` is the row being replaced, when there is one: a reference it
+    /// already held was checked when it was written and cannot have gone stale,
+    /// because deleting the parent would have had to cascade to this row or be
+    /// refused. Skipping it is a round trip saved on the common update that
+    /// touches everything but the reference.
+    ///
+    /// `known` holds row keys of parents a bulk write has already found; see
+    /// [`RecordTransaction::visible_parents`].
+    async fn check_foreign_keys(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        row: &Row,
+        previous: Option<&Row>,
+        known: &HashSet<Vec<u8>>,
+    ) -> Result<()> {
+        for foreign_key in table.foreign_keys() {
+            // A null anywhere in the referencing columns means the row
+            // references nothing: SQL's `MATCH SIMPLE`.
+            let Some(parent_key) = foreign_key.parent_key(row) else {
+                continue;
+            };
+            if previous
+                .and_then(|old| foreign_key.parent_key(old))
+                .as_deref()
+                == Some(parent_key.as_slice())
+            {
+                continue;
+            }
+            let parent = self.parent_of(foreign_key)?;
+            if known.contains(&keys::row_key(parent, &parent_key)) {
+                continue;
+            }
+            // A secured read, so a parent the caller's policy hides is absent
+            // for them and reports identically to one that never existed. The
+            // constraint therefore answers no question they could not already
+            // answer for themselves.
+            //
+            // It is a read in the full sense, including the grant: writing a
+            // row that references a table means being allowed to read that
+            // table. An `AccessDenied` naming the parent discloses nothing
+            // about its rows, and the alternative — a privileged read behind a
+            // caller who cannot read the table at all — is the oracle.
+            if self
+                .reads()
+                .get(context, parent, &parent_key)
+                .await?
+                .is_none()
+            {
+                return Err(SchemaError::ForeignKeyViolation {
+                    table: table.name().to_owned(),
+                    foreign_key: foreign_key.name().to_owned(),
+                    parent: parent.name().to_owned(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// The row keys of every parent a batch references and the caller can read,
+    /// gathered in one round of overlapped reads.
+    ///
+    /// Without this a bulk insert costs a round trip per row per foreign key,
+    /// which is the cost the bulk path exists to avoid. Keys are deduplicated
+    /// first, because a batch of children usually points at a handful of
+    /// parents.
+    ///
+    /// A key missing from the result is not yet a violation: it may belong to a
+    /// row written earlier in this same batch, which the per-row check picks up
+    /// because a transaction reads its own writes.
+    async fn visible_parents(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        rows: &[Row],
+    ) -> Result<HashSet<Vec<u8>>> {
+        let mut wanted: Vec<(&TableDef, Vec<Value>)> = Vec::new();
+        let mut asked: HashSet<Vec<u8>> = HashSet::new();
+        for foreign_key in table.foreign_keys() {
+            let parent = self.parent_of(foreign_key)?;
+            for row in rows {
+                let Some(key) = foreign_key.parent_key(row) else {
+                    continue;
+                };
+                if asked.insert(keys::row_key(parent, &key)) {
+                    wanted.push((parent, key));
+                }
+            }
+        }
+
+        let mut found = HashSet::with_capacity(wanted.len());
+        for chunk in wanted.chunks(BULK_READ_CONCURRENCY) {
+            let mut inflight = FuturesOrdered::new();
+            for (parent, key) in chunk {
+                inflight.push_back(self.reads().get(context, parent, key));
+            }
+            let mut position = 0;
+            while let Some(row) = inflight.next().await {
+                if row?.is_some()
+                    && let Some((parent, key)) = chunk.get(position)
+                {
+                    found.insert(keys::row_key(parent, key));
+                }
+                position += 1;
+            }
+        }
+        Ok(found)
+    }
+
+    /// The table a foreign key points at.
+    ///
+    /// `Catalog::from_tables` resolves every parent, so a store built the usual
+    /// way cannot fail here. Failing closed matters anyway: a foreign key
+    /// nobody can resolve must refuse the write rather than silently permit it.
+    fn parent_of(&self, foreign_key: &ForeignKeyDef) -> Result<&'a TableDef> {
+        self.catalog
+            .table(foreign_key.parent())
+            .ok_or(KernelError::UnknownTable(foreign_key.parent()))
     }
 
     /// Read a row only if the caller's policy for `action` admits it.
@@ -1275,4 +1706,23 @@ impl<'a> RecordSnapshot<'a> {
             .group_by(context, table, query, group, aggregates, having)
             .await
     }
+}
+
+/// Refuse a row that fails a `CHECK`.
+///
+/// A check passes when its predicate is *unknown*, which is the opposite of a
+/// `WHERE` and is easy to get backwards; the rule itself lives in
+/// [`CheckDef::satisfied_by`](slate_schema::CheckDef::satisfied_by) so there is
+/// one copy of it.
+fn check_constraints(table: &TableDef, row: &Row) -> Result<()> {
+    for check in table.checks() {
+        if !check.satisfied_by(row) {
+            return Err(SchemaError::CheckViolation {
+                table: table.name().to_owned(),
+                check: check.name().to_owned(),
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
