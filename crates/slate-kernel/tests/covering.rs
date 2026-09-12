@@ -14,8 +14,8 @@
 use slate_kernel::latency::{IoCounters, LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Access, Action, CmpOp, Expr, Grant, Policy, Principal, Projection, RecordStore, ScanOrder,
-    SecurityCatalog, SecurityContext, plan_projected,
+    Access, Action, CmpOp, Expr, Grant, Policy, Principal, Projection, Query, RecordStore, Scalar,
+    ScanOrder, SecurityCatalog, SecurityContext, plan_projected,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -331,4 +331,99 @@ async fn a_projection_never_changes_which_rows_match() {
 
     assert!(!full.is_empty());
     assert_eq!(ids(full), ids(projected));
+}
+
+/// A covering scan that also has to *compute* something evaluates it from the
+/// columns the entry carries, and the column it read is not part of the answer.
+///
+/// The ordinary-index half of what teaching the executor to cover an expression
+/// index changed. The planner used to expand `lower(kind)` into `kind` before
+/// it knew which index it was asking about *and* insist on the computed
+/// ordinal, which no index holds, so no index ever covered a query that
+/// computed anything. Now `by_kind_size` holds `kind` and can.
+///
+/// A differential against a forced table scan, comparing whole rows, because
+/// the two ways to get this wrong both produce a plausible row: computing from
+/// a `kind` the entry never filled in gives null, and returning the `kind` the
+/// entry did fill in gives a column the projection did not ask for — and a
+/// table scan would return the other answer in each case.
+#[tokio::test]
+async fn a_covering_scan_computes_from_the_entry_it_holds() {
+    let (store, counters) = store(open()).await;
+    let table = notes();
+    let filter = Expr::eq(col("kind"), Value::Str("kind-1".into()));
+    let query = Query::all().filter(filter).select([col("id")]).computing([
+        Scalar::Upper(Box::new(Scalar::Column(col("kind")))),
+        // Over a column the predicate does *not* read, so it is in the
+        // answer for no reason but the computation — and must therefore
+        // not be in the answer at all.
+        Scalar::Add(
+            Box::new(Scalar::Column(col("size"))),
+            Box::new(Scalar::Literal(Value::I64(1))),
+        ),
+    ]);
+
+    counters.reset();
+    let txn = store.begin().await.unwrap();
+    // Explained rather than planned directly, because the plan that runs is
+    // the one with the security filter folded in — and on a tenant-scoped
+    // table it is the policy's own tenant term that makes the index usable at
+    // all.
+    let explained = txn.explain(&reader(), &table, &query).unwrap();
+    assert!(
+        explained.access.to_string().contains("Index Only"),
+        "`by_kind_size` holds `kind`, so it can compute `upper(kind)`: {explained}"
+    );
+    let covered: Vec<Vec<Value>> = txn
+        .execute(&reader(), &table, &query)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.values().to_vec())
+        .collect();
+    assert_eq!(
+        counters.gets(),
+        0,
+        "the entry holds everything this query reads"
+    );
+
+    let scanned: Vec<Vec<Value>> = txn
+        .execute(&reader(), &table, &query.clone().using_table_scan())
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.values().to_vec())
+        .collect();
+
+    assert_eq!(covered.len(), (ROWS / 4) as usize);
+    assert_eq!(covered, scanned, "the two paths must return the same rows");
+    let width = table.columns().len();
+    for row in &covered {
+        assert_eq!(
+            row[width],
+            Value::Str("KIND-1".to_owned()),
+            "`upper(kind)` computed from the value the entry carries"
+        );
+        let Value::I64(bumped) = row[width + 1] else {
+            panic!("`size + 1` should be an integer, got {:?}", row[width + 1]);
+        };
+        // `kind` comes back because the predicate reads it — the documented
+        // rule for a projection — while `size` was read only to compute
+        // `size + 1` and is not part of the answer. The distinction is the
+        // whole reason an expression index can cover anything: an entry keyed
+        // on a computed value cannot produce the column underneath it, so
+        // nothing else may either.
+        assert_eq!(row[col("kind").0], Value::Str("kind-1".to_owned()));
+        assert_eq!(row[col("size").0], Value::Null, "read only to compute");
+        let Value::U64(id) = row[col("id").0] else {
+            panic!("id was {:?}", row[col("id").0]);
+        };
+        assert_eq!(bumped, id as i64 + 1);
+    }
 }

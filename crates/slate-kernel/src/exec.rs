@@ -5,6 +5,22 @@
 //! security filter (see [`crate::security`]), a row that reaches a caller has
 //! passed the policy by evaluation, not by the planner having correctly turned
 //! it into a range.
+//!
+//! # Computed values, and what a row comes back holding
+//!
+//! Values a query computes are appended after the table's own columns, and two
+//! rules keep them from making a row's contents depend on its plan:
+//!
+//! - the columns a computed value *reads* are decoded and then put back to
+//!   null, because they are not part of the answer — see `transient`;
+//! - the one computed value an index entry already holds is taken from the
+//!   entry rather than evaluated, which is what lets an index keyed on
+//!   `lower(title)` answer a query without reading a row — see `from_entry`.
+//!
+//! The second is only sound because of the first. An entry keyed on a computed
+//! value cannot produce the column underneath it, so a scan of one returns null
+//! there; if a table scan of the same query returned the column, the two paths
+//! would answer differently.
 
 use crate::error::{KernelError, Result};
 use crate::expr::Expr;
@@ -15,7 +31,7 @@ use crate::scalar::Scalar;
 use crate::store::{KeyRange, KvSnapshot, ScanOrder};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use slate_schema::{ColumnSet, IndexDef, IndexId, Row, TableDef, decode_row_columns};
+use slate_schema::{ColumnSet, IndexDef, IndexId, Ordinal, Row, TableDef, decode_row_columns};
 use slate_tuple::{Direction, Value};
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -119,9 +135,28 @@ pub struct QueryCursor<'a> {
     /// allocation. On a scan that rejects most rows, the difference is most of
     /// the work.
     filter_columns: ColumnSet,
-    output_columns: ColumnSet,
+    /// Columns to decode: the answer's own, plus whatever the computed values
+    /// read. Not the same set — see `transient`.
+    decode_columns: ColumnSet,
     /// Whether the output needs anything the filter did not already decode.
     needs_second_phase: bool,
+    /// Columns decoded only because a computed value reads them, which are
+    /// therefore not part of the answer.
+    ///
+    /// `SELECT id, lower(title)` has to read `title` and did not ask for it,
+    /// and a row that carried it anyway would make the contents of a row
+    /// depend on the plan: an expression index holds `lower(title)` and not
+    /// `title`, so a covering scan of one *cannot* return the column, and a
+    /// table scan of the same query must not either. Nulled after the computed
+    /// values are evaluated, which is the last moment anything needs them.
+    ///
+    /// A `Vec` rather than a [`ColumnSet`]: this is walked once per row and is
+    /// almost always empty or a single entry, where a bitset would be walked
+    /// word by word to find the same one or two ordinals.
+    transient: Vec<Ordinal>,
+    /// Which computed value, if any, comes out of the index entry rather than
+    /// being evaluated. See [`crate::plan::expression_position`].
+    from_entry: Option<usize>,
     /// Values computed per row and appended after the table's own columns, so
     /// a filter, sort or grouping can name one by ordinal.
     compute: Vec<Scalar>,
@@ -149,13 +184,15 @@ impl core::fmt::Debug for QueryCursor<'_> {
 ///
 /// A free function rather than a method so the caller can hold a mutable borrow
 /// of the cursor's source while it runs.
+#[allow(clippy::too_many_arguments)]
 fn materialise(
     table: &TableDef,
     residual: &Expr,
     filter_columns: &ColumnSet,
-    output_columns: &ColumnSet,
+    decode_columns: &ColumnSet,
     two_phase: bool,
     compute: &[Scalar],
+    transient: &[Ordinal],
     raw: &RawRow,
 ) -> Result<Option<Row>> {
     // Computed values are appended after the table's own columns, and the
@@ -167,9 +204,9 @@ fn materialise(
             table,
             &raw.primary_key,
             &raw.body,
-            wanted(output_columns, table),
+            wanted(decode_columns, table),
         )?;
-        let extended = extend(decoded, compute);
+        let extended = extend(decoded, compute, transient, None);
         return Ok(residual.admits(&extended).then_some(extended));
     }
 
@@ -178,7 +215,7 @@ fn materialise(
     let first = if two_phase {
         filter_columns
     } else {
-        output_columns
+        decode_columns
     };
     let decoded = decode_row_columns(table, &raw.primary_key, &raw.body, wanted(first, table))?;
     if !residual.admits(&decoded) {
@@ -191,30 +228,55 @@ fn materialise(
         table,
         &raw.primary_key,
         &raw.body,
-        wanted(output_columns, table),
+        wanted(decode_columns, table),
     )?))
 }
 
-/// Append a row's computed values, in order, after its own columns.
+/// Append a row's computed values, in order, after its own columns, then drop
+/// the columns that were read only to produce them.
 ///
 /// Each is evaluated against the row as it stands, so a later expression can
 /// read an earlier one — which is what makes a chain of them expressible
 /// without nesting.
-fn extend(row: Row, compute: &[Scalar]) -> Row {
+///
+/// `from_entry` is the one computed value an index entry already holds, for a
+/// covering scan of an *expression* index. Its inputs are exactly the columns
+/// such an entry does not carry — `lower(title)` is in the entry and `title` is
+/// not — so evaluating it there would yield `lower(null)` and answer
+/// differently from every other access path. Taking the value the writer
+/// computed instead is what makes the entry answer the query on its own.
+fn extend(
+    row: Row,
+    compute: &[Scalar],
+    transient: &[Ordinal],
+    from_entry: Option<(usize, &Value)>,
+) -> Row {
     if compute.is_empty() {
         return row;
     }
     let mut values = row.into_values();
     values.reserve(compute.len());
-    for scalar in compute {
-        // Evaluated against the values as a slice rather than a rebuilt `Row`.
-        // Rebuilding cloned every value once per computed column, which is
-        // quadratic: ClickBench's ninety-sum query spent ninety seconds in it.
-        let value = {
-            let so_far: &[Value] = &values;
-            scalar.evaluate(so_far)
+    for (position, scalar) in compute.iter().enumerate() {
+        let value = match from_entry {
+            Some((from, value)) if from == position => value.clone(),
+            // Evaluated against the values as a slice rather than a rebuilt
+            // `Row`. Rebuilding cloned every value once per computed column,
+            // which is quadratic: ClickBench's ninety-sum query spent ninety
+            // seconds in it.
+            _ => {
+                let so_far: &[Value] = &values;
+                scalar.evaluate(so_far)
+            }
         };
         values.push(value);
+    }
+    // After the last computed value and before anything else sees the row: the
+    // residual, the sort comparator and the caller all read the same row, and
+    // whichever access path produced it.
+    for ordinal in transient {
+        if let Some(slot) = values.get_mut(ordinal.0) {
+            *slot = Value::Null;
+        }
     }
     Row::new(values)
 }
@@ -271,12 +333,13 @@ fn compare_rows(left: &Row, right: &Row, keys: &[SortKey]) -> core::cmp::Orderin
 /// Sound only when the planner has established that the query reads nothing
 /// outside the index and the primary key; see `Access::IndexScan::covering`.
 ///
-/// `wanted` is the query's output columns, and filling in anything else would
-/// be a bug rather than a bonus: an index entry often carries columns the
-/// caller did not ask for, and handing those back makes the contents of a row
-/// depend on which access path the planner chose. Found by the planner oracle,
-/// which caught `by_kind_size` returning `size` on a query that projected only
-/// the primary key, where a table scan returned null for it.
+/// `wanted` is what the query decodes — its answer's columns plus whatever its
+/// computed values read — and filling in anything else would be a bug rather
+/// than a bonus: an index entry often carries columns the caller did not ask
+/// for, and handing those back makes the contents of a row depend on which
+/// access path the planner chose. Found by the planner oracle, which caught
+/// `by_kind_size` returning `size` on a query that projected only the primary
+/// key, where a table scan returned null for it.
 fn row_from_index_entry(
     table: &TableDef,
     index: &IndexDef,
@@ -386,10 +449,50 @@ impl<'a> QueryCursor<'a> {
         offset: usize,
         compute: Vec<Scalar>,
     ) -> Result<Self> {
+        // What has to come off the row, which is the answer's columns plus
+        // whatever the computed values read. `plan.output_columns` is the
+        // answer; the difference is put back to null once the computed values
+        // have been evaluated, so that a query's rows do not depend on which
+        // access path produced them. See `transient`.
+        let width = table.columns().len();
+        let mut decode_columns = plan.output_columns.clone();
+        let mut transient: Vec<Ordinal> = Vec::new();
+        for scalar in &compute {
+            for input in scalar.columns() {
+                // A scalar may read an earlier computed value, which is not a
+                // column and is decoded from nothing.
+                if input.0 >= width || decode_columns.contains(input) {
+                    continue;
+                }
+                decode_columns.insert(input);
+                transient.push(input);
+            }
+        }
+
+        // Which computed value the chosen index's entries hold outright, for a
+        // covering scan of an expression index. Answered by the same function
+        // the planner used to decide the scan covers the query at all, so the
+        // two cannot disagree about which value the entry stands for.
+        let from_entry = match &plan.access {
+            Access::IndexScan {
+                index,
+                covering: true,
+                ..
+            }
+            | Access::IndexScans {
+                index,
+                covering: true,
+                ..
+            } => table
+                .index(*index)
+                .and_then(|index| crate::plan::expression_position(index, &compute)),
+            _ => None,
+        };
+
         let source = match &plan.access {
             Access::Nothing => Source::Empty,
             Access::PointGet { key } => Source::Point(
-                read::read_row_projected(snapshot, table, key, &plan.output_columns).await?,
+                read::read_row_projected(snapshot, table, key, &decode_columns).await?,
             ),
             Access::PointGets { keys } => Source::Points {
                 keys: keys.clone().into_iter(),
@@ -435,9 +538,11 @@ impl<'a> QueryCursor<'a> {
             table,
             source,
             needs_second_phase: plan.filter_first
-                && !plan.predicate_columns.contains_all(&plan.output_columns),
+                && !plan.predicate_columns.contains_all(&decode_columns),
             filter_columns: plan.predicate_columns,
-            output_columns: plan.output_columns,
+            decode_columns,
+            transient,
+            from_entry,
             residual: plan.residual,
             prefetch: DEFAULT_PREFETCH,
             compute,
@@ -570,8 +675,10 @@ impl<'a> QueryCursor<'a> {
             snapshot,
             residual,
             filter_columns,
-            output_columns,
+            decode_columns,
             needs_second_phase,
+            transient,
+            from_entry,
             prefetch,
             compute,
             ..
@@ -584,9 +691,10 @@ impl<'a> QueryCursor<'a> {
                         table,
                         residual,
                         filter_columns,
-                        output_columns,
+                        decode_columns,
                         *needs_second_phase,
                         compute,
+                        transient,
                         &raw,
                     )? {
                         return Ok(Some(row));
@@ -620,9 +728,10 @@ impl<'a> QueryCursor<'a> {
                                 table,
                                 residual,
                                 filter_columns,
-                                output_columns,
+                                decode_columns,
                                 *needs_second_phase,
                                 compute,
+                                transient,
                                 &raw,
                             )? {
                                 return Ok(Some(row));
@@ -673,9 +782,10 @@ impl<'a> QueryCursor<'a> {
                                 table,
                                 residual,
                                 filter_columns,
-                                output_columns,
+                                decode_columns,
                                 *needs_second_phase,
                                 compute,
+                                transient,
                                 &raw,
                             )? {
                                 return Ok(Some(row));
@@ -699,6 +809,38 @@ impl<'a> QueryCursor<'a> {
                     }
                 }
             }
+            // An arm of its own rather than a case of `next_candidate`,
+            // because the entry has to reach `extend`: the value an expression
+            // index keys on is in the entry and in no column, and a `Row` on
+            // its way out of `next_candidate` has nowhere to carry it.
+            Source::CoveringIndex {
+                cursor,
+                index,
+                rest,
+                order,
+            } => {
+                loop {
+                    // The entry already holds everything this query reads, so
+                    // there is nothing to fetch. This is the whole point of a
+                    // covering index: no read per matching row.
+                    let Some((indexed, primary_key)) =
+                        next_index_entry(*snapshot, table, index, *order, cursor, rest).await?
+                    else {
+                        return Ok(None);
+                    };
+                    let row =
+                        row_from_index_entry(table, index, &indexed, &primary_key, decode_columns);
+                    // An expression index keys on exactly one value, so it is
+                    // the first and only one in the entry. `None` here for an
+                    // ordinary covering index, whose scalars are evaluated from
+                    // the columns the entry does carry.
+                    let held = from_entry.and_then(|position| Some((position, indexed.first()?)));
+                    let row = extend(row, compute, transient, held);
+                    if residual.admits(&row) {
+                        return Ok(Some(row));
+                    }
+                }
+            }
             _ => {
                 while let Some(row) = self.next_candidate().await? {
                     // Already-sorted rows were extended and filtered on the
@@ -707,7 +849,7 @@ impl<'a> QueryCursor<'a> {
                     let row = if matches!(self.source, Source::Sorted(_)) {
                         row
                     } else {
-                        extend(row, &self.compute)
+                        extend(row, &self.compute, &self.transient, None)
                     };
                     if self.residual.admits(&row) {
                         return Ok(Some(row));
@@ -724,30 +866,7 @@ impl<'a> QueryCursor<'a> {
             Source::Sorted(rows) => Ok(rows.next()),
             Source::Point(row) => Ok(row.take()),
             Source::Rows(_) => unreachable!("handled by next_admitted"),
-            Source::CoveringIndex {
-                cursor,
-                index,
-                rest,
-                order,
-            } => {
-                // The entry already holds every column this query reads, so
-                // there is nothing to fetch. This is the whole point of a
-                // covering index: no read per matching row.
-                let Some((indexed, primary_key)) =
-                    next_index_entry(self.snapshot, self.table, index, *order, cursor, rest)
-                        .await?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(row_from_index_entry(
-                    self.table,
-                    index,
-                    &indexed,
-                    &primary_key,
-                    &self.output_columns,
-                )))
-            }
-            Source::Index { .. } | Source::Points { .. } => {
+            Source::CoveringIndex { .. } | Source::Index { .. } | Source::Points { .. } => {
                 unreachable!("handled by next_admitted")
             }
         }

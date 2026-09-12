@@ -608,7 +608,13 @@ Built and tested:
       on the schema, maintained by the record store, and read by the planner
       only for queries it can *prove* land inside the predicate
 - [x] Expression indexes — a key computed from the row (`lower(email)`,
-      `length(url)`) rather than read out of it
+      `length(url)`) rather than read out of it, with `analyze` evaluating the
+      expression so the estimate is measured rather than assumed, and a covering
+      scan that answers from the entry it is already holding
+- [x] A computed value's inputs are read and are *not* part of the answer.
+      `SELECT id, lower(title)` returns `title` as null unless it is asked for;
+      an entry keyed on `lower(title)` cannot produce `title`, so no path may,
+      or a row's contents would depend on the plan that fetched it
 - [x] A gRPC head node with writer leadership: a compare-and-set lease on one
       object in the same bucket, terminal step-down on `WriterFenced`, reads
       routed by freshness and tenant affinity and stamped with which replica
@@ -628,12 +634,15 @@ Not built:
 - [ ] Joins, aggregates and computed columns on the wire — each needs an
       ordinal space or a grouping model of its own in the protocol, and half of
       one would be worse than none
-- [ ] Maintenance for an expression index is there; **statistics** for one are
-      not. `analyze` does not evaluate the expression, so the planner's estimate
-      for such an index is whatever the caller supplies
-- [ ] An expression index can never be covering: the executor evaluates scalars
-      from a row's own columns, and a row rebuilt from an index entry has the
-      source column null
+- [ ] The planner oracle does not generate expression indexes or compute lists.
+      The covering path over one is proved by hand-written differentials — whole
+      rows, every projection, forced index against forced table scan, reads
+      counted — which is the right shape but tests the cases somebody thought
+      of, and not having that property is the whole point of an oracle
+- [ ] A scalar that reads an *earlier computed value* supplied by an index is
+      not treated as covered, though a second pass could prove it. The safe
+      direction: a covering scan wrongly claimed returns nulls, one missed only
+      reads rows it need not have
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent. Measured: estimates run up to 20x
       out, and the plan chosen is unchanged in every shape tested, so this is

@@ -43,7 +43,7 @@
 //! than correctness.
 
 use crate::expr::{CmpOp, Expr};
-use slate_schema::{Ordinal, TableDef, TableId};
+use slate_schema::{IndexId, Ordinal, TableDef, TableId};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
 
@@ -233,17 +233,36 @@ impl Histogram {
     }
 }
 
+/// What one statistic describes.
+///
+/// A column, or the value an *expression* index keys on. The second is not a
+/// column and has no ordinal of its own — `lower(email)` is nowhere in the
+/// row — so it is named by the index that computes it, which is the only
+/// durable name it has.
+///
+/// One key type rather than a second pair of maps: the two kinds are described
+/// by exactly the same [`ColumnStats`] and [`Histogram`], estimated by exactly
+/// the same code, and a parallel set of maps would be a second place for a
+/// selectivity rule to be written down and to drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StatTarget {
+    /// A column of the table.
+    Column(Ordinal),
+    /// The value an expression index keys on.
+    Expression(IndexId),
+}
+
 /// What is known about one table's contents.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableStats {
     /// Rows in the table.
     pub row_count: u64,
-    columns: BTreeMap<Ordinal, ColumnStats>,
+    columns: BTreeMap<StatTarget, ColumnStats>,
     /// How each column's values are spread, where that has been measured.
     ///
     /// Held apart from [`ColumnStats`] so that stays small and `Copy`: a
     /// histogram is a hundred values and is read on far fewer paths.
-    histograms: BTreeMap<Ordinal, Histogram>,
+    histograms: BTreeMap<StatTarget, Histogram>,
 }
 
 impl Default for TableStats {
@@ -280,27 +299,69 @@ impl TableStats {
     /// Record what is known about a column.
     #[must_use]
     pub fn with_column(mut self, ordinal: Ordinal, stats: ColumnStats) -> Self {
-        self.columns.insert(ordinal, stats);
+        self.columns.insert(StatTarget::Column(ordinal), stats);
         self
     }
 
     /// Record how a column's values are spread.
     #[must_use]
     pub fn with_histogram(mut self, ordinal: Ordinal, histogram: Histogram) -> Self {
-        self.histograms.insert(ordinal, histogram);
+        self.histograms
+            .insert(StatTarget::Column(ordinal), histogram);
+        self
+    }
+
+    /// Record what is known about the value an expression index keys on.
+    ///
+    /// Against the index rather than against an ordinal, because the value is
+    /// not in the row. A query that computes the same expression does give it
+    /// an ordinal — computed values are appended after the table's own columns
+    /// — but that ordinal depends on the query's own list of computed values,
+    /// so it is no name to store anything under.
+    #[must_use]
+    pub fn with_expression(mut self, index: IndexId, stats: ColumnStats) -> Self {
+        self.columns.insert(StatTarget::Expression(index), stats);
+        self
+    }
+
+    /// Record how the values an expression index keys on are spread.
+    #[must_use]
+    pub fn with_expression_histogram(mut self, index: IndexId, histogram: Histogram) -> Self {
+        self.histograms
+            .insert(StatTarget::Expression(index), histogram);
         self
     }
 
     /// How `ordinal`'s values are spread, if that has been measured.
     #[must_use]
     pub fn histogram(&self, ordinal: Ordinal) -> Option<&Histogram> {
-        self.histograms.get(&ordinal)
+        self.histograms.get(&StatTarget::Column(ordinal))
+    }
+
+    /// What is known about the value `index` keys on, if it has been analysed.
+    ///
+    /// `Option` rather than the default a column gets, because the caller has
+    /// to be able to tell "measured, and it looks like the default" from "never
+    /// measured": the planner copies these onto a computed ordinal for the
+    /// duration of a query and there is no point copying a default.
+    #[must_use]
+    pub fn expression(&self, index: IndexId) -> Option<ColumnStats> {
+        self.columns.get(&StatTarget::Expression(index)).copied()
+    }
+
+    /// How the values `index` keys on are spread, if that has been measured.
+    #[must_use]
+    pub fn expression_histogram(&self, index: IndexId) -> Option<&Histogram> {
+        self.histograms.get(&StatTarget::Expression(index))
     }
 
     /// What is known about `ordinal`, or the default.
     #[must_use]
     pub fn column(&self, ordinal: Ordinal) -> ColumnStats {
-        self.columns.get(&ordinal).copied().unwrap_or_default()
+        self.columns
+            .get(&StatTarget::Column(ordinal))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The fraction of rows an equality on `ordinal` is expected to keep.

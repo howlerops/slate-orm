@@ -119,14 +119,15 @@ fn big() -> TableStats {
                 null_fraction: 0.9,
             },
         )
-        // A computed value has no statistics of its own: `analyze` measures
-        // columns, and `lower(title)` is not one. Without this the planner falls
-        // back to "a hundred distinct values", which on a million rows makes an
-        // equality ten thousand rows and no index worth reading — so an
-        // expression index would lose every test below on the estimate rather
-        // than on the decision being tested. Recorded here, and noted as a real
-        // gap: see the module docs.
-        .with_column(computed(), spread)
+        // The computed value's own statistics, recorded against the index
+        // rather than against an ordinal because `lower(title)` is not a
+        // column and has none. `analyze` now measures this by evaluating the
+        // expression over the rows it samples; recorded by hand here so the
+        // tests below turn on the decision being tested rather than on the
+        // size of a fixture. Without it the planner falls back to "a hundred
+        // distinct values", which on a million rows makes an equality ten
+        // thousand rows and no index worth reading.
+        .with_expression(BY_LOWER_TITLE, spread)
 }
 
 fn plan_of(filter: Expr, compute: &[Scalar], projection: &Projection) -> Access {
@@ -501,7 +502,7 @@ fn an_in_over_an_expression_index_is_still_a_union() {
             Value::Str("ulysses".to_owned()),
         ],
     };
-    match plan_of(filter, &compute, &Projection::All) {
+    match plan_of(filter.clone(), &compute, &Projection::All) {
         Access::IndexScans {
             index,
             ref ranges,
@@ -511,9 +512,24 @@ fn an_in_over_an_expression_index_is_still_a_union() {
             assert_eq!(ranges.len(), 2);
             assert!(
                 !covering,
-                "`lower(title)` does not give back `title`, so nothing outside \
-                 the key is covered"
+                "`SELECT *` needs every column and the entry holds one value \
+                 and the key"
             );
+        }
+        other => panic!("expected a union over the expression index, got {other:?}"),
+    }
+
+    // The same union, projected down to what the entry can answer, is covering
+    // — the split into ranges and the index-only scan are independent, and a
+    // change that coupled them would show up here.
+    match plan_of(filter, &compute, &Projection::Columns(vec![col("id")])) {
+        Access::IndexScans {
+            ref ranges,
+            covering,
+            ..
+        } => {
+            assert_eq!(ranges.len(), 2);
+            assert!(covering, "each range answers from its own entries");
         }
         other => panic!("expected a union over the expression index, got {other:?}"),
     }
@@ -547,33 +563,140 @@ fn a_different_expression_is_a_different_index() {
     );
 }
 
-/// An expression index is never covering, and that is about the executor
-/// rather than about the entry.
+/// An expression index *is* covering for a query that reads nothing but the
+/// computed value and the key.
 ///
-/// The entry does hold `lower(title)` — the very value the query asked about.
-/// What it does not hold is `title`, and the executor recomputes every scalar
-/// from the row's own columns, so a row rebuilt from the entry would compute
-/// `lower(null)` and hand back a null where every other access path returns a
-/// string. Better to read the row than to answer differently depending on the
-/// plan.
+/// This used to be refused, and the refusal was about the executor rather than
+/// about the entry: the entry holds `lower(title)` — the very value asked about
+/// — but every scalar was evaluated from the row's own columns, and a row
+/// rebuilt from an entry has `title` null, so the scan would have computed
+/// `lower(null)` and answered differently from every other access path. The
+/// executor now takes that value out of the entry, so there is nothing left to
+/// read and the index answers on its own.
 #[test]
-fn an_expression_index_is_not_covering_even_for_a_key_only_projection() {
+fn an_expression_index_covers_a_projection_of_the_key_and_the_expression() {
     let compute = vec![lower_title()];
     let filter = Expr::eq(computed(), Value::Str("moby dick".to_owned()));
-    let key_only = plan_of(filter, &compute, &Projection::Columns(vec![col("id")]));
-    assert!(
-        uses(&key_only, BY_LOWER_TITLE),
-        "expected the expression index, got {key_only:?}"
+    for projection in [
+        // The key alone.
+        Projection::Columns(vec![col("id")]),
+        // And the computed value itself, which is the query anyone would
+        // actually write.
+        Projection::Columns(vec![col("id"), computed()]),
+        // Nothing at all, which is what a count projects.
+        Projection::none(),
+    ] {
+        let access = plan_of(filter.clone(), &compute, &projection);
+        assert!(
+            uses(&access, BY_LOWER_TITLE),
+            "expected the expression index for {projection:?}, got {access:?}"
+        );
+        assert!(
+            matches!(access, Access::IndexScan { covering: true, .. }),
+            "the entry holds the key and the computed value, so {projection:?} \
+             needs no row: {access:?}"
+        );
+    }
+}
+
+/// And it is *not* covering as soon as the query needs the column the
+/// expression reads.
+///
+/// The dangerous direction. `title` is nowhere in an entry keyed on
+/// `lower(title)`, so a covering scan would hand back null for it while a
+/// table scan hands back the string — the same query with two answers, decided
+/// by a cost estimate.
+#[test]
+fn an_expression_index_does_not_cover_a_query_that_reads_the_source_column() {
+    let compute = vec![lower_title()];
+    let filter = Expr::eq(computed(), Value::Str("moby dick".to_owned()));
+    for projection in [
+        // Projected outright.
+        Projection::Columns(vec![col("id"), col("title")]),
+        // Or reached through a *second* computed value, whose inputs the entry
+        // does not carry either. Only the one value the index keys on comes
+        // out of the entry.
+        Projection::Columns(vec![col("id"), Ordinal(computed().0 + 1)]),
+        // Or a column the index has nothing to do with.
+        Projection::Columns(vec![col("id"), col("size")]),
+    ] {
+        let compute = match projection {
+            Projection::Columns(ref columns) if columns.contains(&Ordinal(computed().0 + 1)) => {
+                vec![
+                    lower_title(),
+                    Scalar::Length(Box::new(Scalar::Column(TITLE))),
+                ]
+            }
+            _ => compute.clone(),
+        };
+        let access = plan_of(filter.clone(), &compute, &projection);
+        assert!(
+            !matches!(access, Access::IndexScan { covering: true, .. }),
+            "{projection:?} reads a column no entry of `by_lower_title` holds, \
+             so it cannot be answered from one: {access:?}"
+        );
+    }
+}
+
+/// An *ordinary* index covers a computed query when it holds what the
+/// expression reads.
+///
+/// A consequence of the same change rather than a separate feature: the
+/// planner used to expand a computed value into its input columns before it
+/// knew which index it was asking about, and then also insist on the computed
+/// ordinal itself, which no index has. Now the inputs decide, and `by_title`
+/// holds `title`.
+#[test]
+fn an_ordinary_index_covers_a_computed_query_from_its_own_columns() {
+    let compute = vec![lower_title()];
+    let filter = Expr::eq(col("title"), Value::Str("Moby Dick".to_owned()));
+    let access = plan_of(
+        filter,
+        &compute,
+        &Projection::Columns(vec![col("id"), computed()]),
     );
     assert!(
-        matches!(
-            key_only,
-            Access::IndexScan {
-                covering: false,
-                ..
-            }
-        ),
-        "an expression index was called covering: {key_only:?}"
+        matches!(access, Access::IndexScan { covering: true, .. }) && uses(&access, BY_TITLE),
+        "`by_title` holds `title`, so it can compute `lower(title)` itself: {access:?}"
+    );
+}
+
+/// The statistics decide whether an expression index is worth reading at all.
+///
+/// A *non-covering* scan of one costs a point read per row it fetches, so the
+/// choice is entirely the estimate's — and until `analyze` evaluated the
+/// expression there was no estimate, only the hundred distinct values an
+/// unmeasured column gets. On a million rows that is ten thousand point reads,
+/// and the table is cheaper to read whole.
+#[test]
+fn expression_statistics_decide_whether_the_index_is_worth_reading() {
+    let filter = Expr::eq(computed(), Value::Str("moby dick".to_owned()));
+    let compute = vec![lower_title()];
+
+    let measured = plan_of(filter.clone(), &compute, &Projection::All);
+    assert!(
+        uses(&measured, BY_LOWER_TITLE),
+        "a million distinct computed values makes this one row: {measured:?}"
+    );
+
+    // The same query, the same table, the same size — and nothing recorded
+    // about what the expression produces.
+    let unmeasured = plan_hinted(
+        &docs(),
+        Arc::new(filter),
+        ScanOrder::Ascending,
+        &Projection::All,
+        &TableStats::with_row_count(1_000_000),
+        None,
+        &[],
+        None,
+        &compute,
+    )
+    .access;
+    assert!(
+        matches!(unmeasured, Access::TableScan { .. }),
+        "unmeasured, the equality looks like ten thousand rows and the index \
+         should lose: {unmeasured:?}"
     );
 }
 
@@ -768,6 +891,7 @@ fn the_generators_produce_implications_to_check() {
 // throws it away and the answer looks right. The only way to see the entry that
 // should not be there is to look at the keys.
 
+use slate_kernel::latency::{LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
     Action, Grant, KernelError, RecordStore, SecurityCatalog, SecurityContext, keys,
@@ -1628,6 +1752,235 @@ async fn an_expression_index_agrees_with_a_table_scan() {
         scanned.sort();
         assert_eq!(indexed, scanned, "the two paths disagree on {filter:?}");
     }
+}
+
+/// The covering oracle: an index-only scan of an expression index must return
+/// exactly what a table scan of the same query returns — whole rows, computed
+/// value included.
+///
+/// This is the test the whole of gap two turns on, and it is a differential
+/// rather than a list of expectations because the failure modes are all
+/// "plausible but different". Three of them, each of which this catches:
+///
+/// - the executor evaluating `lower(body)` from a row rebuilt out of an entry,
+///   where `body` is null, and returning null;
+/// - the entry's value being read from the wrong place in the entry, or under
+///   the wrong direction, and coming back as some other row's;
+/// - the table scan returning `body` — which it has to decode to compute
+///   `lower(body)` — while the covering scan cannot, so the two paths differ on
+///   a column nobody projected.
+///
+/// The rows are compared in full, not by id, precisely because the third of
+/// those is invisible to a comparison of ids.
+#[tokio::test]
+async fn a_covering_expression_scan_agrees_with_a_table_scan() {
+    let (store, _kv) = note_store();
+    let table = notes();
+    let bodies = [
+        Some("Alpha"),
+        Some("alpha"),
+        Some("BETA"),
+        Some("beta"),
+        Some("gamma"),
+        Some(""),
+        None,
+        Some("Delta"),
+        Some("delta"),
+        Some("epsilon"),
+    ];
+    let txn = store.begin().await.unwrap();
+    for (id, body) in bodies.iter().enumerate() {
+        txn.insert(&root(), &table, &note(id as u64, *body))
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let computed = Query::computed(&table, 0);
+    let cases = [
+        Expr::True,
+        Expr::eq(computed, Value::Str("alpha".to_owned())),
+        Expr::eq(computed, Value::Str("nothing".to_owned())),
+        Expr::is_null(computed),
+        Expr::compare(computed, CmpOp::Ge, Value::Str("c".to_owned())),
+        Expr::In {
+            column: computed,
+            values: vec![
+                Value::Str("beta".to_owned()),
+                Value::Str("gamma".to_owned()),
+            ],
+        },
+    ];
+
+    // Two projections: one that the entry can answer on its own, and one that
+    // reaches for the source column and so must not be answered from it. Both
+    // have to agree with the scan, and the second is the control — if the
+    // planner ever did call it covering, the answers would part company here.
+    let projections = [vec![NOTE_ID], vec![NOTE_ID, computed], vec![NOTE_ID, BODY]];
+
+    for filter in cases {
+        for projection in &projections {
+            let base = Query::all()
+                .filter(filter.clone())
+                .select(projection.iter().copied())
+                .computing([lower_body()]);
+            let through_index = base.clone().using_index(BY_LOWER_BODY);
+            let through_scan = base.using_table_scan();
+
+            let txn = store.begin().await.unwrap();
+            let plan = txn.explain(&root(), &table, &through_index).unwrap();
+            assert!(
+                plan.access.to_string().contains("by_lower_body"),
+                "the hint did not take: {} for {filter:?}",
+                plan.access
+            );
+            // The projection that needs `body` must not be answered from the
+            // entry; the ones that do not, must be.
+            assert_eq!(
+                plan.access.to_string().contains("Index Only"),
+                !projection.contains(&BODY),
+                "wrong covering decision for {projection:?}: {}",
+                plan.access
+            );
+
+            let mut indexed = rows_of(&txn, &table, &through_index).await;
+            let mut scanned = rows_of(&txn, &table, &through_scan).await;
+            indexed.sort();
+            scanned.sort();
+            assert_eq!(
+                indexed, scanned,
+                "the two paths disagree on {filter:?} projecting {projection:?}"
+            );
+        }
+    }
+}
+
+/// Every value of every row a query returns, for comparing two access paths.
+async fn rows_of(
+    txn: &slate_kernel::RecordTransaction<'_>,
+    table: &TableDef,
+    query: &Query,
+) -> Vec<Vec<Value>> {
+    txn.execute(&root(), table, query)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.values().to_vec())
+        .collect()
+}
+
+/// And it really does skip the rows: the point of covering measured in reads
+/// rather than asserted in prose.
+///
+/// A count, not a duration — "this reads no rows" survives a different machine
+/// in a way "this took 2 ms" does not. The uncovered projection is measured in
+/// the same run as the control, because a covering scan that read every row
+/// would still pass a bare "zero is small" check if the counter were broken.
+#[tokio::test]
+async fn a_covering_expression_scan_reads_no_rows() {
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let backing = MemoryStore::new();
+    let table = notes();
+    let loader = RecordStore::new(backing.clone(), catalog.clone(), SecurityCatalog::new());
+    let txn = loader.begin().await.unwrap();
+    for id in 0..40u64 {
+        txn.insert(
+            &root(),
+            &table,
+            &note(id, Some(&format!("Body {}", id % 8))),
+        )
+        .await
+        .unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let counting = LatencyStore::new(backing, LatencyProfile::free());
+    let counters = counting.counters();
+    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL));
+    let store = RecordStore::new(counting, catalog, security);
+
+    let computed = Query::computed(&table, 0);
+    let filter = Expr::eq(computed, Value::Str("body 3".to_owned()));
+    let matching = 40u64 / 8;
+
+    let covered = Query::all()
+        .filter(filter.clone())
+        .select([NOTE_ID])
+        .computing([lower_body()])
+        .using_index(BY_LOWER_BODY);
+    counters.reset();
+    let txn = store.begin().await.unwrap();
+    let rows = rows_of(&txn, &table, &covered).await;
+    assert_eq!(rows.len() as u64, matching);
+    assert_eq!(
+        counters.gets(),
+        0,
+        "an index-only scan of an expression index must read no rows"
+    );
+
+    // The same query asking for the column the entry lacks: the rows are read,
+    // which is what makes the zero above a measurement rather than a constant.
+    let uncovered = covered.clone().select([NOTE_ID, BODY]);
+    counters.reset();
+    let rows = rows_of(&txn, &table, &uncovered).await;
+    assert_eq!(rows.len() as u64, matching);
+    assert_eq!(
+        counters.gets(),
+        matching,
+        "the source column can only come from the row"
+    );
+}
+
+/// A computed value's inputs are read and are not part of the answer.
+///
+/// The rule that makes the covering scan above possible at all: an entry keyed
+/// on `lower(body)` cannot produce `body`, so no path may produce it either.
+/// Stated as its own test because it is a change to what a *table scan*
+/// returns, and an oracle between two paths would pass just as happily if both
+/// of them were wrong.
+#[tokio::test]
+async fn a_computed_values_inputs_are_not_part_of_the_answer() {
+    let (store, _kv) = note_store();
+    let table = notes();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &note(1, Some("Moby Dick")))
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let query = Query::all()
+        .select([NOTE_ID])
+        .computing([lower_body()])
+        .using_table_scan();
+    let rows = rows_of(&txn, &table, &query).await;
+    assert_eq!(
+        rows,
+        vec![vec![
+            Value::U64(1),
+            Value::Null,
+            Value::Str("moby dick".to_owned())
+        ]],
+        "`body` was read to compute `lower(body)` and was not asked for"
+    );
+
+    // Asking for it brings it back, so this is a projection being honoured
+    // rather than a column that can no longer be read alongside a computation.
+    let query = Query::all()
+        .select([NOTE_ID, BODY])
+        .computing([lower_body()])
+        .using_table_scan();
+    assert_eq!(
+        rows_of(&txn, &table, &query).await,
+        vec![vec![
+            Value::U64(1),
+            Value::Str("Moby Dick".to_owned()),
+            Value::Str("moby dick".to_owned())
+        ]]
+    );
 }
 
 /// A declared type the expression does not produce is refused at the write.

@@ -50,8 +50,8 @@ use crate::token::ReadToken;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{
-    Catalog, ForeignKeyDef, IndexDef, Ordinal, PartialRow, ReferentialAction, Row, SchemaError,
-    TableDef, encode_body,
+    Catalog, ForeignKeyDef, IndexDef, IndexExpression, IndexId, Ordinal, PartialRow,
+    ReferentialAction, Row, SchemaError, TableDef, encode_body,
 };
 use slate_tuple::Value;
 use std::collections::HashSet;
@@ -697,10 +697,31 @@ impl<'a> RecordTransaction<'a> {
     /// that usually exceed it.
     pub async fn analyze(&self, context: &SecurityContext, table: &TableDef) -> Result<TableStats> {
         let column_count = table.columns().len();
-        let mut distinct: Vec<HashSet<Vec<u8>>> = vec![HashSet::new(); column_count];
-        let mut overflowed = vec![false; column_count];
-        let mut nulls = vec![0u64; column_count];
-        let mut samples: Vec<Vec<Value>> = vec![Vec::new(); column_count];
+        // An expression index keys on a value no column holds, so nothing
+        // above this line would ever describe it and the planner was left
+        // estimating `lower(email) = ?` from the hundred distinct values a
+        // column it has never seen gets by default. Each one is analysed as if
+        // it were an extra column appended after the table's own: the value is
+        // computed per sampled row and then goes through exactly the same
+        // distinct count, null count and reservoir as everything else, because
+        // there is no reason for the arithmetic to differ and every reason for
+        // it not to.
+        //
+        // A *partial* expression index is described over every row the caller
+        // can see, not only the ones it holds. That matches how a partial
+        // index's column statistics already work: the planner multiplies the
+        // key's selectivity by the predicate's separately, so describing the
+        // subset here would count the predicate twice.
+        let expressions: Vec<(IndexId, &IndexExpression)> = table
+            .indexes()
+            .iter()
+            .filter_map(|index| index.expression().map(|e| (index.id(), e)))
+            .collect();
+        let slots = column_count + expressions.len();
+        let mut distinct: Vec<HashSet<Vec<u8>>> = vec![HashSet::new(); slots];
+        let mut overflowed = vec![false; slots];
+        let mut nulls = vec![0u64; slots];
+        let mut samples: Vec<Vec<Value>> = vec![Vec::new(); slots];
         let mut row_count = 0u64;
         // Reservoir sampling, so the sample describes the whole table rather
         // than its first ten thousand rows. That distinction matters here
@@ -715,7 +736,15 @@ impl<'a> RecordTransaction<'a> {
         let mut cursor = self.execute(context, table, &Query::all()).await?;
         while let Some(row) = cursor.next().await? {
             row_count += 1;
-            for (ordinal, value) in row.values().iter().enumerate() {
+            // Computed once and borrowed by both passes below. Evaluating the
+            // expression twice per row would double what an expression index
+            // costs `analyze`, and the expressions worth indexing are the ones
+            // worth not running twice.
+            let computed: Vec<Value> = expressions
+                .iter()
+                .map(|(_, expression)| expression.value(&row))
+                .collect();
+            for (ordinal, value) in row.values().iter().chain(computed.iter()).enumerate() {
                 if value.is_null() {
                     if let Some(count) = nulls.get_mut(ordinal) {
                         *count += 1;
@@ -743,7 +772,7 @@ impl<'a> RecordTransaction<'a> {
             // Sampled separately from the distinct count, which stops early on
             // a high-cardinality column; a histogram wants values from
             // exactly those.
-            for (ordinal, value) in row.values().iter().enumerate() {
+            for (ordinal, value) in row.values().iter().chain(computed.iter()).enumerate() {
                 if value.is_null() {
                     continue;
                 }
@@ -767,29 +796,40 @@ impl<'a> RecordTransaction<'a> {
         }
 
         let mut stats = TableStats::with_row_count(row_count);
-        for ordinal in 0..column_count {
-            let null_count = nulls.get(ordinal).copied().unwrap_or(0);
-            let counted = distinct.get(ordinal).map_or(0, HashSet::len) as u64;
-            let distinct_values = if overflowed.get(ordinal).copied().unwrap_or(false) {
+        for slot in 0..slots {
+            let null_count = nulls.get(slot).copied().unwrap_or(0);
+            let counted = distinct.get(slot).map_or(0, HashSet::len) as u64;
+            let distinct_values = if overflowed.get(slot).copied().unwrap_or(false) {
                 row_count.max(1)
             } else {
                 counted.max(1)
             };
-            stats = stats.with_column(
-                Ordinal(ordinal),
-                ColumnStats {
-                    distinct: distinct_values,
-                    null_fraction: if row_count == 0 {
-                        0.0
-                    } else {
-                        null_count as f64 / row_count as f64
-                    },
+            let measured = ColumnStats {
+                distinct: distinct_values,
+                null_fraction: if row_count == 0 {
+                    0.0
+                } else {
+                    null_count as f64 / row_count as f64
                 },
-            );
-            if let Some(sample) = samples.get_mut(ordinal)
-                && let Some(histogram) = Histogram::from_values(core::mem::take(sample))
-            {
-                stats = stats.with_histogram(Ordinal(ordinal), histogram);
+            };
+            let histogram = samples
+                .get_mut(slot)
+                .and_then(|sample| Histogram::from_values(core::mem::take(sample)));
+            // The slots past the table's own columns are the expression
+            // indexes, in the order they were collected above.
+            match expressions.get(slot.wrapping_sub(column_count)) {
+                None => {
+                    stats = stats.with_column(Ordinal(slot), measured);
+                    if let Some(histogram) = histogram {
+                        stats = stats.with_histogram(Ordinal(slot), histogram);
+                    }
+                }
+                Some((index, _)) => {
+                    stats = stats.with_expression(*index, measured);
+                    if let Some(histogram) = histogram {
+                        stats = stats.with_expression_histogram(*index, histogram);
+                    }
+                }
             }
         }
         Ok(stats)

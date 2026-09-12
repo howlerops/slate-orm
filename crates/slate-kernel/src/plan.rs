@@ -50,6 +50,23 @@
 //! row, the planner downcasts back to a `Scalar` to match it against what a
 //! query computes, and an index whose expression is not a `Scalar` is
 //! maintained but never chosen — the same asymmetry, the same safe direction.
+//!
+//! # A computed value is a value an index can hold
+//!
+//! Both statistics and covering turn on treating the value an expression index
+//! keys on as an ordinary value that happens to live in the entry rather than
+//! in the row.
+//!
+//! - **Statistics.** [`TableStats`] records them against the index, because the
+//!   value has no ordinal of its own. A query that computes the same expression
+//!   gives it one, and `planning_stats` copies the statistics onto that ordinal
+//!   for the length of the plan, so every estimate reads them the way it reads
+//!   a column's.
+//! - **Covering.** [`covers`] asks what each *value* the query needs would have
+//!   to be read from. A column has to be in the entry; a computed value is in
+//!   the entry when this is the index that computes it, and otherwise needs
+//!   whatever feeds it to be. The executor then takes that one value out of the
+//!   entry rather than evaluating it from columns the entry never carried.
 
 use crate::exec::DEFAULT_PREFETCH;
 use crate::query::{AccessHint, SortKey};
@@ -180,6 +197,13 @@ pub enum Projection {
     /// predicate reads, which has to be decoded to evaluate it. Both are free by
     /// the time the row is returned, so withholding them would cost work rather
     /// than save it.
+    ///
+    /// A computed value's inputs are the exception, and deliberately so: they
+    /// are read on the way to producing it and are then put back to null.
+    /// Returning them would be free here too, and it would make a row's
+    /// contents depend on its plan — an index keyed on `lower(title)` holds the
+    /// computed value and not `title`, so a scan of that index cannot produce
+    /// the column, and no other path may either.
     Columns(Vec<Ordinal>),
 }
 
@@ -539,42 +563,37 @@ pub fn plan_hinted(
         .into_iter()
         .flat_map(|c| expanded_inputs(c, width, compute))
         .collect();
-    let mut output_columns = predicate_columns.clone();
+    // Columns of the answer, which is not the same set as the columns that
+    // have to be read to produce it. A computed value's inputs are read and
+    // are *not* part of the answer: `SELECT id, lower(title)` asked for `id`,
+    // and handing back `title` as well would make a row's contents depend on
+    // whether the plan happened to need the column — the same shape of bug the
+    // planner oracle found in the covering scan. The executor adds the inputs
+    // to what it decodes and takes them out of the row again; see
+    // `exec::QueryCursor`.
+    //
+    // It has to be this way round now that an expression index can cover a
+    // query. Such an index holds `lower(title)` and not `title`, so a plan that
+    // reads it *cannot* return `title`; a table scan of the same query must
+    // therefore not return it either, or the two paths answer differently.
+    let mut output_columns = predicate
+        .columns()
+        .into_iter()
+        .filter(|c| c.0 < width)
+        .collect::<ColumnSet>();
     match projection.columns() {
         None => output_columns = ColumnSet::all(table.columns().len()),
         Some(columns) => {
-            for column in columns {
-                if column.0 < width {
-                    output_columns.insert(*column);
-                } else if let Some(scalar) = compute.get(column.0 - width) {
-                    for input in scalar.columns() {
-                        output_columns.insert(input);
-                    }
-                }
+            for column in columns.iter().filter(|c| c.0 < width) {
+                output_columns.insert(*column);
             }
             // A column the sort orders by has to be decoded even when the
             // caller did not ask to see it. Leaving it out does not fail: it
             // reads back as null, every row compares equal, and the result
             // comes out in whatever order the scan happened to produce. A
             // wrong order that looks like an order is worse than an error.
-            for key in sort {
-                if key.column.0 < width {
-                    output_columns.insert(key.column);
-                } else if let Some(scalar) = compute.get(key.column.0 - width) {
-                    for input in scalar.columns() {
-                        output_columns.insert(input);
-                    }
-                }
-            }
-            // Every computed value is evaluated on every row whether or not
-            // anything references it, so its inputs are always needed. The
-            // same hole the sort column fell through: an undecoded input reads
-            // as null and the computed value is quietly wrong rather than
-            // missing.
-            for scalar in compute {
-                for input in scalar.columns() {
-                    output_columns.insert(input);
-                }
+            for key in sort.iter().filter(|k| k.column.0 < width) {
+                output_columns.insert(key.column);
             }
         }
     }
@@ -594,6 +613,11 @@ pub fn plan_hinted(
     }
 
     let constraints = collect_constraints(&conjuncts);
+
+    // From here on, a computed value the table has an analysed expression index
+    // for is an ordinary column with ordinary statistics. See `planning_stats`.
+    let stats = planning_stats(table, stats, compute, width);
+    let stats = stats.as_ref();
 
     let total_selectivity = stats.predicate_selectivity(&predicate);
 
@@ -623,24 +647,24 @@ pub fn plan_hinted(
 
     // What the query needs to see: the projected columns plus whatever the
     // predicate reads, since the predicate still has to be evaluated.
+    // Computed ordinals are left as they are rather than replaced by their
+    // inputs, because whether an index can answer one depends on the index:
+    // an expression index *is* that value and hands it over out of the entry,
+    // and every other index has to hold whatever feeds it. Expanding here
+    // would settle that question before knowing which index was being asked.
     let needed = match projection.columns() {
         None => Needed::All,
         Some(columns) => {
-            let mut set: BTreeSet<Ordinal> = predicate
-                .columns()
-                .into_iter()
-                .flat_map(|c| expanded_inputs(c, width, compute))
-                .collect();
-            set.extend(columns.iter().copied().filter(|c| c.0 < width));
-            // An index cannot answer a query on its own unless it holds what
-            // the computed values read, for the same reason.
-            for scalar in compute {
-                set.extend(scalar.columns());
-            }
+            let mut set: BTreeSet<Ordinal> = predicate.columns().into_iter().collect();
+            set.extend(columns.iter().copied());
             // Same reason as `output_columns`: an index that does not hold the
             // sort column cannot answer the query on its own, however well it
             // covers the projection.
             set.extend(sort.iter().map(|key| key.column));
+            // Every computed value is evaluated on every row whether or not
+            // anything references it, so every one of them is needed however
+            // narrow the projection.
+            set.extend((0..compute.len()).map(|i| Ordinal(width + i)));
             Needed::Some(set)
         }
     };
@@ -1073,20 +1097,129 @@ fn point_get_set(
     Some(keys)
 }
 
-/// Whether `index` holds every column in `needed`.
+/// Which of the query's computed values `index` keys on, if any.
+///
+/// The one place that answers "is this expression index the one this query is
+/// asking about", called by the planner to decide whether the index is a
+/// candidate at all and by the executor to decide which computed value to take
+/// out of an entry rather than evaluate. Two answers to that question would be
+/// a silent wrong answer one edit away — the executor would fill in a value the
+/// planner matched somewhere else — which is why it is a function and not a
+/// rule written down twice.
+///
+/// `None` for an ordinary index, for an expression index whose expression is
+/// not a [`Scalar`](crate::scalar::Scalar), and for one whose expression the
+/// query does not compute.
+#[must_use]
+pub(crate) fn expression_position(
+    index: &IndexDef,
+    compute: &[crate::scalar::Scalar],
+) -> Option<usize> {
+    let expression = crate::record::index_expression(index)?;
+    compute.iter().position(|scalar| scalar == expression)
+}
+
+/// The statistics to plan with, with every expression index's own statistics
+/// copied onto the ordinal this query gives its value.
+///
+/// [`TableStats`] records an expression index's statistics against the index,
+/// because the value is not a column and has no ordinal of its own. A query
+/// that computes the same expression *does* give it one — `width + position` —
+/// and from there on it is an ordinary column as far as every estimate is
+/// concerned. Aliasing it here means `predicate_selectivity`, `match_key`,
+/// `bounded_selectivity` and the rest read it without knowing it came from an
+/// index.
+///
+/// The alternative was to thread a resolver — "is this ordinal computed, and if
+/// so by which index" — through six signatures, every one of which would then
+/// have a way to forget. This clones the statistics once per query, and only
+/// when the query actually computes an analysed expression; every other query
+/// borrows.
+fn planning_stats<'a>(
+    table: &TableDef,
+    stats: &'a TableStats,
+    compute: &[crate::scalar::Scalar],
+    width: usize,
+) -> std::borrow::Cow<'a, TableStats> {
+    if compute.is_empty() {
+        return std::borrow::Cow::Borrowed(stats);
+    }
+    // Two indexes on the same expression describe the same value and would
+    // write the same numbers at the same ordinal, so the first wins and the
+    // rest are skipped rather than fought over.
+    let mut aliased: Option<TableStats> = None;
+    let mut done: BTreeSet<Ordinal> = BTreeSet::new();
+    for index in table.indexes() {
+        let Some(position) = expression_position(index, compute) else {
+            continue;
+        };
+        let ordinal = Ordinal(width + position);
+        if !done.insert(ordinal) {
+            continue;
+        }
+        let measured = stats.expression(index.id());
+        let histogram = stats.expression_histogram(index.id());
+        if measured.is_none() && histogram.is_none() {
+            // Never analysed. Copying the default over would be the same
+            // numbers `TableStats::column` already returns, for the price of
+            // cloning the whole table's statistics.
+            continue;
+        }
+        let mut next = aliased.take().unwrap_or_else(|| stats.clone());
+        if let Some(measured) = measured {
+            next = next.with_column(ordinal, measured);
+        }
+        if let Some(histogram) = histogram {
+            next = next.with_histogram(ordinal, histogram.clone());
+        }
+        aliased = Some(next);
+    }
+    aliased.map_or(std::borrow::Cow::Borrowed(stats), std::borrow::Cow::Owned)
+}
+
+/// Whether `index` holds every value in `needed`.
 ///
 /// An index entry carries its own columns and the primary key, so those are
-/// what it can answer from.
-fn covers(table: &TableDef, index: &IndexDef, needed: &Needed) -> bool {
+/// what it can answer from — plus, for an expression index, the one computed
+/// value it keys on, which is in the entry and needs no row at all.
+fn covers(cx: &MatchContext<'_>, index: &IndexDef) -> bool {
     // Scanning two short slices beats building a set per index per query; both
     // are a handful of entries and this runs on every plan.
     let holds = |ordinal: Ordinal| {
         index.columns().iter().any(|c| c.ordinal == ordinal)
-            || table.primary_key().contains(&ordinal)
+            || cx.table.primary_key().contains(&ordinal)
     };
-    match needed {
-        Needed::All => (0..table.columns().len()).map(Ordinal).all(holds),
-        Needed::Some(columns) => columns.iter().copied().all(holds),
+    // The computed ordinal this index's entries already hold the value for.
+    // Every *other* computed value is still evaluated from the row, so what it
+    // reads has to be in the entry like any other column.
+    let from_entry = expression_position(index, cx.compute).map(|p| Ordinal(cx.width + p));
+    let holds_value = |ordinal: Ordinal| {
+        if ordinal.0 < cx.width {
+            return holds(ordinal);
+        }
+        if Some(ordinal) == from_entry {
+            return true;
+        }
+        // A computed value the entry does not carry is recomputed, so its
+        // inputs decide. Those inputs can themselves be computed ordinals — a
+        // scalar may read an earlier one — and `holds` says no to those, which
+        // gives up a covering scan that a second pass could have proved. The
+        // safe direction, and the same one a missed implication takes: a
+        // covering scan wrongly claimed returns nulls, a covering scan missed
+        // reads some rows.
+        //
+        // An ordinal past the table naming no computed value
+        // reads nothing and expands to nothing, which is trivially held —
+        // the executor makes it null on every path alike.
+        expanded_inputs(ordinal, cx.width, cx.compute)
+            .into_iter()
+            .all(holds)
+    };
+    match cx.needed {
+        // Everything, so an expression index has nothing to add: it would have
+        // to hold every column of the table before the computed value mattered.
+        Needed::All => (0..cx.table.columns().len()).map(Ordinal).all(holds),
+        Needed::Some(columns) => columns.iter().copied().all(holds_value),
     }
 }
 
@@ -1395,21 +1528,14 @@ fn match_index(cx: &MatchContext<'_>, index: &IndexDef) -> Option<Candidate> {
         Vec::new()
     };
 
-    let covering = match computed {
-        None => covers(cx.table, index, cx.needed),
-        // Never, for an expression index — and not because the entry holds too
-        // little. It holds the computed value, which is what the query asked
-        // about. The executor is what cannot use it: every scalar is evaluated
-        // per row from the row's own columns, so `lower(title)` needs `title`,
-        // and a row rebuilt from an index entry has `title` null. It would
-        // compute `lower(null)`, which is null, and hand back a row that agrees
-        // with no other access path.
-        //
-        // Making this true means teaching the executor to take a computed value
-        // from the entry it is already holding — worth doing, and a change to
-        // the executor rather than to this decision.
-        Some(_) => false,
-    };
+    // An expression index used to be excluded here, because the executor
+    // evaluated every scalar from the row's own columns and a row rebuilt from
+    // an entry has the source column null — so it would have computed
+    // `lower(null)` and answered differently from every other access path. The
+    // executor now takes that one value out of the entry it is already holding
+    // (`exec::QueryCursor`), so the entry answers for it and `covers` treats it
+    // like any other value the index holds.
+    let covering = covers(cx, index);
 
     // An `IN` on the first column the equality prefix does not pin splits the
     // one range into several narrow ones. Worth it precisely when the values

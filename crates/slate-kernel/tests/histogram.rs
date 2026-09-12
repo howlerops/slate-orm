@@ -13,7 +13,7 @@
 )]
 
 use slate_kernel::{
-    AccessSummary, Action, CmpOp, Expr, Grant, Histogram, Query, RecordStore, ScanOrder,
+    AccessSummary, Action, CmpOp, Expr, Grant, Histogram, Query, RecordStore, Scalar, ScanOrder,
     SecurityCatalog, SecurityContext, Statistics, TableStats, memory::MemoryStore,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
@@ -294,4 +294,365 @@ async fn analyze_is_reproducible() {
         second.histogram(col("at")).map(Histogram::bounds),
     );
     assert_eq!(first.row_count, second.row_count);
+}
+
+// --- statistics for a computed value ---------------------------------------
+//
+// An expression index keys on a value no column holds, so nothing `analyze`
+// measured described it and the planner fell back to the hundred distinct
+// values an unseen column gets. That is not a small error in one place: it is
+// the *only* number behind every decision about such an index.
+//
+// The tests below are oracles rather than expectations wherever they can be.
+// What `analyze` records is checked against the same expression computed by
+// hand over the same rows, and what the histogram says is checked against
+// counting the rows. A statistic that agrees with a hardcoded number agrees
+// with whoever wrote it down.
+
+const EVENTS: TableId = TableId(2);
+const BY_LOWER_TAG: IndexId = IndexId(20);
+const BY_TAG_LENGTH: IndexId = IndexId(21);
+/// `id`, `tag`. By position, because `events()` names an expression over them.
+const EVENT_ID: Ordinal = Ordinal(0);
+const TAG: Ordinal = Ordinal(1);
+
+/// Fifty distinct lowered tags, spelled three ways each, so `lower(tag)` has a
+/// third of the distinct values `tag` has. That gap is the oracle: statistics
+/// that merely copied the column's would come back with a hundred and fifty.
+const TAGS: u64 = 50;
+
+fn lower_tag() -> Scalar {
+    Scalar::Lower(Box::new(Scalar::Column(TAG)))
+}
+
+fn tag_length() -> Scalar {
+    Scalar::Length(Box::new(Scalar::Column(TAG)))
+}
+
+fn events() -> TableDef {
+    TableDef::builder("events", EVENTS)
+        .column("id", ValueType::U64)
+        .nullable_column("tag", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_lower_tag", BY_LOWER_TAG).expression(lower_tag(), ValueType::Str),
+        )
+        // A second one, so the statistics of two expression indexes on one
+        // table have to be told apart. `analyze` counts them in slots past the
+        // table's own columns, and an off-by-one there would describe one
+        // index with the other's numbers — which nothing with a single index
+        // could ever notice.
+        .index(
+            IndexDef::builder("by_tag_length", BY_TAG_LENGTH)
+                .expression(tag_length(), ValueType::I64),
+        )
+        .build()
+        .expect("valid schema")
+}
+
+#[test]
+fn the_event_ordinals_are_where_they_are_claimed_to_be() {
+    let table = events();
+    assert_eq!(EVENT_ID, table.ordinal_of("id").expect("id"));
+    assert_eq!(TAG, table.ordinal_of("tag").expect("tag"));
+}
+
+/// One row. Zero-padded so the lexicographic order the index stores is the
+/// numeric one the test reasons about, and every tenth tag null so a null
+/// fraction is a real number rather than zero.
+fn event(id: u64) -> Row {
+    let bucket = id % TAGS;
+    let tag = if bucket.is_multiple_of(10) {
+        Value::Null
+    } else {
+        // Three spellings of the same lowered value.
+        Value::Str(match id % 3 {
+            0 => format!("Tag-{bucket:02}"),
+            1 => format!("tag-{bucket:02}"),
+            _ => format!("TAG-{bucket:02}"),
+        })
+    };
+    Row::new(vec![Value::U64(id), tag])
+}
+
+fn event_rows() -> Vec<Row> {
+    (0..ROWS).map(event).collect()
+}
+
+/// `lower(tag)` for every row, computed here rather than read out of the
+/// index — the oracle the recorded statistics are held to.
+fn lowered_tags() -> Vec<Value> {
+    event_rows()
+        .iter()
+        .map(|row| lower_tag().evaluate(row.values()))
+        .collect()
+}
+
+/// A store over `kv` planning with `stats`.
+///
+/// Rebuilt rather than cloned because a `RecordStore` is not `Clone`, and the
+/// tests below need the same rows read through two different sets of
+/// statistics — which is the whole comparison.
+fn events_store(kv: &MemoryStore, stats: TableStats) -> RecordStore<MemoryStore> {
+    let catalog = Catalog::from_tables([events()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
+    RecordStore::new(kv.clone(), catalog, security)
+        .with_statistics(Statistics::new().with(EVENTS, stats))
+}
+
+/// The rows loaded, and what `analyze` makes of them.
+async fn analysed_events() -> (MemoryStore, TableStats) {
+    let kv = MemoryStore::new();
+    let loader = events_store(&kv, TableStats::assumed());
+    let txn = loader.begin().await.unwrap();
+    txn.insert_many(&root(), &events(), &event_rows())
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = loader.begin().await.unwrap();
+    let stats = txn.analyze(&root(), &events()).await.unwrap();
+    (kv, stats)
+}
+
+/// How many rows a query really returns, which is what an estimate is judged
+/// against.
+async fn count_through(store: &RecordStore<MemoryStore>, query: Query) -> usize {
+    let txn = store.begin().await.unwrap();
+    txn.execute(&root(), &events(), &query)
+        .await
+        .unwrap()
+        .count()
+        .await
+        .unwrap()
+}
+
+/// `analyze` evaluates the expression, and what it records matches computing
+/// the expression by hand over the same rows.
+#[tokio::test]
+async fn analyze_measures_what_an_expression_index_keys_on() {
+    let (_kv, stats) = analysed_events().await;
+    let measured = stats
+        .expression(BY_LOWER_TAG)
+        .expect("the expression index was analysed");
+
+    let values = lowered_tags();
+    let nulls = values.iter().filter(|v| v.is_null()).count();
+    let distinct: std::collections::BTreeSet<&Value> =
+        values.iter().filter(|v| !v.is_null()).collect();
+
+    assert_eq!(
+        measured.distinct,
+        distinct.len() as u64,
+        "distinct computed values"
+    );
+    assert!(
+        (measured.null_fraction - nulls as f64 / ROWS as f64).abs() < 1e-9,
+        "null fraction {} against {}",
+        measured.null_fraction,
+        nulls as f64 / ROWS as f64
+    );
+
+    // And it is not the source column's statistics under another name, which
+    // is what a version of this that never ran the expression would record.
+    // Three spellings per tag, so the column has three times the values.
+    assert_eq!(stats.column(TAG).distinct, measured.distinct * 3);
+}
+
+/// The histogram describes the computed values, checked against counting them.
+///
+/// Bucket resolution is about 1.5%, and the sample is the whole table here, so
+/// the bar is tight enough to fail on a histogram built from the wrong values
+/// and loose enough not to fail on the bucket midpoint.
+#[tokio::test]
+async fn an_expression_histogram_agrees_with_counting_the_rows() {
+    let (_kv, stats) = analysed_events().await;
+    let histogram = stats
+        .expression_histogram(BY_LOWER_TAG)
+        .expect("enough distinct computed values for a histogram");
+
+    let values: Vec<Value> = lowered_tags()
+        .into_iter()
+        .filter(|v| !v.is_null())
+        .collect();
+    for cut in [1u64, 5, 10, 25, 40, 49] {
+        let cut = Value::Str(format!("tag-{cut:02}"));
+        let below = values.iter().filter(|v| **v < cut).count() as f64 / values.len() as f64;
+        let estimated = histogram.fraction_below(&cut);
+        assert!(
+            (estimated - below).abs() < 0.03,
+            "below {cut:?}: estimated {estimated:.3}, counted {below:.3}"
+        );
+    }
+}
+
+/// A table with no expression index gets no expression statistics, and one
+/// that was never analysed reports none rather than a default dressed up as a
+/// measurement.
+#[tokio::test]
+async fn an_unanalysed_expression_has_no_statistics() {
+    let bare = TableStats::with_row_count(ROWS);
+    assert!(bare.expression(BY_LOWER_TAG).is_none());
+    assert!(bare.expression_histogram(BY_LOWER_TAG).is_none());
+
+    // And the ones that are recorded do not leak into the columns: `analyze`
+    // appends the expressions after the table's own columns while it counts,
+    // and an off-by-one there would write a computed value's statistics at a
+    // column's ordinal.
+    let (_kv, stats) = analysed_events().await;
+    let table = events();
+    assert!(
+        stats.histogram(Ordinal(table.columns().len())).is_none(),
+        "nothing should be recorded past the table's own columns"
+    );
+}
+
+/// The planner's estimate for a query on the computed value, before and after
+/// `analyze` has described it.
+///
+/// The claim being tested is not "the estimate changed" but "the estimate got
+/// closer to the truth", so the truth is counted and both estimates are held
+/// to it. Measured on this fixture — two thousand rows over fifty tag buckets,
+/// five of which are null, so forty-five distinct computed values:
+///
+/// | predicate | rows | estimate before | after |
+/// |---|---:|---:|---:|
+/// | `lower(tag) = 'tag-07'` | 40 | 18 (2.22x out) | 40 (1.00x) |
+/// | `lower(tag) < 'tag-10'` | 360 | 594 (1.65x out) | 352 (1.02x) |
+///
+/// The equality was wrong because a hundred distinct values is the default for
+/// a column nobody measured, and there are fifty; the range because without a
+/// histogram a one-sided bound is a flat third of the table whatever it asks.
+#[tokio::test]
+async fn the_planner_estimates_a_computed_predicate_from_its_own_statistics() {
+    let (kv, analysed) = analysed_events().await;
+    let table = events();
+    let computed = Query::computed(&table, 0);
+    let informed = events_store(&kv, analysed.clone());
+    // Statistics that know the row count and the columns and nothing about the
+    // expression — which is exactly what `analyze` produced before this change.
+    let blind = events_store(&kv, blind_stats(&analysed));
+
+    // An equality on a tag that exists, and a range over a fifth of the tags.
+    let cases: [(&str, Expr); 2] = [
+        ("lower(tag) = 'tag-07'", Expr::eq(computed, tag_value(7))),
+        (
+            "lower(tag) < 'tag-10'",
+            Expr::compare(computed, CmpOp::Lt, tag_value(10)),
+        ),
+    ];
+
+    for (label, filter) in cases {
+        let query = Query::all().filter(filter.clone()).computing([lower_tag()]);
+
+        // The truth, by running it.
+        let actual = count_through(&informed, query.clone().using_table_scan()).await as f64;
+        assert!(actual > 0.0, "{label} should match something");
+
+        let with = informed
+            .begin()
+            .await
+            .unwrap()
+            .explain(&root(), &table, &query)
+            .unwrap()
+            .estimated_rows;
+        let without = blind
+            .begin()
+            .await
+            .unwrap()
+            .explain(&root(), &table, &query)
+            .unwrap()
+            .estimated_rows;
+
+        let error = |estimate: f64| (estimate / actual).max(actual / estimate);
+        assert!(
+            error(with) < error(without),
+            "{label}: {actual} rows; analysed estimate {with} ({:.2}x out), \
+             unanalysed {without} ({:.2}x out)",
+            error(with),
+            error(without),
+        );
+        // And close, not merely closer.
+        assert!(
+            error(with) < 1.2,
+            "{label}: {actual} rows, estimated {with}"
+        );
+    }
+}
+
+fn tag_value(bucket: u64) -> Value {
+    Value::Str(format!("tag-{bucket:02}"))
+}
+
+/// The same statistics with everything about the expression index removed:
+/// the row count and the column measurements stay, so the comparison is about
+/// the expression and not about the size of the table.
+fn blind_stats(analysed: &TableStats) -> TableStats {
+    let mut blind = TableStats::with_row_count(analysed.row_count);
+    for ordinal in [EVENT_ID, TAG] {
+        blind = blind.with_column(ordinal, analysed.column(ordinal));
+        if let Some(histogram) = analysed.histogram(ordinal) {
+            blind = blind.with_histogram(ordinal, histogram.clone());
+        }
+    }
+    blind
+}
+
+/// Whatever the estimate, the answer is the same. The point of the whole
+/// exercise is a better plan, never a different result.
+#[tokio::test]
+async fn an_expression_estimate_never_changes_the_answer() {
+    let (kv, analysed) = analysed_events().await;
+    let table = events();
+    let computed = Query::computed(&table, 0);
+    let informed = events_store(&kv, analysed.clone());
+    let blind = events_store(&kv, blind_stats(&analysed));
+
+    for bucket in [1u64, 7, 23, 49] {
+        for op in [CmpOp::Eq, CmpOp::Lt, CmpOp::Ge] {
+            let query = Query::all()
+                .filter(Expr::compare(computed, op, tag_value(bucket)))
+                .computing([lower_tag()]);
+            let planned = count_through(&informed, query.clone()).await;
+            let unplanned = count_through(&blind, query.clone()).await;
+            let scanned = count_through(&informed, query.using_table_scan()).await;
+            assert_eq!(planned, scanned, "disagreed on {op:?} {bucket}");
+            assert_eq!(unplanned, scanned, "disagreed on {op:?} {bucket}");
+        }
+    }
+}
+
+/// Two expression indexes on one table are described separately.
+///
+/// The two are chosen to be impossible to confuse: every tag is the same
+/// length, so `length(tag)` has exactly one distinct value and no histogram at
+/// all, while `lower(tag)` has forty-five and does. Swap the two slots and both
+/// halves of this fail.
+#[tokio::test]
+async fn two_expression_indexes_get_their_own_statistics() {
+    let (_kv, stats) = analysed_events().await;
+    let lowered = stats.expression(BY_LOWER_TAG).expect("analysed");
+    let lengths = stats.expression(BY_TAG_LENGTH).expect("analysed");
+
+    let by_hand = |scalar: Scalar| {
+        event_rows()
+            .iter()
+            .map(|row| scalar.evaluate(row.values()))
+            .filter(|v| !v.is_null())
+            .collect::<std::collections::BTreeSet<Value>>()
+            .len() as u64
+    };
+    assert_eq!(lowered.distinct, by_hand(lower_tag()));
+    assert_eq!(lengths.distinct, by_hand(tag_length()));
+    assert!(
+        lowered.distinct > lengths.distinct,
+        "{} against {}",
+        lowered.distinct,
+        lengths.distinct
+    );
+
+    // One distinct value is not a distribution, so the length index gets no
+    // histogram where the lowered one does.
+    assert!(stats.expression_histogram(BY_LOWER_TAG).is_some());
+    assert!(stats.expression_histogram(BY_TAG_LENGTH).is_none());
 }

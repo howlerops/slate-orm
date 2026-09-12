@@ -602,6 +602,92 @@ removing it and running the suite. Five failed immediately. The sixth — that
 bulk shortcut — passed, which is how it was found; the test that now covers it
 was written before the guard was believed.
 
+### Statistics for a value no column holds
+
+`analyze` sampled rows and described columns, and an expression index keys on
+something that is not a column — so its estimate came from the default a column
+nobody measured gets: a hundred distinct values, a tenth of them null. That is
+not a small error in one place. For an expression index it is the *only* number
+behind every decision about it.
+
+It now evaluates the expression over the rows it samples and puts the result
+through the same distinct count, null count and reservoir as everything else.
+The statistics are recorded against the **index**, because the value has no
+ordinal of its own; a query that computes the same expression does give it one,
+and the planner copies them onto that ordinal for the length of the plan, which
+is what lets `predicate_selectivity`, `match_key` and `bounded_selectivity` read
+them without any of them learning what an expression is. The alternative — a
+resolver threaded through six signatures — is six places to forget.
+
+Measured on two thousand rows over fifty tag buckets, five of them null and
+each of the rest spelled three ways, so forty-five distinct computed values:
+
+| predicate | rows | estimate before | after |
+|---|---:|---:|---:|
+| `lower(tag) = 'tag-07'` | 40 | 18 (2.22x out) | 40 (1.00x) |
+| `lower(tag) < 'tag-10'` | 360 | 594 (1.65x out) | 352 (1.02x) |
+
+The equality was wrong because a hundred distinct values is the default and
+there are forty-five; the range because without a histogram a one-sided bound is
+a flat third of the table whatever it asks for. And it changes plans, not only
+numbers: a non-covering scan of an expression index costs a point read per row,
+so on a million rows the unmeasured estimate of ten thousand matching rows loses
+to a table scan and the measured one of a single row wins.
+
+The tests are oracles rather than expectations. What `analyze` records is
+checked against the same expression computed by hand over the same rows, and
+what the histogram says against counting them — a statistic asserted equal to a
+number someone wrote down only agrees with whoever wrote it. Two expression
+indexes on one table are checked separately, and chosen so they cannot be
+confused: every tag is the same length, so `length(tag)` has one distinct value
+and no histogram at all where `lower(tag)` has forty-five and does. Swapping the
+two slots fails both halves.
+
+### Covering: taking the value out of the entry
+
+An expression index could never satisfy an index-only scan, and the reason was
+never that the entry held too little — it holds exactly the computed value the
+query asked about. The executor was what could not use it: every scalar was
+evaluated from the row's own columns, and a row rebuilt from an entry has the
+source column null, so the scan would have computed `lower(null)` and answered
+differently from every other access path.
+
+The executor now takes that one value out of the entry it is already holding.
+Which value that is comes from one function, called by the planner to decide the
+scan covers the query and by the executor to decide what to substitute — two
+answers to that question would be a wrong answer one edit away.
+
+The change that made it possible is elsewhere, and is worth stating on its own
+because it changes what a **table scan** returns: **a computed value's input
+columns are read and are not part of the answer.** `SELECT id, lower(title)`
+decodes `title`, computes, and puts `title` back to null. Before, it came back
+populated. It had to change: an entry keyed on `lower(title)` cannot produce
+`title`, so if a table scan produced it the two paths would differ on a column
+nobody projected — which is the covering-scan bug the planner oracle found,
+wearing different clothes. A column the *predicate* reads still comes back, as
+the projection has always documented.
+
+A pleasant by-product: an *ordinary* index now covers a query that computes
+something, when it holds what the expression reads. `by_kind_size` can answer
+`SELECT id WHERE kind = 'x'` computing `upper(kind)` with no row read at all.
+That was previously impossible for a reason with nothing to do with expression
+indexes — the planner expanded a computed value into its inputs before it knew
+which index it was asking about, and then also demanded the computed ordinal
+itself, which no index has.
+
+The tests are differentials, because every way this can go wrong produces a
+*plausible* row rather than an error: the same query is run as an index-only
+scan and as a forced table scan and the **whole rows** are compared, not the
+ids — comparing ids cannot see a column that leaked. The covering decision is
+asserted per projection in the same loop, including the control that reaches for
+the source column and must not be covered, and the reads are counted rather than
+timed: zero for the covered query, one per row for the uncovered one measured in
+the same run, so the zero is a measurement and not a constant.
+
+The planner's guard saying an expression index is never covering was load-bearing
+before this — forcing it true failed three tests — and each of the three now
+asserts the new behaviour instead of being deleted.
+
 ### The other seam: a key the row does not contain
 
 An **expression** index keys on `lower(body)` or `length(url)` — a value no
@@ -678,18 +764,25 @@ what genuinely has not been done.
   against a real S3 server at 200,000 rows, which is what corrected it; the
   million-row runs are still in memory. Nothing has been measured at a size
   where compaction, tiering and a cold cache all matter at once.
-- **Statistics for a computed value.** `analyze` samples rows and builds
-  histograms per column; it does not evaluate an expression index's expression,
-  so the planner's estimate for one comes from whatever stats the caller
-  supplies. The decision is right, the number behind it is a guess.
-- **An expression index can never be covering.** Not because the entry holds
-  too little — it holds exactly the computed value — but because the executor
-  evaluates scalars from a row's own columns, and a row rebuilt from an index
-  entry has the source column null. Teaching it to take the value from the
-  entry it is already holding is a change to the executor, not to the planner.
 - **Partial indexes in the derive macro.** `#[derive(Record)]` cannot declare
   one; the schema builder can. A struct attribute for it is a small piece of
   work that has not been done.
+- **Expression indexes in the planner oracle.** The generator produces neither
+  computed values nor the indexes over them, so the covering path is covered by
+  hand-written differentials rather than by random queries. Those differentials
+  are the right shape — every path, whole rows — but they test the shapes
+  somebody thought of, which is the property the oracle exists to not have.
+- **Expression statistics at scale, or on storage.** The improvement is measured
+  on an in-memory fixture of two thousand rows. Nothing says how a reservoir
+  sample of a computed value behaves on a table where `analyze` is itself a long
+  read, and the cost of evaluating an expression per sampled row is not measured
+  against the read it rides along with.
+- **A partial *and* expression index's statistics.** They describe every row the
+  caller can see, not only the rows the index holds, because the planner
+  multiplies the key's selectivity by the predicate's separately and describing
+  the subset would count the predicate twice. That matches how a partial index's
+  column statistics already work; neither has been measured against a partial
+  index selective enough for the independence assumption to hurt.
 - **Anything about the head node's performance.** Its correctness is tested;
   nothing in it has been benchmarked. The query stream's batch size and the
   lease's fifteen-second term are chosen by argument, not measurement.
