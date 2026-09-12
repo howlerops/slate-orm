@@ -9,9 +9,9 @@
 )]
 
 use slate_orm::{
-    Action, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId, Record,
-    RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog, SecurityContext, TableDef,
-    TableId, Value, ValueType, memory::MemoryStore,
+    Action, Aggregate, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId,
+    Query, Record, RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog,
+    SecurityContext, SortKey, TableDef, TableId, Value, ValueType, memory::MemoryStore,
 };
 use uuid::Uuid;
 
@@ -317,4 +317,111 @@ async fn a_unique_index_declared_on_a_field_is_enforced() {
         ),
         "got {err:?}"
     );
+}
+
+/// The typed layer should reach everything the kernel can do, without dropping
+/// back to untyped calls.
+#[tokio::test]
+async fn the_typed_layer_exposes_queries_aggregates_and_plans() {
+    let store = store();
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    for id in 1..=5u64 {
+        let mut user = alice(1, id);
+        user.age = 20 + id as i64;
+        txn.insert_record(&ctx, &user).await.unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+
+    // A full query: filter, order, window — expressed with the generated
+    // column constants rather than string lookups.
+    let page: Vec<User> = txn
+        .query_records(
+            &ctx,
+            &Query::all()
+                .filter(Expr::compare(
+                    User::COLUMNS.age,
+                    slate_orm::CmpOp::Ge,
+                    Value::I64(22),
+                ))
+                .sort_by([SortKey::desc(User::COLUMNS.age)])
+                .limit(2),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].age, 25);
+    assert_eq!(page[1].age, 24);
+
+    // Counting and aggregating, which never decode a record at all.
+    assert_eq!(
+        txn.count_records::<User>(&ctx, &Query::all())
+            .await
+            .unwrap(),
+        5
+    );
+    let totals = txn
+        .aggregate_records::<User>(
+            &ctx,
+            &Query::all(),
+            &[
+                Aggregate::Min(User::COLUMNS.age),
+                Aggregate::Max(User::COLUMNS.age),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(totals, vec![Value::I64(21), Value::I64(25)]);
+
+    // Grouping.
+    let groups = txn
+        .group_records::<User>(
+            &ctx,
+            &Query::all(),
+            &[User::COLUMNS.tenant_id],
+            &[Aggregate::Count],
+        )
+        .await
+        .unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].values[0], Value::U64(5));
+
+    // And the plan is inspectable from up here too.
+    let explained = txn
+        .explain_records::<User>(&ctx, &Query::all())
+        .unwrap()
+        .to_string();
+    assert!(explained.contains("on users"), "{explained}");
+
+    // Statistics can be gathered for a derived table without naming it.
+    let stats = txn.analyze_records::<User>(&ctx).await.unwrap();
+    assert_eq!(stats.row_count, 5);
+}
+
+/// A decoded record needs every field, so the typed path must not let a
+/// projection turn real values into nulls.
+#[tokio::test]
+async fn typed_queries_always_read_whole_rows() {
+    let store = store();
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    txn.insert_record(&ctx, &alice(1, 1)).await.unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let found: Vec<User> = txn
+        .query_records(
+            &ctx,
+            // Asking for one column: the typed layer must ignore it.
+            &Query::all().select([User::COLUMNS.id]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0], alice(1, 1), "a projected read lost fields");
 }

@@ -48,9 +48,10 @@ pub use slate_derive::Record;
 // The typed layer is not a wall around the kernel; re-export what a caller
 // needs so they are not forced to depend on four crates to write a query.
 pub use slate_kernel::{
-    Access, Action, CmpOp, Expr, Grant, KernelError, KeyRange, Plan, Policy, Principal,
-    QueryCursor, RecordStore, RecordTransaction, ScanOrder, SecurityCatalog, SecurityContext,
-    Truth, memory,
+    Access, AccessSummary, Action, Aggregate, CmpOp, ColumnStats, Explanation, Expr, Grant, Group,
+    KernelError, KeyRange, NullsOrder, Plan, Policy, Principal, Projection, Query, QueryCursor,
+    RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RetryPolicy, ScanOrder,
+    SecurityCatalog, SecurityContext, SortKey, Statistics, TableStats, Truth, latency, memory,
 };
 pub use slate_schema::{
     Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Ordinal, Row, SchemaError, TableDef,

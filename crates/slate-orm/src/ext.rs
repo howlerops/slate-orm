@@ -9,7 +9,11 @@
 use crate::error::{OrmError, Result};
 use crate::record::Record;
 use async_trait::async_trait;
-use slate_kernel::{Expr, RecordTransaction, ScanOrder, SecurityContext};
+use slate_kernel::{
+    Aggregate, Explanation, Expr, Group, Projection, Query, RecordTransaction, ScanOrder,
+    SecurityContext, TableStats,
+};
+use slate_schema::Ordinal;
 use slate_tuple::Value;
 
 /// Typed reads and writes over a [`RecordTransaction`].
@@ -60,6 +64,53 @@ pub trait Records {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<Vec<R>>;
+
+    /// Run a full query — filter, order, limit, offset — and decode the results.
+    ///
+    /// The projection is forced to every column: a decoded record needs all of
+    /// its fields, and a narrowed projection would fill the rest with nulls
+    /// that are indistinguishable from stored ones. Use
+    /// [`Records::aggregate_records`] or the kernel's projected query when the
+    /// point is to read less.
+    async fn query_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Vec<R>>;
+
+    /// Count the rows a query matches, without decoding any.
+    async fn count_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<u64>;
+
+    /// Compute aggregates over the rows a query matches.
+    async fn aggregate_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Value>>;
+
+    /// Compute aggregates per distinct combination of `group`.
+    async fn group_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Group>>;
+
+    /// The plan a query would run under, without running it.
+    fn explain_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Explanation>;
+
+    /// Gather statistics for a record's table. See the kernel's `analyze`.
+    async fn analyze_records<R: Record>(&self, context: &SecurityContext) -> Result<TableStats>;
 }
 
 #[async_trait]
@@ -121,11 +172,65 @@ impl Records for RecordTransaction<'_> {
         filter: Expr,
         order: ScanOrder,
     ) -> Result<Vec<R>> {
+        self.query_records(context, &Query::all().filter(filter).order(order))
+            .await
+    }
+
+    async fn query_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Vec<R>> {
+        let mut query = query.clone();
+        query.projection = Projection::All;
         let rows = self
-            .query(context, R::table(), filter, order)
+            .execute(context, R::table(), &query)
             .await?
             .collect()
             .await?;
         rows.iter().map(R::from_row).map(|r| Ok(r?)).collect()
+    }
+
+    async fn count_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<u64> {
+        Ok(self.count(context, R::table(), query).await?)
+    }
+
+    async fn aggregate_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Value>> {
+        Ok(self
+            .aggregate(context, R::table(), query, aggregates)
+            .await?)
+    }
+
+    async fn group_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Group>> {
+        Ok(self
+            .group_by(context, R::table(), query, group, aggregates)
+            .await?)
+    }
+
+    fn explain_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Explanation> {
+        Ok(self.explain(context, R::table(), query)?)
+    }
+
+    async fn analyze_records<R: Record>(&self, context: &SecurityContext) -> Result<TableStats> {
+        Ok(self.analyze(context, R::table()).await?)
     }
 }

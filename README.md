@@ -14,7 +14,7 @@ the keyspace, index maintenance, and the point where access policy is enforced.
 > TypeScript SDKs are not built yet. See [Status](#status).
 
 ```rust
-use slate_orm::{Record, Records, Expr, ScanOrder};
+use slate_orm::{Aggregate, Expr, Query, Record, Records, SortKey, Value};
 use uuid::Uuid;
 
 #[derive(Record)]
@@ -25,6 +25,7 @@ struct User {
     #[record(index(name = "by_email", id = 10, unique))]
     email: String,
     nickname: Option<String>,
+    age: i64,
 }
 
 let txn = store.begin().await?;
@@ -33,8 +34,21 @@ txn.commit().await?;
 
 // Column ordinals are generated as constants, so a predicate needs no
 // fallible name lookup.
-let filter = Expr::eq(User::COLUMNS.email, Value::Str("a@example.com".into()));
-let found: Vec<User> = txn.find_records(&ctx, filter, ScanOrder::Ascending).await?;
+let recent: Vec<User> = txn
+    .query_records(&ctx, &Query::all()
+        .filter(Expr::eq(User::COLUMNS.email, Value::Str("a@example.com".into())))
+        .sort_by([SortKey::desc(User::COLUMNS.age)])
+        .limit(20))
+    .await?;
+
+// Counting and aggregating decode no records, and read no rows when an index
+// holds the columns involved.
+let total = txn.count_records::<User>(&ctx, &Query::all()).await?;
+let oldest = txn
+    .aggregate_records::<User>(&ctx, &Query::all(), &[Aggregate::Max(User::COLUMNS.age)])
+    .await?;
+
+println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 ```
 
 ## Layout
