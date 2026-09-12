@@ -165,6 +165,21 @@ each had to be talked out of. And the hash build side is bounded, because a join
 condition that does not relate the two tables is otherwise a way to be killed by
 the allocator rather than told what is wrong.
 
+### Chains cost what their steps cost
+
+A chain of three tables runs as repeated two-table steps, each choosing its own
+algorithm. Two things were worth checking rather than assuming.
+
+The machinery is not a tax: the same two-table join expressed as a one-step
+chain came out at 32.7 ms against the specialised path's 32.1 ms, with the same
+reads and the same algorithm chosen. And a chain that starts from one row does
+not automatically get cheap — `one team → actors → events` is 32 ms against the
+whole-table version's 36 ms, because the last step scans every event either
+way. The step counts say why at a glance: `[1, 50, 250]`. That number is
+reported by the cursor rather than only estimated, because a step that was
+predicted at ten rows and produced ten thousand is the usual reason a chain is
+slow, and it is invisible otherwise.
+
 ## Current numbers
 
 | query | rows | point reads | wall | plan |
@@ -181,6 +196,8 @@ the allocator rather than told what is wrong.
 |---|---:|---:|---:|---:|---|
 | every actor to their events | 2500 | 0 | 3000 | 32 ms | Hash |
 | one actor's events | 5 | 6 | 5 | 6.7 ms | Nested Loop |
+| every team → actors → events | 2500 | 0 | 3010 | 36 ms | hash + hash |
+| one team → actors → events | 250 | 1 | 3000 | 32 ms | hash + hash |
 
 | write | rows | point reads | wall |
 |---|---:|---:|---:|

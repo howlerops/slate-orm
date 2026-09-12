@@ -10,8 +10,8 @@ use crate::error::{OrmError, Result};
 use crate::record::Record;
 use async_trait::async_trait;
 use slate_kernel::{
-    Aggregate, Explanation, Expr, Group, Join, JoinExplanation, KernelError, Projection, Query,
-    RecordTransaction, ScanOrder, SecurityContext, TableStats,
+    Aggregate, Chain, Explanation, Expr, Group, Join, JoinExplanation, KernelError, Projection,
+    Query, RecordTransaction, ScanOrder, SecurityContext, TableStats,
 };
 use slate_schema::Ordinal;
 use slate_tuple::Value;
@@ -136,6 +136,18 @@ pub trait Records {
         context: &SecurityContext,
         join: &Join,
     ) -> Result<JoinExplanation>;
+
+    /// Join three record types in a chain, decoding each side.
+    ///
+    /// The chain's ordinal space comes from
+    /// `JoinSchema::over([A::table(), B::table(), C::table()])`, and each
+    /// step's condition is written in it. A table that an outer step left
+    /// absent decodes to `None`.
+    async fn chain_records<A: Record, B: Record, C: Record>(
+        &self,
+        context: &SecurityContext,
+        chain: &Chain,
+    ) -> Result<Vec<(Option<A>, Option<B>, Option<C>)>>;
 
     /// Compute aggregates over the rows a query matches.
     async fn aggregate_records<R: Record>(
@@ -330,6 +342,27 @@ impl Records for RecordTransaction<'_> {
     ) -> Result<JoinExplanation> {
         self.explain_join(context, L::table(), R::table(), join)
             .map_err(OrmError::from)
+    }
+
+    async fn chain_records<A: Record, B: Record, C: Record>(
+        &self,
+        context: &SecurityContext,
+        chain: &Chain,
+    ) -> Result<Vec<(Option<A>, Option<B>, Option<C>)>> {
+        let rows = self
+            .chain(context, &[A::table(), B::table(), C::table()], chain)
+            .await?
+            .collect()
+            .await?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    row.at(0).map(A::from_row).transpose()?,
+                    row.at(1).map(B::from_row).transpose()?,
+                    row.at(2).map(C::from_row).transpose()?,
+                ))
+            })
+            .collect()
     }
 
     async fn count_records<R: Record>(

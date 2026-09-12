@@ -16,8 +16,8 @@
 use slate_kernel::latency::{LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Action, CmpOp, Expr, Grant, Join, JoinAlgorithm, Projection, Query, RecordStore, ScanOrder,
-    SecurityCatalog, SecurityContext, Side, Statistics,
+    Action, Chain, CmpOp, Expr, Grant, Join, JoinAlgorithm, JoinSchema, JoinStep, Projection,
+    Query, RecordStore, ScanOrder, SecurityCatalog, SecurityContext, Side, Statistics,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value, ValueType};
@@ -26,9 +26,11 @@ use uuid::Uuid;
 
 const EVENTS: TableId = TableId(1);
 const ACTORS: TableId = TableId(2);
+const TEAMS: TableId = TableId(3);
 const TENANTS: u128 = 4;
 const ROWS_PER_TENANT: u64 = 2_500;
 const ACTOR_COUNT: u64 = 500;
+const TEAM_COUNT: u64 = 10;
 
 fn events() -> TableDef {
     TableDef::builder("events", EVENTS)
@@ -71,6 +73,30 @@ fn actor_row(tenant: u128, id: u64) -> Row {
     ])
 }
 
+/// The third link: the team each actor belongs to.
+fn teams() -> TableDef {
+    TableDef::builder("teams", TEAMS)
+        .column("tenant_id", ValueType::Uuid)
+        .column("name", ValueType::Str)
+        .column("region", ValueType::Str)
+        .primary_key(["tenant_id", "name"])
+        .tenant_column("tenant_id")
+        .build()
+        .expect("valid schema")
+}
+
+fn team_column(name: &str) -> Ordinal {
+    teams().ordinal_of(name).expect("column exists")
+}
+
+fn team_row(tenant: u128, id: u64) -> Row {
+    Row::new(vec![
+        Value::Uuid(Uuid::from_u128(tenant)),
+        Value::Str(format!("team-{id}")),
+        Value::Str(format!("region-{}", id % 3)),
+    ])
+}
+
 fn column(name: &str) -> Ordinal {
     events().ordinal_of(name).expect("column exists")
 }
@@ -90,10 +116,13 @@ fn row(tenant: u128, id: u64) -> Row {
 async fn main() {
     let table = events();
     let actor_table = actors();
-    let catalog = Catalog::from_tables([table.clone(), actor_table.clone()]).expect("catalog");
+    let team_table = teams();
+    let catalog = Catalog::from_tables([table.clone(), actor_table.clone(), team_table.clone()])
+        .expect("catalog");
     let security = SecurityCatalog::new()
         .grant(Grant::new("bench", EVENTS, Action::ALL))
-        .grant(Grant::new("bench", ACTORS, Action::ALL));
+        .grant(Grant::new("bench", ACTORS, Action::ALL))
+        .grant(Grant::new("bench", TEAMS, Action::ALL));
     let root = SecurityContext::superuser();
 
     let backing = MemoryStore::new();
@@ -114,17 +143,23 @@ async fn main() {
                 .await
                 .expect("insert");
         }
+        for id in 0..TEAM_COUNT {
+            txn.insert(&root, &team_table, &team_row(tenant, id))
+                .await
+                .expect("insert");
+        }
         txn.commit().await.expect("commit");
     }
 
     // Statistics first: without them the planner has to guess how many rows a
     // predicate selects, and guessing structurally is what made it pick a plan
     // 30x slower than the alternative.
-    let (analyzed, actors_analyzed) = {
+    let (analyzed, actors_analyzed, teams_analyzed) = {
         let txn = loader.begin().await.expect("begin");
         (
             txn.analyze(&root, &table).await.expect("analyze"),
             txn.analyze(&root, &actor_table).await.expect("analyze"),
+            txn.analyze(&root, &team_table).await.expect("analyze"),
         )
     };
     println!(
@@ -139,7 +174,8 @@ async fn main() {
     let store = RecordStore::new(slow, catalog, security).with_statistics(
         Statistics::new()
             .with(EVENTS, analyzed)
-            .with(ACTORS, actors_analyzed),
+            .with(ACTORS, actors_analyzed)
+            .with(TEAMS, teams_analyzed),
     );
 
     let tenant = Value::Uuid(Uuid::from_u128(0));
@@ -319,6 +355,69 @@ async fn main() {
             counters.scan_rows(),
             started.elapsed(),
             algorithm
+        );
+    }
+
+    println!("\nchains");
+    println!("{:-<118}", "");
+    let chain_tables: Vec<&TableDef> = vec![&team_table, &actor_table, &table];
+    let at = JoinSchema::over(chain_tables.iter().copied());
+    let one_team = || {
+        Query::all().filter(
+            Expr::eq(team_column("tenant_id"), tenant.clone())
+                .and(Expr::eq(team_column("name"), Value::Str("team-3".into()))),
+        )
+    };
+    let all_teams = || Query::all().filter(Expr::eq(team_column("tenant_id"), tenant.clone()));
+    let to_actors = || {
+        JoinStep::equating(at.at(0, team_column("name")), actor_column("team"))
+            .query(Query::all().filter(Expr::eq(actor_column("tenant_id"), tenant.clone())))
+    };
+    let to_events = || {
+        JoinStep::equating(at.at(1, actor_column("name")), column("actor"))
+            .query(Query::all().filter(by_tenant()))
+    };
+    let chains: Vec<(&str, Chain)> = vec![
+        (
+            "every team -> actors -> events",
+            Chain::from(all_teams()).join(to_actors()).join(to_events()),
+        ),
+        (
+            "one team -> actors -> events",
+            Chain::from(one_team()).join(to_actors()).join(to_events()),
+        ),
+    ];
+    for (label, chain) in chains {
+        counters.reset();
+        let started = Instant::now();
+        let txn = store.begin().await.expect("begin");
+        let plan = txn
+            .explain_chain(&root, &chain_tables, &chain)
+            .expect("explain");
+        let algorithms: Vec<String> = plan
+            .steps
+            .iter()
+            .map(|step| match step.algorithm {
+                JoinAlgorithm::NestedLoop => "loop".to_owned(),
+                JoinAlgorithm::Hash { .. } => "hash".to_owned(),
+            })
+            .collect();
+        let cursor = txn
+            .chain(&root, &chain_tables, &chain)
+            .await
+            .expect("chain");
+        let steps = format!("{:?}", cursor.step_counts());
+        let rows = cursor.count().await.expect("count");
+        println!(
+            "{:<38} {:>6} {:>8} {:>7} {:>10} {:>12?}  {} {}",
+            label,
+            rows,
+            counters.gets(),
+            counters.scans(),
+            counters.scan_rows(),
+            started.elapsed(),
+            algorithms.join("+"),
+            steps
         );
     }
 

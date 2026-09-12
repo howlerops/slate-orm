@@ -9,6 +9,7 @@
 #![warn(missing_docs)]
 
 pub mod aggregate;
+pub mod chain;
 pub mod error;
 pub mod exec;
 pub mod explain;
@@ -29,6 +30,7 @@ pub mod store;
 pub mod token;
 
 pub use aggregate::{Aggregate, Group};
+pub use chain::{Chain, ChainCursor, ChainPlan, ChainRow, JoinStep, JoinStepPlan};
 pub use error::{KernelError, Result, StorageError};
 pub use exec::QueryCursor;
 pub use explain::{AccessSummary, Explanation, JoinExplanation};

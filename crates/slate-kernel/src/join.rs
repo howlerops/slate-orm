@@ -441,8 +441,37 @@ pub(crate) fn distinct_over(stats: &TableStats, columns: &[Ordinal]) -> f64 {
 /// is still evaluated on every pair.
 pub(crate) const CROSS_SIDE_SELECTIVITY: f64 = 0.3;
 
+/// A chain step's condition, costed against the new table's statistics.
+///
+/// A conjunct naming only the table being added is costed properly; anything
+/// touching an earlier table has no single set of statistics to ask, so it
+/// gets the same fixed guess a two-table cross-side conjunct gets.
+pub(crate) fn having_selectivity_at(
+    schema: &JoinSchema,
+    having: &Expr,
+    stats: &TableStats,
+    position: usize,
+) -> f64 {
+    let mut selectivity = 1.0;
+    for conjunct in having.conjuncts() {
+        let columns = conjunct.columns();
+        let only_here = !columns.is_empty()
+            && columns
+                .iter()
+                .all(|c| matches!(schema.locate(*c), Some((at, _)) if at == position));
+        selectivity *= if only_here {
+            let moved =
+                conjunct.map_columns(&|c| schema.locate(c).map_or(c, |(_, ordinal)| ordinal));
+            stats.predicate_selectivity(&moved)
+        } else {
+            CROSS_SIDE_SELECTIVITY
+        };
+    }
+    selectivity.clamp(0.0, 1.0)
+}
+
 pub(crate) fn having_selectivity(
-    schema: JoinSchema,
+    schema: &JoinSchema,
     having: &Expr,
     left: &TableStats,
     right: &TableStats,
@@ -530,80 +559,128 @@ pub(crate) fn probe_floor(cost: f64) -> f64 {
 
 /// The ordinal space of a joined row.
 ///
-/// A join's two sides are separate tables with separate ordinals, so `left.a`
-/// and `right.a` are both `Ordinal(0)` and a predicate naming one cannot say
-/// which. This gives them one space: the left table's columns keep their own
-/// ordinals and the right table's are shifted past the left table's width.
+/// A join's sides are separate tables with separate ordinals, so `left.a` and
+/// `right.a` are both `Ordinal(0)` and a predicate naming one cannot say
+/// which. This gives them one space: each table's columns are shifted past the
+/// widths of the tables before it.
 ///
 /// It is a shift rather than a `(side, ordinal)` pair so that a cross-side
 /// predicate is an ordinary [`Expr`] — the same type, the same evaluator, the
 /// same three-valued logic the security filter depends on. A parallel
 /// expression type for joins would be a second place for those null semantics
 /// to be got wrong.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Two tables is the common case and has [`JoinSchema::left`] and
+/// [`JoinSchema::right`] for it; a chain of more uses
+/// [`JoinSchema::at`](JoinSchema::at) with a table's position.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinSchema {
-    left_width: usize,
-    right_width: usize,
+    /// Column count of each table, in order.
+    widths: Vec<usize>,
+    /// Where each table's columns start in the joined space.
+    offsets: Vec<usize>,
 }
 
 impl JoinSchema {
-    /// The space for a join of these two tables.
+    /// The space for a chain of tables, in the order they are joined.
+    #[must_use]
+    pub fn over<'t, I: IntoIterator<Item = &'t TableDef>>(tables: I) -> Self {
+        let widths: Vec<usize> = tables.into_iter().map(|t| t.columns().len()).collect();
+        let mut offsets = Vec::with_capacity(widths.len());
+        let mut at = 0;
+        for width in &widths {
+            offsets.push(at);
+            at += width;
+        }
+        Self { widths, offsets }
+    }
+
+    /// The space for a join of two tables.
     #[must_use]
     pub fn of(left: &TableDef, right: &TableDef) -> Self {
-        Self {
-            left_width: left.columns().len(),
-            right_width: right.columns().len(),
-        }
+        Self::over([left, right])
+    }
+
+    /// A column of the table at `position` in the chain, in the joined space.
+    ///
+    /// A position past the end returns the ordinal unchanged, which is then
+    /// out of range and refused by validation rather than silently reading as
+    /// some other table's column.
+    #[must_use]
+    pub fn at(&self, position: usize, column: Ordinal) -> Ordinal {
+        Ordinal(
+            self.offsets
+                .get(position)
+                .map_or(column.0, |o| o + column.0),
+        )
     }
 
     /// A left-table column, in the joined space. Unchanged, by construction.
     #[must_use]
-    pub const fn left(self, column: Ordinal) -> Ordinal {
-        column
+    pub fn left(&self, column: Ordinal) -> Ordinal {
+        self.at(0, column)
     }
 
     /// A right-table column, in the joined space.
     #[must_use]
-    pub const fn right(self, column: Ordinal) -> Ordinal {
-        Ordinal(column.0 + self.left_width)
+    pub fn right(&self, column: Ordinal) -> Ordinal {
+        self.at(1, column)
     }
 
     /// A column of `side`, in the joined space.
     #[must_use]
-    pub const fn column(self, side: Side, column: Ordinal) -> Ordinal {
+    pub fn column(&self, side: Side, column: Ordinal) -> Ordinal {
         match side {
             Side::Left => self.left(column),
             Side::Right => self.right(column),
         }
     }
 
-    /// Which side a joined ordinal belongs to, and its ordinal there.
+    /// Which table a joined ordinal belongs to, and its ordinal there.
     #[must_use]
-    pub const fn resolve(self, column: Ordinal) -> Option<(Side, Ordinal)> {
-        if column.0 < self.left_width {
-            Some((Side::Left, column))
-        } else if column.0 < self.left_width + self.right_width {
-            Some((Side::Right, Ordinal(column.0 - self.left_width)))
-        } else {
-            None
+    pub fn locate(&self, column: Ordinal) -> Option<(usize, Ordinal)> {
+        for (position, (offset, width)) in self.offsets.iter().zip(&self.widths).enumerate() {
+            if column.0 >= *offset && column.0 < offset + width {
+                return Some((position, Ordinal(column.0 - offset)));
+            }
+        }
+        None
+    }
+
+    /// Which side a joined ordinal belongs to, for a two-table join.
+    ///
+    /// `None` for an ordinal outside the space, and for one belonging to a
+    /// third table — a caller asking about sides has a two-table join in mind.
+    #[must_use]
+    pub fn resolve(&self, column: Ordinal) -> Option<(Side, Ordinal)> {
+        match self.locate(column) {
+            Some((0, at)) => Some((Side::Left, at)),
+            Some((1, at)) => Some((Side::Right, at)),
+            _ => None,
         }
     }
 
     /// Total columns in the joined space.
     #[must_use]
-    pub const fn width(self) -> usize {
-        self.left_width + self.right_width
+    pub fn width(&self) -> usize {
+        self.widths.iter().sum()
     }
 
-    /// The columns of `predicate` that belong to one side, back in that
-    /// table's own ordinals.
+    /// How many tables the space covers.
     #[must_use]
-    pub fn side_columns(self, predicate: &Expr, side: Side) -> Vec<Ordinal> {
+    pub fn tables(&self) -> usize {
+        self.widths.len()
+    }
+
+    /// The columns of `predicate` that belong to the table at `position`, back
+    /// in that table's own ordinals.
+    #[must_use]
+    pub fn columns_at(&self, predicate: &Expr, position: usize) -> Vec<Ordinal> {
         predicate
             .columns()
             .into_iter()
-            .filter_map(|c| match self.resolve(c) {
-                Some((found, ordinal)) if found == side => Some(ordinal),
+            .filter_map(|c| match self.locate(c) {
+                Some((found, ordinal)) if found == position => Some(ordinal),
                 _ => None,
             })
             .collect()
@@ -620,7 +697,7 @@ impl JoinSchema {
 /// keeps only rows that matched, which is the familiar reason such a filter
 /// belongs in `ON` rather than `WHERE`.
 struct JoinedView<'r> {
-    schema: JoinSchema,
+    schema: &'r JoinSchema,
     left: Option<&'r Row>,
     right: Option<&'r Row>,
 }
@@ -932,7 +1009,7 @@ pub struct JoinCursor<'a> {
     join_type: JoinType,
     /// The condition over the joined row, and the space it is written in.
     having: Arc<Expr>,
-    schema: JoinSchema,
+    schema: Arc<JoinSchema>,
     limit: Option<usize>,
     offset: usize,
     skipped: usize,
@@ -944,7 +1021,7 @@ pub struct JoinCursor<'a> {
 /// Split out so both algorithms apply it identically. `Expr::True` short-
 /// circuits, so a join with no such condition pays a discriminant check per
 /// pair and nothing else.
-fn admits_pair(having: &Expr, schema: JoinSchema, left: &Row, right: &Row) -> bool {
+fn admits_pair(having: &Expr, schema: &JoinSchema, left: &Row, right: &Row) -> bool {
     if matches!(having, Expr::True) {
         return true;
     }
@@ -1022,7 +1099,7 @@ impl<'a> JoinCursor<'a> {
             state,
             join_type: join.join_type,
             having: Arc::new(join.having.clone()),
-            schema: JoinSchema::of(left_table, right_table),
+            schema: Arc::new(JoinSchema::of(left_table, right_table)),
             limit: join.limit,
             offset: join.offset,
             skipped: 0,
@@ -1049,7 +1126,7 @@ impl<'a> JoinCursor<'a> {
     async fn next_joined(&mut self) -> Result<Option<JoinedRow>> {
         let join_type = self.join_type;
         let having = Arc::clone(&self.having);
-        let schema = self.schema;
+        let schema = Arc::clone(&self.schema);
         match &mut self.state {
             State::Hash {
                 probe,
@@ -1080,7 +1157,7 @@ impl<'a> JoinCursor<'a> {
                         let (Some(l), Some(r)) = (&candidate.left, &candidate.right) else {
                             continue;
                         };
-                        if admits_pair(&having, schema, l, r) {
+                        if admits_pair(&having, &schema, l, r) {
                             emit = Some(candidate);
                             break;
                         }
@@ -1150,7 +1227,7 @@ impl<'a> JoinCursor<'a> {
                     Some(Ok((left, matches))) => {
                         let matches: Vec<Row> = matches
                             .into_iter()
-                            .filter(|right| admits_pair(&having, schema, &left, right))
+                            .filter(|right| admits_pair(&having, &schema, &left, right))
                             .collect();
                         if matches.is_empty() {
                             if join_type.preserves(Side::Left) {

@@ -280,6 +280,39 @@ so a hash join wins the general case by 4.7×. But "one row against ten thousand
 is what an ORM does all day — load a user, then their orders — and there the loop
 wins by 4.4×. The planner gets both right; `explain_join` says which it chose.
 
+### Chains of more than two tables
+
+```rust
+let at = JoinSchema::over([&teams, &actors, &events]);
+let chain = Chain::from(one_team)
+    .join(JoinStep::equating(at.at(0, team_name), actor_team))
+    .join(JoinStep::equating(at.at(1, actor_name), event_actor));
+
+let rows: Vec<(Option<Team>, Option<Actor>, Option<Event>)> =
+    txn.chain_records(&ctx, &chain).await?;
+```
+
+Left-deep and explicit: the tables join in the order written, and there is no
+join-order search. That is the part of query optimisation that genuinely needs
+one — the space is factorial and the estimates feeding it compound — and doing
+it badly would be worse than not doing it, because a wrong order here costs
+round trips rather than a constant factor.
+
+A step can join back to any earlier table, not only the one before it, which is
+what the positional ordinal space is for. Each step chooses its own algorithm
+by the same rule as a two-table join, and each is a secured read, so a policy on
+the third table applies as surely as one on the first.
+
+Intermediates are materialised — each step is the next step's build side — so
+the accumulated set is bounded at every step rather than left to the allocator.
+`step_counts()` reports what each step actually produced, which is the first
+thing to look at when a chain is slow and the estimate said it would not be:
+
+```
+every team -> actors -> events   2500 rows   3 scans, 3010 rows read   36 ms   [10, 500, 2500]
+one team   -> actors -> events    250 rows   2 scans, 3000 rows read   32 ms   [1, 50, 250]
+```
+
 ### Schemas are code, and so are policies
 
 No dynamic DDL. A table is defined once through a builder that validates
@@ -420,6 +453,7 @@ Built and tested:
 - [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
 - [x] Inner, left, right and full outer joins, hash or nested-loop by cost,
       both sides secured; conditions spanning both sides
+- [x] Chains of three or more tables, in the order written, with per-step plans
 - [x] Bulk writes: `insert_many`/`upsert_many` overlap the duplicate-key and
       unique-index reads (100 rows in 13 ms, down from 223 ms)
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
@@ -431,7 +465,6 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Joining more than two tables in one plan
 - [ ] Histograms, so a range estimate is better than a fixed guess; correlated
       column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)

@@ -6,10 +6,11 @@
 //! that does not go through the secured reads in this module.
 
 use crate::aggregate::{Accumulators, Aggregate, Group};
+use crate::chain::{self, Chain, ChainCursor, ChainPlan, JoinStepPlan};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::expr::Expr;
-use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinPlan, JoinSchema, Side};
+use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinKey, JoinPlan, JoinSchema, Side};
 use crate::keys;
 use crate::plan::{Plan, Projection, plan_full};
 use crate::query::Query;
@@ -229,7 +230,7 @@ impl<'a> SecuredReads<'a> {
                 right.estimated_rows,
                 join::distinct_over(&left_stats, &join.columns(Side::Left)),
                 join::distinct_over(&right_stats, &join.columns(Side::Right)),
-            ) * join::having_selectivity(schema, &join.having, &left_stats, &right_stats);
+            ) * join::having_selectivity(&schema, &join.having, &left_stats, &right_stats);
         let per_row = estimated_rows * join::JOIN_ROW_COST;
 
         // A probe is the right side read with the join equality bound to one
@@ -293,6 +294,115 @@ impl<'a> SecuredReads<'a> {
             estimated_rows,
             estimated_cost,
         })
+    }
+
+    /// Choose how to run a chain of joins.
+    ///
+    /// Every table is planned through [`SecuredReads::plan`], so every one is
+    /// authorised and carries its own row filter. A chain is *n* secured
+    /// reads, and the argument that a join cannot see a hidden row is the
+    /// same one applied once per step.
+    pub(crate) fn plan_chain(
+        self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        schema: &JoinSchema,
+    ) -> Result<ChainPlan> {
+        chain.validate(tables, schema)?;
+
+        let first_table = *chain::table_at(tables, 0)?;
+        let first = self.plan(context, first_table, &chain.first)?;
+        let mut estimated_rows = first.estimated_rows;
+        let mut estimated_cost = first.estimated_cost;
+        let mut steps = Vec::with_capacity(chain.steps.len());
+
+        for (index, step) in chain.steps.iter().enumerate() {
+            let table = *chain::table_at(tables, index + 1)?;
+            let stats = self.statistics.table(table);
+            let plan = self.plan(context, table, &step.query)?;
+
+            // The same probe-shape trick as a two-table join: the literal does
+            // not matter, only the column's distinct count.
+            let own: Vec<JoinKey> = step
+                .on
+                .iter()
+                .map(|key| JoinKey::new(key.left, key.right))
+                .collect();
+            let mut probe_query = step.query.clone();
+            probe_query.filter = core::mem::replace(&mut probe_query.filter, Expr::True)
+                .and(join::probe_shape(&own));
+            let probe = self.plan(context, table, &probe_query)?;
+
+            // Hash: read the table once, probe with what is already in memory.
+            // Loop: one probe per accumulated row.
+            let hash_cost = plan.estimated_cost;
+            let loop_cost = estimated_rows.max(0.0) * chain::step_probe_floor(probe.estimated_cost);
+            // A loop learns nothing about a row of the new table it did not
+            // fetch, so it cannot preserve that side. Same limit as before.
+            let loop_possible = !step.join_type.preserves(Side::Right);
+
+            let (algorithm, cost) = match step.force {
+                Some(forced @ JoinAlgorithm::Hash { .. }) => (forced, hash_cost),
+                Some(JoinAlgorithm::NestedLoop) if !loop_possible => {
+                    return Err(KernelError::JoinNotSupported {
+                        reason: format!(
+                            "step {} (`{}`) preserves unmatched rows of that table, \
+                             which a nested loop cannot do",
+                            index + 1,
+                            table.name()
+                        ),
+                    });
+                }
+                Some(JoinAlgorithm::NestedLoop) => (JoinAlgorithm::NestedLoop, loop_cost),
+                None if loop_possible && loop_cost < hash_cost => {
+                    (JoinAlgorithm::NestedLoop, loop_cost)
+                }
+                // The accumulated side is already in memory, so a hash step
+                // builds nothing new: it reads the table and probes it.
+                None => (JoinAlgorithm::Hash { build: Side::Right }, hash_cost),
+            };
+
+            let distinct =
+                join::distinct_over(&stats, &step.on.iter().map(|k| k.right).collect::<Vec<_>>());
+            // An accumulated row matches, on average, as many rows of the new
+            // table as that table has per distinct key value.
+            let fanout = (plan.estimated_rows / distinct.max(1.0)).max(0.0);
+            let mut rows = estimated_rows * fanout;
+            if step.join_type.preserves(Side::Left) {
+                // An outer step returns at least what it started with.
+                rows = rows.max(estimated_rows);
+            }
+            rows *= join::having_selectivity_at(schema, &step.having, &stats, index + 1);
+
+            estimated_rows = rows;
+            estimated_cost += cost;
+            steps.push(JoinStepPlan {
+                plan,
+                algorithm,
+                estimated_rows: rows,
+                estimated_cost: cost,
+            });
+        }
+
+        Ok(ChainPlan {
+            first,
+            steps,
+            estimated_rows,
+            estimated_cost,
+        })
+    }
+
+    /// Plan and run a chain of joins.
+    pub(crate) async fn chain(
+        self,
+        context: &SecurityContext,
+        tables: &[&'a TableDef],
+        chain: &Chain,
+    ) -> Result<ChainCursor> {
+        let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
+        let plan = self.plan_chain(context, tables, chain, &schema)?;
+        chain::run(self, context, tables, chain, &plan, schema).await
     }
 
     /// Plan and run a join.

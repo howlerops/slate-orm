@@ -9,9 +9,10 @@
 )]
 
 use slate_orm::{
-    Action, Aggregate, Catalog, Direction, Expr, Field, FieldError, Grant, IndexDef, IndexId, Join,
-    JoinSchema, Query, Record, RecordError, RecordStore, Records, Row, ScanOrder, SecurityCatalog,
-    SecurityContext, SortKey, TableDef, TableId, Value, ValueType, memory::MemoryStore,
+    Action, Aggregate, Catalog, Chain, Direction, Expr, Field, FieldError, Grant, IndexDef,
+    IndexId, Join, JoinSchema, JoinStep, Query, Record, RecordError, RecordStore, Records, Row,
+    ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef, TableId, Value, ValueType,
+    memory::MemoryStore,
 };
 use uuid::Uuid;
 
@@ -661,4 +662,82 @@ async fn typed_joins_take_a_cross_side_condition() {
         ));
     let none: Vec<(User, Option<Post>)> = txn.join_records(&ctx, &flipped).await.unwrap();
     assert!(none.is_empty(), "{none:?}");
+}
+
+/// A third record type, so the typed layer has a chain to walk.
+#[derive(Debug, Clone, PartialEq, Record)]
+#[record(table = "blogs", id = 3)]
+struct Blog {
+    #[record(pk)]
+    tenant_id: Uuid,
+    #[record(pk)]
+    id: u64,
+    name: String,
+}
+
+/// Walking two associations down, decoded at every step.
+#[tokio::test]
+async fn typed_chains_decode_every_table() {
+    let catalog = Catalog::from_tables([
+        User::table().clone(),
+        Post::table().clone(),
+        Blog::table().clone(),
+    ])
+    .expect("catalog");
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        catalog,
+        SecurityCatalog::new()
+            .grant(Grant::new("member", User::table().id(), Action::ALL))
+            .grant(Grant::new("member", Post::table().id(), Action::ALL))
+            .grant(Grant::new("member", Blog::table().id(), Action::ALL)),
+    );
+    let ctx = context(1);
+
+    let txn = store.begin().await.unwrap();
+    txn.insert_records(&ctx, &[alice(1, 1)]).await.unwrap();
+    txn.insert_records(&ctx, &[post(1, 100, Some(1), "hello")])
+        .await
+        .unwrap();
+    txn.insert_records(
+        &ctx,
+        &[Blog {
+            tenant_id: Uuid::from_u128(1),
+            id: 100,
+            name: "the blog".to_owned(),
+        }],
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::over([User::table(), Post::table(), Blog::table()]);
+    // users -> posts by author, posts -> blogs by the post's own id.
+    let chain = Chain::start()
+        .join(JoinStep::equating(
+            at.at(0, User::COLUMNS.id),
+            Post::COLUMNS.author_id,
+        ))
+        .join(JoinStep::equating(
+            at.at(1, Post::COLUMNS.id),
+            Blog::COLUMNS.id,
+        ));
+
+    let rows: Vec<(Option<User>, Option<Post>, Option<Blog>)> =
+        txn.chain_records(&ctx, &chain).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let (user, post, blog) = &rows[0];
+    assert_eq!(user.as_ref().unwrap().id, 1);
+    assert_eq!(post.as_ref().unwrap().title, "hello");
+    assert_eq!(blog.as_ref().unwrap().name, "the blog");
+
+    // An outer step leaves the tail absent rather than dropping the row.
+    let dangling = Chain::start()
+        .join(JoinStep::equating(at.at(0, User::COLUMNS.id), Post::COLUMNS.author_id).left_outer())
+        .join(JoinStep::equating(at.at(1, Post::COLUMNS.id), Blog::COLUMNS.tenant_id).left_outer());
+    let rows: Vec<(Option<User>, Option<Post>, Option<Blog>)> =
+        txn.chain_records(&ctx, &dangling).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].2.is_none(), "no blog should match a uuid column");
 }

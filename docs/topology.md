@@ -155,14 +155,19 @@ been tried.
 Those reads are independent and could be issued together. Small, safe,
 unmeasured — and worth less than the batch case, which is done.
 
-### Joins beyond two tables
+### Join order, and streaming a chain
 
-A join is two secured cursors combined; three tables would be a tree of them,
-and the planner would then have to choose a join order, which is the part of
-query optimisation that actually needs a search. Two tables covers association
-loading, which is what the typed layer is for. The shape composes — a
-`JoinedRow` keeps each side's row intact rather than flattening them — so a
-third side is a planner problem rather than an executor one.
+A chain joins its tables in the order written. Choosing that order is the part
+of query optimisation that genuinely needs a search: the space is factorial,
+the estimates feeding it compound, and a wrong choice costs round trips rather
+than a constant factor. Doing it badly would be worse than not doing it, so it
+is the caller's decision and the cursor reports what each step actually
+produced so they can tell when they chose wrong.
+
+A chain also materialises its intermediates, because each step is the next
+step's build side. The last step need not: it could stream, the way a two-table
+join's probe side does. That is a real optimisation, bounded in scope, and not
+done.
 
 ### Pushing a cross-side condition down
 

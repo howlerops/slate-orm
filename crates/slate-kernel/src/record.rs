@@ -6,11 +6,12 @@
 //! whole write lands or none of it does.
 
 use crate::aggregate::{Aggregate, Group};
+use crate::chain::{Chain, ChainCursor, ChainPlan};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::explain::{Explanation, JoinExplanation};
 use crate::expr::Expr;
-use crate::join::{Join, JoinCursor};
+use crate::join::{Join, JoinCursor, JoinSchema};
 use crate::keys::{self, IndexEntry};
 use crate::plan::Projection;
 use crate::query::Query;
@@ -356,6 +357,31 @@ impl<'a> RecordTransaction<'a> {
     ) -> Result<JoinExplanation> {
         let plan = self.reads().plan_join(context, left, right, join)?;
         Ok(JoinExplanation::of(left, right, &plan, join))
+    }
+
+    /// Join a chain of tables, in the order given.
+    ///
+    /// `tables` is the chain in order and must be one longer than the chain's
+    /// steps: the first table, then the table each step adds. Every one is
+    /// read through its own secured plan. See [`crate::chain`].
+    pub async fn chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+    ) -> Result<ChainCursor> {
+        self.reads().chain(context, tables, chain).await
+    }
+
+    /// The plan `chain` would run under, without running it.
+    pub fn explain_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+    ) -> Result<ChainPlan> {
+        let schema = JoinSchema::over(tables.iter().copied());
+        self.reads().plan_chain(context, tables, chain, &schema)
     }
 
     /// Compute `aggregates` over the rows `query` selects.
@@ -1066,6 +1092,31 @@ impl<'a> RecordSnapshot<'a> {
     ) -> Result<JoinExplanation> {
         let plan = self.reads().plan_join(context, left, right, join)?;
         Ok(JoinExplanation::of(left, right, &plan, join))
+    }
+
+    /// Join a chain of tables, in the order given.
+    ///
+    /// `tables` is the chain in order and must be one longer than the chain's
+    /// steps: the first table, then the table each step adds. Every one is
+    /// read through its own secured plan. See [`crate::chain`].
+    pub async fn chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+    ) -> Result<ChainCursor> {
+        self.reads().chain(context, tables, chain).await
+    }
+
+    /// The plan `chain` would run under, without running it.
+    pub fn explain_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+    ) -> Result<ChainPlan> {
+        let schema = JoinSchema::over(tables.iter().copied());
+        self.reads().plan_chain(context, tables, chain, &schema)
     }
 
     /// Compute `aggregates` over the rows `query` selects.
