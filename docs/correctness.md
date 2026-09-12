@@ -573,6 +573,36 @@ back; what is tested is the decision, which is the half with the sharp edge.
 Until the write path closes, `plan_annotated` is the only entry point that can
 choose a partial index, and no other caller passes it any facts.
 
+## The head node, and a lease checked against a wrong one
+
+`crates/slate-server/tests/`
+
+Two of its techniques belong here; `docs/topology.md` has the rest.
+
+The first is the query differential, run over gRPC rather than in process: every
+filter × sort × limit/offset in a sweep of 448 queries is executed under the
+planner's choice *and* under each index forced, and all of them must agree with
+a filter and a comparator written out again in the test. It is the planner
+oracle's shape, one layer further out, so a wire conversion that quietly dropped
+a predicate term would be caught by the same reasoning that catches a wrong
+index — with the filters separately asserted to select some but not all rows,
+and every sort ending in the primary key so ties are pinned rather than
+arbitrary.
+
+The second is more unusual and worth naming. A lease taken by reading the object
+and then writing it — the obvious implementation — passes every single-threaded
+test anyone would write for it. So the harness runs against two implementations:
+the real compare-and-set lease, and a deliberately naive `OverwritingLease`. The
+naive one is asserted to **fail**, at the renewal specifically, and that
+assertion is the reason to believe the harness proves anything about the real
+one. A test suite that only ever runs against the implementation it was written
+alongside cannot tell "this is correct" from "this is what I wrote".
+
+The same idea shows up in the leadership tests as counting: proving that a
+fenced node refuses writes *locally* is not a statement about the error the
+client sees, it is a statement about the store never being called — so the test
+counts calls into it, and five writes after the first fence reach it zero times.
+
 ## What is still not proven
 
 Stated plainly, because a document like this is otherwise an advertisement.
@@ -592,3 +622,6 @@ what genuinely has not been done.
   where compaction, tiering and a cold cache all matter at once.
 - **Partial indexes end to end.** The planner decides correctly which of them
   it may use, and nothing maintains them. See the section above.
+- **Anything about the head node's performance.** Its correctness is tested;
+  nothing in it has been benchmarked. The query stream's batch size and the
+  lease's fifteen-second term are chosen by argument, not measurement.

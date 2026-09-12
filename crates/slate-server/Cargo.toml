@@ -1,0 +1,53 @@
+[package]
+name = "slate-server"
+description = "gRPC head node over the slate-orm record layer, with writer leadership"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-tuple.workspace = true
+
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["time", "rt"] }
+tokio-stream = "0.1"
+
+# The lease lives in the same object storage the database does, so that a
+# deployment needs no second system to elect a writer. Pinned to the version
+# SlateDB itself depends on: a lease object written through a different copy of
+# the crate would still work, but `Arc<dyn ObjectStore>` would not be the same
+# type and callers could not share one store between the two.
+object_store = "0.14"
+
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+
+[build-dependencies]
+# protox parses the schema in Rust rather than shelling out to `protoc`, so a
+# build needs no protobuf toolchain installed. That is not a convenience: a
+# build that depends on an external binary is one that fails differently on
+# every machine.
+protox = "0.9"
+tonic-prost-build = "0.14"
+
+[dev-dependencies]
+slate-slatedb.workspace = true
+slatedb = { version = "0.16", default-features = false }
+proptest.workspace = true
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "net", "sync"] }
+# `TcpListenerStream`, so a test can bind port 0 and hand tonic the listener
+# rather than guessing a free port and racing another test for it.
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[lints]
+workspace = true

@@ -8,6 +8,7 @@ members = [
     "crates/slate-derive",
     "crates/slate-orm",
     "crates/slate-clickbench",
+    "crates/slate-server",
 ]
 
 [workspace.package]

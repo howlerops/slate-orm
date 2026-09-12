@@ -1,0 +1,373 @@
+//! Fixtures: a catalog, a set of rules, and a head node serving them.
+//!
+//! The head node is served over a real loopback socket rather than an in-memory
+//! channel. That is deliberate: the things most likely to be wrong at a wire
+//! boundary — a stream that never terminates, a status that loses its code, a
+//! message too large — are exactly the things an in-process shortcut skips.
+
+// A shared test module is compiled into each test binary, so items it exposes
+// look unused from whichever binary does not call them.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    dead_code,
+    unreachable_pub
+)]
+
+use slate_kernel::memory::MemoryStore;
+use slate_kernel::{
+    Action, Expr, Grant, KvReadStore, KvStore, Policy, RecordStore, SecurityCatalog,
+    SecurityContext,
+};
+use slate_schema::{Catalog, IndexDef, IndexId, Row, TableDef, TableId};
+use slate_server::leadership::Leadership;
+use slate_server::lease::{Clock, Lease, LeaseError, ObjectStoreLease, Term};
+use slate_server::proto as pb;
+use slate_server::proto::records_client::RecordsClient;
+use slate_server::{Head, HeadConfig, MetadataIdentity};
+use slate_tuple::{Direction, Value, ValueType};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::task::JoinHandle;
+use tonic::Request;
+use tonic::transport::Channel;
+
+pub const DOCS: TableId = TableId(1);
+pub const USERS: TableId = TableId(2);
+
+/// A plain table: no tenant, two indexes, one nullable column.
+pub fn docs() -> TableDef {
+    TableDef::builder("docs", DOCS)
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .column("size", ValueType::I64)
+        .nullable_column("note", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("by_kind", IndexId(1)).column("kind"))
+        .index(IndexDef::builder("by_size", IndexId(2)).column_with("size", Direction::Asc))
+        .build()
+        .expect("valid schema")
+}
+
+/// A tenant-scoped table with a row policy, for the security and routing tests.
+pub fn users() -> TableDef {
+    TableDef::builder("users", USERS)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("owner", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(
+            IndexDef::builder("by_email", IndexId(1))
+                .column("email")
+                .unique(),
+        )
+        .build()
+        .expect("valid schema")
+}
+
+pub fn catalog() -> Catalog {
+    Catalog::from_tables([docs(), users()]).expect("catalog")
+}
+
+/// Grants for the `app` role, plus a row policy on `users`: a caller sees only
+/// the rows it owns.
+pub fn security() -> SecurityCatalog {
+    SecurityCatalog::new()
+        .grant(Grant::new("app", DOCS, Action::ALL))
+        .grant(Grant::new("app", USERS, Action::ALL))
+        .policy(Policy::new(
+            "own_rows",
+            USERS,
+            Action::ALL,
+            |context: &SecurityContext| {
+                let owner = users().ordinal_of("owner").expect("owner");
+                Expr::eq(owner, context.principal().id.clone())
+            },
+        ))
+}
+
+pub fn doc(id: u64, kind: &str, size: i64, note: Option<&str>) -> Row {
+    Row::new(vec![
+        Value::U64(id),
+        Value::Str(kind.to_owned()),
+        Value::I64(size),
+        note.map_or(Value::Null, |n| Value::Str(n.to_owned())),
+    ])
+}
+
+pub fn user(tenant: u64, id: u64, owner: u64, email: &str) -> Row {
+    Row::new(vec![
+        Value::U64(tenant),
+        Value::U64(id),
+        Value::U64(owner),
+        Value::Str(email.to_owned()),
+    ])
+}
+
+/// A record store over an in-memory backend, with this catalog and rules.
+pub fn store(backing: Arc<MemoryStore>) -> RecordStore<Arc<MemoryStore>> {
+    RecordStore::new(backing, catalog(), security())
+}
+
+// --- leases ---------------------------------------------------------------
+
+/// A clock the test moves by hand.
+///
+/// Every property worth establishing about a lease is about expiry, and a test
+/// that establishes them by sleeping is slow when it passes and flaky when the
+/// machine is busy.
+#[derive(Debug)]
+pub struct TestClock {
+    millis: AtomicU64,
+}
+
+impl TestClock {
+    pub fn new() -> Arc<Self> {
+        // Not zero: an expiry of `UNIX_EPOCH` is what a malformed record
+        // decodes to, and starting there would make the two indistinguishable.
+        Arc::new(Self {
+            millis: AtomicU64::new(1_700_000_000_000),
+        })
+    }
+
+    pub fn advance(&self, by: Duration) {
+        self.millis
+            .fetch_add(by.as_millis() as u64, Ordering::SeqCst);
+    }
+}
+
+impl Clock for TestClock {
+    fn now(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::from_millis(self.millis.load(Ordering::SeqCst))
+    }
+}
+
+/// A lease that always grants, for tests about something other than the lease.
+#[derive(Debug, Default)]
+pub struct AlwaysLeader {
+    generation: AtomicU64,
+}
+
+#[tonic::async_trait]
+impl Lease for AlwaysLeader {
+    async fn acquire(&self) -> Result<Term, LeaseError> {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(Term {
+            generation,
+            holder: "always".to_owned(),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+        })
+    }
+
+    async fn renew(&self) -> Result<Term, LeaseError> {
+        self.acquire().await
+    }
+
+    async fn release(&self) -> Result<(), LeaseError> {
+        Ok(())
+    }
+
+    async fn observe(&self) -> Result<Option<Term>, LeaseError> {
+        Ok(None)
+    }
+
+    fn held(&self) -> Option<Term> {
+        None
+    }
+
+    fn holder(&self) -> &str {
+        "always"
+    }
+}
+
+/// A lease held by somebody else, forever.
+#[derive(Debug)]
+pub struct HeldByAnother;
+
+#[tonic::async_trait]
+impl Lease for HeldByAnother {
+    async fn acquire(&self) -> Result<Term, LeaseError> {
+        Err(LeaseError::Held {
+            holder: "the-other-node".to_owned(),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+        })
+    }
+
+    async fn renew(&self) -> Result<Term, LeaseError> {
+        Err(LeaseError::NotHeld)
+    }
+
+    async fn release(&self) -> Result<(), LeaseError> {
+        Err(LeaseError::NotHeld)
+    }
+
+    async fn observe(&self) -> Result<Option<Term>, LeaseError> {
+        Ok(None)
+    }
+
+    fn held(&self) -> Option<Term> {
+        None
+    }
+
+    fn holder(&self) -> &str {
+        "this-node"
+    }
+}
+
+/// An object-store lease under a clock the test controls.
+pub fn lease_at(
+    store: Arc<dyn object_store::ObjectStore>,
+    holder: &str,
+    clock: Arc<TestClock>,
+    term: Duration,
+) -> ObjectStoreLease {
+    ObjectStoreLease::with_holder(store, "leases/writer", holder.to_owned())
+        .with_term_length(term)
+        .with_clock(clock)
+}
+
+// --- serving --------------------------------------------------------------
+
+/// A head node and the socket it is answering on.
+pub struct Serving {
+    pub address: SocketAddr,
+    pub server: JoinHandle<()>,
+}
+
+impl Serving {
+    /// A client connected to it.
+    pub async fn client(&self) -> RecordsClient<Channel> {
+        RecordsClient::connect(format!("http://{}", self.address))
+            .await
+            .expect("connect to the head node")
+    }
+}
+
+impl Drop for Serving {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+/// Build a head node over `writer`, reading through `replicas`.
+pub fn head(
+    writer: Arc<MemoryStore>,
+    replicas: Vec<Arc<dyn KvReadStore>>,
+    leadership: Arc<Leadership>,
+) -> Head<MemoryStore> {
+    Head::new(
+        HeadConfig::new(catalog(), security()),
+        writer,
+        replicas,
+        leadership,
+        Arc::new(MetadataIdentity::trusting_the_caller_completely()),
+    )
+}
+
+/// Serve a head node on a loopback port the operating system chooses.
+pub async fn serve<S: KvStore + KvReadStore>(head: Head<S>) -> Serving {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind a loopback port");
+    let address = listener.local_addr().expect("local address");
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+
+    let server = tokio::spawn(async move {
+        let _ = tonic::transport::Server::builder()
+            .add_service(head.into_service())
+            .serve_with_incoming(incoming)
+            .await;
+    });
+
+    Serving { address, server }
+}
+
+/// A head node that already holds the lease, serving on a loopback port.
+pub async fn serving_leader(writer: Arc<MemoryStore>) -> Serving {
+    let leadership = Leadership::new(Arc::new(AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+    serve(head(writer, Vec::new(), leadership)).await
+}
+
+// --- requests -------------------------------------------------------------
+
+/// Attach an identity to a request, the way the proxy in front of a real
+/// deployment would.
+pub fn as_principal<T>(message: T, id: &str, tenant: Option<&str>, roles: &str) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert("slate-principal", id.parse().expect("ascii"));
+    if let Some(tenant) = tenant {
+        request
+            .metadata_mut()
+            .insert("slate-tenant", tenant.parse().expect("ascii"));
+    }
+    request
+        .metadata_mut()
+        .insert("slate-roles", roles.parse().expect("ascii"));
+    request
+}
+
+/// The identity the `docs` tests use: a member of `app`, with no tenant.
+pub fn app<T>(message: T) -> Request<T> {
+    as_principal(message, "u64:1", None, "app")
+}
+
+/// A member of `app` in tenant `tenant`, with principal id `id`.
+pub fn app_in<T>(message: T, id: u64, tenant: u64) -> Request<T> {
+    as_principal(
+        message,
+        &format!("u64:{id}"),
+        Some(&format!("u64:{tenant}")),
+        "app",
+    )
+}
+
+/// Collect a query stream into rows, and the `served_by` its header carried.
+pub async fn drain(
+    stream: tonic::Streaming<pb::QueryResponse>,
+) -> (Vec<pb::Row>, Option<pb::ServedBy>) {
+    let mut stream = stream;
+    let mut rows = Vec::new();
+    let mut served_by = None;
+    while let Some(message) = stream.message().await.expect("a query message") {
+        if served_by.is_none() {
+            served_by = message.served_by.clone();
+        }
+        rows.extend(message.rows);
+    }
+    (rows, served_by)
+}
+
+/// The `id` column of a `docs` row, for comparing results without noise.
+pub fn doc_ids(rows: &[pb::Row]) -> Vec<u64> {
+    rows.iter()
+        .map(
+            |row| match row.values.first().and_then(|v| v.kind.as_ref()) {
+                Some(pb::value::Kind::Uint64Value(id)) => *id,
+                other => panic!("first column of a docs row was {other:?}"),
+            },
+        )
+        .collect()
+}
+
+/// A query over `docs` with everything defaulted.
+pub fn docs_query() -> pb::Query {
+    pb::Query {
+        table: "docs".to_owned(),
+        filter: None,
+        order: pb::ScanOrder::Ascending as i32,
+        projection: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+        hint: None,
+    }
+}

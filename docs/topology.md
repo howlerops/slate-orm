@@ -230,3 +230,148 @@ Storage is tested over the S3 protocol as well as an in-memory object store —
 the same assertions, both substrates — using an in-process S3 server so it stays
 hermetic, plus a CI job against MinIO for behaviour specific to a
 production-grade implementation.
+
+## The head node
+
+`crates/slate-server` is the process the note above describes and the library
+deliberately is not: a gRPC surface over the record layer, plus the leadership
+SlateDB does not provide. It answers the question left open under
+[The writer](#the-writer) — *something outside the database has to hold a
+lease* — and it puts that something in the same bucket the database is in.
+
+```
+                   ┌──────────────────────────────┐
+   gRPC ──────────►│            Head              │
+                   │                              │
+                   │  writes ─► leader? ─► writer │──► object storage
+                   │  reads  ─► pool ─► replica   │◄── manifest poll
+                   └──────────────┬───────────────┘
+                                  │ compare-and-set
+                            ┌─────▼─────┐
+                            │   lease   │  one object, same bucket
+                            └───────────┘
+```
+
+### The lease decides who tries; the fence decides who wins
+
+The lease is a single object, taken and extended with a conditional write
+(`PutMode::Create`, then `PutMode::Update` against the version last read). It
+carries a generation, a holder and an expiry, in plain text so an operator can
+read it with `cat`.
+
+It is worth stating plainly what that does and does not buy, because a lease is
+the classic thing to believe more of than it says.
+
+- **It cannot promise mutual exclusion.** The holder checks the expiry against
+  its own clock, and between the check and the write it can be descheduled,
+  garbage-collected or paused for longer than the whole term. There are moments
+  when two processes both believe they hold it, and nothing at this layer
+  removes them.
+- **It does promise that exactly one process wins a contested acquisition**,
+  because the write that takes it is a compare-and-set rather than a read
+  followed by a write — and that generations never repeat, so two processes
+  that briefly overlap can always be ordered.
+
+Safety is still the fence. That division is the design: the lease exists to
+stop the fencing happening over and over, not to prevent it. The head node is
+wired to believe the fence over the lease, and steps down on `WriterFenced`
+even while its own lease still looks perfectly valid — which, in the case that
+matters, it does.
+
+etcd or ZooKeeper would give a better lease, with a real session and
+revocation. They would also be a second stateful system to run, and the
+deployment this project targets is a bucket. Object storage already offers the
+one primitive a lease needs.
+
+### Being fenced is terminal, and the node keeps serving reads
+
+This note says a head node should shut down on `WriterFenced`. The server does
+something slightly different, and the difference falls out of the read/write
+split: writes go to the leader's store, reads go through the pool, and the pool
+does not care who the leader is. So a fenced node refuses writes permanently
+and carries on answering reads. Shutting down would drop those connections for
+no gain — the interruption this note describes is to reads *on the writer*, and
+there are none once writes are refused.
+
+Refusing writes is local, from a watch channel, rather than a forwarded storage
+error. After a fence the writer's `begin` fails anyway, but it fails after a
+call into SlateDB, and a node that has stepped down should not be making those.
+The refusal is `UNAVAILABLE` with the current holder in a `slate-leader`
+trailer, because the request should be retried — just not here.
+
+Campaigning again is refused for the life of the process. A node that treated
+fencing as a bad moment would win the lease, open a store that is permanently
+fenced, and serve nothing while looking healthy.
+
+### Where a request goes
+
+| | destination |
+|---|---|
+| Write, node holds the lease | this node's writer store |
+| Write, node does not | refused, `UNAVAILABLE` + `slate-leader` |
+| Read, no transaction | the pool, by freshness and tenant affinity |
+| Read, inside a transaction | that transaction, on the writer |
+
+Reads are routed on the *principal's* tenant, not one dug out of the filter: on
+a tenant-scoped table the security layer forces the principal's tenant onto the
+predicate anyway, so it is the tenant whose key range the read will actually
+touch. Every read response says which view served it and at what sequence, so
+routing is visible rather than inferred.
+
+A transactional read is the one thing a takeover still interrupts, and that is
+inherent — it is a read of the writer's transaction. A client that must keep
+reading through a handover reads outside a transaction.
+
+### Two things the wire format refuses to guess
+
+An identity never appears in a request body. The `.proto` has no principal
+field anywhere; the `SecurityContext` is built from transport metadata by an
+`Authenticator` the deployment supplies, and nothing in the crate can produce a
+superuser.
+
+An unset `oneof` is an error, not a default. proto3 cannot tell an unset field
+from a zero one, so a `Value` with no kind set is most likely a client built
+against a newer schema — reading it as null would quietly change the predicate
+it appears in.
+
+### What was tested
+
+- **The wire conversion round trip**, as a property over generated values,
+  predicates and whole queries: converting out and back must be the identity.
+  A damaged wire form is fed back in to show the comparison is sharp enough to
+  notice a dropped `ILIKE` flag, and the generators are separately asserted to
+  reach every variant.
+- **A query differential over gRPC.** Every filter, sort, limit and offset in
+  the sweep is run under the planner's choice and under each index forced, and
+  all of them must agree with a filter and comparator written out again in the
+  test. Every sort ends in the primary key so ties are pinned. 448 queries;
+  the filters are separately asserted to select some but not all rows.
+- **The lease, against a deliberately wrong implementation.** A
+  read-then-write lease passes every single-threaded test anyone would write,
+  so the same harness runs against both: the compare-and-set one tells a
+  replaced holder it was replaced, and the naive one renews straight over its
+  successor. That failure is asserted, and is the reason to believe the harness
+  proves anything.
+- **A real fence through the head node.** Two `SlateStore`s over one object
+  store, which is what a replacement node amounts to. The fenced node refuses
+  writes as `UNAVAILABLE`, reports itself stepped down, keeps serving reads
+  from a `SlateReader` replica — with the read that *asks for the writer*
+  failing as the control — and releases its lease so the successor need not
+  wait out a term.
+- **That the refusal is local**, by counting calls into the store: five writes
+  after the first fence reach it zero times.
+
+### Not built
+
+- **Joins, chains, aggregates and computed columns on the wire.** Each needs an
+  ordinal space or a grouping model of its own in the schema, and half of one
+  would be worse than none.
+- **A read-only transaction pinned to a replica.** `ReplicaMode::Pinned` is the
+  right substrate for a consistent multi-read export, and the session type for
+  it is not a write transaction.
+- **`update_many`.** `insert_many` overlaps its reads across a batch; a
+  multi-row update still costs a round trip per row, here as in the kernel.
+- **Any performance number.** Nothing in the head node has been benchmarked.
+  The batch size on a query stream and the lease's fifteen-second term are both
+  chosen by argument, not measurement, and are marked as such where they are
+  defined.

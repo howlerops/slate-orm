@@ -1,0 +1,363 @@
+syntax = "proto3";
+
+package slate.v1;
+
+// The head node's wire surface over the record layer.
+//
+// Two things are deliberately absent.
+//
+// There is no principal on any request. Who is asking is decided by the
+// server's `Authenticator` from the request's transport metadata, never from a
+// field a client fills in, because a field a client fills in is not an identity
+// — it is a request to be trusted. There is likewise no way to ask for
+// superuser: `SecurityContext::superuser` is not reachable from this file.
+//
+// There is no schema. The catalog is the server's, and a request names a table
+// and its columns by the names and ordinals that catalog already has. A client
+// that could describe a table could describe one that is not there.
+
+// A null. A one-value enum rather than an absent field: proto3 cannot tell an
+// unset field from a zero one, so "the client sent a null" and "the client sent
+// nothing" would be the same message. They are not the same thing — the second
+// is a client built against a newer schema whose value this server cannot read,
+// and turning that silently into a null is how a filter comes to mean something
+// other than what was written.
+enum NullValue {
+  NULL_VALUE = 0;
+}
+
+// One element of a row or a predicate, mirroring `slate_tuple::Value`.
+message Value {
+  oneof kind {
+    NullValue null_value = 1;
+    bool bool_value = 2;
+    bytes bytes_value = 3;
+    string string_value = 4;
+    int64 int64_value = 5;
+    uint64 uint64_value = 6;
+    double double_value = 7;
+    // Exactly sixteen bytes, big-endian, as `Uuid::as_bytes` gives them.
+    bytes uuid_value = 8;
+    Vector vector_value = 9;
+  }
+}
+
+// A dense f32 vector, for embeddings.
+message Vector {
+  repeated float elements = 1;
+}
+
+// A row: one value per column of its table, in ordinal order. Also used for a
+// primary key, in which case it holds only the key columns, in key order.
+message Row {
+  repeated Value values = 1;
+}
+
+// A comparison operator. `CMP_OP_UNSPECIFIED` is refused rather than defaulted:
+// defaulting it would make a malformed predicate mean equality.
+enum CmpOp {
+  CMP_OP_UNSPECIFIED = 0;
+  CMP_OP_EQ = 1;
+  CMP_OP_NE = 2;
+  CMP_OP_LT = 3;
+  CMP_OP_LE = 4;
+  CMP_OP_GT = 5;
+  CMP_OP_GE = 6;
+}
+
+// A predicate over one table's rows, mirroring `slate_kernel::Expr`.
+message Expr {
+  oneof node {
+    // `Expr::True` when true, `Expr::False` when false.
+    bool literal = 1;
+    Compare compare = 2;
+    CompareColumns compare_columns = 3;
+    IsNull is_null = 4;
+    Like like = 5;
+    Matches matches = 6;
+    InList in_list = 7;
+    ExprList conjunction = 8;
+    ExprList disjunction = 9;
+    Expr negation = 10;
+  }
+}
+
+message ExprList {
+  repeated Expr exprs = 1;
+}
+
+message Compare {
+  uint32 column = 1;
+  CmpOp op = 2;
+  Value value = 3;
+}
+
+message CompareColumns {
+  uint32 left = 1;
+  CmpOp op = 2;
+  uint32 right = 3;
+}
+
+message IsNull {
+  uint32 column = 1;
+  bool negated = 2;
+}
+
+message Like {
+  uint32 column = 1;
+  string pattern = 2;
+  bool negated = 3;
+  bool insensitive = 4;
+}
+
+message Matches {
+  uint32 column = 1;
+  string pattern = 2;
+  bool negated = 3;
+  bool insensitive = 4;
+}
+
+message InList {
+  uint32 column = 1;
+  repeated Value values = 2;
+}
+
+enum ScanOrder {
+  SCAN_ORDER_ASCENDING = 0;
+  SCAN_ORDER_DESCENDING = 1;
+}
+
+enum SortDirection {
+  SORT_DIRECTION_ASC = 0;
+  SORT_DIRECTION_DESC = 1;
+}
+
+// Where nulls go in a sort. Unspecified means the direction's natural place —
+// which is what the storage already does, and therefore the only setting that
+// can be served without materialising the whole result.
+enum NullsOrder {
+  NULLS_ORDER_UNSPECIFIED = 0;
+  NULLS_ORDER_FIRST = 1;
+  NULLS_ORDER_LAST = 2;
+}
+
+message SortKey {
+  uint32 column = 1;
+  SortDirection direction = 2;
+  NullsOrder nulls = 3;
+}
+
+// Columns to return. `all_columns` wins over `columns`; with neither set the
+// projection is empty, which is what a count wants.
+message Projection {
+  bool all_columns = 1;
+  repeated uint32 columns = 2;
+}
+
+// An access path to take instead of the cheapest one. Advice, not an
+// instruction: see `Query.hint`.
+message AccessHint {
+  oneof path {
+    bool table_scan = 1;
+    string index = 2;
+  }
+}
+
+message Query {
+  // Table name, resolved against the server's catalog.
+  string table = 1;
+  // Rows to keep. Absent means every row.
+  Expr filter = 2;
+  ScanOrder order = 3;
+  // Absent means every column.
+  Projection projection = 4;
+  repeated SortKey sort = 5;
+  optional uint64 limit = 6;
+  uint64 offset = 7;
+  // Ignored when it names an index the table does not have, matching the
+  // kernel: a query that stops working because an index was renamed is worse
+  // than one that gets slower. `ExplainResponse.warnings` says when this
+  // happened, so "my hint did nothing" is still debuggable.
+  AccessHint hint = 8;
+}
+
+// How fresh a read has to be. Absent means `ANY`.
+message Freshness {
+  oneof level {
+    // Any replica, however far behind.
+    bool any = 1;
+    // Only a view that has reached this sequence — the number a commit
+    // returned. This is read-your-writes.
+    uint64 at_least = 2;
+    // The writer, which is the only view that can see an unflushed write.
+    bool latest = 3;
+  }
+}
+
+// Which view served a read, so a client can meter routing and thread a
+// watermark without guessing.
+message ServedBy {
+  string replica = 1;
+  // The sequence that view is known to include, or zero when it does not
+  // track one.
+  uint64 sequence = 2;
+}
+
+message BeginRequest {}
+
+message BeginResponse {
+  // An opaque handle. It is a capability: anyone holding it can use the
+  // transaction, so it is a v4 UUID and is additionally pinned to the
+  // principal that opened it.
+  string transaction = 1;
+}
+
+message CommitRequest {
+  string transaction = 1;
+}
+
+message CommitResponse {
+  // The sequence the writes landed at. Absent when the transaction wrote
+  // nothing. Pass it back as `Freshness.at_least` to read them from a replica.
+  optional uint64 sequence = 1;
+}
+
+message RollbackRequest {
+  string transaction = 1;
+}
+
+message RollbackResponse {}
+
+// A transaction handle, or empty for a single-statement transaction the server
+// opens, commits and — on a conflict — retries by itself.
+message InsertRequest {
+  string transaction = 1;
+  string table = 2;
+  repeated Row rows = 3;
+  // Replace a row whose primary key is already present, rather than refusing.
+  bool upsert = 4;
+}
+
+message UpdateRequest {
+  string transaction = 1;
+  string table = 2;
+  repeated Row rows = 3;
+}
+
+message DeleteRequest {
+  string transaction = 1;
+  string table = 2;
+  // Primary key values only, in key order.
+  repeated Row primary_keys = 3;
+}
+
+message WriteResponse {
+  // Set only for a single-statement write, which commits. A write inside a
+  // transaction has no sequence until that transaction commits.
+  optional uint64 sequence = 1;
+  // How many rows the write found to act on. For a delete this is how many
+  // existed; a row the caller's policy hides counts as absent.
+  uint64 affected = 2;
+}
+
+message GetRequest {
+  string transaction = 1;
+  string table = 2;
+  Row primary_key = 3;
+  Freshness freshness = 4;
+}
+
+message GetResponse {
+  Row row = 1;
+  // A row the caller's policy hides reads as absent, so this cannot be used to
+  // test whether a forbidden row exists.
+  bool found = 2;
+  ServedBy served_by = 3;
+}
+
+message QueryRequest {
+  string transaction = 1;
+  Query query = 2;
+  Freshness freshness = 3;
+}
+
+// Rows arrive in batches. The first message is always sent, even when the
+// result is empty, because it carries `served_by`.
+message QueryResponse {
+  repeated Row rows = 1;
+  ServedBy served_by = 2;
+}
+
+message ExplainRequest {
+  string transaction = 1;
+  Query query = 2;
+  Freshness freshness = 3;
+}
+
+message ExplainResponse {
+  string table = 1;
+  // The access path, as `AccessSummary` prints it.
+  string access = 2;
+  // The predicate re-checked on every candidate row, including the mandatory
+  // security filter — which is why this is worth returning: it is the proof
+  // that a policy reached the executor.
+  string residual = 3;
+  bool descending = 4;
+  double estimated_rows = 5;
+  double estimated_cost = 6;
+  optional uint64 limit = 7;
+  uint64 offset = 8;
+  // Whether the whole result must be materialised before the first row.
+  bool sorts = 9;
+  // Whether no row is read at all: the index answers the query.
+  bool index_only = 10;
+  // The one-line human form.
+  string display = 11;
+  // Things the server did with the request that the request did not ask for,
+  // such as ignoring an unusable hint.
+  repeated string warnings = 12;
+  ServedBy served_by = 13;
+}
+
+message LeadershipRequest {}
+
+// What this node believes about who may write. Believes, not knows: see the
+// `lease` module. A node that has lost the lease without noticing still
+// reports itself the leader, and the storage layer's fence — not this — is
+// what stops it writing.
+message LeadershipStatus {
+  enum Standing {
+    STANDING_UNSPECIFIED = 0;
+    // Not the leader, and trying to become one.
+    STANDING_FOLLOWER = 1;
+    // Holds the lease and will accept writes.
+    STANDING_LEADER = 2;
+    // Was the leader and has stopped: fenced, or the lease was lost. Terminal
+    // for this process; reads are still served from replicas.
+    STANDING_STEPPED_DOWN = 3;
+  }
+  Standing standing = 1;
+  // The lease generation this node holds, when it is the leader.
+  optional uint64 generation = 2;
+  // Who the lease says holds it, when that is known. A client can use this to
+  // find the node that will accept its writes.
+  string holder = 3;
+  // Why this node stepped down, when it has.
+  string stepped_down_because = 4;
+}
+
+service Records {
+  rpc Begin(BeginRequest) returns (BeginResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Rollback(RollbackRequest) returns (RollbackResponse);
+
+  rpc Insert(InsertRequest) returns (WriteResponse);
+  rpc Update(UpdateRequest) returns (WriteResponse);
+  rpc Delete(DeleteRequest) returns (WriteResponse);
+
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Query(QueryRequest) returns (stream QueryResponse);
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+
+  rpc Leadership(LeadershipRequest) returns (LeadershipStatus);
+}
