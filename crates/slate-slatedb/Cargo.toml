@@ -1,6 +1,6 @@
 [package]
 name = "slate-slatedb"
-description = "SlateDB storage backend for slate-orm"
+description = "SlateDB storage backend for the slate-orm record layer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,16 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+slate-kernel.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+slatedb = "0.16"
+
+[dev-dependencies]
+slate-schema.workspace = true
+slate-tuple.workspace = true
+tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
