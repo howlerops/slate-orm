@@ -6,8 +6,10 @@
 //! consistent snapshot taken when it began, and a commit fails if any key it
 //! wrote was also written by a transaction that committed in the meantime.
 //!
-//! It is a test and demo backend, not a storage engine: a transaction copies the
-//! whole map when it begins.
+//! It is a test and demo backend, not a storage engine, but it is not a toy
+//! either: beginning a transaction shares the committed map by pointer rather
+//! than copying it, so it stays usable for benchmarks at sizes where an O(n)
+//! `begin` would dominate every measurement.
 
 use crate::error::{KernelError, Result};
 use crate::store::{
@@ -15,10 +17,25 @@ use crate::store::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use core::ops::Bound;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
-type Snapshot = BTreeMap<Vec<u8>, Bytes>;
+/// Stands in for a released snapshot, so reads stay total without an unwrap.
+static EMPTY: LazyLock<Committed> = LazyLock::new(Committed::new);
+
+/// Borrow a bound's key, so a `BTreeMap<Vec<u8>, _>` can be ranged by slice.
+fn as_bytes(bound: &Bound<Vec<u8>>) -> Bound<&[u8]> {
+    match bound {
+        Bound::Included(key) => Bound::Included(key.as_slice()),
+        Bound::Excluded(key) => Bound::Excluded(key.as_slice()),
+        Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
+type Committed = BTreeMap<Vec<u8>, Bytes>;
+/// A transaction's view: shared by pointer, so beginning one is O(1).
+type Snapshot = Arc<Committed>;
 /// A buffered write: `Some` to put, `None` to delete.
 type Pending = BTreeMap<Vec<u8>, Option<Bytes>>;
 
@@ -111,15 +128,18 @@ impl MemoryStore {
         })
     }
 
-    /// Start a transaction against a copy of the current committed state.
+    /// Start a transaction against the current committed state.
+    ///
+    /// The snapshot is shared by pointer; a later commit copies it only if some
+    /// transaction is still reading the old version.
     async fn open(&self) -> MemoryTransaction {
         let (snapshot, version) = self.locked(|s| {
             s.register(s.version);
-            (s.committed.clone(), s.version)
+            (Arc::clone(&s.committed), s.version)
         });
         MemoryTransaction {
             shared: Arc::clone(&self.shared),
-            snapshot,
+            snapshot: Some(snapshot),
             started_at: version,
             pending: Mutex::new(Pending::new()),
         }
@@ -160,7 +180,10 @@ impl KvStore for MemoryStore {
 #[derive(Debug)]
 pub struct MemoryTransaction {
     shared: Arc<Mutex<Shared>>,
-    snapshot: Snapshot,
+    /// `None` only between a commit releasing it and the transaction dropping.
+    /// Releasing it early is what lets the commit mutate the shared map in
+    /// place instead of copying it.
+    snapshot: Option<Snapshot>,
     started_at: u64,
     pending: Mutex<Pending>,
 }
@@ -172,12 +195,25 @@ impl MemoryTransaction {
         f(&mut guard)
     }
 
-    /// The snapshot with this transaction's own writes applied, so a read sees
-    /// what it has already written.
-    fn visible(&self) -> Snapshot {
-        let mut view = self.snapshot.clone();
+    /// The committed state this transaction reads.
+    fn base(&self) -> &Committed {
+        self.snapshot.as_deref().unwrap_or(&EMPTY)
+    }
+
+    /// The rows of `range`, with this transaction's own writes applied.
+    ///
+    /// Materialises only the range asked for. Copying the whole map and then
+    /// filtering would be O(database) per scan, which turns every measurement
+    /// of the read path into a measurement of this function.
+    fn visible_range(&self, range: &KeyRange) -> Committed {
+        let bounds = (as_bytes(&range.start), as_bytes(&range.end));
+        let mut view: Committed = self
+            .base()
+            .range::<[u8], _>(bounds)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         self.with_pending(|pending| {
-            for (key, value) in pending.iter() {
+            for (key, value) in pending.range::<[u8], _>(bounds) {
                 match value {
                     Some(v) => {
                         view.insert(key.clone(), v.clone());
@@ -206,7 +242,7 @@ impl KvSnapshot for MemoryTransaction {
         if let Some(pending) = self.with_pending(|p| p.get(key).cloned()) {
             return Ok(pending);
         }
-        Ok(self.snapshot.get(key).cloned())
+        Ok(self.base().get(key).cloned())
     }
 
     async fn scan(
@@ -215,9 +251,8 @@ impl KvSnapshot for MemoryTransaction {
         order: ScanOrder,
     ) -> Result<Box<dyn KvIterator + Send + '_>> {
         let mut items: Vec<KeyValue> = self
-            .visible()
+            .visible_range(&range)
             .into_iter()
-            .filter(|(k, _)| range.contains(k))
             .map(|(key, value)| KeyValue {
                 key: Bytes::from(key),
                 value,
@@ -244,11 +279,15 @@ impl KvTransaction for MemoryTransaction {
         Ok(())
     }
 
-    async fn commit(self: Box<Self>) -> Result<Option<u64>> {
+    async fn commit(mut self: Box<Self>) -> Result<Option<u64>> {
         let pending = self.with_pending(core::mem::take);
         if pending.is_empty() {
             return Ok(None);
         }
+        // Release this transaction's view before taking the lock: if nothing
+        // else is reading the old map, the write below mutates it in place
+        // rather than copying it.
+        self.snapshot = None;
 
         #[allow(clippy::expect_used)]
         let mut shared = self.shared.lock().expect("memory store lock poisoned");
@@ -267,13 +306,15 @@ impl KvTransaction for MemoryTransaction {
 
         shared.version += 1;
         let version = shared.version;
+        // Copy-on-write: only pays for a copy while an older view is still live.
+        let committed = Arc::make_mut(&mut shared.committed);
         for (key, value) in &pending {
             match value {
                 Some(v) => {
-                    shared.committed.insert(key.clone(), v.clone());
+                    committed.insert(key.clone(), v.clone());
                 }
                 None => {
-                    shared.committed.remove(key);
+                    committed.remove(key);
                 }
             }
         }

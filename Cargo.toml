@@ -38,6 +38,7 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 
 # dev
 proptest = "1"
+criterion = { version = "0.8", features = ["async_tokio"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

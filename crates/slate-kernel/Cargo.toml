@@ -19,8 +19,13 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 uuid.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "queries"
+harness = false
 
 [lints]
 workspace = true

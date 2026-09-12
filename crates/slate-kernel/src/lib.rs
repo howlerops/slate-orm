@@ -12,6 +12,7 @@ pub mod error;
 pub mod exec;
 pub mod expr;
 pub mod keys;
+pub mod latency;
 pub mod memory;
 pub mod plan;
 pub mod pool;
