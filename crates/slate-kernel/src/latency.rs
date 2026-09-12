@@ -38,6 +38,14 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LatencyProfile {
     /// Cost of a point read.
+    ///
+    /// One *latency* — the time spent waiting — not one request. A point read
+    /// costs about three object-store requests, which is what
+    /// [`crate::stats::POINT_READ_COST`] counts, but they overlap so the wait
+    /// is closer to one round trip. The two numbers measure different things
+    /// on purpose: this fixture models time, the cost model models work, and
+    /// conflating them is what made the planner prefer a plan doing 58x the
+    /// requests.
     pub get: Duration,
     /// Cost of opening a scan.
     pub scan_open: Duration,
@@ -84,7 +92,19 @@ impl LatencyProfile {
             // rows. The two have to state the same number. When they did not,
             // measurements against the fixture disagreed with the planner's
             // estimates for reasons that had nothing to do with the planner.
-            rows_per_block: 100,
+            // Eight thousand, because that is what a scan with readahead
+            // actually returns per object-store request, measured against an
+            // S3 server by `slate-slatedb`'s `cost_calibration` example. It is
+            // also exactly `1 / SCAN_ROW_COST`, and
+            // `the_fixture_and_the_cost_model_agree` fails if the two drift.
+            //
+            // It said a hundred until the cost model was recalibrated, and the
+            // comment here asserted the two "have to state the same number"
+            // while they no longer did — the same fixture-versus-model
+            // disagreement `docs/performance.md` already records twice, made a
+            // third time by changing one side and not the other. A comment
+            // cannot hold an invariant; the test can.
+            rows_per_block: 8_000,
             commit: Duration::from_millis(2),
         }
     }

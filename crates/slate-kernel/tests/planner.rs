@@ -395,3 +395,32 @@ async fn an_index_is_not_worth_its_lookups_on_a_small_table() {
         "half the table should be scanned, got {plan}"
     );
 }
+
+/// The latency fixture and the cost model must state the same rows per block.
+///
+/// They are different units — the fixture models elapsed time, the cost model
+/// counts object-store requests — but they share one physical fact: how many
+/// rows a single block fetch returns. When they disagree, every measurement of
+/// a scan against an estimate compares two different beliefs, and the
+/// disagreement looks like a planner bug.
+///
+/// `docs/performance.md` records this happening twice before. It happened a
+/// third time the moment `SCAN_ROW_COST` was recalibrated against object
+/// storage and the fixture was left alone, because the only thing tying them
+/// together was a comment saying they had to match. This is that comment as an
+/// assertion.
+#[test]
+fn the_fixture_and_the_cost_model_agree_on_rows_per_block() {
+    use slate_kernel::latency::LatencyProfile;
+    use slate_kernel::stats::SCAN_ROW_COST;
+
+    let implied = 1.0 / SCAN_ROW_COST;
+    let fixture = LatencyProfile::object_storage().rows_per_block as f64;
+    assert!(
+        (implied - fixture).abs() < 1.0,
+        "the cost model implies {implied:.0} rows per block and the latency \
+         fixture charges one every {fixture:.0}. Change both together, or a \
+         scan measured against the fixture will not match its estimate for \
+         reasons that have nothing to do with the planner."
+    );
+}
