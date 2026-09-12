@@ -1,0 +1,141 @@
+//! Running a plan.
+//!
+//! The executor walks the access path the planner chose and evaluates the
+//! residual predicate on every candidate row. Since the residual carries the
+//! security filter (see [`crate::security`]), a row that reaches a caller has
+//! passed the policy by evaluation, not by the planner having correctly turned
+//! it into a range.
+
+use crate::error::{KernelError, Result};
+use crate::expr::Expr;
+use crate::plan::{Access, Plan};
+use crate::record::{IndexCursor, RecordTransaction, RowCursor};
+use slate_schema::{IndexDef, Row, TableDef};
+
+/// Where a cursor's candidate rows come from.
+enum Source<'a> {
+    /// Rows read straight out of the table's key range.
+    Rows(RowCursor<'a>),
+    /// Primary keys read from an index, each fetched from the table.
+    Index {
+        cursor: IndexCursor<'a>,
+        index: &'a IndexDef,
+    },
+    /// The plan proved there is nothing to read.
+    Empty,
+}
+
+/// A cursor over the rows a plan admits.
+pub struct QueryCursor<'a> {
+    txn: &'a RecordTransaction<'a>,
+    table: &'a TableDef,
+    source: Source<'a>,
+    residual: Expr,
+    limit: Option<usize>,
+    yielded: usize,
+}
+
+impl core::fmt::Debug for QueryCursor<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("QueryCursor")
+            .field("table", &self.table.name())
+            .field("yielded", &self.yielded)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> QueryCursor<'a> {
+    /// Open a cursor for `plan` on `table`.
+    pub(crate) async fn open(
+        txn: &'a RecordTransaction<'a>,
+        table: &'a TableDef,
+        plan: Plan,
+    ) -> Result<Self> {
+        let source = match &plan.access {
+            Access::Nothing => Source::Empty,
+            Access::TableScan { range } => {
+                Source::Rows(txn.scan_rows(table, range.clone(), plan.order).await?)
+            }
+            Access::IndexScan { index, range } => {
+                let index = table
+                    .index(*index)
+                    .ok_or(KernelError::UnknownTable(table.id()))?;
+                Source::Index {
+                    cursor: txn
+                        .scan_index(table, index, range.clone(), plan.order)
+                        .await?,
+                    index,
+                }
+            }
+        };
+        Ok(Self {
+            txn,
+            table,
+            source,
+            residual: plan.residual,
+            limit: None,
+            yielded: 0,
+        })
+    }
+
+    /// Stop after `limit` rows.
+    #[must_use]
+    pub const fn limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// The next admitted row.
+    pub async fn next(&mut self) -> Result<Option<Row>> {
+        if self.limit.is_some_and(|l| self.yielded >= l) {
+            return Ok(None);
+        }
+        while let Some(row) = self.next_candidate().await? {
+            if self.residual.admits(&row) {
+                self.yielded += 1;
+                return Ok(Some(row));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn next_candidate(&mut self) -> Result<Option<Row>> {
+        match &mut self.source {
+            Source::Empty => Ok(None),
+            Source::Rows(cursor) => cursor.next().await,
+            Source::Index { cursor, index } => {
+                let Some((_, primary_key)) = cursor.next().await? else {
+                    return Ok(None);
+                };
+                // Index entries and rows are written in one transaction, so an
+                // entry without a row means the two have diverged on disk.
+                self.txn
+                    .read_row_unchecked(self.table, &primary_key)
+                    .await?
+                    .ok_or_else(|| KernelError::CorruptIndexEntry {
+                        table: self.table.name().to_owned(),
+                        index: index.name().to_owned(),
+                    })
+                    .map(Some)
+            }
+        }
+    }
+
+    /// Drain the cursor into a vector.
+    pub async fn collect(mut self) -> Result<Vec<Row>> {
+        let mut out = Vec::new();
+        while let Some(row) = self.next().await? {
+            out.push(row);
+        }
+        Ok(out)
+    }
+
+    /// Count the admitted rows.
+    pub async fn count(mut self) -> Result<usize> {
+        let mut n = 0;
+        while self.next().await?.is_some() {
+            n += 1;
+        }
+        Ok(n)
+    }
+}

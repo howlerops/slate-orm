@@ -9,7 +9,10 @@
     clippy::panic
 )]
 
-use slate_kernel::{KernelError, KeyRange, RecordStore, ScanOrder, keys, memory::MemoryStore};
+use slate_kernel::{
+    Expr, KernelError, RecordStore, RecordTransaction, ScanOrder, SecurityCatalog, SecurityContext,
+    keys, memory::MemoryStore,
+};
 use slate_schema::{Catalog, IndexDef, IndexId, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value, ValueType};
 use uuid::Uuid;
@@ -45,7 +48,24 @@ fn users() -> TableDef {
 
 fn store() -> RecordStore<MemoryStore> {
     let catalog = Catalog::from_tables([users()]).expect("catalog");
-    RecordStore::new(MemoryStore::new(), catalog)
+    // These tests are about the record store, not about policy; they run as
+    // superuser so that authorisation never masks a storage bug. The security
+    // rules have their own suite.
+    RecordStore::new(MemoryStore::new(), catalog, SecurityCatalog::new())
+}
+
+fn root() -> SecurityContext {
+    SecurityContext::superuser()
+}
+
+/// Every row of `table`, read as superuser.
+async fn all_rows(txn: &RecordTransaction<'_>, table: &TableDef) -> Vec<Row> {
+    txn.query(&root(), table, Expr::True, ScanOrder::Ascending)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
 }
 
 fn user(tenant: u128, id: u64, email: &str, nickname: Option<&str>, age: i64) -> Row {
@@ -79,21 +99,54 @@ fn index_entries(backend: &MemoryStore, table: &TableDef) -> Vec<(String, Vec<Va
     out
 }
 
+/// Decoded index entries whose key starts with `prefix`, in stored key order.
+///
+/// Reads straight out of the backend so the assertion is about what is
+/// physically stored, not about what a scan chooses to return.
+fn entries_under(
+    backend: &MemoryStore,
+    table: &TableDef,
+    index: &IndexDef,
+    prefix: &[u8],
+) -> Vec<(Vec<Value>, Vec<Value>)> {
+    backend
+        .entries()
+        .into_iter()
+        .filter(|(key, _)| key.starts_with(prefix))
+        .map(|(key, value)| {
+            keys::decode_index_entry(table, index, &key, &value).expect("decode entry")
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn insert_then_read_back() {
     let store = store();
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", Some("ay"), 30))
-        .await
-        .unwrap();
+    txn.insert(
+        &root(),
+        &table,
+        &user(TENANT_A, 1, "a@x.com", Some("ay"), 30),
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
-    let row = txn.get(&table, &pk(TENANT_A, 1)).await.unwrap().unwrap();
+    let row = txn
+        .get(&root(), &table, &pk(TENANT_A, 1))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row, user(TENANT_A, 1, "a@x.com", Some("ay"), 30));
-    assert!(txn.get(&table, &pk(TENANT_A, 2)).await.unwrap().is_none());
+    assert!(
+        txn.get(&root(), &table, &pk(TENANT_A, 2))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -102,14 +155,14 @@ async fn duplicate_primary_key_is_rejected() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", None, 30))
+    txn.insert(&root(), &table, &user(TENANT_A, 1, "a@x.com", None, 30))
         .await
         .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
     let err = txn
-        .insert(&table, &user(TENANT_A, 1, "b@x.com", None, 31))
+        .insert(&root(), &table, &user(TENANT_A, 1, "b@x.com", None, 31))
         .await
         .unwrap_err();
     assert!(
@@ -126,50 +179,45 @@ async fn update_retires_stale_index_entries() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "old@x.com", Some("nick"), 30))
-        .await
-        .unwrap();
+    txn.insert(
+        &root(),
+        &table,
+        &user(TENANT_A, 1, "old@x.com", Some("nick"), 30),
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
-    txn.update(&table, &user(TENANT_A, 1, "new@x.com", Some("nick"), 31))
-        .await
-        .unwrap();
+    txn.update(
+        &root(),
+        &table,
+        &user(TENANT_A, 1, "new@x.com", Some("nick"), 31),
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
 
     // The old email must no longer resolve, and the new one must.
-    let txn = store.begin().await.unwrap();
     let by_email = table.index_by_name("by_email").unwrap();
 
-    let old_hits = txn
-        .scan_index(
-            &table,
-            by_email,
-            KeyRange::prefix(&index_lookup_key(&table, by_email, "old@x.com")),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    let old_hits = entries_under(
+        store.backend(),
+        &table,
+        by_email,
+        &index_lookup_key(&table, by_email, "old@x.com"),
+    );
     assert!(
         old_hits.is_empty(),
         "stale index entry survived: {old_hits:?}"
     );
 
-    let new_hits = txn
-        .scan_index(
-            &table,
-            by_email,
-            KeyRange::prefix(&index_lookup_key(&table, by_email, "new@x.com")),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    let new_hits = entries_under(
+        store.backend(),
+        &table,
+        by_email,
+        &index_lookup_key(&table, by_email, "new@x.com"),
+    );
     assert_eq!(new_hits.len(), 1);
     assert_eq!(new_hits[0].1, pk(TENANT_A, 1));
 
@@ -196,12 +244,20 @@ async fn delete_removes_row_and_every_index_entry() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", Some("ay"), 30))
-        .await
-        .unwrap();
-    txn.insert(&table, &user(TENANT_A, 2, "b@x.com", Some("bee"), 40))
-        .await
-        .unwrap();
+    txn.insert(
+        &root(),
+        &table,
+        &user(TENANT_A, 1, "a@x.com", Some("ay"), 30),
+    )
+    .await
+    .unwrap();
+    txn.insert(
+        &root(),
+        &table,
+        &user(TENANT_A, 2, "b@x.com", Some("bee"), 40),
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
     assert_eq!(
         index_entries(store.backend(), &table).len(),
@@ -209,12 +265,22 @@ async fn delete_removes_row_and_every_index_entry() {
     );
 
     let txn = store.begin().await.unwrap();
-    assert!(txn.delete(&table, &pk(TENANT_A, 1)).await.unwrap());
+    assert!(txn.delete(&root(), &table, &pk(TENANT_A, 1)).await.unwrap());
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
-    assert!(txn.get(&table, &pk(TENANT_A, 1)).await.unwrap().is_none());
-    assert!(txn.get(&table, &pk(TENANT_A, 2)).await.unwrap().is_some());
+    assert!(
+        txn.get(&root(), &table, &pk(TENANT_A, 1))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        txn.get(&root(), &table, &pk(TENANT_A, 2))
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     let remaining = index_entries(store.backend(), &table);
     assert_eq!(remaining.len(), table.indexes().len());
@@ -228,7 +294,7 @@ async fn delete_removes_row_and_every_index_entry() {
 
     // Deleting again reports that there was nothing to delete.
     let txn = store.begin().await.unwrap();
-    assert!(!txn.delete(&table, &pk(TENANT_A, 1)).await.unwrap());
+    assert!(!txn.delete(&root(), &table, &pk(TENANT_A, 1)).await.unwrap());
 }
 
 #[tokio::test]
@@ -237,14 +303,14 @@ async fn unique_index_rejects_a_second_row_with_the_same_value() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "same@x.com", None, 30))
+    txn.insert(&root(), &table, &user(TENANT_A, 1, "same@x.com", None, 30))
         .await
         .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
     let err = txn
-        .insert(&table, &user(TENANT_A, 2, "same@x.com", None, 31))
+        .insert(&root(), &table, &user(TENANT_A, 2, "same@x.com", None, 31))
         .await
         .unwrap_err();
     match err {
@@ -261,29 +327,19 @@ async fn unique_index_allows_repeated_nulls() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", None, 30))
+    txn.insert(&root(), &table, &user(TENANT_A, 1, "a@x.com", None, 30))
         .await
         .unwrap();
-    txn.insert(&table, &user(TENANT_A, 2, "b@x.com", None, 31))
+    txn.insert(&root(), &table, &user(TENANT_A, 2, "b@x.com", None, 31))
         .await
         .unwrap();
-    txn.insert(&table, &user(TENANT_A, 3, "c@x.com", None, 32))
+    txn.insert(&root(), &table, &user(TENANT_A, 3, "c@x.com", None, 32))
         .await
         .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
-    let rows = txn
-        .scan_rows(
-            &table,
-            KeyRange::prefix(&keys::table_prefix(&table)),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    let rows = all_rows(&txn, &table).await;
     assert_eq!(rows.len(), 3);
 }
 
@@ -299,11 +355,11 @@ async fn concurrent_inserts_of_the_same_unique_value_cannot_both_commit() {
     let second = store.begin().await.unwrap();
 
     first
-        .insert(&table, &user(TENANT_A, 1, "race@x.com", None, 30))
+        .insert(&root(), &table, &user(TENANT_A, 1, "race@x.com", None, 30))
         .await
         .unwrap();
     second
-        .insert(&table, &user(TENANT_A, 2, "race@x.com", None, 31))
+        .insert(&root(), &table, &user(TENANT_A, 2, "race@x.com", None, 31))
         .await
         .unwrap();
 
@@ -315,17 +371,7 @@ async fn concurrent_inserts_of_the_same_unique_value_cannot_both_commit() {
     );
 
     let txn = store.begin().await.unwrap();
-    let rows = txn
-        .scan_rows(
-            &table,
-            KeyRange::prefix(&keys::table_prefix(&table)),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    let rows = all_rows(&txn, &table).await;
     assert_eq!(rows.len(), 1, "only one row should have survived");
 }
 
@@ -335,9 +381,13 @@ async fn rollback_leaves_nothing_behind() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", Some("ay"), 30))
-        .await
-        .unwrap();
+    txn.insert(
+        &root(),
+        &table,
+        &user(TENANT_A, 1, "a@x.com", Some("ay"), 30),
+    )
+    .await
+    .unwrap();
     txn.rollback();
 
     assert!(
@@ -352,7 +402,7 @@ async fn update_of_a_missing_row_is_an_error() {
     let table = users();
     let txn = store.begin().await.unwrap();
     let err = txn
-        .update(&table, &user(TENANT_A, 9, "a@x.com", None, 30))
+        .update(&root(), &table, &user(TENANT_A, 9, "a@x.com", None, 30))
         .await
         .unwrap_err();
     assert!(
@@ -367,17 +417,20 @@ async fn upsert_inserts_then_replaces() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.upsert(&table, &user(TENANT_A, 1, "a@x.com", None, 30))
+    txn.upsert(&root(), &table, &user(TENANT_A, 1, "a@x.com", None, 30))
         .await
         .unwrap();
-    txn.upsert(&table, &user(TENANT_A, 1, "b@x.com", None, 31))
+    txn.upsert(&root(), &table, &user(TENANT_A, 1, "b@x.com", None, 31))
         .await
         .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
     assert_eq!(
-        txn.get(&table, &pk(TENANT_A, 1)).await.unwrap().unwrap(),
+        txn.get(&root(), &table, &pk(TENANT_A, 1))
+            .await
+            .unwrap()
+            .unwrap(),
         user(TENANT_A, 1, "b@x.com", None, 31)
     );
     assert_eq!(
@@ -395,13 +448,13 @@ async fn tenants_occupy_disjoint_key_ranges() {
     let table = users();
 
     let txn = store.begin().await.unwrap();
-    txn.insert(&table, &user(TENANT_A, 1, "a@x.com", None, 30))
+    txn.insert(&root(), &table, &user(TENANT_A, 1, "a@x.com", None, 30))
         .await
         .unwrap();
-    txn.insert(&table, &user(TENANT_A, 2, "b@x.com", None, 31))
+    txn.insert(&root(), &table, &user(TENANT_A, 2, "b@x.com", None, 31))
         .await
         .unwrap();
-    txn.insert(&table, &user(TENANT_B, 1, "c@x.com", None, 32))
+    txn.insert(&root(), &table, &user(TENANT_B, 1, "c@x.com", None, 32))
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -412,9 +465,24 @@ async fn tenants_occupy_disjoint_key_ranges() {
         keys::table_tenant_prefix(&table, &Value::Uuid(Uuid::from_u128(TENANT_B))).unwrap();
     assert!(!a_prefix.starts_with(&b_prefix) && !b_prefix.starts_with(&a_prefix));
 
+    // Every stored row key for tenant A really does live under A's prefix.
+    let a_keys = store
+        .backend()
+        .keys()
+        .into_iter()
+        .filter(|k| k.starts_with(&a_prefix))
+        .count();
+    assert_eq!(a_keys, 2);
+
     let txn = store.begin().await.unwrap();
+    let tenant_ordinal = table.ordinal_of("tenant_id").unwrap();
     let a_rows = txn
-        .scan_rows(&table, KeyRange::prefix(&a_prefix), ScanOrder::Ascending)
+        .query(
+            &root(),
+            &table,
+            Expr::eq(tenant_ordinal, Value::Uuid(Uuid::from_u128(TENANT_A))),
+            ScanOrder::Ascending,
+        )
         .await
         .unwrap()
         .collect()
@@ -432,18 +500,7 @@ async fn tenants_occupy_disjoint_key_ranges() {
         by_age,
         Some(&Value::Uuid(Uuid::from_u128(TENANT_A))),
     );
-    let entries = txn
-        .scan_index(
-            &table,
-            by_age,
-            KeyRange::prefix(&a_index_prefix),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    let entries = entries_under(store.backend(), &table, by_age, &a_index_prefix);
     assert_eq!(entries.len(), 2);
     for (_, key) in &entries {
         assert_eq!(key[0], Value::Uuid(Uuid::from_u128(TENANT_A)));
@@ -460,6 +517,7 @@ async fn descending_index_column_reverses_stored_order() {
     let txn = store.begin().await.unwrap();
     for (i, age) in [30i64, 10, 20].into_iter().enumerate() {
         txn.insert(
+            &root(),
             &table,
             &user(TENANT_A, i as u64, &format!("u{i}@x.com"), None, age),
         )
@@ -468,44 +526,30 @@ async fn descending_index_column_reverses_stored_order() {
     }
     txn.commit().await.unwrap();
 
-    let txn = store.begin().await.unwrap();
     let tenant = Value::Uuid(Uuid::from_u128(TENANT_A));
 
-    let asc_index = table.index_by_name("by_age").unwrap();
-    let ages: Vec<Value> = txn
-        .scan_index(
+    let ages = |index: &IndexDef| -> Vec<Value> {
+        entries_under(
+            store.backend(),
             &table,
-            asc_index,
-            KeyRange::prefix(&keys::index_prefix(&table, asc_index, Some(&tenant))),
-            ScanOrder::Ascending,
+            index,
+            &keys::index_prefix(&table, index, Some(&tenant)),
         )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap()
         .into_iter()
         .map(|(vals, _)| vals[0].clone())
-        .collect();
-    assert_eq!(ages, vec![Value::I64(10), Value::I64(20), Value::I64(30)]);
+        .collect()
+    };
 
-    let desc_index = table.index_by_name("by_age_desc").unwrap();
-    let ages: Vec<Value> = txn
-        .scan_index(
-            &table,
-            desc_index,
-            KeyRange::prefix(&keys::index_prefix(&table, desc_index, Some(&tenant))),
-            ScanOrder::Ascending,
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(vals, _)| vals[0].clone())
-        .collect();
-    assert_eq!(ages, vec![Value::I64(30), Value::I64(20), Value::I64(10)]);
+    assert_eq!(
+        ages(table.index_by_name("by_age").unwrap()),
+        vec![Value::I64(10), Value::I64(20), Value::I64(30)]
+    );
+    // Stored in reverse, so walking the index forwards yields descending ages
+    // with no sort step.
+    assert_eq!(
+        ages(table.index_by_name("by_age_desc").unwrap()),
+        vec![Value::I64(30), Value::I64(20), Value::I64(10)]
+    );
 }
 
 /// Whatever sequence of writes happens, the number of index entries must stay
@@ -519,6 +563,7 @@ async fn index_entry_count_tracks_row_count() {
     let txn = store.begin().await.unwrap();
     for i in 0..5u64 {
         txn.insert(
+            &root(),
             &table,
             &user(
                 TENANT_A,
@@ -535,13 +580,21 @@ async fn index_entry_count_tracks_row_count() {
     assert_eq!(index_entries(store.backend(), &table).len(), 5 * indexes);
 
     let txn = store.begin().await.unwrap();
-    txn.update(&table, &user(TENANT_A, 0, "changed@x.com", None, 99))
-        .await
-        .unwrap();
-    txn.delete(&table, &pk(TENANT_A, 4)).await.unwrap();
-    txn.upsert(&table, &user(TENANT_A, 7, "seven@x.com", Some("sev"), 7))
-        .await
-        .unwrap();
+    txn.update(
+        &root(),
+        &table,
+        &user(TENANT_A, 0, "changed@x.com", None, 99),
+    )
+    .await
+    .unwrap();
+    txn.delete(&root(), &table, &pk(TENANT_A, 4)).await.unwrap();
+    txn.upsert(
+        &root(),
+        &table,
+        &user(TENANT_A, 7, "seven@x.com", Some("sev"), 7),
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
 
     assert_eq!(index_entries(store.backend(), &table).len(), 5 * indexes);

@@ -87,6 +87,32 @@ pub enum KernelError {
     #[error("transaction conflicted with a concurrent commit; retry")]
     TransactionConflict,
 
+    /// The caller's roles do not grant this action on this table.
+    #[error("access denied: no role grants {action} on table `{table}`")]
+    AccessDenied {
+        /// The table named.
+        table: String,
+        /// The action attempted.
+        action: &'static str,
+    },
+
+    /// A tenant-scoped table was reached by a context with no tenant.
+    ///
+    /// Refused rather than defaulted, because the only available default would
+    /// be to show every tenant.
+    #[error("table `{table}` is tenant-scoped, but the security context has no tenant")]
+    TenantRequired {
+        /// The table named.
+        table: String,
+    },
+
+    /// A write would produce a row the caller is not permitted to have written.
+    #[error("row-level security forbids writing this row to table `{table}`")]
+    RowCheckFailed {
+        /// The table written to.
+        table: String,
+    },
+
     /// A stored index entry pointed at a row key that would not decode.
     ///
     /// This means the index and the table disagree, which the record store

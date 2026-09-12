@@ -9,12 +9,22 @@
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod exec;
+pub mod expr;
 pub mod keys;
 pub mod memory;
+pub mod plan;
 pub mod record;
+pub mod security;
 pub mod store;
 
 pub use error::{KernelError, Result, StorageError};
+pub use exec::QueryCursor;
+pub use expr::{CmpOp, Expr, Truth};
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
+pub use plan::{Access, Plan, plan};
 pub use record::{IndexCursor, RecordStore, RecordTransaction, RowCursor};
+pub use security::{
+    Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
+};
 pub use store::{KeyRange, KeyValue, KvIterator, KvStore, KvTransaction, ScanOrder};
