@@ -57,33 +57,104 @@ three secondary indexes.
 | index scan, 100 rows | 134 µs (1.34 µs/row) |
 | insert 1 row, 3 indexes | 8.7 µs |
 
-## What the baseline says
+## What the baseline said, and what was done about it
 
-**An index scan costs one point read per row, and that dominates everything
-else.** Returning 100 rows through an index costs 231 ms, while scanning the
-whole 2500-row tenant costs 36 ms — the index is 6× *slower* while reading 25×
-less data. At 500 rows the index scan takes 1.1 seconds against the same 36 ms.
+Every line below is a change the profile asked for, not one that seemed like a
+good idea.
 
-**The planner has no idea this is true.** It picks an index whenever one matches
-more equality terms, with no notion of how many rows that implies. On the 500-row
-range that choice is 30× worse than ignoring the index. This is the largest
-single defect the profile exposes and no amount of making the row lookup faster
-fixes it.
+### An index scan cost one point read per row
 
-**A primary-key lookup opens a scan rather than doing a point read.** Functionally
-fine, needlessly indirect, and it means the cheapest possible query does not take
-the cheapest possible path.
+Returning 100 rows through an index cost 231 ms while scanning the whole
+2500-row tenant cost 36 ms — the index 6× slower while reading 25× less data.
 
-**Planning costs more than executing a point lookup** — 1.04 µs against 830 ns.
-It clones the predicate into the residual and allocates a constraint list per
-call, on every query.
+Two things fixed it. **Index-only scans**: a query says which columns it needs,
+and when the index holds them the row is assembled from the index entry and
+never read. **Pipelining**: when the row must be read, the reads are overlapped
+rather than done one at a time.
 
-**Key encoding is mostly allocation.** 63 ns to encode a two-column key, 19 ns
-for the same bytes into a buffer that already exists. A write with three indexes
-builds seven keys.
+| | before | after |
+|---|---|---|
+| indexed equality, 100 rows | 100 reads, 218 ms | 0 reads, 2.3 ms |
+| count over an index | 500 reads, 1080 ms | 0 reads, 4.8 ms |
+| non-covering index scan, 60 rows | 128 ms | 10.8 ms |
 
-**Every insert does a read.** The duplicate-primary-key check costs a round trip
-per row, so a 100-row load spends 100 of them before writing anything.
+### The planner had no idea any of that was true
+
+It preferred whichever index matched the most equality terms. On a 500-row
+range that was 30× worse than ignoring the index. Structure cannot tell you how
+many rows a predicate selects, so the planner now costs plans against
+statistics gathered by `analyze`.
+
+| query | before | after |
+|---|---:|---:|
+| indexed equality, 100 rows | 218 ms | 23 ms |
+| indexed range, 500 rows | 1099 ms | 24 ms |
+| indexed equality, limit 10 | 43 ms | 3.0 ms |
+
+Across the read workload: **1,111 point reads became 1**.
+
+### A key lookup opened a scan
+
+Now a point read: 16 ms to 2.3 ms.
+
+### Key encoding was mostly allocation
+
+Composing a key from a prefix plus a separately encoded tuple allocated twice
+and copied once, on every read and every write. Building it into one buffer took
+it from 148 ns to 30 ns, and a point get 19% faster end to end.
+
+### Planning cost more than a point lookup
+
+It did before this work (1.04 µs against 830 ns), and the cost model made it
+worse before it made it better — 1.87 µs at its peak, now 1.27 µs after sharing
+the residual instead of deep-cloning it, borrowing the query's literals instead
+of copying them, and not building a set of every column per index to answer a
+question with a known answer.
+
+Still above where it started. That is the right trade: the model it pays for is
+what turned a 1.1-second query into 23 ms.
+
+### Every insert still does a read
+
+Unchanged. The duplicate-key check costs a round trip per row, so a 100-row load
+spends 100 of them. A bulk path that skips the check — and lets the write-write
+conflict catch a genuine duplicate instead — is the obvious next thing, and is
+not done.
+
+## Current numbers
+
+| query | rows | point reads | wall | plan |
+|---|---:|---:|---:|---|
+| point get by primary key | 1 | 1 | 2.3 ms | Point Get |
+| whole tenant | 2500 | 0 | 24 ms | Table Scan |
+| indexed equality | 100 | 0 | 24 ms | Table Scan |
+| indexed equality, limit 10 | 10 | 0 | 3.0 ms | Table Scan |
+| indexed range | 500 | 0 | 24 ms | Table Scan |
+| covered equality, keys only | 100 | 0 | 2.3 ms | Index Only Scan |
+| covered count | 500 | 0 | 4.8 ms | Index Only Scan |
+
+| operation | before | now |
+|---|---:|---:|
+| build a row key | 148 ns | 30 ns |
+| point get, end to end | 830 ns | 690 ns |
+| plan a 3-term predicate | 1.04 µs | 1.27 µs |
+| scan 2500 rows | 1.60 ms | 1.51 ms |
+
+## Two results worth keeping
+
+**A non-covering index scan needs to select under about 1% of the rows a scan
+would touch to be worth using.** That falls out of the cost ratio — a point read
+is a round trip, a scanned row is a hundredth of one — and it is why so many
+plans above are table scans. It is not a quirk of the constants; it is what
+storage where every lookup is a network round trip implies, and it is why
+covering an index matters far more here than on local disk.
+
+**A limit cannot change which plan wins; `ORDER BY` with a limit can.** Reading
+`L` rows through an index costs `L` point reads, and finding `L` matches by
+scanning costs `L / selectivity` rows: both linear in `L`, so their ratio is
+whatever it was unlimited. A sort is different, because it must see every
+matching row before returning the first — so an ordered index that streams beats
+a sort that cannot stop early, and that flip is tested.
 
 ## Fixture notes
 

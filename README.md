@@ -9,8 +9,9 @@ derive macro is a surface; the value is in the kernel underneath it, which owns
 the keyspace, index maintenance, and the point where access policy is enforced.
 
 > **Status: early.** The Rust record layer works end to end and is tested,
-> including read replicas over S3-compatible storage. The gRPC head node and the
-> Python, Go and TypeScript SDKs are not built yet. See [Status](#status).
+> including a cost-based planner, index-only scans, aggregates, read replicas
+> and S3-compatible storage. The gRPC head node and the Python, Go and
+> TypeScript SDKs are not built yet. See [Status](#status).
 
 ```rust
 use slate_orm::{Record, Records, Expr, ScanOrder};
@@ -42,7 +43,7 @@ let found: Vec<User> = txn.find_records(&ctx, filter, ScanOrder::Ascending).awai
 |---|---|
 | `slate-tuple` | Order-preserving tuple encoding, the closed value model |
 | `slate-schema` | Table, column and index definitions; the row body codec |
-| `slate-kernel` | Keyspace, record store, planner, executor, RLS/RBAC |
+| `slate-kernel` | Keyspace, record store, planner, executor, RLS/RBAC, statistics |
 | `slate-slatedb` | SlateDB backend, S3-compatible storage, read replicas |
 | `slate-derive` | `#[derive(Record)]` and generated column constants |
 | `slate-orm` | Typed surface; re-exports the rest |
@@ -131,19 +132,79 @@ deny-style policy would hand out exactly the rows nobody owns. Evaluation
 follows SQL: the comparison is unknown, the negation stays unknown, the row is
 withheld.
 
-### Bounds narrow, the residual decides
+### The planner costs plans, and can be asked why
 
-The planner is heuristic on purpose — it matches equality terms against an
-index's leading columns and allows one range on the next — because a cost model
-needs statistics and statistics need a subsystem.
+Queries are planned against statistics, in units of one object-storage round
+trip: opening a scan 1.0, a row from an open scan 0.01, a point read 1.0. The
+ratio has a blunt consequence — **a non-covering index scan only beats a table
+scan when it selects under roughly 1% of the rows the scan would touch.** That
+is not a quirk of the constants; it is what storage where every lookup is a
+network round trip implies, and it is why covering an index matters far more
+here than on local disk.
 
-Scan bounds are treated as an optimisation only. Every conjunct stays in the
-plan's residual and is re-checked per row, even when the bounds already imply
-it. That costs a little work and buys two things: a bound-derivation bug can
-make a scan slow but not wrong, and a mandatory security predicate is enforced
-by evaluation rather than by the planner having correctly turned it into a
-range. Dropping provably-redundant conjuncts is a later optimisation that has to
-be argued for rather than assumed.
+Without a cost model the planner preferred whichever index matched the most
+equality terms, which on the benchmark corpus chose a plan 30× slower than
+ignoring the index. See [`docs/performance.md`](docs/performance.md).
+
+```rust
+let plan = txn.explain(&ctx, &table, &query)?;
+println!("{plan}");
+// Index Only Scan using by_kind on events  (rows=100 cost=2.00)
+```
+
+`analyze` gathers the statistics by reading the table. It is an ordinary read,
+so it sees what the caller can see — statistics gathered under a restrictive
+policy describe that slice rather than the table.
+
+Scan bounds are still treated as an optimisation only. Every conjunct stays in
+the plan's residual and is re-checked per row, even when the bounds already
+imply it. That costs a little work and buys two things: a bound-derivation bug
+can make a scan slow but not wrong, and a mandatory security predicate is
+enforced by evaluation rather than by the planner having correctly turned it
+into a range.
+
+### Index-only scans
+
+A query says which columns it needs. When an index holds all of them — its own
+columns plus the primary key it carries — the row is assembled from the index
+entry and never read:
+
+```rust
+// No rows read at all: `by_kind` holds everything this touches.
+let query = Query::all()
+    .filter(Expr::eq(kind, Value::Str("signup".into())))
+    .select([id, kind]);
+
+// Counting reads no columns, so any usable index answers it.
+let total = txn.count(&ctx, &table, &Query::all()).await?;
+```
+
+The check is over the projected columns *union the predicate's*, and the
+security filter is part of that predicate — so a policy on a column the index
+lacks forces the row read rather than being skipped by the optimisation.
+
+### Queries
+
+```rust
+let query = Query::all()
+    .filter(Expr::eq(region, Value::Str("eu".into())))
+    .and(Expr::compare(amount, CmpOp::Ge, Value::I64(100)))
+    .sort_by([SortKey::desc(amount)])
+    .limit(20)
+    .offset(40);
+
+let rows = txn.execute(&ctx, &table, &query).await?.collect().await?;
+
+let groups = txn
+    .group_by(&ctx, &table, &Query::all(), &[region],
+              &[Aggregate::Count, Aggregate::Sum(amount)])
+    .await?;
+```
+
+`ORDER BY` is planned, not just executed: each access path knows the order it
+produces, and a requested order is satisfied when it is a prefix of that. When
+nothing produces it the result is materialised and sorted, and the cost model
+knows a sort must see every matching row before returning the first.
 
 ### Schemas are code, and so are policies
 
@@ -232,6 +293,8 @@ let store = SlateStore::open_s3(
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets
+cargo bench                                                # criterion
+cargo run --release -p slate-kernel --example perf_report  # I/O counts
 ```
 
 Tests are written around guarantees rather than API surface:
@@ -258,6 +321,8 @@ Tests are written around guarantees rather than API surface:
   writers unable to both take a unique index slot, a replica genuinely observing
   the writer's data, security applying identically on a replica, and a second
   writer fencing the first.
+- Performance claims are tested in point reads, not milliseconds — "this reads
+  no rows" survives a different machine in a way "this took 2 ms" does not.
 
 Set `SLATE_S3_BUCKET` and friends to point the storage suite at your own MinIO,
 Tigris or R2 bucket instead of the in-process server.
@@ -276,6 +341,10 @@ Built and tested:
 - [x] SlateDB backend, and S3-compatible storage (AWS, MinIO, Tigris, R2)
 - [x] Read replicas, read tokens, tenant-affinity routing
 - [x] Conflict retry and writer fencing
+- [x] Cost-based planning with statistics, `analyze`, and `EXPLAIN`
+- [x] Projections and index-only scans; pipelined index lookups
+- [x] Aggregates, `GROUP BY`, `ORDER BY`, `LIMIT`/`OFFSET`
+- [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md))
 
 Not built:
 
@@ -284,10 +353,13 @@ Not built:
       come from outside the database
 - [ ] Python, Go and TypeScript SDKs, which need the head node first
 - [ ] Migrations beyond additive nullable columns (no column drop or rename)
-- [ ] Projections, covering/index-only scans, pipelined index lookups — see
-      [`docs/topology.md`](docs/topology.md) for why these are in that order
-- [ ] Cost-based planning, joins
+- [ ] Joins — everything today is single-table
+- [ ] A bulk-write path: every insert still does a read for the duplicate-key
+      check, so a 100-row load spends 100 round trips before writing anything
+- [ ] Histograms, so a range estimate is better than a fixed guess; correlated
+      column statistics
 - [ ] `IN` as multiple index ranges (today it is a residual filter)
+- [ ] Partial and expression indexes; foreign keys; `DEFAULT` and `CHECK`
 
 ## License
 

@@ -124,27 +124,21 @@ durability naturally share a flush, so a batching layer here would duplicate it
 and add a scheduling delay on top. Worth measuring before believing there is
 anything to win.
 
-### Pipelined index lookups — the next thing to do
+### Pipelined index lookups — built
 
-An index scan currently walks the index and does one point lookup per row,
-serially. Over object storage an uncached get is milliseconds, so a
-thousand-row index scan is seconds of mostly-waiting. Reading a batch of primary
-keys from the index cursor and issuing the lookups concurrently — preserving
-order, with a bounded in-flight count — should be worth roughly the concurrency
-factor.
+Deferred here on the grounds that the batch size was the whole question and
+could not be chosen without a benchmark. With one, it can: sixteen reads in
+flight took a sixty-row non-covering index scan from 128 ms to 10.8 ms.
 
-It is not built because the batch size is the entire question, and it cannot be
-chosen against an in-memory backend: too small and nothing is won, too large and
-a `LIMIT 10` query fetches a thousand rows to discard them. This needs a
-benchmark against real object storage first.
+The cost model deliberately does not divide the point-read cost by the prefetch
+depth. Pipelining improves latency, not the number of round trips, and a planner
+that costed latency would start preferring index scans under concurrency, where
+round trips are exactly what is scarce.
 
-### Covering (index-only) scans — bigger win, bigger change
+### Covering (index-only) scans — built
 
-If an index's columns plus the primary key cover everything a query projects,
-the row lookup can be skipped entirely, which removes the problem above rather
-than parallelising it. It needs projections in the query API, which today
-returns whole rows. The right order is probably projections first, then covering
-scans, then pipelining for what is left.
+Projections came first, as predicted, and then covering scans on top: 100 point
+reads to none, 218 ms to 2.3 ms. See [`performance.md`](performance.md).
 
 ### Prefix bloom filters — cheap, unexplored
 
@@ -168,6 +162,14 @@ mandatory security predicate is enforced by evaluation rather than by the
 planner having correctly turned it into a range. Dropping the redundant ones is
 a real optimisation, but it moves security correctness into the planner and so
 needs an argument, not just a benchmark.
+
+### A bulk-write path
+
+Every insert reads first, to tell a duplicate primary key from a new one. A
+hundred-row load therefore spends a hundred round trips before writing anything.
+A bulk path could skip the check and let the write-write conflict catch a
+genuine duplicate — the guarantee does not depend on the read, which exists only
+to produce a better error. This is the largest untouched item the profile shows.
 
 ## Failure modes
 
