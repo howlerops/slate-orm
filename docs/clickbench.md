@@ -379,6 +379,84 @@ Three things are worth keeping from that:
 to count distinct values, and samples every column for a histogram. Fine at
 five columns, noticeable at a hundred.
 
+## The regression-suite article, and what it is actually about
+
+A second pgrust write-up ([the regression
+suite](https://malisper.me/postgres-in-rust-regression-suite/)) covers how they
+reached 100% of Postgres' regression tests. It is worth reading, and worth
+being clear about what it is: an account of **porting** Postgres with AI agents
+across four attempts at roughly $100,000, not of designing a planner.
+
+That distinction settles the obvious question. pgrust does not have planner
+optimisations to copy, because it did not design any — it inherited Postgres'
+50k lines of planner C, first through `c2rust` and then rewritten crate by
+crate. Their engineering problem was fidelity; ours is judgement. There is no
+cost model in that article to learn from.
+
+What *is* there is worth more than a technique.
+
+### Their first attempt died on plan representation
+
+Postgres compiles `SELECT name FROM users WHERE age > 30` into **one** node:
+
+```
+SeqScan { scanrelid = 1, targetlist = [name], qual = [age > 30] }
+```
+
+Their first attempt produced three, nested: projection over filter over scan.
+The article calls the difference small-looking and "massive" in effect — "in C
+lots of functions will take a sequential scan node with a filter. In rust,
+those functions would sometimes need to take a sequential scan, sometimes take
+a filter node, and other times need to take a projection node." It broke the
+attempt.
+
+This project's `Plan` is the fused shape, not the tree: one struct carrying
+`access`, `residual`, `predicate_columns`, `output_columns` and `filter_first`
+together. That was not foresight about porting — it fell out of late
+materialisation, which *needs* the filter and the projection visible at the
+same level to decode a predicate's columns first and the rest only for rows
+that survive. A three-node tree cannot express that; the filter node would have
+to be handed rows already decoded. Two unrelated pressures, one answer, and it
+is mildly reassuring that Postgres landed there too.
+
+### What was worth taking: plans as a reviewable artifact
+
+Postgres' regression suite works substantially by diffing `EXPLAIN` output, and
+that is the applicable idea.
+
+Recalibrating the cost model here was correct and necessary, and it changed
+seven tests. Each was discovered separately, over seven build-and-run cycles,
+each looking like an isolated surprise rather than one deliberate change with a
+wide blast radius. Every fact needed to review it at once already existed.
+Nothing collected it.
+
+`crates/slate-kernel/tests/plan_snapshots.rs` now does: eighteen query shapes
+against three table sizes, rendered as text and committed. Reverting
+`POINT_READ_COST` from 3.0 to 1.0 reports **eleven changed plans in one
+output** — the whole blast radius, in the form a reviewer can actually read.
+
+It found two things on its first run. One is a real inconsistency introduced by
+the empty-range fix: a plan that reads nothing was reporting the cost and row
+count of the range it would have scanned, so `EXPLAIN` described a plan reading
+88,209 rows at cost 12.25 while returning none. Fixed. The other is not a bug
+but is worth having visible — at a thousand rows a `Point Get` is chosen at
+cost 3.00 where a table scan costs 1.12, because a full-key equality replaces
+the key-range candidate rather than competing with it, and because a
+request-counting unit ignores the thousand rows of bytes a scan would move to
+return one.
+
+### What was not taken
+
+The rest of the article is a porting workflow: `find-next-crate`,
+`port-crate`, `audit-crate` as named skills, forty concurrent subagents,
+`c2rust` as a scaffold to refactor away from. All of it is shaped by having an
+existing implementation to be faithful to. There is nothing here to be faithful
+to, and a correctness strategy built on diffing against a reference is not
+available — which is why the equivalent here is oracles that diff *plans
+against each other* and measurements that diff the *model against the
+substrate*. Both were found necessary independently, and both found bugs the
+other could not.
+
 ## What was not taken from pgrust
 
 The original interest was vectorised execution. It is still not the thing to

@@ -622,11 +622,16 @@ pub fn plan_hinted(
     // backwards — which a store is entitled to treat as a programming error
     // (`BTreeMap::range` panics on it). Saying `Nothing` is both the correct
     // answer and the cheapest way to reach it.
-    let access = match &access {
+    // Contradictory bounds are an empty range, and a plan over an empty range
+    // reads nothing — so its estimates have to say so too. Leaving them at what
+    // the range would have cost made `EXPLAIN` report a plan that reads no rows
+    // as costing twelve round trips and returning eighty-eight thousand, which
+    // the plan snapshot caught on its first run.
+    let (access, estimated_rows, estimated_cost) = match &access {
         Access::TableScan { range } | Access::IndexScan { range, .. } if range.is_empty() => {
-            Access::Nothing
+            (Access::Nothing, 0.0, 0.0)
         }
-        _ => access,
+        _ => (access, estimated_rows, estimated_cost),
     };
 
     Plan {

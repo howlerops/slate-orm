@@ -526,6 +526,11 @@ Tests are written around guarantees rather than API surface:
   fixture. Doing that found it overcharging scans eighty times and
   undercharging index lookups forty — see
   [`docs/correctness.md`](docs/correctness.md).
+- **Plans are snapshotted.** Eighteen query shapes across three table sizes,
+  committed as text, so a cost-model change is one reviewable diff rather than
+  a series of surprises: reverting one constant reports eleven changed plans at
+  once. Borrowed from how Postgres' regression suite works; see
+  [`docs/clickbench.md`](docs/clickbench.md).
 - Row-level security is checked as a **matrix**, once per access path, rather
   than as a set of scenarios: a policy honoured by the table scan and skipped
   by the k-NN search is a leak, and the paths that skip it are the ones added
