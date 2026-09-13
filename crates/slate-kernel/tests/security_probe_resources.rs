@@ -369,8 +369,7 @@ mod limits {
         let err = txn
             .execute(&app(), &table(), &sorted)
             .await
-            .err()
-            .expect("an unlimited sort past the ceiling must be refused");
+            .expect_err("an unlimited sort past the ceiling must be refused");
         assert!(
             matches!(err, KernelError::SortTooLarge { limit: 10 }),
             "expected SortTooLarge, got {err:?}"
