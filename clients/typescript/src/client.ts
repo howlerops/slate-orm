@@ -5,6 +5,13 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
 import { fromServiceError, SlateError } from "./errors.js";
+import {
+  applyGrouping,
+  type Group,
+  type Grouping,
+  type JoinQuery,
+  joinToWire,
+} from "./join.js";
 import { type Query, queryToWire } from "./query.js";
 import { type Value, valueFromWire, valueToWire } from "./value.js";
 
@@ -357,6 +364,80 @@ export class Session {
     return new RowStream(stream, (sb) => this.#observeServedBy(sb));
   }
 
+  /** Read joined rows. */
+  join(join: JoinQuery): JoinStream {
+    const stream = this.#client.stream("Join", {
+      join: joinToWire(join),
+      freshness: this.#freshness(),
+    });
+    return new JoinStream(stream, (sb) => this.#observeServedBy(sb));
+  }
+
+  /** Group one table. */
+  aggregate(over: Query, grouping: Grouping): GroupStream {
+    const query = applyGrouping({ input: queryToWire(over) }, grouping);
+    return this.#aggregate(query, undefined);
+  }
+
+  /**
+   * Group a join.
+   *
+   * Two inputs exactly: the kernel groups a two-table join and does not group
+   * a chain. A third is refused by the server with that as the reason, rather
+   * than counted here where the count could drift from the kernel's.
+   */
+  aggregateJoin(over: JoinQuery, grouping: Grouping): GroupStream {
+    const query = applyGrouping({ join: joinToWire(over) }, grouping);
+    return this.#aggregate(query, undefined);
+  }
+
+  /** @internal */
+  aggregateIn(
+    query: Record<string, unknown>,
+    transaction: string,
+  ): GroupStream {
+    return this.#aggregate(query, transaction);
+  }
+
+  #aggregate(query: Record<string, unknown>, transaction: string | undefined): GroupStream {
+    const request: Record<string, unknown> = { aggregate: query };
+    if (transaction !== undefined) request["transaction"] = transaction;
+    // A transaction's reads go to the writer and need no freshness floor.
+    else request["freshness"] = this.#freshness();
+    const stream = this.#client.stream("Aggregate", request);
+    return new GroupStream(stream, (sb) => this.#observeServedBy(sb));
+  }
+
+  /**
+   * Ask for a join's plan without running it.
+   *
+   * Needs the `explain` action on every table involved, not just one.
+   */
+  async explainJoin(join: JoinQuery): Promise<JoinExplanation> {
+    const r = await this.#client.call<Record<string, unknown>>("ExplainJoin", {
+      join: joinToWire(join),
+      freshness: this.#freshness(),
+    });
+    this.#observeServedBy(r["servedBy"]);
+    const inputs = ((r["inputs"] as Record<string, unknown>[]) ?? []).map((input) => {
+      const algorithm = input["algorithm"] as Record<string, unknown> | undefined;
+      return {
+        plan: explanationFromWire((input["plan"] as Record<string, unknown>) ?? {}),
+        type: String(input["joinType"] ?? ""),
+        algorithm: algorithm ? String(algorithm["algorithm"] ?? "") : "",
+        estimatedRows: Number(input["estimatedRows"] ?? 0),
+        estimatedCost: Number(input["estimatedCost"] ?? 0),
+      };
+    });
+    return {
+      inputs,
+      estimatedRows: Number(r["estimatedRows"] ?? 0),
+      estimatedCost: Number(r["estimatedCost"] ?? 0),
+      display: String(r["display"] ?? ""),
+      warnings: (r["warnings"] as string[]) ?? [],
+    };
+  }
+
   /**
    * Ask for a plan without running it.
    *
@@ -370,18 +451,7 @@ export class Session {
       freshness: this.#freshness(),
     });
     this.#observeServedBy(r["servedBy"]);
-    return {
-      table: String(r["table"] ?? ""),
-      access: String(r["access"] ?? ""),
-      residual: String(r["residual"] ?? ""),
-      descending: Boolean(r["descending"]),
-      estimatedRows: Number(r["estimatedRows"] ?? 0),
-      estimatedCost: Number(r["estimatedCost"] ?? 0),
-      sorts: Boolean(r["sorts"]),
-      indexOnly: Boolean(r["indexOnly"]),
-      display: String(r["display"] ?? ""),
-      warnings: (r["warnings"] as string[]) ?? [],
-    };
+    return explanationFromWire(r);
   }
 
   /**
@@ -497,6 +567,31 @@ export class Transaction {
     return response.found ? rowFromWire(response.row) : undefined;
   }
 
+  /** Read joined rows inside the transaction. */
+  join(join: JoinQuery): JoinStream {
+    const stream = this.#client.stream("Join", {
+      transaction: this.#id,
+      join: joinToWire(join),
+    });
+    return new JoinStream(stream, () => {});
+  }
+
+  /** Group one table inside the transaction. */
+  aggregate(over: Query, grouping: Grouping): GroupStream {
+    return this.#session.aggregateIn(
+      applyGrouping({ input: queryToWire(over) }, grouping),
+      this.#id,
+    );
+  }
+
+  /** Group a join inside the transaction. */
+  aggregateJoin(over: JoinQuery, grouping: Grouping): GroupStream {
+    return this.#session.aggregateIn(
+      applyGrouping({ join: joinToWire(over) }, grouping),
+      this.#id,
+    );
+  }
+
   /** Read rows inside the transaction. */
   query(query: Query): RowStream {
     const stream = this.#client.stream("Query", {
@@ -577,6 +672,177 @@ export class RowStream implements AsyncIterable<Value[]> {
     for await (const row of this) out.push(row);
     return out;
   }
+}
+
+/**
+ * Joined rows arriving in batches.
+ *
+ * A joined row is one array of values **per input**, `undefined` where an
+ * outer join found no match — kept separate rather than concatenated, because
+ * a flat row cannot tell "the right side had no match" from "the right side
+ * matched and its columns are null".
+ */
+export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
+  readonly #stream: grpc.ClientReadableStream<unknown>;
+  readonly #onServedBy: (servedBy: unknown) => void;
+  #servedBy: ServedBy | undefined;
+  #warnings: string[] = [];
+
+  /** @internal */
+  constructor(
+    stream: grpc.ClientReadableStream<unknown>,
+    onServedBy: (servedBy: unknown) => void,
+  ) {
+    this.#stream = stream;
+    this.#onServedBy = onServedBy;
+  }
+
+  /** Which store answered, known once the first message has arrived. */
+  get servedBy(): ServedBy | undefined {
+    return this.#servedBy;
+  }
+
+  /** What the server said about the request it served. */
+  get warnings(): readonly string[] {
+    return this.#warnings;
+  }
+
+  /** Cancel the call. */
+  cancel(): void {
+    this.#stream.cancel();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<(Value[] | undefined)[]> {
+    try {
+      for await (const message of this.#stream as AsyncIterable<Record<string, unknown>>) {
+        this.#note(message);
+        for (const joined of (message["rows"] as { inputs?: unknown[] }[]) ?? []) {
+          yield (joined.inputs ?? []).map((input) => {
+            const row = (input as { row?: unknown }).row;
+            return row ? rowFromWire(row) : undefined;
+          });
+        }
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+  }
+
+  #note(message: Record<string, unknown>): void {
+    const servedBy = message["servedBy"];
+    if (servedBy && !this.#servedBy) {
+      const sb = servedBy as { replica?: string; sequence?: string };
+      this.#servedBy = { replica: sb.replica ?? "", sequence: BigInt(sb.sequence ?? 0) };
+      this.#onServedBy(servedBy);
+    }
+    const warnings = message["warnings"] as string[] | undefined;
+    if (warnings?.length) this.#warnings.push(...warnings);
+  }
+
+  /** Drain into an array. */
+  async collect(): Promise<(Value[] | undefined)[][]> {
+    const out: (Value[] | undefined)[][] = [];
+    for await (const row of this) out.push(row);
+    return out;
+  }
+}
+
+/** Groups arriving in batches. */
+export class GroupStream implements AsyncIterable<Group> {
+  readonly #stream: grpc.ClientReadableStream<unknown>;
+  readonly #onServedBy: (servedBy: unknown) => void;
+  #servedBy: ServedBy | undefined;
+  #warnings: string[] = [];
+
+  /** @internal */
+  constructor(
+    stream: grpc.ClientReadableStream<unknown>,
+    onServedBy: (servedBy: unknown) => void,
+  ) {
+    this.#stream = stream;
+    this.#onServedBy = onServedBy;
+  }
+
+  /** Which store answered. */
+  get servedBy(): ServedBy | undefined {
+    return this.#servedBy;
+  }
+
+  /** What the server said about the request it served. */
+  get warnings(): readonly string[] {
+    return this.#warnings;
+  }
+
+  /** Cancel the call. */
+  cancel(): void {
+    this.#stream.cancel();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<Group> {
+    try {
+      for await (const message of this.#stream as AsyncIterable<Record<string, unknown>>) {
+        const servedBy = message["servedBy"];
+        if (servedBy && !this.#servedBy) {
+          const sb = servedBy as { replica?: string; sequence?: string };
+          this.#servedBy = { replica: sb.replica ?? "", sequence: BigInt(sb.sequence ?? 0) };
+          this.#onServedBy(servedBy);
+        }
+        const warnings = message["warnings"] as string[] | undefined;
+        if (warnings?.length) this.#warnings.push(...warnings);
+        for (const group of (message["groups"] as Record<string, unknown>[]) ?? []) {
+          yield {
+            key: ((group["key"] as unknown[]) ?? []).map(valueFromWire),
+            values: ((group["values"] as unknown[]) ?? []).map(valueFromWire),
+          };
+        }
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+  }
+
+  /** Drain into an array. */
+  async collect(): Promise<Group[]> {
+    const out: Group[] = [];
+    for await (const group of this) out.push(group);
+    return out;
+  }
+}
+
+/** How one input of a join is planned. */
+export interface JoinInputPlan {
+  readonly plan: Explanation;
+  readonly type: string;
+  /** The algorithm the planner chose, or empty where it named none. */
+  readonly algorithm: string;
+  readonly estimatedRows: number;
+  readonly estimatedCost: number;
+}
+
+/** The plan a join would run under. */
+export interface JoinExplanation {
+  readonly inputs: JoinInputPlan[];
+  readonly estimatedRows: number;
+  readonly estimatedCost: number;
+  readonly display: string;
+  readonly warnings: string[];
+}
+
+function explanationFromWire(r: Record<string, unknown>): Explanation {
+  return {
+    table: String(r["table"] ?? ""),
+    access: String(r["access"] ?? ""),
+    residual: String(r["residual"] ?? ""),
+    descending: Boolean(r["descending"]),
+    estimatedRows: Number(r["estimatedRows"] ?? 0),
+    estimatedCost: Number(r["estimatedCost"] ?? 0),
+    sorts: Boolean(r["sorts"]),
+    indexOnly: Boolean(r["indexOnly"]),
+    display: String(r["display"] ?? ""),
+    warnings: (r["warnings"] as string[]) ?? [],
+  };
 }
 
 function isServiceError(error: unknown): error is grpc.ServiceError {

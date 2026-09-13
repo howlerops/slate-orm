@@ -65,11 +65,53 @@ Every failure is a `SlateError` with a `kind`. Use `isKind(error, "…")`.
 landed and retrying is how one write becomes two; and `"deadline-exceeded"` has
 the same ambiguity.
 
+## Joins and aggregates
+
+```ts
+import { newJoin, at, count, agg, groupGt, uint } from "@slate-orm/client";
+
+const b = newJoin();
+const authors = b.add({ table: "authors" });
+b.add({
+  table: "books",
+  type: "left",
+  on: [{ earlier: at(authors, 0), own: 1 }],
+});
+
+const groups = await session
+  .aggregateJoin(b.query(), {
+    groupBy: [at(0, 0)],
+    aggregates: [count()],
+    having: groupGt(agg(0), uint(1)),
+    sort: [{ column: agg(0), direction: "desc" }],
+    limit: 10,
+  })
+  .collect();
+```
+
+A `Column` is *(which input, that input's own ordinal)* — never a cumulative
+offset into a flattened row. `at(1, 2)` is the third column of the second
+table, not "first table's width plus two". This is why the client needs no
+catalog, and it is the thing about joins that is easiest to get wrong.
+
+A grouping's `sort`, `limit` and `offset` are over **groups**, not the rows
+going into them. A `having` and a group ordering name keys and aggregates —
+`groupKey(0)`, `agg(0)` — and their comparisons are the `group*` family
+(`groupGt`, …), separate from the row-level `gt` so the wrong one does not
+typecheck.
+
+A join stream yields one array **per input**, `undefined` where an outer join
+found no match — kept separate rather than concatenated, because a flat row
+cannot tell "no match" from "matched, and the columns are null".
+
+`aggregateJoin` takes exactly two inputs. A third is refused by the server with
+that as the reason, rather than counted here where the count could drift from
+the kernel's.
+
 ## What is not here
 
-`Join`, `Aggregate` and `ExplainJoin` are on the wire and have no typed surface
-here. `Explain` for a single table is. No vector similarity search, no
-`SchemaCheck` plumbing, no computed values in a query.
+No vector similarity search, no `SchemaCheck` plumbing, no computed values in a
+query or a join input.
 
 The proto is loaded at runtime by `@grpc/proto-loader` rather than compiled
 ahead of time, so there is no codegen step and no `protoc` needed to build
