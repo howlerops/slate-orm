@@ -63,6 +63,7 @@ use object_store::{
 };
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -136,6 +137,26 @@ pub enum LeaseError {
     Malformed {
         /// What did not parse.
         detail: String,
+    },
+
+    /// The store cannot do something this lease is built out of.
+    ///
+    /// Distinct from [`LeaseError::Backend`] because it is not a failure that
+    /// might go away: the store does not implement the operation and will not
+    /// implement it on the next attempt. The one case in practice is
+    /// `object_store::local::LocalFileSystem`, which has no conditional update
+    /// — see [`ObjectStoreLease`].
+    ///
+    /// [`Leadership`](crate::leadership::Leadership) treats it as terminal for
+    /// the writer role rather than retrying it forever.
+    #[error("{operation} is not supported by {store}: {remedy}")]
+    Unsupported {
+        /// What the lease tried to do.
+        operation: String,
+        /// The store, as it names itself.
+        store: String,
+        /// What to do instead.
+        remedy: String,
     },
 
     /// The store backing the lease failed.
@@ -237,13 +258,59 @@ pub const DEFAULT_TERM: Duration = Duration::from_secs(15);
 ///
 /// Acquisition and renewal are conditional writes: `PutMode::Create` when the
 /// object does not exist, `PutMode::Update` against the version last read
-/// otherwise. Both are supported by every object store this project targets.
+/// otherwise.
+///
+/// # What the store has to be able to do
+///
+/// **A conditional update.** Not "would be nice to have" — it is the whole
+/// mechanism. Renewing is an update against the version last written, taking
+/// over an expired term is an update against the version last read, and
+/// releasing is an update that writes an expiry in the past. Remove it and the
+/// only operation left is `Create`, which works exactly once.
+///
+/// S3, R2, Tigris, GCS, Azure and MinIO all have it. **`LocalFileSystem` does
+/// not**, and returns `NotImplemented`: there is no compare-and-swap on a POSIX
+/// file by ETag to implement it with.
+///
+/// So [`ObjectStoreLease::acquire`] checks first, and refuses with
+/// [`LeaseError::Unsupported`] rather than taking a lease it can never keep.
+/// That refusal is the fix for a real defect and is worth stating as one: a
+/// node over a local filesystem used to *take* the lease, then fail every
+/// renewal with an opaque storage error that
+/// [`Leadership::renew`](crate::leadership::Leadership::renew) correctly reads
+/// as transient and correctly declines to step down for. The term then lapsed
+/// under a perfectly healthy leader, the leader never noticed, the lease was
+/// never released, and no successor could take over an expired term — because
+/// that is an update too. A `local` database was a one-start database, and
+/// nothing anywhere said so.
+///
+/// The check costs one request, on the first acquisition only, and writes
+/// nothing: it is a `PutMode::Update` against a version that cannot match, at a
+/// scratch path beside the lease. A store that can do conditional updates
+/// answers "precondition failed" or "not found"; one that cannot answers "not
+/// implemented" before it looks at the path at all.
+///
+/// # Running over a local filesystem anyway
+///
+/// Use a lease built on a primitive the filesystem *has*. `slate-serverd`'s
+/// `filelease.rs` is one: an advisory `flock`, which for the single machine and
+/// single directory that `backend = "local"` describes is a better lease than
+/// this one — kernel-enforced rather than inferred from two clocks, and
+/// released by the kernel when the holder exits. Its limits are host-locality
+/// and NFS, and they are written down there.
 pub struct ObjectStoreLease {
     store: Arc<dyn ObjectStore>,
     path: Path,
     holder: String,
     term_length: Duration,
     clock: Arc<dyn Clock>,
+    /// What the probe found, as [`UNKNOWN`], [`SUPPORTED`] or [`UNSUPPORTED`].
+    ///
+    /// An atomic rather than a `OnceCell` because two concurrent first
+    /// acquisitions racing to probe is harmless — they ask the same question
+    /// and get the same answer — and serialising them would mean holding a
+    /// lock across a round trip to buy nothing.
+    conditional_update: AtomicU8,
     /// What this client holds, and the object version that proves it.
     ///
     /// A `tokio` mutex rather than a `std` one because it is held across the
@@ -252,6 +319,28 @@ pub struct ObjectStoreLease {
     /// compare-and-set defends against between processes.
     held: Mutex<Option<Held>>,
 }
+
+/// The store has not been asked yet whether it can do a conditional update.
+const UNKNOWN: u8 = 0;
+/// It can.
+const SUPPORTED: u8 = 1;
+/// It cannot, and this lease will not work against it.
+const UNSUPPORTED: u8 = 2;
+
+/// What the capability probe writes into, and never writes.
+///
+/// A scratch path beside the lease rather than the lease itself. The probe is
+/// designed not to land — the version it names cannot match anything — but
+/// "designed not to" is a poor thing to point at the one object whose contents
+/// decide who is allowed to write to the database. Pointed here, the worst a
+/// mistaken store could do is create a file nobody reads.
+const PROBE_SUFFIX: &str = ".probe";
+
+/// A version no object can be at.
+///
+/// Deliberately not a plausible ETag: if it ever *did* match, the probe would
+/// be a write.
+const IMPOSSIBLE_VERSION: &str = "slate-lease-capability-probe";
 
 /// A term, plus the object version that will let us write over it.
 #[derive(Debug, Clone)]
@@ -309,6 +398,7 @@ impl ObjectStoreLease {
             term_length: DEFAULT_TERM,
             clock: Arc::new(SystemClock),
             held: Mutex::new(None),
+            conditional_update: AtomicU8::new(UNKNOWN),
         }
     }
 
@@ -369,6 +459,81 @@ impl ObjectStoreLease {
         })
     }
 
+    /// Refuse before taking a lease this store cannot let us keep.
+    ///
+    /// Asked once and remembered. The answer cannot change: it is whether a
+    /// crate implements a method.
+    ///
+    /// Deliberately *not* inferred from a failed renewal, which is the shape
+    /// this would naturally take and the wrong one. A renewal fails after the
+    /// lease has been taken and the node has started serving writes, at which
+    /// point the honest response — stand down — costs the database its writer
+    /// for a configuration mistake that could have been caught before it
+    /// started. Asking first turns a lapsing leader into a refusal to lead.
+    async fn require_conditional_update(&self) -> Result<(), LeaseError> {
+        match self.conditional_update.load(Ordering::Relaxed) {
+            SUPPORTED => return Ok(()),
+            UNSUPPORTED => return Err(self.unsupported()),
+            _ => {}
+        }
+
+        let probe = Path::from(format!("{}{PROBE_SUFFIX}", self.path));
+        let options = PutOptions {
+            mode: PutMode::Update(UpdateVersion {
+                e_tag: Some(IMPOSSIBLE_VERSION.to_owned()),
+                version: None,
+            }),
+            tags: TagSet::default(),
+            attributes: Attributes::default(),
+            extensions: object_store::Extensions::default(),
+        };
+        let outcome = self
+            .store
+            .put_opts(&probe, Bytes::new().into(), options)
+            .await;
+
+        // Anything other than "not implemented" means the store took the
+        // request seriously enough to check the version, which is the only
+        // thing being asked. A transient failure is deliberately read as
+        // support: refusing to lead because the object store hiccuped once
+        // would be a worse failure than the one this is guarding against, and
+        // a store that really cannot do it will say so again next time.
+        //
+        // That the probe writes nothing rests on one fact and no cleanup: a
+        // conditional update against a version nothing can be at is refused by
+        // every store that implements conditional updates, and ignored by
+        // every store that does not. A `delete` afterwards, for the store that
+        // took the write anyway, was written and then removed: it can only run
+        // against a store that violates the contract being probed for, so
+        // nothing can reach it and no test can show it works. An unreachable
+        // tidy-up is worse than the stray zero-byte object it imagines.
+        let supported = !matches!(outcome, Err(object_store::Error::NotImplemented { .. }));
+        self.conditional_update.store(
+            if supported { SUPPORTED } else { UNSUPPORTED },
+            Ordering::Relaxed,
+        );
+        if supported {
+            Ok(())
+        } else {
+            Err(self.unsupported())
+        }
+    }
+
+    /// The refusal, with the store named and something to do about it.
+    fn unsupported(&self) -> LeaseError {
+        LeaseError::Unsupported {
+            operation: "a conditional update (`PutMode::Update`), which is how this lease renews, \
+                        releases and takes over an expired term"
+                .to_owned(),
+            store: self.store.to_string(),
+            remedy: "this lease cannot be used against that store — a node would take the lease \
+                     once and then never renew, release or hand it over. Point the database at \
+                     object storage, or use a lease built on a primitive the store has (for a \
+                     local directory, `slate-serverd`'s file lock)"
+                .to_owned(),
+        }
+    }
+
     /// Who holds it now, for an error message. Best effort: naming the holder
     /// is a courtesy, and failing to read it must not turn a clean "someone
     /// else has it" into a storage error.
@@ -383,6 +548,11 @@ impl ObjectStoreLease {
 #[async_trait]
 impl Lease for ObjectStoreLease {
     async fn acquire(&self) -> Result<Term, LeaseError> {
+        // Before anything is written, including the `Create` that would
+        // otherwise succeed and strand this node holding a lease it can never
+        // renew, release or hand on. See `require_conditional_update`.
+        self.require_conditional_update().await?;
+
         let mut held = self.held.lock().await;
         let now = self.clock.now();
         let expires_at = now + self.term_length;

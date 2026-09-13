@@ -79,30 +79,28 @@ async fn a_client_probes_another_tenants_rows_through_insert() {
         .await
         .expect_err("writing into tenant 2 must fail");
 
-    // All three are refusals, and all three should be the *same* refusal.
-    assert_eq!(
-        occupied.code(),
-        Code::AlreadyExists,
-        "key taken in tenant 2: {occupied:?}"
-    );
-    assert_eq!(
-        free.code(),
-        Code::PermissionDenied,
-        "key free in tenant 2: {free:?}"
-    );
-    assert_eq!(
-        email_taken.code(),
-        Code::AlreadyExists,
-        "email taken in tenant 2: {email_taken:?}"
-    );
-    assert_ne!(
-        occupied.code(),
-        free.code(),
-        "the answers are distinguishable, which is the oracle"
-    );
+    // FIXED. All three are refusals and all three are now the *same* refusal.
+    // `write_many` decides the row policy before it reads anything, exactly as
+    // single-row `insert` does, so a taken key, a taken email and a free slot
+    // in another tenant are indistinguishable from here.
+    //
+    // Asserted end to end as well as in the kernel because this is the shape
+    // that mattered: the probe was free, repeatable, batched, and every insert
+    // on the wire went through it.
+    for (label, status) in [
+        ("key taken in tenant 2", &occupied),
+        ("key free in tenant 2", &free),
+        ("email taken in tenant 2", &email_taken),
+    ] {
+        assert_eq!(
+            status.code(),
+            Code::PermissionDenied,
+            "{label} still answers differently: {status:?}"
+        );
+    }
     assert!(
-        email_taken.message().contains("by_email"),
-        "the refusal even names the index: {}",
+        !email_taken.message().contains("by_email"),
+        "the refusal still names the index another tenant's row occupies: {}",
         email_taken.message()
     );
 

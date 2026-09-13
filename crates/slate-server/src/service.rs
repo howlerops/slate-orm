@@ -130,13 +130,23 @@ impl HeadConfig {
 
 /// A head node.
 ///
-/// One writer store, a pool of replicas, a lease, and the rules for who may ask
-/// what. Everything it holds is shared behind `Arc`, because request handlers
-/// hand pieces of it to spawned tasks — see [`crate::session`] for why the
-/// transaction path has to.
+/// A pool of replicas, a lease, the rules for who may ask what, and — if this
+/// node has one — a writer store. Everything it holds is shared behind `Arc`,
+/// because request handlers hand pieces of it to spawned tasks — see
+/// [`crate::session`] for why the transaction path has to.
 pub struct Head<S> {
     pool: Arc<ReplicaPool>,
-    writer: Arc<RecordStore<Arc<S>>>,
+    /// `None` on a node built by [`Head::read_only`].
+    ///
+    /// Optional rather than a second type, because a writerless head differs
+    /// from a writing one in exactly one place — [`Head::leader`] — and every
+    /// other line of this file is the same code. Two types would be two gRPC
+    /// service implementations, and the read path is where the security
+    /// filtering lives: a second copy of it is the last thing this crate
+    /// wants. The alternative considered and rejected was a
+    /// `Head<NoWriter>` with a stub `KvStore`, which puts a store that panics
+    /// on write into the type system and only moves the check to run time.
+    writer: Option<Arc<RecordStore<Arc<S>>>>,
     leadership: Arc<Leadership>,
     authenticator: Arc<dyn Authenticator>,
     sessions: Arc<Sessions>,
@@ -147,9 +157,90 @@ impl<S> core::fmt::Debug for Head<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Head")
             .field("standing", &self.leadership.standing())
+            .field("writer", &self.writer.is_some())
             .field("open_transactions", &self.sessions.len())
             .field("pool", &self.pool)
             .finish_non_exhaustive()
+    }
+}
+
+impl<S> Head<S> {
+    /// A head node with **no writer store**, reading through `replicas`.
+    ///
+    /// This is the node `topology.md` describes as a follower and this crate
+    /// has always claimed to support: it answers every read a leader answers,
+    /// and refuses every write with the leader's name in a `slate-leader`
+    /// trailer.
+    ///
+    /// # Why it has to exist
+    ///
+    /// Opening a SlateDB writer *fences* whichever writer was there. So a node
+    /// that has lost the lease cannot build a [`Head::new`] without killing the
+    /// node that won — which meant, until this constructor, that a second node
+    /// could only refuse to start. "Reads scale, writes do not" is the whole
+    /// shape of this system, and it was not reachable: every replica-serving
+    /// process had to bring a writer it must never use.
+    ///
+    /// # What it cannot do
+    ///
+    /// It cannot be promoted. A node with no writer store that somehow won the
+    /// lease still has nothing to write *to*, and building the store afterwards
+    /// is not a matter of a field: it is opening a database, which is the step
+    /// that has to happen after the campaign and never before. So a read-only
+    /// node should not campaign — [`crate::leadership::follow`] is the loop for
+    /// it, which keeps the leader's name fresh for the redirect and never
+    /// acquires — and promotion is a restart. [`Head::leader`] refuses with
+    /// that sentence rather than panicking, because "won the lease with no
+    /// store" is a wiring mistake and an operator needs to be told which one.
+    ///
+    /// The pool has no writer in it either, so [`Freshness::Latest`] is
+    /// refused rather than served from a replica that cannot satisfy it. That
+    /// is not new behaviour: `ReplicaPool` already refuses a `Latest` it has no
+    /// writer for, and a follower is exactly the node that has none.
+    ///
+    /// `S` is still a type parameter with nothing to hold it up, so a caller
+    /// names the writer type this node *would* have had —
+    /// `Head::<SlateStore>::read_only(…)`. That is deliberate: the same binary
+    /// builds either kind depending on how the campaign went, and both arms
+    /// have to have one type.
+    #[must_use]
+    pub fn read_only(
+        config: HeadConfig,
+        replicas: Vec<Arc<dyn KvReadStore>>,
+        leadership: Arc<Leadership>,
+        authenticator: Arc<dyn Authenticator>,
+    ) -> Self {
+        let HeadConfig {
+            catalog,
+            security,
+            statistics,
+            routing,
+            limits,
+        } = config;
+
+        let pool = ReplicaPool::new(replicas, catalog, security)
+            .with_statistics(statistics)
+            .with_policy(routing);
+
+        Self {
+            pool: Arc::new(pool),
+            writer: None,
+            leadership,
+            authenticator,
+            sessions: Arc::new(Sessions::new(limits)),
+            limits,
+        }
+    }
+
+    /// Whether this node has a writer store at all.
+    ///
+    /// `false` for a node built by [`Head::read_only`]. Not the same question
+    /// as [`Leadership::is_leader`]: a node can have a writer and not hold the
+    /// lease, and that is the ordinary state of a leader that has just been
+    /// replaced.
+    #[must_use]
+    pub const fn has_writer(&self) -> bool {
+        self.writer.is_some()
     }
 }
 
@@ -159,6 +250,11 @@ impl<S: KvStore + KvReadStore> Head<S> {
     /// The writer joins the pool as well, as the fallback for a read no replica
     /// can serve: [`Freshness::Latest`] has nowhere else to go, and a pool
     /// without a writer refuses it rather than substituting a stale view.
+    ///
+    /// Only a node that holds the lease should build one of these, because
+    /// building one means having opened the writer store, and opening a
+    /// SlateDB writer fences whoever held it. A node that lost the campaign
+    /// wants [`Head::read_only`].
     #[must_use]
     pub fn new(
         config: HeadConfig,
@@ -184,7 +280,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
 
         Self {
             pool: Arc::new(pool),
-            writer: Arc::new(store),
+            writer: Some(Arc::new(store)),
             leadership,
             authenticator,
             sessions: Arc::new(Sessions::new(limits)),
@@ -244,7 +340,21 @@ impl<S: KvStore + KvReadStore> Head<S> {
     /// The writer, if this node may use it.
     fn leader(&self) -> Result<&Arc<RecordStore<Arc<S>>>, Status> {
         match self.leadership.standing() {
-            Standing::Leader { .. } => Ok(&self.writer),
+            // Holding the lease and having no store is a wiring mistake — a
+            // node built by `Head::read_only` was left campaigning — and it is
+            // one an operator has to be *told*, because from the outside it
+            // looks like a leader refusing writes. `UNAVAILABLE` with no
+            // `slate-leader` trailer, because this node holds the lease and
+            // there is nowhere better to send the request until somebody
+            // restarts something.
+            Standing::Leader { .. } => self.writer.as_ref().ok_or_else(|| {
+                redirect(
+                    "this node holds the lease but was started read-only, so it has no writer \
+                     store: it cannot be promoted without a restart, and it should not have been \
+                     campaigning — see `leadership::follow`",
+                    None,
+                )
+            }),
             Standing::Follower { leader } => {
                 Err(redirect("this node is not the writer", leader.as_deref()))
             }

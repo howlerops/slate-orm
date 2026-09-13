@@ -28,6 +28,26 @@
 //! connections for no gain — the interruption `handover.rs` describes is to
 //! reads *on the writer*, and there are none once writes are refused.
 //!
+//! # Two loops, because a node without a writer must not win
+//!
+//! [`maintain`] campaigns and renews. It is for a node that has a writer store
+//! — which is to say a node that has already opened the database, which is a
+//! thing only the leader may do, because opening a SlateDB writer fences
+//! whoever held it.
+//!
+//! A node that lost the campaign is therefore built by
+//! [`Head::read_only`](crate::Head::read_only) with no writer at all, and
+//! running [`maintain`] on it would be a bug with teeth: it would eventually
+//! win the lease, take the writer role away from a node that could have used
+//! it, and serve nothing while looking healthy — the same failure this module
+//! refuses for a fenced node, arrived at from the other side. [`follow`] is the
+//! loop for it. It reads the lease and never acquires, which keeps the
+//! `slate-leader` redirect naming a node that exists.
+//!
+//! Promotion is a restart. There is no way to grow a writer store into a
+//! running process without opening the database, and opening the database is
+//! the step that has to come *after* the campaign.
+//!
 //! What it must not do is keep accepting writes, and the refusal has to be
 //! local rather than a forwarded storage error: after a fence the writer's
 //! `begin` fails, so every write would cost a pointless round trip to a store
@@ -96,6 +116,17 @@ pub enum StepDown {
     LeaseLost,
     /// The node was asked to stand down, for a rolling restart.
     Resigned,
+    /// The lease cannot work against the storage it was pointed at.
+    ///
+    /// [`LeaseError::Unsupported`] — the store is missing a primitive the lease
+    /// is built out of, which for
+    /// [`ObjectStoreLease`](crate::lease::ObjectStoreLease) means a conditional
+    /// update. Terminal like the rest, and for a stronger reason: this one
+    /// cannot succeed on the next attempt or the thousandth, so a node that
+    /// went on campaigning would spend requests forever to stay exactly where
+    /// it is. The node keeps serving reads, which is what
+    /// [`Head::read_only`](crate::Head::read_only) exists for.
+    LeaseUnusable,
 }
 
 impl StepDown {
@@ -106,6 +137,7 @@ impl StepDown {
             Self::Fenced => "fenced by another writer",
             Self::LeaseLost => "the lease was taken by another node",
             Self::Resigned => "resigned",
+            Self::LeaseUnusable => "the storage backing the lease cannot support one",
         }
     }
 }
@@ -213,6 +245,17 @@ impl Leadership {
                 });
                 false
             }
+            Err(LeaseError::Unsupported { .. }) => {
+                // Not a storage failure and not somebody else's lease: the
+                // store cannot do what a lease is made of, and will not start
+                // being able to. Retrying at the campaign cadence for the life
+                // of the process is how "this deployment has no leader
+                // election" becomes invisible, so it is terminal instead — the
+                // node is permanently a reader and the `Leadership` RPC says
+                // so.
+                self.step_down(StepDown::LeaseUnusable).await;
+                false
+            }
             Err(_) => {
                 // A storage failure is not evidence that someone else holds
                 // the lease, but it is also not permission to write: the last
@@ -223,6 +266,36 @@ impl Leadership {
                 false
             }
         }
+    }
+
+    /// Record who the lease says holds it, without trying to take it.
+    ///
+    /// For a node that has no writer store and therefore must never win: see
+    /// [`follow`]. The standing it publishes is the same `Follower` a lost
+    /// campaign publishes, because it is the same fact — this node is not the
+    /// writer, and here is who is — and a second standing meaning "follower,
+    /// but on purpose" would be a second thing every `match` on `Standing` has
+    /// to get right.
+    ///
+    /// A node that has stepped down, or that holds the lease, is left alone:
+    /// the first because stepping down is terminal and an observation is not
+    /// evidence against it, the second because reading the object is not how a
+    /// leader finds out it was replaced — [`Leadership::renew`] is, and it has
+    /// the version to prove it. Demoting a healthy leader because a `GET`
+    /// happened to race its own renewal is exactly the churn the lease exists
+    /// to prevent.
+    ///
+    /// Only sends when something changed, so a watcher is woken by a handover
+    /// rather than by the clock.
+    pub fn observed(&self, holder: Option<String>) {
+        let next = Standing::Follower { leader: holder };
+        self.standing.send_if_modified(|standing| {
+            if standing.has_stepped_down() || standing.is_leader() || *standing == next {
+                return false;
+            }
+            *standing = next.clone();
+            true
+        });
     }
 
     /// Extend the term, stepping down if it has moved on.
@@ -284,6 +357,51 @@ impl Leadership {
         // already means another writer is live and the lease is the only thing
         // still saying otherwise.
         let _ = self.lease.release().await;
+    }
+}
+
+/// Watch the lease without ever taking it, for a node that has no writer.
+///
+/// The loop for a [`Head::read_only`](crate::Head::read_only) node. It exists
+/// because such a node must not run [`maintain`]: winning the lease would leave
+/// it holding the writer role with nothing to write to, having taken the role
+/// away from a node that could have had it. So this one only reads.
+///
+/// What the reading buys is the redirect. A write refused by a follower carries
+/// the leader's name in a `slate-leader` trailer, and that name comes from the
+/// standing — which, without this loop, would be whatever the node saw at
+/// startup for the rest of its life, and would go on naming a node that has
+/// since been replaced. One `GET` per cadence keeps it true.
+///
+/// A read that fails is reported as "no known leader" rather than left at the
+/// last answer: an unreachable lease is not evidence that the node named in it
+/// an hour ago is still there, and sending a client at it is worse than telling
+/// it there is nobody to send it to.
+///
+/// An *expired* term is still reported, and deliberately. Deciding it had
+/// lapsed would mean comparing its expiry against a clock this loop does not
+/// have — [`Lease`](crate::lease::Lease) exposes no clock, and the one node
+/// with an opinion worth having about a term is the node holding it. The holder
+/// named in a lapsed term is also the node most likely to hold the next one, so
+/// it is the better hint either way; `slate-leader` is a hint and the client
+/// retries.
+///
+/// Runs until the node steps down, which for a read-only node means until the
+/// process ends.
+pub async fn follow(leadership: Arc<Leadership>, cadence: Cadence) {
+    loop {
+        if leadership.standing().has_stepped_down() {
+            return;
+        }
+        let holder = leadership
+            .lease()
+            .observe()
+            .await
+            .ok()
+            .flatten()
+            .map(|term| term.holder);
+        leadership.observed(holder);
+        tokio::time::sleep(cadence.campaign_every).await;
     }
 }
 

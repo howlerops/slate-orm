@@ -330,6 +330,256 @@ async fn a_follower_still_serves_reads() {
     );
 }
 
+// --- following with no writer at all ---------------------------------------
+
+/// A read-only head answers reads and refuses writes.
+///
+/// The same two properties as the two tests above, over a node that has no
+/// writer store to refuse *with*. That distinction is the whole of
+/// `Head::read_only`: a follower built by `Head::new` is a node holding an open
+/// SlateDB writer it has promised not to use, and opening that writer is the
+/// act that fences the leader. `handover.rs` is where the fencing half is
+/// proved against a real SlateDB; this is where the refusal is proved to be the
+/// same refusal, with the same status and the same trailer, so a client cannot
+/// tell the two kinds of follower apart.
+#[tokio::test]
+async fn a_head_with_no_writer_reads_and_refuses_writes() {
+    let backing = Arc::new(MemoryStore::new());
+    seed(&backing, 3).await;
+
+    let leadership = Leadership::new(Arc::new(HeldByAnother));
+    assert!(!leadership.campaign().await, "the lease is held elsewhere");
+
+    let replica: Arc<dyn KvReadStore> = Arc::new(Replica(Arc::clone(&backing)));
+    let head = Head::<Fenceable>::read_only(
+        HeadConfig::new(catalog(), security()),
+        vec![replica],
+        Arc::clone(&leadership),
+        Arc::new(MetadataIdentity::trusting_the_caller_completely()),
+    );
+    assert!(!head.has_writer(), "it was built without one");
+
+    let serving = common::serve(head).await;
+    let mut client = serving.client().await;
+
+    let (rows, served_by) = drain(
+        client
+            .query(app(pb::QueryRequest {
+                transaction: String::new(),
+                query: Some(docs_query()),
+                freshness: None,
+            }))
+            .await
+            .expect("a node with no writer still serves reads")
+            .into_inner(),
+    )
+    .await;
+    assert_eq!(rows.len(), 3);
+    assert_eq!(served_by.expect("served_by").replica, "the-replica");
+
+    let refused = client
+        .insert(app(insert_one(1)))
+        .await
+        .expect_err("a node with no writer must refuse writes");
+    assert_eq!(refused.code(), Code::Unavailable, "{refused:?}");
+    assert_eq!(
+        refused
+            .metadata()
+            .get(slate_server::LEADER_KEY)
+            .expect("the refusal should say who to ask instead")
+            .to_str()
+            .unwrap(),
+        "the-other-node"
+    );
+
+    // And a transaction cannot be opened either, which is the same refusal one
+    // layer down: a transaction is a write transaction on the writer store.
+    let begun = client
+        .begin(app(pb::BeginRequest {}))
+        .await
+        .expect_err("there is no store to open a transaction on");
+    assert_eq!(begun.code(), Code::Unavailable, "{begun:?}");
+}
+
+/// `Latest` is refused rather than substituted, because there is no writer.
+///
+/// The control for the test above. Without it, "reads work" would be
+/// consistent with a pool quietly treating a replica as the writer, which would
+/// turn read-your-writes into a stale read — the failure `topology.md` says the
+/// pool refuses rather than papers over.
+#[tokio::test]
+async fn a_head_with_no_writer_refuses_a_read_that_needs_one() {
+    let backing = Arc::new(MemoryStore::new());
+    seed(&backing, 1).await;
+    let leadership = Leadership::new(Arc::new(HeldByAnother));
+    leadership.campaign().await;
+
+    let replica: Arc<dyn KvReadStore> = Arc::new(Replica(backing));
+    let serving = common::serve(Head::<Fenceable>::read_only(
+        HeadConfig::new(catalog(), security()),
+        vec![replica],
+        leadership,
+        Arc::new(MetadataIdentity::trusting_the_caller_completely()),
+    ))
+    .await;
+    let mut client = serving.client().await;
+
+    let refused = client
+        .query(app(pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(docs_query()),
+            freshness: Some(pb::Freshness {
+                level: Some(pb::freshness::Level::Latest(pb::Unit::Unit as i32)),
+            }),
+        }))
+        .await
+        .expect_err("only the writer can serve `Latest`, and there is none");
+    assert_eq!(refused.code(), Code::Unavailable, "{refused:?}");
+}
+
+/// A read-only node that somehow holds the lease says so, rather than panicking
+/// or accepting a write it cannot perform.
+///
+/// It should not be reachable — that is what `follow` is for — but "should not
+/// be reachable" is how an `unwrap` gets written. The message has to name the
+/// wiring mistake, because from outside the node looks like a leader refusing
+/// writes, which is the one thing a leader is not supposed to do.
+#[tokio::test]
+async fn a_read_only_node_holding_the_lease_names_the_wiring_mistake() {
+    let backing = Arc::new(MemoryStore::new());
+    seed(&backing, 1).await;
+    let leadership = Leadership::new(Arc::new(common::AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+
+    let replica: Arc<dyn KvReadStore> = Arc::new(Replica(backing));
+    let serving = common::serve(Head::<Fenceable>::read_only(
+        HeadConfig::new(catalog(), security()),
+        vec![replica],
+        leadership,
+        Arc::new(MetadataIdentity::trusting_the_caller_completely()),
+    ))
+    .await;
+    let mut client = serving.client().await;
+
+    let refused = client
+        .insert(app(insert_one(1)))
+        .await
+        .expect_err("there is no store to write to, lease or no lease");
+    assert_eq!(refused.code(), Code::Unavailable, "{refused:?}");
+    assert!(
+        refused.message().contains("started read-only"),
+        "the message should name the mistake, said: {}",
+        refused.message()
+    );
+}
+
+/// `follow` keeps the redirect current without ever taking the lease.
+///
+/// Both halves matter. The one that would break a cluster is the acquisition:
+/// a node with no writer that won the lease would hold the writer role with
+/// nothing to write to, and would have taken it from a node that could have
+/// used it. The one that would merely mislead is the staleness: a redirect is
+/// only useful if it names a node that exists.
+#[tokio::test(start_paused = true)]
+async fn following_refreshes_the_leader_and_never_acquires() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let clock = TestClock::new();
+    let term = Duration::from_secs(10);
+
+    // Somebody else's lease, in a real object store, so `observe` reads a real
+    // object and the holder is whatever is written there.
+    let incumbent = lease_at(Arc::clone(&store), "node-a", Arc::clone(&clock), term);
+    incumbent.acquire().await.expect("the lease starts free");
+
+    let ours = Arc::new(lease_at(
+        Arc::clone(&store),
+        "node-b",
+        Arc::clone(&clock),
+        term,
+    ));
+    let leadership = Leadership::new(Arc::clone(&ours) as Arc<dyn Lease>);
+    let following = tokio::spawn(slate_server::follow(
+        Arc::clone(&leadership),
+        slate_server::Cadence::for_term(term),
+    ));
+
+    // One cadence is enough for the first observation.
+    tokio::time::sleep(term).await;
+    match leadership.standing() {
+        Standing::Follower { leader } => assert_eq!(leader.as_deref(), Some("node-a")),
+        other => panic!("a following node should be a follower, was {other:?}"),
+    }
+
+    // The incumbent's term lapses and nothing takes it. This is the window —
+    // and it has to be an actual window, several cadences wide, rather than a
+    // lapse the successor closes in the same breath. A `follow` that
+    // campaigned would be refused by a *live* lease every time and would look
+    // identical to this one; the only moment the two differ is when the lease
+    // is free and there is nobody to lose to.
+    clock.advance(term + Duration::from_millis(1));
+    tokio::time::sleep(term * 3).await;
+
+    assert!(
+        ours.held().is_none(),
+        "a following node took a lease that was going free"
+    );
+    let untouched = ours
+        .observe()
+        .await
+        .expect("read the lease")
+        .expect("there is one");
+    assert_eq!(
+        (untouched.holder.as_str(), untouched.generation),
+        ("node-a", 1),
+        "the lease object was written by a node that has nothing to write with"
+    );
+
+    // A successor takes it. `follow` must notice, because the whole reason it
+    // costs a request per cadence is that a redirect naming a node that has
+    // gone is worse than no redirect.
+    let successor = lease_at(Arc::clone(&store), "node-c", Arc::clone(&clock), term);
+    successor.acquire().await.expect("the term had lapsed");
+
+    tokio::time::sleep(term).await;
+    match leadership.standing() {
+        Standing::Follower { leader } => assert_eq!(leader.as_deref(), Some("node-c")),
+        other => panic!("the redirect went stale, standing is {other:?}"),
+    }
+
+    following.abort();
+}
+
+/// An observation cannot demote a leader, and cannot revive a stepped-down
+/// node.
+///
+/// `observed` publishes the same `Follower` a lost campaign publishes, so it is
+/// the one function that could overwrite either terminal state by accident. A
+/// leader demoted by a `GET` racing its own renewal would hand the database
+/// over every cadence; a stepped-down node revived by one would campaign again
+/// after a fence, which is the failure this module is built around.
+#[tokio::test]
+async fn an_observation_cannot_demote_a_leader_or_revive_a_stepped_down_node() {
+    let leader = Leadership::new(Arc::new(common::AlwaysLeader::default()));
+    assert!(leader.campaign().await);
+    leader.observed(Some("someone-else".to_owned()));
+    assert!(
+        leader.is_leader(),
+        "reading the lease object is not how a leader finds out it was replaced"
+    );
+
+    let done = Leadership::new(Arc::new(common::AlwaysLeader::default()));
+    assert!(done.campaign().await);
+    done.fenced().await;
+    done.observed(Some("someone-else".to_owned()));
+    assert_eq!(
+        done.standing(),
+        Standing::SteppedDown {
+            reason: StepDown::Fenced
+        },
+        "stepping down is terminal"
+    );
+}
+
 // --- being fenced ---------------------------------------------------------
 
 #[tokio::test]

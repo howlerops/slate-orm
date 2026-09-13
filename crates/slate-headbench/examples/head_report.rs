@@ -808,10 +808,20 @@ async fn one_row_in_a_transaction(client: &mut RecordsClient<Channel>) {
 async fn section_routing() {
     heading("4. Read routing, and what the freshness wait costs");
 
-    const POLL: Duration = Duration::from_millis(50);
+    // 50 ms by default, which is what the table in `docs/performance.md` was
+    // taken at. Overridable because the number this section reports is set by
+    // this interval and nothing else — and because `slate-serverd` does not
+    // set it at all, so a deployment gets `DbReaderOptions::default()`, which
+    // is **10 seconds**. `HEADBENCH_POLL_MS=10000` measures what that does.
+    let poll = Duration::from_millis(
+        std::env::var("HEADBENCH_POLL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(50),
+    );
     let backend = Backend::open().await;
     let durable = backend.durable();
-    let replicas = backend.replicas(3, POLL).await;
+    let replicas = backend.replicas(3, poll).await;
     let table = events();
     let ctx = context(TENANT);
 
@@ -844,7 +854,7 @@ async fn section_routing() {
             .await;
     }
 
-    println!("\nThree following replicas, manifest poll {POLL:?}; writer at sequence {seeded}.\n");
+    println!("\nThree following replicas, manifest poll {poll:?}; writer at sequence {seeded}.\n");
 
     // --- sanity: the reads really do go where we think --------------------
     let any = grpc_get(&mut client, 7, Freshness::Any).await;

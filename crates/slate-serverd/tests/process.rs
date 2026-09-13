@@ -624,13 +624,199 @@ async fn the_local_backend_keeps_rows_across_a_restart() {
     );
 }
 
+/// The `local` fixture, plus what a second node needs to be useful.
+///
+/// A replica, because a node that is not the writer reads through one and has
+/// no writer to fall back on — `slate-serverd` refuses to start one with none
+/// rather than accept connections it can answer nothing on. And a generous
+/// `catch_up`, so that a read asking for a sequence waits for the replica's
+/// next manifest poll instead of racing it: the assertions here are about
+/// which node served a read, not about how fast a debug-profile SlateDB
+/// notices a flush.
+fn local_with_a_replica(directory: &std::path::Path) -> String {
+    let base = CONFIG.replace(
+        "backend = \"memory\"",
+        &format!(
+            "backend = \"local\"\ndirectory = \"{}\"",
+            directory.display()
+        ),
+    );
+    format!("{base}\n[routing]\ncatch_up = \"10s\"\n\n[[replicas]]\nname = \"replica-0\"\n")
+}
+
+/// Every row a query returns, on a view that has reached `sequence`.
+///
+/// The cross-node form of read-your-writes: the sequence comes from the
+/// leader's own commit, so a follower that returns the row has genuinely seen
+/// the leader's write rather than happened to poll in time.
+async fn rows_at_least(
+    client: &mut proto::records_client::RecordsClient<tonic::transport::Channel>,
+    identity: &Identity,
+    table: &str,
+    sequence: u64,
+) -> Result<Vec<proto::Row>, tonic::Status> {
+    let request = identity.on(proto::QueryRequest {
+        transaction: String::new(),
+        query: Some(query(table)),
+        freshness: Some(proto::Freshness {
+            level: Some(proto::freshness::Level::AtLeast(sequence)),
+        }),
+    });
+    let mut stream = client.query(request).await?.into_inner();
+    let mut out = Vec::new();
+    while let Some(message) = stream.message().await? {
+        out.extend(message.rows);
+    }
+    Ok(out)
+}
+
 #[tokio::test]
-async fn a_second_node_over_one_local_database_refuses_to_start() {
-    // The failure this prevents is the expensive one: two writers over one
-    // SlateDB take turns fencing each other, and the second would fence a
-    // healthy first on its way to *discovering* that it is second. So the
-    // lease is taken before the database is opened, and losing it is a refusal
-    // rather than a degraded start.
+async fn a_second_node_over_one_local_database_serves_reads_and_does_not_fence_the_first() {
+    // This test used to assert the opposite — that the second node refused to
+    // start — and the refusal was a workaround for something the library could
+    // not do. `Head::new` took a writer store, so a second node had to open the
+    // database to build a head at all, and opening a SlateDB writer fences the
+    // one that is there. The choice was between killing a healthy leader and
+    // not running, and not running won.
+    //
+    // `Head::read_only` removes the choice: the second node opens its replicas
+    // and no writer, so there is nothing to fence with. What has to be proved
+    // is that it really did not open one, and a *read* on the first node would
+    // not prove it — `handover.rs` in `slate-server` is the demonstration that
+    // a fenced SlateDB can still be read from. So the first node writes.
+    let files = Files::new();
+    let directory = files.path().join("data");
+    let path = files.write("local.toml", &local_with_a_replica(&directory));
+    let seed = files.write("seed.toml", SEED);
+
+    let first = Serving::start(&[
+        "--config",
+        &path.display().to_string(),
+        "--seed",
+        &seed.display().to_string(),
+    ]);
+    let mut leader = connect(&first).await;
+
+    // A write of this node's own, so the follower's read can name a sequence
+    // and wait for it rather than sleeping.
+    let landed = leader
+        .insert(APP.on(proto::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(9),
+                str_value("kind-d"),
+                i64_value(30),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("the leader writes")
+        .into_inner()
+        .sequence
+        .expect("a single-statement write commits, so it has a sequence");
+
+    // The second node starts. That it starts at all is the change.
+    let second = Serving::start(&["--config", &path.display().to_string()]);
+    let mut follower = connect(&second).await;
+
+    // 1. It calls itself a follower, and names the node that has the lease.
+    let standing = follower
+        .leadership(APP.on(proto::LeadershipRequest {}))
+        .await
+        .expect("leadership")
+        .into_inner();
+    assert_eq!(
+        standing.standing,
+        proto::leadership_status::Standing::Follower as i32,
+        "the second node must not believe it is the writer"
+    );
+    assert!(
+        standing.holder.starts_with("slate-serverd-"),
+        "it should name the holder it read out of the lease, said `{}`",
+        standing.holder
+    );
+
+    // 2. It serves reads, and they are the leader's data rather than a stale
+    //    or empty view. Row 1 is missing because the policy hides it, which is
+    //    the control that says security is applied on this path too.
+    let served = rows_at_least(&mut follower, &APP, "docs", landed)
+        .await
+        .expect("a node with no writer must still serve reads");
+    assert_eq!(ids(&served), vec![2, 3, 9]);
+
+    // 3. It refuses writes, and says where to send them.
+    let refused = follower
+        .insert(APP.on(proto::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(10),
+                str_value("kind-d"),
+                i64_value(30),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect_err("a node with no writer must refuse writes");
+    assert_eq!(refused.code(), tonic::Code::Unavailable, "{refused:?}");
+    assert!(
+        refused.metadata().get("slate-leader").is_some(),
+        "the refusal should carry the leader's name: {refused:?}"
+    );
+
+    // 4. **The assertion this test exists for.** The first node is untouched.
+    //    A second node that had opened the database on its way to losing the
+    //    campaign would have fenced this one, and this write would fail.
+    let transaction = leader
+        .begin(APP.on(proto::BeginRequest {}))
+        .await
+        .expect("begin")
+        .into_inner()
+        .transaction;
+    leader
+        .insert(APP.on(proto::InsertRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(11),
+                str_value("kind-a"),
+                i64_value(20),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("the first node is still the writer");
+    leader
+        .commit(APP.on(proto::CommitRequest { transaction }))
+        .await
+        .expect("commit on an unfenced writer");
+
+    let leading = leader
+        .leadership(APP.on(proto::LeadershipRequest {}))
+        .await
+        .expect("leadership")
+        .into_inner();
+    assert_eq!(
+        leading.standing,
+        proto::leadership_status::Standing::Leader as i32,
+        "the first node stepped down, so something fenced it"
+    );
+}
+
+#[tokio::test]
+async fn a_second_node_with_nothing_to_read_from_refuses_to_start() {
+    // The other half of serving reads without a writer: a node that lost the
+    // campaign and has no replicas configured could answer nothing at all — an
+    // empty pool with no writer to fall back on refuses every read. Accepting
+    // connections in order to fail them is worse than not starting, and the
+    // refusal has to say which line of the file to add.
     let files = Files::new();
     let directory = files.path().join("data");
     let config = CONFIG.replace(
@@ -642,56 +828,48 @@ async fn a_second_node_over_one_local_database_refuses_to_start() {
     );
     let path = files.write("local.toml", &config);
 
-    let first = Serving::start(&["--config", &path.display().to_string()]);
+    let _first = Serving::start(&["--config", &path.display().to_string()]);
 
     let second = harness::run(&["--config", &path.display().to_string()]);
     assert_eq!(
         second.code,
         Some(2),
-        "the second node should refuse:\n{}",
+        "a node that can serve nothing should refuse:\n{}",
         second.output()
     );
     assert!(
-        second.output().contains("writer lease"),
-        "the refusal should name the lease:\n{}",
+        second.output().contains("[[replicas]]"),
+        "the refusal should name the section to add:\n{}",
         second.output()
     );
-    assert!(
-        second.output().contains("would fence"),
-        "the refusal should say why:\n{}",
-        second.output()
-    );
+}
 
-    // And the first node is untouched. A *read* is not evidence of that — a
-    // fenced SlateDB writer can still be read from — so this writes. A second
-    // node that had opened the database on its way to losing the campaign
-    // would have fenced this one, and `begin` would fail.
-    let mut client = connect(&first).await;
-    let transaction = client
-        .begin(APP.on(proto::BeginRequest {}))
-        .await
-        .expect("begin")
-        .into_inner()
-        .transaction;
-    client
-        .insert(APP.on(proto::InsertRequest {
-            transaction: transaction.clone(),
-            table: "docs".to_owned(),
-            rows: vec![row(vec![
-                u64_value(1),
-                u64_value(1),
-                str_value("kind-a"),
-                i64_value(20),
-                null_value(),
-            ])],
-            ..Default::default()
-        }))
-        .await
-        .expect("the first node is still the writer");
-    client
-        .commit(APP.on(proto::CommitRequest { transaction }))
-        .await
-        .expect("commit on an unfenced writer");
+#[tokio::test]
+async fn a_local_node_is_still_the_leader_after_several_lease_terms() {
+    // The `local` half of `the_lease_is_renewed_rather_than_lapsing`, and the
+    // one that matters, because `local` is the backend whose lease is not the
+    // object-store one: `object_store`'s `LocalFileSystem` has no conditional
+    // update, so `ObjectStoreLease` refuses to be taken there at all and
+    // `slate-serverd` runs a file lock instead. A node wired back onto the
+    // object-store lease would not reach the banner; a lease whose renewal
+    // stopped working would lose the role inside this wait.
+    let files = Files::new();
+    let directory = files.path().join("data");
+    let config = format!(
+        "{}\n[lease]\nterm = \"300ms\"\n",
+        CONFIG.replace(
+            "backend = \"memory\"",
+            &format!(
+                "backend = \"local\"\ndirectory = \"{}\"",
+                directory.display()
+            ),
+        )
+    );
+    let path = files.write("short.toml", &config);
+    let serving = Serving::start(&["--config", &path.display().to_string()]);
+    let mut client = connect(&serving).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
     let standing = client
         .leadership(APP.on(proto::LeadershipRequest {}))
@@ -700,8 +878,30 @@ async fn a_second_node_over_one_local_database_refuses_to_start() {
         .into_inner();
     assert_eq!(
         standing.standing,
-        proto::leadership_status::Standing::Leader as i32
+        proto::leadership_status::Standing::Leader as i32,
+        "four terms have passed; the node is still the leader only if renewal works"
     );
+    assert_eq!(
+        standing.generation,
+        Some(1),
+        "a renewal extends a term rather than taking a new one"
+    );
+
+    client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(78),
+                str_value("kind-e"),
+                i64_value(30),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("a write after several renewals");
 }
 
 #[tokio::test]

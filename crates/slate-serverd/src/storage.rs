@@ -20,7 +20,9 @@
 //! healthy leader on its way to discovering that it is not the leader. So
 //! [`prepare`] builds the object store and settles the settings, the lease is
 //! taken against that object store, and only then does [`open`] open the
-//! database. A node that loses the campaign never touches it.
+//! database. A node that loses the campaign never touches it, and calls
+//! [`open_read_only`] instead: replicas and nothing else, which is what a
+//! `Head::read_only` serves from.
 //!
 //! # The in-memory backend has a real lease
 //!
@@ -308,6 +310,26 @@ pub(crate) async fn open(
     }
 }
 
+/// Open only the replicas: what a node that lost the campaign may do.
+///
+/// The whole of the difference from [`open`] is the line that is not here. A
+/// `SlateReader` reads the manifest and the SSTs and never claims the writer
+/// role, so a follower coming up leaves the leader alone — which is the point,
+/// and is asserted in `tests/process.rs` by writing on the leader afterwards
+/// rather than by reading, since a fenced writer can still be read from.
+///
+/// A follower with no replicas configured is refused rather than served,
+/// because it could answer nothing: its pool would be empty and it has no
+/// writer to fall back on, so every read would come back
+/// `NoReplicaAvailable`. A process that accepts connections and refuses
+/// everything is worse than one that did not start.
+pub(crate) async fn open_read_only(
+    prepared: &Prepared,
+    replicas: &[config::Replica],
+) -> Started<Vec<Arc<dyn KvReadStore>>> {
+    open_replicas(replicas, &prepared.path, &prepared.objects).await
+}
+
 async fn open_replicas(
     replicas: &[config::Replica],
     path: &Path,
@@ -477,6 +499,7 @@ pub(crate) fn term(lease: &config::LeaseSettings) -> Started<Duration> {
 )]
 mod tests {
     use super::*;
+    use slate_server::Lease as _;
 
     fn storage(text: &str) -> config::Storage {
         toml::from_str(text).unwrap_or_else(|e| panic!("{e}"))
@@ -543,6 +566,63 @@ mod tests {
         assert!(prepared.is_shared(), "another process could open this one");
         let (writer, _) = open(&prepared, &[]).await.unwrap();
         assert!(matches!(writer, Writer::Slate(_)));
+    }
+
+    #[tokio::test]
+    async fn a_local_backend_gets_a_lease_it_can_actually_renew() {
+        // The choice in `Prepared::lease` is the whole of the fix for
+        // `ObjectStoreLease` over a local filesystem, and it is a choice a
+        // future edit could quietly undo — the object-store arm is the `_`
+        // pattern, so adding a backend or reordering the match reaches it by
+        // default. This asserts the choice by *exercising* it: acquire, renew,
+        // release, and take it again with no wait, none of which the
+        // object-store lease can do here.
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let prepared = prepare(&storage(&format!(
+            "backend = \"local\"\ndirectory = \"{}\"",
+            dir.path().display()
+        )))
+        .unwrap();
+        let settings: config::LeaseSettings = toml::from_str("").unwrap();
+        let lease = prepared.lease(&settings, Duration::from_secs(15));
+
+        let term = lease.acquire().await.expect("take the lease");
+        lease.renew().await.expect("renew it");
+        lease.release().await.expect("release it");
+        let again = lease.acquire().await.expect("take it again at once");
+        assert!(again.generation > term.generation);
+
+        // And the control, which is what makes the assertions above mean
+        // something rather than being a description of whatever happened: the
+        // lease this backend is *not* given refuses at the first step, over
+        // the same directory.
+        let refused = ObjectStoreLease::with_holder(
+            Arc::clone(&prepared.objects),
+            "leases/writer",
+            "someone".to_owned(),
+        )
+        .acquire()
+        .await
+        .expect_err("the object-store lease cannot work over a local filesystem");
+        assert!(
+            matches!(refused, slate_server::LeaseError::Unsupported { .. }),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_only_node_with_no_replicas_is_refused_rather_than_left_useless() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let prepared = prepare(&storage(&format!(
+            "backend = \"local\"\ndirectory = \"{}\"",
+            dir.path().display()
+        )))
+        .unwrap();
+        let error = match open_read_only(&prepared, &[]).await {
+            Err(fault) => fault.to_string(),
+            Ok(_) => panic!("a follower with nothing to read from was accepted"),
+        };
+        assert!(error.contains("[[replicas]]"), "{error}");
     }
 
     #[test]

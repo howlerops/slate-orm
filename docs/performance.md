@@ -332,6 +332,12 @@ quoting: the wall-clock ratios here run from 158x to 409x depending on which
 pair you compare, because this server's per-request cost is its own, but 1372
 requests against 44 is arithmetic.
 
+> **Corrected later.** "This server's per-request cost is its own" turned out
+> to be 34 ms of Nagle: the in-process S3 server accepts connections without
+> `TCP_NODELAY`. With that fixed the same two settings measure 827 ms against
+> 103 ms — about 8x, not 158x-409x. The 31x request count is unaffected. See
+> section 9 below.
+
 The two levers do different things. Readahead removes requests — that is the
 31x. Concurrency then halves the time again at the *same* request count, which
 is latency overlap rather than less work. Eight tasks is not reliably better
@@ -555,6 +561,14 @@ cargo run --release -p slate-headbench --example head_report -- stream lease
 HEADBENCH_RUNS=21 cargo run --release -p slate-headbench --example head_report
 HEADBENCH_BATCHES=118,124,126,128 cargo run --release -p slate-headbench \
     --example head_report -- stream
+
+# the dependency-defaults sweep: whether SlateDB has a cache at all, whether
+# the in-process S3 server's socket is Nagled, and what the daemon's replica
+# poll interval costs
+cargo run --release -p slate-headbench --example cache_probe
+cargo run --release -p slate-headbench --example s3_nodelay
+HEADBENCH_POLL_MS=10000 cargo run --release -p slate-headbench \
+    --example head_report -- routing
 ```
 
 ### Conditions, and why they are stated first
@@ -964,6 +978,11 @@ that finds read-your-writes too slow should look at
 `DbReaderOptions::manifest_poll_interval` first; the 250 ms `catch_up` budget in
 `RoutingPolicy` never came close to expiring, so no read was pushed onto the
 writer.
+
+> **And cannot, today.** `slate-serverd` never sets that interval, so a
+> deployed replica polls every 10 seconds — forty times the `catch_up` budget.
+> At that setting this same measurement reads 251.87 ms and falls back to the
+> writer 64 times out of 64. See section 10 below.
 
 #### A replica that has just taken writes reads 2.4× slower
 
@@ -1558,3 +1577,280 @@ top — and the one argument for lowering it turned out to be a socket option.
   and the disk under the in-process S3 server hit zero twice during the
   session. Scale and disk are not separated, and a machine with room would
   separate them in twenty minutes.
+
+## The dependency defaults sweep
+
+`TCP_NODELAY` was found by reading `tonic`'s documentation, not by profiling:
+a library default that does not apply on the path this code takes. That is a
+shape, not an incident, so the same question was put to every dependency this
+project configures — `tonic`, `slatedb`, `object_store`, `tokio`, `hyper`,
+`reqwest` and `prost`. Read what the repository sets; then read what the
+library does with it on the path the repository takes.
+
+Three answers came back. One is a capability switched off by a feature flag,
+one is the same Nagle bug one layer down and inside the only wall-clock
+numbers in this document that are not taken against a latency model, and one
+is a setting the benchmark configures and the shipping daemon cannot.
+
+```sh
+cargo run --release -p slate-headbench --example cache_probe
+cargo run --release -p slate-headbench --example s3_nodelay
+HEADBENCH_POLL_MS=10000 cargo run --release -p slate-headbench \
+    --example head_report -- routing
+```
+
+### 8. SlateDB's block cache is compiled out, and a point read pays three GETs
+
+Every crate here declares `slatedb = { version = "0.16", default-features =
+false }`, and `slate-slatedb` re-enables one feature, `aws`. SlateDB's own
+`default` is `["aws", "foyer"]`. `cargo tree -i -p slatedb -e features`
+confirms what is left: the `aws` feature and nothing else.
+
+That matters because of how SlateDB installs its cache. `DbBuilder::new` calls
+`default_db_cache()`, which builds a `SplitCache` over `default_block_cache()`
+and `default_meta_cache()` — and **both of those return `None` unless `foyer`
+or `moka` is compiled in**. A `SplitCache` with two empty halves is not an
+absent cache, which would be obvious; it is a present one that answers
+`Ok(None)` to every lookup and discards every insert. Nothing fails. The reads
+just all go to object storage.
+
+This is the readahead finding again, and worse in one respect: readahead was a
+default we passed, and this is a capability a feature flag removed.
+
+20,000 rows, written, closed and reopened over an in-memory object store
+wrapped in a counting store, 21 runs, on a quiet box (load 1.3):
+
+| phase | arm | cold GETs | GETs/op, warm | wall clock |
+|---|---|---:|---:|---:|
+| point read, spread | **as shipped (default)** | 603 | **3.02** | 117.52 µs [115.89 – 128.09] |
+| point read, spread | cache off, said so | 603 | 3.02 | 116.32 µs [112.79 – 133.93] |
+| point read, spread | **cache on** | 205 | **0.00** | **72.13 µs** [70.51 – 74.88] |
+| point read, one key | as shipped (default) | 600 | 3.00 | 116.10 µs [113.09 – 148.49] |
+| point read, one key | cache on | 3 | 0.00 | 69.34 µs [67.94 – 72.88] |
+| full scan of 20,000 | as shipped (default) | 2 | 2.00 | 34.79 ms [34.12 – 36.17] |
+| full scan of 20,000 | cache on | 2 | 1.00 | 34.90 ms [34.38 – 35.75] |
+
+**A point read costs three object-store GETs, every time, for ever.** With a
+cache installed it costs none once the metadata is loaded. The GET column
+does not care what else is on the machine: the same four arms re-run at load
+6.8 give the same 3.02 / 3.02 / 0.00 / 0.00. The clock column does, which is
+why it is the second column and not the first.
+
+Two controls, and the first one is the whole argument. The `as shipped
+(default)` arm calls `Db::builder(..).build()` with no cache method at all —
+the exact path `SlateStore::open` takes — and the `cache off, said so` arm
+calls `with_db_cache_disabled()`. They are indistinguishable: identical GET
+counts, and 1.20 µs and 2.22 µs apart on the clock, inside noise both times.
+That is the demonstration that the cache SlateDB installs by itself is doing
+nothing in this build. The second control is the cold full scan: **2 GETs in
+every one of the four arms**, because 20,000 small rows arrive in two 1 MiB
+readahead fetches whatever the cache does.
+
+The mechanism is the probe cache's own hit counters, and it says exactly which
+three GETs those are. On the cold spread-out pass with a cache: **blocks 0/203
+hit, metadata 398/400 hit**. Two hundred reads touched two hundred different
+blocks — no block hit, and none should. But they consulted the *same two*
+metadata objects four hundred times and missed twice: one SST index and one
+filter, fetched once each. Without a cache those two objects are re-fetched on
+every single read. That is two of the three GETs, and they are pure waste.
+
+The wall-clock column is a lower bound and is stated as one: an avoided GET
+here is a memcpy against an in-memory store, and in a bucket it is a round
+trip. On this box removing three GETs was worth 1.63×; against S3 at 15 ms a
+GET it is the difference between one round trip and three, warm, and between
+nothing and three, hot.
+
+**What this does not show.** The cache in the measurement is an unbounded
+`HashMap` written for the experiment, so it is the *ceiling* on what a real
+cache buys — no eviction ever costs it a hit. `foyer`'s default is 512 MiB of
+blocks and 128 MiB of metadata, and this fixture is about 4 MB, so it fits in
+either; on a working set that does not fit, the block half of this result
+shrinks and the metadata half does not. The unbounded map was chosen over
+enabling `foyer` for the measurement because it changes exactly one variable
+and needs no second build.
+
+**The fix**, and it is a manifest change rather than a code change: stop
+passing `default-features = false` to SlateDB, or pass `features = ["foyer"]`
+alongside it. `crates/slate-slatedb/Cargo.toml` is the place — it already
+forwards `aws = ["slatedb/aws"]`, so a sibling `cache = ["slatedb/foyer"]` in
+its `default` set gives every dependent the cache back without any of them
+knowing. The same line appears in `crates/slate-serverd/Cargo.toml`,
+`crates/slate-headbench/Cargo.toml` and `crates/slate-server`'s
+dev-dependencies, all of which are pinned to the same version so that
+`Arc<dyn ObjectStore>` stays one type; features unify across them, so one of
+them enabling `foyer` is enough to turn the cache on everywhere.
+
+### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
+
+`crates/slate-slatedb/tests/common/s3server.rs` binds its own `TcpListener`,
+accepts a `TcpStream`, and hands it to
+`hyper_util::server::conn::auto::Builder::serve_connection`. Nothing on that
+path sets `TCP_NODELAY`. Unlike `tonic::transport::Server` there is not even a
+default being ignored: hyper does not own the socket and never touches its
+options, and only the *client* side of `hyper-util` sets nodelay.
+
+That server is under `scan_tuning`, `cost_calibration` and `cost_at_scale` —
+which is to say under every wall-clock number in this document that is *not*
+taken against a latency model.
+
+Two servers, identical but for `set_nodelay(true)` on each accepted
+connection, each with its own storage and its own SlateDB. Same 20,000-row
+fixture as `scan_tuning`, scanned end to end, 5 runs, arms ordered
+Nagle/nodelay/nodelay/Nagle so a machine getting busier cannot be read as a
+slower socket:
+
+| | S3 GETs | wall clock | delayed ACKs/scan |
+|---|---:|---:|---:|
+| Nagle on, 1 MiB readahead | 59 | 183.80 ms [150.01 – 218.71] | 11 |
+| `TCP_NODELAY`, 1 MiB readahead | 59 | **103.02 ms** [99.84 – 105.12] | 4 |
+| `TCP_NODELAY`, SlateDB defaults | 1231 | **827.25 ms** [674.25 – 829.30] | 5 |
+| Nagle on, SlateDB defaults | 1377 | **47.14 s** [39.36 – 52.00] | **1127** |
+
+**A scan at SlateDB's default readahead went from 47.14 s to 827 ms — 57×.**
+At the readahead this project actually ships it is 183.80 ms against 103.02 ms,
+1.78×, which is the same effect with two orders of magnitude fewer writes to
+stall on.
+
+The last column is the mechanism, and it is the same counter that settled the
+head node's socket. 1,127 expiries of the kernel's delayed-acknowledgement
+timer per scan, against 1,377 requests — call it one stall per request. Divide
+the wall clock by the requests and the Nagled arm costs **34.2 ms per GET**,
+which is not a number any code path produces; it is the delayed-ACK timer.
+With the socket fixed the same counter reads 5 per scan.
+
+**Run twice.** A second pass, three runs, on a different machine load:
+44.66 s against 846.09 ms (52.8×) with 1,042 delayed ACKs against 6, and
+169.31 ms against 86.29 ms (1.96×) at 1 MiB readahead with 59 GETs on both
+sides. The effect is not a state the box was in.
+
+**The control moved, and it should be said plainly.** The request count is
+supposed to be the control — a socket option cannot change how many blocks a
+scan reads — and it went from 1231 to 1377, 12% more. That is background work:
+a scan that takes 47 seconds accumulates manifest polls and compactor checks
+that a scan taking 0.8 seconds does not. It is an effect of the slowness, not
+a cause, and 12% more requests does not make 57×.
+
+**This retro-corrects the readahead table above.** Its "SlateDB defaults" row
+reads 1372 GETs and 51,915 ms; this reproduces it (1377 GETs, 47.1 s) and shows
+that ~34 ms of each of those requests was a socket. With `TCP_NODELAY` the same
+comparison is 827 ms against 103 ms: **about 8×, not the 158×–409× that table
+quotes.** The 31× *request-count* ratio is untouched, which is exactly what
+that section said the number worth quoting was. Called correctly then, for the
+right reason, and now there is a number behind the hedge.
+
+**The fix** is one line in `crates/slate-slatedb/tests/common/s3server.rs`,
+between `accept` and `TokioIo::new`:
+
+```rust
+let Ok((stream, _)) = listener.accept().await else { return };
+let _ = stream.set_nodelay(true);
+```
+
+### 10. The daemon polls its replicas every ten seconds, and the harness never did
+
+`slate-serverd` opens each configured replica with `SlateReader::open`
+(`storage.rs`), which passes `DbReaderOptions::default()`. That default is
+`manifest_poll_interval: Duration::from_secs(10)`. There is no key for it in
+the `[[replicas]]` table, so a deployment cannot change it. Every other
+construction site in the repository sets it: the replica tests and
+`examples/replicas.rs` use 20 ms, and section 4 above was measured at 50 ms.
+
+The same routing section, run at both intervals, 7 runs each:
+
+| | poll 50 ms | poll 10 s (what ships) |
+|---|---:|---:|
+| `AtLeast(a sequence just committed)` | 26.98 ms [10.90 – 46.32] | **251.87 ms** [251.66 – 252.27] |
+| fell back to the writer | **0 of 64** | **64 of 64** |
+| `Freshness::Any` (a replica) | 232.41 µs | 206.40 µs |
+| `Freshness::Latest` (the writer) | 227.30 µs | 205.30 µs |
+| `pool.route`, tenant affinity | 97 ns | 96 ns |
+
+The spread is the finding. At 50 ms the catch-up wait is 10.9–46.3 ms —
+roughly uniform inside the polling cycle, which is what a wait looks like. At
+10 s it is 251.87 ms with a range of **±0.2%**, which is not a wait at all: it
+is `RoutingPolicy::catch_up`, 250 ms, expiring. Every one of the sixty-four
+reads gave up and was served by the writer, against none of sixty-four at
+50 ms.
+
+So in the daemon that ships, read-your-writes through a replica is 9.3× slower
+than the number in section 4 and **the replica fleet contributes nothing to
+it** — every such read is a 250 ms delay followed by a read from the writer.
+Section 4's closing line, that a deployment finding read-your-writes too slow
+"should look at `DbReaderOptions::manifest_poll_interval` first", is right and
+is currently impossible to act on through the configuration file.
+
+The three reads that do not have to wait, and both routing costs, are the
+controls and none of them move.
+
+**The fix** is a key on the replica table — `poll_interval` in
+`config::Replica`, threaded into `SlateReader::open_with` in
+`storage.rs::open_replicas` — and a default well under
+`RoutingPolicy::catch_up` rather than forty times over it. The two constants
+are coupled and neither knows about the other: a poll interval above the
+catch-up budget turns every freshness-proving read into a timeout, and that
+relationship deserves a line in the configuration documentation whatever
+default is chosen.
+
+### What the sweep checked and found correct
+
+Reported because it is worth as much as the findings, and so nobody sweeps it
+again:
+
+- **`tonic`'s client-side `TCP_NODELAY`.** `Endpoint::new_uri` sets
+  `tcp_nodelay: true` and `connect` passes it to `HttpConnector::set_nodelay`.
+  Unlike the server side there is no path that ignores it, and
+  `RecordsClient::connect` — which every client in this repository uses — takes
+  it. The Nagle bug was server-side only.
+- **Every server that binds its own listener.** `slate-serverd`'s `serve.rs`,
+  the harness's `harness::serve`, `slate-server`'s test fixture and
+  `clients/python/testserver` all call `set_nodelay(true)` on each accepted
+  connection now. The one that did not was the S3 test server, above.
+- **HTTP/2 flow-control windows.** `tonic` leaves `init_stream_window_size` and
+  `init_connection_window_size` unset, so hyper's defaults apply: 1 MiB
+  connection and 1 MiB stream on the server, 5 MiB and 2 MiB on the client. A
+  server-streamed response is governed by the client's 2 MiB stream window,
+  which is eight times the largest batch this head node will send. Nothing to
+  tune, and nothing silently small.
+- **`object_store`'s client defaults.** 30 s request timeout, 5 s connect
+  timeout, HTTP/1.1 rather than HTTP/2 (deliberate upstream, and documented
+  there as the faster choice), and `reqwest` sets `tcp_nodelay` on by default.
+  No `ClientOptions` are set anywhere here, and none of the defaults are wrong
+  for this workload.
+- **`ScanTuning`.** 1 MiB readahead and four fetch tasks are already chosen and
+  already measured. `cache_blocks: false` is the third field and was checked
+  here for the first time: with a cache installed, letting scans populate it
+  takes the repeated-scan cost from 1 GET to 0, which is real and is still the
+  wrong default — a table scan that evicts the working set of every point read
+  is the reason SlateDB has the switch. Left as it is, deliberately, and now
+  measured rather than assumed.
+- **`DbReaderOptions` everywhere except the daemon.** The replica tests and
+  `examples/replicas.rs` set `manifest_poll_interval` to 20 ms and the harness
+  takes it as an argument. Only `slate-serverd` takes the default.
+- **`prost` and `tonic` codegen.** No compression, no custom codec, nothing
+  configured that a later call overrides. `build.rs` is a plain `configure()`
+  with `build_client` and `build_server`.
+- **`tokio`.** Both binaries use the multi-threaded runtime; no
+  `current_thread` runtime is hiding under a server, and nothing on the read
+  path blocks a runtime thread.
+- **SlateDB's compression codecs are compiled out too**, by the same
+  `default-features = false`. It changes no behaviour today, because
+  `Settings::default().compression_codec` is `None` regardless — but a
+  deployment that wanted compression could not turn it on without a manifest
+  change, and that is worth knowing before someone tries.
+
+### Suspected, not demonstrated
+
+- **`bytes` fields cross the wire by copy, twice.** `slate-server`'s `build.rs`
+  does not call `tonic_prost_build`'s `.bytes([".."])`, so prost generates
+  `Vec<u8>` for the proto's `bytes_value` and `uuid_value` rather than
+  `bytes::Bytes` sliced out of the receive buffer. On top of that `convert.rs`
+  copies again in both directions — `Kind::BytesValue(bytes.to_vec())` going
+  out, `Value::Bytes(bytes::Bytes::from(bytes.clone()))` coming back — while
+  the kernel's `Value::Bytes` is already a `bytes::Bytes` that could have been
+  handed over for nothing. Every uuid column pays a 16-byte allocation per
+  value per direction, and a table keyed by uuid — the shape the README's own
+  example uses — pays it on every key of every row of every batch. The
+  mechanism is certain; the size of it is not measured, because measuring it
+  means regenerating `slate-server`'s protobuf types and that crate was not
+  this sweep's to edit. The fixture here is keyed by `u64` and would show
+  nothing.

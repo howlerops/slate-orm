@@ -283,6 +283,46 @@ revocation. They would also be a second stateful system to run, and the
 deployment this project targets is a bucket. Object storage already offers the
 one primitive a lease needs.
 
+#### Except where it does not
+
+"Object storage already offers the one primitive a lease needs" is true of S3,
+R2, Tigris, GCS, Azure and MinIO, and false of `object_store`'s
+`LocalFileSystem`, which implements `PutMode::Create` and returns
+`NotImplemented` for `PutMode::Update`. There is no compare-and-swap on a POSIX
+file by ETag to implement one with.
+
+That asymmetry used to be silent, and silent in the worst available way. A
+`local` node *took* the lease — `Create` works — and then every renewal failed
+with a storage error that looks exactly like a slow bucket, which the leadership
+loop correctly declines to hand the database over for. The term lapsed under a
+healthy leader, nothing was released, and no successor could take over an
+expired term either, because that is a conditional update as well. A `local`
+database was a one-start database.
+
+`ObjectStoreLease::acquire` now asks the store first, with a conditional write
+that cannot land — an impossible version, at a scratch path — and refuses with
+`LeaseError::Unsupported` when the store says `NotImplemented`. One request, on
+the first acquisition only, and nothing is written. `Leadership` treats that
+refusal as terminal rather than retrying it forever: a node pointed at such a
+store is permanently a reader and its `Leadership` RPC says so, which is the
+whole difference between a limitation and a defect.
+
+What `local` uses instead is an advisory `flock`, in `slate-serverd`'s
+`filelease.rs`. For the deployment `backend = "local"` describes — one machine,
+one directory — it is a *better* lease than the object one: mutual exclusion
+the kernel enforces rather than two clocks agreeing, and released when the
+process exits however it exits. Its limits are that it is advisory and
+host-local, so two machines over one NFS mount are not separated by it, and a
+deployment with more than one machine uses `s3`.
+
+The alternative that would have removed even that caveat — a lease whose
+generation lives in the object's *name*, taken with `Create`, which is how
+SlateDB writes its own manifest and therefore how SlateDB fences over a local
+directory — is argued and rejected in `filelease.rs`: it is slower than the
+conditional update everywhere the conditional update exists, weaker than a
+`flock` on one host, and its one advantage is an NFS safety claim this
+repository has no way to test.
+
 ### Being fenced is terminal, and the node keeps serving reads
 
 This note says a head node should shut down on `WriterFenced`. The server does
@@ -302,6 +342,52 @@ trailer, because the request should be retried — just not here.
 Campaigning again is refused for the life of the process. A node that treated
 fencing as a bad moment would win the lease, open a store that is permanently
 fenced, and serve nothing while looking healthy.
+
+### A node that never won the lease serves reads too
+
+The paragraph above was true and incomplete, and the gap was large enough to
+contradict this note. A *fenced* node keeps serving reads because it already
+has a store open. A node that loses the campaign at **startup** has no store,
+and until recently could not get one safely: `Head::new` required a writer, and
+opening a SlateDB writer is the fence. Its only options were to kill a healthy
+leader on the way to discovering it was not the leader, or to refuse to start.
+`slate-serverd` refused to start, and this note went on describing a follower
+that served reads while no process could be one.
+
+`Head::read_only` is the missing half. It takes replicas, a lease and an
+authenticator, and no writer store at all:
+
+```
+   node A (leader)                      node B (read-only)
+   ├── SlateStore  ── writes            ├──   (nothing)   ── writes refused
+   └── pool ── replica ── reads         └── pool ── replica ── reads
+        │                                              │
+        └────────── one object store ──────────────────┘
+```
+
+Three consequences, all of them the point:
+
+- **A follower coming up does not fence the leader**, because it opens nothing
+  that could. That is the assertion the tests are built around; a test that
+  only checked the follower's reads would pass against the design this
+  replaces, since a fenced leader's replica goes on answering perfectly well.
+- **`Freshness::Latest` is refused on a follower**, not substituted. The pool
+  has no writer, and the one view that can see an unflushed write is the
+  writer. This is the existing rule — a pool without a writer refuses `Latest`
+  — arriving at the node that most obviously has none.
+- **A follower must never campaign.** Winning would leave it holding the writer
+  role with nothing to write to, having taken it from a node that could have
+  used it: the fenced-node failure from the other side. `leadership::follow` is
+  its loop — it reads the lease so the `slate-leader` redirect keeps naming a
+  node that exists, and never acquires. `leadership::maintain` is only for a
+  node that has a writer.
+
+**Promotion is a restart, and that is not a temporary state of affairs.** A
+writer store is a database that has been opened, and it may only be opened
+after the campaign is won. There is no way to grow one into a running process
+without reintroducing exactly the ordering this design exists to preserve. A
+supervisor restarting a read-only node is what promotes it; the node opens the
+database at startup, after campaigning, like every other leader.
 
 ### Where a request goes
 
@@ -665,6 +751,39 @@ select the arm it was trying not to select.
   wait out a term.
 - **That the refusal is local**, by counting calls into the store: five writes
   after the first fence reach it zero times.
+- **A second node that does not fence the first.** The same two `SlateStore`s
+  shape, except that the second node opens no store at all: it loses the
+  campaign, builds a `Head::read_only` over a `SlateReader`, serves a read that
+  names the leader's own commit sequence, and refuses a write with the leader
+  in the trailer. The assertion that carries the test is the last one — the
+  **leader writes again** afterwards. A test that only checked the follower's
+  reads would pass against the design this replaces, because a fenced leader's
+  replica goes on answering perfectly well, and a read on the fenced node
+  itself would not settle it either: the fence test above is the proof that a
+  fenced SlateDB is still readable. Only a write distinguishes them. The same
+  property is asserted a second time end to end, as two `slate-serverd`
+  processes over one local directory.
+- **That a read-only node refuses what it cannot serve**, three ways: a write
+  (`UNAVAILABLE` with `slate-leader`), a `Begin` (there is no store to open a
+  transaction on), and a `Freshness::Latest` read — the control that separates
+  "no writer" from "a writer it is choosing not to use". Plus the unreachable
+  case made legible rather than left to an `unwrap`: a read-only node that
+  somehow holds the lease says which wiring mistake produced it.
+- **That a following node never acquires.** `leadership::follow` is run against
+  a real object-store lease under a controlled clock, across a handover it
+  could twice have won, and must end with the lease still somebody else's and
+  the redirect naming the *new* holder rather than the one it saw at startup.
+  With the two states an observation must not overwrite asserted separately: it
+  cannot demote a leader, and it cannot revive a node that has stepped down.
+- **The lease against a store that cannot back one**, over a real directory
+  through `LocalFileSystem` rather than a fake missing the method. Acquisition
+  is refused with a distinct error naming the store and the remedy, no lease
+  object is left behind claiming this node holds the database, the *second*
+  node gets the same refusal rather than being told the lease is held — which
+  would look like an election that worked — and a node pointed at such a store
+  steps down permanently instead of campaigning forever. The control runs the
+  same probe against a store that does support conditional updates and requires
+  it to write nothing and disturb nothing.
 - **The schema check, as migrations rather than as cases.** Each is two table
   definitions, v1 and v2, exactly as a schema evolving in a repository would
   be, with the claim computed from v1 and checked against v2: a column added
@@ -709,6 +828,21 @@ select the arm it was trying not to select.
 - **A read-only transaction pinned to a replica.** `ReplicaMode::Pinned` is the
   right substrate for a consistent multi-read export, and the session type for
   it is not a write transaction.
+- **Promoting a read-only node without restarting it.** A writer store is a
+  database that has been opened, and it may only be opened after the campaign
+  is won — so a running follower cannot grow one without reintroducing the
+  ordering that keeps it from fencing the leader. A supervisor restart is the
+  promotion, and a read-only node deliberately does not campaign, so nothing
+  triggers one automatically: an operator or an orchestrator decides. What
+  would remove the restart is a `Head` whose writer can arrive at run time,
+  which is a lifecycle this crate does not have and should not grow casually —
+  every request handler currently gets to assume the store it has is the store
+  it started with.
+- **A lease over a store with no conditional update, in the library.** The
+  create-only design that would work — the generation in the object's name, as
+  SlateDB's own manifest does it — is specified and argued against in
+  `slate-serverd`'s `filelease.rs`. Over a local directory `slate-serverd` uses
+  a `flock` instead, and `ObjectStoreLease` refuses rather than degrading.
 - **`delete_many`.** `insert_many` and `update_many` overlap their reads across
   a batch; a multi-row delete still costs a round trip per key, because a
   delete walks a foreign-key closure and two keys in one batch can reach the

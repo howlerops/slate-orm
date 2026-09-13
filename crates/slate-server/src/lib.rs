@@ -37,6 +37,17 @@
 //! turned into behaviour: a takeover is an interruption, not a drain, and only
 //! the replica path survives it.
 //!
+//! **A node that never won the lease can serve reads too.** That is
+//! [`Head::read_only`], and until it existed the paragraph above was only half
+//! true: a fenced node kept serving reads because it already had a store open,
+//! while a node that lost the campaign at *startup* could not build a [`Head`]
+//! at all without opening a writer — which would have fenced the node that won.
+//! So the only safe thing a second node could do was refuse to start, and
+//! "reads scale, writes do not" had no process to be true of. A read-only head
+//! has no writer store, refuses every write with the leader's name, and runs
+//! [`follow`] rather than [`maintain`] so that it never wins a role it has
+//! nothing to fill.
+//!
 //! **A transaction is a task, not an entry in a map.** [`session`] keeps each
 //! open transaction inside its own task, because `RecordTransaction` borrows
 //! the store and the alternatives were a self-referential struct or leaking a
@@ -158,6 +169,17 @@
 //! the server, and inventing a second place to configure them makes the
 //! deployment worse.
 //!
+//! No promotion of a [`Head::read_only`] node to a writer while it runs. A
+//! writer store is a database that has been opened, and opening it fences
+//! whoever held it — so it can only be opened *after* the campaign is won,
+//! which is startup. A read-only node that should become the writer is
+//! restarted.
+//!
+//! No lease over a store without a conditional update.
+//! [`ObjectStoreLease`](lease::ObjectStoreLease) refuses one rather than taking
+//! a lease it can never renew; `object_store`'s `LocalFileSystem` is the case
+//! that matters, and `slate-serverd` runs a file lock there instead.
+//!
 //! [`ReplicaMode::Pinned`]: https://docs.rs/slate-slatedb
 
 #![forbid(unsafe_code)]
@@ -175,7 +197,7 @@ pub mod status;
 
 pub use auth::{Authenticator, DenyEveryone, MetadataIdentity};
 pub use fingerprint::of_table as schema_fingerprint;
-pub use leadership::{Cadence, Leadership, Standing, StepDown, maintain};
+pub use leadership::{Cadence, Leadership, Standing, StepDown, follow, maintain};
 pub use lease::{Clock, Lease, LeaseError, ObjectStoreLease, SystemClock, Term};
 pub use service::{Head, HeadConfig};
 pub use session::{Limits, Sessions};

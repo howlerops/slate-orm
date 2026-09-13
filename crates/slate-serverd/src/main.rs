@@ -149,34 +149,47 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     // starts, so that the first attempt is this one and its result is known
     // here.
     let leader = leadership.campaign().await;
-    if !leader && prepared.is_shared() {
-        // Refusing rather than serving reads, which is what `slate-server`
-        // does for a node that is fenced *while running*. The two cases differ:
-        // a fenced node already holds an open store, and this one would have to
-        // open the database to build a `Head` at all — `Head::new` takes a
-        // writer, there is no read-only head — and opening it would fence the
-        // healthy leader. Refusing to start is the only option that does not
-        // make a second node worse than no second node.
-        //
-        // This is the largest thing this binary wants from `slate-server` and
-        // cannot have: a head node that serves reads from replicas with no
-        // writer store of its own.
-        let holder = leadership
-            .lease()
-            .observe()
-            .await
-            .ok()
-            .flatten()
-            .map_or_else(|| "another node".to_owned(), |term| term.holder);
-        return Err(Fault::new(format!(
-            "the writer lease at `{}` is held by `{holder}`.\n\
-             This node will not start: opening the database would fence that writer, and `slate-server` has no head node that serves reads without opening one. Stop the other node, or wait for its lease to lapse (terms are {term:?}).",
-            document.lease.path
-        )));
-    }
-    tokio::spawn(maintain(Arc::clone(&leadership), Cadence::for_term(term)));
 
-    let (writer, replicas) = storage::open(&prepared, &document.replicas).await?;
+    // A node that lost the campaign starts as a reader. It must never open the
+    // database — opening a SlateDB writer fences the node that won — so it
+    // opens only its replicas and builds a `Head` with no writer store at all.
+    //
+    // This used to be a refusal to start, and the comment here used to say why:
+    // `Head::new` took a writer and there was no read-only head, so a second
+    // node could only choose between fencing a healthy leader and not running.
+    // `slate-server` grew `Head::read_only`, and this is the case it grew it
+    // for. The refusal was the workaround, not the design: `topology.md` has
+    // always said reads scale and writes do not, and until now no process could
+    // be the reading half.
+    //
+    // `memory` is excluded because nothing else can be contending for it; if
+    // its private lease somehow refused, the old behaviour of starting with a
+    // writer and refusing writes locally is still the right one.
+    let read_only = !leader && prepared.is_shared();
+
+    if read_only && fixture.is_some() {
+        return Err(Fault::new(
+            "`--seed` inserts rows, and this node did not win the writer lease, so it has no writer to insert them with. Seed from the node that holds the lease",
+        ));
+    }
+
+    let (writer, replicas) = if read_only {
+        // `follow`, not `maintain`: this node has nothing to write to, so
+        // winning the lease would take the writer role away from a node that
+        // could have used it and serve nothing while looking healthy.
+        // `follow` reads the lease so the `slate-leader` redirect keeps naming
+        // a node that exists, and never acquires.
+        tokio::spawn(slate_server::follow(
+            Arc::clone(&leadership),
+            Cadence::for_term(term),
+        ));
+        let replicas = storage::open_read_only(&prepared, &document.replicas).await?;
+        (None, replicas)
+    } else {
+        tokio::spawn(maintain(Arc::clone(&leadership), Cadence::for_term(term)));
+        let (writer, replicas) = storage::open(&prepared, &document.replicas).await?;
+        (Some(writer), replicas)
+    };
 
     // Bound before the banner, so a client that connects the instant it reads
     // the banner finds the socket already accepting rather than racing it.
@@ -198,7 +211,17 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         replicas.len(),
         if replicas.len() == 1 { "" } else { "s" },
         chosen.description,
-        if leader { "leader" } else { "follower" },
+        if leader {
+            "leader"
+        } else if read_only {
+            // Spelled out rather than left at "follower": an operator reading
+            // this line needs to know the node will refuse writes *and* that
+            // it did not open the database, which is the fact that makes it
+            // safe to have started at all.
+            "follower (read-only: no writer store, writes are redirected)"
+        } else {
+            "follower"
+        },
     );
 
     let common = Common {
@@ -221,8 +244,13 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     // `Arc<dyn KvStore>`, because the writer also joins the replica pool and a
     // trait object there would lose `SlateStore::close`.
     match writer {
-        Writer::Memory(store) => start(store, common, None).await,
-        Writer::Slate(store) => {
+        // A read-only node still has to name a writer type, because `Head` is
+        // generic over one whether or not it holds it. `SlateStore` is the
+        // type this node *would* have had: a read-only node only happens on a
+        // shared backend, and every shared backend is a `SlateStore`.
+        None => start_read_only::<slate_slatedb::SlateStore>(common).await,
+        Some(Writer::Memory(store)) => start(store, common, None).await,
+        Some(Writer::Slate(store)) => {
             let closing = Arc::clone(&store);
             start(store, common, Some(closing)).await
         }
@@ -291,17 +319,7 @@ async fn start<S: KvStore + KvReadStore>(
         authenticator,
     );
 
-    // The handshake. Printed on standard output, after the listener is bound
-    // and before anything is served, and spelled exactly as
-    // `clients/python/testserver` spells it so a harness written against that
-    // one needs no change.
-    println!("LISTENING {bound}");
-    use std::io::Write;
-    std::io::stdout()
-        .flush()
-        .map_err(|why| Fault::new(format!("cannot write the banner: {why}")))?;
-
-    serve::run(head, listener, leadership, grace).await?;
+    announce_and_serve(head, listener, bound, leadership, grace).await?;
 
     if let Some(store) = closing {
         store
@@ -310,6 +328,83 @@ async fn start<S: KvStore + KvReadStore>(
             .map_err(|why| Fault::new(format!("the database did not close cleanly: {why}")))?;
     }
     Ok(())
+}
+
+/// Serve with no writer store: this node lost the campaign.
+///
+/// Deliberately not `start` with an `Option<Arc<S>>`. Half of `start` is the
+/// two things a node does with a writer before it serves — seed rows and
+/// `analyze` — and both are writes or reads *of the writer*. Threading an
+/// option through them would put four `if let Some` in a function whose whole
+/// job is the sequence, and the interesting property of this path is exactly
+/// what it does *not* do.
+///
+/// `analyze` is the one real loss. It reads the tables to measure them, and
+/// this node has no store that can be read that way — the replicas are behind
+/// `Arc<dyn KvReadStore>`, and `RecordStore` needs a `KvStore`. Measuring
+/// through a `RecordSnapshot` would work and is not done: statistics differing
+/// between a leader and its followers would make a plan depend on which node
+/// answered, which is the same "same query, different answer" this project
+/// treats as the worst kind of bug. A follower plans on the defaults and says
+/// so.
+async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()> {
+    let Common {
+        catalog,
+        security,
+        limits,
+        routing,
+        grace,
+        fixture,
+        analyze,
+        replicas,
+        authenticator,
+        leadership,
+        listener,
+        bound,
+    } = common;
+
+    // Refused earlier, where the message can name `--seed`. Belt and braces:
+    // a fixture reaching here would be silently ignored.
+    debug_assert!(fixture.is_none(), "a read-only node cannot seed");
+    if analyze {
+        eprintln!(
+            "slate-serverd: warning: `analyze_on_start` is skipped on a node with no writer store; the planner runs on default statistics until this node is restarted as the writer"
+        );
+    }
+
+    let head = Head::<S>::read_only(
+        HeadConfig::new(catalog, security)
+            .with_routing(routing)
+            .with_limits(limits),
+        replicas,
+        Arc::clone(&leadership),
+        authenticator,
+    );
+
+    announce_and_serve(head, listener, bound, leadership, grace).await
+}
+
+/// The handshake, then serving.
+///
+/// Printed on standard output, after the listener is bound and before anything
+/// is served, and spelled exactly as `clients/python/testserver` spells it so a
+/// harness written against that one needs no change. Shared by both start
+/// paths so that a read-only node's handshake cannot drift from a writer's —
+/// a test harness waits on this line and does not know which kind it started.
+async fn announce_and_serve<S: KvStore + KvReadStore>(
+    head: Head<S>,
+    listener: tokio::net::TcpListener,
+    bound: SocketAddr,
+    leadership: Arc<Leadership>,
+    grace: Duration,
+) -> Started<()> {
+    println!("LISTENING {bound}");
+    use std::io::Write;
+    std::io::stdout()
+        .flush()
+        .map_err(|why| Fault::new(format!("cannot write the banner: {why}")))?;
+
+    serve::run(head, listener, leadership, grace).await
 }
 
 fn limits(settings: &config::LimitSettings) -> Started<Limits> {

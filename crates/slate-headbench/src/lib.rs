@@ -12,6 +12,21 @@
 //! cargo run --release -p slate-headbench --example head_report -- stream lease
 //! ```
 //!
+//! Two later examples ask a different question — not what the head node costs
+//! but whether the libraries under it are configured the way the code assumes.
+//! Both came out of re-reading documentation rather than profiling, which is
+//! how the `TCP_NODELAY` bug was found:
+//!
+//! ```sh
+//! # Does SlateDB have a block cache in this build? (No: `default-features =
+//! # false` drops `foyer`, and a point read pays three object-store GETs.)
+//! cargo run --release -p slate-headbench --example cache_probe
+//!
+//! # Is the in-process S3 server's socket Nagled? (Yes, and it is inside every
+//! # wall-clock number `scan_tuning` ever produced.)
+//! cargo run --release -p slate-headbench --example s3_nodelay
+//! ```
+//!
 //! # The shape
 //!
 //! Every measurement is the same three pieces:

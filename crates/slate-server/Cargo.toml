@@ -49,6 +49,11 @@ tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros
 # `TcpListenerStream`, so a test can bind port 0 and hand tonic the listener
 # rather than guessing a free port and racing another test for it.
 tokio-stream = { version = "0.1", features = ["net"] }
+# A real directory for the lease tests. `LocalFileSystem`'s missing conditional
+# update is the defect `ObjectStoreLease` now refuses on, and an in-memory
+# object store cannot show it: the whole point is what a particular
+# implementation does not implement.
+tempfile = "3"
 
 [lints]
 workspace = true

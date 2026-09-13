@@ -35,3 +35,14 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The in-process S3 server, so the socket underneath `scan_tuning` can be
+# measured without editing the crate that owns it. Pinned to the versions
+# `slate-slatedb`'s own test server already uses, so the workspace builds one
+# copy of each.
+s3s = "0.14"
+s3s-fs = "0.14"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+tempfile = "3"

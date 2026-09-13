@@ -984,6 +984,161 @@ fenced node refuses writes *locally* is not a statement about the error the
 client sees, it is a statement about the store never being called — so the test
 counts calls into it, and five writes after the first fence reach it zero times.
 
+## A second pair of eyes on the newest four
+
+Four bodies of code landed in a day and had been read once each, by whoever
+wrote them. This is what a review that was told to hunt for a *wrong answer*
+rather than a panic found, and — as valuable — where it came up empty, stated
+precisely enough that nobody re-treads it.
+
+Two findings. Both are the same shape, and it is the shape this document keeps
+returning to: **the answer depended on something that is not part of the
+question.** Neither is a crash, neither returns an error, and both return a
+table of numbers that looks exactly like an answer.
+
+### A sum that depended on the direction of the scan
+
+`crates/slate-kernel/tests/review_aggregates.rs`
+
+`Total::add` kept a running sum on an integer side until something forced a
+float, then kept it on the real side. Integers arriving *after* the first float
+were added to the integer side and, two lines later, discarded — the same
+statement that moves the total to the real side zeroed the integer accumulator
+unconditionally.
+
+Nothing caught it for as long as a column had one declared type, because an
+aggregate then only ever saw one domain. `Scalar` ended that: `SUM(coalesce(price,
+amount))` over a nullable `f64` and an `i64` is an ordinary thing to write and
+produces a float on some rows and an integer on others.
+
+The property that catches it needs no oracle at all, which is what makes it
+worth copying: **an aggregate is a fold over a set, so nothing about the answer
+may depend on the order of the fold.** Scan direction varies that order and
+nothing else. Over two rows, `SUM` came back as `1.5` read forwards and `11.5`
+read backwards; `AVG` as `0.75` and `5.75`.
+
+The test is kept as the order-independence property rather than as the two
+numbers, because the numbers are a fact about a fixture and the property is a
+fact about aggregation.
+
+### A grouped join that depended on which algorithm won
+
+`crates/slate-kernel/tests/review_grouped_join.rs`
+
+`read::narrowed` drops a query's `limit` and `offset` before grouping it, and
+says why: "aggregating a windowed subset of an unordered result is not a
+meaningful request". `read::narrowed_join` cloned the join and replaced only the
+two projections, so a join's own `limit` survived and windowed the row stream
+before the grouper saw it.
+
+A join has no order. Which rows the window kept was therefore whichever ones the
+chosen algorithm happened to produce first — so the same grouped join over the
+same rows came back as counts of 3/3/3/3 with the left side built and 4/2/4/2
+with the right, decided by a cost estimate.
+
+`grouped_join_oracle.rs` could not have found it: it builds every join it tests
+through one helper, and that helper never sets `limit` or `offset`. The gap was
+not in the property, which is the right one, but in the corpus — the same reason
+the cross-side condition had to be added to `join_oracle.rs` before the hash
+join's per-bucket flag became visible.
+
+The fix drops the window in `narrowed_join` too, so the two grouped paths make
+the same decision for the same reason rather than one of them making it by
+accident.
+
+### Two things the kernel accepts that a joined ordinal cannot mean
+
+Pinned in the same file, as statements of what happens today rather than as
+failures, because the fix is a refusal and that is a decision:
+
+- A `Grouping` ordinal **past the joined width** groups every row under null and
+  returns one row. `Join::validate` refuses exactly this for `having` — "would
+  silently read as null, that is, as a condition nobody wrote" — and nothing
+  applies the same rule to a `Grouping`, which arrives through the same call.
+- A **left-side computed value's ordinal** is worse, because it is in range.
+  `JoinSchema` packs by declared table width, so the ordinal a left-side query
+  gives its first computed value is the right table's column 0 in the joined
+  space, and `JoinedRow::flatten` truncates the left row before the grouper sees
+  it. Grouping by it silently groups by the right table's first column.
+  `records.proto` refuses this reference on `having` in as many words; the
+  kernel's `Grouping` accepts it.
+
+### Where it came up empty
+
+Stated with the shapes, because "we looked at the covering path" is not a result
+anybody can act on.
+
+**The expression-index covering path** — `crates/slate-kernel/tests/review_covering.rs`.
+Nine compute lists the planner oracle's generator cannot draw, against five
+projections, four filters and all six access paths, plus the same nine sorted on
+a computed value in both directions with and without a window. The lists are the
+ones the second pass has to reason about: the same expression at two positions
+(so the planner's "this one comes from the entry" and the executor's must be the
+same position, and the *other* copy must be refused); a chain three long; a chain
+whose last link also reaches for a table column, which must stop it; a forward
+reference; an ordinal naming no computed value at all; both expression indexes'
+values at once; and the descending index's value with a chain on it. No
+disagreement anywhere. 24 of 360 hinted plans are index-only scans of an
+expression index, asserted, so the differential is about the covering path and
+not about a table scan agreeing with itself.
+
+Reasoned through and found sound rather than tested: `covers` and
+`QueryCursor::open` derive `from_entry` from the same function, so they cannot
+disagree about which position the entry supplies; `output_columns` is computed
+before any candidate is considered, so `transient` — and therefore which columns
+a row comes back holding — is a property of the query and not of the plan; and
+`Scalar::collect_columns` is exhaustive over the enum including the `Expr`
+conditions inside a `Case`, which is what would otherwise let `covers` credit a
+value whose real inputs the entry does not carry.
+
+**The schema fingerprint** — `crates/slate-server/tests/review_fingerprint.rs`.
+A collision sweep over ~20,000 declarations, with names chosen to attack the
+*framing* rather than the hash: `:` and `;`, which are the canonical form's own
+delimiters; `key` and `columns`, which are its two literal field markers; and
+bare digits, which sit next to both the decimal length prefix and the decimal
+ordinal. Every declared width the check would accept is in the sweep, which is
+what folds the prefix rule into it. No two different declarations share a
+fingerprint. The accepted-spellings cross product is sound by construction as
+well: a declaration is accepted exactly when every ordinal's name is a current or
+previous name *of that ordinal*, so no rename can make one column's name
+acceptable at another's position.
+
+What the prefix rule does leave open, pinned in the same file: the check compares
+the declaration against the table's prefix and never against the ordinals the
+request goes on to use, so a request may declare one column, pass, and then
+filter on ordinal 2. The server has the information to refuse it — `convert`
+resolves every `ColumnRef` after `fingerprint::check` runs — so closing it is a
+policy change rather than a fix.
+
+**`slate-serverd`'s configuration language** —
+`crates/slate-serverd/tests/review_lang.rs`. The parser's own tests assert the
+tree it produces, which is the right shape for a parser and has one blind spot:
+whoever decided where the `And` goes also wrote the test that says where it goes.
+So this asks from the other end — twenty-three predicates go into
+`[[security.policies]]` entries, seven rows go into the store, and the ids that
+come back are compared against a set written out by hand from reading the text as
+SQL. Each case names the reading it rules out, so a case both readings agree on
+cannot creep in. Covered: `AND` over `OR`, `NOT` over both, `NOT NOT`, unary minus
+bare and inside an `IN` list and inside a conjunction, `<>` against `!=`, the
+doubled-quote escape, `~*`, `NOT LIKE` against `NOT (… LIKE …)` — which lower to
+different `Expr` shapes and must mean the same thing about a null — `NOT IN` with
+and without a conjunction, and `IS NULL`. Nothing disagreed.
+
+The claim in `Pred::lower` that a `:tenant` with no tenant behind it "fails closed
+in every position a placeholder can occupy" is checked as its own block, read by a
+caller with no tenant header: `=`, `<>`, `NOT (… = …)` and `NOT IN` all admit
+nothing, with `IN ('a', :tenant)` as the control that a null in the list does not
+swallow a real match. `Expr::In`'s three-valued rule is what makes the `NOT IN`
+case hold, and it is the one that would have been easy to get wrong.
+
+Read and found clean without a test: the lexer's operator table is longest-first
+for every prefix pair (`<>`/`<=` before `<`, `!~*`/`!~` before `!~`… and no bare
+`!`, so `!` alone is a refusal); `literal_from_number` refuses an out-of-range
+`i64`, a negative against a `u64` and a fractional against either, so the type
+boundaries are closed; and a literal's type comes from the column on the other
+side of *this* comparison at both call sites of `operand`, so there is no nesting
+in the predicate grammar for it to take the wrong column's type from.
+
 ## What is still not proven
 
 Stated plainly, because a document like this is otherwise an advertisement.

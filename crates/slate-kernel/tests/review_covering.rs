@@ -182,10 +182,7 @@ fn compute_lists() -> Vec<(&'static str, Vec<Scalar>)> {
             "a chain that reaches back to a column",
             vec![
                 lower_label(),
-                Scalar::Concat(vec![
-                    Scalar::Column(computed(0)),
-                    Scalar::Column(LABEL),
-                ]),
+                Scalar::Concat(vec![Scalar::Column(computed(0)), Scalar::Column(LABEL)]),
             ],
         ),
         (
@@ -261,9 +258,12 @@ fn filters() -> Vec<(&'static str, Expr)> {
     ]
 }
 
+/// One access path: a name, and how to force it onto a query.
+type Path = (&'static str, Box<dyn Fn(Query) -> Query>);
+
 /// Every access path, forced. Hinting an index the planner cannot use falls
 /// back to a scan rather than failing, which is still a plan that has to agree.
-fn paths() -> Vec<(&'static str, Box<dyn Fn(Query) -> Query>)> {
+fn paths() -> Vec<Path> {
     vec![
         ("planner's choice", Box::new(|q: Query| q)),
         ("table scan", Box::new(Query::using_table_scan)),
@@ -433,4 +433,3 @@ async fn the_corpus_reaches_a_covering_scan_of_an_expression_index() {
          about the covering path"
     );
 }
-

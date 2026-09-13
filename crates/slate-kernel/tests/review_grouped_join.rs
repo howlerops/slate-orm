@@ -278,9 +278,10 @@ async fn a_grouping_ordinal_past_the_joined_width_groups_everything_under_null()
 async fn a_left_side_computed_ordinal_lands_on_the_right_tables_first_column() {
     let store = store().await;
     let left_width = authors().columns().len();
-    let join = Join::equating(author_col("id"), book_col("author_id")).left(
-        Query::all().computing([Scalar::Upper(Box::new(Scalar::Column(author_col("region"))))]),
-    );
+    let join =
+        Join::equating(author_col("id"), book_col("author_id")).left(Query::all().computing([
+            Scalar::Upper(Box::new(Scalar::Column(author_col("region")))),
+        ]));
     let txn = store.begin().await.unwrap();
     let by_computed = txn
         .group_by_join(
@@ -301,7 +302,10 @@ async fn a_left_side_computed_ordinal_lands_on_the_right_tables_first_column() {
             &authors(),
             &books(),
             &join,
-            &Grouping::by([Ordinal(left_width + book_col("id").0)], &[Aggregate::Count]),
+            &Grouping::by(
+                [Ordinal(left_width + book_col("id").0)],
+                &[Aggregate::Count],
+            ),
         )
         .await
         .unwrap();

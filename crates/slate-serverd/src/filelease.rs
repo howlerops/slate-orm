@@ -9,13 +9,21 @@
 //! `object_store::local::LocalFileSystem` implements the first and returns
 //! `NotImplemented` for the second.
 //!
-//! The consequences are not subtle, and were found by running the thing:
+//! The consequences were not subtle, and were found by running the thing:
 //!
 //! - the first node takes the lease and can never renew it, so the term
 //!   silently lapses under a perfectly healthy leader;
 //! - it cannot release it either, so a restart waits out the term;
 //! - and then the restart *fails anyway*, because taking over an expired lease
-//!   is also a conditional update. A `local` database is a one-start database.
+//!   is also a conditional update. A `local` database was a one-start database.
+//!
+//! None of that is silent any more:
+//! [`ObjectStoreLease::acquire`](slate_server::lease::ObjectStoreLease) now
+//! probes for the conditional update and refuses with `LeaseError::Unsupported`
+//! rather than taking a lease it cannot keep. So the object-store lease over a
+//! local filesystem is a refusal to start, not a one-start database — and this
+//! type is what a `local` deployment uses instead, rather than a patch over a
+//! failure nobody could see.
 //!
 //! # What replaces it
 //!
@@ -31,11 +39,49 @@
 //! - and it needs no clock, which is the part of a time-based lease that
 //!   cannot be made sound.
 //!
-//! A fake lease that always grants — which is what
-//! `clients/python/testserver` and the head node's own tests use — was the
-//! alternative, and is what this crate is trying not to be: a binary whose
-//! leadership is real on one backend and pretend on another is one where the
-//! fast tests prove nothing about the slow path.
+//! # The alternatives, and why not
+//!
+//! **A fake lease that always grants** — which is what
+//! `clients/python/testserver` and the head node's own tests use. It is what
+//! this crate is trying not to be: a binary whose leadership is real on one
+//! backend and pretend on another is one where the fast tests prove nothing
+//! about the slow path.
+//!
+//! **A create-only lease in `slate-server`, alongside the object-store one.**
+//! This is the interesting one, because it would work. `PutMode::Create` *is*
+//! implemented by `LocalFileSystem`, and a compare-and-set can be built out of
+//! nothing else by putting the generation in the object's *name*: taking the
+//! lease is creating `writer/0000000008`, which exactly one contender can do,
+//! and reading it is listing the prefix and taking the highest. That is not a
+//! trick — it is precisely how SlateDB writes its own manifest, which is why
+//! SlateDB can fence a writer over a local directory at all.
+//!
+//! It was still rejected, for three reasons in descending order of weight:
+//!
+//! - **It is worse where it is not needed.** Against S3 it costs a `PUT` plus
+//!   a `DELETE` per renewal and a `LIST` per observation, where the conditional
+//!   update S3 *does* support costs one `PUT` and no `GET`. So it could not
+//!   replace `ObjectStoreLease`; it would have to sit beside it, chosen by
+//!   capability — a third lease implementation, and a rule for picking between
+//!   two of them, to serve one backend.
+//! - **It is weaker than this one on the deployment `local` describes.** One
+//!   machine, one directory. A `flock` is mutual exclusion the kernel enforces,
+//!   released when the process exits however it exits; a generation lease is
+//!   two clocks and a term, so a crashed node blocks its successor for up to
+//!   fifteen seconds and a paused one can believe in a term it has lost. Trading
+//!   a real lock for a timed one is a downgrade.
+//! - **The one place it would be better is untestable here.** Its appeal is
+//!   NFS: `LocalFileSystem`'s `PutMode::Create` publishes through a hard link,
+//!   which is the classic atomic primitive that *does* cross an NFS mount,
+//!   where `flock` does not. That is a real argument and it is also a safety
+//!   claim about a filesystem this repository has no way to run a test against.
+//!   Shipping an untested claim of NFS safety is worse than the documented
+//!   limitation below, because the limitation makes people use `s3` and the
+//!   claim would make them stop.
+//!
+//! If a shared-mount deployment ever becomes a thing this project supports, the
+//! generation lease is the design to build, and the paragraph above is the
+//! specification. It is not that today.
 //!
 //! # What it does not do
 //!
@@ -47,6 +93,10 @@
 //! with more than one node uses `s3`, where the conditional write is real and
 //! [`ObjectStoreLease`](slate_server::lease::ObjectStoreLease) is used
 //! unchanged.
+//!
+//! Two nodes on *one* host over one `local` directory are separated, and that
+//! is now a supported shape rather than a refusal: the second one starts as a
+//! reader. See `Head::read_only` and `storage::open_read_only`.
 //!
 //! The term is still reported and still extended on renewal, because
 //! [`Term`] has one and the leadership RPC shows it. It is bookkeeping here:

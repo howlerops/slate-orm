@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use common::{TestClock, lease_at};
 use object_store::memory::InMemory;
 use object_store::{ObjectStore, ObjectStoreExt as _, path::Path};
-use slate_server::lease::{Lease, LeaseError, Term};
+use slate_server::lease::{Lease, LeaseError, ObjectStoreLease, Term};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -134,6 +134,163 @@ async fn a_read_then_write_lease_does_not_and_that_is_the_point() {
         why.contains("renewed successfully"),
         "it should fail at the renewal, not earlier: {why}"
     );
+}
+
+// --- the store that cannot back a lease ------------------------------------
+
+/// A real directory, through the same `LocalFileSystem` a `local` deployment
+/// would use.
+///
+/// An in-memory object store cannot stand in here. The defect is a method one
+/// particular implementation does not implement, so a fake that implements it
+/// proves nothing and a fake that does not is only a restatement of the
+/// assertion.
+fn local_filesystem() -> (tempfile::TempDir, Arc<dyn ObjectStore>) {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let store: Arc<dyn ObjectStore> = Arc::new(
+        object_store::local::LocalFileSystem::new_with_prefix(directory.path())
+            .expect("a local object store"),
+    );
+    (directory, store)
+}
+
+/// Over a local filesystem the lease refuses to be taken, rather than being
+/// taken once and never again.
+///
+/// The defect this pins was not that renewal failed. It was that *acquisition
+/// succeeded*: `PutMode::Create` is implemented, so the first node took the
+/// lease, and everything after it — renew, release, take over an expired term
+/// — is a `PutMode::Update`, which is not. The node then held a lease it could
+/// not extend, `Leadership::renew` read the `NotImplemented` as the transient
+/// storage error it looks like and correctly declined to step down for one, the
+/// term lapsed under a healthy leader, and no successor could take over an
+/// expired term either. A `local` database was a one-start database and nothing
+/// said so.
+#[tokio::test]
+async fn a_store_without_conditional_updates_refuses_the_lease_up_front() {
+    let (directory, store) = local_filesystem();
+    let lease = ObjectStoreLease::with_holder(store, "leases/writer", "node-a".to_owned());
+
+    let error = lease
+        .acquire()
+        .await
+        .expect_err("a local filesystem cannot back this lease");
+    let LeaseError::Unsupported {
+        operation,
+        store: named,
+        remedy,
+    } = &error
+    else {
+        panic!("the refusal must be distinguishable from a storage failure, got {error:?}");
+    };
+    assert!(operation.contains("PutMode::Update"), "{operation}");
+    assert!(
+        named.contains("LocalFileSystem"),
+        "the refusal should name the store, said {named}"
+    );
+    assert!(
+        remedy.contains("local directory"),
+        "the refusal should say what to do instead, said {remedy}"
+    );
+
+    // Nothing was written. The old behaviour left a lease object behind that
+    // said this node held the database, which is the statement that made the
+    // failure silent — an operator reading it would have believed it.
+    assert!(
+        !directory.path().join("leases/writer").exists(),
+        "a refused acquisition must not leave a lease behind claiming this node holds it"
+    );
+    assert!(lease.held().is_none());
+}
+
+/// A second node gets the same answer, and no node is left holding anything.
+///
+/// The failure mode being excluded is the asymmetric one: the first node takes
+/// the lease with the `Create` that works, and the second is told the lease is
+/// held. That reads as a healthy cluster and is a cluster with no election at
+/// all.
+#[tokio::test]
+async fn neither_node_can_take_a_lease_the_store_cannot_support() {
+    let (_directory, store) = local_filesystem();
+    let a = ObjectStoreLease::with_holder(Arc::clone(&store), "leases/writer", "node-a".to_owned());
+    let b = ObjectStoreLease::with_holder(store, "leases/writer", "node-b".to_owned());
+
+    assert!(matches!(
+        a.acquire().await,
+        Err(LeaseError::Unsupported { .. })
+    ));
+    let second = b.acquire().await.expect_err("node B too");
+    assert!(
+        matches!(second, LeaseError::Unsupported { .. }),
+        "the second node must not be told the lease is *held*, which would look like an \
+         election that worked: {second:?}"
+    );
+}
+
+/// And a node pointed at such a store never becomes the leader, terminally.
+///
+/// The alternative — campaign, fail, sleep, campaign again forever — is the
+/// same silence in a different place: a supervisor sees a healthy process, a
+/// client sees `UNAVAILABLE` on every write, and nothing anywhere says the
+/// deployment has no leader election. Stepping down is a state the
+/// `Leadership` RPC reports.
+#[tokio::test]
+async fn a_node_over_such_a_store_steps_down_instead_of_campaigning_forever() {
+    use slate_server::leadership::{Leadership, StepDown};
+
+    let (_directory, store) = local_filesystem();
+    let lease = ObjectStoreLease::with_holder(store, "leases/writer", "node-a".to_owned());
+    let leadership = Leadership::new(Arc::new(lease));
+
+    assert!(!leadership.campaign().await, "it cannot have won");
+    assert_eq!(
+        leadership.standing(),
+        slate_server::Standing::SteppedDown {
+            reason: StepDown::LeaseUnusable
+        },
+        "a lease that cannot work is not a lease to keep trying"
+    );
+    // Terminal, so `maintain` returns rather than spending a request per
+    // cadence for the life of the process.
+    assert!(!leadership.campaign().await);
+}
+
+/// The probe costs one request and does not write.
+///
+/// Asserted against a store that *can* do conditional updates, because that is
+/// the path every real deployment takes: the check must not leave anything
+/// behind beside the lease, and must not disturb a lease that is already there.
+#[tokio::test]
+async fn the_capability_probe_leaves_a_working_store_untouched() {
+    let store = object_store();
+    let clock = TestClock::new();
+    let a = lease_at(Arc::clone(&store), "node-a", Arc::clone(&clock), TERM);
+
+    let term = a.acquire().await.expect("an ordinary acquisition");
+    assert_eq!(term.generation, 1);
+
+    let listed: Vec<String> = {
+        use futures::TryStreamExt as _;
+        store
+            .list(None)
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("list")
+            .into_iter()
+            .map(|meta| meta.location.to_string())
+            .collect()
+    };
+    assert_eq!(
+        listed,
+        vec!["leases/writer".to_owned()],
+        "the probe wrote something: {listed:?}"
+    );
+
+    // And the lease still behaves: renewing keeps the generation, and a second
+    // client is refused.
+    assert_eq!(a.renew().await.expect("renew").generation, 1);
+    let b = lease_at(store, "node-b", clock, TERM);
+    assert!(matches!(b.acquire().await, Err(LeaseError::Held { .. })));
 }
 
 // --- properties of the real one -------------------------------------------
