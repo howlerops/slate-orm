@@ -1,8 +1,9 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2 and 5 are fixed and their probes now assert
-> the refusal; 3, 4, 6, 7 and 8 are open. Each finding carries its own status
-> line below. The fixes are in the commits that reference this file.
+> **Status, later the same session.** Findings 1, 2, 5 and 6 are fixed and their
+> probes now assert the refusal; 3, 4, 7 and 8 are open. Each finding carries
+> its own status line below. The fixes are in the commits that reference this
+> file.
 
 An adversarial end-to-end review of the authentication, RBAC, row-level
 security, tenant isolation, wire protocol and configuration surfaces, done as
@@ -274,8 +275,15 @@ fix closes it.
 
 ## 6. Trusted-header mode: the client's copy of an identity header wins
 
-**Status: OPEN, and the cheapest of the open ones.** A one-line fail-closed
-lookup: refuse when a key appears more than once, rather than taking the first.
+**Status: FIXED.** `text` reads `get_all` and refuses a key that appears more
+than once, rather than resolving it. Refused rather than resolved because there
+is no safe pick: taking the last trusts a proxy that appends, taking the first
+trusts one that replaces, and the server cannot tell which it is behind. The
+refusal covers identical duplicates too — treating those as benign would make
+the check pass or fail depending on what the attacker chose to send — and the
+message names the duplicate without echoing the identity that was claimed.
+`a_duplicated_identity_header_is_refused_rather_than_resolved` now asserts the
+refusal.
 
 **Impact: medium — total impersonation, but only under a specific (and easy)
 proxy misconfiguration.**

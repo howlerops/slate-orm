@@ -116,7 +116,7 @@ async fn a_client_probes_another_tenants_rows_through_insert() {
 /// between `proxy_set_header` and `add_header` in the two commonest proxies —
 /// so the requirement is a demonstrated one rather than a stated one.
 #[test]
-fn the_first_copy_of_a_duplicated_identity_header_wins() {
+fn a_duplicated_identity_header_is_refused_rather_than_resolved() {
     use slate_server::Authenticator as _;
     use tonic::metadata::MetadataMap;
 
@@ -130,27 +130,23 @@ fn the_first_copy_of_a_duplicated_identity_header_wins() {
     metadata.append("slate-roles", "app".parse().unwrap());
     metadata.append("slate-tenant", "u64:1".parse().unwrap());
 
-    let context = slate_server::MetadataIdentity::trusting_the_caller_completely()
+    // Was: the client's copy won, because `get` returns the first. Now the
+    // request is refused outright. Resolving it either way would be a guess
+    // about a proxy this server cannot see: taking the last trusts one that
+    // appends, taking the first trusts one that replaces.
+    let status = slate_server::MetadataIdentity::trusting_the_caller_completely()
         .authenticate(&metadata)
-        .expect("authenticated");
+        .expect_err("a duplicated identity header must not be resolved");
 
-    assert_eq!(
-        context.principal().id,
-        slate_tuple::Value::U64(666),
-        "the client's principal won over the proxy's"
-    );
-    assert_eq!(
-        context.principal().tenant,
-        Some(slate_tuple::Value::U64(2)),
-        "the client's tenant won over the proxy's"
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert!(
+        status.message().contains("more than once"),
+        "the error should name the duplicate rather than the value it rejected: {}",
+        status.message()
     );
     assert!(
-        context.principal().roles.contains("admin"),
-        "the client's roles won over the proxy's: {:?}",
-        context.principal().roles
-    );
-    assert!(
-        !context.principal().roles.contains("app"),
-        "only the first copy is read at all"
+        !status.message().contains("666"),
+        "the refusal must not echo the identity the caller tried to claim: {}",
+        status.message()
     );
 }
