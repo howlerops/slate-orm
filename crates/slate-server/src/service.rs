@@ -1081,6 +1081,24 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                     groups, served_by, warnings, batch_size,
                 )))
             }
+            GroupedSource::Chain { tables, chain } => {
+                let definitions = self.definitions(tables)?;
+                // Affinity from the first table, as a plain chain does: it is
+                // the one the planner reads first, and every later step is
+                // secured on its own.
+                let first = *definitions
+                    .first()
+                    .ok_or_else(|| Status::new(Code::Internal, "a chain with no tables"))?;
+                let affinity = Self::affinity(first, &context);
+                let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+                let groups = view
+                    .group_by_chain(&context, &definitions, chain, &grouping)
+                    .await
+                    .map_err(|e| from_kernel(&e))?;
+                Ok(Response::new(replay_groups(
+                    groups, served_by, warnings, batch_size,
+                )))
+            }
         }
     }
 

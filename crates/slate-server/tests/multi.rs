@@ -1932,6 +1932,19 @@ async fn grouped_join_in_process(
     Ok(groups_as_strings(&groups))
 }
 
+/// The same, for a chain: what does the kernel answer for this grouping?
+async fn in_process_grouped_chain(
+    backing: &Arc<MemoryStore>,
+    tables: &[&TableDef],
+    chain: &Chain,
+    grouping: &Grouping,
+) -> Result<Vec<String>, slate_kernel::KernelError> {
+    let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(backing));
+    let txn = store.begin().await.unwrap();
+    let groups = txn.group_by_chain(&ctx(), tables, chain, grouping).await?;
+    Ok(groups_as_strings(&groups))
+}
+
 /// The wire's grouped join must answer exactly what the kernel's does.
 ///
 /// The point of the differential: the head node implements no grouping of its
@@ -1984,16 +1997,18 @@ async fn a_grouped_join_over_the_wire_agrees_with_the_kernel() {
     assert!(!expected.is_empty(), "the fixture should produce groups");
 }
 
-/// Three inputs is refused rather than planned as something else, and the
-/// refusal says why: the kernel groups a two-table join and does not group a
-/// chain.
+/// A three-table chain, grouped over the wire.
+///
+/// This was a refusal until the kernel grew `group_by_chain`: the server said
+/// "the kernel groups a two-table join, and grouping a chain is not built",
+/// which stopped being true the moment it did. The test that asserted the
+/// refusal is this one, rewritten rather than deleted — a refusal test that
+/// outlives the refusal passes forever and protects nothing.
 #[tokio::test]
-async fn grouping_a_chain_is_refused_with_the_reason() {
-    let (serving, _backing) = seeded().await;
+async fn a_grouped_chain_over_the_wire_agrees_with_the_kernel() {
+    let (serving, backing) = seeded().await;
     let mut client = serving.client().await;
 
-    // A plain three-table chain, built the way the chain tests above build
-    // one, so the refusal is about the number of inputs and nothing else.
     let (a, b, sl) = (authors(), books(), sales());
     let tables: Vec<&TableDef> = vec![&a, &b, &sl];
     let space = JoinSchema::over(tables.iter().copied());
@@ -2006,11 +2021,19 @@ async fn grouping_a_chain_is_refused_with_the_reason() {
             space.at(1, at(&b, "id")),
             at(&sl, "book_id"),
         ));
-    let chain = chain_to_proto(&tables, &chain);
+
+    // Books per author, counted across the whole chain.
+    let grouping = Grouping::by([space.at(0, at(&a, "id"))], &[Aggregate::Count]);
+    let expected = in_process_grouped_chain(&backing, &tables, &chain, &grouping)
+        .await
+        .expect("the kernel groups this chain");
+
+    let mut wire = chain_to_proto(&tables, &chain);
+    wire.limit = None;
     let query = pb::AggregateQuery {
         input: None,
-        join: Some(chain),
-        group_by: Vec::new(),
+        join: Some(wire),
+        group_by: vec![column_ref(0, at(&a, "id").0)],
         aggregates: vec![pb::Aggregate {
             function: pb::AggregateFunction::Count as i32,
             column: None,
@@ -2021,15 +2044,14 @@ async fn grouping_a_chain_is_refused_with_the_reason() {
         offset: 0,
     };
 
-    let status = grouped_join_over_the_wire(&mut client, query)
+    let mut actual = grouped_join_over_the_wire(&mut client, query)
         .await
-        .expect_err("grouping a chain must be refused");
-    assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert!(
-        status.message().contains("chain"),
-        "the refusal should say what is not built: {}",
-        status.message()
-    );
+        .expect("the wire groups this chain");
+    let mut expected = expected;
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+    assert!(!expected.is_empty(), "the fixture should produce groups");
 }
 
 /// Naming both sources is a client bug, reported rather than resolved by a

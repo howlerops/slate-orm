@@ -802,6 +802,15 @@ async fn apply<S: KvStore>(
                         .group_by_join(&context, left, right, join, &grouping)
                         .await
                 }
+                GroupedSource::Chain { tables, chain } => {
+                    let mut definitions = Vec::with_capacity(tables.len());
+                    for id in tables {
+                        definitions.push(table!(*id, reply));
+                    }
+                    transaction
+                        .group_by_chain(&context, &definitions, chain, &grouping)
+                        .await
+                }
             };
             answer(reply, outcome)
         }

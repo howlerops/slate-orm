@@ -1735,6 +1735,19 @@ pub enum GroupedSource {
         /// Which rows.
         query: Query,
     },
+    /// Three or more tables, chained.
+    ///
+    /// Separate from [`GroupedSource::Join`] rather than folded into it,
+    /// because the kernel has two entry points — `group_by_join` narrows each
+    /// side's projection and `group_by_chain` cannot — and collapsing them
+    /// here would mean choosing at the call site anyway, one level further
+    /// from the reason.
+    Chain {
+        /// The tables, in the order the chain reads them.
+        tables: Vec<TableId>,
+        /// The chain itself.
+        chain: Box<Chain>,
+    },
     /// Exactly two tables, joined.
     ///
     /// A pair rather than a `Vec`, because "exactly two" is checked once here
@@ -1851,23 +1864,10 @@ pub fn aggregate_from_proto_query(
         }
         (_, Some(join_wire)) => {
             let (tables, read, warnings) = join_from_proto(join_wire, catalog)?;
-            let join = match read {
-                MultiRead::Join(join) => join,
-                // The kernel groups a two-table joined row stream and does not
-                // group a chain. Refused with that reason rather than planned
-                // as something the caller did not ask for.
-                MultiRead::Chain(_) => {
-                    return Err(bad(format!(
-                        "grouping over a join of {} tables is not supported; the kernel \
-                         groups a two-table join, and grouping a chain is not built",
-                        tables.len()
-                    )));
-                }
-            };
-            // The group and the aggregates are named in the join's schema,
-            // so the space has to be the same one `JoinQuery.having` uses:
-            // every input visible, each shifted past the width of everything
-            // before it. Rebuilt from the wire rather than returned by
+            // The group and the aggregates are named in the joined schema, so
+            // the space has to be the same one `JoinQuery.having` uses: every
+            // input visible, each shifted past the width of everything before
+            // it. Rebuilt from the wire rather than returned by
             // `join_from_proto`, because the compute counts are right here.
             let mut shapes = Vec::with_capacity(tables.len());
             for (id, input) in tables.iter().zip(&join_wire.inputs) {
@@ -1879,9 +1879,21 @@ pub fn aggregate_from_proto_query(
             }
             let visible = shapes.len();
             let space = Space::joined(shapes, visible);
-            let [left, right] = <[TableId; 2]>::try_from(tables)
-                .map_err(|_| bad("a two-table join resolved to a different number of tables"))?;
-            (GroupedSource::Join { left, right, join }, space, warnings)
+
+            let source = match read {
+                MultiRead::Join(join) => {
+                    let [left, right] = <[TableId; 2]>::try_from(tables).map_err(|_| {
+                        bad("a two-table join resolved to a different number of tables")
+                    })?;
+                    GroupedSource::Join { left, right, join }
+                }
+                // Three or more inputs used to be refused here, saying the
+                // kernel does not group a chain. It does now, so the refusal
+                // is gone rather than left to become a lie about what the
+                // kernel can do.
+                MultiRead::Chain(chain) => GroupedSource::Chain { tables, chain },
+            };
+            (source, space, warnings)
         }
         (None, None) => unreachable!("checked above"),
     };

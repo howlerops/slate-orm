@@ -400,9 +400,12 @@ func TestHavingKeepsGroups(t *testing.T) {
 	}
 }
 
-// The kernel groups a two-table join and does not group a chain. The refusal
-// arrives with its reason rather than being planned as something else.
-func TestGroupingAChainIsRefused(t *testing.T) {
+// A three-table chain, grouped.
+//
+// This asserted a refusal until the kernel grew `group_by_chain`. Rewritten
+// rather than deleted: a refusal test that outlives the refusal passes forever
+// and protects nothing.
+func TestGroupingAChain(t *testing.T) {
 	session := library(t)
 
 	b := slate.NewJoin()
@@ -411,6 +414,8 @@ func TestGroupingAChainIsRefused(t *testing.T) {
 		Table: "books",
 		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
 	})
+	// A third input joining back to the second, which is what makes it a chain
+	// rather than a pair.
 	b.Add(slate.JoinInput{
 		Table: "books",
 		On:    []slate.On{{Earlier: slate.At(books, 0), Own: 0}},
@@ -420,18 +425,17 @@ func TestGroupingAChainIsRefused(t *testing.T) {
 		GroupBy:    []slate.Column{slate.At(0, 0)},
 		Aggregates: []slate.Aggregate{slate.Count()},
 	})
-	// The refusal arrives when the stream is drained, not when the call is
-	// made: opening a server stream does not wait for the server to accept the
-	// request. A test that only checks the call sees no error and passes
-	// against a client that never sends the request at all.
-	if err == nil {
-		_, err = stream.Collect()
+	if err != nil {
+		t.Fatalf("grouping a chain: %v", err)
 	}
-	if err == nil {
-		t.Fatal("grouping a chain must be refused")
+	groups, err := stream.Collect()
+	if err != nil {
+		t.Fatalf("draining: %v", err)
 	}
-	if !slate.IsKind(err, slate.KindInvalidRequest) {
-		t.Errorf("err = %v, want KindInvalidRequest", err)
+	// Authors 1 and 2 have books; joining books to itself on the id keeps one
+	// row per book, so the counts are unchanged.
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2", len(groups))
 	}
 }
 

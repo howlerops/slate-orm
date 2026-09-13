@@ -624,7 +624,9 @@ Built and tested:
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,
       or a row's contents would depend on the plan that fetched it
-- [x] Grouping over a `Chain`, the n-way case of a grouped join. Group keys may
+- [x] Grouping over a `Chain`, the n-way case of a grouped join, kernel and
+      wire alike — the server's old "grouping a chain is not built" refusal is
+      gone rather than left to become a lie. Group keys may
       name any table in the chain. It reads *wider* than a grouped join does —
       a step's condition can name any earlier table, so narrowing each step's
       projection to the grouping's columns would read away a column a later

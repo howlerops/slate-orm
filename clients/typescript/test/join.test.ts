@@ -258,23 +258,24 @@ test("having keeps groups", async () => {
   assert.equal(keyOf(groups[0]!), 1n);
 });
 
-// The kernel groups a two-table join and does not group a chain. The refusal
-// arrives with its reason rather than the request being planned as something
-// else — and it arrives when the stream is drained, not when it is opened.
-test("grouping a chain is refused", async () => {
+// A three-table chain, grouped.
+//
+// This asserted a refusal until the kernel grew grouping over a chain.
+// Rewritten rather than deleted: a refusal test that outlives the refusal
+// passes forever and protects nothing.
+test("grouping a chain", async () => {
   const session = await library();
   const b = newJoin();
   const authors = b.add({ table: "authors" });
   const books = b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
+  // A third input joining back to the second, which is what makes it a chain.
   b.add({ table: "books", on: [{ earlier: at(books, 0), own: 0 }] });
 
-  await assert.rejects(
-    () => session.aggregateJoin(b.query(), { groupBy: [at(0, 0)], aggregates: [count()] }).collect(),
-    (error: unknown) => {
-      assert.ok(isKind(error, "invalid-request"), `kind was ${(error as SlateError).kind}`);
-      return true;
-    },
-  );
+  const groups = await session
+    .aggregateJoin(b.query(), { groupBy: [at(0, 0)], aggregates: [count()] })
+    .collect();
+
+  assert.equal(groups.length, 2, "authors 1 and 2 have books");
 });
 
 test("explain join describes every input", async () => {

@@ -124,11 +124,12 @@ def test_an_offset_skips_groups(client: Client) -> None:
     assert rest == every[1:], "an offset drops the leading groups, in order"
 
 
-def test_grouping_a_chain_is_refused_with_the_reason(client: Client) -> None:
-    """The kernel groups a two-table join and does not group a chain.
+def test_grouping_a_chain(client: Client) -> None:
+    """A three-table chain, grouped.
 
-    Refused by name rather than planned as something else, and the client can
-    reach the refusal — which is the point of not counting inputs here.
+    This asserted a refusal until the kernel grew `group_by_chain`. Rewritten
+    rather than deleted: a refusal test that outlives the refusal passes
+    forever and protects nothing.
     """
     join = JoinQuery()
     authors = join.add(AUTHORS)
@@ -139,9 +140,12 @@ def test_grouping_a_chain_is_refused_with_the_reason(client: Client) -> None:
     grouped.group_by(authors.c.id)
     grouped.aggregate(Agg.count())
 
-    with pytest.raises(InvalidRequest) as caught:
-        list(client.aggregate(grouped))
-    assert "two" in str(caught.value).lower() or "chain" in str(caught.value).lower()
+    groups = [tag_group(g) for g in client.aggregate(grouped)]
+    assert groups, "the chain should produce groups"
+    for group in groups:
+        kind, count = group["values"][0]
+        assert kind == "u64"
+        assert count >= 1
 
 
 def test_a_grouped_join_needs_at_least_one_aggregate(client: Client) -> None:
