@@ -1,5 +1,9 @@
 # Security review
 
+> **Status, later the same session.** Findings 1, 2 and 5 are fixed and their probes now assert
+> the refusal; 3, 4, 6, 7 and 8 are open. Each finding carries its own status
+> line below. The fixes are in the commits that reference this file.
+
 An adversarial end-to-end review of the authentication, RBAC, row-level
 security, tenant isolation, wire protocol and configuration surfaces, done as
 one pass rather than feature by feature. Findings are ranked by impact, each
@@ -27,6 +31,12 @@ what to change it to once the finding is fixed.
 ---
 
 ## 1. A `CASCADE` from a shared parent deletes other tenants' rows
+
+**Status: FIXED.** `Catalog::from_tables` refuses a referential action from a
+non-tenant-scoped parent to a tenant-scoped child, naming both tables. Refused
+rather than confined at the scan — confining stops the destruction and leaves
+other tenants' children pointing at a parent that is gone, trading a security
+hole for a correctness one. Turning the refusal on broke nothing but the pins.
 
 **Impact: high — cross-tenant data destruction, no read needed.**
 `crates/slate-kernel/src/record.rs`, `deletion_closure`.
@@ -81,6 +91,11 @@ Either way the doc comment on `delete` needs its second bound narrowed to
 ---
 
 ## 2. `insert_many` / `upsert_many` are a free cross-tenant existence oracle
+
+**Status: FIXED.** `write_many` decides the row policy before its batched
+reads, as single-row `insert` already did. Not applied to `update_many`, which
+is already indistinguishable — pre-checking there would replace `RowNotFound`
+with `RowCheckFailed` and reintroduce this disclosure from the other side.
 
 **Impact: high — cross-tenant disclosure of primary keys *and* unique-index
 values, over gRPC, with nothing written.**
@@ -156,6 +171,13 @@ That closes the cross-tenant case entirely. The same-tenant, RLS-hidden case
 
 ## 3. `EXPLAIN` reads other tenants' values out of the planner's histograms
 
+**Status: OPEN, and the hardest of these.** Statistics have to be global to be
+correct — per-policy histograms would mis-optimise — so this is a design
+decision rather than a patch. The candidates are withholding `estimated_rows`
+from the wire, coarsening what `bounded_selectivity` reports, or gathering
+per-tenant statistics and accepting the plan quality cost. None is obviously
+right.
+
 **Impact: high — verbatim recovery of column values from tenants the caller
 cannot read a single row of.**
 `crates/slate-kernel/src/stats.rs` (`Histogram`, `bounded_selectivity`),
@@ -207,6 +229,11 @@ statistics a deployed node plans with.
 
 ## 4. A write reports whether a row hidden by RLS occupies a key
 
+**Status: OPEN.** The reviewer's own assessment is that it is probably inherent
+— a unique key is a shared resource, and refusing to say it is taken means
+accepting a write that cannot land. If so the fix is to `security.rs`'s claim
+rather than to the code, and the claim is the thing that is wrong.
+
 **Impact: medium — same-tenant existence oracle; contradicts a stated
 invariant.**
 `crates/slate-kernel/src/security.rs` module docs, `record.rs::insert`.
@@ -236,6 +263,9 @@ matters.
 
 ## 5. `RESTRICT` discloses a referencing row in another tenant
 
+**Status: FIXED with finding 1** — it is the read side of the same edge, and
+the catalog now refuses the edge for either action.
+
 **Impact: medium — one bit per probe, cross-tenant.** Covered under §1; the
 demonstration is `a_restrict_refusal_discloses_another_tenants_row`. The same
 fix closes it.
@@ -243,6 +273,9 @@ fix closes it.
 ---
 
 ## 6. Trusted-header mode: the client's copy of an identity header wins
+
+**Status: OPEN, and the cheapest of the open ones.** A one-line fail-closed
+lookup: refuse when a key appears more than once, rather than taking the first.
 
 **Impact: medium — total impersonation, but only under a specific (and easy)
 proxy misconfiguration.**
@@ -286,6 +319,11 @@ and says why, instead of serving whoever asked.
 
 ## 7. Unbounded per-request work and memory
 
+**Status: OPEN.** Only joins have a budget. An `IN` list stays in the residual
+and is re-scanned per row (8 values 8 ms, 50,000 values 2.98 s over 2,000 rows);
+`GROUP BY`, `COUNT(DISTINCT)` and an unlimited `ORDER BY` hold the whole result
+with no cap; the daemon has no concurrency limit and no request timeout.
+
 **Impact: medium — one authenticated caller can pin the node.**
 `crates/slate-kernel/src/{expr,aggregate,exec}.rs`,
 `crates/slate-serverd/src/serve.rs`.
@@ -328,6 +366,9 @@ regardless.
 ---
 
 ## 8. Schema disclosure to an authenticated caller with no grant
+
+**Status: OPEN, low.** The fingerprint and table-name lookup run before the
+RBAC check, so a caller with no grant can confirm a table's shape.
 
 **Impact: low.** `crates/slate-server/src/service.rs`,
 `crates/slate-server/src/fingerprint.rs`.
