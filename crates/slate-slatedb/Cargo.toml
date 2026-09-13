@@ -18,9 +18,29 @@ tokio = { workspace = true, features = ["time"] }
 uuid.workspace = true
 
 [features]
-default = ["aws"]
+default = ["aws", "cache"]
 # S3-compatible object storage: AWS S3, MinIO, Tigris, Cloudflare R2.
 aws = ["slatedb/aws"]
+# SlateDB's block and metadata caches, which are `slatedb/foyer`.
+#
+# On by default because off is not a neutral choice. `default-features = false`
+# here drops `foyer` from SlateDB's own default of `["aws", "foyer"]`, and
+# `DbBuilder::new` still calls `default_db_cache()` — which without the feature
+# returns caches that answer `None` to every lookup and discard every insert.
+# Not an absent cache: a present one that does nothing, silently.
+#
+# Measured (`slate-headbench`'s `cache_probe`, `docs/performance.md`): a warm
+# point read over 20,000 rows pays 3.02 object-store GETs with the cache
+# compiled out and 0.00 with it in, 117 µs against 72 µs. Two of those three
+# are the *same two* metadata objects — one SST index, one filter — re-fetched
+# on every read; the probe's own counters show 200 reads consulting them 400
+# times and missing twice. Against real object storage those are two network
+# round trips per point read, for ever.
+#
+# Left switchable rather than simply removing `default-features = false`,
+# because that would also pull in codecs nothing here uses. A deployment that
+# wants the smaller binary can turn this off, and now has to say so.
+cache = ["slatedb/foyer"]
 
 [dev-dependencies]
 # For the object-store fault injector, whose trait methods return boxed streams.

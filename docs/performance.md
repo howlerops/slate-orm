@@ -1601,6 +1601,16 @@ HEADBENCH_POLL_MS=10000 cargo run --release -p slate-headbench \
 
 ### 8. SlateDB's block cache is compiled out, and a point read pays three GETs
 
+**Fixed.** `slate-slatedb` now has a `cache` feature (`slatedb/foyer`) and it is
+on by default. Re-measured afterwards, on the same probe: the *as shipped*
+arm moved from 603 cold GETs and 3.02 warm to 205 and **0.00**, which is where
+the *cache on* arm already sat, while *cache off, said so* stayed at 603 and
+3.02 as the control. The arm that was broken is now indistinguishable from the
+arm that was correct, and the arm that asks for no cache still gets none — so
+the change did what it claims and nothing more.
+
+The original finding follows.
+
 Every crate here declares `slatedb = { version = "0.16", default-features =
 false }`, and `slate-slatedb` re-enables one feature, `aws`. SlateDB's own
 `default` is `["aws", "foyer"]`. `cargo tree -i -p slatedb -e features`
@@ -1682,6 +1692,15 @@ them enabling `foyer` is enough to turn the cache on everywhere.
 
 ### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
 
+**Fixed**: `crates/slate-slatedb/tests/common/s3server.rs` sets `TCP_NODELAY`
+on each accepted connection. The correction to the readahead table below
+stands — that table's wall-clock ratios were measured through this socket and
+the real figure is about 8x, not 158x-409x. The 31x request-count ratio, which
+is what that section says is the number worth quoting, is unaffected: request
+counts do not care about ACKs.
+
+The original finding follows.
+
 `crates/slate-slatedb/tests/common/s3server.rs` binds its own `TcpListener`,
 accepts a `TcpStream`, and hands it to
 `hyper_util::server::conn::auto::Builder::serve_connection`. Nothing on that
@@ -1747,6 +1766,16 @@ let _ = stream.set_nodelay(true);
 ```
 
 ### 10. The daemon polls its replicas every ten seconds, and the harness never did
+
+**Not fixed here.** The fix belongs in `crates/slate-serverd`, which another
+stream had open when this landed; the finding was handed to it with the
+measurement, including two things worth deciding rather than assuming — that
+the daemon's default poll and `RoutingPolicy::catch_up` are coupled and neither
+constant currently knows about the other, and that a configured poll at or
+above `catch_up` is this same bug written down deliberately and is probably
+worth refusing at startup.
+
+The finding follows.
 
 `slate-serverd` opens each configured replica with `SlateReader::open`
 (`storage.rs`), which passes `DbReaderOptions::default()`. That default is

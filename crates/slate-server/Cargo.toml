@@ -43,6 +43,9 @@ tonic-prost-build = "0.14"
 
 [dev-dependencies]
 slate-slatedb.workspace = true
+# `default-features = false` deliberately: `slate-slatedb` owns the feature
+# choice, including `cache`, and features unify across the graph. Enabling
+# anything here would silently override that.
 slatedb = { version = "0.16", default-features = false }
 proptest.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "net", "sync"] }

@@ -127,6 +127,23 @@ impl LocalS3 {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
+                // Nagle off, and it is worth more here than anywhere else in
+                // the repo: this server sits under `scan_tuning`,
+                // `cost_calibration` and `cost_at_scale`, so a delay here is a
+                // delay inside a *published measurement*. hyper never touches
+                // socket options — unlike tonic there is not even a default
+                // being ignored — so nothing was setting it.
+                //
+                // Measured (`slate-headbench`'s `s3_nodelay`): the
+                // SlateDB-defaults arm of the readahead comparison took 47.14 s
+                // Nagled against 827 ms with this line, over 1,377 requests —
+                // 34.2 ms per GET, which is the delayed-ACK timer rather than
+                // any code path, confirmed by 1,127 timer expiries per scan.
+                // That arm is in `docs/performance.md`'s readahead table, whose
+                // wall-clock ratios are corrected there from 158x-409x to about
+                // 8x. The 31x request-count ratio that section actually quotes
+                // is unaffected, because request counts do not care about ACKs.
+                let _ = stream.set_nodelay(true);
                 let service = service.clone();
                 tokio::spawn(async move {
                     let io = hyper_util::rt::TokioIo::new(stream);

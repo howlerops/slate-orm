@@ -21,6 +21,9 @@ slate-tuple.workspace = true
 # For `IsolationLevel` only, which `SlateStore::with_isolation` takes and
 # `slate-slatedb` does not re-export. Pinned to the version `slate-slatedb`
 # resolves, so there is one copy of SlateDB in the build.
+# `default-features = false` deliberately: `slate-slatedb` owns the feature
+# choice, including `cache`, and features unify across the graph. Enabling
+# anything here would silently override that.
 slatedb = { version = "0.16", default-features = false }
 
 async-trait.workspace = true

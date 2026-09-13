@@ -28,6 +28,9 @@ uuid.workspace = true
 # SlateDB accept, and a `tonic::Request` built here has to be the one the
 # generated client wants.
 object_store = "0.14"
+# `default-features = false` deliberately: `slate-slatedb` owns the feature
+# choice, including `cache`, and features unify across the graph. Enabling
+# anything here would silently override that.
 slatedb = { version = "0.16", default-features = false }
 tonic = "0.14"
 tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "net", "sync"] }
