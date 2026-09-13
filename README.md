@@ -652,6 +652,20 @@ Built and tested:
       object in the same bucket, terminal step-down on `WriterFenced`, reads
       routed by freshness and tenant affinity and stamped with which replica
       served them
+- [x] The head node under concurrency: 32,627 point reads/s and 25,953
+      streamed rows/s at 128 clients with zero errors, the box taking over at
+      ~8 clients for a read and ~16 for a stream. Durable writers share a flush
+      exactly — 633 commits/s each still seeing the same 101 ms — and
+      `max_transactions` refuses more cheaply than it accepts. An abandoned
+      stream really does stop: 0.016 core-seconds against 1.935 for the same
+      scans drained
+- [x] `TCP_NODELAY` on every server that binds its own listener. `tonic` sets
+      it on connections it accepts itself and documents that the setting is
+      *ignored* under `serve_with_incoming`, which is what binding your own
+      port requires — so the shipped binary and both test servers were serving
+      through Nagled sockets. A ten-row streamed query measured 44.00 ms with
+      Nagle and 285 µs without, 154x, with a unary call unmoved as the control
+      and the kernel's delayed-ACK counter at 1.12 per operation against 0.00
 - [x] Benchmarks and a recorded baseline ([`docs/performance.md`](docs/performance.md)),
       the head node included: a gRPC round trip costs ~120 µs of which the head
       node's own work is 7–23 µs, so it is transport rather than conversion;
@@ -693,20 +707,26 @@ Not built:
       pathologically nested expression is stopped by prost's decode recursion
       limit, and the conversion functions themselves recurse without a depth
       counter of their own
+- [ ] The cost model above 200,000 rows. The 200k calibration reproduces
+      (1,223 GETs against 1,217 recorded) and is not an artefact of a warm
+      cache, but the loader stops being linear somewhere between 500,000 and
+      600,000 rows and four attempts past that never finished, so the
+      constants at a million rows are still unmeasured. `POINT_READ_COST` is
+      13–19% low at 200k — not enough to change a plan here
+- [ ] What that loader cliff is. The row width and SlateDB's default 64 MB
+      `l0_sst_size_bytes` line up suspiciously well with where it happens, and
+      it is not machine load (400k and 500k took the same time at load 8.6 as
+      at 2.5). Reproducible, unattributed, and the size that would settle it is
+      the size that will not finish
+- [ ] A ~250 µs residual rise in first-row latency near a batch of 125, left
+      after the 2.3 ms step turned out to be the socket. Consistent with the
+      per-row cost of a larger batch and at the edge of this harness's
+      resolution, which is not a demonstration of either
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent. Measured: estimates run up to 20x
       out, and the plan chosen is unchanged in every shape tested, so this is
       not currently worth fixing
       (`cargo run --release -p slate-kernel --example correlation`)
-- [ ] The head node under *concurrency*. It is measured now, but every
-      measurement is one request at a time, so the per-stream channel and the
-      task-per-transaction design have never been under pressure
-- [ ] A reproducible ~2.3 ms step in first-row latency around a batch of 125.
-      It looked exactly like tokio's 128-operation cooperative budget; a 31-run
-      sweep then produced a fast run at 128, which that hypothesis forbids, so
-      it is recorded as unexplained rather than explained wrongly
-- [ ] Scale past 200,000 rows on real object storage, which is where the cost
-      model was calibrated
 
 ## License
 

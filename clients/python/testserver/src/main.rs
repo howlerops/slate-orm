@@ -927,7 +927,13 @@ async fn main() {
     use std::io::Write;
     std::io::stdout().flush().expect("flush");
 
-    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+    // `serve_with_incoming` ignores tonic's own `TCP_NODELAY` default — its
+    // documentation says so — so a server that binds its own listener accepts
+    // Nagled sockets unless it says otherwise. On a gRPC server stream, which
+    // is a header message followed by a batch of rows, that measured 44.01 ms
+    // against 267 µs for a ten-row query. See `slate-serverd`'s `serve.rs`.
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
+        .map(|accepted| accepted.inspect(|socket| socket.set_nodelay(true).expect("nodelay")));
     tonic::transport::Server::builder()
         .add_service(head.into_service())
         .serve_with_incoming(incoming)

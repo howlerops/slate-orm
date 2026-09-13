@@ -209,9 +209,31 @@ impl Serving {
 
         let status = wait_for(&mut self.child);
         let mut stdout = self.seen.join("\n");
-        while let Ok(line) = self.lines.recv_timeout(Duration::from_millis(200)) {
-            stdout.push('\n');
-            stdout.push_str(&line);
+        // Drained to end-of-pipe, not for a fixed gap. The child has already
+        // exited by here, so its stdout is closed and the reader thread ends —
+        // which disconnects this channel and is the only thing that can end
+        // this loop. Waiting 200 ms for the next line instead used to end the
+        // drain early on a loaded machine, and `STOPPING SIGTERM` is written
+        // *before* the exit this already waited for, so the assertion looking
+        // for it failed for want of reading rather than for want of the line.
+        // The deadline is a backstop against a wedged reader thread, not a
+        // timing assumption: hitting it means something is broken, and the
+        // panic says so rather than quietly returning a short transcript.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            match self.lines.recv_timeout(Duration::from_millis(100)) {
+                Ok(line) => {
+                    stdout.push('\n');
+                    stdout.push_str(&line);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the child exited but its stdout never closed"
+                    );
+                }
+            }
         }
         let mut stderr = String::new();
         if let Some(mut pipe) = self.child.stderr.take() {

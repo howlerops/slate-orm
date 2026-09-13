@@ -69,15 +69,18 @@ pub struct Limits {
     /// How many rows go in one message of a query stream.
     ///
     /// Framing costs per message and latency costs per batch, so this trades
-    /// one against the other. Measured now (`slate-headbench`, see
-    /// `docs/performance.md`): throughput climbs to a batch of 64 and is flat
-    /// from there to 16,384, so the useful range is 64–1024 and 256 sits
-    /// inside it. What a larger batch buys is nothing and what it costs is the
-    /// first row — 370 µs at a batch of 1, 3.07 ms at 256, 37 ms at 16,384.
-    /// Left at 256 rather than lowered: there is a reproducible and
-    /// *unexplained* step in first-row latency around a batch of 125, and
-    /// retuning onto a cliff nobody understands is how a constant becomes
-    /// load-bearing by accident.
+    /// one against the other. Measured (`slate-headbench`, see
+    /// `docs/performance.md`), and then measured again after the first round
+    /// turned out to have been taken through a Nagled socket: the useful range
+    /// is 32 at the bottom to about 1,000 at the top, and 256 sits inside it.
+    ///
+    /// The earlier numbers here said 64–1024 and cited a first-row cost of
+    /// 370 µs at a batch of 1 against 3.07 ms at 256, plus a reproducible and
+    /// unexplained step around a batch of 125. All three were the socket. With
+    /// `TCP_NODELAY` the first-row gap is 547 µs against 1.13 ms, which is the
+    /// honest cost of 144 more rows and is bought back in framing, and the
+    /// step is gone. The argument for lowering this to 112 is withdrawn: it
+    /// was buying back a delay that should not have been there.
     pub rows_per_message: usize,
 }
 

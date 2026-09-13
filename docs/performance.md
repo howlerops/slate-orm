@@ -1388,12 +1388,14 @@ point reads measured in bulk over a pseudo-random walk of the keyspace rather
 than one at a time.
 
 **First, that it is the same fixture.** At 200,000 rows this example reproduces
-the calibration's decisive measurement to three significant figures: forcing
-the contested query through the index costs **1,223 GETs and 4.3 s** here
-against the **1,217 requests and 3.6 s** [`correctness.md`](correctness.md)
-records, and the table scan the planner actually picks costs 19–23 GETs and
-0.5–0.7 s. Two runs an hour apart agreed. Nothing below is being compared
-against a different fixture.
+the calibration's decisive measurement in the unit that travels: forcing the
+contested query through the index costs **1,223 GETs** here against the
+**1,217 requests** [`correctness.md`](correctness.md) records — half a percent
+apart, and the same number in two runs an hour apart. The wall time is 4.3 s
+against the 3.6 s recorded, which is this machine being busier and is why the
+request count is the one quoted. The table scan the planner actually picks
+costs 19–23 GETs and 0.5–0.7 s. Nothing below is being compared against a
+different fixture.
 
 #### The calibration was not measuring a warm cache
 

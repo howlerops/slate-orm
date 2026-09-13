@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt as _;
 use tonic::Request;
 use tonic::transport::Channel;
 
@@ -403,7 +404,13 @@ pub async fn serve<S: KvStore + KvReadStore>(head: Head<S>) -> Serving {
         .await
         .expect("bind a loopback port");
     let address = listener.local_addr().expect("local address");
-    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+    // `serve_with_incoming` ignores tonic's own `TCP_NODELAY` default — its
+    // documentation says so — so a server that binds its own listener accepts
+    // Nagled sockets unless it says otherwise. On a gRPC server stream, which
+    // is a header message followed by a batch of rows, that measured 44.01 ms
+    // against 267 µs for a ten-row query. See `slate-serverd`'s `serve.rs`.
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
+        .map(|accepted| accepted.inspect(|socket| socket.set_nodelay(true).expect("nodelay")));
 
     let server = tokio::spawn(async move {
         let _ = tonic::transport::Server::builder()
