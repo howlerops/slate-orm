@@ -479,7 +479,12 @@ pub fn doc_ids(rows: &[pb::Row]) -> Vec<u64> {
         .collect()
 }
 
-/// A query over `table` with everything defaulted.
+/// A query over `table` with everything defaulted — and with the schema check
+/// a correct client sends.
+///
+/// Attached by default rather than left off, so that every test in the suite
+/// that builds a request by hand puts a fingerprint through the server. A test
+/// about the check itself sets `schema` to something else.
 pub fn plain_query(table: &str) -> pb::Query {
     pb::Query {
         table: table.to_owned(),
@@ -491,6 +496,29 @@ pub fn plain_query(table: &str) -> pb::Query {
         offset: 0,
         hint: None,
         compute: Vec::new(),
+        // `None` for a table this catalog does not have, so that a test about
+        // an unknown table still reaches the server's own refusal rather than
+        // being stopped here.
+        schema: maybe_claim(table),
+    }
+}
+
+/// The schema check a correct client sends for one of the fixture tables.
+pub fn claim(table: &str) -> pb::SchemaCheck {
+    maybe_claim(table).unwrap_or_else(|| panic!("no fixture table named `{table}`"))
+}
+
+fn maybe_claim(table: &str) -> Option<pb::SchemaCheck> {
+    let catalog = catalog();
+    let table = catalog.table_by_name(table)?;
+    Some(slate_server::fingerprint::claim(table))
+}
+
+/// A wire row of stored values, with no computed values beside them.
+pub fn wire_row(values: Vec<pb::Value>) -> pb::Row {
+    pb::Row {
+        values,
+        computed: Vec::new(),
     }
 }
 
@@ -544,4 +572,79 @@ pub async fn drain_groups(
         groups.extend(message.groups);
     }
     (groups, served_by)
+}
+
+/// Collect a query stream into rows and the warnings its header carried.
+///
+/// Separate from [`drain`] rather than folded into it, because "the warnings
+/// are on the *first* message and nowhere else" is itself part of the
+/// contract: this asserts it rather than concatenating them all and hiding a
+/// server that sent them on every batch.
+pub async fn drain_warned(
+    stream: tonic::Streaming<pb::QueryResponse>,
+) -> (Vec<pb::Row>, Vec<String>) {
+    let mut stream = stream;
+    let (mut rows, mut warnings, mut first) = (Vec::new(), Vec::new(), true);
+    while let Some(message) = stream.message().await.expect("a query message") {
+        if first {
+            warnings = message.warnings.clone();
+            first = false;
+        } else {
+            assert!(
+                message.warnings.is_empty(),
+                "warnings belong on the first message only"
+            );
+        }
+        rows.extend(message.rows);
+    }
+    (rows, warnings)
+}
+
+/// The same, for a join.
+pub async fn drain_joined_warned(
+    stream: tonic::Streaming<pb::JoinResponse>,
+) -> (Vec<pb::JoinedRow>, Vec<String>) {
+    let mut stream = stream;
+    let (mut rows, mut warnings, mut first) = (Vec::new(), Vec::new(), true);
+    while let Some(message) = stream.message().await.expect("a join message") {
+        if first {
+            warnings = message.warnings.clone();
+            first = false;
+        } else {
+            assert!(
+                message.warnings.is_empty(),
+                "warnings belong on the first message only"
+            );
+        }
+        rows.extend(message.rows);
+    }
+    (rows, warnings)
+}
+
+/// The same, for an aggregate.
+pub async fn drain_groups_warned(
+    stream: tonic::Streaming<pb::AggregateResponse>,
+) -> (Vec<pb::Group>, Vec<String>) {
+    let mut stream = stream;
+    let (mut groups, mut warnings, mut first) = (Vec::new(), Vec::new(), true);
+    while let Some(message) = stream.message().await.expect("an aggregate message") {
+        if first {
+            warnings = message.warnings.clone();
+            first = false;
+        } else {
+            assert!(
+                message.warnings.is_empty(),
+                "warnings belong on the first message only"
+            );
+        }
+        groups.extend(message.groups);
+    }
+    (groups, warnings)
+}
+
+/// An access hint naming an index that does not exist.
+pub fn missing_index_hint() -> pb::AccessHint {
+    pb::AccessHint {
+        path: Some(pb::access_hint::Path::Index("by_nothing".to_owned())),
+    }
 }

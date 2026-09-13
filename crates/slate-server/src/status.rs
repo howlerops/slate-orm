@@ -23,18 +23,170 @@
 //! `tests/status.rs` pins every variant that exists today, so a mapping that
 //! changes has to be changed deliberately. It cannot pin one that does not
 //! exist yet.
+//!
+//! # The code is lossy, so something structured travels with it
+//!
+//! The mapping above is many-to-one and cannot be anything else: `UNAVAILABLE`
+//! is four kernel errors that want four different responses (retry elsewhere,
+//! retry later, lower your freshness, page someone), and `ALREADY_EXISTS` is
+//! two — "that id is taken" and "that **email** is taken". The second is the
+//! one that hurts, because [`KernelError::UniqueViolation`]'s own payload
+//! names the index, which is exactly what an application needs to say
+//! "that email address is already registered".
+//!
+//! The distinction is recoverable from the message, and a message is not an
+//! interface: nothing tests its wording, and a client that branches on it
+//! breaks the day somebody improves it. So every status carries a
+//! [`google.rpc.ErrorInfo`](crate::proto::rpc::ErrorInfo) in
+//! `grpc-status-details-bin` as well:
+//!
+//! - `reason` — a stable token per kernel variant, [`reason_for`]. It is
+//!   `SCREAMING_SNAKE_CASE`, is part of the wire contract, and changing one is
+//!   a breaking change in the way changing a status code is.
+//! - `domain` — [`DOMAIN`], the namespace those tokens live in.
+//! - `metadata` — the variant's own payload, one entry per field: `table`,
+//!   `index`, `action`, `replica`, `required`, `visible`, `limit`.
+//!
+//! That is the standard shape, so a client using its language's rich-error
+//! helper gets it with no special support here, and one that ignores details
+//! is unaffected. The `slate-leader` trailer stays where it is — it predates
+//! this, clients read it, and a redirect that only a rich-error client could
+//! follow would be worse.
+//!
+//! An unclassified variant gets `reason: UNCLASSIFIED` rather than a token
+//! invented from its `Debug`. A token is a promise that the meaning is stable,
+//! and nobody has decided what an unclassified variant means; the wildcard is
+//! `INTERNAL` for the same reason.
 
+use crate::proto::rpc;
+use prost::Message as _;
 use slate_kernel::KernelError;
+use std::collections::HashMap;
 use tonic::{Code, Status};
 
 /// The metadata key naming the node a write should go to instead.
 pub const LEADER_KEY: &str = "slate-leader";
 
+/// The namespace [`reason_for`]'s tokens belong to.
+///
+/// `google.rpc.ErrorInfo` calls for "the logical grouping to which the reason
+/// belongs", usually a service name. It is a name, not a URL, and nothing
+/// dereferences it.
+pub const DOMAIN: &str = "slate-orm";
+
+/// The type URL a `google.rpc.ErrorInfo` is packed under.
+///
+/// Written out rather than derived from a `prost::Name` impl, which needs
+/// `enable_type_names()` in the build and would put the same constant in a
+/// generated file instead of a visible one.
+const ERROR_INFO_URL: &str = "type.googleapis.com/google.rpc.ErrorInfo";
+
 /// A kernel error as a gRPC status.
 #[must_use]
 pub fn from_kernel(error: &KernelError) -> Status {
     let code = code_for(error);
-    Status::new(code, error.to_string())
+    let message = error.to_string();
+    with_details(code, message, error_info(error))
+}
+
+/// A status carrying `info` in `grpc-status-details-bin`.
+fn with_details(code: Code, message: String, info: rpc::ErrorInfo) -> Status {
+    let status = rpc::Status {
+        code: i32::from(code as u8),
+        message: message.clone(),
+        // Hand-built rather than `Any::from_msg`, which needs the generated
+        // type to carry a `prost::Name`.
+        details: vec![prost_types::Any {
+            type_url: ERROR_INFO_URL.to_owned(),
+            value: info.encode_to_vec(),
+        }],
+    };
+    Status::with_details(code, message, status.encode_to_vec().into())
+}
+
+/// The stable token for a kernel error, and its payload.
+fn error_info(error: &KernelError) -> rpc::ErrorInfo {
+    let mut metadata = HashMap::new();
+    let mut put = |key: &str, value: String| {
+        metadata.insert(key.to_owned(), value);
+    };
+    match error {
+        KernelError::UniqueViolation { table, index } => {
+            put("table", table.clone());
+            // The whole reason this exists: "which constraint fired" is the
+            // difference between "that id is taken" and "that email address is
+            // already registered", and the status code cannot hold it.
+            put("index", index.clone());
+        }
+        KernelError::DuplicatePrimaryKey { table }
+        | KernelError::RowNotFound { table }
+        | KernelError::TenantRequired { table }
+        | KernelError::RowCheckFailed { table } => put("table", table.clone()),
+        KernelError::AccessDenied { table, action } => {
+            put("table", table.clone());
+            put("action", (*action).to_owned());
+        }
+        KernelError::UnknownTable(id) => put("table_id", id.0.to_string()),
+        KernelError::ReplicaTooStale {
+            replica,
+            required,
+            visible,
+        } => {
+            put("replica", replica.clone());
+            put("required", required.to_string());
+            put("visible", visible.to_string());
+        }
+        KernelError::NoReplicaAvailable { reason } => put("why", (*reason).to_owned()),
+        KernelError::NotSummable { found } => put("type", (*found).to_owned()),
+        KernelError::CorruptIndexEntry { table, index } => {
+            put("table", table.clone());
+            put("index", index.clone());
+        }
+        KernelError::JoinBuildTooLarge { table, limit } => {
+            put("table", table.clone());
+            put("limit", limit.to_string());
+        }
+        _ => {}
+    }
+    rpc::ErrorInfo {
+        reason: reason_for(error).to_owned(),
+        domain: DOMAIN.to_owned(),
+        metadata,
+    }
+}
+
+/// The stable token a kernel error carries in its details.
+///
+/// One per variant, so the collapse the status code performs is undone. These
+/// are wire contract: a client matches on them, and renaming one breaks it as
+/// surely as changing a code would.
+#[must_use]
+pub fn reason_for(error: &KernelError) -> &'static str {
+    match error {
+        KernelError::UniqueViolation { .. } => "UNIQUE_VIOLATION",
+        KernelError::DuplicatePrimaryKey { .. } => "DUPLICATE_PRIMARY_KEY",
+        KernelError::RowNotFound { .. } => "ROW_NOT_FOUND",
+        KernelError::UnknownTable(_) => "UNKNOWN_TABLE",
+        KernelError::AccessDenied { .. } => "ACCESS_DENIED",
+        KernelError::TenantRequired { .. } => "TENANT_REQUIRED",
+        KernelError::RowCheckFailed { .. } => "ROW_CHECK_FAILED",
+        KernelError::TransactionConflict => "TRANSACTION_CONFLICT",
+        KernelError::WriterFenced => "WRITER_FENCED",
+        KernelError::CommitTimedOut => "COMMIT_TIMED_OUT",
+        KernelError::ReplicaTooStale { .. } => "REPLICA_TOO_STALE",
+        KernelError::NoReplicaAvailable { .. } => "NO_REPLICA_AVAILABLE",
+        KernelError::Storage(_) => "STORAGE",
+        KernelError::Schema(_) => "SCHEMA",
+        KernelError::NotSummable { .. } => "NOT_SUMMABLE",
+        KernelError::ComparisonTypeMismatch { .. } => "COMPARISON_TYPE_MISMATCH",
+        KernelError::JoinNotSupported { .. } => "JOIN_NOT_SUPPORTED",
+        KernelError::KeyDecode(_) => "KEY_DECODE",
+        KernelError::CorruptIndexEntry { .. } => "CORRUPT_INDEX_ENTRY",
+        KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
+        // See the module docs: a token is a promise of a stable meaning, and
+        // nobody has decided this one's.
+        _ => "UNCLASSIFIED",
+    }
 }
 
 /// The code a kernel error carries.
@@ -111,7 +263,23 @@ pub fn code_for(error: &KernelError) -> Code {
 /// that wants it can find it and one that does not is unaffected.
 #[must_use]
 pub fn redirect(message: impl Into<String>, leader: Option<&str>) -> Status {
-    let mut status = Status::new(Code::Unavailable, message);
+    let mut metadata = HashMap::new();
+    if let Some(leader) = leader {
+        metadata.insert("leader".to_owned(), leader.to_owned());
+    }
+    // Not a `KernelError`: this refusal is local, from the watch channel,
+    // before any call into storage. It still gets a reason, because a client
+    // distinguishing "not the writer" from "the storage is down" is the whole
+    // point of the reason — both are `UNAVAILABLE`.
+    let mut status = with_details(
+        Code::Unavailable,
+        message.into(),
+        rpc::ErrorInfo {
+            reason: "NOT_LEADER".to_owned(),
+            domain: DOMAIN.to_owned(),
+            metadata,
+        },
+    );
     if let Some(leader) = leader
         && let Ok(value) = leader.parse()
     {

@@ -46,7 +46,7 @@ from .errors import Conflict, SlateError, from_rpc_error
 from .freshness import Freshness, ReadToken, ServedBy, Watermark
 from .query import AggregateQuery, JoinQuery, Query
 from .rows import Group, JoinedRow, Row
-from .schema import Table
+from .schema import Table, fingerprint_of
 from .values import PyValue, to_value
 
 __all__ = [
@@ -453,6 +453,20 @@ class _Ops:
 
     # --- writes -----------------------------------------------------------
 
+    @staticmethod
+    def _schema_check(table: Table) -> pb.SchemaCheck:
+        """This client's claim about `table`, for the server to disagree with.
+
+        Sent on every request that names a table rather than once at connect:
+        a connection outlives a rolling deployment, and a check made only at
+        connect would pass against the node it happened to reach and then be
+        wrong for the rest of the session. Per-request costs 12 bytes and
+        cannot go stale. See `fingerprint_of`.
+        """
+        return pb.SchemaCheck(
+            columns=table.width, fingerprint=fingerprint_of(table)
+        )
+
     def insert(
         self,
         table: Table,
@@ -473,6 +487,7 @@ class _Ops:
                 table=table.name,
                 rows=self._rows_proto(table, rows),
                 upsert=upsert,
+                schema=self._schema_check(table),
             ),
         )
         return self._write_result(response)
@@ -491,6 +506,7 @@ class _Ops:
                 transaction=self._transaction_id(),
                 table=table.name,
                 rows=self._rows_proto(table, rows),
+                schema=self._schema_check(table),
             ),
         )
         return self._write_result(response)
@@ -505,6 +521,7 @@ class _Ops:
                 transaction=self._transaction_id(),
                 table=table.name,
                 primary_keys=[self._key_proto(table, k) for k in primary_keys],
+                schema=self._schema_check(table),
             ),
         )
         return self._write_result(response)
@@ -534,6 +551,7 @@ class _Ops:
             transaction=self._transaction_id(),
             table=table.name,
             primary_key=self._key_proto(table, primary_key),
+            schema=self._schema_check(table),
         )
         wire_freshness = self._freshness(freshness)
         if wire_freshness is not None:

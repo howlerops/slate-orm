@@ -41,9 +41,10 @@ use crate::auth::Authenticator;
 use crate::convert::{
     MultiRead, aggregate_from_proto_query, chain_plan_to_proto, explanation_to_proto,
     freshness_from_proto, group_to_proto, join_explanation_to_proto, join_from_proto,
-    multi_row_to_proto, query_from_proto, row_from_proto, row_to_proto, two_tables,
-    values_from_proto,
+    multi_row_to_proto, primary_key_from_proto, query_from_proto, row_from_proto, row_to_proto,
+    row_to_proto_split, two_tables,
 };
+use crate::fingerprint;
 use crate::leadership::{Leadership, Standing};
 use crate::proto as pb;
 use crate::proto::records_server::{Records, RecordsServer};
@@ -494,6 +495,10 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let context = self.context(&request)?;
         let request = request.into_inner();
         let table = self.table(&request.table)?;
+        // Before the rows are read, not after: a declaration that disagrees
+        // makes every value in every row positionally wrong, and there is
+        // nothing to be gained by decoding them first.
+        fingerprint::check(table, request.schema.as_ref())?;
         let rows = request
             .rows
             .iter()
@@ -535,6 +540,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let context = self.context(&request)?;
         let request = request.into_inner();
         let table = self.table(&request.table)?;
+        fingerprint::check(table, request.schema.as_ref())?;
         let rows = request
             .rows
             .iter()
@@ -568,10 +574,16 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let context = self.context(&request)?;
         let request = request.into_inner();
         let table = self.table(&request.table)?;
+        fingerprint::check(table, request.schema.as_ref())?;
+        // Checked against the table's key rather than encoded and looked up: a
+        // key of the wrong arity or the wrong integer width used to delete
+        // nothing and report `affected: 0`, which is also what a key that was
+        // never there reports, and what a key the caller's policy hides
+        // reports.
         let keys = request
             .primary_keys
             .iter()
-            .map(values_from_proto)
+            .map(|key| primary_key_from_proto(key, table))
             .collect::<Result<Vec<Vec<Value>>, Status>>()?;
 
         if request.transaction.is_empty() {
@@ -601,10 +613,15 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let context = self.context(&request)?;
         let request = request.into_inner();
         let table = self.table(&request.table)?;
+        fingerprint::check(table, request.schema.as_ref())?;
         let Some(wire_key) = &request.primary_key else {
             return Err(Status::new(Code::InvalidArgument, "no primary key given"));
         };
-        let key = values_from_proto(wire_key)?;
+        // See `primary_key_from_proto`: without this a malformed key came back
+        // as `found: false`, which is the same answer as a legitimate miss and
+        // as a row the caller's policy hides — three different facts with one
+        // spelling, one of which is a client bug that would never be found.
+        let key = primary_key_from_proto(wire_key, table)?;
 
         if !request.transaction.is_empty() {
             let row = self
@@ -645,7 +662,13 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             return Err(Status::new(Code::InvalidArgument, "no query given"));
         };
         let table = self.table(&wire.table)?;
-        let (query, _warnings) = query_from_proto(&wire, table)?;
+        // Kept, not dropped. An ignored index hint used to be reported by
+        // `Explain` alone, so a caller whose hint did nothing had to issue a
+        // *different* request and trust the planner had decided the same way
+        // on it. The first message of the stream is always sent and already
+        // carries `served_by`, so there was a header to put this in all along.
+        let (query, warnings) = query_from_proto(&wire, table)?;
+        let stored = table.columns().len();
         let batch_size = self.limits.rows_per_message.max(1);
 
         if !request.transaction.is_empty() {
@@ -655,7 +678,13 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 .sessions
                 .query(&request.transaction, &context, table.id(), query)
                 .await?;
-            return Ok(Response::new(replay(rows, in_transaction(), batch_size)));
+            return Ok(Response::new(replay(
+                rows,
+                stored,
+                in_transaction(),
+                warnings,
+                batch_size,
+            )));
         }
 
         let freshness = freshness_from_proto(request.freshness.as_ref())?;
@@ -667,6 +696,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             table: table.id(),
             context,
             query,
+            warnings,
             batch_size,
             freshness,
             affinity,
@@ -760,14 +790,17 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.join else {
             return Err(Status::new(Code::InvalidArgument, "no join given"));
         };
-        // The warnings — an unusable hint, a build limit that was clamped —
-        // are dropped here for the same reason `Query` drops them: a stream
-        // has no header to put them in that a client would have to read, and
-        // inventing one would make every client parse a field it does not
-        // want. `ExplainJoin` returns them, which is where a client goes to
-        // find out why its request did not do what it expected.
-        let (tables, read, _warnings) = join_from_proto(&wire, self.pool.catalog())?;
+        // The warnings — an unusable hint on any input, a build limit that was
+        // clamped — travel on the first message of the stream, beside
+        // `served_by`. They used to be dropped here on the grounds that a
+        // stream has no header; it has one, and it is the message that is
+        // always sent even when the result is empty.
+        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
         let definitions = self.definitions(&tables)?;
+        let stored: Vec<usize> = definitions
+            .iter()
+            .map(|table| table.columns().len())
+            .collect();
         let batch_size = self.limits.rows_per_message.max(1);
 
         if !request.transaction.is_empty() {
@@ -777,7 +810,9 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 .await?;
             return Ok(Response::new(replay_joined(
                 rows,
+                &stored,
                 in_transaction(),
+                warnings,
                 batch_size,
             )));
         }
@@ -791,6 +826,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             tables,
             context,
             read,
+            warnings,
             batch_size,
             freshness,
             affinity,
@@ -834,8 +870,8 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.aggregate else {
             return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
         };
-        // Warnings are dropped, as on `Query` and `Join`; see `join` above.
-        let (read, _warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
+        // Carried on the first message, as on `Query` and `Join`.
+        let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
         let batch_size = self.limits.rows_per_message.max(1);
 
         if !request.transaction.is_empty() {
@@ -846,6 +882,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             return Ok(Response::new(replay_groups(
                 groups,
                 in_transaction(),
+                warnings,
                 batch_size,
             )));
         }
@@ -866,7 +903,9 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             .await
             .map_err(|e| from_kernel(&e))?;
 
-        Ok(Response::new(replay_groups(groups, served_by, batch_size)))
+        Ok(Response::new(replay_groups(
+            groups, served_by, warnings, batch_size,
+        )))
     }
 
     async fn explain_join(
@@ -948,15 +987,32 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 }
 
 /// Turn rows already in memory into the same stream shape a live query gives.
-fn replay(rows: Vec<Row>, served_by: pb::ServedBy, batch_size: usize) -> RowStream {
+///
+/// `stored` is the table's declared width, so a computed value goes in
+/// `Row.computed` here exactly as it does on the streaming path. The two
+/// shapes have to be identical: a client cannot see which one it got, and the
+/// only thing worse than the arithmetic this removes would be it applying to
+/// one of the two.
+fn replay(
+    rows: Vec<Row>,
+    stored: usize,
+    served_by: pb::ServedBy,
+    warnings: Vec<String>,
+    batch_size: usize,
+) -> RowStream {
     let mut messages = vec![Ok(pb::QueryResponse {
         rows: Vec::new(),
         served_by: Some(served_by),
+        warnings,
     })];
     for batch in rows.chunks(batch_size) {
         messages.push(Ok(pb::QueryResponse {
-            rows: batch.iter().map(row_to_proto).collect(),
+            rows: batch
+                .iter()
+                .map(|row| row_to_proto_split(row, stored))
+                .collect(),
             served_by: None,
+            warnings: Vec::new(),
         }));
     }
     Box::pin(futures::stream::iter(messages))
@@ -968,6 +1024,9 @@ struct Scan {
     table: TableId,
     context: SecurityContext,
     query: Query,
+    /// What the server did with the request that the request did not ask for.
+    /// Sent on the first message, with `served_by`.
+    warnings: Vec<String>,
     batch_size: usize,
     freshness: Freshness,
     affinity: Option<Value>,
@@ -1014,12 +1073,14 @@ impl Scan {
             return;
         }
 
-        // The first message carries `served_by` and no rows, so a client learns
-        // where its read went even when the result is empty.
+        // The first message carries `served_by`, the warnings and no rows, so
+        // a client learns where its read went — and what the server did with
+        // its hint — even when the result is empty.
         if sender
             .send(Ok(pb::QueryResponse {
                 rows: Vec::new(),
                 served_by: Some(served_by),
+                warnings: self.warnings.clone(),
             }))
             .await
             .is_err()
@@ -1027,10 +1088,11 @@ impl Scan {
             return;
         }
 
+        let stored = definition.columns().len();
         let mut batch = Vec::with_capacity(self.batch_size);
         loop {
             match cursor.next().await {
-                Ok(Some(row)) => batch.push(row_to_proto(&row)),
+                Ok(Some(row)) => batch.push(row_to_proto_split(&row, stored)),
                 Ok(None) => break,
                 Err(error) => {
                     let _ = sender.send(Err(from_kernel(&error))).await;
@@ -1043,6 +1105,7 @@ impl Scan {
                     .send(Ok(pb::QueryResponse {
                         rows,
                         served_by: None,
+                        warnings: Vec::new(),
                     }))
                     .await
                     .is_err()
@@ -1058,6 +1121,7 @@ impl Scan {
                 .send(Ok(pb::QueryResponse {
                     rows: batch,
                     served_by: None,
+                    warnings: Vec::new(),
                 }))
                 .await;
         }
@@ -1073,30 +1137,48 @@ type GroupStream =
 
 /// Turn joined rows already in memory into the same stream shape a live join
 /// gives.
-fn replay_joined(rows: Vec<MultiRow>, served_by: pb::ServedBy, batch_size: usize) -> JoinedStream {
+fn replay_joined(
+    rows: Vec<MultiRow>,
+    stored: &[usize],
+    served_by: pb::ServedBy,
+    warnings: Vec<String>,
+    batch_size: usize,
+) -> JoinedStream {
     let mut messages = vec![Ok(pb::JoinResponse {
         rows: Vec::new(),
         served_by: Some(served_by),
+        warnings,
     })];
     for batch in rows.chunks(batch_size) {
         messages.push(Ok(pb::JoinResponse {
-            rows: batch.iter().map(|row| multi_row_to_proto(row)).collect(),
+            rows: batch
+                .iter()
+                .map(|row| multi_row_to_proto(row, stored))
+                .collect(),
             served_by: None,
+            warnings: Vec::new(),
         }));
     }
     Box::pin(futures::stream::iter(messages))
 }
 
 /// The same, for groups.
-fn replay_groups(groups: Vec<Group>, served_by: pb::ServedBy, batch_size: usize) -> GroupStream {
+fn replay_groups(
+    groups: Vec<Group>,
+    served_by: pb::ServedBy,
+    warnings: Vec<String>,
+    batch_size: usize,
+) -> GroupStream {
     let mut messages = vec![Ok(pb::AggregateResponse {
         groups: Vec::new(),
         served_by: Some(served_by),
+        warnings,
     })];
     for batch in groups.chunks(batch_size) {
         messages.push(Ok(pb::AggregateResponse {
             groups: batch.iter().map(group_to_proto).collect(),
             served_by: None,
+            warnings: Vec::new(),
         }));
     }
     Box::pin(futures::stream::iter(messages))
@@ -1139,6 +1221,8 @@ struct MultiScan {
     tables: Vec<TableId>,
     context: SecurityContext,
     read: MultiRead,
+    /// As on [`Scan`]: sent on the first message, with `served_by`.
+    warnings: Vec<String>,
     batch_size: usize,
     freshness: Freshness,
     affinity: Option<Value>,
@@ -1180,6 +1264,12 @@ impl MultiScan {
                 }
             }
         }
+        // One per input, so each input's computed values are split off its own
+        // table's columns rather than off whichever width came to hand.
+        let stored: Vec<usize> = definitions
+            .iter()
+            .map(|table| table.columns().len())
+            .collect();
 
         let opened = match &self.read {
             MultiRead::Join(join) => match two_tables(&definitions) {
@@ -1205,12 +1295,13 @@ impl MultiScan {
             return;
         }
 
-        // The first message carries `served_by` and no rows, so a client learns
-        // where its read went even when the result is empty.
+        // The first message carries `served_by`, the warnings and no rows, so
+        // a client learns where its read went even when the result is empty.
         if sender
             .send(Ok(pb::JoinResponse {
                 rows: Vec::new(),
                 served_by: Some(served_by),
+                warnings: self.warnings.clone(),
             }))
             .await
             .is_err()
@@ -1221,7 +1312,7 @@ impl MultiScan {
         let mut batch = Vec::with_capacity(self.batch_size);
         loop {
             match cursor.next().await {
-                Ok(Some(row)) => batch.push(multi_row_to_proto(&row)),
+                Ok(Some(row)) => batch.push(multi_row_to_proto(&row, &stored)),
                 Ok(None) => break,
                 Err(error) => {
                     let _ = sender.send(Err(from_kernel(&error))).await;
@@ -1234,6 +1325,7 @@ impl MultiScan {
                     .send(Ok(pb::JoinResponse {
                         rows,
                         served_by: None,
+                        warnings: Vec::new(),
                     }))
                     .await
                     .is_err()
@@ -1249,6 +1341,7 @@ impl MultiScan {
                 .send(Ok(pb::JoinResponse {
                     rows: batch,
                     served_by: None,
+                    warnings: Vec::new(),
                 }))
                 .await;
         }

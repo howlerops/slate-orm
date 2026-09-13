@@ -49,8 +49,8 @@ use slate_kernel::{
 };
 use slate_schema::{Ordinal, Row, TableDef};
 use slate_server::convert::{
-    aggregate_to_proto_query, chain_to_proto, column_ref, computed_ref, join_to_proto,
-    query_to_proto, row_from_proto,
+    aggregate_to_proto_query, chain_to_proto, column_ref, computed_ref, flat_row_from_proto,
+    join_to_proto, query_to_proto,
 };
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
@@ -157,10 +157,16 @@ fn from_wire(rows: &[pb::JoinedRow]) -> Vec<Wide> {
             row.inputs
                 .iter()
                 .map(|input| {
-                    input
-                        .row
-                        .as_ref()
-                        .map(|row| row_from_proto(row).expect("a row this server sent"))
+                    input.row.as_ref().map(|row| {
+                        // `flat_row_from_proto`, because the kernel's row is
+                        // flat and the wire's is not: an input's computed
+                        // values come back in `Row.computed` rather than as a
+                        // tail of its columns, so comparing against the kernel
+                        // means putting them back together. `row_from_proto`
+                        // refuses a row carrying them, which is what a *write*
+                        // wants.
+                        flat_row_from_proto(row).expect("a row this server sent")
+                    })
                 })
                 .collect()
         })
@@ -713,6 +719,7 @@ async fn computed_columns_over_grpc_return_what_the_kernel_returns() {
 
     let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(&backing));
     for (name, compute) in cases {
+        let compute_len = compute.len();
         // Sorted by the primary key so the two paths' orders are pinned, and
         // filtered on the computed value so the conversion has to survive a
         // predicate as well as a projection.
@@ -740,7 +747,30 @@ async fn computed_columns_over_grpc_return_what_the_kernel_returns() {
             .unwrap()
             .into_inner();
         let (rows, _) = drain(stream).await;
-        let actual: Vec<Row> = rows.iter().map(|r| row_from_proto(r).unwrap()).collect();
+
+        // Every row must carry exactly the table's own columns in `values`,
+        // and the computed values in `computed` — never concatenated. That is
+        // the split itself: with them concatenated a client reads computed
+        // value `i` at `table_width + i`, from a width this protocol does not
+        // publish and which moves the day a column is added.
+        for row in &rows {
+            assert_eq!(
+                row.values.len(),
+                b.columns().len(),
+                "`{name}` returned a row whose stored values are not the table's columns"
+            );
+            assert_eq!(
+                row.computed.len(),
+                compute_len,
+                "`{name}` returned {} computed values, not {compute_len}",
+                row.computed.len()
+            );
+        }
+
+        let actual: Vec<Row> = rows
+            .iter()
+            .map(|r| flat_row_from_proto(r).unwrap())
+            .collect();
 
         assert_eq!(
             format!("{actual:?}"),
@@ -1677,4 +1707,159 @@ async fn a_join_inside_a_transaction_is_served_by_the_writer() {
         }))
         .await
         .unwrap();
+}
+
+// --- warnings, on the request that carried them ---------------------------
+
+/// The same finding as `server.rs`'s query case, on the two other streams. A
+/// join has more places to hide one: an unusable hint on any input, and a
+/// build limit the client tried to raise.
+#[tokio::test]
+async fn a_join_reports_what_it_did_with_the_request_on_the_request() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+
+    let mut wire = join_to_proto(&a, &b, &Join::equating(at(&a, "id"), at(&b, "author_id")));
+    // Both at once, on purpose: they come from different places in the
+    // conversion — one per input, one for the join — and a plumbing that
+    // carried only the second would pass a test with only the second.
+    wire.build_limit = Some(u64::MAX);
+    if let Some(input) = wire.inputs.get_mut(1)
+        && let Some(query) = input.query.as_mut()
+    {
+        query.hint = Some(common::missing_index_hint());
+    }
+
+    let (rows, warnings) = common::drain_joined_warned(
+        client
+            .join(app_request(pb::JoinRequest {
+                transaction: String::new(),
+                join: Some(wire),
+                freshness: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner(),
+    )
+    .await;
+    assert!(!rows.is_empty(), "the join should still have run");
+    assert!(
+        warnings.iter().any(|w| w.contains("build limit")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings.iter().any(|w| w.contains("by_nothing")),
+        "{warnings:?}"
+    );
+
+    // The control: the same join with nothing to complain about is quiet.
+    let (_, quiet) = common::drain_joined_warned(
+        client
+            .join(app_request(pb::JoinRequest {
+                transaction: String::new(),
+                join: Some(join_to_proto(
+                    &a,
+                    &b,
+                    &Join::equating(at(&a, "id"), at(&b, "author_id")),
+                )),
+                freshness: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner(),
+    )
+    .await;
+    assert!(quiet.is_empty(), "{quiet:?}");
+}
+
+#[tokio::test]
+async fn an_aggregate_reports_what_it_did_with_the_request_on_the_request() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+    let b = books();
+
+    let mut wire = aggregate_to_proto_query(
+        &b,
+        &Query::all(),
+        &[],
+        &[Aggregate::Count],
+        &slate_kernel::Expr::True,
+    );
+    if let Some(input) = wire.input.as_mut() {
+        input.hint = Some(common::missing_index_hint());
+    }
+
+    let (groups, warnings) = common::drain_groups_warned(
+        client
+            .aggregate(app_request(pb::AggregateRequest {
+                transaction: String::new(),
+                aggregate: Some(wire),
+                freshness: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner(),
+    )
+    .await;
+    assert_eq!(groups.len(), 1, "the aggregate should still have run");
+    assert!(
+        warnings.iter().any(|w| w.contains("by_nothing")),
+        "{warnings:?}"
+    );
+}
+
+// --- a joined input's computed values are kept apart too ------------------
+
+/// `Row.computed` is on `Row`, so it applies inside a `JoinedRow` as well as
+/// on a single-table read — and it has to, because a join input's query can
+/// compute values and the client reading that input's row would otherwise
+/// need its table's width. The oracle above already proves the *values* are
+/// right; this proves they are in the right list.
+#[tokio::test]
+async fn a_join_inputs_computed_values_come_back_beside_its_columns() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+
+    // A computed value on each side, so a split that used one input's width
+    // for both is caught: `authors` has six columns and `books` five.
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"))
+        .left(Query::all().computing([Scalar::column(at(&a, "name")).length()]))
+        .right(Query::all().computing([
+            Scalar::column(at(&b, "year")) + 1i64,
+            Scalar::column(at(&b, "title")).length(),
+        ]));
+
+    let wire = join_to_proto(&a, &b, &join);
+    let stream = client
+        .join(app_request(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(wire),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let (rows, _) = drain_joined(stream).await;
+    assert!(!rows.is_empty(), "the join returned nothing to check");
+
+    for row in &rows {
+        let left = row.inputs[0]
+            .row
+            .as_ref()
+            .expect("an inner join pairs both");
+        let right = row.inputs[1]
+            .row
+            .as_ref()
+            .expect("an inner join pairs both");
+        assert_eq!(left.values.len(), a.columns().len());
+        assert_eq!(left.computed.len(), 1);
+        assert_eq!(right.values.len(), b.columns().len());
+        assert_eq!(right.computed.len(), 2);
+    }
+
+    // And the values are the kernel's, not merely the right shape.
+    let expected = in_process_join(&backing, &a, &b, &join).await.unwrap();
+    assert_eq!(multiset(&from_wire(&rows)), multiset(&expected));
 }

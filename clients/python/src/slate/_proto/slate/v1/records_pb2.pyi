@@ -42,6 +42,12 @@ class NullValue(_NullValue, metaclass=_NullValueEnumTypeWrapper):
     and its columns by the names and ordinals that catalog already has. A client
     that could describe a table could describe one that is not there.
 
+    The traffic is one-way, and that is the whole of the distinction: a client
+    may *assert* what it believes a table's columns are and be refused if it is
+    wrong (`SchemaCheck`), and nothing here will tell it what they are instead.
+    An assertion needs no round trip, cannot go stale in a cache, and does not
+    let a client discover a table it was not already told about.
+
     ── How a column is addressed, everywhere ────────────────────────────────────
 
     A join's row comes from several tables, a computed value occupies a slot no
@@ -65,6 +71,39 @@ class NullValue(_NullValue, metaclass=_NullValueEnumTypeWrapper):
 
 NULL_VALUE: NullValue.ValueType  # 0
 Global___NullValue: _TypeAlias = NullValue  # noqa: Y015
+
+class _Unit:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _UnitEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_Unit.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    UNIT: _Unit.ValueType  # 0
+
+class Unit(_Unit, metaclass=_UnitEnumTypeWrapper):
+    """A `oneof` arm that carries nothing, for the same reason `NullValue` exists.
+
+    A `bool` inside a `oneof` has two spellings for one choice, and the false
+    one is what a client that zeroed the struct sends. `Freshness{latest:false}`
+    selected `latest` while meaning nothing of the kind, and the server had to
+    read it back as `ANY` — a wire where a field means something other than what
+    it says, in a file whose opening argument is that an unset `oneof` must
+    never be defaulted. A one-value enum makes the false spelling
+    unrepresentable rather than reinterpreted.
+
+    The `bool` fields it replaces are `reserved`, and the reason is sharper here
+    than usual. A `bool` and a one-value enum are *both varints*, so reusing the
+    number would not even be a wire-type change: an old client's `false` would
+    decode cleanly as `UNIT` and select the arm it was trying not to select —
+    `latest: false` would become a demand for the writer, and `nested_loop:
+    false` would force a nested loop. Reserving the number leaves it an unknown
+    field, which a decoder drops, so the `oneof` is simply unset — which for all
+    three of these is the safe reading and is what the old server did with the
+    false spelling anyway.
+    """
+
+UNIT: Unit.ValueType  # 0
+Global___Unit: _TypeAlias = Unit  # noqa: Y015
 
 class _CmpOp:
     ValueType = _typing.NewType("ValueType", _builtins.int)
@@ -380,30 +419,188 @@ class Row(_message.Message):
     """A row: one value per column of its table, in ordinal order. Also used for a
     primary key, in which case it holds only the key columns, in key order.
 
-    A row from a query that computed values carries those values after the
-    table's own columns, in the order they were requested — the same layout
-    `ColumnRef.computed` addresses. A projection narrows which *stored* columns
-    are decoded; it never removes a computed value, because the value was
-    computed rather than read and withholding it would save nothing.
+    The computed values are a *separate* list rather than a tail of `values`,
+    for the reason `JoinedRow` keeps its inputs apart and `Group` keeps its keys
+    apart from its aggregates: the client should not have to do the arithmetic
+    that `ColumnRef` exists to remove. Concatenated, reading the nth computed
+    value meant `table_width + n` — a width this protocol does not publish, and
+    one that moves the day a column is added to the table. That is the same
+    silent re-pointing `ColumnRef` removed from the request side, and it was
+    still here on the way back.
+
+    A projection narrows which *stored* columns are decoded; it never removes a
+    computed value, because the value was computed rather than read and
+    withholding it would save nothing.
+
+    `computed` is empty on a row travelling the other way — an insert, an
+    update, a primary key — and a request that sets it is refused rather than
+    having it dropped: a computed value is not something a client can store.
     """
 
     DESCRIPTOR: _descriptor.Descriptor
 
     VALUES_FIELD_NUMBER: _builtins.int
+    COMPUTED_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def values(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]: ...
+    @_builtins.property
+    def computed(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]: ...
     def __init__(
         self,
         *,
         values: _abc.Iterable[Global___Value] | None = ...,
+        computed: _abc.Iterable[Global___Value] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["values", b"values"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["computed", b"computed", "values", b"values"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___Row: _TypeAlias = Row  # noqa: Y015
+
+@_typing.final
+class SchemaCheck(_message.Message):
+    """What a client believes the shape of a table is, so the server can refuse a
+    request written against a different one.
+
+    ── The hole this closes ─────────────────────────────────────────────────────
+
+    `ColumnRef` removed the arithmetic *across* tables. It did not remove the
+    ordinal *within* one: a request still says "input 1's column 3", and a
+    client outside Rust knows that `title` is column 3 only because it wrote
+    that down. The Rust caller's constants are generated from the same
+    declaration the server serves, so they cannot disagree; a hand-written
+    `Table` in another language can, and when it does the server accepts the
+    reference — it is a legitimate ordinal — and the query returns plausible
+    rows about the wrong column. That is the "same query, different answer"
+    failure the reference model exists to prevent, moved one level down rather
+    than removed.
+
+    So the client states its belief and the server checks it. The check is
+    `optional`: a request without one is served exactly as before, because a
+    protocol that only works for clients that opted into a new field is a
+    protocol that broke.
+
+    ── What is fingerprinted, and what deliberately is not ──────────────────────
+
+    Only the facts a client must restate in order to address a column, and only
+    facts it can state: the table's name, and for each ordinal in order the
+    column's name and type, and which ordinals form the primary key. Nothing
+    else. A fingerprint that covered more would change when something a client
+    does not depend on changed, and a check that fails on a migration nobody's
+    client cares about is a check every operator learns to disable.
+
+    Left out, each for a reason:
+
+      nullability, DEFAULT, CHECK, foreign keys — none of them addresses a
+        column. A write that violates one is refused by name at write time,
+        which is a better error than a fingerprint mismatch, and adding a CHECK
+        must not invalidate every reader in the fleet.
+      indexes — a hint is advice and an unusable one is already a warning, so
+        adding an index for performance must not break a client that never
+        names it.
+      table ids, index ids, schema versions, `added_in`/`dropped_in` — a client
+        cannot state them. A fingerprint a client cannot compute is a constant
+        it has to be told, which is the schema on the wire by another route.
+
+    ── How it survives a migration ──────────────────────────────────────────────
+
+    This is the property that makes it worth having, and it comes from the
+    schema layer rather than from here: **an ordinal never moves.** A column is
+    appended; a dropped column keeps its ordinal for ever and holds nothing; a
+    rename records the previous name and keeps resolving it. So every migration
+    this project supports leaves every existing reference pointing at the same
+    column, and the fingerprint is built to say so:
+
+      adding a column   the client's `columns` is a *prefix* of the table, and
+                        the server hashes exactly that prefix. An old client
+                        keeps working through the deployment, which is the whole
+                        point — it is the case where a whole-catalog fingerprint
+                        would take down every client at once.
+      dropping a column the ordinal and the declaration are unchanged, so the
+                        fingerprint is unchanged. A client that still *writes*
+                        the column is refused by name, which is the error it
+                        wanted.
+      renaming a column the server knows the previous name, and accepts a
+                        declaration using either. The schema layer promises that
+                        code written against the old name keeps working; a check
+                        that broke on a rename would contradict it.
+      DEFAULT, CHECK,   not fingerprinted at all.
+      foreign keys
+
+    What it does refuse is a declaration that is *wrong*: a column inserted in
+    the middle, two same-typed columns swapped, a name that was never this
+    column's, a key of the wrong shape. Those are the cases that otherwise
+    return rows.
+
+    ── Why the client asserts rather than the server advertising ────────────────
+
+    The obvious cheaper design is one opaque fingerprint on every response, for
+    the client to compare at startup. It was rejected because a mismatch is then
+    uninterpretable: the client cannot tell "your declaration is wrong" from
+    "the server has one more column than when you were written", and the only
+    safe reaction to an uninterpretable mismatch is to refuse to start — which
+    is precisely the additive migration taking down the fleet. The party holding
+    both statements is the server, so the claim travels to the server, which can
+    be exactly as tolerant as its own schema rules are and can refuse with a
+    message saying which. It also refuses *the request that would have been
+    wrong*, rather than hoping somebody ran the startup check.
+
+    ── The fingerprint ──────────────────────────────────────────────────────────
+
+    FNV-1a, 64-bit (offset basis 0xcbf29ce484222325, prime 0x100000001b3) over
+    this byte string, where `s(x)` is the decimal byte length of `x`, a colon,
+    and `x` in UTF-8, and `d(n)` is `n` in decimal followed by a semicolon:
+
+      "slate.v1.schema/1"
+      s(table name)
+      for each column, ordinal 0 upwards:  d(ordinal) s(column name) s(type)
+      "key" d(number of key columns)  then d(ordinal) for each, in key order
+      "columns" d(number of columns)
+
+    The type is spelled as `slate_tuple::ValueType` names it: `bool`, `bytes`,
+    `string`, `i64`, `u64`, `f64`, `uuid`, `vector`.
+
+    Length-prefixed rather than delimited, so that no column name can be spelled
+    to look like the end of a field; FNV-1a rather than SHA-256 because every
+    language has to reimplement this exactly and ten lines that can be checked
+    by eye beat a dependency. It is a check against drift, not against an
+    adversary — a client that wanted to lie about its schema can simply not send
+    one.
+
+    The key is written as ordinals, not names, so that a rename cannot change it
+    twice.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    COLUMNS_FIELD_NUMBER: _builtins.int
+    FINGERPRINT_FIELD_NUMBER: _builtins.int
+    columns: _builtins.int
+    """How many columns the client declares, which is how much of the table the
+    fingerprint covers. Fewer than the table has is a prefix and is accepted;
+    more is refused, because the client is addressing columns this table does
+    not have.
+
+    Sent as well as hashed so that the commonest disagreement — a client older
+    or newer than the catalog — is reported as a count rather than as an
+    opaque number that differs.
+    """
+    fingerprint: _builtins.int
+    def __init__(
+        self,
+        *,
+        columns: _builtins.int = ...,
+        fingerprint: _builtins.int = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["columns", b"columns", "fingerprint", b"fingerprint"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___SchemaCheck: _TypeAlias = SchemaCheck  # noqa: Y015
 
 @_typing.final
 class ColumnRef(_message.Message):
@@ -1142,21 +1339,21 @@ class AccessHint(_message.Message):
 
     DESCRIPTOR: _descriptor.Descriptor
 
-    TABLE_SCAN_FIELD_NUMBER: _builtins.int
     INDEX_FIELD_NUMBER: _builtins.int
-    table_scan: _builtins.bool
+    TABLE_SCAN_FIELD_NUMBER: _builtins.int
     index: _builtins.str
+    table_scan: Global___Unit.ValueType
     def __init__(
         self,
         *,
-        table_scan: _builtins.bool = ...,
         index: _builtins.str = ...,
+        table_scan: Global___Unit.ValueType = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["index", b"index", "path", b"path", "table_scan", b"table_scan"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["index", b"index", "path", b"path", "table_scan", b"table_scan"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_path: _TypeAlias = _typing.Literal["table_scan", "index"]  # noqa: Y015
+    _WhichOneofReturnType_path: _TypeAlias = _typing.Literal["index", "table_scan"]  # noqa: Y015
     _WhichOneofArgType_path: _TypeAlias = _typing.Literal["path", b"path"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_path) -> _WhichOneofReturnType_path | None: ...
 
@@ -1175,6 +1372,7 @@ class Query(_message.Message):
     OFFSET_FIELD_NUMBER: _builtins.int
     HINT_FIELD_NUMBER: _builtins.int
     COMPUTE_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
     table: _builtins.str
     """Table name, resolved against the server's catalog."""
     order: Global___ScanOrder.ValueType
@@ -1200,8 +1398,20 @@ class Query(_message.Message):
 
     @_builtins.property
     def compute(self) -> _containers.RepeatedCompositeFieldContainer[Global___Scalar]:
-        """Values computed per row, appended after the table's own columns.
-        `ColumnRef.computed` names one. See `Scalar`.
+        """Values computed per row, returned in `Row.computed`. `ColumnRef.computed`
+        names one. See `Scalar`.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """What the client believes this table's columns are. Absent means unchecked;
+        present and disagreeing is `INVALID_ARGUMENT` before anything is read. See
+        `SchemaCheck` — this is the one field that stops a hand-written schema
+        silently naming the wrong column.
+
+        On a join it is per input, because each input names its own table's
+        ordinals and a client can be right about one table and wrong about
+        another.
         """
 
     def __init__(
@@ -1216,10 +1426,11 @@ class Query(_message.Message):
         offset: _builtins.int = ...,
         hint: Global___AccessHint | None = ...,
         compute: _abc.Iterable[Global___Scalar] | None = ...,
+        schema: Global___SchemaCheck | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "filter", b"filter", "hint", b"hint", "limit", b"limit", "projection", b"projection"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "filter", b"filter", "hint", b"hint", "limit", b"limit", "projection", b"projection", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "compute", b"compute", "filter", b"filter", "hint", b"hint", "limit", b"limit", "offset", b"offset", "order", b"order", "projection", b"projection", "sort", b"sort", "table", b"table"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "compute", b"compute", "filter", b"filter", "hint", b"hint", "limit", b"limit", "offset", b"offset", "order", b"order", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
     _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015
@@ -1251,12 +1462,12 @@ class JoinAlgorithm(_message.Message):
     still carries one there, so this passes it through rather than having an
     opinion the kernel does not.
     """
-    nested_loop: _builtins.bool
+    nested_loop: Global___Unit.ValueType
     def __init__(
         self,
         *,
         hash_build: Global___Side.ValueType = ...,
-        nested_loop: _builtins.bool = ...,
+        nested_loop: Global___Unit.ValueType = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["algorithm", b"algorithm", "hash_build", b"hash_build", "nested_loop", b"nested_loop"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
@@ -1399,11 +1610,19 @@ class JoinQuery(_message.Message):
     offset: _builtins.int
     """Joined rows to discard first."""
     build_limit: _builtins.int
-    """Rows a build side may hold in memory before the read is refused.
+    """Rows a **hash** build side may hold in memory before the read is refused.
+
+    It is a property of one algorithm, not of the request. A nested loop has
+    no build side and holds nothing, so this bounds nothing there — lowering
+    it protects a node only on the plans the planner costed as hash joins, and
+    on the others it does exactly nothing. `ExplainJoin` says which each input
+    got; a caller that must have the bound should force `hash_build` and take
+    the plan it asked for.
 
     A client may lower this and not raise it: the server's own limit is what
     stops a mistyped join key turning into an out-of-memory kill, and a limit
-    a client can raise is not a limit.
+    a client can raise is not a limit. Raising it is clamped and reported in
+    `warnings`, not refused.
     """
     @_builtins.property
     def inputs(self) -> _containers.RepeatedCompositeFieldContainer[Global___JoinInput]:
@@ -1497,29 +1716,31 @@ class Freshness(_message.Message):
 
     DESCRIPTOR: _descriptor.Descriptor
 
-    ANY_FIELD_NUMBER: _builtins.int
     AT_LEAST_FIELD_NUMBER: _builtins.int
+    ANY_FIELD_NUMBER: _builtins.int
     LATEST_FIELD_NUMBER: _builtins.int
-    any: _builtins.bool
-    """Any replica, however far behind."""
     at_least: _builtins.int
     """Only a view that has reached this sequence — the number a commit
     returned. This is read-your-writes.
     """
-    latest: _builtins.bool
+    any: Global___Unit.ValueType
+    """Any replica, however far behind. The same as leaving the whole message
+    absent, which is what a client with nothing to say should do.
+    """
+    latest: Global___Unit.ValueType
     """The writer, which is the only view that can see an unflushed write."""
     def __init__(
         self,
         *,
-        any: _builtins.bool = ...,
         at_least: _builtins.int = ...,
-        latest: _builtins.bool = ...,
+        any: Global___Unit.ValueType = ...,
+        latest: Global___Unit.ValueType = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["any", b"any", "at_least", b"at_least", "latest", b"latest", "level", b"level"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["any", b"any", "at_least", b"at_least", "latest", b"latest", "level", b"level"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_level: _TypeAlias = _typing.Literal["any", "at_least", "latest"]  # noqa: Y015
+    _WhichOneofReturnType_level: _TypeAlias = _typing.Literal["at_least", "any", "latest"]  # noqa: Y015
     _WhichOneofArgType_level: _TypeAlias = _typing.Literal["level", b"level"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_level) -> _WhichOneofReturnType_level | None: ...
 
@@ -1691,12 +1912,26 @@ class InsertRequest(_message.Message):
     TABLE_FIELD_NUMBER: _builtins.int
     ROWS_FIELD_NUMBER: _builtins.int
     UPSERT_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     upsert: _builtins.bool
     """Replace a row whose primary key is already present, rather than refusing."""
     @_builtins.property
-    def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]: ...
+    def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+        """Whole rows: one value per column the table declares, in ordinal order,
+        including a null for any column that has been dropped. `Row.computed` must
+        be empty.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`. Worth more on a write than on a read: a write is
+        positional across the *whole* row, so a declaration that disagrees writes
+        every value into the wrong column, and it is only caught by luck — when
+        two columns happen to have different types.
+        """
+
     def __init__(
         self,
         *,
@@ -1704,10 +1939,11 @@ class InsertRequest(_message.Message):
         table: _builtins.str = ...,
         rows: _abc.Iterable[Global___Row] | None = ...,
         upsert: _builtins.bool = ...,
+        schema: Global___SchemaCheck | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "table", b"table", "transaction", b"transaction", "upsert", b"upsert"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "schema", b"schema", "table", b"table", "transaction", b"transaction", "upsert", b"upsert"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -1715,25 +1951,56 @@ Global___InsertRequest: _TypeAlias = InsertRequest  # noqa: Y015
 
 @_typing.final
 class UpdateRequest(_message.Message):
+    """An update is a **row replacement**: it names whole rows by their primary
+    keys and writes them entire. There is no `SET column = expression`, and no
+    predicate form.
+
+    That is the kernel's shape and it is not hidden here. `UPDATE ... SET size =
+    size + 1 WHERE kind = 'x'` is a query followed by an update of the rows it
+    returned, and it is atomic if — and only if — the client opens a transaction
+    around the pair. Two things would have to exist for the SQL spelling: a way
+    to say "this column, this expression", which is a kernel evaluator applied
+    to a write rather than to a read; and a write that walks a cursor, which the
+    head node would have to implement over rows it had already streamed. The
+    second is the same objection that keeps a grouped join out — a second
+    implementation of something the kernel owns, with nothing to be an oracle
+    against — and the first is a kernel change, not a wire one.
+
+    A delete by predicate is the same shape: `Query` for the keys, then
+    `Delete`, in one transaction.
+    """
+
     DESCRIPTOR: _descriptor.Descriptor
 
     TRANSACTION_FIELD_NUMBER: _builtins.int
     TABLE_FIELD_NUMBER: _builtins.int
     ROWS_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     @_builtins.property
-    def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]: ...
+    def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+        """Whole rows, as on `InsertRequest`. Every row must already exist: an update
+        of a missing row fails the whole batch rather than inserting it.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`, and `InsertRequest.schema` for why a write wants one
+        more than a read does.
+        """
+
     def __init__(
         self,
         *,
         transaction: _builtins.str = ...,
         table: _builtins.str = ...,
         rows: _abc.Iterable[Global___Row] | None = ...,
+        schema: Global___SchemaCheck | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -1746,11 +2013,22 @@ class DeleteRequest(_message.Message):
     TRANSACTION_FIELD_NUMBER: _builtins.int
     TABLE_FIELD_NUMBER: _builtins.int
     PRIMARY_KEYS_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     @_builtins.property
     def primary_keys(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
-        """Primary key values only, in key order."""
+        """Primary key values only, in key order — as many values as the table has
+        key columns, of the types it declares them with. A key of the wrong arity
+        or the wrong types is refused, rather than encoding to a key nothing is
+        stored at and reading as a row that is not there.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`. The key columns are part of the fingerprint, so this
+        also checks the shape of the keys above.
+        """
 
     def __init__(
         self,
@@ -1758,10 +2036,11 @@ class DeleteRequest(_message.Message):
         transaction: _builtins.str = ...,
         table: _builtins.str = ...,
         primary_keys: _abc.Iterable[Global___Row] | None = ...,
+        schema: Global___SchemaCheck | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["primary_keys", b"primary_keys", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["primary_keys", b"primary_keys", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -1778,8 +2057,26 @@ class WriteResponse(_message.Message):
     transaction has no sequence until that transaction commits.
     """
     affected: _builtins.int
-    """How many rows the write found to act on. For a delete this is how many
-    existed; a row the caller's policy hides counts as absent.
+    """How many rows the write acted on. Read it as "how many rows the server
+    agreed to", not "how many rows changed" — those are the same number for
+    only one of the three writes.
+
+      Delete  how many of the keys existed, which is a fact the caller did not
+              already have. A row the caller's policy hides counts as absent,
+              so this cannot be used to probe for one.
+      Insert  `len(rows)`, echoed. An insert is all-or-nothing — a duplicate
+              key fails the whole batch rather than applying a prefix — so any
+              other number would mean the response arrived after a partial
+              write, which cannot happen. An upsert reports the same 1 for a
+              row it replaced as for a row it created; distinguishing them
+              would need a read the write path does not do.
+      Update  `len(rows)`, echoed, and all-or-nothing for the same reason: a
+              row that is not there fails the batch.
+
+    Left as an echo rather than made `optional` and unset: a client reading it
+    as a count gets the right number for every write that succeeded, and an
+    absent field would make the common `affected == len(rows)` assertion
+    language-specific rather than merely uninformative.
     """
     def __init__(
         self,
@@ -1799,7 +2096,22 @@ Global___WriteResponse: _TypeAlias = WriteResponse  # noqa: Y015
 
 @_typing.final
 class GetRequest(_message.Message):
-    """── Reads ────────────────────────────────────────────────────────────────────"""
+    """── Reads ────────────────────────────────────────────────────────────────────
+
+    Read one row by its primary key.
+
+    One key, and not `repeated`, which is the one asymmetry with `Insert`,
+    `Update` and `Delete`. It is deliberate. The batched read already exists and
+    is a `Query` with `IN` over the primary key: the planner turns that into the
+    point reads it actually is, issued together — sixteen in flight — which is
+    the whole win that makes `insert_many` worth having. A `repeated Row
+    primary_keys` here could not do that. `Expr::In` names one column, so the
+    overlap is available for a single-column key and not for a composite one,
+    and the server would have to fall back to a loop; the result would be a
+    batch operation that costs one round trip on some tables and fifty on
+    others, with nothing in the response to say which. That is a worse thing to
+    have on a wire than an asymmetry.
+    """
 
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -1807,12 +2119,30 @@ class GetRequest(_message.Message):
     TABLE_FIELD_NUMBER: _builtins.int
     PRIMARY_KEY_FIELD_NUMBER: _builtins.int
     FRESHNESS_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     @_builtins.property
-    def primary_key(self) -> Global___Row: ...
+    def primary_key(self) -> Global___Row:
+        """As many values as the table has key columns, in key order, of the types it
+        declares them with.
+
+        Checked, rather than encoded and looked up. `found: false` is
+        *deliberately* indistinguishable from "a row your policy hides", which is
+        right — but it made a malformed key indistinguishable from a legitimate
+        miss and from an authorisation outcome, all at once, and a client bug read
+        as an absent row. A key that cannot be this table's is `INVALID_ARGUMENT`
+        and says what the key columns are, the way the insert path already did.
+        """
+
     @_builtins.property
     def freshness(self) -> Global___Freshness: ...
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`. The key columns are part of the fingerprint, so this
+        also checks the shape of the key above.
+        """
+
     def __init__(
         self,
         *,
@@ -1820,10 +2150,11 @@ class GetRequest(_message.Message):
         table: _builtins.str = ...,
         primary_key: Global___Row | None = ...,
         freshness: Global___Freshness | None = ...,
+        schema: Global___SchemaCheck | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "primary_key", b"primary_key"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "primary_key", b"primary_key", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "primary_key", b"primary_key", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "primary_key", b"primary_key", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -1867,6 +2198,24 @@ class QueryRequest(_message.Message):
     QUERY_FIELD_NUMBER: _builtins.int
     FRESHNESS_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
+    """A transaction handle, or empty to read outside one.
+
+    The two are not the same read, and the difference is not visible in the
+    messages that come back, so it is stated here. **A read inside a
+    transaction is materialised.** A cursor borrows the transaction, and the
+    transaction lives inside a task that owns it, so nothing can stream out of
+    it; the server collects the whole result and then replays it through the
+    same batched `QueryResponse` a streaming read uses. The wire shape is
+    identical and the memory profile is not — the result set is in the head
+    node's memory before the first message leaves.
+
+    So a large read should be made outside a transaction, where it streams and
+    the channel gives back pressure. Inside one is for the small read that
+    decides what to write next, which is what a read in a write transaction
+    nearly always is. The same applies to `Join` and `Aggregate`; an aggregate
+    is materialised either way, because grouping folds every row before any
+    group is final.
+    """
     @_builtins.property
     def query(self) -> Global___Query: ...
     @_builtins.property
@@ -1889,26 +2238,42 @@ Global___QueryRequest: _TypeAlias = QueryRequest  # noqa: Y015
 @_typing.final
 class QueryResponse(_message.Message):
     """Rows arrive in batches. The first message is always sent, even when the
-    result is empty, because it carries `served_by`.
+    result is empty, because it carries `served_by` — and `warnings`.
     """
 
     DESCRIPTOR: _descriptor.Descriptor
 
     ROWS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
+    WARNINGS_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]: ...
     @_builtins.property
     def served_by(self) -> Global___ServedBy: ...
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]:
+        """Things the server did with *this* request that the request did not ask
+        for: an index hint it could not use, a build limit it clamped.
+
+        On the first message only, with `served_by`, and empty on the rest.
+
+        These used to be on `Explain` alone, which meant that finding out why a
+        hint did nothing required issuing a different RPC and trusting that the
+        planner had made the same decision on a request that ran at a different
+        moment against a possibly different view. A warning is about the request
+        that carried it or it is about nothing.
+        """
+
     def __init__(
         self,
         *,
         rows: _abc.Iterable[Global___Row] | None = ...,
         served_by: Global___ServedBy | None = ...,
+        warnings: _abc.Iterable[_builtins.str] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -1951,19 +2316,27 @@ class JoinResponse(_message.Message):
 
     ROWS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
+    WARNINGS_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___JoinedRow]: ...
     @_builtins.property
     def served_by(self) -> Global___ServedBy: ...
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]:
+        """As on `QueryResponse`: an unusable hint on any input, a clamped build
+        limit. First message only.
+        """
+
     def __init__(
         self,
         *,
         rows: _abc.Iterable[Global___JoinedRow] | None = ...,
         served_by: Global___ServedBy | None = ...,
+        warnings: _abc.Iterable[_builtins.str] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -2073,19 +2446,25 @@ class AggregateResponse(_message.Message):
 
     GROUPS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
+    WARNINGS_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def groups(self) -> _containers.RepeatedCompositeFieldContainer[Global___Group]: ...
     @_builtins.property
     def served_by(self) -> Global___ServedBy: ...
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]:
+        """As on `QueryResponse`. First message only."""
+
     def __init__(
         self,
         *,
         groups: _abc.Iterable[Global___Group] | None = ...,
         served_by: Global___ServedBy | None = ...,
+        warnings: _abc.Iterable[_builtins.str] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "served_by", b"served_by"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -2159,8 +2538,9 @@ class ExplainResponse(_message.Message):
     @_builtins.property
     def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]:
         """Things the server did with the request that the request did not ask for,
-        such as ignoring an unusable hint. Set only on a response to `Explain`;
-        an `ExplainResponse` nested inside `JoinExplainResponse` describes a plan
+        such as ignoring an unusable hint. The same list `QueryResponse` carries,
+        for the same request. Set only on a response to `Explain`; an
+        `ExplainResponse` nested inside `JoinExplainResponse` describes a plan
         rather than a request, so its `warnings` and `served_by` are always empty
         and the outer message carries the request's.
         """

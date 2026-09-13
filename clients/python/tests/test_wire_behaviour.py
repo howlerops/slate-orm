@@ -115,7 +115,7 @@ def test_the_coercion_agrees_across_access_paths(stub: Stub) -> None:
     Coercion that held for a table scan and not for an index would be that
     bug. It does not.
     """
-    scan = pb.AccessHint(table_scan=True)
+    scan = pb.AccessHint(table_scan=pb.UNIT)
     index = pb.AccessHint(index="by_size")
     answers = {
         _rows(stub, _compare(2, pb.CMP_OP_GT, value, hint))
@@ -150,43 +150,62 @@ def test_the_write_path_refuses_the_wrong_integer_width(stub: Stub) -> None:
     ("label", "key"),
     [("two values for a one-column key", [U(1), S("x")]), ("no values at all", [])],
 )
-def test_a_primary_key_of_the_wrong_arity_reads_as_absent(
+def test_a_primary_key_of_the_wrong_arity_is_refused(
     stub: Stub, label: str, key: list[pb.Value]
 ) -> None:
-    """PROTOCOL FINDING, pinned: a malformed key is not refused.
+    """PROTOCOL FINDING 7, since fixed: a malformed key is refused by name.
 
-    `found: false` is deliberately indistinguishable from "a row your policy
-    hides", which is right. It should not also be indistinguishable from "this
-    request was nonsense". The insert path refuses a row of the wrong width by
-    name; `Get` and `Delete` do not.
+    This was pinned the other way round. `found: false` is deliberately
+    indistinguishable from "a row your policy hides", which is right — and it
+    used to be indistinguishable from "this request was nonsense" as well, so a
+    malformed key, a legitimate miss and an authorisation outcome were one
+    answer. The insert path refused a row of the wrong width by name; `Get` and
+    `Delete` did not.
 
-    This client refuses it locally, so reaching it needs the raw stub.
+    This client refuses it locally, so reaching the server needs the raw stub.
     """
-    response = stub.Get(
-        pb.GetRequest(table="docs", primary_key=pb.Row(values=key)), metadata=APP.metadata
+    with pytest.raises(grpc.RpcError) as caught:
+        stub.Get(
+            pb.GetRequest(table="docs", primary_key=pb.Row(values=key)), metadata=APP.metadata
+        )
+    assert caught.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+
+    # The control, and the half that must NOT change: a well-formed key for a
+    # row that is not there is still an ordinary miss, because that is what
+    # keeps it indistinguishable from a row a policy hides.
+    absent = stub.Get(
+        pb.GetRequest(table="docs", primary_key=pb.Row(values=[U(999_999)])),
+        metadata=APP.metadata,
     )
-    assert response.found is False
+    assert absent.found is False
 
 
 # --- freshness --------------------------------------------------------------
 
 
-def test_freshness_any_false_still_means_any(stub: Stub) -> None:
-    """A zeroed `oneof` arm is a request that does not say what it looks like.
+def test_a_freshness_arm_cannot_be_spelled_as_selected_meaning_no(stub: Stub) -> None:
+    """PROTOCOL FINDING 10, since fixed: the arms are one-value enums now.
 
-    The reasoning for reading `latest: false` as ANY is sound (see
-    `convert.rs`); the consequence is a field whose `false` value means
-    something other than "not this". `NullValue`'s one-value-enum trick would
-    have made it unrepresentable.
+    Pinned the other way round. The arms were `bool`, so `latest: false` was a
+    *selected* arm carrying the zero value — which the server read as ANY,
+    correctly and unavoidably, since a zeroed struct produces exactly that. A
+    field whose `false` means something other than "not this" is the trap
+    `NullValue`'s one-value-enum trick exists to prevent, and this file's own
+    protobuf uses that trick elsewhere.
+
+    Now `UNIT` is the only value, so the zero value *is* the selection and
+    there is nothing else to send. `False` no longer even encodes.
     """
-    assert (
-        _rows(stub, pb.Query(table="docs"))
-        == sum(
-            len(m.rows)
-            for m in stub.Query(
-                pb.QueryRequest(query=pb.Query(table="docs"), freshness=pb.Freshness(any=False)),
-                metadata=APP.metadata,
-            )
+    with pytest.raises(TypeError):
+        pb.Freshness(any=False)  # type: ignore[arg-type]
+
+    # Absent freshness still means ANY, which is the behaviour the old spelling
+    # was accidentally reachable through and is now the only way to say it.
+    assert _rows(stub, pb.Query(table="docs")) == sum(
+        len(m.rows)
+        for m in stub.Query(
+            pb.QueryRequest(query=pb.Query(table="docs"), freshness=pb.Freshness(any=pb.UNIT)),
+            metadata=APP.metadata,
         )
     )
 

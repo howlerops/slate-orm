@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from slate import Client, PermissionDenied, Query, Table
+from slate import Client, InvalidRequest, PermissionDenied, Query, Table
 
 from .fixture import AUTHORS, BOOKS, DOCS, SALES, SECRETS, USERS
 
@@ -50,12 +50,22 @@ def test_a_table_with_no_grant_is_denied_rather_than_absent(
         list(oracle_client.query(Query(SECRETS)))
 
 
-def test_the_width_check_cannot_see_a_rename(oracle_client: Client) -> None:
-    """Named so the gap is a test rather than a footnote.
+def test_a_renamed_column_is_refused_rather_than_silently_answered(
+    oracle_client: Client,
+) -> None:
+    """PROTOCOL FINDING 2, since fixed: the server now checks the client's claim.
 
-    `renamed` declares the same shape as `docs` with one column called
-    something else. Every reference built from it is accepted by the server and
-    means a different column than the caller wrote — and this check passes.
+    This was pinned the other way round, as the gap it named. `renamed`
+    declares the same *shape* as `docs` with one column called something else,
+    so the client's only available check — compare the returned row's width
+    against the declared width — passes, and every reference built from it is a
+    well-formed ordinal naming a different column than the caller wrote. The
+    query was answered. Nothing at any layer could see it.
+
+    The fix is a schema fingerprint travelling on every request that names a
+    table: the table name, and per ordinal the column's name and declared type,
+    plus the primary key and the count. The width check this test was named for
+    is now the weaker half of a real one.
     """
     from slate import Column, ValueType
 
@@ -69,9 +79,19 @@ def test_the_width_check_cannot_see_a_rename(oracle_client: Client) -> None:
         ],
         primary_key=["id"],
     )
-    rows = list(oracle_client.query(Query(renamed).limit(1)))
-    assert len(rows[0].values) == renamed.width  # the check passes
-    q = Query(renamed)
-    # And the wrong-named reference is answered rather than refused.
-    found = list(oracle_client.query(q.where(q.c.category.eq("kind-a"))))
-    assert found, "the server refused it after all, which would be better news"
+    with pytest.raises(InvalidRequest):
+        list(oracle_client.query(Query(renamed).limit(1)))
+
+    # The control: the same shape spelled correctly is served, so the refusal
+    # is about the name and not about the check refusing everything.
+    correct = Table(
+        "docs",
+        [
+            Column("id", ValueType.U64),
+            Column("kind", ValueType.STR),
+            Column("size", ValueType.I64),
+            Column("note", ValueType.STR),
+        ],
+        primary_key=["id"],
+    )
+    assert list(oracle_client.query(Query(correct).limit(1)))

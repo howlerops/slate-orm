@@ -40,15 +40,25 @@ class Row(Sequence[PyValue]):
     Indexable by position, and by name when the `Table` it came from is known.
     """
 
-    __slots__ = ("_table", "_values")
+    __slots__ = ("_computed", "_table", "_values")
 
-    def __init__(self, values: Sequence[PyValue], table: Table | None = None) -> None:
+    def __init__(
+        self,
+        values: Sequence[PyValue],
+        table: Table | None = None,
+        computed: Sequence[PyValue] = (),
+    ) -> None:
         self._values = tuple(values)
         self._table = table
+        self._computed = tuple(computed)
 
     @staticmethod
     def from_proto(wire: pb.Row, table: Table | None = None) -> Row:
-        return Row([from_value(v) for v in wire.values], table)
+        return Row(
+            [from_value(v) for v in wire.values],
+            table,
+            [from_value(v) for v in wire.computed],
+        )
 
     # There is deliberately no `to_proto` here. A `Row` that came back from a
     # read can be handed straight to `insert` or `update`, which encode it in
@@ -109,28 +119,34 @@ class Row(Sequence[PyValue]):
             raise KeyError(f"table `{self._table.name}` has no column `{name}`")
         return self._values[ordinal]
 
+    @property
+    def computed_values(self) -> tuple[PyValue, ...]:
+        """Every computed value, in the order the query asked for them.
+
+        Beside [`values`][slate.Row.values] rather than appended to it: the
+        wire keeps the two apart (finding 4), and joining them here would put
+        back the width arithmetic that removal was for.
+        """
+        return self._computed
+
     def computed(self, index: int) -> PyValue:
         """The `index`th computed value of the query that produced this row.
 
-        See the module docstring: this is the one width addition in the
-        package, and it is here because the wire returns a flat row.
+        This used to be the one width addition in the package: the wire
+        returned a flat row and the client added `table.width + index` to find
+        a computed value, which is the arithmetic `ColumnRef` had already
+        removed from the request side and the response side put back. It was
+        reported as finding 4 and the wire now carries them in their own field,
+        so no width is involved and a row read without a table can still be
+        asked for one.
         """
-        if self._table is None:
-            raise LookupError(
-                "this row was read without a table, so the width of its stored "
-                "columns is unknown and a computed value cannot be located. The "
-                "wire returns a query's computed values appended after the table's "
-                "own columns and does not say where they start."
-            )
-        at = self._table.width + index
-        if at >= len(self._values):
+        if index >= len(self._computed):
             raise IndexError(
-                f"the row has {len(self._values)} values and `{self._table.name}` "
-                f"declares {self._table.width} columns, so there is no computed "
-                f"value {index}. Either the query did not compute one, or the "
-                f"declared table is not the one the server has."
+                f"the row carries {len(self._computed)} computed values, so "
+                f"there is no computed value {index}. The query did not compute "
+                f"one."
             )
-        return self._values[at]
+        return self._computed[index]
 
 
 class JoinedRow(Sequence["Row | None"]):

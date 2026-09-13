@@ -30,7 +30,7 @@ pub mod stats;
 pub mod store;
 pub mod token;
 
-pub use aggregate::{Aggregate, Group};
+pub use aggregate::{Aggregate, Group, Grouper, Grouping};
 pub use chain::{Chain, ChainCursor, ChainPlan, ChainRow, JoinStep, JoinStepPlan};
 pub use error::{KernelError, Result, StorageError};
 pub use exec::QueryCursor;

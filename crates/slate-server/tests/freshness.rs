@@ -167,6 +167,7 @@ async fn a_commit_token_is_what_makes_a_write_readable() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 5, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -217,6 +218,7 @@ async fn asking_for_the_latest_goes_to_the_writer() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 5, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap();
@@ -224,7 +226,7 @@ async fn asking_for_the_latest_goes_to_the_writer() {
     let (rows, served_by) = drain(
         client
             .query(app(query(Some(pb::Freshness {
-                level: Some(pb::freshness::Level::Latest(true)),
+                level: Some(pb::freshness::Level::Latest(pb::Unit::Unit as i32)),
             }))))
             .await
             .unwrap()
@@ -248,6 +250,7 @@ async fn a_point_read_honours_its_token_too() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(4, "kind-a", 5, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -260,8 +263,10 @@ async fn a_point_read_honours_its_token_too() {
         table: "docs".to_owned(),
         primary_key: Some(pb::Row {
             values: vec![value_to_proto(&Value::U64(4))],
+            computed: Vec::new(),
         }),
         freshness,
+        schema: Some(common::claim("docs")),
     };
 
     let stale = client.get(app(get(None))).await.unwrap().into_inner();
@@ -314,10 +319,11 @@ async fn one_tenants_reads_always_land_on_one_replica() {
         app_in(
             pb::QueryRequest {
                 transaction: String::new(),
-                query: Some(pb::Query {
-                    table: "users".to_owned(),
-                    ..docs_query()
-                }),
+                // `plain_query`, not `docs_query` with the table swapped: the
+                // schema check on a query is the fingerprint of the table it
+                // names, and swapping only the name leaves `docs`' one behind
+                // — which the server now refuses, correctly.
+                query: Some(common::plain_query("users")),
                 freshness: None,
             },
             7,
@@ -398,6 +404,7 @@ async fn a_write_never_goes_to_a_replica() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 5, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap();
@@ -452,6 +459,7 @@ async fn a_freshness_no_view_can_meet_is_refused_rather_than_served_stale() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 5, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .expect("the write");
@@ -519,28 +527,37 @@ async fn a_transactional_read_says_it_came_from_the_writer() {
         .unwrap();
 }
 
+/// A client with nothing to say about freshness must not be routed to the
+/// writer, which is the scarcest resource in the deployment.
+///
+/// It used to be able to say it two ways: an absent message, and `latest`
+/// selected but false, which is what zeroing the struct produced. The second
+/// spelling is gone — `latest` is a `Unit` — so what is left to check is that
+/// the absent message still goes to a replica, and that a `Unit` arm carrying
+/// anything other than `UNIT` is refused rather than read as a selection. The
+/// refusal matters here and not only in `wire.rs`: a client built against a
+/// newer schema must not have its freshness silently reinterpreted by an older
+/// server.
 #[tokio::test]
-async fn an_unknown_freshness_level_does_not_become_a_request_for_the_writer() {
-    // `latest: false` is what a client that zeroed the message sends.
+async fn a_read_with_nothing_to_say_about_freshness_goes_to_a_replica() {
     let writer = Arc::new(MemoryStore::new());
     let serving = leader_with(Arc::clone(&writer), vec![Frozen::new("stale-replica")]).await;
     let mut client = serving.client().await;
 
-    let (_, served_by) = drain(
-        client
-            .query(app(query(Some(pb::Freshness {
-                level: Some(pb::freshness::Level::Latest(false)),
-            }))))
-            .await
-            .unwrap()
-            .into_inner(),
-    )
-    .await;
+    let (_, served_by) = drain(client.query(app(query(None))).await.unwrap().into_inner()).await;
     assert_eq!(
         served_by.expect("served_by").replica,
         "stale-replica",
-        "a zeroed freshness message was read as a demand for the writer"
+        "an absent freshness message was read as a demand for the writer"
     );
+
+    let error = client
+        .query(app(query(Some(pb::Freshness {
+            level: Some(pb::freshness::Level::Latest(7)),
+        }))))
+        .await
+        .expect_err("a Unit arm carrying anything but UNIT is refused");
+    assert_eq!(error.code(), Code::InvalidArgument);
 }
 
 /// Reading with a transaction handle that is not ours must not fall back to a
@@ -640,8 +657,10 @@ async fn a_response_names_the_replica_whose_rows_it_returned() {
                 table: "docs".to_owned(),
                 primary_key: Some(pb::Row {
                     values: vec![value_to_proto(&Value::U64(1))],
+                    computed: Vec::new(),
                 }),
                 freshness: None,
+                schema: Some(common::claim("docs")),
             }))
             .await
             .unwrap()

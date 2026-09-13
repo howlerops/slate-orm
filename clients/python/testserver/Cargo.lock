@@ -1271,6 +1271,7 @@ dependencies = [
  "futures",
  "object_store",
  "prost",
+ "prost-types",
  "protox",
  "slate-kernel",
  "slate-schema",

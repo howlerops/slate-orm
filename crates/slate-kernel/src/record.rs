@@ -30,7 +30,7 @@
 //!   exists to prevent. That scan therefore ignores row policy, and what it
 //!   discloses is bounded rather than absent: see [`RecordTransaction::delete`].
 
-use crate::aggregate::{Aggregate, Group};
+use crate::aggregate::{Aggregate, Group, Grouping};
 use crate::chain::{Chain, ChainCursor, ChainPlan};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
@@ -654,9 +654,13 @@ impl<'a> RecordTransaction<'a> {
         group: &[Ordinal],
         aggregates: &[Aggregate],
     ) -> Result<Vec<Group>> {
-        self.reads()
-            .group_by(context, table, query, group, aggregates, &Expr::True)
-            .await
+        self.grouped(
+            context,
+            table,
+            query,
+            &Grouping::by(group.iter().copied(), aggregates),
+        )
+        .await
     }
 
     /// [`RecordTransaction::group_by`], keeping only the groups `having`
@@ -675,8 +679,61 @@ impl<'a> RecordTransaction<'a> {
         aggregates: &[Aggregate],
         having: &Expr,
     ) -> Result<Vec<Group>> {
+        self.grouped(
+            context,
+            table,
+            query,
+            &Grouping::by(group.iter().copied(), aggregates).having(having.clone()),
+        )
+        .await
+    }
+
+    /// Group the rows `query` selects, with everything a grouped read can ask
+    /// for in one value.
+    ///
+    /// [`Grouping`] is where `HAVING`, `ORDER BY` and `LIMIT` over the *groups*
+    /// live. Ordering groups is not the same operation as ordering rows and
+    /// cannot borrow the row path's bounded heap: nothing can be known about
+    /// the last group until the last row has been read, so the groups are all
+    /// in memory before the first one can be returned and a heap would save
+    /// nothing. The comparator is shared with the row path, so the two agree
+    /// about direction and null placement by construction.
+    pub async fn grouped(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        self.reads().grouped(context, table, query, grouping).await
+    }
+
+    /// Group the rows a join produces.
+    ///
+    /// The gap this closes: a caller could join, and could group, and could not
+    /// do both — grouping consumed a single-table cursor. It consumes the
+    /// joined row stream now, so a group key may span both sides.
+    ///
+    /// The ordinals in `grouping` are in the space
+    /// [`JoinSchema`](crate::JoinSchema) defines, which is the space
+    /// [`Join::having`](crate::Join::having) already uses: the left table keeps
+    /// its ordinals and the right table's shift past its width. The
+    /// grouping's own `having` and `sort` are the exception, and read the
+    /// *group* — its keys, then its aggregates — exactly as they do for a
+    /// single table.
+    ///
+    /// Both sides are still planned and secured separately, so this is no more
+    /// privileged than the join it is built on.
+    pub async fn group_by_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
         self.reads()
-            .group_by(context, table, query, group, aggregates, having)
+            .grouped_join(context, left, right, join, grouping)
             .await
     }
 
@@ -1936,12 +1993,16 @@ impl<'a> RecordSnapshot<'a> {
         group: &[Ordinal],
         aggregates: &[Aggregate],
     ) -> Result<Vec<Group>> {
-        self.reads()
-            .group_by(context, table, query, group, aggregates, &Expr::True)
-            .await
+        self.grouped(
+            context,
+            table,
+            query,
+            &Grouping::by(group.iter().copied(), aggregates),
+        )
+        .await
     }
 
-    /// [`RecordTransaction::group_by`], keeping only the groups `having`
+    /// [`RecordSnapshot::group_by`], keeping only the groups `having`
     /// admits.
     ///
     /// The predicate is evaluated over the group rather than a row: its
@@ -1957,8 +2018,61 @@ impl<'a> RecordSnapshot<'a> {
         aggregates: &[Aggregate],
         having: &Expr,
     ) -> Result<Vec<Group>> {
+        self.grouped(
+            context,
+            table,
+            query,
+            &Grouping::by(group.iter().copied(), aggregates).having(having.clone()),
+        )
+        .await
+    }
+
+    /// Group the rows `query` selects, with everything a grouped read can ask
+    /// for in one value.
+    ///
+    /// [`Grouping`] is where `HAVING`, `ORDER BY` and `LIMIT` over the *groups*
+    /// live. Ordering groups is not the same operation as ordering rows and
+    /// cannot borrow the row path's bounded heap: nothing can be known about
+    /// the last group until the last row has been read, so the groups are all
+    /// in memory before the first one can be returned and a heap would save
+    /// nothing. The comparator is shared with the row path, so the two agree
+    /// about direction and null placement by construction.
+    pub async fn grouped(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        self.reads().grouped(context, table, query, grouping).await
+    }
+
+    /// Group the rows a join produces.
+    ///
+    /// The gap this closes: a caller could join, and could group, and could not
+    /// do both — grouping consumed a single-table cursor. It consumes the
+    /// joined row stream now, so a group key may span both sides.
+    ///
+    /// The ordinals in `grouping` are in the space
+    /// [`JoinSchema`](crate::JoinSchema) defines, which is the space
+    /// [`Join::having`](crate::Join::having) already uses: the left table keeps
+    /// its ordinals and the right table's shift past its width. The
+    /// grouping's own `having` and `sort` are the exception, and read the
+    /// *group* — its keys, then its aggregates — exactly as they do for a
+    /// single table.
+    ///
+    /// Both sides are still planned and secured separately, so this is no more
+    /// privileged than the join it is built on.
+    pub async fn group_by_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
         self.reads()
-            .group_by(context, table, query, group, aggregates, having)
+            .grouped_join(context, left, right, join, grouping)
             .await
     }
 }

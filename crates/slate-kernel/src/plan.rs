@@ -1189,31 +1189,64 @@ fn covers(cx: &MatchContext<'_>, index: &IndexDef) -> bool {
         index.columns().iter().any(|c| c.ordinal == ordinal)
             || cx.table.primary_key().contains(&ordinal)
     };
-    // The computed ordinal this index's entries already hold the value for.
+    // The computed position this index's entries already hold the value for.
     // Every *other* computed value is still evaluated from the row, so what it
-    // reads has to be in the entry like any other column.
-    let from_entry = expression_position(index, cx.compute).map(|p| Ordinal(cx.width + p));
+    // reads has to be reachable without one.
+    let from_entry = expression_position(index, cx.compute);
+
+    // One forward pass over the compute list, settling for each position
+    // whether a scan of this index can produce it without reading the row.
+    //
+    // A position is available when the index keys on it — the executor takes
+    // that value straight out of the entry — or when everything it reads is
+    // already available. The second half is what makes this a *pass* rather
+    // than a lookup: a scalar may read an earlier computed value, and
+    // `SELECT id WHERE lower(title) = 'x' COMPUTING lower(title), length(#0)`
+    // is answerable from an entry keyed on `lower(title)` even though nothing
+    // in it holds `title`. Refusing that was the conservative choice this
+    // replaces; it cost a row read per row on a query an entry could answer
+    // outright.
+    //
+    // The direction of a mistake here has not changed and is worth restating:
+    // a covering scan wrongly claimed returns nulls where the row had values,
+    // which is a wrong answer rather than a slow one. That is why this runs
+    // over the same `compute` slice the executor's `extend` walks, in the same
+    // order, and why the planner oracle generates chained compute lists over
+    // an expression index.
+    //
+    // Iterative rather than recursive so a compute list where each element
+    // reads the two before it costs `n` steps and not `2^n`.
+    let mut available: Vec<bool> = Vec::with_capacity(cx.compute.len());
+    for (position, scalar) in cx.compute.iter().enumerate() {
+        let supplied = Some(position) == from_entry
+            || scalar.columns().into_iter().all(|input| {
+                if input.0 < cx.width {
+                    return holds(input);
+                }
+                match available.get(input.0 - cx.width) {
+                    // An earlier computed value, already settled.
+                    Some(ready) => *ready,
+                    // Either a forward reference or an ordinal naming no
+                    // computed value at all. The second reads nothing and is
+                    // null on every path alike, so it is held; the first reads
+                    // a value that does not exist yet and is *also* null on
+                    // every path, but proving that means modelling evaluation
+                    // order in the planner, so it is refused instead. A refusal
+                    // costs a row read.
+                    None => input.0 - cx.width >= cx.compute.len(),
+                }
+            });
+        available.push(supplied);
+    }
+
     let holds_value = |ordinal: Ordinal| {
         if ordinal.0 < cx.width {
             return holds(ordinal);
         }
-        if Some(ordinal) == from_entry {
-            return true;
-        }
-        // A computed value the entry does not carry is recomputed, so its
-        // inputs decide. Those inputs can themselves be computed ordinals — a
-        // scalar may read an earlier one — and `holds` says no to those, which
-        // gives up a covering scan that a second pass could have proved. The
-        // safe direction, and the same one a missed implication takes: a
-        // covering scan wrongly claimed returns nulls, a covering scan missed
-        // reads some rows.
-        //
-        // An ordinal past the table naming no computed value
-        // reads nothing and expands to nothing, which is trivially held —
-        // the executor makes it null on every path alike.
-        expanded_inputs(ordinal, cx.width, cx.compute)
-            .into_iter()
-            .all(holds)
+        // An ordinal past the table naming no computed value reads nothing and
+        // expands to nothing, which is trivially held — the executor makes it
+        // null on every path alike.
+        available.get(ordinal.0 - cx.width).copied().unwrap_or(true)
     };
     match cx.needed {
         // Everything, so an expression index has nothing to add: it would have

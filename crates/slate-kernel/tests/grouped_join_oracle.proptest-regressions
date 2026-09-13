@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cec11ff526f1e8bf9e654ac55881c60c03bc011e26c44bcc3e7c3b8d694ac848 # shrinks to kind = Right, left = Not(IsNull { column: Ordinal(2), negated: false }), right = True, having = CompareColumns { left: Ordinal(2), op: Gt, right: Ordinal(5) }, group = [], aggregates = [Sum(Ordinal(5)), Avg(Ordinal(5))]

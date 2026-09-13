@@ -262,6 +262,7 @@ fn insert_one(id: u64) -> pb::InsertRequest {
             id, "kind-a", 10, None,
         ))],
         upsert: false,
+        schema: Some(common::claim("docs")),
     }
 }
 

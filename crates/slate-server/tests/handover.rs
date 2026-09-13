@@ -54,6 +54,7 @@ fn insert(id: u64) -> pb::InsertRequest {
         table: "docs".to_owned(),
         rows: vec![row_to_proto(&doc(id, "kind-a", 10, None))],
         upsert: false,
+        schema: Some(common::claim("docs")),
     }
 }
 
@@ -266,6 +267,6 @@ fn query(freshness: Option<pb::Freshness>) -> pb::QueryRequest {
 
 fn latest() -> pb::Freshness {
     pb::Freshness {
-        level: Some(pb::freshness::Level::Latest(true)),
+        level: Some(pb::freshness::Level::Latest(pb::Unit::Unit as i32)),
     }
 }

@@ -30,8 +30,8 @@
 
 use proptest::prelude::*;
 use slate_kernel::{
-    Action, CmpOp, Expr, Grant, Join, JoinAlgorithm, JoinType, JoinedRow, Query, RecordStore,
-    SecurityCatalog, SecurityContext, Side, memory::MemoryStore,
+    Action, CmpOp, Expr, Grant, Join, JoinAlgorithm, JoinSchema, JoinType, JoinedRow, Query,
+    RecordStore, SecurityCatalog, SecurityContext, Side, memory::MemoryStore,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -188,21 +188,63 @@ fn right_filter() -> impl Strategy<Value = Expr> {
     ]
 }
 
-/// A whole join: type, a filter per side, and an optional window.
-fn any_join() -> impl Strategy<Value = (JoinType, Expr, Expr, Option<usize>, usize)> {
+/// A condition only a formed pair can answer, over columns the join is not
+/// keyed on.
+///
+/// This was missing, and its absence hid a wrong answer for as long as the file
+/// has existed. Without a cross-side condition every probe that finds a bucket
+/// produces a pair, so "this bucket was probed" and "this built row paired with
+/// something" are the same statement — and the hash join recorded the first
+/// while owing the caller the second. With one they come apart: `having` can
+/// admit the pair with one row of a bucket and reject it with the next, and a
+/// right or full outer join then has to return the rejected one as unmatched.
+/// See [`a_rejected_pair_still_leaves_the_built_row_unmatched`].
+///
+/// `rank` is null on every third author, so the comparison is *unknown* rather
+/// than false for those pairs — which is the same rejection by a different
+/// route, and the one three-valued logic decides.
+fn cross_condition() -> impl Strategy<Value = Expr> {
+    let at = JoinSchema::of(&authors(), &books());
+    prop_oneof![
+        2 => Just(Expr::True),
+        1 => Just(Expr::compare_columns(
+            at.left(author_col("rank")),
+            CmpOp::Gt,
+            at.right(book_col("pages")),
+        )),
+        1 => Just(Expr::compare_columns(
+            at.left(author_col("rank")),
+            CmpOp::Le,
+            at.right(book_col("pages")),
+        )),
+    ]
+}
+
+/// A whole join: type, a filter per side, a cross-side condition and an
+/// optional window.
+fn any_join() -> impl Strategy<Value = (JoinType, Expr, Expr, Expr, Option<usize>, usize)> {
     (
         join_type(),
         left_filter(),
         right_filter(),
+        cross_condition(),
         prop_oneof![Just(None), (0..20usize).prop_map(Some)],
         0..3usize,
     )
 }
 
-fn build(kind: JoinType, left: &Expr, right: &Expr, limit: Option<usize>, offset: usize) -> Join {
+fn build(
+    kind: JoinType,
+    left: &Expr,
+    right: &Expr,
+    having: &Expr,
+    limit: Option<usize>,
+    offset: usize,
+) -> Join {
     let mut join = Join::equating(author_col("id"), book_col("author_id"))
         .left(Query::all().filter(left.clone()))
         .right(Query::all().filter(right.clone()))
+        .having(having.clone())
         .offset(offset);
     join = match kind {
         JoinType::Inner => join,
@@ -283,6 +325,7 @@ fn brute_force(
     kind: JoinType,
     left_filter: &Expr,
     right_filter: &Expr,
+    having: &Expr,
 ) -> Vec<(Option<u64>, Option<u64>)> {
     let lefts: Vec<Row> = (0..AUTHOR_ROWS)
         .map(author)
@@ -297,8 +340,20 @@ fn brute_force(
         Value::U64(n) => n,
         ref other => panic!("id was {other:?}"),
     };
-    let matches =
-        |l: &Row, r: &Row| l.values()[author_col("id").0] == r.values()[book_col("author_id").0];
+    // A pair matches when the keys are equal *and* the cross-side condition
+    // admits it. Written out over one concatenated row rather than through
+    // `JoinSchema`, which is the shift the engine applies and so is the thing
+    // being checked; a left table three columns wide puts the right table's
+    // first column at ordinal three, and if that ever stops being true this
+    // says so.
+    let matches = |l: &Row, r: &Row| {
+        if l.values()[author_col("id").0] != r.values()[book_col("author_id").0] {
+            return false;
+        }
+        let mut joined = l.values().to_vec();
+        joined.extend(r.values().iter().cloned());
+        having.admits(&Row::new(joined))
+    };
 
     let mut out = Vec::new();
     let mut right_matched = vec![false; rights.len()];
@@ -340,8 +395,8 @@ fn every_join_algorithm_returns_the_same_rows() {
     let rt = runtime();
     let store = rt.block_on(seeded());
 
-    proptest!(|((kind, left, right, _limit, _offset) in any_join())| {
-        let base = build(kind, &left, &right, None, 0);
+    proptest!(|((kind, left, right, having, _limit, _offset) in any_join())| {
+        let base = build(kind, &left, &right, &having, None, 0);
 
         let expected = keys(&rt.block_on(run(&store, &base.clone().using(JoinAlgorithm::Hash {
             build: Side::Left,
@@ -373,9 +428,9 @@ fn a_join_returns_what_a_brute_force_join_returns() {
     let rt = runtime();
     let store = rt.block_on(seeded());
 
-    proptest!(|((kind, left, right, _limit, _offset) in any_join())| {
-        let expected = brute_force(kind, &left, &right);
-        let base = build(kind, &left, &right, None, 0);
+    proptest!(|((kind, left, right, having, _limit, _offset) in any_join())| {
+        let expected = brute_force(kind, &left, &right, &having);
+        let base = build(kind, &left, &right, &having, None, 0);
 
         for algorithm in algorithms(kind) {
             let got = keys(&rt.block_on(run(&store, &base.clone().using(algorithm))));
@@ -399,11 +454,11 @@ fn a_windowed_join_returns_a_subset_of_the_whole() {
     let rt = runtime();
     let store = rt.block_on(seeded());
 
-    proptest!(|((kind, left, right, limit, offset) in any_join())| {
-        let whole = brute_force(kind, &left, &right);
+    proptest!(|((kind, left, right, having, limit, offset) in any_join())| {
+        let whole = brute_force(kind, &left, &right, &having);
         let windowed = keys(&rt.block_on(run(
             &store,
-            &build(kind, &left, &right, limit, offset),
+            &build(kind, &left, &right, &having, limit, offset),
         )));
 
         let expected_len = whole
@@ -445,7 +500,8 @@ async fn a_nested_loop_refuses_a_right_outer_join() {
     let (left, right) = (authors(), books());
 
     for kind in [JoinType::Right, JoinType::Full] {
-        let join = build(kind, &Expr::True, &Expr::True, None, 0).using(JoinAlgorithm::NestedLoop);
+        let join = build(kind, &Expr::True, &Expr::True, &Expr::True, None, 0)
+            .using(JoinAlgorithm::NestedLoop);
         let txn = store.begin().await.unwrap();
         let outcome = txn.join(&root(), &left, &right, &join).await;
         assert!(
@@ -456,7 +512,8 @@ async fn a_nested_loop_refuses_a_right_outer_join() {
 
     // And the combinations that *are* legal still work.
     for kind in [JoinType::Inner, JoinType::Left] {
-        let join = build(kind, &Expr::True, &Expr::True, None, 0).using(JoinAlgorithm::NestedLoop);
+        let join = build(kind, &Expr::True, &Expr::True, &Expr::True, None, 0)
+            .using(JoinAlgorithm::NestedLoop);
         let txn = store.begin().await.unwrap();
         txn.join(&root(), &left, &right, &join)
             .await
@@ -472,10 +529,10 @@ async fn a_nested_loop_refuses_a_right_outer_join() {
 #[test]
 fn the_generated_joins_produce_a_range_of_sizes() {
     let collected = std::cell::RefCell::new(Vec::new());
-    proptest!(ProptestConfig::with_cases(400), |((kind, left, right, _l, _o) in any_join())| {
+    proptest!(ProptestConfig::with_cases(400), |((kind, left, right, having, _l, _o) in any_join())| {
         collected
             .borrow_mut()
-            .push(brute_force(kind, &left, &right).len());
+            .push(brute_force(kind, &left, &right, &having).len());
     });
     let sizes = collected.into_inner();
 
@@ -635,18 +692,80 @@ fn triple_loop(
 
 /// A chain of two is a join of two.
 ///
+/// A built row whose only candidate pair the condition rejects still comes
+/// back unmatched.
+///
+/// The bug this pins, found by the grouped-join oracle and reproduced here
+/// without grouping in the way: the hash join recorded that a *bucket* had been
+/// probed, and drained the buckets nothing probed. Buckets agree on the join
+/// keys, so without a cross-side condition "probed" and "paired" are the same
+/// statement and the shortcut is invisible. With one they come apart — the
+/// condition can admit the pair with one row of a bucket and reject it with the
+/// next — and the rejected row was swallowed by its neighbour's success.
+///
+/// It is asymmetric, which is why it survived: with the *left* side built, the
+/// right rows stream and each one that finds no admitted pair is emitted
+/// immediately. Only building the right side reaches the drain, and only a
+/// right or full outer join drains at all. Three conditions at once, none of
+/// which the file generated.
+///
+/// Books 7 and 22 both point at author 7, and the condition admits only the
+/// first of them, so book 22 is the row at stake.
+#[tokio::test]
+async fn a_rejected_pair_still_leaves_the_built_row_unmatched() {
+    let store = seeded().await;
+    let at = JoinSchema::of(&authors(), &books());
+    let having = Expr::compare_columns(
+        at.left(author_col("rank")),
+        CmpOp::Gt,
+        at.right(book_col("pages")),
+    );
+
+    let mut answers = Vec::new();
+    for build in [Side::Left, Side::Right] {
+        let mut join = build_right_outer(&having);
+        join.force = Some(JoinAlgorithm::Hash { build });
+        let rows = run(&store, &join).await;
+        // Every book comes back, matched or not: that is what a right outer
+        // join is.
+        assert_eq!(
+            rows.len() as u64,
+            BOOK_ROWS,
+            "building {build:?} returned {} of {BOOK_ROWS} books",
+            rows.len()
+        );
+        answers.push(keys(&rows));
+    }
+    assert_eq!(answers[0], answers[1], "the build side changed the answer");
+
+    // And the premise: the condition really does admit some pairs and reject
+    // others within one bucket, so this is not thirty unmatched rows.
+    let matched = answers[0].iter().filter(|(l, _)| l.is_some()).count();
+    assert_eq!(
+        matched, 1,
+        "premise: exactly one pair survives the condition, got {matched}"
+    );
+}
+
+fn build_right_outer(having: &Expr) -> Join {
+    build(JoinType::Right, &Expr::True, &Expr::True, having, None, 0)
+}
+
 /// The two code paths exist for different reasons and must not have drifted:
 /// anything `Chain` does with one step, `Join` must do the same way.
 #[test]
 fn a_one_step_chain_matches_the_equivalent_join() {
     let rt = runtime();
     let store = rt.block_on(seeded());
-    let schema = slate_kernel::JoinSchema::of(&authors(), &books());
+    let schema = JoinSchema::of(&authors(), &books());
 
     proptest!(|(left in left_filter(), right in right_filter(), outer in any::<bool>())| {
         let kind = if outer { JoinType::Left } else { JoinType::Inner };
 
-        let by_join = keys(&rt.block_on(run(&store, &build(kind, &left, &right, None, 0))));
+        // No cross-side condition here: a `Chain` step has no place to put
+        // one, so comparing with one would compare two different questions.
+        let by_join =
+            keys(&rt.block_on(run(&store, &build(kind, &left, &right, &Expr::True, None, 0))));
 
         let chain = slate_kernel::Chain::from(Query::all().filter(left.clone())).join(step(
             schema.at(0, author_col("id")),

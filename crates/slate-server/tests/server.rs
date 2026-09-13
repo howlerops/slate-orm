@@ -193,7 +193,7 @@ fn access_paths() -> Vec<(&'static str, Option<pb::AccessHint>)> {
         (
             "a forced table scan",
             Some(pb::AccessHint {
-                path: Some(pb::access_hint::Path::TableScan(true)),
+                path: Some(pb::access_hint::Path::TableScan(pb::Unit::Unit as i32)),
             }),
         ),
         (
@@ -507,6 +507,7 @@ async fn a_single_statement_write_commits_and_returns_its_sequence() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 3, Some("hello")))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -523,10 +524,12 @@ async fn a_single_statement_write_commits_and_returns_its_sequence() {
             table: "docs".to_owned(),
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
+                computed: Vec::new(),
             }),
             freshness: Some(pb::Freshness {
                 level: Some(pb::freshness::Level::AtLeast(sequence)),
             }),
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -552,6 +555,7 @@ async fn a_rolled_back_transaction_leaves_nothing() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 3, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap();
@@ -563,8 +567,10 @@ async fn a_rolled_back_transaction_leaves_nothing() {
             table: "docs".to_owned(),
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
+                computed: Vec::new(),
             }),
             freshness: None,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -584,8 +590,10 @@ async fn a_rolled_back_transaction_leaves_nothing() {
             table: "docs".to_owned(),
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
+                computed: Vec::new(),
             }),
             freshness: None,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -621,6 +629,7 @@ async fn a_transaction_belongs_to_the_principal_that_opened_it() {
         table: "docs".to_owned(),
         rows: vec![row_to_proto(&doc(1, "kind-a", 3, None))],
         upsert: false,
+        schema: Some(common::claim("docs")),
     };
     let error = client
         .insert(common::as_principal(stolen, "u64:2", None, "app"))
@@ -686,6 +695,7 @@ async fn an_idle_transaction_is_rolled_back_rather_than_pinning_a_snapshot() {
             table: "docs".to_owned(),
             rows: vec![row_to_proto(&doc(1, "kind-a", 3, None))],
             upsert: false,
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap();
@@ -742,6 +752,7 @@ async fn a_duplicate_unique_value_is_already_exists_not_internal() {
         table: "users".to_owned(),
         rows: vec![row_to_proto(&user(1, id, 7, "taken@example.com"))],
         upsert: false,
+        schema: Some(common::claim("users")),
     };
     client.insert(app_in(insert(1), 7, 1)).await.unwrap();
 
@@ -759,6 +770,7 @@ async fn deleting_reports_how_many_rows_were_there() {
 
     let key = |id: u64| pb::Row {
         values: vec![value_to_proto(&Value::U64(id))],
+        computed: Vec::new(),
     };
     let deleted = client
         .delete(app(pb::DeleteRequest {
@@ -766,6 +778,7 @@ async fn deleting_reports_how_many_rows_were_there() {
             table: "docs".to_owned(),
             // One that exists, one that never did.
             primary_keys: vec![key(3), key(9999)],
+            schema: Some(common::claim("docs")),
         }))
         .await
         .unwrap()
@@ -821,10 +834,7 @@ async fn a_caller_cannot_ask_to_be_a_superuser() {
 
     let query = pb::QueryRequest {
         transaction: String::new(),
-        query: Some(pb::Query {
-            table: "users".to_owned(),
-            ..docs_query()
-        }),
+        query: Some(common::plain_query("users")),
         freshness: None,
     };
     let stream = client
@@ -873,10 +883,7 @@ async fn a_row_policy_applies_to_a_query_over_the_wire() {
         .query(app_in(
             pb::QueryRequest {
                 transaction: String::new(),
-                query: Some(pb::Query {
-                    table: "users".to_owned(),
-                    ..docs_query()
-                }),
+                query: Some(common::plain_query("users")),
                 freshness: None,
             },
             7,
@@ -969,10 +976,264 @@ async fn a_value_with_no_kind_is_refused_at_the_boundary() {
             table: "docs".to_owned(),
             primary_key: Some(pb::Row {
                 values: vec![pb::Value { kind: None }],
+                computed: Vec::new(),
+            }),
+            freshness: None,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("an unset value is not a null");
+    assert_eq!(error.code(), Code::InvalidArgument);
+}
+
+// --- a malformed primary key is a bad request, not an absent row ----------
+
+/// `found: false` is *deliberately* indistinguishable from "a row your policy
+/// hides" — that is right, and it is exactly why it must not also mean "your
+/// key was malformed". It used to mean all three at once: a client bug, a
+/// legitimate miss and an authorisation outcome had one spelling, and the one
+/// that is a bug would never be found.
+///
+/// The insert path already refused by name (`table 'docs' expects 4 column(s),
+/// row has 1`). These two now do too.
+#[tokio::test]
+async fn a_primary_key_of_the_wrong_shape_is_refused_rather_than_read_as_absent() {
+    let serving = serving_leader(Arc::new(MemoryStore::new())).await;
+    let mut client = serving.client().await;
+
+    client
+        .insert(app(pb::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row_to_proto(&doc(1, "kind-a", 3, None))],
+            upsert: false,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .unwrap();
+
+    let get = |values: Vec<Value>| pb::GetRequest {
+        transaction: String::new(),
+        table: "docs".to_owned(),
+        primary_key: Some(common::wire_row(
+            values.iter().map(value_to_proto).collect(),
+        )),
+        freshness: None,
+        schema: Some(common::claim("docs")),
+    };
+
+    // The control, and the reason the rest of this test proves anything: the
+    // right key still finds the row, and a right-shaped key for a row that is
+    // not there still reads as absent rather than as an error.
+    assert!(
+        client
+            .get(app(get(vec![Value::U64(1)])))
+            .await
+            .unwrap()
+            .into_inner()
+            .found
+    );
+    assert!(
+        !client
+            .get(app(get(vec![Value::U64(2)])))
+            .await
+            .unwrap()
+            .into_inner()
+            .found,
+        "a well-formed key for a row that is not there is still `found: false`"
+    );
+
+    let malformed = [
+        (
+            "two values for a one-column key",
+            vec![Value::U64(1), Value::Str("x".to_owned())],
+        ),
+        ("no values at all", vec![]),
+        // The tuple codec orders type-first, so this encodes to a different
+        // key rather than to a coerced one. It is a guaranteed miss, which is
+        // the same failure wearing a different hat.
+        (
+            "the right arity and the wrong integer width",
+            vec![Value::I64(1)],
+        ),
+        ("a null in a key", vec![Value::Null]),
+    ];
+    for (what, key) in malformed {
+        let error = client
+            .get(app(get(key.clone())))
+            .await
+            .expect_err(&format!("`{what}` should be refused"));
+        assert_eq!(error.code(), Code::InvalidArgument, "`{what}`");
+        assert!(
+            error.message().contains("primary key"),
+            "`{what}`: {}",
+            error.message()
+        );
+
+        // `Delete` had the same hole and reported it as `affected: 0`, which
+        // is also what a key that was never there reports.
+        let error = client
+            .delete(app(pb::DeleteRequest {
+                transaction: String::new(),
+                table: "docs".to_owned(),
+                primary_keys: vec![common::wire_row(key.iter().map(value_to_proto).collect())],
+                schema: Some(common::claim("docs")),
+            }))
+            .await
+            .expect_err(&format!("`{what}` should be refused by Delete too"));
+        assert_eq!(error.code(), Code::InvalidArgument, "`{what}`");
+    }
+
+    // Nothing was deleted by any of that.
+    assert!(
+        client
+            .get(app(get(vec![Value::U64(1)])))
+            .await
+            .unwrap()
+            .into_inner()
+            .found
+    );
+}
+
+/// The same, in a transaction: the check is in the request handler, so both
+/// paths get it, and a transactional `Get` must not be the way round it.
+#[tokio::test]
+async fn a_malformed_primary_key_is_refused_inside_a_transaction_too() {
+    let serving = serving_leader(Arc::new(MemoryStore::new())).await;
+    let mut client = serving.client().await;
+    let transaction = client
+        .begin(app(pb::BeginRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .transaction;
+
+    let error = client
+        .get(app(pb::GetRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            primary_key: Some(common::wire_row(vec![])),
+            freshness: None,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("an empty key is refused inside a transaction too");
+    assert_eq!(error.code(), Code::InvalidArgument);
+
+    client
+        .rollback(app(pb::RollbackRequest { transaction }))
+        .await
+        .unwrap();
+}
+
+// --- warnings reach the request that carried them -------------------------
+
+/// An ignored hint used to be reported by `Explain` and by nothing else, so a
+/// caller whose hint did nothing had to issue a *different* request and trust
+/// the planner had decided the same way on it — at a different moment, against
+/// a possibly different view. The first message of a query stream is always
+/// sent, even when the result is empty, so there was a header to put this in
+/// all along.
+#[tokio::test]
+async fn a_hint_that_could_not_be_used_is_reported_on_the_query_that_ran() {
+    let serving = serving_leader(Arc::new(MemoryStore::new())).await;
+    let mut client = serving.client().await;
+    client
+        .insert(app(pb::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row_to_proto(&doc(1, "kind-a", 3, None))],
+            upsert: false,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .unwrap();
+
+    let hinted = |hint: Option<pb::AccessHint>| pb::QueryRequest {
+        transaction: String::new(),
+        query: Some(pb::Query {
+            hint,
+            ..docs_query()
+        }),
+        freshness: None,
+    };
+
+    let (rows, warnings) = common::drain_warned(
+        client
+            .query(app(hinted(Some(common::missing_index_hint()))))
+            .await
+            .unwrap()
+            .into_inner(),
+    )
+    .await;
+    // A hint is advice: the query still runs and still returns its rows. That
+    // is the kernel's rule and the reason this is a warning rather than an
+    // error — a query that stops working because an index was renamed is worse
+    // than one that gets slower.
+    assert_eq!(rows.len(), 1, "the query should still have run");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("by_nothing"), "{}", warnings[0]);
+
+    // And a request that gave the server nothing to complain about says
+    // nothing, so a client can treat a non-empty list as news.
+    let (_, quiet) =
+        common::drain_warned(client.query(app(hinted(None))).await.unwrap().into_inner()).await;
+    assert!(quiet.is_empty(), "{quiet:?}");
+
+    // The same warning still reaches `Explain`, which is where it was: the
+    // point was never that `Explain` should stop reporting it.
+    let explained = client
+        .explain(app(pb::ExplainRequest {
+            transaction: String::new(),
+            query: Some(pb::Query {
+                hint: Some(common::missing_index_hint()),
+                ..docs_query()
             }),
             freshness: None,
         }))
         .await
-        .expect_err("an unset value is not a null");
+        .unwrap()
+        .into_inner();
+    assert_eq!(explained.warnings.len(), 1);
+}
+
+/// `Row.computed` is a response field. A request that sets it is refused
+/// rather than having it dropped: silently discarding it would let an insert
+/// appear to accept values it threw away, which is the failure mode the whole
+/// split exists to avoid on the other side.
+#[tokio::test]
+async fn a_row_that_carries_computed_values_cannot_be_written_or_looked_up_by() {
+    let serving = serving_leader(Arc::new(MemoryStore::new())).await;
+    let mut client = serving.client().await;
+
+    let mut row = row_to_proto(&doc(1, "kind-a", 3, None));
+    row.computed = vec![value_to_proto(&Value::I64(7))];
+
+    let error = client
+        .insert(app(pb::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row],
+            upsert: false,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("an insert cannot carry a computed value");
+    assert_eq!(error.code(), Code::InvalidArgument);
+    assert!(error.message().contains("computed"), "{}", error.message());
+
+    let error = client
+        .get(app(pb::GetRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            primary_key: Some(pb::Row {
+                values: vec![value_to_proto(&Value::U64(1))],
+                computed: vec![value_to_proto(&Value::I64(7))],
+            }),
+            freshness: None,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("a primary key cannot carry a computed value");
     assert_eq!(error.code(), Code::InvalidArgument);
 }

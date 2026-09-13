@@ -18,11 +18,26 @@
     clippy::panic
 )]
 
+use prost::Message as _;
 use slate_kernel::KernelError;
 use slate_kernel::error::StorageError;
 use slate_schema::TableId;
 use slate_server::code_for;
+use slate_server::proto::rpc;
 use tonic::Code;
+
+/// The `google.rpc.ErrorInfo` a status carries in `grpc-status-details-bin`.
+///
+/// Decoded the way a client in another language would: parse the details as a
+/// `google.rpc.Status`, find the `Any`, check its type URL, decode it. Written
+/// out rather than helped along by anything in this crate, because the thing
+/// under test is whether a client that has never seen this code can read it.
+fn error_info(status: &tonic::Status) -> rpc::ErrorInfo {
+    let details = rpc::Status::decode(status.details()).expect("details are a google.rpc.Status");
+    let any = details.details.first().expect("one detail");
+    assert_eq!(any.type_url, "type.googleapis.com/google.rpc.ErrorInfo");
+    rpc::ErrorInfo::decode(any.value.as_slice()).expect("an ErrorInfo")
+}
 
 fn table_of_mappings() -> Vec<(KernelError, Code)> {
     vec![
@@ -181,5 +196,163 @@ fn an_unclassified_error_is_not_retryable() {
         !classified.contains(&Code::Internal),
         "INTERNAL is the wildcard, so no classified error may also use it — \
          otherwise a variant that fell through would be indistinguishable"
+    );
+}
+
+// --- what travels beside the code -----------------------------------------
+
+/// The mapping above is many-to-one and cannot be otherwise, so the
+/// distinctions have to survive somewhere. They survive in `ErrorInfo.reason`.
+///
+/// Asserted as a *set* rather than one by one: what matters is not that
+/// `UniqueViolation` says `UNIQUE_VIOLATION` — that is a rename away from
+/// meaning nothing — but that no two errors sharing a status code share a
+/// reason. A reason that collapsed the same way the code does would be a
+/// second lossy channel rather than a fix.
+#[test]
+fn no_two_errors_behind_one_status_code_share_a_reason() {
+    let mut by_code: std::collections::HashMap<Code, Vec<String>> =
+        std::collections::HashMap::new();
+    for (error, _) in table_of_mappings() {
+        let status = slate_server::from_kernel(&error);
+        by_code
+            .entry(status.code())
+            .or_default()
+            .push(error_info(&status).reason);
+    }
+    for (code, reasons) in by_code {
+        let mut unique = reasons.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            reasons.len(),
+            "{code:?} has {} errors behind it and {} reasons: {reasons:?}",
+            reasons.len(),
+            unique.len()
+        );
+    }
+}
+
+/// The row of the table that hurt: an application inserting a user wants to
+/// say "that email address is already registered", and `ALREADY_EXISTS` cannot
+/// tell it which constraint fired. `UniqueViolation` knows; now so does the
+/// client, without matching on prose.
+#[test]
+fn a_unique_violation_names_its_index_in_the_details() {
+    let status = slate_server::from_kernel(&KernelError::UniqueViolation {
+        table: "users".to_owned(),
+        index: "by_email".to_owned(),
+    });
+    let info = error_info(&status);
+    assert_eq!(info.reason, "UNIQUE_VIOLATION");
+    assert_eq!(info.domain, slate_server::DOMAIN);
+    assert_eq!(
+        info.metadata.get("index").map(String::as_str),
+        Some("by_email")
+    );
+    assert_eq!(
+        info.metadata.get("table").map(String::as_str),
+        Some("users")
+    );
+
+    // The other error behind `ALREADY_EXISTS`, which a client must be able to
+    // tell apart from it — "this id is taken" is a different sentence from
+    // "this email is taken", and only one of them has an index.
+    let duplicate = slate_server::from_kernel(&KernelError::DuplicatePrimaryKey {
+        table: "users".to_owned(),
+    });
+    assert_eq!(duplicate.code(), status.code());
+    assert_eq!(error_info(&duplicate).reason, "DUPLICATE_PRIMARY_KEY");
+    assert!(!error_info(&duplicate).metadata.contains_key("index"));
+}
+
+/// The four errors behind `UNAVAILABLE` want four different responses: retry
+/// elsewhere, retry later, lower your freshness, page someone.
+#[test]
+fn the_four_unavailable_errors_are_told_apart() {
+    let cases = [
+        (KernelError::WriterFenced, "WRITER_FENCED"),
+        (
+            KernelError::ReplicaTooStale {
+                replica: "replica-0".to_owned(),
+                required: 9,
+                visible: 2,
+            },
+            "REPLICA_TOO_STALE",
+        ),
+        (
+            KernelError::NoReplicaAvailable {
+                reason: "the pool has no replicas",
+            },
+            "NO_REPLICA_AVAILABLE",
+        ),
+        (
+            KernelError::Storage(StorageError::new(std::io::Error::other("no route to host"))),
+            "STORAGE",
+        ),
+    ];
+    for (error, reason) in cases {
+        let status = slate_server::from_kernel(&error);
+        assert_eq!(status.code(), Code::Unavailable);
+        assert_eq!(error_info(&status).reason, reason);
+    }
+
+    // How far behind, and how far behind it needed to be: the two numbers that
+    // decide whether to wait or to lower the freshness asked for.
+    let stale = slate_server::from_kernel(&KernelError::ReplicaTooStale {
+        replica: "replica-0".to_owned(),
+        required: 9,
+        visible: 2,
+    });
+    let info = error_info(&stale);
+    assert_eq!(info.metadata.get("required").map(String::as_str), Some("9"));
+    assert_eq!(info.metadata.get("visible").map(String::as_str), Some("2"));
+    assert_eq!(
+        info.metadata.get("replica").map(String::as_str),
+        Some("replica-0")
+    );
+}
+
+/// A refusal that is not a kernel error at all — the node is not the writer —
+/// is `UNAVAILABLE` like three kernel errors are, so it needs a reason too.
+/// The `slate-leader` trailer stays: it predates this and clients read it.
+#[test]
+fn a_redirect_carries_a_reason_and_keeps_its_trailer() {
+    let status = slate_server::status::redirect("this node is not the writer", Some("node-2"));
+    assert_eq!(status.code(), Code::Unavailable);
+    let info = error_info(&status);
+    assert_eq!(info.reason, "NOT_LEADER");
+    assert_eq!(
+        info.metadata.get("leader").map(String::as_str),
+        Some("node-2")
+    );
+    assert_eq!(
+        status
+            .metadata()
+            .get(slate_server::LEADER_KEY)
+            .and_then(|v| v.to_str().ok()),
+        Some("node-2")
+    );
+}
+
+/// The details are the standard shape, so a client using its language's
+/// rich-error helper reads them with no special support here.
+#[test]
+fn the_details_are_a_google_rpc_status_agreeing_with_the_outer_one() {
+    let error = KernelError::AccessDenied {
+        table: "users".to_owned(),
+        action: "read",
+    };
+    let status = slate_server::from_kernel(&error);
+    let details = rpc::Status::decode(status.details()).expect("a google.rpc.Status");
+    assert_eq!(details.code, i32::from(status.code() as u8));
+    assert_eq!(details.message, status.message());
+    assert_eq!(
+        error_info(&status)
+            .metadata
+            .get("action")
+            .map(String::as_str),
+        Some("read")
     );
 }

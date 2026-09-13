@@ -445,7 +445,137 @@ join is an error rather than a quiet fallback to a hash join.
 `build_limit` may be lowered by a client and not raised: the server's limit is
 what stops a mistyped join key becoming an out-of-memory kill, and a limit the
 client can raise is not a limit. Raising it is clamped and reported as a
-warning rather than refused.
+warning rather than refused. It bounds a **hash** build side and nothing else —
+a nested loop has no build side — so lowering it protects a node only on the
+plans the planner costed as hash joins. The field comment says so now; a
+caller that must have the bound forces `hash_build` and takes the plan it asked
+for.
+
+### Checking a client's copy of the schema, without publishing one
+
+`ColumnRef` removed the arithmetic *across* tables. It did not remove the
+ordinal *within* one, and the first client written outside Rust said so: a
+request still says "input 1's column 3", and a hand-written table declaring
+`category` where the catalog has `kind` filters the wrong column, is accepted
+because the ordinal is legitimate, and returns plausible rows. The derive macro
+generates the Rust constants from the same declaration the server serves, so
+Rust cannot disagree. Nothing else had an equivalent.
+
+`SchemaCheck` is the equivalent: `columns`, and a 64-bit fingerprint over the
+table's name, each ordinal's column name and type in order, and the ordinals
+that form the primary key. It hangs off `Query` — so it covers every input of a
+join, every explain and every aggregate — and off `Get`, `Insert`, `Update` and
+`Delete`. It is optional; a request without one is served as before.
+
+The traffic is one way, which is the whole of the distinction from the
+`Describe` the `.proto` refuses. A client may *assert* what it believes and be
+refused; nothing tells it what the answer is instead.
+
+#### The design constraint is the migration, not the check
+
+A fingerprint that broke on every migration would be worse than none, because
+the second thing an operator does after it takes the fleet down is turn it off.
+What makes one possible here is a property of the schema layer rather than of
+the wire: **an ordinal never moves.** A column is appended; a dropped column
+keeps its ordinal for ever and holds nothing; a rename records the previous
+name and goes on resolving it. So every migration this project supports leaves
+every existing reference naming the same column, and the check is built to
+agree:
+
+| migration | what the check does |
+|---|---|
+| a column added | the old client's declaration is a *prefix*, and the server hashes exactly that prefix. It keeps working across the deployment |
+| a column dropped | the ordinal and the declaration are unchanged, so the fingerprint is unchanged. A client still *writing* it is refused by name |
+| a column renamed | accepted under either name: the server knows the previous one, because the schema layer promises code written against it keeps working |
+| `DEFAULT`, `CHECK`, foreign keys | not fingerprinted at all |
+
+What it refuses is a declaration that is *wrong*: a column inserted in the
+middle, two same-typed columns swapped, a name this column never answered to, a
+key of the wrong shape. Those are the ones that otherwise return rows.
+
+Nullability, constraints and indexes are left out because none of them
+addresses a column — a write that violates one is refused by name, which is a
+better error, and an index added for performance must not invalidate a client
+that never names it. Table ids, index ids and schema versions are left out
+because a client cannot state them, and a fingerprint a client cannot compute
+is a constant it has to be told, which is the schema on the wire by another
+route.
+
+#### Why the client asserts rather than the server advertising
+
+The cheaper design — the one the finding proposed — is one opaque fingerprint
+on every response, compared by the client at startup: one field, no round trip.
+It was rejected, and the reason is the migration table above. With one opaque
+value a mismatch is *uninterpretable*: the client cannot tell "your declaration
+is wrong" from "the server has one more column than when you were written", and
+the only safe reaction to an uninterpretable mismatch is to refuse to start.
+That is the additive migration taking down the fleet, arrived at from the other
+direction.
+
+The party that holds both statements is the server. So the claim travels to the
+server, which can be exactly as tolerant as its own schema rules are, can say
+which way the disagreement runs, and refuses *the request that would have been
+wrong* rather than hoping somebody ran a startup check. The cost is a field on
+five requests instead of one on a response, and nine bytes on the wire.
+
+The hash is FNV-1a over a length-prefixed canonical form, specified in the
+`.proto` in a paragraph. FNV rather than SHA-256 because every language has to
+reimplement it byte for byte, and ten lines that can be checked by eye beat a
+dependency; length-prefixed rather than delimited so that no column name can be
+spelled to look like the end of a field. It is a check against drift, not
+against an adversary — a client that wants to lie about its schema can simply
+not send one. `schema_check.rs` pins the constants against a second
+implementation written in Python, because agreeing with itself proves nothing.
+
+### A computed value comes back beside the row, not inside it
+
+`Row` carries `values` and `computed` as two lists. Concatenated, reading the
+nth computed value meant `table_width + n` — the arithmetic `ColumnRef` exists
+to remove, from a width this protocol does not publish, moving the day a column
+is added to the table. `JoinedRow` and `Group` had already been split for that
+reason and the single-table row had not, which made it an omission rather than
+a trade-off. Because the split is on `Row` itself it applies inside a
+`JoinedRow` too, where each input is split at *its own* table's width.
+
+`computed` is empty on a row travelling the other way, and a request that sets
+one is refused rather than having it dropped: an insert that appeared to accept
+values it discarded is the same failure in the opposite direction.
+
+### Warnings belong to the request that caused them
+
+An ignored index hint and a clamped build limit used to be reported by
+`Explain` and by nothing else, so a caller whose hint did nothing had to issue a
+*different* request and trust the planner had decided the same way on it — at a
+different moment, possibly against a different view. `QueryResponse`,
+`JoinResponse` and `AggregateResponse` carry `warnings` on their first message,
+which is the message that is always sent even for an empty result because it
+carries `served_by`. There was a header to put them in all along.
+
+### The status code is lossy, so something structured travels with it
+
+The mapping in `status.rs` is many-to-one and cannot be otherwise: `UNAVAILABLE`
+is four kernel errors wanting four different responses, and `ALREADY_EXISTS` is
+"that id is taken" and "that **email** is taken", where the second needs the
+index name that `UniqueViolation` is already carrying. The distinction was
+recoverable only from the message, and a message is not an interface — nothing
+tests its wording, so a client that branches on it breaks when somebody improves
+it.
+
+Every status now also carries a `google.rpc.ErrorInfo` in
+`grpc-status-details-bin`: a `reason` token per kernel variant, a `domain`, and
+the variant's own payload as metadata (`table`, `index`, `action`, `replica`,
+`required`, `visible`, `limit`). That is the standard shape, so a client using
+its language's rich-error helper needs no special support, and one that ignores
+details is unaffected. The two well-known messages are declared in this
+repository's own `proto/google/rpc/` rather than pulled in as a dependency —
+they are twelve lines, the build is hermetic on purpose, and what has to agree
+is the bytes rather than the crate.
+
+`slate-leader` stays where it is. It predates this, clients read it, and a
+redirect only a rich-error client could follow would be worse. The test that
+matters is not that `UniqueViolation` says `UNIQUE_VIOLATION` — that is a rename
+away from meaning nothing — but that no two errors behind one status code share
+a reason.
 
 ### Two things the wire format refuses to guess
 
@@ -458,6 +588,20 @@ An unset `oneof` is an error, not a default. proto3 cannot tell an unset field
 from a zero one, so a `Value` with no kind set is most likely a client built
 against a newer schema — reading it as null would quietly change the predicate
 it appears in.
+
+A `bool` inside a `oneof` breaks that rule from the inside, and three of them
+did. `Freshness{latest: false}` selects the `latest` arm while meaning nothing
+of the kind — it is what zeroing the struct produces — so the server read it
+back as `ANY`, with the right reason (routing every zeroed read to the writer
+would point the fleet at the scarcest resource in the deployment) and the wrong
+outcome: a field that said "the writer" and meant "any replica". `AccessHint`
+and `JoinAlgorithm` had the same shape. All three arms are now a one-value
+`Unit` enum, which is the trick `NullValue` already played for "the client sent
+a null" against "the client sent nothing": the false spelling is
+unrepresentable rather than reinterpreted, and a client with nothing to say
+leaves the message absent, which has always meant `ANY`. The old field numbers
+are reserved — `false` on the old field would decode as `UNIT` on a new one and
+select the arm it was trying not to select.
 
 ### What was tested
 
@@ -521,6 +665,34 @@ it appears in.
   wait out a term.
 - **That the refusal is local**, by counting calls into the store: five writes
   after the first fence reach it zero times.
+- **The schema check, as migrations rather than as cases.** Each is two table
+  definitions, v1 and v2, exactly as a schema evolving in a repository would
+  be, with the claim computed from v1 and checked against v2: a column added
+  (twice — nullable, and `NOT NULL` with a default), a column dropped, a column
+  renamed and named under both spellings, a `CHECK`, an index and a `DEFAULT`
+  added. Against them, the drifts that must be refused: a name this column
+  never answered to, two same-typed columns swapped, a column inserted in the
+  middle, a different key, a different type, a declaration wider than the
+  table. The canonical form is pinned against a reference implementation
+  written in Python and printed in the test, because a fingerprint that agrees
+  only with itself is not a fingerprint — and a change to the form has to fail
+  here rather than in somebody else's client after an upgrade.
+- **That a malformed primary key is a bad request.** `found: false` is
+  deliberately indistinguishable from "a row your policy hides", so it must not
+  also mean "your key was malformed": the wrong arity, no values at all, the
+  right arity with the wrong integer width, and a null are each refused by
+  name, on `Get` and on `Delete`, inside a transaction and outside one — with
+  the well-formed key for a row that is not there still reading as absent, as
+  the control that keeps the rest of it meaningful.
+- **That warnings reach the request that ran**, on all three streams, with the
+  same request run again with nothing to complain about as the control, and
+  with a join carrying two warnings from two different places in the conversion
+  — an input's hint and the join's build limit — so that plumbing only one of
+  them fails.
+- **That no two errors behind one status code share a reason.** Asserted as a
+  set rather than one by one: the property is that the details undo the
+  collapse, not that any particular variant spells its token any particular
+  way.
 
 ### Not built
 
@@ -542,6 +714,28 @@ it appears in.
   delete walks a foreign-key closure and two keys in one batch can reach the
   same doomed row by different paths. Batching it means unioning those closures
   before writing anything, which is a different change from the other two.
+- **A batched `Get`.** `Get` takes one key where the three writes take
+  `repeated`, and the asymmetry is deliberate rather than an oversight. The
+  batched read already exists and is a `Query` with `IN` over the primary key,
+  which the planner turns into the point reads it actually is, issued together
+  — that overlap is the whole win, and it is what makes `insert_many` worth
+  having. `repeated Row primary_keys` could not reproduce it: `Expr::In` names
+  one column, so the overlap is available for a single-column key and not for a
+  composite one, and the server would fall back to a loop. The result would be
+  a batch that costs one round trip on some tables and fifty on others with
+  nothing in the response to say which — which is a worse thing to have on a
+  wire than an asymmetry. The `.proto` says all of this under `GetRequest`,
+  which is the actual gap: the second spelling existed and was not written
+  down.
+- **A write by predicate.** `DELETE FROM docs WHERE …` is a query followed by a
+  batch delete, in one transaction, and `UPDATE … SET size = size + 1` cannot
+  be said at all. Both would be new: the second needs the expression evaluator
+  applied to a write, which is a kernel change, and the first needs a write
+  that walks a cursor, which the head node would have to implement over rows it
+  had already streamed — the same objection that keeps a grouped join out. What
+  was missing was the sentence saying so, and `UpdateRequest` now carries it: an
+  update is a row replacement, there is no predicate form, and here is what to
+  write instead.
 - **The head node under concurrency.** It is measured now — see
   `docs/performance.md` — but every measurement is one request at a time, so
   the per-stream channel and the task-per-transaction design have never been

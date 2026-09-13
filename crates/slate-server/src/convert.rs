@@ -34,6 +34,7 @@
 //! mismatches here, where a flat ordinal would have made them indistinguishable
 //! from a legitimate reference that happened to land in range.
 
+use crate::fingerprint;
 use crate::proto as pb;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
@@ -50,6 +51,22 @@ use uuid::Uuid;
 /// A client sent something this server cannot read.
 fn bad(message: impl Into<String>) -> Status {
     Status::invalid_argument(message)
+}
+
+/// Check a `oneof` arm that carries no payload.
+///
+/// [`pb::Unit`] has exactly one value, which is the whole point of it: the arm
+/// is selected or it is not, and there is no second spelling meaning "selected
+/// but no". Any other value is a client built against a schema this server
+/// does not have, and is refused rather than read as `UNIT` — the same rule
+/// every other enum here follows.
+fn unit(value: i32, what: &str) -> Result<(), Status> {
+    if pb::Unit::try_from(value) == Ok(pb::Unit::Unit) {
+        return Ok(());
+    }
+    Err(bad(format!(
+        "{what} carries {value}, and the only value it can carry is UNIT"
+    )))
 }
 
 // --- values ---------------------------------------------------------------
@@ -112,16 +129,60 @@ pub fn value_from_proto(value: &pb::Value) -> Result<Value, Status> {
     })
 }
 
-/// A row in its wire form.
+/// A stored row in its wire form: no computed values, so no split to make.
+///
+/// For a row that came out of a query that computed values, use
+/// [`row_to_proto_split`] — this one would send them as if they were columns.
 #[must_use]
 pub fn row_to_proto(row: &Row) -> pb::Row {
     pb::Row {
         values: row.values().iter().map(value_to_proto).collect(),
+        computed: Vec::new(),
+    }
+}
+
+/// A row in its wire form, with the values past `stored` sent as computed
+/// values rather than as columns.
+///
+/// The kernel's row is flat: a query's computed values sit after its table's
+/// own columns, at `width + i`, which is where `Query::computed` puts them.
+/// The wire is not, and this is where the two part company. Sending the flat
+/// row would have made the *client* compute `width + i` to read a computed
+/// value — from a width this protocol does not publish, and one that moves the
+/// day a column is added to the table. That is exactly the arithmetic
+/// `ColumnRef` removed from the request side, and it was still here on the way
+/// back; `JoinedRow` and `Group` had already been split for the same reason.
+///
+/// `stored` is the table's declared width, taken from the catalog rather than
+/// from the row, and the split is saturating: a row shorter than its table
+/// (which nothing produces today) comes back with no computed values rather
+/// than panicking, because a head node should not be able to be brought down
+/// by a row it can describe.
+#[must_use]
+pub fn row_to_proto_split(row: &Row, stored: usize) -> pb::Row {
+    let values = row.values();
+    let at = stored.min(values.len());
+    let (columns, computed) = values.split_at(at);
+    pb::Row {
+        values: columns.iter().map(value_to_proto).collect(),
+        computed: computed.iter().map(value_to_proto).collect(),
     }
 }
 
 /// The values of a wire row, without checking them against any table.
+///
+/// Refuses a row that carries computed values, which no request may: a
+/// computed value is produced by a read and is not something a client can
+/// store or look a row up by. Dropping them silently would let an insert
+/// appear to accept values it discarded.
 pub fn values_from_proto(row: &pb::Row) -> Result<Vec<Value>, Status> {
+    if !row.computed.is_empty() {
+        return Err(bad(format!(
+            "a row in this request carries {} computed value(s); computed values are \
+             produced by a read and cannot be written or looked up by",
+            row.computed.len()
+        )));
+    }
     row.values.iter().map(value_from_proto).collect()
 }
 
@@ -131,6 +192,84 @@ pub fn values_from_proto(row: &pb::Row) -> Result<Vec<Value>, Status> {
 /// table, and it produces the better message.
 pub fn row_from_proto(row: &pb::Row) -> Result<Row, Status> {
     Ok(Row::new(values_from_proto(row)?))
+}
+
+/// A wire row as the kernel's flat one: its columns, then its computed values.
+///
+/// The inverse of [`row_to_proto_split`], and the only place the two lists are
+/// put back together. A client never needs this — it reads the two lists as
+/// two lists — but the round-trip property in `tests/wire.rs` and the oracle
+/// in `tests/multi.rs` compare against kernel rows, which are flat.
+pub fn flat_row_from_proto(row: &pb::Row) -> Result<Row, Status> {
+    let mut values = row
+        .values
+        .iter()
+        .map(value_from_proto)
+        .collect::<Result<Vec<_>, _>>()?;
+    for value in &row.computed {
+        values.push(value_from_proto(value)?);
+    }
+    Ok(Row::new(values))
+}
+
+/// The primary key of `table` from a wire row, checked against the key it
+/// declares.
+///
+/// The check is the point. `GetRequest.primary_key` and
+/// `DeleteRequest.primary_keys` used to be decoded and encoded straight into a
+/// lookup, so a key of the wrong arity — or of the right arity and the wrong
+/// integer width, which encodes to different bytes because the tuple codec is
+/// type-first — found nothing and came back as `found: false`. That answer is
+/// *deliberately* indistinguishable from "a row your policy hides", which is
+/// right and is why it must not also mean "your key was malformed": a client
+/// bug, a legitimate miss and an authorisation outcome were one answer. The
+/// write path already refused by name; these two now do too.
+pub fn primary_key_from_proto(row: &pb::Row, table: &TableDef) -> Result<Vec<Value>, Status> {
+    let values = values_from_proto(row)?;
+    let types = table.primary_key_types();
+    if values.len() != types.len() {
+        return Err(bad(format!(
+            "table `{}` has a primary key of {} column(s) ({}), and this key has {}",
+            table.name(),
+            types.len(),
+            key_columns(table),
+            values.len()
+        )));
+    }
+    for (at, (value, expected)) in values.iter().zip(&types).enumerate() {
+        match value.value_type() {
+            Some(actual) if actual == *expected => {}
+            // A null cannot be in a primary key, and a value of the wrong type
+            // encodes to a different key rather than to a coerced one — the
+            // tuple codec orders type first, which is what makes it sortable.
+            // Either way the lookup would be a guaranteed miss.
+            _ => {
+                return Err(bad(format!(
+                    "column {at} of table `{}`'s primary key ({}) expects {expected}, \
+                     got {}",
+                    table.name(),
+                    key_columns(table),
+                    value.type_name()
+                )));
+            }
+        }
+    }
+    Ok(values)
+}
+
+/// A table's key columns, named, for a message about one.
+fn key_columns(table: &TableDef) -> String {
+    table
+        .primary_key()
+        .iter()
+        .map(|ordinal| {
+            table
+                .columns()
+                .get(ordinal.0)
+                .map_or("?", |column| column.name())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 // --- column references ----------------------------------------------------
@@ -979,7 +1118,7 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
         offset: query.offset as u64,
         hint: query.hint.map(|hint| pb::AccessHint {
             path: Some(match hint {
-                AccessHint::TableScan => pb::access_hint::Path::TableScan(true),
+                AccessHint::TableScan => pb::access_hint::Path::TableScan(pb::Unit::Unit as i32),
                 AccessHint::Index(id) => pb::access_hint::Path::Index(
                     table
                         .index(id)
@@ -988,6 +1127,11 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
             }),
         }),
         compute,
+        // Sent, not left absent: this is the reference client for every other
+        // one, and a reference that skips the check teaches the check is
+        // optional in practice. It also means the oracle in `tests/multi.rs`
+        // puts a fingerprint through the server on every query it runs.
+        schema: Some(fingerprint::claim(table)),
     }
 }
 
@@ -1012,6 +1156,12 @@ pub fn query_from_proto_at(
     table: &TableDef,
     index: usize,
 ) -> Result<(Query, Vec<String>), Status> {
+    // Before anything is resolved. Every ordinal below is only meaningful
+    // relative to a declaration, so checking the declaration first is the only
+    // order in which the refusal means anything: a reference that resolves
+    // against the wrong schema resolves perfectly well.
+    fingerprint::check(table, query.schema.as_ref())?;
+
     let mut warnings = Vec::new();
 
     // Computed values first, and one at a time: the `i`th is converted in a
@@ -1087,8 +1237,10 @@ pub fn query_from_proto_at(
 
     let hint = match query.hint.as_ref().and_then(|hint| hint.path.as_ref()) {
         None => None,
-        Some(pb::access_hint::Path::TableScan(true)) => Some(AccessHint::TableScan),
-        Some(pb::access_hint::Path::TableScan(false)) => None,
+        Some(pb::access_hint::Path::TableScan(value)) => {
+            unit(*value, "an access hint's `table_scan`")?;
+            Some(AccessHint::TableScan)
+        }
         Some(pb::access_hint::Path::Index(name)) => match table.index_by_name(name) {
             Some(index) => Some(AccessHint::Index(index.id())),
             None => {
@@ -1384,10 +1536,15 @@ fn algorithm_from_proto(
                 return Err(bad(format!("side {side} is not one this server knows")));
             }
         },
-        pb::join_algorithm::Algorithm::NestedLoop(true) => Some(JoinAlgorithm::NestedLoop),
-        // Same reasoning as `Freshness.latest: false`: a client that zeroed
-        // the message is not asking for a nested loop.
-        pb::join_algorithm::Algorithm::NestedLoop(false) => None,
+        pb::join_algorithm::Algorithm::NestedLoop(value) => {
+            // No `false` arm to interpret any more: `nested_loop` is a `Unit`,
+            // so a client that zeroed the message leaves `algorithm` unset and
+            // is handled above. That used to be a `bool` whose false spelling
+            // had to be read as "no algorithm forced" — a field that meant
+            // something other than what it said.
+            unit(*value, "a forced algorithm's `nested_loop`")?;
+            Some(JoinAlgorithm::NestedLoop)
+        }
     })
 }
 
@@ -1398,7 +1555,9 @@ fn algorithm_to_proto(algorithm: JoinAlgorithm) -> pb::JoinAlgorithm {
             Side::Left => pb::Side::Left as i32,
             Side::Right => pb::Side::Right as i32,
         }),
-        JoinAlgorithm::NestedLoop => pb::join_algorithm::Algorithm::NestedLoop(true),
+        JoinAlgorithm::NestedLoop => {
+            pb::join_algorithm::Algorithm::NestedLoop(pb::Unit::Unit as i32)
+        }
     };
     pb::JoinAlgorithm {
         algorithm: Some(algorithm),
@@ -1526,13 +1685,24 @@ pub fn chain_row_values(row: &ChainRow, inputs: usize) -> Vec<Option<Row>> {
 /// kernel cursors spell that differently and the wire should not. See
 /// [`crate::session::MultiCursor`], which does the flattening and the padding
 /// a chain needs.
+///
+/// `stored` is one declared table width per input, so each input's computed
+/// values are split off its *own* table rather than off whichever width came
+/// to hand. An input with no width — which cannot happen, since the widths come
+/// from the same request the row does — is sent whole rather than panicking.
 #[must_use]
-pub fn multi_row_to_proto(row: &[Option<Row>]) -> pb::JoinedRow {
+pub fn multi_row_to_proto(row: &[Option<Row>], stored: &[usize]) -> pb::JoinedRow {
     pb::JoinedRow {
         inputs: row
             .iter()
-            .map(|row| pb::JoinedInput {
-                row: row.as_ref().map(row_to_proto),
+            .enumerate()
+            .map(|(input, row)| pb::JoinedInput {
+                row: row.as_ref().map(|row| {
+                    row_to_proto_split(
+                        row,
+                        stored.get(input).copied().unwrap_or(row.values().len()),
+                    )
+                }),
             })
             .collect(),
     }
@@ -1660,13 +1830,23 @@ pub fn freshness_from_proto(freshness: Option<&pb::Freshness>) -> Result<Freshne
         return Ok(Freshness::Any);
     };
     Ok(match level {
-        pb::freshness::Level::Any(_) => Freshness::Any,
+        pb::freshness::Level::Any(value) => {
+            unit(*value, "a freshness's `any`")?;
+            Freshness::Any
+        }
         pb::freshness::Level::AtLeast(sequence) => Freshness::AtLeast(ReadToken::new(*sequence)),
-        pb::freshness::Level::Latest(true) => Freshness::Latest,
-        // `latest: false` is what a client that zeroed the field sends. It is
-        // not a request for the writer, and reading it as one would send every
-        // such read to the scarcest resource in the deployment.
-        pb::freshness::Level::Latest(false) => Freshness::Any,
+        // There is no longer a `latest: false` to reinterpret. It used to be
+        // read as `ANY` — with the right reason, since it is what a client
+        // that zeroed the struct sent, and routing every such read to the
+        // writer would point the whole fleet at the scarcest resource in the
+        // deployment — but the outcome was a wire that said "the writer" and
+        // meant "any replica". `Unit` removes the spelling instead of
+        // reinterpreting it: a client with nothing to say leaves the message
+        // absent, which has always meant `ANY`.
+        pb::freshness::Level::Latest(value) => {
+            unit(*value, "a freshness's `latest`")?;
+            Freshness::Latest
+        }
     })
 }
 
@@ -1674,9 +1854,9 @@ pub fn freshness_from_proto(freshness: Option<&pb::Freshness>) -> Result<Freshne
 #[must_use]
 pub const fn freshness_to_proto(freshness: Freshness) -> pb::Freshness {
     let level = match freshness {
-        Freshness::Any => pb::freshness::Level::Any(true),
+        Freshness::Any => pb::freshness::Level::Any(pb::Unit::Unit as i32),
         Freshness::AtLeast(token) => pb::freshness::Level::AtLeast(token.sequence()),
-        Freshness::Latest => pb::freshness::Level::Latest(true),
+        Freshness::Latest => pb::freshness::Level::Latest(pb::Unit::Unit as i32),
     };
     pb::Freshness { level: Some(level) }
 }

@@ -30,7 +30,7 @@ from collections.abc import Iterable, Sequence
 from ._proto.slate.v1 import records_pb2 as pb
 from .expr import ColumnRef, Columns, Expr, aggregate_ref, computed_ref, group_key_ref
 from .scalar import Scalar
-from .schema import Table
+from .schema import Table, fingerprint_of
 
 __all__ = [
     "Agg",
@@ -127,10 +127,18 @@ class _QueryBase:
         return computed_ref(self._input, index)
 
     def _base_proto(self) -> pb.Query:
+        # The schema check rides on `Query` rather than on the request, because
+        # a join carries one `Query` per input and a client can be right about
+        # one table and wrong about another. Building it here means every
+        # shape — a plain read, a join input, an aggregate's source — carries
+        # it without each call site remembering to.
         query = pb.Query(
             table=self.table.name,
             order=self._order.value,
             compute=[s.to_proto() for s in self._compute],
+            schema=pb.SchemaCheck(
+                columns=self.table.width, fingerprint=fingerprint_of(self.table)
+            ),
         )
         if self._filter is not None:
             query.filter.CopyFrom(self._filter.to_proto())
@@ -217,7 +225,7 @@ class Query(_QueryBase):
         return self
 
     def using_table_scan(self) -> Query:
-        self._hint = pb.AccessHint(table_scan=True)
+        self._hint = pb.AccessHint(table_scan=pb.UNIT)
         return self
 
     def to_proto(self) -> pb.Query:
@@ -349,7 +357,7 @@ class AggregateQuery(_QueryBase):
         return self
 
     def using_table_scan(self) -> AggregateQuery:
-        self._hint = pb.AccessHint(table_scan=True)
+        self._hint = pb.AccessHint(table_scan=pb.UNIT)
         return self
 
     def to_proto(self) -> pb.AggregateQuery:
@@ -403,7 +411,7 @@ class JoinAlgorithm:
 
     @staticmethod
     def nested_loop() -> JoinAlgorithm:
-        return JoinAlgorithm(pb.JoinAlgorithm(nested_loop=True))
+        return JoinAlgorithm(pb.JoinAlgorithm(nested_loop=pb.UNIT))
 
     def to_proto(self) -> pb.JoinAlgorithm:
         return self._proto

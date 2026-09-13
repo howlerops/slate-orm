@@ -41,7 +41,7 @@ from slate import (
 )
 
 from .fixture import AUTHORS, BOOKS, DOCS, SALES, USERS
-from .oracle import Oracle, multiset, tag_group, tag_joined, tag_row
+from .oracle import Oracle, multiset, tag, tag_group, tag_joined, tag_row
 
 
 @pytest.fixture(scope="session")
@@ -83,16 +83,30 @@ def test_docs_null_or_like(client: Client, oracle: Oracle) -> None:
 
 def test_docs_computed(client: Client, oracle: Oracle) -> None:
     # The computed value is named as `computed(0)`, never as ordinal 4. The
-    # server adds the table's width; this side never learns it.
+    # server adds the table's width; this side never learns it — on the way
+    # out, and now on the way back too.
     q = Query(DOCS)
     q.compute(q.c.size * i64(2), upper(q.c.kind))
     q.where(q.computed(0) > i64(40)).sort(asc(q.c.id))
     rows = list(client.query(q))
-    assert [tag_row(r) for r in rows] == oracle.rows("docs_computed")
-    # And the *response* side does need the width, which is the finding: the
-    # wire returns one flat row and says the computed values are after the
-    # table's own columns.
+
+    # The oracle records what the *kernel* returns, which is one flat row with
+    # the computed values occupying ordinals after the table's width — that is
+    # the kernel's own model and it has not changed. The wire now splits them
+    # (finding 4), so the agreement to assert is that the split is lossless and
+    # in the recorded order. It is a stronger statement than the flat compare
+    # this replaces: that one could not have noticed the two halves being
+    # swapped or interleaved.
+    assert [tag_row(r) + [tag(v) for v in r.computed_values] for r in rows] == oracle.rows(
+        "docs_computed"
+    )
+
+    # And no width is involved in reaching one any more. This used to be the
+    # single place in the package that added `table.width + index`.
     assert rows[0].computed(1) == rows[0].get("kind").upper()  # type: ignore[union-attr]
+    assert tag_row(rows[0]) == oracle.rows("docs_computed")[0][: DOCS.width], (
+        "the columns half of the split is not the table's own columns"
+    )
 
 
 def test_docs_descending(client: Client, oracle: Oracle) -> None:

@@ -623,6 +623,15 @@ Built and tested:
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,
       or a row's contents would depend on the plan that fetched it
+- [x] A grouped join, and `ORDER BY`/`LIMIT` over groups — one hash-grouping
+      implementation over two sources rather than a second one, and an
+      index-only scan still serves a grouped join (`count(*)` per author reads
+      zero book rows)
+- [x] All fifteen protocol findings from the first outside client answered:
+      eleven fixed, two argued and documented, two refused with reasons. A
+      schema fingerprint on every request that names a table now catches a
+      client whose column names or types have drifted from the catalog — the
+      failure that previously filtered the wrong column and returned rows
 - [x] Joins, aggregates, `GROUP BY`/`HAVING` and computed columns on the wire.
       A column reference names a *producer* and an index inside it — an input's
       column, the nth computed value, the nth group key, the nth aggregate —
@@ -657,31 +666,16 @@ Not built:
       head node's startup by hand, because `slate-server` is a library with no
       binary — see finding 1 in
       [`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md)
-- [ ] Fourteen of the fifteen protocol findings that building that client
-      produced. One was a kernel correctness bug and is fixed; the rest are
-      open and unranked in the file, the load-bearing ones being that a client's
-      copy of the schema cannot be checked against the server's, that the
-      response side puts back the width arithmetic `ColumnRef` removed from the
-      request side, and that a primary key of the wrong arity reads as "not
-      found" rather than as a bad request
-- [ ] A grouped *join*, and `ORDER BY`/`LIMIT` over groups. Both are kernel
-      gaps rather than wire gaps — the kernel groups over a single-table cursor
-      and has no ordering over groups — so building either into the head node
-      would be a second implementation of grouping or of sorting, with nothing
-      to be an oracle against
+- [ ] A grouped join and ordered groups are not on the wire yet — the kernel
+      does both now, so this is protocol work rather than a design gap, and
+      there is no wire differential for them
+- [ ] Grouping over a `Chain`. Same grouper, same shape of row stream, not done
+- [ ] A grouped join is not *costed*: the join is planned as if its rows were
+      being returned, so a plan cheaper to group than to stream is not preferred
 - [ ] The wire's deep-nesting refusal is inherited rather than written: a
       pathologically nested expression is stopped by prost's decode recursion
       limit, and the conversion functions themselves recurse without a depth
       counter of their own
-- [ ] The planner oracle does not generate expression indexes or compute lists.
-      The covering path over one is proved by hand-written differentials — whole
-      rows, every projection, forced index against forced table scan, reads
-      counted — which is the right shape but tests the cases somebody thought
-      of, and not having that property is the whole point of an oracle
-- [ ] A scalar that reads an *earlier computed value* supplied by an index is
-      not treated as covered, though a second pass could prove it. The safe
-      direction: a covering scan wrongly claimed returns nulls, one missed only
-      reads rows it need not have
 - [ ] Correlated column statistics — selectivities still multiply, which
       assumes the columns are independent. Measured: estimates run up to 20x
       out, and the plan chosen is unchanged in every shape tested, so this is

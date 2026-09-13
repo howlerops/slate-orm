@@ -5,7 +5,7 @@
 //! here too, so a replica cannot be a way around them: there is no read path
 //! that does not go through the secured reads in this module.
 
-use crate::aggregate::{Accumulators, Aggregate, Group};
+use crate::aggregate::{Accumulators, Aggregate, Group, Grouper, Grouping};
 use crate::chain::{self, Chain, ChainCursor, ChainPlan, JoinStepPlan};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
@@ -19,8 +19,8 @@ use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use bytes::Bytes;
 use slate_schema::{ColumnDef, IndexDef, Ordinal, Row, TableDef, decode_row};
-use slate_tuple::{Direction, Value, encode_value_into};
-use std::collections::HashMap;
+use slate_tuple::Value;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// Restrict a query to the columns an aggregation actually reads.
@@ -42,6 +42,53 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         hint: query.hint,
         compute: query.compute.clone(),
     }
+}
+
+/// The join to run for a grouped read: the same join, with each side reading
+/// only the columns the grouping and the join itself actually need.
+///
+/// The mapping is the only fiddly part, and it is fiddly in a way that shows
+/// up as a null rather than an error, so the grouped-join oracle compares
+/// against a join materialised with no projection at all. What each side has
+/// to produce:
+///
+/// - the grouping columns and the aggregates' columns, which are in the joined
+///   space and are resolved back to a side by [`JoinSchema::resolve`];
+/// - the columns `Join::having` reads, for the same reason — the pair is
+///   rejected or admitted after both sides are read;
+/// - the join keys, which are already in each side's own ordinals and are what
+///   the hash build and the probe compare.
+///
+/// A side's `sort`, `limit` and `offset` are already ignored by the join, and
+/// the grouping's own `sort` names a *group*, not a row, so neither adds
+/// anything here.
+fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join {
+    let mut wanted = grouping.columns();
+    wanted.extend(join.having.columns());
+    let mut left: BTreeSet<Ordinal> = BTreeSet::new();
+    let mut right: BTreeSet<Ordinal> = BTreeSet::new();
+    for ordinal in wanted {
+        match schema.resolve(ordinal) {
+            Some((Side::Left, at)) => {
+                left.insert(at);
+            }
+            Some((Side::Right, at)) => {
+                right.insert(at);
+            }
+            // Outside the joined space. Nothing to read for it, and the row it
+            // would have come from does not exist; it reads as null on every
+            // path alike.
+            None => {}
+        }
+    }
+    for key in &join.on {
+        left.insert(key.left);
+        right.insert(key.right);
+    }
+    let mut narrowed = join.clone();
+    narrowed.left.projection = Projection::Columns(left.into_iter().collect());
+    narrowed.right.projection = Projection::Columns(right.into_iter().collect());
+    narrowed
 }
 
 /// A row as it is stored: its key already decoded, its body still bytes.
@@ -193,82 +240,72 @@ impl<'a> SecuredReads<'a> {
         Ok(accumulators.finish())
     }
 
-    /// Compute `aggregates` per distinct combination of `group`.
-    pub(crate) async fn group_by(
+    /// Group the rows `query` selects.
+    ///
+    /// The rows come from an ordinary secured cursor and the grouping is
+    /// [`Grouper`]'s, which is also what a grouped join uses. One
+    /// implementation, two sources.
+    pub(crate) async fn grouped(
         self,
         context: &SecurityContext,
         table: &'a TableDef,
         query: &Query,
-        group: &[Ordinal],
-        aggregates: &[Aggregate],
-        having: &Expr,
+        grouping: &Grouping,
     ) -> Result<Vec<Group>> {
+        let columns: Vec<Ordinal> = grouping.group.clone();
         let mut cursor = self
-            .execute(context, table, &narrowed(query, aggregates, group))
+            .execute(
+                context,
+                table,
+                &narrowed(query, &grouping.aggregates, &columns),
+            )
             .await?;
-
-        // Grouped in a map rather than by sorting first: the input is not
-        // ordered by the grouping columns in general, and requiring that would
-        // mean sorting every row to save a lookup per row.
-        //
-        // Hashed on the *encoded* key rather than ordered on the values. An
-        // ordered map gives group order for free, which was worth having until
-        // it was measured: a million distinct keys cost O(log k) comparisons
-        // of a `Vec<Value>` on every row, and the same query with a filter
-        // that cut the keys down ran nearly four times faster. Encoding the
-        // key once per row and hashing the bytes replaces those comparisons
-        // with one hash, and it is the same equality an index uses — two rows
-        // group together exactly when they would collide in a key.
-        let mut groups: HashMap<Vec<u8>, (Vec<Value>, Accumulators)> = HashMap::new();
-        let mut encoded = Vec::new();
+        let mut grouper = Grouper::new(grouping);
         while let Some(row) = cursor.next().await? {
-            encoded.clear();
-            for ordinal in group {
-                let value = row.get(*ordinal).unwrap_or(&Value::Null);
-                encode_value_into(&mut encoded, value, Direction::Asc);
-            }
-            match groups.get_mut(encoded.as_slice()) {
-                Some((_, accumulators)) => accumulators.push(&row)?,
-                None => {
-                    let key: Vec<Value> = group
-                        .iter()
-                        .map(|c| row.get(*c).cloned().unwrap_or(Value::Null))
-                        .collect();
-                    let mut accumulators = Accumulators::new(aggregates);
-                    accumulators.push(&row)?;
-                    groups.insert(encoded.clone(), (key, accumulators));
-                }
-            }
+            grouper.push(&row)?;
         }
+        Ok(grouper.finish())
+    }
 
-        // Sorted once at the end rather than maintained throughout. The order
-        // is the same one the ordered map produced — the encoding sorts as the
-        // values do, which is the property the whole keyspace rests on — so
-        // this is still deterministic, and callers that depended on the order
-        // still get it.
-        let mut out: Vec<(Vec<u8>, Group)> = groups
-            .into_iter()
-            .map(|(encoded, (key, accumulators))| {
-                (
-                    encoded,
-                    Group {
-                        key,
-                        values: accumulators.finish(),
-                    },
-                )
-            })
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+    /// Group the rows a *join* produces.
+    ///
+    /// Grouping sits above the join rather than beside it: it consumes the
+    /// joined row stream, in the ordinal space [`JoinSchema`] defines, which is
+    /// the same space `Join::having` is written in. A group key can therefore
+    /// span both sides, which is the whole reason this is not two calls.
+    ///
+    /// Both sides are still planned and secured individually — this is the
+    /// join's own cursor, not a privileged read — so a policy on either side
+    /// applies to the groups exactly as it applies to the rows.
+    pub(crate) async fn grouped_join(
+        self,
+        context: &SecurityContext,
+        left_table: &'a TableDef,
+        right_table: &'a TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        let schema = JoinSchema::of(left_table, right_table);
+        // Each side reads only what the grouping and the join itself need,
+        // which is what lets an index-only scan serve a grouped join the way it
+        // already serves a grouped table scan. A side's limit and offset are
+        // ignored here as they are ignored everywhere else in a join: they
+        // would change the answer rather than page it.
+        let narrowed = narrowed_join(join, &schema, grouping);
+        let plan = self.plan_join(context, left_table, right_table, &narrowed)?;
+        let mut cursor =
+            JoinCursor::open(self, context, left_table, right_table, &narrowed, &plan).await?;
 
-        // `HAVING` filters groups, not rows, so it runs here and reads the
-        // aggregates rather than the columns. A group's key comes first and
-        // its aggregates after, in one ordinal space, so the same predicate
-        // language serves without learning anything new.
-        Ok(out
-            .into_iter()
-            .map(|(_, group)| group)
-            .filter(|group| matches!(having, Expr::True) || having.admits(&group.as_row()))
-            .collect())
+        let mut grouper = Grouper::new(grouping);
+        while let Some(joined) = cursor.next().await? {
+            // Flattened rather than grouped through a two-sided view, because
+            // the accumulators take a `Row` and a second row-like type
+            // threaded through them would be a second place for the null rules
+            // to drift. `JoinedRow::flatten` reports a missing side as nulls,
+            // which is what the view reports too.
+            grouper.push(&joined.flatten(&schema))?;
+        }
+        Ok(grouper.finish())
     }
 
     /// Choose how to join two tables.

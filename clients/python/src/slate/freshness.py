@@ -98,7 +98,7 @@ class Freshness:
     @staticmethod
     def any() -> Freshness:
         """Any replica, however far behind. The cheapest read."""
-        return Freshness(pb.Freshness(any=True))
+        return Freshness(pb.Freshness(any=pb.UNIT))
 
     @staticmethod
     def at_least(token: ReadToken | int) -> Freshness:
@@ -114,7 +114,7 @@ class Freshness:
         replica, which is why it is a distinct level rather than a very large
         `at_least`.
         """
-        return Freshness(pb.Freshness(latest=True))
+        return Freshness(pb.Freshness(latest=pb.UNIT))
 
     def to_proto(self) -> pb.Freshness:
         return self._proto

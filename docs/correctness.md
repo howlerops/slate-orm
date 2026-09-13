@@ -91,6 +91,113 @@ All three are pinned as named tests as well as being reachable by the
 generator, because a property test only rediscovers a bug if it happens to
 generate that shape again.
 
+### Teaching it about expression indexes
+
+The generator produced neither computed values nor the indexes over them, so
+the newest and least-travelled path in the executor — a covering scan that
+takes a value out of the index entry rather than computing it from a row — was
+proved only by hand-written differentials. Those are the right shape and are
+still there; the point of an oracle is to cover the shapes nobody thought of.
+
+It now generates both. The table carries two expression indexes over a
+*nullable* column, one producing text and one an integer and one of them
+declared **descending**, and the rows are arranged to be awkward for them: the
+column is null a quarter of the time, so `lower(null)` is a live entry rather
+than a missing one; it is spelled in two cases, so `lower` is not the column
+back again; and it comes in two lengths, so `length` is not one value for the
+whole table. A fixture where the expression is the identity would let a
+covering scan hand back the source column and still agree with everything.
+
+Queries are drawn as a compute list *first* and everything else against it. A
+predicate on the third computed value of a query that computes one is not a
+hard case, it is a null, and the type each position produces is carried
+alongside because `Value`'s order is type-first — an integer compared against a
+string answers the same way for every row and tests nothing. Seven compute
+lists between them reach: the value an expression index supplies; two computed
+values where only one can come out of the entry; a computed value no expression
+index has, which an *ordinary* index can still cover because it holds what the
+expression reads; a value computed from an **earlier computed value**; and the
+index's own value sitting **second**, behind one the primary key can produce.
+
+The weights were measured rather than chosen. A covering scan needs every leaf,
+every sort key and every projected column to be something the entry holds, so
+the chance of reaching one falls off as a power of the chance that any single
+leaf is a table column: at equal weights the generator reached an index-only
+scan of an expression index in 3% of cases, which would have left the whole
+extension resting on a handful of samples. At four to one it reaches one in
+19%, and a generator-quality test holds it to 10% — along with the *control*,
+a query reaching for the source column with the same index available, at the
+same rate, because if the planner ever called that one covering the two paths
+would part company in the differential.
+
+**What it catches that the hand-written tests do not.** Nine mutations were
+reintroduced to find out, and most of them — evaluating the computed value from
+the rebuilt row instead of reading the entry, letting an expression index claim
+it holds the column its expression reads, crediting *every* computed value to
+an expression index, filling a row rebuilt from an entry with columns outside
+the projection — fail the hand-written differentials as well. That is a good
+result for whoever wrote those and a poor demonstration, so it is stated
+plainly.
+
+One is not: making the planner ignore an expression index's **declared key
+direction** leaves the entire rest of the kernel suite green, including all
+forty-eight partial- and expression-index tests, and fails the oracle on the
+first run:
+
+```
+index IndexId(15) disagreed with a table scan for
+  Or([score = 0.0, kind = "kind-0"]) computing [Length(Column(Ordinal(4)))]
+```
+
+Nothing hand-written declares a descending expression index, because an
+ascending one is what anybody writing a fixture reaches for. A bound for a
+descending key has to be built inverted, and getting it backwards produces an
+empty range rather than a wrong one — the failure that reads as "no rows
+matched".
+
+Soaked afterwards at 20,000 cases on the differential and 4,000 on the other
+two, it found nothing. That is the useful result: it says the generators are
+the limit rather than the case count.
+
+### Covering a value computed from another computed value
+
+The rule was deliberately conservative in one place, and the note said a second
+pass could prove it. It now does. A scalar may read an earlier computed value,
+and `SELECT id WHERE lower(title) = 'x' COMPUTING lower(title), length(#0)` is
+answerable from an entry keyed on `lower(title)` even though nothing in the
+entry holds `title` — the old rule stopped at the first hop, saw a computed
+ordinal where it wanted a column, and read every row to recompute a value the
+entry had already answered for.
+
+It is a forward pass over the compute list: position `i` is available when the
+index keys on it, or when everything it reads is. Iterative rather than
+recursive, so a list where each element reads the two before it costs `n` steps
+and not `2^n`. Two things make it sound, and both are properties of code
+elsewhere rather than of this function:
+
+- the executor's `extend` walks the same slice in the same order, so an earlier
+  position really is in place when a later one reads it;
+- `covers` demands **every** computed position, not only the projected ones,
+  because every computed value is evaluated on every row whether or not
+  anything references it. That is what makes the pass safe by construction: a
+  chain can only be claimed when its first link can be, and the first link can
+  only be claimed when the entry supplies it.
+
+A forward reference — a scalar naming a *later* computed value — is refused
+rather than reasoned about. It reads as null on every path alike, so proving it
+would be correct and would mean modelling evaluation order in the planner. A
+refusal costs a row read.
+
+The honest note on what this is worth: the pass **cannot** produce a wrong
+answer that reading the entry wrongly does not already produce, for the reason
+above, and the oracle confirms as much — the mutation that removes the pass
+leaves the differential green and fails only the reads-counted test that says
+the scan is index-only. So the second pass is a performance change with a
+correctness argument, not a correctness change, and it is tested as one: a
+chained compute list is asserted to plan as `Index Only`, to read **zero** rows,
+and to return the same whole rows as a forced table scan, with a control one
+link along where the chain reaches `length(body)` and must stop.
+
 ## The row-level-security matrix
 
 `crates/slate-kernel/tests/rls_matrix.rs`
@@ -298,6 +405,35 @@ refusal is now pinned by name, because a later change that "supports" the
 combination by quietly falling back to a hash join would pass every other test
 in the file.
 
+**And what it did not generate, which cost a wrong answer.** The file produced
+a filter per side and no cross-side condition — no `Join::having` — for as long
+as it existed. That single omission hid a real bug, and the reason is worth
+stating because it is the whole argument for oracles: without a condition over
+the formed pair, *every* probe that finds a bucket produces a pair, so "this
+bucket was probed" and "this built row paired with something" are the same
+statement. The hash join recorded the first and owed the caller the second.
+
+With a condition they come apart. `having` is evaluated per pair, so it can
+admit the pair with one row of a bucket and reject it with the next — and the
+rejected row was swallowed by its neighbour's success, never drained, never
+returned. A right outer join over the fixture came back with 30 rows building
+the left side and 29 building the right: same query, same data, one book
+missing, decided by a cost estimate.
+
+It needed three things at once, which is why nothing hand-written had it:
+building the *right* side (with the left built, right rows stream and each one
+that finds no admitted pair is emitted immediately), a right or full outer join
+(nothing else drains at all), and a condition that splits a bucket. The fix
+flags the built row that paired rather than the bucket it lives in. It is pinned
+by name as well as generated, and the generator now draws a cross-side condition
+over two columns the join is not keyed on, one of which is null a third of the
+time so the rejection also arrives by three-valued logic rather than only by
+comparison.
+
+It was found by the *grouped-join* oracle, not by this one — a grouped join runs
+the same three algorithms and requires them to agree, and one of them counted
+one book fewer. Reproducing it without grouping in the way took four lines.
+
 **Chains.** A three-table chain must match a hand-written triple loop, and a
 one-step chain must match the equivalent two-way join — the two paths exist for
 different reasons and must not have drifted apart.
@@ -325,6 +461,77 @@ bound for the descending column has to be built inverted.
 The same differential property, over that schema, plus one specific to it:
 no access path, on any index, in either direction, may return another tenant's
 row. Twelve thousand cases, nothing found.
+
+## Grouping over a join, and ordering over groups
+
+`crates/slate-kernel/tests/grouped_join_oracle.rs`
+
+Two gaps closed at once. They fail in opposite ways, so they get different
+oracles.
+
+**A grouped join** consumes the joined row stream rather than a single table's
+cursor, in the ordinal space `JoinSchema` defines — the space `Join::having` was
+already written in. Everything that can go wrong there produces a *plausible*
+group rather than an error: a key resolved to the wrong side reads as null and
+collapses every row into one group; a projection narrowed too far reads as null
+and does the same; an outer join's missing side is null and has to group *as*
+null rather than vanish. A table of numbers comes back either way.
+
+So the property is a fold written out over a join materialised with **no
+projection at all**, which is what makes a narrowing that dropped a needed
+column visible. The fold is deliberately different in two ways from the thing it
+checks: it buckets by comparing `Value`s where the implementation hashes an
+encoded key, and it orders by `Value`'s own ordering where the implementation
+sorts the bytes. That the two agree is the codec's central property, so using it
+here is a second statement of the answer rather than the same one. Its `match`
+over `Aggregate` is exhaustive, so a new variant fails to compile rather than
+going untested. Separately, all three join algorithms and the planner's own
+choice must produce the same groups, which assumes nothing about what a group
+means — a hash build flags its buckets and drains the unprobed ones at the end,
+a nested loop streams, and the two see the rows in genuinely different orders.
+
+**Ordering over groups** could not use the row path's bounded top-N heap, and
+the reason is worth stating because it is not "it did not fit". That heap exists
+for memory: sorting a million rows to return ten holds a million decoded rows.
+Groups are all in memory before the first one can be returned — nothing can be
+known about the last group until the last row has been read — so a heap there
+would save nothing and would be a second sorting implementation to keep in step
+with the first. What *is* shared is the comparator, so direction and null
+placement cannot drift between rows and groups. The oracle is that comparator
+written out again, over the group set filtered, sorted and sliced in the test:
+the order of those three is SQL's and is a statement this test makes rather than
+one it inherits, because taking a window before ordering returns a different set
+of groups rather than the same set differently arranged.
+
+Ties are pinned rather than left arbitrary. The groups arrive in encoded-key
+order and the sort is stable, so `ORDER BY count(*) DESC LIMIT 3` over groups
+that tie has one answer and not six — the same rule every oracle here follows by
+appending the primary key to a generated sort.
+
+**What it found.** The algorithm-agreement property failed on its first run
+carrying a cross-side condition, and the bug was not in the grouping: a hash
+join building the right side lost a book from a right outer join. It is written
+up under "Joins, chains and aggregates" above, where the generator that should
+have caught it now lives.
+
+One more thing is measured rather than asserted, because it is the reason
+grouping belongs in the kernel at all: a grouped join reads only the columns the
+grouping needs. `count(*)` per author needs nothing off a book but the join key,
+which the index on it holds, so **no** book row is read; asking for `sum(pages)`
+in the same shape reads all thirty. The zero is next to the number in the same
+run, so it is a measurement and not a constant.
+
+### The one mutation that survived
+
+Replacing the stable sort of the groups with `sort_unstable_by` fails nothing —
+including a test written specifically to pin the tie order, over thirty groups
+at seven distinct levels. Measured rather than assumed: on this toolchain
+`sort_unstable_by` reorders that pattern for a `Vec<usize>` and does **not**
+reorder it for a struct the size of a `Group`. So the mutation is not observable
+at any size this fixture reaches, which makes it a fact about the standard
+library's sort rather than a missing test. The stable sort stays, because the
+guarantee wanted is that the tie order is a property of this code and not of
+whichever sort `std` ships.
 
 ## Writer handover
 
@@ -797,11 +1004,17 @@ what genuinely has not been done.
 - **Partial indexes in the derive macro.** `#[derive(Record)]` cannot declare
   one; the schema builder can. A struct attribute for it is a small piece of
   work that has not been done.
-- **Expression indexes in the planner oracle.** The generator produces neither
-  computed values nor the indexes over them, so the covering path is covered by
-  hand-written differentials rather than by random queries. Those differentials
-  are the right shape — every path, whole rows — but they test the shapes
-  somebody thought of, which is the property the oracle exists to not have.
+- **Grouped joins on the wire.** The kernel can group over a join and order
+  over groups; `slate-server` cannot yet ask for either, so the wire has no
+  differential against the kernel for them the way it has for every other
+  shape. Until it does, the head node's grouping remains single-table.
+- **Grouping over a chain.** Three tables and up join through `Chain`, which
+  materialises each step; grouping over one would be the same `Grouper` over
+  the same kind of row stream, and has not been done. A caller can chain and
+  group only by doing the second half itself.
+- **A grouped join's cost.** Grouping is not costed: the join is planned as if
+  its rows were being returned, so a plan that is cheaper to group than to
+  stream is not preferred. Nothing measures how far out that is.
 - **Expression statistics at scale, or on storage.** The improvement is measured
   on an in-memory fixture of two thousand rows. Nothing says how a reservoir
   sample of a computed value behaves on a table where `analyze` is itself a long

@@ -8,13 +8,17 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const SCHEMA: &str = "proto/slate/v1/records.proto";
+    const STATUS: &str = "proto/google/rpc/status.proto";
+    const DETAILS: &str = "proto/google/rpc/error_details.proto";
 
-    let descriptors = protox::compile([SCHEMA], ["proto"])?;
+    let descriptors = protox::compile([SCHEMA, STATUS, DETAILS], ["proto"])?;
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
         .compile_fds(descriptors)?;
 
     println!("cargo:rerun-if-changed={SCHEMA}");
+    println!("cargo:rerun-if-changed={STATUS}");
+    println!("cargo:rerun-if-changed={DETAILS}");
     Ok(())
 }

@@ -128,3 +128,70 @@ class Table:
 
     def column_types(self) -> tuple[ValueType, ...]:
         return tuple(c.type for c in self.columns)
+
+
+# --- the schema check -------------------------------------------------------
+#
+# Finding 2 was that nothing could catch a client's declaration drifting from
+# the server's catalog. `ColumnRef` removed the *cross-table* width arithmetic
+# from the request side, but the within-table ordinal stayed an unverifiable
+# local guess: a `Table` naming `category` where the server has `kind` filters
+# the wrong column, and every layer accepts it because it is a well-formed
+# reference to a real ordinal.
+#
+# The server now takes a `SchemaCheck` on every read and write. This is the
+# client half. The canonical form is defined by `crates/slate-server/src/
+# fingerprint.rs`, and the test file there prints this same algorithm in Python
+# as its cross-implementation pin — so if these two ever disagree, that test
+# fails on the Rust side rather than this failing silently here.
+
+#: FNV-1a 64. Chosen by the server; restated rather than imported because a
+#: fingerprint whose two implementations share code proves nothing.
+_FNV_OFFSET = 0xCBF29CE484222325
+_FNV_PRIME = 0x100000001B3
+_MASK = 0xFFFFFFFFFFFFFFFF
+
+
+def _fnv1a(data: bytes) -> int:
+    h = _FNV_OFFSET
+    for byte in data:
+        h ^= byte
+        h = (h * _FNV_PRIME) & _MASK
+    return h
+
+
+def _length_prefixed(text: str) -> bytes:
+    """`text` as `<len>:<bytes>`.
+
+    Length-prefixed rather than delimited so that no column name can be spelled
+    to look like the end of one field and the start of another.
+    """
+    raw = text.encode()
+    return str(len(raw)).encode() + b":" + raw
+
+
+def _digits(n: int) -> bytes:
+    return str(n).encode() + b";"
+
+
+def fingerprint_of(table: Table) -> int:
+    """This client's claim about `table`, in the server's canonical form.
+
+    Only what a client can address and can be wrong about: the table name, and
+    per ordinal the column's name and declared type, plus the primary key and
+    the column count. Nullability, `DEFAULT`, `CHECK`, foreign keys and indexes
+    address no column, so they are deliberately absent — hashing them would
+    make an unrelated migration break every client, which is the failure mode
+    that makes a fingerprint worse than none.
+    """
+    out = b"slate.v1.schema/1" + _length_prefixed(table.name)
+    for ordinal, column in enumerate(table.columns):
+        out += _digits(ordinal) + _length_prefixed(column.name) + _length_prefixed(column.type.value)
+    key_ordinals = [
+        next(i for i, c in enumerate(table.columns) if c.name == name)
+        for name in table.primary_key
+    ]
+    out += b"key" + _digits(len(key_ordinals))
+    for k in key_ordinals:
+        out += _digits(k)
+    return _fnv1a(out + b"columns" + _digits(len(table.columns)))

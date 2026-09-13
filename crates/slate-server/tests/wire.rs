@@ -440,18 +440,38 @@ fn an_absent_freshness_means_any_replica_will_do() {
     use slate_kernel::Freshness;
     use slate_server::convert::freshness_from_proto;
     assert_eq!(freshness_from_proto(None).unwrap(), Freshness::Any);
+}
 
-    // A client that zeroed the message sends `latest: false`. Reading that as
-    // a request for the writer would send every such read to the scarcest
-    // resource in the deployment.
-    let zeroed = pb::Freshness {
-        level: Some(pb::freshness::Level::Latest(false)),
-    };
-    assert_eq!(
-        freshness_from_proto(Some(&zeroed)).unwrap(),
-        Freshness::Any,
-        "`latest: false` is not a request for the writer"
-    );
+/// `Freshness` used to have two ways to spell "any": the `any` arm, and the
+/// `latest` arm set to false — which is what a client that zeroed the struct
+/// sent. The server read the second as `ANY`, for the right reason (routing
+/// every zeroed read to the writer would point the fleet at the scarcest
+/// resource in the deployment) and with the wrong outcome: a wire field that
+/// meant something other than what it said, in a file whose opening argument
+/// is that an unset `oneof` must never be defaulted.
+///
+/// Both arms are `Unit` now, so the false spelling does not exist. What a
+/// client with nothing to say sends is an absent message, which has always
+/// meant `ANY` — the assertion above.
+#[test]
+fn a_freshness_level_cannot_be_spelled_as_a_selected_arm_meaning_no() {
+    use slate_server::convert::freshness_from_proto;
+
+    // The only value `Unit` has. Anything else is a client built against a
+    // schema this server does not have, and is refused rather than read as
+    // `UNIT` — which is what makes the false spelling unrepresentable rather
+    // than merely discouraged.
+    for arm in [
+        pb::freshness::Level::Latest(1),
+        pb::freshness::Level::Any(1),
+        pb::freshness::Level::Latest(-1),
+    ] {
+        let message = pb::Freshness { level: Some(arm) };
+        let status = freshness_from_proto(Some(&message))
+            .expect_err("a Unit arm carrying anything but UNIT is refused");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        assert!(status.message().contains("UNIT"), "{}", status.message());
+    }
 }
 
 // --- computed values ------------------------------------------------------

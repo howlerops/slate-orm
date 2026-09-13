@@ -575,6 +575,64 @@ wrong first:
   0.6–5.1 µs, inside noise.
 - **Controls are measured before the workload that changes the data.** See the
   replica finding below, which reversed once this was fixed.
+- **The listening socket had Nagle's algorithm on.** Found last, and it was in
+  every streaming number this harness had produced. It has its own section
+  immediately below, because until it is read the batch-size table underneath
+  cannot be.
+
+### 0. A fourth harness bug, and it was inside every stream measurement
+
+`tonic::transport::Server` sets `TCP_NODELAY` by default. Its own
+documentation for `serve_with_incoming` says the setting *"is ignored when
+using this method"* — and `serve_with_incoming` is exactly what a harness that
+lets the operating system choose its port has to call. So every measurement in
+this crate, and every streaming figure in the section below, was taken against
+a server socket with **Nagle's algorithm enabled**, which nothing reaching a
+deployment through `Server::serve` would have.
+
+Nagle holds a small write back until the previous one has been acknowledged,
+and Linux delays acknowledgements. A unary reply is a single write and never
+notices. A stream is at least two — the header message that names the replica,
+then the first batch of rows — and when the second is not ready in the same
+poll as the first, it waits.
+
+Both states, same fixture, same process, four clients, with the kernel's own
+delayed-acknowledgement counter beside them:
+
+| | ops/s | p50 | p99 | worst | delayed ACKs /op |
+|---|---:|---:|---:|---:|---:|
+| Nagle on, unary `Get` | 7,109 | 102.2 µs | 323.0 µs | 8.47 ms | **0.00** |
+| Nagle on, 1-row query (`Point Get` plan) | 58 | 601.0 µs | 48.01 ms | 48.18 ms | **0.45** |
+| Nagle on, 10-row query (scan plan) | 22 | **44.01 ms** | 48.05 ms | 48.05 ms | **1.16** |
+| `TCP_NODELAY`, unary `Get` | 7,010 | 109.3 µs | 294.2 µs | 6.41 ms | 0.00 |
+| `TCP_NODELAY`, 1-row query | 4,210 | 229.9 µs | 377.3 µs | 4.24 ms | 0.00 |
+| `TCP_NODELAY`, 10-row query | 3,672 | 267.2 µs | 374.8 µs | 1.01 ms | 0.00 |
+
+**A ten-row streaming query went from 44.01 ms to 267 µs — 165×.** The unary
+call is the control and it did not move: same socket, same server, same
+authentication and conversion, and only the *shape of the response* differs.
+
+Those rows were taken while the machine was at load 8.9, which is why the
+one-row query's median is 601 µs there. On a quieter pass the same three
+Nagled measurements came out at 190 µs, 243 µs and **44.00 ms** — so the scan
+plan stalls on essentially every call and the `Point Get` plan stalls only
+sometimes, which is what a race between two writes reaching the socket should
+look like. The 44 ms figure is the one that does not move.
+
+The last column is why this is a mechanism and not a coincidence.
+`TcpExt: DelayedACKs` counts each time the kernel's delayed-acknowledgement
+timer expires — the event a Nagled sender is waiting on. It is **zero per
+operation for every unary call and for every call once `TCP_NODELAY` is set**,
+and roughly one per operation for exactly the two shapes that stall. Nothing
+about the head node predicts that pattern; the socket option does.
+
+**This is not only the harness.** `crates/slate-serverd`, the daemon that
+actually ships, serves with `serve_with_incoming_shutdown` over a bare
+`TcpListenerStream`, which ignores `tcp_nodelay` for the same reason. On the
+evidence above that is tens of milliseconds on every streaming response. It is
+reported rather than fixed here: that crate is outside this benchmark's
+ownership, and the fix is one line — `set_nodelay(true)` on each accepted
+connection, which is what `harness::serve` now does.
 
 ### 1. A request over gRPC costs about 130 µs, and it is almost all transport
 
@@ -644,114 +702,152 @@ the head node's 10–23 µs grows not at all — so 130 µs is an *upper* bound 
 head node's share of a request and a *lower* bound on what a remote caller
 sees.
 
-### 2. Stream throughput saturates at a batch of about 64, and 256 is fine
+### 2. Stream throughput saturates at a batch of about 32, and 256 is fine
 
-20,000 rows, whole-table scan, `Limits::rows_per_message` swept. The in-process
-floor — the same scan with no head node in front of it — is **22.5 ms
-(890,000 rows/s)**.
+20,000 rows, whole-table scan, `Limits::rows_per_message` swept, 21 runs.
+**Re-measured with `TCP_NODELAY` set** — the table in earlier revisions of this
+document was taken through the Nagled socket of section 0 and its first-row
+column was measuring the kernel's acknowledgement timer. The in-process floor
+— the same scan with no head node in front of it — is **26.15 ms
+(765,000 rows/s)** in this run.
 
-Drain time is quoted as the **best of 21 runs** and first-row latency as the
-**median of 21**, for a reason given directly below: the drain column is
-bimodal and its median measures the machine, while the first-row column is
-stable and its best is bimodal. Both are printed by the harness.
+Drain time is quoted as the **best of 21** and first-row latency as **both** the
+median and the best of 21, because on a shared box the median of either column
+carries whatever else was running and the best does not.
 
-| batch | messages | drain, best of 21 | rows/s | first row, median |
-|---:|---:|---:|---:|---:|
-| 1 | 20,001 | 140.6 ms | 142,000 | 370 µs |
-| 8 | 2,501 | 64.1 ms | 312,000 | 398 µs |
-| 32 | 626 | 46.5 ms | 430,000 | 490 µs |
-| 64 | 314 | 79.7 ms | 251,000 | 631 µs |
-| 96 | 210 | 37.1 ms | 540,000 | 683 µs |
-| 112 | 180 | 37.5 ms | 533,000 | 674 µs |
-| 127 | 159 | 75.9 ms | 264,000 | **3.22 ms** |
-| 128 | 158 | 75.9 ms | 264,000 | 3.14 ms |
-| **256** | **80** | **75.9 ms** | **263,000** | **3.07 ms** |
-| 512 | 41 | 35.8 ms | 558,000 | 3.71 ms |
-| 1024 | 21 | 36.4 ms | 550,000 | 4.98 ms |
-| 4096 | 6 | 37.1 ms | 540,000 | 14.62 ms |
-| 16384 | 3 | 36.4 ms | 550,000 | 36.97 ms |
+| batch | messages | drain, best of 21 | rows/s | first row, median | first row, best |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 20,001 | 70.7 ms | 283,000 | 596 µs | 366 µs |
+| 8 | 2,501 | 52.9 ms | 378,000 | 995 µs | 407 µs |
+| 32 | 626 | 44.4 ms | 451,000 | 3.73 ms | 577 µs |
+| 64 | 314 | 43.3 ms | 462,000 | 1.79 ms | 573 µs |
+| 96 | 210 | 43.0 ms | 466,000 | 1.16 ms | 524 µs |
+| 112 | 180 | 42.3 ms | 473,000 | 815 µs | 547 µs |
+| 127 | 159 | 43.6 ms | 459,000 | 1.13 ms | 826 µs |
+| 128 | 158 | 44.5 ms | 449,000 | 1.39 ms | 773 µs |
+| 129 | 157 | 41.5 ms | 482,000 | 1.44 ms | 824 µs |
+| 160 | 126 | 41.8 ms | 479,000 | 2.58 ms | 834 µs |
+| **256** | **80** | **41.3 ms** | **485,000** | **2.62 ms** | **1.13 ms** |
+| 512 | 41 | 40.5 ms | 494,000 | 2.26 ms | 1.74 ms |
+| 1024 | 21 | 40.7 ms | 492,000 | 3.00 ms | 2.68 ms |
+| 4096 | 6 | 38.9 ms | 514,000 | 10.95 ms | 9.26 ms |
+| 16384 | 3 | 40.9 ms | 489,000 | 41.28 ms | 37.00 ms |
 
-Read the drain column with care. It is **bimodal at roughly 36 ms and 76 ms
-independent of batch size**, and which mode a run lands in varies between
-sweeps for the *same* batch size — batch 64 gave 36.1 ms in one sweep and
-79.7 ms in another. That is the machine, not the batch size. Taking the lowest
-value observed for each size across five sweeps gives the shape that survives:
+Two things changed when the socket did, and both are corrections to what this
+section used to say.
 
-| batch | 1 | 8 | 32 | ≥64 |
-|---|---:|---:|---:|---:|
-| best drain, 20,000 rows | 66 ms | 50 ms | 45 ms | **34–38 ms** |
+**The drain column is no longer bimodal.** It used to sit at either ~36 ms or
+~76 ms with no relation to the batch size, and that was written down as "the
+machine". It was not: with `TCP_NODELAY` the best drain is **38.9–44.5 ms at
+every batch size from 32 up**, a spread of 14% rather than a factor of two. The
+bimodality was the Nagled socket, and calling it the machine was wrong.
 
-**Throughput saturates by a batch of about 64 and does not improve again up to
-16,384.** Against the 22.5 ms in-process floor, streaming 20,000 rows over gRPC
-adds ~12 ms at batch ≥64 (**0.6 µs/row**) and ~43 ms at batch 1
-(**2.1 µs/row**). Per-message framing is real and it is paid off by 64.
+**Throughput saturates by a batch of about 32, not 64.** Against the 26.15 ms
+in-process floor, streaming 20,000 rows over gRPC adds ~16 ms at batch ≥32
+(**0.8 µs/row**) and ~44 ms at batch 1 (**2.2 µs/row**). Per-message framing is
+real, it costs about 1.4 µs a message, and it is paid off by 32.
 
-The other half of the trade is first-row latency, and it does *not* behave the
-way the comment beside the constant assumes. Above a batch of about 1,000 it
-grows with the batch, as producing that many rows must: 5.0 ms at 1,024,
-14.6 ms at 4,096, **37.0 ms at 16,384**. Below that there is a step that is not
-gradual at all.
+First-row latency is the other half of the trade, and above a batch of about
+1,000 it grows with the batch as producing that many rows must: 2.7 ms at 1,024,
+9.3 ms at 4,096, **37.0 ms at 16,384**.
 
-#### The step at 125 rows, which is honestly not explained
+#### The step at 125 rows: it was the socket
 
-First-row latency is flat at 620–680 µs up to a batch of 124 and jumps to
-~2.9 ms at 126. Located to the row:
+The step was real, it was reproducible, and it was **not in the head node**.
+Setting `TCP_NODELAY` removes it.
 
-| batch | 118 | 120 | 122 | **124** | **126** | 127 | 128 | 130 | 140 |
+The measurement that settles it separates two times the earlier sweeps did not:
+the **header message**, which the head node sends before it has produced a
+single row, and the **first message carrying rows**. Routing, opening the
+cursor and the request round trip are all in the first; only making and
+shipping the batch is in the difference. That difference is a within-run
+subtraction, so it survives a busy machine in a way the absolute times do not.
+
+The difference, `first row − header`, 21 runs per point, both sockets, same
+process, same fixture:
+
+| batch | 118 | 120 | 122 | **124** | **125** | **126** | 127 | 128 | 130 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| first row, median | 624 µs | 659 µs | 678 µs | **675 µs** | **2.84 ms** | 3.32 ms | 2.96 ms | 2.92 ms | 3.25 ms |
-| the best run of 15 | 567 µs | 557 µs | 564 µs | 521 µs | 824 µs | 2.95 ms | 2.74 ms | 854 µs | 696 µs |
+| Nagle on | 272 µs | 90 µs | 89 µs | **148 µs** | **306 µs** | **264 µs** | **3.17 ms** | **2.76 ms** | 113 µs |
+| `TCP_NODELAY` | 181 µs | 65 µs | 101 µs | 133 µs | 262 µs | 356 µs | 362 µs | 448 µs | 385 µs |
 
-The median steps cleanly between 124 and 126 and stays stepped. The best-run
-row is the interesting one: above the threshold it goes bimodal, with occasional
-runs at 700–860 µs among typical runs near 2.9 ms. Below the threshold there are
-no slow runs at all. The step is reproducible across five sweeps and is ~2.3 ms
-every time.
+and the first-row latency those add up to:
 
-The obvious suspect was tokio's cooperative-scheduling budget, which is exactly
-128 resource operations before a task is made to yield — and a batch that
-crosses it would make the streaming task yield before it can send its first
-message. The evidence half-supports that and half does not:
+| batch | 118 | 120 | 122 | 124 | 125 | 126 | 127 | 128 | 130 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Nagle on, median | 1.91 ms | 1.71 ms | 2.91 ms | **1.10 ms** | **3.30 ms** | 3.64 ms | 4.04 ms | 3.60 ms | 3.68 ms |
+| `TCP_NODELAY`, median | 1.62 ms | 867 µs | 854 µs | 842 µs | 1.02 ms | 1.04 ms | 1.06 ms | 1.15 ms | 1.14 ms |
+| Nagle on, worst run | 3.75 ms | 5.96 ms | 6.14 ms | 5.58 ms | 6.71 ms | 18.97 ms | 4.98 ms | 7.62 ms | 18.55 ms |
+| `TCP_NODELAY`, worst run | 7.86 ms | 7.50 ms | 1.08 ms | 1.28 ms | 1.44 ms | 1.46 ms | 1.43 ms | 2.19 ms | 2.80 ms |
 
-- **For it:** the step is sharp, it sits within a few rows of 128, and above it
-  the distribution goes bimodal — occasional runs at 700–860 µs among typical
-  runs at 2.9 ms, which is what a task that *sometimes* gets rescheduled at once
-  looks like.
-- **Against it:** the step is **the same size on an idle machine as on one at
-  load 5**, and a yield-and-repark on an idle four-core box costs microseconds,
-  not 2.3 ms. Whatever the 2.3 ms is, it is not waiting for a busy core.
+**With Nagle on the step is there, at 2.5–3 ms, in the same place it was first
+found. With `TCP_NODELAY` it is gone.** Above the boundary the Nagled arm's
+worst run reaches 19 ms; the `TCP_NODELAY` arm's worst run reaches 2.8 ms.
 
-An earlier draft of this section reported the step as a confirmed tokio-budget
-finding on three sweeps. Raising the repetition count produced a fast run at
-batch 128, which the hypothesis forbids, and the claim had to be withdrawn. It
-is recorded here as a reproducible, unattributed step, because the alternative
-was a tidy explanation the data does not carry.
+Two further arms rule out the remaining candidates.
+
+**It is not a fixed count of operations, which retires the tokio-budget
+hypothesis on mechanism rather than on an anomalous run.** Making a row five
+times wider — a 220-byte `note` where the fixture had a null — moves the
+threshold *down*, from about 125 rows to somewhere between 48 and 64:
+
+| batch | 8 | 16 | 24 | 32 | 48 | 64 | 96 | 124 | 126 | 256 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| wide rows, Nagle on, `first − header` | 15 µs | 32 µs | 75 µs | 107 µs | 161 µs | **925 µs** | 1.37 ms | 988 µs | 840 µs | 1.70 ms |
+| wide rows, `TCP_NODELAY` | 20 µs | 35 µs | 36 µs | 128 µs | 128 µs | 116 µs | 103 µs | 200 µs | 649 µs | 1.23 ms |
+
+tokio's cooperative budget is 128 *operations*, and 128 operations do not become
+56 because the rows got longer. Whatever the trigger is, it moves with how long
+the first batch takes to produce and how big it is — which is what decides
+whether the head node's two messages reach the socket as one write or two.
+
+**And it is not a constant number of bytes either**: ~125 narrow rows is roughly
+6 KB and ~56 wide rows is roughly 15 KB. So the trigger is a race, not a
+buffer boundary, which is also what the bimodality above the threshold always
+said it was — a race sometimes goes the other way, and a fixed buffer never
+does.
+
+What the delayed-acknowledgement counter in section 0 adds is the last piece:
+the shapes that stall are exactly the shapes that make the kernel's
+acknowledgement timer fire, and setting `TCP_NODELAY` takes that count to zero
+and the stall with it.
+
+**What is left unexplained, and it is small.** With `TCP_NODELAY` there is
+still a rise across the same region — about 130 µs below the boundary and
+about 350–450 µs above it, with non-overlapping run-to-run ranges either side.
+That is a real difference of roughly 250 µs, seven to ten times smaller than
+the step it replaced, and it is consistent with the per-row cost of producing a
+larger batch (the same column reaches 912 µs at 256 and 1.23 ms for wide rows
+at 256). It is not claimed as anything more than that, and it is not worth a
+constant.
 
 #### What that says about `rows_per_message = 256`
 
-**The constant is defensible and is not being changed.** It sits inside the
-flat region for throughput: the difference between 64 and 256 is entirely
-inside the machine's bimodality, and nothing above 64 buys anything. Its stated
-rationale — keeping a wide row's batch under a megabyte — is the binding one,
-and nothing here contradicts it. These rows work out at roughly fifty bytes of
-protobuf each — counted off the schema, not measured — so a 256-row message here
-is well under 20 KB, while a 4 KB row would put the same message at 1 MB
-exactly, which is the case the constant was chosen for.
+**The constant stays at 256, and now for a measured reason rather than because
+of a cliff nobody could explain.**
 
-What the measurement adds is the range the constant should stay in, which
-nobody knew: **64 at the bottom** (below it, per-message framing costs real
-throughput — batch 1 is 2× slower) and **about 1,000 at the top** (above it,
-time to first row grows with the batch and reaches 37 ms at 16,384).
+The argument for lowering it has been withdrawn, because the thing it rested on
+was a socket option. It used to read: a batch of 112 delivers its first row in
+674 µs where 256 takes 3.07 ms at identical throughput, so 2.4 ms of latency
+was being paid for nothing. With `TCP_NODELAY` those two numbers are **547 µs
+and 1.13 ms** (best of 21) or **815 µs and 2.62 ms** (median of 21 on a busy
+box). What is left is roughly 600 µs, it is the genuine cost of producing 144
+more rows before sending any of them, and it is bought back in framing: 256
+sends a third as many messages as 112.
 
-There is one argument for a *lower* value that this harness raises and
-deliberately does not act on. A batch of 112 delivers its first row in 674 µs
-where 256 takes 3.07 ms, at identical throughput — 2.4 ms of latency for
-nothing. But the boundary is at a *row count* only on this fixture; it is
-plainly a proxy for some operation or byte count, so it would move with row
-width, with the backend and with the query shape. Tuning 256 down to 112 would
-be fitting a constant to one synthetic corpus, which is the mistake
-`SCAN_ROW_COST` and the block-size mismatch already cost this project twice.
-The step should be explained before the constant is moved.
+The range the constant should stay inside is now measured at both ends:
+
+- **32 at the bottom.** Below it per-message framing costs real throughput —
+  batch 1 drains 20,000 rows in 70.7 ms against 41–44 ms from 32 up, and adds
+  2.2 µs a row against 0.8.
+- **About 1,000 at the top.** Above it, time to first row grows with the batch:
+  2.68 ms at 1,024, 9.26 ms at 4,096, 37.0 ms at 16,384.
+
+256 sits in the middle of that, and its original rationale — keeping a wide
+row's batch under a megabyte — is untouched and is still the binding one. These
+rows are roughly fifty bytes of protobuf each, so a 256-row message here is
+under 20 KB; a 4 KB row would put the same message at exactly 1 MB, which is
+the case the constant was chosen for.
 
 ### 3. Autocommit against an explicit transaction: the answer is the flush
 

@@ -295,7 +295,7 @@ fn wanted<'a>(columns: &'a ColumnSet, table: &TableDef) -> Option<&'a ColumnSet>
 /// [`Value`](slate_tuple::Value) already has a total order matching the storage
 /// encoding, where nulls sort below everything; the only extra work is
 /// respecting a caller who wants them at the other end.
-fn compare_rows(left: &Row, right: &Row, keys: &[SortKey]) -> core::cmp::Ordering {
+pub(crate) fn compare_rows(left: &Row, right: &Row, keys: &[SortKey]) -> core::cmp::Ordering {
     use core::cmp::Ordering;
 
     for key in keys {

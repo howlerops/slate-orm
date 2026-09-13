@@ -1,0 +1,279 @@
+//! Checking a client's copy of a table against this server's.
+//!
+//! # The hole this closes
+//!
+//! [`ColumnRef`](crate::proto::ColumnRef) removed the arithmetic *across*
+//! tables: a client never adds a table width to an index, so a column added to
+//! an earlier table cannot re-point a later reference. It did not remove the
+//! ordinal *within* a table. A request still says "input 1's column 3", and a
+//! client outside Rust knows `title` is column 3 only because somebody wrote
+//! that down. The derive macro generates those constants from the same
+//! declaration the server serves, so a Rust caller cannot disagree; a
+//! hand-written table in another language can, and when it does the server
+//! accepts the reference — it is a perfectly legitimate ordinal — and answers
+//! a question about a different column. Same query, different answer, with no
+//! error at any layer.
+//!
+//! So the client states what it believes and the server checks it. The check
+//! is optional on the wire: a request without one is served exactly as before.
+//!
+//! # What is hashed
+//!
+//! Only what a client must restate in order to *address* a column, and only
+//! what it can state: the table's name, each ordinal's column name and type in
+//! order, and which ordinals form the primary key.
+//!
+//! Nullability, defaults, `CHECK`s and foreign keys are left out because none
+//! of them addresses a column — a write that violates one is refused by name
+//! at write time, which is a better error than a fingerprint mismatch, and
+//! adding a `CHECK` must not invalidate every reader. Indexes are left out
+//! because a hint is advice and an unusable one is already only a warning, so
+//! adding an index for performance must not break a client that never names
+//! it. Table ids, index ids and schema versions are left out because a client
+//! cannot state them, and a fingerprint a client cannot compute is a constant
+//! it has to be *told* — the schema on the wire by another route.
+//!
+//! # How it survives a migration
+//!
+//! The property comes from the schema layer rather than from here: **an
+//! ordinal never moves**. A column is appended, a dropped column keeps its
+//! ordinal for ever and holds nothing, and a rename records the previous name
+//! and keeps resolving it. Every migration this project supports therefore
+//! leaves every existing reference naming the same column, and this check is
+//! built to agree:
+//!
+//! - **A column added** leaves the client's declaration a *prefix* of the
+//!   table, and [`check`] hashes exactly that prefix. The old client keeps
+//!   working across the deployment. This is the case that makes the whole
+//!   design: a fingerprint over the whole catalog would take down every client
+//!   in the fleet the moment anybody added a nullable column.
+//! - **A column dropped** changes neither its ordinal nor its declaration, so
+//!   the fingerprint does not change. A client still *writing* it is refused
+//!   by name, which is the error it wanted.
+//! - **A column renamed** is accepted under either name, because
+//!   [`ColumnDef::answers_to`] is what the schema layer promises: code written
+//!   against the old name keeps working. A check that broke on a rename would
+//!   contradict the feature it is checking.
+//! - **`DEFAULT`, `CHECK`, foreign keys** are not hashed at all.
+//!
+//! What it does refuse is a declaration that is *wrong*: a column inserted in
+//! the middle, two same-typed columns swapped, a name that was never this
+//! column's, a key of the wrong shape. Those are the ones that otherwise
+//! return rows.
+//!
+//! # Why the client asserts rather than the server advertising
+//!
+//! The cheaper design is one opaque fingerprint on every response, compared by
+//! the client at startup. It is rejected here because a mismatch is then
+//! uninterpretable: the client cannot tell "your declaration is wrong" from
+//! "the server has one more column than it did when you were written", and the
+//! only safe reaction to an uninterpretable mismatch is to refuse to start —
+//! which is the additive migration taking down the fleet, again. The party
+//! that holds both statements is the server, so the claim travels to the
+//! server, which can be exactly as tolerant as its own schema rules are, can
+//! say which way the disagreement runs, and refuses *the request that would
+//! have been wrong* rather than hoping somebody ran a startup check.
+
+use crate::proto as pb;
+use slate_schema::TableDef;
+use tonic::{Code, Status};
+
+/// FNV-1a's 64-bit offset basis.
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+/// FNV-1a's 64-bit prime.
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// How many alias spellings of one declaration will be tried.
+///
+/// A renamed column has two acceptable spellings (its name and each previous
+/// name), so a table with several renames has a product of them. The product
+/// is one and two in every real schema, and the cap exists so that a
+/// pathological one cannot turn a request into a hashing benchmark. Past it,
+/// only the current names are accepted, and the refusal says so.
+const MAX_SPELLINGS: usize = 64;
+
+/// An FNV-1a hash being built, with the framing the canonical form uses.
+///
+/// Cloneable because the alias candidates share every byte up to the column
+/// that has more than one name; branching is a clone rather than a re-hash
+/// from the start.
+#[derive(Debug, Clone, Copy)]
+struct Fnv(u64);
+
+impl Fnv {
+    const fn new() -> Self {
+        Self(FNV_OFFSET)
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= *byte as u64;
+            self.0 = self.0.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    /// A string, length-prefixed.
+    ///
+    /// Length-prefixed rather than delimited so that no column name can be
+    /// spelled to look like the end of a field — `a\nb` and two columns must
+    /// not hash alike.
+    fn text(&mut self, text: &str) {
+        self.bytes(text.len().to_string().as_bytes());
+        self.bytes(b":");
+        self.bytes(text.as_bytes());
+    }
+
+    /// A number, terminated.
+    fn number(&mut self, n: usize) {
+        self.bytes(n.to_string().as_bytes());
+        self.bytes(b";");
+    }
+}
+
+/// Every fingerprint this table would accept for a declaration of `columns`
+/// columns.
+///
+/// More than one only where a column has been renamed: the client may be
+/// spelling it either way, and both are correct.
+fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
+    let mut start = Fnv::new();
+    start.bytes(b"slate.v1.schema/1");
+    start.text(table.name());
+
+    let mut live = vec![start];
+    for (ordinal, column) in table.columns().iter().take(columns).enumerate() {
+        // The current name first, so that the truncation below keeps the
+        // spelling a client written today would use.
+        let mut names = Vec::with_capacity(1 + column.previous_names().len());
+        names.push(column.name());
+        names.extend(column.previous_names().iter().map(String::as_str));
+        if live.len() * names.len() > MAX_SPELLINGS {
+            names.truncate(1);
+        }
+
+        let mut next = Vec::with_capacity(live.len() * names.len());
+        for state in &live {
+            for name in &names {
+                let mut state = *state;
+                state.number(ordinal);
+                state.text(name);
+                state.text(column.value_type().name());
+                next.push(state);
+            }
+        }
+        live = next;
+    }
+
+    for state in &mut live {
+        state.bytes(b"key");
+        state.number(table.primary_key().len());
+        for key in table.primary_key() {
+            state.number(key.0);
+        }
+        state.bytes(b"columns");
+        state.number(columns);
+    }
+    live.into_iter().map(|state| state.0).collect()
+}
+
+/// The fingerprint of a table's first `columns` columns, spelled with the
+/// names it has now.
+///
+/// This is what a correct, up-to-date client computes. Exposed so that a test
+/// — and a client library's own test suite, ported — can assert against a
+/// known value rather than against whatever the implementation happens to
+/// produce.
+#[must_use]
+pub fn of(table: &TableDef, columns: usize) -> u64 {
+    // `accepted` puts the current-name spelling first, and there is always at
+    // least one. The fallback keeps this total rather than indexing.
+    accepted(table, columns).first().copied().unwrap_or(0)
+}
+
+/// The whole table's fingerprint, as a client declaring every column computes
+/// it.
+#[must_use]
+pub fn of_table(table: &TableDef) -> u64 {
+    of(table, table.columns().len())
+}
+
+/// Refuse a request whose client declares a different table from this one.
+///
+/// `None` is not a failure: the check is optional, and a client that sends no
+/// claim is served as it always was.
+pub fn check(table: &TableDef, claim: Option<&pb::SchemaCheck>) -> Result<(), Status> {
+    let Some(claim) = claim else {
+        return Ok(());
+    };
+    let declared = claim.columns as usize;
+    let actual = table.columns().len();
+
+    if declared > actual {
+        return Err(Status::new(
+            Code::InvalidArgument,
+            format!(
+                "the schema check on table `{}` declares {declared} columns and this table \
+                 has {actual}: the client is addressing columns this catalog does not have. \
+                 A client newer than the server is deployed the wrong way round.",
+                table.name()
+            ),
+        ));
+    }
+
+    // Before the comparison, not after. A prefix is accepted because every
+    // ordinal in it still names the same column — but a declaration that stops
+    // short of a key column cannot name this table's primary key at all, so it
+    // is not a usable declaration of this table however its bytes hash, and
+    // "the disagreement is inside those n columns" below would not be true of
+    // it.
+    if let Some(key) = table.primary_key().iter().find(|key| key.0 >= declared) {
+        return Err(Status::new(
+            Code::InvalidArgument,
+            format!(
+                "the schema check on table `{}` declares {declared} columns, which stops \
+                 before the key column at ordinal {}: a declaration that short cannot name \
+                 this table's primary key.",
+                table.name(),
+                key.0
+            ),
+        ));
+    }
+
+    if accepted(table, declared).contains(&claim.fingerprint) {
+        return Ok(());
+    }
+
+    // Deliberately not a diff. The client holds its own declaration and can
+    // read it; what the server owes it is a refusal rather than a lesson, and
+    // printing this table's columns back would be the `Describe` this protocol
+    // refuses, delivered through an error message.
+    let shorter = if declared < actual {
+        format!(
+            " The declaration covers the first {declared} of this table's {actual} columns, \
+             which is allowed — a column added later does not invalidate an older client — \
+             so the disagreement is inside those {declared}."
+        )
+    } else {
+        String::new()
+    };
+    Err(Status::new(
+        Code::InvalidArgument,
+        format!(
+            "the schema check on table `{}` does not match this catalog: the column names, \
+             types or key positions the client declares are not this table's.{shorter} \
+             Nothing was read or written. Fix the client's declaration; the ordinals it \
+             would have sent name different columns here.",
+            table.name()
+        ),
+    ))
+}
+
+/// A claim a correct client makes about `table`, for tests and for the
+/// in-process client the benchmarks use.
+#[must_use]
+pub fn claim(table: &TableDef) -> pb::SchemaCheck {
+    pb::SchemaCheck {
+        columns: table.columns().len() as u32,
+        fingerprint: of_table(table),
+    }
+}

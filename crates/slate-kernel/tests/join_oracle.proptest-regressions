@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 838ed2968d469866fff883300cb70bd2ea536ba051da3b32e4812ef48ce13162 # shrinks to (kind, left, right, _limit, _offset) = (Right, True, True, None, 0)
 cc 2223500041d2bff01dcaa1acc8e3b3b9d2c5967908988c813aaf9205b086fdd8 # shrinks to (kind, left, right, _limit, _offset) = (Right, True, True, None, 0)
+cc 477818f23c2cc321ce988dabee1fc062f01c54f6996c7158e66f998ddd9a9ee3 # shrinks to (kind, left, right, having, _limit, _offset) = (Right, Not(IsNull { column: Ordinal(2), negated: false }), True, CompareColumns { left: Ordinal(2), op: Gt, right: Ordinal(5) }, None, 0)

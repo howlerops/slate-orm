@@ -113,6 +113,33 @@
 //! freshness a client asked for applies to the whole result. Two views would
 //! be a join across two points in time.
 //!
+//! On the way back, a row's computed values are a list of their own rather than
+//! a tail of its columns — the same split `JoinedRow` and `Group` already had,
+//! and for the same reason: concatenated, reading the nth computed value means
+//! `table_width + n`, which is the arithmetic this whole model exists to
+//! remove.
+//!
+//! # Checking a client's schema without publishing one
+//!
+//! [`ColumnRef`](proto::ColumnRef) removed the arithmetic across tables and
+//! left the ordinal within one, and a client outside Rust knows that ordinal
+//! only because somebody wrote it down. [`fingerprint`] closes that: a request
+//! may carry what the client believes the table's columns are, and a
+//! declaration that is not this catalog's is refused before anything is read.
+//!
+//! It is an assertion, never a description — nothing here tells a client what
+//! the schema is — and it is built so that every migration the schema layer
+//! supports leaves an older client working, because a check that broke on a
+//! migration would be turned off. See [`fingerprint`] for the whole argument.
+//!
+//! # A status code is lossy, so a reason travels with it
+//!
+//! `UNAVAILABLE` is four kernel errors wanting four different responses and
+//! `ALREADY_EXISTS` is two, so [`status`] attaches a `google.rpc.ErrorInfo` —
+//! a stable `reason` token and the error's own payload — to every status. A
+//! client can then tell "that email address is taken" from "that id is taken"
+//! without matching on prose that nothing tests.
+//!
 //! # What is not here
 //!
 //! No grouped join: the kernel groups over a single-table cursor, and
@@ -138,6 +165,7 @@
 
 pub mod auth;
 pub mod convert;
+pub mod fingerprint;
 pub mod leadership;
 pub mod lease;
 pub mod proto;
@@ -146,8 +174,9 @@ pub mod session;
 pub mod status;
 
 pub use auth::{Authenticator, DenyEveryone, MetadataIdentity};
+pub use fingerprint::of_table as schema_fingerprint;
 pub use leadership::{Cadence, Leadership, Standing, StepDown, maintain};
 pub use lease::{Clock, Lease, LeaseError, ObjectStoreLease, SystemClock, Term};
 pub use service::{Head, HeadConfig};
 pub use session::{Limits, Sessions};
-pub use status::{LEADER_KEY, code_for, from_kernel};
+pub use status::{DOMAIN, LEADER_KEY, code_for, from_kernel, reason_for};

@@ -1934,6 +1934,157 @@ async fn a_covering_expression_scan_reads_no_rows() {
     );
 }
 
+/// A computed value that reads an *earlier* computed value the entry supplies
+/// is covered too.
+///
+/// The covering rule used to stop at the first hop: a scalar's inputs had to be
+/// columns of the index or of the primary key, and a computed ordinal appearing
+/// as an input was never one of those. So
+/// `COMPUTING lower(body), length(#0)` gave up the index-only scan and read
+/// every row, to recompute a value the entry had already answered for.
+///
+/// It is now a forward pass over the compute list: position `i` is available
+/// when the index keys on it, or when everything it reads is. That is sound for
+/// the same reason the executor's `extend` is — it walks the same slice in the
+/// same order, so an earlier position is already in place when a later one
+/// reads it — and the direction of a mistake is unchanged, since a covering
+/// scan wrongly claimed returns nulls.
+///
+/// Both halves are here. The reads are counted, because "covered" that still
+/// reads every row is a claim about a string in `EXPLAIN`; and the rows are
+/// compared in full against a forced table scan, because the whole risk of
+/// covering more is covering something that cannot be answered.
+#[tokio::test]
+async fn a_chain_of_computed_values_is_covered_when_the_entry_supplies_the_first() {
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let backing = MemoryStore::new();
+    let table = notes();
+    let loader = RecordStore::new(backing.clone(), catalog.clone(), SecurityCatalog::new());
+    let txn = loader.begin().await.unwrap();
+    for id in 0..40u64 {
+        // A null every eighth row, so `lower(null)` and `length(null)` are in
+        // the entries the scan reads rather than absent from them.
+        let body = (id % 8 != 3).then(|| format!("Body {}", id % 5));
+        txn.insert(&root(), &table, &note(id, body.as_deref()))
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let counting = LatencyStore::new(backing, LatencyProfile::free());
+    let counters = counting.counters();
+    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL));
+    let store = RecordStore::new(counting, catalog, security);
+
+    let first = Query::computed(&table, 0);
+    let second = Query::computed(&table, 1);
+    // `length(#0)` — the chain. Not `length(body)`, which is the control below
+    // and reads a column no entry of `by_lower_body` holds.
+    let chained = vec![
+        lower_body(),
+        Scalar::Length(Box::new(Scalar::Column(first))),
+    ];
+
+    let base = Query::all()
+        .select([NOTE_ID, second])
+        .computing(chained.clone());
+    let through_index = base.clone().using_index(BY_LOWER_BODY);
+    let through_scan = base.using_table_scan();
+
+    let txn = store.begin().await.unwrap();
+    let plan = txn.explain(&root(), &table, &through_index).unwrap();
+    assert!(
+        plan.access.to_string().contains("Index Only")
+            && plan.access.to_string().contains("by_lower_body"),
+        "a chain over a value the entry holds needs no row: {}",
+        plan.access
+    );
+
+    counters.reset();
+    let mut indexed = rows_of(&txn, &table, &through_index).await;
+    assert_eq!(
+        counters.gets(),
+        0,
+        "an index-only scan must read no rows, however long the chain"
+    );
+    let mut scanned = rows_of(&txn, &table, &through_scan).await;
+    indexed.sort();
+    scanned.sort();
+    assert_eq!(indexed, scanned, "the two paths disagree over a chain");
+    assert!(!indexed.is_empty(), "premise: the query returns rows");
+
+    // The control, one link along: `length(body)` reads the column the entry
+    // does not hold, so the pass must stop rather than follow it.
+    let reaching = vec![lower_body(), Scalar::Length(Box::new(Scalar::Column(BODY)))];
+    let uncovered = Query::all()
+        .select([NOTE_ID, second])
+        .computing(reaching)
+        .using_index(BY_LOWER_BODY);
+    let plan = txn.explain(&root(), &table, &uncovered).unwrap();
+    assert!(
+        !plan.access.to_string().contains("Index Only"),
+        "`length(body)` reads a column no entry holds: {}",
+        plan.access
+    );
+}
+
+/// The value an entry supplies need not be the *first* computed value.
+///
+/// `expression_position` answers "which of this query's computed values does
+/// this index key on", and both the planner and the executor act on it — the
+/// planner to call the scan covering, the executor to decide which value to
+/// take out of the entry rather than evaluate. An answer that was right only
+/// when the expression happened to be written first would put the index's key
+/// into somebody else's slot, and every fixture that computes one value would
+/// agree with it.
+#[tokio::test]
+async fn the_entry_answers_for_its_own_position_and_not_the_first() {
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let backing = MemoryStore::new();
+    let table = notes();
+    let loader = RecordStore::new(backing.clone(), catalog.clone(), SecurityCatalog::new());
+    let txn = loader.begin().await.unwrap();
+    for id in 0..12u64 {
+        let body = (id % 4 != 1).then(|| format!("Body {}", id % 3));
+        txn.insert(&root(), &table, &note(id, body.as_deref()))
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+
+    let counting = LatencyStore::new(backing, LatencyProfile::free());
+    let counters = counting.counters();
+    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL));
+    let store = RecordStore::new(counting, catalog, security);
+
+    // `lower(body)` second, behind a value the primary key alone can produce.
+    let compute = vec![Scalar::Column(NOTE_ID), lower_body()];
+    let base = Query::all()
+        .select([Query::computed(&table, 0), Query::computed(&table, 1)])
+        .computing(compute);
+    let through_index = base.clone().using_index(BY_LOWER_BODY);
+    let through_scan = base.using_table_scan();
+
+    let txn = store.begin().await.unwrap();
+    let plan = txn.explain(&root(), &table, &through_index).unwrap();
+    assert!(
+        plan.access.to_string().contains("Index Only"),
+        "the entry holds the second computed value: {}",
+        plan.access
+    );
+    counters.reset();
+    let mut indexed = rows_of(&txn, &table, &through_index).await;
+    assert_eq!(counters.gets(), 0, "an index-only scan reads no rows");
+    let mut scanned = rows_of(&txn, &table, &through_scan).await;
+    indexed.sort();
+    scanned.sort();
+    assert_eq!(
+        indexed, scanned,
+        "the entry's value landed in the wrong computed slot"
+    );
+    assert!(!indexed.is_empty(), "premise: the query returns rows");
+}
+
 /// A computed value's inputs are read and are not part of the answer.
 ///
 /// The rule that makes the covering scan above possible at all: an entry keyed

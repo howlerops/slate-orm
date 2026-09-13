@@ -689,6 +689,12 @@ impl JoinSchema {
         self.widths.iter().sum()
     }
 
+    /// Columns the table at `position` contributes, or zero past the end.
+    #[must_use]
+    pub fn width_at(&self, position: usize) -> usize {
+        self.widths.get(position).copied().unwrap_or(0)
+    }
+
     /// How many tables the space covers.
     #[must_use]
     pub fn tables(&self) -> usize {
@@ -801,6 +807,38 @@ impl JoinedRow {
         }
     }
 
+    /// The pair as one row, in the space [`JoinSchema`] defines.
+    ///
+    /// A missing side — an outer join's unmatched row — becomes nulls of that
+    /// side's width, which is exactly what [`JoinedView`] already reports for
+    /// it, so a predicate over the flattened row and the same predicate over
+    /// the pair answer identically. That matters: `Join::having` reads the
+    /// view and a grouped join reads this, and two notions of "the joined row"
+    /// would be two answers.
+    ///
+    /// Kept off the join's own path, which passes the two sides through
+    /// untouched so each decodes into its own type and neither has to know the
+    /// other's width. Grouping is the caller that genuinely needs one row,
+    /// because a group key spans both sides.
+    #[must_use]
+    pub fn flatten(&self, schema: &JoinSchema) -> Row {
+        let mut values = Vec::with_capacity(schema.width());
+        for (position, side) in [&self.left, &self.right].into_iter().enumerate() {
+            let width = schema.width_at(position);
+            match side {
+                Some(row) => {
+                    values.extend(row.values().iter().take(width).cloned());
+                    // A side read under a projection is as wide as its table;
+                    // this guards the case where it is not, rather than
+                    // producing a row that silently shifts every later ordinal.
+                    values.resize(schema.at(position, Ordinal(width)).0, Value::Null);
+                }
+                None => values.resize(values.len() + width, Value::Null),
+            }
+        }
+        Row::new(values)
+    }
+
     /// Whether both sides are present.
     #[must_use]
     pub const fn is_matched(&self) -> bool {
@@ -862,7 +900,7 @@ use crate::read::SecuredReads;
 use crate::security::SecurityContext;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Everything a nested loop needs to probe the inner side, owned so each probe
@@ -916,9 +954,19 @@ impl<'a> Probe<'a> {
 /// has to be remembered as you go and drained at the end.
 struct BuildTable {
     rows: HashMap<Vec<u8>, Vec<Row>>,
-    /// Buckets that something probed, by key. Held apart from the rows so a
-    /// bucket can be handed out by reference while this is written.
-    hit: HashSet<Vec<u8>>,
+    /// Which rows of a probed bucket actually paired, one flag per row of the
+    /// bucket, by bucket key. Held apart from the rows so a bucket can be
+    /// handed out by reference while this is written.
+    ///
+    /// Per *row* and not per bucket, which it used to be on the reasoning that
+    /// "a probe that matches a bucket matches every row in it, because they all
+    /// carry the same join values". That is true of the join keys and false of
+    /// `having`, which can admit the pair with one row of a bucket and reject
+    /// it with the next — so a bucket flagged wholesale swallowed the rows that
+    /// were rejected, and a right or full outer join lost them. Nothing without
+    /// a cross-side condition can tell the two apart, which is why the join
+    /// oracle now generates one.
+    hit: HashMap<Vec<u8>, Vec<bool>>,
     /// Rows dropped for having a null join value. They match nothing by
     /// definition, but an outer join that preserves this side still owes them
     /// to the caller.
@@ -962,7 +1010,7 @@ impl BuildTable {
         }
         Ok(Self {
             rows,
-            hit: HashSet::new(),
+            hit: HashMap::new(),
             nulls,
         })
     }
@@ -971,22 +1019,38 @@ impl BuildTable {
         self.rows.get(key).map(Vec::as_slice)
     }
 
-    /// Note that something matched this bucket.
-    fn mark(&mut self, key: &[u8]) {
-        if !self.hit.contains(key) {
-            self.hit.insert(key.to_vec());
+    /// Note that the row at `position` of this bucket paired with something.
+    ///
+    /// The flags are allocated on the bucket's first hit and sized to it, so an
+    /// unprobed bucket costs nothing and a probed one costs a byte per row
+    /// rather than a hash per pair. The key is copied on that first hit only.
+    fn mark(&mut self, key: &[u8], position: usize) {
+        let width = self.rows.get(key).map_or(0, Vec::len);
+        let flags = match self.hit.get_mut(key) {
+            Some(flags) => flags,
+            None => self
+                .hit
+                .entry(key.to_vec())
+                .or_insert_with(|| vec![false; width]),
+        };
+        if let Some(flag) = flags.get_mut(position) {
+            *flag = true;
         }
     }
 
-    /// Every built row nothing matched, once probing is done.
+    /// Every built row nothing paired with, once probing is done.
     ///
-    /// Buckets are all-or-nothing: a probe that matches a bucket matches every
-    /// row in it, because they all carry the same join values.
+    /// Row by row rather than bucket by bucket. Buckets agree on the join keys
+    /// and so are all-or-nothing as far as the *equality* goes, but `having` is
+    /// evaluated per pair and can split one — see [`BuildTable::hit`].
     fn unmatched(&mut self) -> Vec<Row> {
         let mut out = core::mem::take(&mut self.nulls);
         for (key, bucket) in &mut self.rows {
-            if !self.hit.contains(key) {
-                out.append(bucket);
+            let hit = self.hit.get(key);
+            for (position, row) in core::mem::take(bucket).into_iter().enumerate() {
+                if !hit.is_some_and(|flags| flags.get(position).copied().unwrap_or(false)) {
+                    out.push(row);
+                }
             }
         }
         self.rows.clear();
@@ -1170,6 +1234,10 @@ impl<'a> JoinCursor<'a> {
                 if let Some((row, key, at, paired)) = current {
                     let bucket = key.as_deref().and_then(|k| built.get(k));
                     let mut emit = None;
+                    // Where in the bucket the emitted pair came from, so the
+                    // built row that paired is the one flagged — not every row
+                    // that happened to share its join values.
+                    let mut emitted_at = None;
                     while let Some(next) = bucket.and_then(|bucket| bucket.get(*at)) {
                         *at += 1;
                         // Which side was built is a costing decision; which
@@ -1182,11 +1250,15 @@ impl<'a> JoinCursor<'a> {
                         };
                         if admits_pair(&having, &schema, l, r) {
                             emit = Some(candidate);
+                            emitted_at = Some(*at - 1);
                             break;
                         }
                     }
                     if let Some(pair) = emit {
                         *paired = true;
+                        if let (Some(key), Some(position)) = (key.as_deref(), emitted_at) {
+                            built.mark(key, position);
+                        }
                         return Ok(Some(pair));
                     }
 
@@ -1196,9 +1268,6 @@ impl<'a> JoinCursor<'a> {
                     // than a filter over the finished join.
                     let missed = !*paired;
                     let row = row.clone();
-                    if !missed && let Some(key) = key.clone() {
-                        built.mark(&key);
-                    }
                     *current = None;
                     if missed && join_type.preserves(probe_side) {
                         return Ok(Some(JoinedRow::only(row, probe_side)));
