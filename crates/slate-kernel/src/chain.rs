@@ -113,6 +113,36 @@ impl ChainRow {
         self.rows.iter().all(Option::is_some)
     }
 
+    /// Every table's columns laid end to end, in the [`JoinSchema`] space.
+    ///
+    /// The same shape [`JoinedRow::flatten`](crate::JoinedRow::flatten)
+    /// produces for a two-table join, generalised to a chain: a table that
+    /// contributed nothing to this row reads as its full width of nulls, so an
+    /// ordinal means the same thing whether or not its table matched.
+    ///
+    /// A row that stops short of the chain's length — which happens while a
+    /// chain is being built up, and cannot happen once it is finished — is
+    /// padded to the schema's full width, so the result is always the width
+    /// the schema describes rather than the width this row happens to have.
+    #[must_use]
+    pub fn flatten(&self, schema: &JoinSchema) -> Row {
+        let mut values = Vec::with_capacity(schema.width());
+        for position in 0..schema.len() {
+            let width = schema.width_at(position);
+            match self.at(position) {
+                Some(row) => {
+                    values.extend(row.values().iter().take(width).cloned());
+                    // A side read under a projection is as wide as its table;
+                    // this guards the case where it is not, rather than
+                    // producing a row that silently shifts every later ordinal.
+                    values.resize(schema.at(position, Ordinal(width)).0, Value::Null);
+                }
+                None => values.resize(values.len() + width, Value::Null),
+            }
+        }
+        Row::new(values)
+    }
+
     /// Pad to `len` tables with absent rows.
     ///
     /// Used when an outer step preserves a row of the new table: everything

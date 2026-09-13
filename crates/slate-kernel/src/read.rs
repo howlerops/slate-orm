@@ -349,6 +349,45 @@ impl<'a> SecuredReads<'a> {
         Ok(grouper.finish())
     }
 
+    /// Group the rows a *chain* produces.
+    ///
+    /// The n-way generalisation of [`SecuredReads::grouped_join`], and it sits
+    /// above the chain the same way: it consumes the chain's own cursor, in the
+    /// space [`JoinSchema::over`] defines, so a group key may name any table in
+    /// the chain and every step's security still applies.
+    ///
+    /// Unlike the two-table case this does **not** narrow each step's
+    /// projection to what the grouping needs. A step's condition may name any
+    /// earlier table, so the set of columns a step depends on is not the set
+    /// the grouping asks for, and narrowing to the latter would read away a
+    /// column a later step's `having` still needs. The two-table version can
+    /// narrow because there is exactly one condition and it is known up front.
+    /// Doing this properly means computing the transitive closure of every
+    /// step's references, which is worth doing and is not done here — so a
+    /// grouped chain reads wider than a grouped join, and `COUNT(*)` over one
+    /// does not get the index-only treatment.
+    pub(crate) async fn grouped_chain(
+        self,
+        context: &SecurityContext,
+        tables: &[&'a TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
+        let plan = self.plan_chain(context, tables, chain, &schema)?;
+        let mut cursor =
+            chain::run(self, context, tables, chain, &plan, Arc::clone(&schema)).await?;
+
+        let mut grouper = Grouper::with_limits(grouping, self.limits);
+        while let Some(row) = cursor.next().await? {
+            // Flattened for the same reason the two-table version flattens: the
+            // accumulators take a `Row`, and a second row-like type threaded
+            // through them would be a second place for the null rules to drift.
+            grouper.push(&row.flatten(&schema))?;
+        }
+        Ok(grouper.finish())
+    }
+
     /// Choose how to join two tables.
     ///
     /// Both sides are planned through [`SecuredReads::plan`], so both are

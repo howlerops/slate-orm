@@ -624,6 +624,19 @@ Built and tested:
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,
       or a row's contents would depend on the plan that fetched it
+- [x] Grouping over a `Chain`, the n-way case of a grouped join. Group keys may
+      name any table in the chain. It reads *wider* than a grouped join does —
+      a step's condition can name any earlier table, so narrowing each step's
+      projection to the grouping's columns would read away a column a later
+      step still needs, and the transitive closure that would fix it is not
+      written
+- [x] **Withdrawn:** "a grouped join is not costed as grouped". The per-joined-row
+      term is added to the hash cost and the loop cost *equally*, so it cancels
+      out of the comparison and discounting it for a grouped join would change
+      no plan. Grouping does change the plan, through the projection narrowing
+      that was already there.
+      `the_per_row_term_is_symmetric_so_grouping_cannot_flip_the_algorithm`
+      pins the symmetry, so the day it stops holding, the reasoning is caught
 - [x] A grouped join and ordered groups on the wire. `AggregateQuery` carries
       a `join` and its own `sort`/`limit`/`offset` over *groups*, with a
       differential against the kernel per shape. Three inputs is refused with
@@ -712,9 +725,6 @@ Not built:
       database and may only be opened once the lease is won, so promotion is a
       restart — every request handler currently assumes the store it has is the
       store it started with. Specified in [`docs/topology.md`](docs/topology.md)
-- [ ] Grouping over a `Chain`. Same grouper, same shape of row stream, not done
-- [ ] A grouped join is not *costed*: the join is planned as if its rows were
-      being returned, so a plan cheaper to group than to stream is not preferred
 - [ ] The wire's deep-nesting refusal is inherited rather than written: a
       pathologically nested expression is stopped by prost's decode recursion
       limit, and the conversion functions themselves recurse without a depth

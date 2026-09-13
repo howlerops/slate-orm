@@ -689,6 +689,18 @@ impl JoinSchema {
         self.widths.iter().sum()
     }
 
+    /// How many tables this space spans.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.widths.len()
+    }
+
+    /// Whether this space spans no tables.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.widths.is_empty()
+    }
+
     /// Columns the table at `position` contributes, or zero past the end.
     #[must_use]
     pub fn width_at(&self, position: usize) -> usize {

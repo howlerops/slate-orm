@@ -785,6 +785,33 @@ impl<'a> RecordTransaction<'a> {
             .await
     }
 
+    /// Group the rows a chain produces.
+    ///
+    /// The n-way version of [`RecordTransaction::group_by_join`]. Group keys are in the
+    /// space [`JoinSchema::over`](crate::JoinSchema::over) defines — the same
+    /// space a step's `having` uses — so a key may name any table in the chain.
+    ///
+    /// The grouping's own `having` and `sort` read the *group*: its keys, then
+    /// its aggregates, exactly as for a single table or a two-table join.
+    ///
+    /// Every step is planned and secured as it is for an ungrouped chain, so
+    /// this is no more privileged than the chain it is built on.
+    ///
+    /// Reads wider than [`RecordTransaction::group_by_join`] does: see
+    /// `SecuredReads::grouped_chain` for why the per-step projection is not
+    /// narrowed to the grouping's columns.
+    pub async fn group_by_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .grouped_chain(context, tables, chain, grouping)
+            .await
+    }
+
     /// Collect statistics for `table` by reading it.
     ///
     /// The planner needs to know how many rows a predicate selects, and there
@@ -2206,6 +2233,33 @@ impl<'a> RecordSnapshot<'a> {
     ) -> Result<Vec<Group>> {
         self.reads()
             .grouped_join(context, left, right, join, grouping)
+            .await
+    }
+
+    /// Group the rows a chain produces.
+    ///
+    /// The n-way version of [`RecordSnapshot::group_by_join`]. Group keys are in the
+    /// space [`JoinSchema::over`](crate::JoinSchema::over) defines — the same
+    /// space a step's `having` uses — so a key may name any table in the chain.
+    ///
+    /// The grouping's own `having` and `sort` read the *group*: its keys, then
+    /// its aggregates, exactly as for a single table or a two-table join.
+    ///
+    /// Every step is planned and secured as it is for an ungrouped chain, so
+    /// this is no more privileged than the chain it is built on.
+    ///
+    /// Reads wider than [`RecordSnapshot::group_by_join`] does: see
+    /// `SecuredReads::grouped_chain` for why the per-step projection is not
+    /// narrowed to the grouping's columns.
+    pub async fn group_by_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+    ) -> Result<Vec<Group>> {
+        self.reads()
+            .grouped_chain(context, tables, chain, grouping)
             .await
     }
 }
