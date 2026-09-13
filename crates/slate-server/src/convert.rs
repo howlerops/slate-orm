@@ -38,7 +38,7 @@ use crate::fingerprint;
 use crate::proto as pb;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
-    Aggregate, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group, Join,
+    Aggregate, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group, Grouping, Join,
     JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric, Projection, ReadToken,
     ScanOrder, Side, TimeUnit,
 };
@@ -1207,33 +1207,7 @@ pub fn query_from_proto_at(
         }
     };
 
-    let mut sort = Vec::with_capacity(query.sort.len());
-    for key in &query.sort {
-        let column = space.resolve(key.column.as_ref(), "the sort")?;
-        let direction = match pb::SortDirection::try_from(key.direction) {
-            Ok(pb::SortDirection::Asc) => Direction::Asc,
-            Ok(pb::SortDirection::Desc) => Direction::Desc,
-            Err(_) => {
-                return Err(bad(format!(
-                    "sort direction {} is not one this server knows",
-                    key.direction
-                )));
-            }
-        };
-        let nulls = match pb::NullsOrder::try_from(key.nulls) {
-            Ok(pb::NullsOrder::First) => NullsOrder::First,
-            Ok(pb::NullsOrder::Last) => NullsOrder::Last,
-            // Unspecified is the natural place for the direction, which is
-            // where the storage already puts them — the only arrangement an
-            // index can serve without materialising the whole result.
-            Ok(pb::NullsOrder::Unspecified) | Err(_) => NullsOrder::natural_for(direction),
-        };
-        sort.push(SortKey {
-            column,
-            direction,
-            nulls,
-        });
-    }
+    let sort = sort_from_proto(&space, &query.sort, "the sort")?;
 
     let hint = match query.hint.as_ref().and_then(|hint| hint.path.as_ref()) {
         None => None,
@@ -1713,16 +1687,108 @@ pub fn multi_row_to_proto(row: &[Option<Row>], stored: &[usize]) -> pb::JoinedRo
 /// What an aggregate request asks for, as the kernel takes it.
 #[derive(Debug)]
 pub struct GroupedRead {
-    /// The table it reads.
-    pub table: TableId,
-    /// Which rows.
-    pub query: Query,
+    /// Where the rows come from.
+    pub source: GroupedSource,
     /// The grouping columns, empty for one group over everything.
     pub group: Vec<Ordinal>,
     /// The aggregates, in request order.
     pub aggregates: Vec<Aggregate>,
     /// Which groups survive, over the group's own ordinal space.
     pub having: Expr,
+    /// How the groups are ordered, over the group's own ordinal space.
+    pub sort: Vec<SortKey>,
+    /// At most this many groups, after `having` and `sort`.
+    pub limit: Option<usize>,
+    /// Groups to discard first, after `having` and `sort`.
+    pub offset: usize,
+}
+
+impl GroupedRead {
+    /// The kernel's grouping for this read.
+    ///
+    /// Built rather than stored so that the wire shape and the kernel shape
+    /// stay separately reviewable: this is the one place the two are lined up.
+    #[must_use]
+    pub fn grouping(&self) -> Grouping {
+        let mut grouping = Grouping::by(self.group.iter().copied(), &self.aggregates)
+            .having(self.having.clone())
+            .sort_by(self.sort.iter().copied())
+            .offset(self.offset);
+        if let Some(limit) = self.limit {
+            grouping = grouping.limit(limit);
+        }
+        grouping
+    }
+}
+
+/// What a grouped read groups over.
+///
+/// A chain is absent deliberately: the kernel groups a two-table joined row
+/// stream and does not yet group a chain, so a request naming three inputs is
+/// refused with that reason rather than silently planned as something else.
+#[derive(Debug, Clone)]
+pub enum GroupedSource {
+    /// One table.
+    Table {
+        /// The table it reads.
+        table: TableId,
+        /// Which rows.
+        query: Query,
+    },
+    /// Exactly two tables, joined.
+    ///
+    /// A pair rather than a `Vec`, because "exactly two" is checked once here
+    /// and every consumer would otherwise index into it and have to be trusted
+    /// not to be wrong.
+    Join {
+        /// The left table.
+        left: TableId,
+        /// The right table.
+        right: TableId,
+        /// The join itself.
+        join: Box<Join>,
+    },
+}
+
+/// Sort keys resolved against `space`.
+///
+/// Shared between a query's `ORDER BY` over rows and a grouped read's over
+/// groups. The two differ only in which space the columns name — the input's
+/// or the group's — which is exactly the distinction that makes ordering a
+/// grouped result by a raw column a refusal rather than a silent null.
+fn sort_from_proto(
+    space: &Space<'_>,
+    keys: &[pb::SortKey],
+    place: &str,
+) -> Result<Vec<SortKey>, Status> {
+    let mut sort = Vec::with_capacity(keys.len());
+    for key in keys {
+        let column = space.resolve(key.column.as_ref(), place)?;
+        let direction = match pb::SortDirection::try_from(key.direction) {
+            Ok(pb::SortDirection::Asc) => Direction::Asc,
+            Ok(pb::SortDirection::Desc) => Direction::Desc,
+            Err(_) => {
+                return Err(bad(format!(
+                    "sort direction {} is not one this server knows",
+                    key.direction
+                )));
+            }
+        };
+        let nulls = match pb::NullsOrder::try_from(key.nulls) {
+            Ok(pb::NullsOrder::First) => NullsOrder::First,
+            Ok(pb::NullsOrder::Last) => NullsOrder::Last,
+            // Unspecified is the natural place for the direction, which is
+            // where the storage already puts them — the only arrangement an
+            // index can serve without materialising the whole result.
+            Ok(pb::NullsOrder::Unspecified) | Err(_) => NullsOrder::natural_for(direction),
+        };
+        sort.push(SortKey {
+            column,
+            direction,
+            nulls,
+        });
+    }
+    Ok(sort)
 }
 
 /// An aggregate request as the kernel's.
@@ -1730,39 +1796,96 @@ pub fn aggregate_from_proto_query(
     wire: &pb::AggregateQuery,
     catalog: &Catalog,
 ) -> Result<(GroupedRead, Vec<String>), Status> {
-    let input = wire
-        .input
-        .as_ref()
-        .ok_or_else(|| bad("an aggregate request has no input query"))?;
-    let table = catalog
-        .table_by_name(&input.table)
-        .ok_or_else(|| Status::not_found(format!("no table named `{}`", input.table)))?;
-
-    refuse_unused(
-        input,
-        "an aggregate's input",
-        "there is no ordering over groups to limit; see the crate docs",
-    )?;
-    if input.projection.is_some() {
-        // The kernel narrows the projection to exactly the columns the
-        // aggregates read, which is what lets an index answer `COUNT(*)`
-        // without touching a row. Honouring a client's projection would
-        // silently undo that; ignoring it silently is worse.
-        return Err(bad(
-            "an aggregate's input must not set a projection: it is narrowed to the \
-             columns the aggregates and grouping read, which is what lets an index \
-             answer without reading a row",
-        ));
+    // Exactly one source. Both set is a client bug worth reporting rather than
+    // a precedence rule worth inventing, and neither is the same bug.
+    match (wire.input.as_ref(), wire.join.as_ref()) {
+        (Some(_), Some(_)) => {
+            return Err(bad(
+                "an aggregate request sets both `input` and `join`; it aggregates over \
+                 one or the other, so set exactly one",
+            ));
+        }
+        (None, None) => return Err(bad("an aggregate request has no input query")),
+        _ => {}
     }
-
-    let (query, warnings) = query_from_proto_at(input, table, 0)?;
-    let space = Space::input(table, query.compute.len(), 0);
 
     if wire.aggregates.is_empty() {
         return Err(bad(
             "an aggregate request with no aggregates is a query; use Query",
         ));
     }
+
+    let (source, space, warnings) = match (wire.input.as_ref(), wire.join.as_ref()) {
+        (Some(input), _) => {
+            let table = catalog
+                .table_by_name(&input.table)
+                .ok_or_else(|| Status::not_found(format!("no table named `{}`", input.table)))?;
+            refuse_unused(
+                input,
+                "an aggregate's input",
+                "order and limit the groups with the aggregate's own `sort`, `limit` \
+                 and `offset`, which are over groups rather than over input rows",
+            )?;
+            if input.projection.is_some() {
+                // The kernel narrows the projection to exactly the columns the
+                // aggregates read, which is what lets an index answer
+                // `COUNT(*)` without touching a row. Honouring a client's
+                // projection would silently undo that; ignoring it silently is
+                // worse.
+                return Err(bad(
+                    "an aggregate's input must not set a projection: it is narrowed to the \
+                     columns the aggregates and grouping read, which is what lets an index \
+                     answer without reading a row",
+                ));
+            }
+            let (query, warnings) = query_from_proto_at(input, table, 0)?;
+            let space = Space::input(table, query.compute.len(), 0);
+            (
+                GroupedSource::Table {
+                    table: table.id(),
+                    query,
+                },
+                space,
+                warnings,
+            )
+        }
+        (_, Some(join_wire)) => {
+            let (tables, read, warnings) = join_from_proto(join_wire, catalog)?;
+            let join = match read {
+                MultiRead::Join(join) => join,
+                // The kernel groups a two-table joined row stream and does not
+                // group a chain. Refused with that reason rather than planned
+                // as something the caller did not ask for.
+                MultiRead::Chain(_) => {
+                    return Err(bad(format!(
+                        "grouping over a join of {} tables is not supported; the kernel \
+                         groups a two-table join, and grouping a chain is not built",
+                        tables.len()
+                    )));
+                }
+            };
+            // The group and the aggregates are named in the join's schema,
+            // so the space has to be the same one `JoinQuery.having` uses:
+            // every input visible, each shifted past the width of everything
+            // before it. Rebuilt from the wire rather than returned by
+            // `join_from_proto`, because the compute counts are right here.
+            let mut shapes = Vec::with_capacity(tables.len());
+            for (id, input) in tables.iter().zip(&join_wire.inputs) {
+                let table = catalog
+                    .table(*id)
+                    .ok_or_else(|| bad("a table resolved by the join is not in the catalog"))?;
+                let computed = input.query.as_ref().map_or(0, |q| q.compute.len());
+                shapes.push(Input::new(table, computed));
+            }
+            let visible = shapes.len();
+            let space = Space::joined(shapes, visible);
+            let [left, right] = <[TableId; 2]>::try_from(tables)
+                .map_err(|_| bad("a two-table join resolved to a different number of tables"))?;
+            (GroupedSource::Join { left, right, join }, space, warnings)
+        }
+        (None, None) => unreachable!("checked above"),
+    };
+
     let aggregates = wire
         .aggregates
         .iter()
@@ -1774,22 +1897,25 @@ pub fn aggregate_from_proto_query(
         group.push(space.resolve(Some(column), "a grouping column")?);
     }
 
-    // `having` reads the group, not a row, so it is resolved against the group
-    // space — which is what turns "column must appear in the GROUP BY clause"
-    // into a refusal instead of a silent null.
+    // `having` and `sort` read the group, not a row, so they resolve against
+    // the group space — which is what turns "column must appear in the GROUP
+    // BY clause" into a refusal instead of a silent null.
     let group_space = Space::groups(group.len(), aggregates.len());
     let having = match &wire.having {
         Some(having) => expr_named(&group_space, having, "the HAVING condition")?,
         None => Expr::True,
     };
+    let sort = sort_from_proto(&group_space, &wire.sort, "the group ordering")?;
 
     Ok((
         GroupedRead {
-            table: table.id(),
-            query,
+            source,
             group,
             aggregates,
             having,
+            sort,
+            limit: wire.limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX)),
+            offset: usize::try_from(wire.offset).unwrap_or(usize::MAX),
         },
         warnings,
     ))
@@ -1818,6 +1944,14 @@ pub fn aggregate_to_proto_query(
             .map(|a| aggregate_to_proto(&space, *a))
             .collect(),
         having: Some(expr_to_proto(&group_space, having)),
+        // The outbound direction is used by the typed client for a
+        // single-table grouped read, which is why these are the empty case
+        // rather than parameters: a caller wanting a grouped join or ordered
+        // groups builds the message itself.
+        join: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
     }
 }
 

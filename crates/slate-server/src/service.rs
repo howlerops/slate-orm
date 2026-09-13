@@ -39,10 +39,10 @@
 
 use crate::auth::Authenticator;
 use crate::convert::{
-    MultiRead, aggregate_from_proto_query, chain_plan_to_proto, explanation_to_proto,
-    freshness_from_proto, group_to_proto, join_explanation_to_proto, join_from_proto,
-    multi_row_to_proto, primary_key_from_proto, query_from_proto, row_from_proto, row_to_proto,
-    row_to_proto_split, two_tables,
+    GroupedSource, MultiRead, aggregate_from_proto_query, chain_plan_to_proto,
+    explanation_to_proto, freshness_from_proto, group_to_proto, join_explanation_to_proto,
+    join_from_proto, multi_row_to_proto, primary_key_from_proto, query_from_proto, row_from_proto,
+    row_to_proto, row_to_proto_split, two_tables,
 };
 use crate::fingerprint;
 use crate::leadership::{Leadership, Standing};
@@ -1017,24 +1017,37 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         }
 
         let freshness = freshness_from_proto(request.freshness.as_ref())?;
-        let table = self.definition(read.table)?;
-        let affinity = Self::affinity(table, &context);
-        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
-        let groups = view
-            .group_by_having(
-                &context,
-                table,
-                &read.query,
-                &read.group,
-                &read.aggregates,
-                &read.having,
-            )
-            .await
-            .map_err(|e| from_kernel(&e))?;
-
-        Ok(Response::new(replay_groups(
-            groups, served_by, warnings, batch_size,
-        )))
+        let grouping = read.grouping();
+        match &read.source {
+            GroupedSource::Table { table, query } => {
+                let table = self.definition(*table)?;
+                let affinity = Self::affinity(table, &context);
+                let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+                let groups = view
+                    .grouped(&context, table, query, &grouping)
+                    .await
+                    .map_err(|e| from_kernel(&e))?;
+                Ok(Response::new(replay_groups(
+                    groups, served_by, warnings, batch_size,
+                )))
+            }
+            GroupedSource::Join { left, right, join } => {
+                let left = self.definition(*left)?;
+                let right = self.definition(*right)?;
+                // Affinity from the left side, as a plain join does: both
+                // sides are planned and secured separately, and the left is
+                // the one the planner reads first.
+                let affinity = Self::affinity(left, &context);
+                let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+                let groups = view
+                    .group_by_join(&context, left, right, join, &grouping)
+                    .await
+                    .map_err(|e| from_kernel(&e))?;
+                Ok(Response::new(replay_groups(
+                    groups, served_by, warnings, batch_size,
+                )))
+            }
+        }
     }
 
     async fn explain_join(

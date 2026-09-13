@@ -42,7 +42,7 @@
 //! gets, because "that transaction exists but is not yours" is a fact worth
 //! not disclosing.
 
-use crate::convert::{GroupedRead, MultiRead, chain_row_values, two_tables};
+use crate::convert::{GroupedRead, GroupedSource, MultiRead, chain_row_values, two_tables};
 use crate::leadership::Leadership;
 use crate::status::from_kernel;
 use slate_kernel::security::Principal;
@@ -787,17 +787,22 @@ async fn apply<S: KvStore>(
             read,
             reply,
         } => {
-            let definition = table!(read.table, reply);
-            let outcome = transaction
-                .group_by_having(
-                    &context,
-                    definition,
-                    &read.query,
-                    &read.group,
-                    &read.aggregates,
-                    &read.having,
-                )
-                .await;
+            let grouping = read.grouping();
+            let outcome = match &read.source {
+                GroupedSource::Table { table, query } => {
+                    let definition = table!(*table, reply);
+                    transaction
+                        .grouped(&context, definition, query, &grouping)
+                        .await
+                }
+                GroupedSource::Join { left, right, join } => {
+                    let left = table!(*left, reply);
+                    let right = table!(*right, reply);
+                    transaction
+                        .group_by_join(&context, left, right, join, &grouping)
+                        .await
+                }
+            };
             answer(reply, outcome)
         }
         // Handled by the loop, which has to consume the transaction.

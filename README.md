@@ -624,6 +624,11 @@ Built and tested:
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,
       or a row's contents would depend on the plan that fetched it
+- [x] A grouped join and ordered groups on the wire. `AggregateQuery` carries
+      a `join` and its own `sort`/`limit`/`offset` over *groups*, with a
+      differential against the kernel per shape. Three inputs is refused with
+      the reason rather than planned as something else, because the kernel
+      groups a two-table join and does not group a chain
 - [x] A grouped join, and `ORDER BY`/`LIMIT` over groups — one hash-grouping
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
@@ -704,9 +709,6 @@ Not built:
       database and may only be opened once the lease is won, so promotion is a
       restart — every request handler currently assumes the store it has is the
       store it started with. Specified in [`docs/topology.md`](docs/topology.md)
-- [ ] A grouped join and ordered groups are not on the wire yet — the kernel
-      does both now, so this is protocol work rather than a design gap, and
-      there is no wire differential for them
 - [ ] Grouping over a `Chain`. Same grouper, same shape of row stream, not done
 - [ ] A grouped join is not *costed*: the join is planned as if its rows were
       being returned, so a plan cheaper to group than to stream is not preferred

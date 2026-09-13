@@ -44,13 +44,13 @@ use common::{
 };
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Aggregate, Chain, CmpOp, Expr, Join, JoinAlgorithm, JoinKey, JoinSchema, JoinStep, JoinType,
-    Query, RecordStore, Scalar, SecurityContext, Side, SortKey, TimeUnit,
+    Aggregate, Chain, CmpOp, Expr, Group, Grouping, Join, JoinAlgorithm, JoinKey, JoinSchema,
+    JoinStep, JoinType, Query, RecordStore, Scalar, SecurityContext, Side, SortKey, TimeUnit,
 };
 use slate_schema::{Ordinal, Row, TableDef};
 use slate_server::convert::{
     aggregate_to_proto_query, chain_to_proto, column_ref, computed_ref, flat_row_from_proto,
-    join_to_proto, query_to_proto,
+    join_to_proto, query_to_proto, value_from_proto,
 };
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
@@ -1495,6 +1495,10 @@ fn count_over(table: &str) -> pb::AggregateQuery {
             ..common::plain_query(table)
         }),
         group_by: Vec::new(),
+        join: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
         aggregates: vec![pb::Aggregate {
             function: pb::AggregateFunction::Count as i32,
             column: None,
@@ -1862,4 +1866,344 @@ async fn a_join_inputs_computed_values_come_back_beside_its_columns() {
     // And the values are the kernel's, not merely the right shape.
     let expected = in_process_join(&backing, &a, &b, &join).await.unwrap();
     assert_eq!(multiset(&from_wire(&rows)), multiset(&expected));
+}
+
+// --- grouped joins, and ordering over groups -------------------------------
+
+/// A grouped result in a shape both paths produce, sorted for comparison the
+/// way the joined rows above are — except where the request asked for an
+/// order, which is the one case the order is the thing under test.
+fn groups_as_strings(groups: &[Group]) -> Vec<String> {
+    groups
+        .iter()
+        .map(|g| format!("{:?}|{:?}", g.key, g.values))
+        .collect()
+}
+
+fn wire_groups_as_strings(groups: &[pb::Group]) -> Vec<String> {
+    groups
+        .iter()
+        .map(|g| {
+            let key: Vec<Value> = g
+                .key
+                .iter()
+                .map(|v| value_from_proto(v).expect("a value this server sent"))
+                .collect();
+            let values: Vec<Value> = g
+                .values
+                .iter()
+                .map(|v| value_from_proto(v).expect("a value this server sent"))
+                .collect();
+            format!("{key:?}|{values:?}")
+        })
+        .collect()
+}
+
+async fn grouped_join_over_the_wire(
+    client: &mut RecordsClient<Channel>,
+    query: pb::AggregateQuery,
+) -> Result<Vec<String>, tonic::Status> {
+    let stream = client
+        .aggregate(app_request(pb::AggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(query),
+            freshness: None,
+        }))
+        .await?
+        .into_inner();
+    let (groups, served_by) = common::drain_groups(stream).await;
+    assert!(
+        served_by.is_some(),
+        "an aggregate stream must carry `served_by` on its first message"
+    );
+    Ok(wire_groups_as_strings(&groups))
+}
+
+async fn grouped_join_in_process(
+    backing: &Arc<MemoryStore>,
+    join: &Join,
+    grouping: &Grouping,
+) -> Result<Vec<String>, slate_kernel::KernelError> {
+    let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(backing));
+    let txn = store.begin().await.unwrap();
+    let groups = txn
+        .group_by_join(&ctx(), &authors(), &books(), join, grouping)
+        .await?;
+    Ok(groups_as_strings(&groups))
+}
+
+/// The wire's grouped join must answer exactly what the kernel's does.
+///
+/// The point of the differential: the head node implements no grouping of its
+/// own, so a disagreement here is a conversion bug — an ordinal resolved in
+/// the wrong space, an aggregate mapped to the wrong column — and those are
+/// invisible to a test that only checks the shape of the answer.
+#[tokio::test]
+async fn a_grouped_join_over_the_wire_agrees_with_the_kernel() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    // Books per author. The join's two sides are each named in their own
+    // table's ordinals; the *grouping* is named in the joined schema, which is
+    // the distinction this differential is here to catch.
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"));
+    let grouping = Grouping::by([space.at(0, at(&a, "id"))], &[Aggregate::Count]);
+
+    let expected = grouped_join_in_process(&backing, &join, &grouping)
+        .await
+        .expect("the kernel groups this join");
+
+    let mut wire = join_to_proto(&a, &b, &join);
+    wire.limit = None;
+    let query = pb::AggregateQuery {
+        input: None,
+        join: Some(wire),
+        // Input 0, its `id` column: the wire names the group positionally and
+        // the server resolves it into the joined space, which is the
+        // conversion under test.
+        group_by: vec![column_ref(0, at(&a, "id").0)],
+        aggregates: vec![pb::Aggregate {
+            function: pb::AggregateFunction::Count as i32,
+            column: None,
+        }],
+        having: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    };
+
+    let mut actual = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect("the wire groups this join");
+    let mut expected = expected;
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected, "the wire and the kernel must agree");
+    assert!(!expected.is_empty(), "the fixture should produce groups");
+}
+
+/// Three inputs is refused rather than planned as something else, and the
+/// refusal says why: the kernel groups a two-table join and does not group a
+/// chain.
+#[tokio::test]
+async fn grouping_a_chain_is_refused_with_the_reason() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    // A plain three-table chain, built the way the chain tests above build
+    // one, so the refusal is about the number of inputs and nothing else.
+    let (a, b, sl) = (authors(), books(), sales());
+    let tables: Vec<&TableDef> = vec![&a, &b, &sl];
+    let space = JoinSchema::over(tables.iter().copied());
+    let chain = Chain::from(Query::all())
+        .join(JoinStep::equating(
+            space.at(0, at(&a, "id")),
+            at(&b, "author_id"),
+        ))
+        .join(JoinStep::equating(
+            space.at(1, at(&b, "id")),
+            at(&sl, "book_id"),
+        ));
+    let chain = chain_to_proto(&tables, &chain);
+    let query = pb::AggregateQuery {
+        input: None,
+        join: Some(chain),
+        group_by: Vec::new(),
+        aggregates: vec![pb::Aggregate {
+            function: pb::AggregateFunction::Count as i32,
+            column: None,
+        }],
+        having: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    };
+
+    let status = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect_err("grouping a chain must be refused");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert!(
+        status.message().contains("chain"),
+        "the refusal should say what is not built: {}",
+        status.message()
+    );
+}
+
+/// Naming both sources is a client bug, reported rather than resolved by a
+/// precedence rule nobody would remember.
+#[tokio::test]
+async fn naming_both_an_input_and_a_join_is_refused() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let (a, b) = (authors(), books());
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"));
+    let query = pb::AggregateQuery {
+        input: Some(pb::Query {
+            table: "authors".to_owned(),
+            ..Default::default()
+        }),
+        join: Some(join_to_proto(&a, &b, &join)),
+        group_by: Vec::new(),
+        aggregates: vec![pb::Aggregate {
+            function: pb::AggregateFunction::Count as i32,
+            column: None,
+        }],
+        having: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    };
+
+    let status = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect_err("naming both sources must be refused");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert!(
+        status.message().contains("both"),
+        "the refusal should name the problem: {}",
+        status.message()
+    );
+}
+
+/// Ordering, limiting and offsetting are over *groups*, and the wire's answer
+/// must be the kernel's — in order this time, since the order is the point.
+#[tokio::test]
+async fn ordered_and_limited_groups_agree_with_the_kernel_in_order() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"));
+
+    // *Fewest* books first, and an offset, chosen so the requested order
+    // differs from the kernel's default of ascending by encoded group key.
+    // Under this caller's policy the visible groups are author 1 with two
+    // books and author 2 with one, so ascending by count answers (2,1), (1,2)
+    // where the default answers (1,2), (2,1) — and after the offset the two
+    // disagree on the single group returned.
+    //
+    // Descending by count was the first version of this test and proved
+    // nothing: it agreed with the default order on this fixture, so dropping
+    // the ordering entirely still passed. The tie-break on the key is kept so
+    // the comparison is against one answer rather than either of two.
+    let grouping = Grouping::by([space.at(0, at(&a, "id"))], &[Aggregate::Count])
+        .sort_by([SortKey::asc(Ordinal(1)), SortKey::asc(Ordinal(0))])
+        .limit(2)
+        .offset(1);
+
+    let expected = grouped_join_in_process(&backing, &join, &grouping)
+        .await
+        .expect("the kernel orders these groups");
+
+    let query = pb::AggregateQuery {
+        input: None,
+        join: Some(join_to_proto(&a, &b, &join)),
+        group_by: vec![column_ref(0, at(&a, "id").0)],
+        aggregates: vec![pb::Aggregate {
+            function: pb::AggregateFunction::Count as i32,
+            column: None,
+        }],
+        having: None,
+        // Over the group: key 0 is the author id, aggregate 0 is the count.
+        sort: vec![
+            pb::SortKey {
+                column: Some(pb::ColumnRef {
+                    input: 0,
+                    of: Some(pb::column_ref::Of::Aggregate(0)),
+                }),
+                direction: pb::SortDirection::Asc as i32,
+                nulls: pb::NullsOrder::Unspecified as i32,
+            },
+            pb::SortKey {
+                column: Some(pb::ColumnRef {
+                    input: 0,
+                    of: Some(pb::column_ref::Of::GroupKey(0)),
+                }),
+                direction: pb::SortDirection::Asc as i32,
+                nulls: pb::NullsOrder::Unspecified as i32,
+            },
+        ],
+        limit: Some(2),
+        offset: 1,
+    };
+
+    let actual = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect("the wire orders these groups");
+
+    // Compared in order, not as a multiset: an ordering the wire dropped would
+    // pass a multiset comparison exactly.
+    assert_eq!(actual, expected, "the order is part of the answer");
+    assert_eq!(
+        actual.len(),
+        1,
+        "two visible groups, one skipped by the offset"
+    );
+
+    // And pinned against the fixture rather than only against the kernel, so
+    // that both agreeing on the wrong thing is still a failure. Ascending by
+    // count with the first group dropped leaves author 3 (one book) then
+    // author 1 (three).
+    let unordered = Grouping::by([space.at(0, at(&a, "id"))], &[Aggregate::Count]);
+    let all = grouped_join_in_process(&backing, &join, &unordered)
+        .await
+        .expect("the kernel groups this join");
+    assert_eq!(all.len(), 2, "two authors are visible to this caller");
+    assert_ne!(
+        actual,
+        all.iter().skip(1).take(2).cloned().collect::<Vec<_>>(),
+        "the requested order must differ from the kernel's default, or this \
+         test cannot tell whether the ordering was applied"
+    );
+}
+
+/// A group key on the *right* table of the join.
+///
+/// The joined space has to include every input for this to resolve at all,
+/// and a group key on input 0 does not prove that: narrowing the space to the
+/// first input alone passed every other test here. This is the one that fails.
+#[tokio::test]
+async fn a_group_key_on_the_right_side_of_the_join_resolves() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"));
+
+    // Grouping by the *book's* author_id rather than the author's id: the same
+    // partition, named on the other side of the join.
+    let grouping = Grouping::by([space.at(1, at(&b, "author_id"))], &[Aggregate::Count]);
+
+    let expected = grouped_join_in_process(&backing, &join, &grouping)
+        .await
+        .expect("the kernel groups on the right side");
+
+    let query = pb::AggregateQuery {
+        input: None,
+        join: Some(join_to_proto(&a, &b, &join)),
+        group_by: vec![column_ref(1, at(&b, "author_id").0)],
+        aggregates: vec![pb::Aggregate {
+            function: pb::AggregateFunction::Count as i32,
+            column: None,
+        }],
+        having: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    };
+
+    let mut actual = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect("the wire groups on the right side");
+    let mut expected = expected;
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+    assert!(!expected.is_empty(), "the fixture should produce groups");
 }

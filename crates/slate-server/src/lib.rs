@@ -153,14 +153,19 @@
 //!
 //! # What is not here
 //!
-//! No grouped join: the kernel groups over a single-table cursor, and
-//! aggregating a join here would mean a second implementation of grouping in
-//! the head node — over rows it had already streamed, losing the projection
-//! narrowing that lets `COUNT(*)` read no columns at all. No `ORDER BY` over
-//! groups either, for the same reason: the kernel has no ordering over groups
-//! to be an oracle against, and a comparator written here would be a second
-//! statement of the sort rules. Groups come back in the kernel's own order,
-//! ascending by encoded key.
+//! No grouped *chain*. A grouped two-table join is on the wire
+//! (`AggregateQuery.join`), and so is `ORDER BY`/`LIMIT`/`OFFSET` over groups
+//! (`sort`, `limit`, `offset`) — both because the kernel does them, which was
+//! always the condition. The objection that kept them out was never that they
+//! were unwanted: it was that implementing either here would have meant a
+//! second implementation of grouping in the head node, over rows it had
+//! already streamed, losing the projection narrowing that lets `COUNT(*)` read
+//! no columns at all, with nothing to be an oracle against. The kernel groups
+//! a joined row stream itself now, so the wire carries the request to it and
+//! implements nothing.
+//!
+//! Three inputs is refused rather than planned: the kernel groups a two-table
+//! join and does not group a chain, and the refusal says so.
 //!
 //! No read-only transaction pinned to a replica, which [`ReplicaMode::Pinned`]
 //! would make possible and which is the right way to serve a consistent
