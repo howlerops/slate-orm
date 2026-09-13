@@ -652,7 +652,18 @@ Built and tested:
 
 Not built:
 
-- [ ] Python, Go and TypeScript SDKs
+- [ ] Go and TypeScript SDKs. The Python one is built
+      ([`clients/python`](clients/python)); the other two would each restate the
+      head node's startup by hand, because `slate-server` is a library with no
+      binary — see finding 1 in
+      [`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md)
+- [ ] Fourteen of the fifteen protocol findings that building that client
+      produced. One was a kernel correctness bug and is fixed; the rest are
+      open and unranked in the file, the load-bearing ones being that a client's
+      copy of the schema cannot be checked against the server's, that the
+      response side puts back the width arithmetic `ColumnRef` removed from the
+      request side, and that a primary key of the wrong arity reads as "not
+      found" rather than as a bad request
 - [ ] A grouped *join*, and `ORDER BY`/`LIMIT` over groups. Both are kernel
       gaps rather than wire gaps — the kernel groups over a single-table cursor
       and has no ordering over groups — so building either into the head node
