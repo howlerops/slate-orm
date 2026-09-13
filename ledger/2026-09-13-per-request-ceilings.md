@@ -93,3 +93,15 @@ Nothing here bounds the *number* of values in an `IN` list, or the size of a
 decoded request. tonic's 4 MB default still admits a few hundred thousand
 values; that is now cheap to evaluate rather than quadratic, but it is not
 capped.
+
+## Addendum, same day
+
+A follow-up commit (`0e62f4b`) replaced `.err().expect(...)` with `expect_err`
+in the sort-ceiling test, on clippy's advice — it prints the unexpected `Ok`
+when it fires, where the pair prints nothing useful.
+
+That commit was made with `--no-verify`, which is worth recording because it is
+the first use of the escape hatch since the hook went in, and it was not
+necessary: the change is a test's spelling and belongs in this entry, which is
+where it now is. The rule the escape hatch comes with — write the entry
+afterwards — is what this paragraph is.
