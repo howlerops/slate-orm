@@ -293,7 +293,7 @@ pub struct Repeated {
     pub runs: Vec<LoadRun>,
 }
 
-fn median(values: &mut Vec<f64>) -> f64 {
+fn median(values: &mut [f64]) -> f64 {
     if values.is_empty() {
         return f64::NAN;
     }

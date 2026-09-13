@@ -196,7 +196,19 @@ async fn main() {
         }
         let load_seconds = load.elapsed().as_secs_f64();
         let puts = counters.puts();
-        println!("loaded in {load_seconds:.1}s, {puts} PUTs to object storage");
+        let load_gets = counters.gets();
+        println!(
+            "loaded in {load_seconds:.1}s, {puts} PUTs and {load_gets} GETs to object storage \
+             ({:.1} µs and {:.2} GETs per row)",
+            load_seconds * 1e6 / rows as f64,
+            load_gets as f64 / rows as f64
+        );
+        if std::env::var("SCALE_LOAD_ONLY").is_ok() {
+            // The load is the measurement. Used to locate the knee below,
+            // where the rest of the suite would cost minutes per point and
+            // answer a question the load time has already answered.
+            continue;
+        }
 
         // --- reopen, so the data is in object storage and not a memtable ---
         let backend = SlateStore::open_s3(path, server.config())

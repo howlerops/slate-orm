@@ -11,6 +11,15 @@ not.
 cargo bench                                                   # criterion
 cargo run --release -p slate-kernel --example perf_report     # I/O counts
 cargo run --release -p slate-headbench --example head_report  # the head node
+
+# the head node under concurrent load, and the two questions that came out of
+# the single-request report
+cargo run --release -p slate-headbench --example head_concurrency
+cargo run --release -p slate-headbench --example stream_step
+
+# the cost model above the 200,000 rows it was calibrated at
+SCALE_ROWS=200000,600000,1200000 \
+  cargo run --release -p slate-slatedb --example cost_at_scale
 ```
 
 Two profiles are used. `free` charges nothing and isolates CPU. `io` charges
@@ -768,7 +777,7 @@ process, same fixture:
 
 | batch | 118 | 120 | 122 | **124** | **125** | **126** | 127 | 128 | 130 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Nagle on | 272 µs | 90 µs | 89 µs | **148 µs** | **306 µs** | **264 µs** | **3.17 ms** | **2.76 ms** | 113 µs |
+| Nagle on | 272 µs | 90 µs | 89 µs | 148 µs | 306 µs | 264 µs | **3.17 ms** | **2.76 ms** | 113 µs |
 | `TCP_NODELAY` | 181 µs | 65 µs | 101 µs | 133 µs | 262 µs | 356 µs | 362 µs | 448 µs | 385 µs |
 
 and the first-row latency those add up to:
@@ -783,6 +792,15 @@ and the first-row latency those add up to:
 **With Nagle on the step is there, at 2.5–3 ms, in the same place it was first
 found. With `TCP_NODELAY` it is gone.** Above the boundary the Nagled arm's
 worst run reaches 19 ms; the `TCP_NODELAY` arm's worst run reaches 2.8 ms.
+
+The Nagled row of the first table is ragged where the second is not, and that
+is worth reading rather than tidying: at 126 and 130 the 2.7 ms landed *before*
+the header rather than after it, so the difference column looks clean while
+first-row latency is stepped anyway. A stall that can attach itself to either
+of two messages is a stall in the transport under both of them, not in the work
+between them. A 15-run sweep taken an hour earlier put the step at 126 in the
+difference column and 130 in the clean one — it moves between sweeps, which is
+the same bimodality the original write-up noticed and could not place.
 
 Two further arms rule out the remaining candidates.
 
@@ -1076,11 +1094,12 @@ the same binary about twenty minutes later, and each says what it was compared
 against inside itself.
 
 **Read the `cpu/op` column first.** It is `cores ÷ ops/s` — CPU spent per
-operation across both sides — and it is the only column here that other agents'
-builds cannot move. Throughput is `cores the process was given ÷ cpu/op`, and
-only the first of those two depends on what else was compiling. Runs were taken
-at machine load between 3 and 9; the tables below are the median of five 1.2 s
-windows per point with the range beside them.
+operation across both sides — and it is the column other agents' builds cannot
+move, because a process that is given half as much of the machine does the same
+work half as fast and spends the same CPU doing it. The `ops/s` column on its
+own cannot tell a slower head node from a busier box; `cpu/op` can. Runs were
+taken at machine load between 3 and 9; the tables below are the median of five
+1.2 s windows per point with the range beside them.
 
 #### The empty RPC, which nothing else can beat
 
@@ -1137,19 +1156,33 @@ It stops falling by about eight clients — below that, per-operation cost is
 dominated by a runtime that is mostly idle — and from there it does not rise.
 *Nothing inside the head node gets more expensive as callers are added.*
 
-What does happen is that the process runs out of cores, and the identity is
-exact:
+What does happen is that the process runs out of cores.
 
-| workload | cores the process got at 128 | cpu/op | cores ÷ cpu/op | measured ops/s |
-|---|---:|---:|---:|---:|
-| empty RPC | 3.60 | 67 µs | 53,700 | **53,693** |
-| get | 2.88 | 88 µs | 32,600 | **32,627** |
-| 10-row stream | 3.68 | 142 µs | 25,900 | **25,953** |
-| write | 3.24 | 152 µs | 21,300 | **21,398** |
+`cpu/op` is *defined* as `cores ÷ ops/s`, so "cores divided by cpu/op gives the
+throughput" is arithmetic and not a finding — it would be true of any numbers
+at all. What is not arithmetic is that **the left-hand side stops moving**: once
+`cpu/op` is flat, every remaining change in throughput is a change in how many
+cores the process was granted, and none of it is a change in what the work
+costs.
 
-Four workloads, four predictions from two measured columns, all within 1%.
-Throughput here **is** the box divided by the cost of the work, and the cost of
-the work stops changing at eight clients.
+The clearest instance is in the empty-RPC table, where the run at 32 clients
+looks like a regression and is not:
+
+| clients | ops/s | cores the process got | cpu/op |
+|---:|---:|---:|---:|
+| 16 | 40,690 | 2.86 | 70 µs |
+| 32 | **38,799** | **2.41** | 62 µs |
+| 64 | 51,327 | 3.43 | 67 µs |
+
+Throughput fell by 5% between sixteen clients and thirty-two, and the cost of
+the work fell too. What fell furthest was the share of the machine this process
+was given, from 2.86 cores to 2.41, because something else on the box wanted
+them. Reading the ops/s column alone, that row is a scalability cliff. Reading
+the other two, it is a build starting.
+
+At 128 clients the four workloads were given 3.60, 2.88, 3.68 and 3.24 cores of
+the four on the machine, so between 72% and 92% of it, with the load generator
+taking about 40–60% of that.
 
 So the answer to "past what concurrency am I measuring the box" is: **past
 about 8 clients for a point read, and about 16 for a stream or a write.** Above
@@ -1192,8 +1225,9 @@ gap between writing a hundred rows in one commit and a hundred rows one at a
 time is about **round trips**, not about the flush — and a deployment that
 cannot batch its writes can get the same effect by having a hundred callers.
 
-The measurement was run three times over ninety minutes and produced 10 / 20 /
-40 / 79 / 158 / 316 / 633 every time, to the integer.
+The measurement was run three times over ninety minutes and produced
+10 / 20 / 40 / 79 / 158 / 316 / 633 every time, with a single 632 in place of a
+633 in one of them — which is one commit a second out of six hundred.
 
 #### The write sweep, and a hypothesis withdrawn in the middle of writing it
 
@@ -1344,10 +1378,126 @@ a watch-channel read at 17 ns. That is read off `leadership.rs`; what is
 measured is that a 19 ms stall inside the renewal reaches no caller.
 
 
+### 7. Above 200,000 rows: what could be measured, and what stopped it
+
+`slate-slatedb`'s `cost_calibration` measured the two constants the planner
+rests on against a real S3 server at **200,000 rows**, and nothing above that
+had been measured. `examples/cost_at_scale.rs` is the same fixture with three
+things added: several sizes, request counts taken **cold as well as warm**, and
+point reads measured in bulk over a pseudo-random walk of the keyspace rather
+than one at a time.
+
+**First, that it is the same fixture.** At 200,000 rows this example reproduces
+the calibration's decisive measurement to three significant figures: forcing
+the contested query through the index costs **1,223 GETs and 4.3 s** here
+against the **1,217 requests and 3.6 s** [`correctness.md`](correctness.md)
+records, and the table scan the planner actually picks costs 19–23 GETs and
+0.5–0.7 s. Two runs an hour apart agreed. Nothing below is being compared
+against a different fixture.
+
+#### The calibration was not measuring a warm cache
+
+This was a live worry and it turns out to be unfounded, which is worth a line
+because the alternative would have invalidated both constants.
+`cost_calibration` runs `analyze` — a full read of the table — before it
+measures anything, so every number it published was taken against a block cache
+that had just seen the whole database. If the cache were doing the work, the
+constants would describe a hit ratio rather than storage.
+
+| 200,000 rows | before `analyze` | after `analyze` |
+|---|---:|---:|
+| GETs per point read | 3.54 / 3.57 | 3.40 / 3.41 |
+| rows per GET, full scan | 9,524 / 8,000 | 9,524 / 10,526 |
+
+Two independent runs, cold and warm, and the difference between the columns is
+smaller than the difference between the runs. **The cache is not what the
+calibration measured.**
+
+#### The two constants at 200,000 rows
+
+| | the model says | measured |
+|---|---:|---:|
+| `SCAN_ROW_COST` → rows per request on a scan | 8,000 | **8,000 – 10,526** |
+| `POINT_READ_COST` → requests per point read | 3.0 | **3.40 – 3.57** |
+
+The scan constant is right, on the conservative side of right. The point-read
+constant is **13–19% low** — a read really costs about three and a half
+requests, not three. Both errors point the same way (the model slightly
+under-charges reads relative to scans, which makes an index look marginally
+better than it is), and at this scale neither is close to changing a decision:
+the plan the model rejects it rejects by a factor of 46 in cost and 58 in
+requests. Adjusting `POINT_READ_COST` from 3.0 to 3.5 is not proposed here,
+because it is a 17% change to a constant whose own spread across two runs is 5%
+and which is a property of the row width and the deployment rather than of
+anything in this repository — the same argument `SCAN_ROW_COST` was left alone
+under, one section up.
+
+#### Where this stops, and it is not the model
+
+The intended measurement — the same constants at 600,000 and 1,200,000 rows —
+**was not taken, because the fixture cannot be built at those sizes here.** The
+loader is linear and then it is not:
+
+| rows | load | per row | PUTs | GETs during load |
+|---:|---:|---:|---:|---:|
+| 100,000 | 2.6 s | 25.6 µs | 33 | 58 |
+| 200,000 | 4.9 s | 24.6 µs | 54 | 62 |
+| 300,000 | 7.3 s | 24.5 µs | 75 | 74 |
+| 400,000 | 9.8 s | 24.6 µs | 96 | 80 |
+| 500,000 | 11.1 s | 22.2 µs | 118 | 84 |
+| 600,000 | **did not finish in five minutes**, on three attempts | | | |
+
+Twenty-two to twenty-six microseconds a row, dead flat over a factor of five,
+and then something between five and six hundred thousand rows that this harness
+cannot get past.
+
+**It is reproducible and it is not attributed, and the difference matters.**
+Three attempts at 600,000 rows and one at 1,200,000 all failed to finish
+loading inside five minutes, from three different starting states — as the
+second size in a sweep, as the sixth, and alone in a fresh process. Against
+that:
+
+- It is **not simply a busy machine**. The 400,000 and 500,000 rows above were
+  loaded at machine load 8.6 in **9.9 s and 11.4 s**; on a quiet box at load 2.5
+  the same two sizes took **9.8 s and 11.1 s**. The loader does not notice a
+  busy box at those sizes.
+- It **may be the disk**. This machine ran out of disk twice during these
+  measurements — other agents were building on it throughout — and the
+  in-process S3 server writes its bucket to a temporary directory on that same
+  disk. Two of the four stalled attempts began within minutes of a
+  `No space left on device`. That is not an alibi for all four, and it is not
+  ruled out for any of them.
+
+The shape of it is suggestive: these rows are about 110 bytes, so 600,000 of
+them is roughly 66 MB against SlateDB's default 64 MB `l0_sst_size_bytes`, and
+`insert_many`'s duplicate-key check is a read per row that costs nothing while
+the memtable holds the table and costs object-store requests the moment it does
+not. The `GETs during load` column exists to test exactly that. It is **zero
+per row at every size that completes**, which is consistent with the story and
+confirms nothing, because the size that would confirm it is the size that will
+not finish.
+
+So, plainly:So, plainly:
+
+- **The cost model was not shown to break above 200,000 rows.** It was not
+  shown to hold there either. What was measured is that it holds *at* 200,000,
+  cold as well as warm, and that the shapes it ranks it still ranks correctly.
+- **Something stops this fixture at about half a million rows**, and it is
+  reproducible across four attempts and three starting states. Whether it is
+  the write path or the disk under the S3 server is *not established*, and the
+  first thing to do next is to run it on a machine with room and nothing else
+  on it — which would settle it in twenty minutes and could not be done here.
+
+Nothing here says the planner is wrong at a million rows, and nothing here says
+a bulk load of a million rows is slow — only that this harness could not
+perform one, four times, and could perform one of five hundred thousand rows in
+eleven seconds every time it tried.
+
+
 ### What was boring, and is reported as boring
 
-Four things were measured, came back with no difference, and are worth as much
-as the findings:
+These were measured, came back with no difference, and are worth as much as the
+findings:
 
 - **Tenant-affinity routing against round robin**: 76 ns apart, 0.06% of a
   request.
@@ -1398,3 +1548,11 @@ top — and the one argument for lowering it turned out to be a socket option.
   125 once `TCP_NODELAY` is set. It is consistent with the per-row cost of a
   larger batch and it is at the edge of this harness's resolution, and neither
   of those is a demonstration.
+- **The cost model above 200,000 rows**, which is what section 7 set out to
+  measure. The fixture could not be built past about 500,000 rows on this
+  machine, so the constants at a million rows remain unmeasured.
+- **Why the fixture could not be built.** Four attempts at 600,000 rows or more
+  stalled; the loader is linear and indifferent to machine load up to 500,000;
+  and the disk under the in-process S3 server hit zero twice during the
+  session. Scale and disk are not separated, and a machine with room would
+  separate them in twenty minutes.
