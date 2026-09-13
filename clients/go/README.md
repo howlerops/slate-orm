@@ -59,14 +59,48 @@ a `KindNotLeader` is retryable **elsewhere** and carries `Leader`; a
 have landed and retrying is how one write becomes two; and a
 `KindDeadlineExceeded` has the same ambiguity.
 
+## Joins and aggregates
+
+```go
+b := slate.NewJoin()
+authors := b.Add(slate.JoinInput{Table: "authors"})
+b.Add(slate.JoinInput{
+    Table: "books",
+    Type:  slate.Left,
+    On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+})
+
+groups, err := session.AggregateJoin(ctx, b.Query(), slate.Grouping{
+    GroupBy:    []slate.Column{slate.At(0, 0)},
+    Aggregates: []slate.Aggregate{slate.Count()},
+    Sort:       []slate.GroupSortKey{{Column: slate.Agg(0), Direction: slate.Desc}},
+    Limit:      slate.Limit(10),
+})
+```
+
+A `Column` is *(which input, that input's own ordinal)* — never a cumulative
+offset into a flattened row. `At(1, 2)` is the third column of the second
+table, not "first table's width plus two". This is why the client needs no
+catalog, and it is the thing about joins that is easiest to get wrong.
+
+`Grouping`'s `Sort`, `Limit` and `Offset` are over **groups**, not the rows
+going into them. A `HAVING` and a group ordering name keys and aggregates —
+`slate.Key(0)`, `slate.Agg(0)` — and the comparisons for them are the
+`Group*` family (`GroupGt`, …), separate from the row-level `Gt` so that using
+the wrong one does not compile.
+
+A `JoinStream` yields one slice **per input**, `nil` where an outer join found
+no match — kept separate rather than concatenated, because a flat row cannot
+tell "no match" from "matched, and the columns are null".
+
+`AggregateJoin` takes exactly two inputs. A third is refused by the server with
+that as the reason, rather than counted here where the count could drift from
+the kernel's.
+
 ## What is not here
 
-`Join`, `Aggregate` and `ExplainJoin` are on the wire and not on this client
-yet — the generated stubs are in `internal/pb`, so they are reachable, but
-there is no typed surface and no test. `Explain` for a single table is here.
-
-No `Vector` similarity search surface, no schema-check plumbing
-(`SchemaCheck`), no computed values in a `Query`.
+No vector similarity search surface, no schema-check plumbing (`SchemaCheck`),
+no computed values in a `Query` or a join input.
 
 The Python client in `clients/python` is the fuller one; where the two
 disagree about the protocol, that is a bug in one of them rather than a

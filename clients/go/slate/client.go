@@ -607,3 +607,380 @@ func (c *Client) Leadership(ctx context.Context) (*Leadership, error) {
 		SteppedDownBecause: response.SteppedDownBecause,
 	}, nil
 }
+
+// JoinStream is joined rows arriving in batches.
+//
+// A joined row is one slice of values per input, kept separate rather than
+// concatenated: an outer join pads an unmatched side with nulls, and a flat
+// row cannot tell "the right side had no match" from "the right side matched
+// and its columns are null".
+type JoinStream struct {
+	stream   grpc.ServerStreamingClient[pb.JoinResponse]
+	cancel   context.CancelFunc
+	session  *Session
+	batch    [][][]Value
+	at       int
+	servedBy *ServedBy
+	warnings []string
+	done     bool
+	err      error
+}
+
+// Join reads joined rows.
+func (s *Session) Join(ctx context.Context, join JoinQuery) (*JoinStream, error) {
+	ctx, cancel := context.WithCancel(s.ctx(ctx))
+	stream, err := s.client.rpc.Join(ctx, &pb.JoinRequest{
+		Join: join.toProto(), Freshness: s.freshness(),
+	})
+	if err != nil {
+		cancel()
+		return nil, fromRPC(err)
+	}
+	return &JoinStream{stream: stream, cancel: cancel, session: s}, nil
+}
+
+// Join reads joined rows inside the transaction.
+func (t *Transaction) Join(ctx context.Context, join JoinQuery) (*JoinStream, error) {
+	ctx, cancel := context.WithCancel(t.session.ctx(ctx))
+	stream, err := t.session.client.rpc.Join(ctx, &pb.JoinRequest{
+		Transaction: t.id, Join: join.toProto(),
+	})
+	if err != nil {
+		cancel()
+		return nil, fromRPC(err)
+	}
+	return &JoinStream{stream: stream, cancel: cancel, session: t.session}, nil
+}
+
+// Next advances to the next joined row.
+func (j *JoinStream) Next() bool {
+	for j.at >= len(j.batch) {
+		if j.done {
+			return false
+		}
+		message, err := j.stream.Recv()
+		if errors.Is(err, io.EOF) {
+			j.done = true
+			return false
+		}
+		if err != nil {
+			j.err = withTrailers(fromRPC(err), j.stream.Trailer())
+			j.done = true
+			return false
+		}
+		if message.ServedBy != nil && j.servedBy == nil {
+			j.servedBy = &ServedBy{
+				Replica:  message.ServedBy.Replica,
+				Sequence: message.ServedBy.Sequence,
+			}
+			j.session.observeServedBy(message.ServedBy)
+		}
+		j.warnings = append(j.warnings, message.Warnings...)
+		j.batch = j.batch[:0]
+		j.at = 0
+		for _, joined := range message.Rows {
+			inputs := make([][]Value, 0, len(joined.Inputs))
+			for _, input := range joined.Inputs {
+				// A nil `Row` is an unmatched side of an outer join, and stays
+				// nil here so a caller can tell it from a row of nulls.
+				if input.Row == nil {
+					inputs = append(inputs, nil)
+					continue
+				}
+				row, err := rowFromProto(input.Row)
+				if err != nil {
+					j.err = err
+					j.done = true
+					return false
+				}
+				inputs = append(inputs, row)
+			}
+			j.batch = append(j.batch, inputs)
+		}
+	}
+	return true
+}
+
+// Row is the joined row [JoinStream.Next] advanced to: one slice per input,
+// nil where an outer join found no match.
+func (j *JoinStream) Row() [][]Value {
+	if j.at >= len(j.batch) {
+		return nil
+	}
+	row := j.batch[j.at]
+	j.at++
+	return row
+}
+
+// Err is why the stream stopped, or nil if it simply ended.
+func (j *JoinStream) Err() error { return j.err }
+
+// ServedBy is which store answered.
+func (j *JoinStream) ServedBy() *ServedBy { return j.servedBy }
+
+// Warnings are what the server said about the request it served.
+func (j *JoinStream) Warnings() []string { return j.warnings }
+
+// Close cancels the call.
+func (j *JoinStream) Close() { j.cancel() }
+
+// Collect drains a stream into a slice, closing it.
+func (j *JoinStream) Collect() ([][][]Value, error) {
+	defer j.Close()
+	var out [][][]Value
+	for j.Next() {
+		out = append(out, j.Row())
+	}
+	return out, j.Err()
+}
+
+// GroupStream is groups arriving in batches.
+type GroupStream struct {
+	stream   grpc.ServerStreamingClient[pb.AggregateResponse]
+	cancel   context.CancelFunc
+	session  *Session
+	batch    []Group
+	at       int
+	servedBy *ServedBy
+	warnings []string
+	done     bool
+	err      error
+}
+
+// Aggregate groups one table.
+func (s *Session) Aggregate(
+	ctx context.Context,
+	over Query,
+	grouping Grouping,
+) (*GroupStream, error) {
+	wire := &pb.AggregateQuery{Input: over.toProto()}
+	grouping.apply(wire)
+	return s.aggregate(ctx, wire, "")
+}
+
+// AggregateJoin groups a join.
+//
+// Two inputs exactly: the kernel groups a two-table join and does not group a
+// chain. A third is refused by the server with that as the reason, rather than
+// counted here where the count could drift from the kernel's.
+func (s *Session) AggregateJoin(
+	ctx context.Context,
+	over JoinQuery,
+	grouping Grouping,
+) (*GroupStream, error) {
+	wire := &pb.AggregateQuery{Join: over.toProto()}
+	grouping.apply(wire)
+	return s.aggregate(ctx, wire, "")
+}
+
+// Aggregate groups one table inside the transaction.
+func (t *Transaction) Aggregate(
+	ctx context.Context,
+	over Query,
+	grouping Grouping,
+) (*GroupStream, error) {
+	wire := &pb.AggregateQuery{Input: over.toProto()}
+	grouping.apply(wire)
+	return t.session.aggregate(ctx, wire, t.id)
+}
+
+// AggregateJoin groups a join inside the transaction.
+func (t *Transaction) AggregateJoin(
+	ctx context.Context,
+	over JoinQuery,
+	grouping Grouping,
+) (*GroupStream, error) {
+	wire := &pb.AggregateQuery{Join: over.toProto()}
+	grouping.apply(wire)
+	return t.session.aggregate(ctx, wire, t.id)
+}
+
+func (s *Session) aggregate(
+	ctx context.Context,
+	query *pb.AggregateQuery,
+	transaction string,
+) (*GroupStream, error) {
+	ctx, cancel := context.WithCancel(s.ctx(ctx))
+	request := &pb.AggregateRequest{Transaction: transaction, Aggregate: query}
+	// A transaction's reads go to the writer and need no freshness floor.
+	if transaction == "" {
+		request.Freshness = s.freshness()
+	}
+	stream, err := s.client.rpc.Aggregate(ctx, request)
+	if err != nil {
+		cancel()
+		return nil, fromRPC(err)
+	}
+	return &GroupStream{stream: stream, cancel: cancel, session: s}, nil
+}
+
+// Next advances to the next group.
+func (g *GroupStream) Next() bool {
+	for g.at >= len(g.batch) {
+		if g.done {
+			return false
+		}
+		message, err := g.stream.Recv()
+		if errors.Is(err, io.EOF) {
+			g.done = true
+			return false
+		}
+		if err != nil {
+			g.err = withTrailers(fromRPC(err), g.stream.Trailer())
+			g.done = true
+			return false
+		}
+		if message.ServedBy != nil && g.servedBy == nil {
+			g.servedBy = &ServedBy{
+				Replica:  message.ServedBy.Replica,
+				Sequence: message.ServedBy.Sequence,
+			}
+			g.session.observeServedBy(message.ServedBy)
+		}
+		g.warnings = append(g.warnings, message.Warnings...)
+		g.batch = g.batch[:0]
+		g.at = 0
+		for _, group := range message.Groups {
+			key, err := decodeValues(group.Key)
+			if err != nil {
+				g.err = err
+				g.done = true
+				return false
+			}
+			values, err := decodeValues(group.Values)
+			if err != nil {
+				g.err = err
+				g.done = true
+				return false
+			}
+			g.batch = append(g.batch, Group{Key: key, Values: values})
+		}
+	}
+	return true
+}
+
+func decodeValues(wire []*pb.Value) ([]Value, error) {
+	out := make([]Value, 0, len(wire))
+	for i, v := range wire {
+		decoded, err := valueFromProto(v)
+		if err != nil {
+			return nil, fmt.Errorf("value %d: %w", i, err)
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
+}
+
+// Group is the group [GroupStream.Next] advanced to.
+func (g *GroupStream) Group() Group {
+	if g.at >= len(g.batch) {
+		return Group{}
+	}
+	group := g.batch[g.at]
+	g.at++
+	return group
+}
+
+// Err is why the stream stopped, or nil if it simply ended.
+func (g *GroupStream) Err() error { return g.err }
+
+// ServedBy is which store answered.
+func (g *GroupStream) ServedBy() *ServedBy { return g.servedBy }
+
+// Warnings are what the server said about the request it served.
+func (g *GroupStream) Warnings() []string { return g.warnings }
+
+// Close cancels the call.
+func (g *GroupStream) Close() { g.cancel() }
+
+// Collect drains a stream into a slice, closing it.
+func (g *GroupStream) Collect() ([]Group, error) {
+	defer g.Close()
+	var out []Group
+	for g.Next() {
+		out = append(out, g.Group())
+	}
+	return out, g.Err()
+}
+
+// JoinInputPlan is how one input of a join is planned.
+type JoinInputPlan struct {
+	// Plan is the input's own access path.
+	Plan Explanation
+	// Type is how unmatched rows are treated.
+	Type JoinType
+	// Algorithm is what the planner chose, as the server spells it.
+	Algorithm string
+	// EstimatedRows and EstimatedCost are for the join up to and including
+	// this input, not for the input alone.
+	EstimatedRows float64
+	EstimatedCost float64
+}
+
+// JoinExplanation is the plan a join would run under.
+type JoinExplanation struct {
+	Inputs        []JoinInputPlan
+	EstimatedRows float64
+	EstimatedCost float64
+	Display       string
+	Warnings      []string
+}
+
+// ExplainJoin asks for a join's plan without running it.
+//
+// Needs the `explain` action on every table involved, not just one.
+func (s *Session) ExplainJoin(ctx context.Context, join JoinQuery) (*JoinExplanation, error) {
+	response, err := s.client.rpc.ExplainJoin(s.ctx(ctx), &pb.ExplainJoinRequest{
+		Join: join.toProto(), Freshness: s.freshness(),
+	})
+	if err != nil {
+		return nil, fromRPC(err)
+	}
+	s.observeServedBy(response.ServedBy)
+	out := &JoinExplanation{
+		EstimatedRows: response.EstimatedRows,
+		EstimatedCost: response.EstimatedCost,
+		Display:       response.Display,
+		Warnings:      response.Warnings,
+	}
+	for _, input := range response.Inputs {
+		plan := JoinInputPlan{
+			EstimatedRows: input.EstimatedRows,
+			EstimatedCost: input.EstimatedCost,
+		}
+		switch input.JoinType {
+		case pb.JoinType_JOIN_TYPE_LEFT:
+			plan.Type = Left
+		case pb.JoinType_JOIN_TYPE_RIGHT:
+			plan.Type = Right
+		case pb.JoinType_JOIN_TYPE_FULL:
+			plan.Type = Full
+		default:
+			plan.Type = Inner
+		}
+		if input.Algorithm != nil {
+			switch input.Algorithm.Algorithm.(type) {
+			case *pb.JoinAlgorithm_NestedLoop:
+				plan.Algorithm = "nested loop"
+			case *pb.JoinAlgorithm_HashBuild:
+				plan.Algorithm = "hash"
+			}
+		}
+		if input.Plan != nil {
+			plan.Plan = Explanation{
+				Table:         input.Plan.Table,
+				Access:        input.Plan.Access,
+				Residual:      input.Plan.Residual,
+				Descending:    input.Plan.Descending,
+				EstimatedRows: input.Plan.EstimatedRows,
+				EstimatedCost: input.Plan.EstimatedCost,
+				Sorts:         input.Plan.Sorts,
+				IndexOnly:     input.Plan.IndexOnly,
+				Display:       input.Plan.Display,
+				Warnings:      input.Plan.Warnings,
+			}
+		}
+		out.Inputs = append(out.Inputs, plan)
+	}
+	return out, nil
+}
