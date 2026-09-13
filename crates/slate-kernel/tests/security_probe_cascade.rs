@@ -430,3 +430,138 @@ async fn update_many_gives_the_same_answer_both_ways() {
         "update_many leaked: {occupied:?} vs {free:?}"
     );
 }
+
+/// Does an *upsert* against a row the policy hides overwrite it?
+///
+/// Finding 4 records the insert oracle and says the claim holds for "update,
+/// upsert and delete". Upsert is the one worth checking rather than believing:
+/// it is defined as "insert, or replace what is there", and the row that is
+/// there is one this caller may not see. If the replace arm ran, Alice would
+/// destroy Bob's row without ever being able to read it — which would be a far
+/// worse finding than the oracle, and would be silent.
+///
+/// It does not: the `USING` check runs against the existing row first, so the
+/// upsert is refused rather than applied.
+#[tokio::test]
+async fn an_upsert_cannot_overwrite_a_row_the_policy_hides() {
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let store = RecordStore::new(MemoryStore::new(), catalog, owner_policy());
+    let root = SecurityContext::superuser();
+
+    let bobs = Row::new(vec![
+        Value::U64(TENANT_A),
+        Value::U64(7),
+        Value::U64(200),
+        Value::Str("bob's".into()),
+    ]);
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root, &notes(), &bobs).await.unwrap();
+    txn.commit().await.unwrap();
+
+    // Alice tries to take the key with an upsert, claiming ownership.
+    let txn = store.begin().await.unwrap();
+    let outcome = txn
+        .upsert(
+            &person(100),
+            &notes(),
+            &Row::new(vec![
+                Value::U64(TENANT_A),
+                Value::U64(7),
+                Value::U64(100),
+                Value::Str("alice's".into()),
+            ]),
+        )
+        .await;
+    assert!(
+        outcome.is_err(),
+        "an upsert must not replace a row the caller cannot see"
+    );
+    drop(txn);
+
+    // And Bob's row is untouched.
+    let txn = store.begin().await.unwrap();
+    let stored = txn
+        .get(&root, &notes(), &[Value::U64(TENANT_A), Value::U64(7)])
+        .await
+        .unwrap()
+        .expect("bob's row is still there");
+    assert_eq!(
+        stored.values()[3],
+        Value::Str("bob's".into()),
+        "the hidden row was overwritten"
+    );
+}
+
+/// Upsert leaks the same bit as insert, which finding 4 did not say.
+///
+/// The finding records the oracle for `insert` and states the claim holds for
+/// "update, upsert and delete". The first half of that is right and the upsert
+/// half is not: an upsert against a *free* key succeeds and an upsert against a
+/// key held by a row the caller cannot see is refused, and those two outcomes
+/// are the same one bit the insert path gives up.
+///
+/// It is the same inherent bit — a unique key is a shared resource — rather
+/// than a second defect. It is written down because a claim that names upsert
+/// as safe is worse than one that does not mention it: someone reaching for an
+/// upsert *to avoid* the insert oracle would be choosing it for a property it
+/// does not have.
+#[tokio::test]
+async fn an_upsert_leaks_the_same_bit_as_an_insert() {
+    let catalog = Catalog::from_tables([notes()]).expect("catalog");
+    let store = RecordStore::new(MemoryStore::new(), catalog, owner_policy());
+    let root = SecurityContext::superuser();
+
+    // Bob owns note 7. Note 8 is free.
+    let txn = store.begin().await.unwrap();
+    txn.insert(
+        &root,
+        &notes(),
+        &Row::new(vec![
+            Value::U64(TENANT_A),
+            Value::U64(7),
+            Value::U64(200),
+            Value::Str("bob's".into()),
+        ]),
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let alices = |note: u64| {
+        Row::new(vec![
+            Value::U64(TENANT_A),
+            Value::U64(note),
+            Value::U64(100),
+            Value::Str("alice's".into()),
+        ])
+    };
+
+    // The free key: Alice's upsert lands.
+    let txn = store.begin().await.unwrap();
+    let free = txn.upsert(&person(100), &notes(), &alices(8)).await;
+    assert!(
+        free.is_ok(),
+        "an upsert onto a free key should land: {free:?}"
+    );
+    txn.commit().await.unwrap();
+
+    // The occupied-but-invisible key: refused.
+    let txn = store.begin().await.unwrap();
+    let taken = txn.upsert(&person(100), &notes(), &alices(7)).await;
+    assert!(
+        taken.is_err(),
+        "an upsert onto a hidden row must not land, so it is distinguishable"
+    );
+
+    // Which is the oracle: two keys Alice cannot read, told apart by whether
+    // her write succeeded.
+    let visible = txn
+        .get(
+            &person(100),
+            &notes(),
+            &[Value::U64(TENANT_A), Value::U64(7)],
+        )
+        .await
+        .unwrap();
+    assert!(visible.is_none(), "alice still cannot read note 7");
+}

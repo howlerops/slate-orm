@@ -1,7 +1,10 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2, 3, 5, 6 and 7 are fixed
-> and their probes now assert the refusal; 4 and 8 are open. Each finding carries
+> **Status, later the same session.** Findings 1, 2, 3, 5, 6, 7 and 8 are fixed
+> and their probes now assert the refusal. 4 is closed as inherent, with the
+> claim it contradicted narrowed to the truth and one correction to the finding
+> itself: `upsert` leaks the same bit as `insert`, which this document
+> originally said it did not. Each finding carries
 > its own status line below. The fixes are in the commits that reference this
 > file.
 
@@ -242,10 +245,28 @@ statistics a deployed node plans with.
 
 ## 4. A write reports whether a row hidden by RLS occupies a key
 
-**Status: OPEN.** The reviewer's own assessment is that it is probably inherent
-— a unique key is a shared resource, and refusing to say it is taken means
-accepting a write that cannot land. If so the fix is to `security.rs`'s claim
-rather than to the code, and the claim is the thing that is wrong.
+**Status: CLOSED as inherent, with the claim narrowed and one correction to
+this finding.** The oracle is real and is not removable: a unique key is a
+resource shared by everyone who can write the table, and withholding the bit
+means either overwriting the hidden row or accepting a write that cannot be
+stored. `security.rs` now says exactly what each write path discloses, rather
+than claiming a property the insert path does not have.
+
+**The correction:** this finding said the claim was "True of `update`, `upsert`
+and `delete`". It is not true of `upsert`. An upsert onto a free key succeeds
+and an upsert onto a key held by a hidden row is refused, which is the same one
+bit. `an_upsert_leaks_the_same_bit_as_an_insert` demonstrates it. That matters
+more than it sounds: a caller reaching for an upsert *in order to avoid* the
+insert oracle would be choosing it for a property it does not have.
+
+Also checked, because it would have been much worse: an upsert does **not**
+overwrite the hidden row. `an_upsert_cannot_overwrite_a_row_the_policy_hides`
+pins that.
+
+Two things bound the exposure, and `security.rs` states both: it is same-tenant
+only (a tenant-scoped table puts the tenant in the key prefix, so there is no
+collision to observe across tenants), and it requires the attacker to be able
+to *name* the key — a UUID or sequence-drawn key leaves nothing to probe for.
 
 **Impact: medium — same-tenant existence oracle; contradicts a stated
 invariant.**
@@ -406,8 +427,24 @@ regardless.
 
 ## 8. Schema disclosure to an authenticated caller with no grant
 
-**Status: OPEN, low.** The fingerprint and table-name lookup run before the
-RBAC check, so a caller with no grant can confirm a table's shape.
+**Status: FIXED for the shape; table existence is disclosed deliberately.**
+The four handlers that fingerprint-check now authorise first, via
+`Head::authorized_table`, so a caller with no grant is refused before the
+fingerprint runs and a right guess is indistinguishable from a wrong one —
+same code, same message. `a_caller_with_no_grant_cannot_confirm_a_tables_shape`
+asserts both.
+
+Table *existence* still differs: an unknown name answers `NOT_FOUND`, a known
+one with no grant answers `PERMISSION_DENIED`. Kept, and the same choice
+Postgres makes — collapsing them hides a table from someone who cannot use it
+anyway, and makes every ordinary misconfiguration indistinguishable from a
+typo.
+
+The hazard of authorising early is authorising *differently*, and the first
+version of the test could not see it: with only a blanket-granted role to test
+against, a handler checking `Explain` where it meant `Delete` passed. The
+fixture grew four single-action roles, and each handler is now exercised by a
+role holding exactly the one action it needs.
 
 **Impact: low.** `crates/slate-server/src/service.rs`,
 `crates/slate-server/src/fingerprint.rs`.

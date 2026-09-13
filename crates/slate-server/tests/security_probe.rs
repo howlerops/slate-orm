@@ -150,3 +150,196 @@ fn a_duplicated_identity_header_is_refused_rather_than_resolved() {
         status.message()
     );
 }
+
+/// FINDING 8: a caller with no grant could confirm a table's shape.
+///
+/// The fingerprint check used to run before anything authorised the caller, so
+/// someone holding a role with no grant on `users` could send a guessed
+/// `(name, type, key)` layout and learn from the answer whether the guess was
+/// right — one 64-bit fingerprint at a time, against a table they cannot read.
+///
+/// The fix is ordering: the handlers authorise before they fingerprint-check.
+/// Both a right and a wrong guess now answer `PERMISSION_DENIED`, so the
+/// answer carries no information about the shape.
+///
+/// Table *existence* is still disclosed — an unknown name answers `NOT_FOUND`
+/// — and that is deliberate. See `authorized_table` for why.
+#[tokio::test]
+async fn a_caller_with_no_grant_cannot_confirm_a_tables_shape() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    // `stranger` is a real role that grants nothing on `users`.
+    let stranger = |message: pb::InsertRequest| {
+        common::as_principal(message, "u64:9", Some("u64:1"), "stranger")
+    };
+
+    let right = insert(vec![wire(&user(1, 1, 1, "a@example.com"))]);
+    let mut wrong = right.clone();
+    wrong.schema = Some(pb::SchemaCheck {
+        columns: 99,
+        fingerprint: 0xDEAD_BEEF,
+    });
+
+    let with_right_guess = client.insert(stranger(right)).await.expect_err("denied");
+    let with_wrong_guess = client.insert(stranger(wrong)).await.expect_err("denied");
+
+    assert_eq!(
+        with_right_guess.code(),
+        Code::PermissionDenied,
+        "a caller with no grant must be refused before the fingerprint runs"
+    );
+    assert_eq!(
+        with_wrong_guess.code(),
+        with_right_guess.code(),
+        "a right and a wrong schema guess must be indistinguishable: {} vs {}",
+        with_right_guess.message(),
+        with_wrong_guess.message()
+    );
+    assert_eq!(
+        with_wrong_guess.message(),
+        with_right_guess.message(),
+        "the message must not vary with the guess either"
+    );
+}
+
+/// Each handler must authorise the action it actually performs.
+///
+/// The hazard of checking early is checking *differently*. Testing with the
+/// `app` role cannot detect it: `app` holds every action on `users`, so a
+/// handler asking for `Explain` where it meant `Delete` passes — which it did,
+/// when this test first existed in that form.
+///
+/// So each path is exercised by a role holding exactly one action. A handler
+/// that names any other action refuses a caller who should get through.
+#[tokio::test]
+async fn each_handler_authorizes_the_action_it_performs() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    // A `fn`, not a closure: a closure monomorphises to whatever type it is
+    // first called with, and this is called with four different requests.
+    fn only<T>(message: T, role: &str) -> tonic::Request<T> {
+        common::as_principal(message, "u64:1", Some("u64:1"), role)
+    }
+    let key = || {
+        wire(&slate_schema::Row::new(vec![
+            slate_tuple::Value::U64(1),
+            slate_tuple::Value::U64(1),
+        ]))
+    };
+
+    client
+        .insert(only(
+            insert(vec![wire(&user(1, 1, 1, "a@example.com"))]),
+            "inserter_only",
+        ))
+        .await
+        .expect("a role granted only `insert` must be able to insert");
+
+    client
+        .get(only(
+            pb::GetRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                primary_key: Some(key()),
+                freshness: None,
+                schema: Some(claim("users")),
+            },
+            "reader_only",
+        ))
+        .await
+        .expect("a role granted only `read` must be able to get");
+
+    client
+        .update(only(
+            pb::UpdateRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                rows: vec![wire(&user(1, 1, 1, "b@example.com"))],
+                schema: Some(claim("users")),
+            },
+            "updater_only",
+        ))
+        .await
+        .expect("a role granted only `update` must be able to update");
+
+    client
+        .delete(only(
+            pb::DeleteRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                primary_keys: vec![key()],
+                schema: Some(claim("users")),
+            },
+            "deleter_only",
+        ))
+        .await
+        .expect("a role granted only `delete` must be able to delete");
+}
+
+/// And the ordinary blanket-granted caller still gets through every path.
+#[tokio::test]
+async fn the_early_authorization_does_not_refuse_a_permitted_caller() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let row = user(1, 1, 1, "a@example.com");
+    client
+        .insert(app_in(insert(vec![wire(&row)]), 1, 1))
+        .await
+        .expect("insert is permitted");
+
+    client
+        .get(app_in(
+            pb::GetRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                primary_key: Some(wire(&slate_schema::Row::new(vec![
+                    slate_tuple::Value::U64(1),
+                    slate_tuple::Value::U64(1),
+                ]))),
+                freshness: None,
+                schema: Some(claim("users")),
+            },
+            1,
+            1,
+        ))
+        .await
+        .expect("get is permitted");
+
+    let updated = user(1, 1, 1, "b@example.com");
+    client
+        .update(app_in(
+            pb::UpdateRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                rows: vec![wire(&updated)],
+                schema: Some(claim("users")),
+            },
+            1,
+            1,
+        ))
+        .await
+        .expect("update is permitted");
+
+    client
+        .delete(app_in(
+            pb::DeleteRequest {
+                transaction: String::new(),
+                table: "users".to_owned(),
+                primary_keys: vec![wire(&slate_schema::Row::new(vec![
+                    slate_tuple::Value::U64(1),
+                    slate_tuple::Value::U64(1),
+                ]))],
+                schema: Some(claim("users")),
+            },
+            1,
+            1,
+        ))
+        .await
+        .expect("delete is permitted");
+}

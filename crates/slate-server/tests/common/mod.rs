@@ -153,6 +153,14 @@ pub fn security() -> SecurityCatalog {
     SecurityCatalog::new()
         .grant(Grant::new("app", DOCS, Action::EVERYTHING))
         .grant(Grant::new("app", USERS, Action::EVERYTHING))
+        // Four single-action roles on `users`, so a handler that authorises
+        // the *wrong* action is caught. With only an `EVERYTHING` role to test
+        // against, checking `Explain` where `Delete` was meant passes every
+        // test — which is how it got through the first time.
+        .grant(Grant::new("reader_only", USERS, [Action::Read]))
+        .grant(Grant::new("inserter_only", USERS, [Action::Insert]))
+        .grant(Grant::new("updater_only", USERS, [Action::Update]))
+        .grant(Grant::new("deleter_only", USERS, [Action::Delete]))
         .policy(Policy::new(
             "own_rows",
             USERS,

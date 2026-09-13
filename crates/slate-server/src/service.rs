@@ -51,7 +51,7 @@ use crate::proto::records_server::{Records, RecordsServer};
 use crate::session::{Limits, MultiCursor, MultiExplanation, MultiRow, Sessions};
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
-    ExecutionLimits, Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken,
+    Action, ExecutionLimits, Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken,
     RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog,
     SecurityContext, Statistics,
 };
@@ -356,6 +356,40 @@ impl<S: KvStore + KvReadStore> Head<S> {
         })
     }
 
+    /// The table, if this caller holds a grant for `action` on it.
+    ///
+    /// The kernel authorises again inside the planner, and that is the check
+    /// that actually protects the rows — this one is in front of everything
+    /// the handler does *before* reaching the kernel, which is where the
+    /// disclosure was. A caller with no grant used to get as far as
+    /// `fingerprint::check`, and so could confirm a guessed `(name, type,
+    /// key)` layout one 64-bit fingerprint at a time against a table they
+    /// cannot read. Now they get `PERMISSION_DENIED` and learn nothing about
+    /// the shape.
+    ///
+    /// The action must be the same one the kernel will check, or this refuses
+    /// something the kernel would have allowed. That is why it is passed in
+    /// rather than inferred.
+    ///
+    /// Table *existence* is still disclosed: an unknown name answers
+    /// `NOT_FOUND` and a known one with no grant answers `PERMISSION_DENIED`.
+    /// Deliberate, and the same choice Postgres makes. Collapsing the two
+    /// would hide a table's existence from someone who cannot use it anyway,
+    /// at the cost of making every genuine misconfiguration — the overwhelmingly
+    /// common case — indistinguishable from a typo.
+    fn authorized_table(
+        &self,
+        context: &SecurityContext,
+        name: &str,
+        action: Action,
+    ) -> Result<&TableDef, Status> {
+        let table = self.table(name)?;
+        self.pool
+            .authorize(context, table, action)
+            .map_err(|error| from_kernel(&error))?;
+        Ok(table)
+    }
+
     /// The writer, if this node may use it.
     fn leader(&self) -> Result<&Arc<RecordStore<Arc<S>>>, Status> {
         match self.leadership.standing() {
@@ -623,7 +657,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
     ) -> Result<Response<pb::WriteResponse>, Status> {
         let context = self.context(&request)?;
         let request = request.into_inner();
-        let table = self.table(&request.table)?;
+        let table = self.authorized_table(&context, &request.table, Action::Insert)?;
         // Before the rows are read, not after: a declaration that disagrees
         // makes every value in every row positionally wrong, and there is
         // nothing to be gained by decoding them first.
@@ -668,7 +702,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
     ) -> Result<Response<pb::WriteResponse>, Status> {
         let context = self.context(&request)?;
         let request = request.into_inner();
-        let table = self.table(&request.table)?;
+        let table = self.authorized_table(&context, &request.table, Action::Update)?;
         fingerprint::check(table, request.schema.as_ref())?;
         let rows = request
             .rows
@@ -702,7 +736,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
     ) -> Result<Response<pb::WriteResponse>, Status> {
         let context = self.context(&request)?;
         let request = request.into_inner();
-        let table = self.table(&request.table)?;
+        let table = self.authorized_table(&context, &request.table, Action::Delete)?;
         fingerprint::check(table, request.schema.as_ref())?;
         // Checked against the table's key rather than encoded and looked up: a
         // key of the wrong arity or the wrong integer width used to delete
@@ -741,7 +775,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
     ) -> Result<Response<pb::GetResponse>, Status> {
         let context = self.context(&request)?;
         let request = request.into_inner();
-        let table = self.table(&request.table)?;
+        let table = self.authorized_table(&context, &request.table, Action::Read)?;
         fingerprint::check(table, request.schema.as_ref())?;
         let Some(wire_key) = &request.primary_key else {
             return Err(Status::new(Code::InvalidArgument, "no primary key given"));

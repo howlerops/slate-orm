@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::security::SecurityCatalog;
+use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 
 /// How a pool decides where a read goes.
@@ -152,6 +152,32 @@ impl ReplicaPool {
     pub const fn with_policy(mut self, policy: RoutingPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// Does `context` hold a grant for `action` on `table`?
+    ///
+    /// The check itself rather than a `security()` accessor, for the reason
+    /// [`ReplicaPool::snapshot_from`] gives at length about `catalog()`: handing
+    /// out the component invites a caller to assemble its own view of the
+    /// security state, and a second assembly is a second thing to keep right.
+    /// A caller that only wants the answer gets the answer.
+    ///
+    /// This does not replace the planner's check — that one is what protects
+    /// the rows, and it runs whether or not this was called. This exists so a
+    /// server can refuse *before* doing the work in front of the planner, which
+    /// is where a caller with no grant was able to observe things about a table
+    /// it cannot read.
+    ///
+    /// # Errors
+    ///
+    /// [`KernelError::AccessDenied`] when no role grants the action.
+    pub fn authorize(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+    ) -> Result<()> {
+        self.security.authorize(context, table, action)
     }
 
     /// The catalog this pool serves.

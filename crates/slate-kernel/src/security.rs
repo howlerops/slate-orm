@@ -24,8 +24,38 @@
 //! Writes are checked from both directions, as in Postgres: an update or delete
 //! may only touch a row the principal can already see (`USING`), and may only
 //! leave behind a row the principal is allowed to have written (`WITH CHECK`).
-//! A write aimed at a row the policy hides reports the row as missing rather
-//! than as forbidden, so the error cannot be used to probe for existence.
+//!
+//! # What a write discloses, exactly
+//!
+//! An `update` or a `delete` aimed at a row the policy hides reports the row as
+//! **missing**, not as forbidden, so those two errors cannot be used to probe
+//! for existence.
+//!
+//! An `insert` or an `upsert` cannot make that promise, and does not. Both
+//! succeed on a free primary key and fail on one held by a row the caller
+//! cannot see, and the difference between those two outcomes is exactly the bit
+//! "is this key taken". That is inherent rather than an oversight: a unique key
+//! is a resource shared by everyone who can write the table, and the only ways
+//! to withhold the bit are to overwrite the hidden row or to accept a write
+//! that cannot be stored. Postgres RLS has the same oracle for the same reason.
+//!
+//! This claim was previously written as covering every write, and it did not:
+//! `security_probe_cascade.rs` demonstrates both the insert and the upsert
+//! version. The upsert case is worth naming rather than folding into "writes",
+//! because a caller reaching for an upsert *in order to avoid* the insert
+//! oracle would be choosing it for a property it does not have.
+//!
+//! Two things bound the exposure, and neither is a fix:
+//!
+//! - It is same-tenant only. A tenant-scoped table puts the tenant in the key
+//!   prefix, so a key in another tenant is a different key and there is no
+//!   collision to observe. (Finding 2 in `docs/security-review.md` was a
+//!   separate path where the same bit *did* cross tenants; that one is fixed.)
+//! - It requires the attacker to be able to name the key. A primary key that is
+//!   a UUID, or drawn from a sequence the attacker cannot read, leaves nothing
+//!   to probe for — the oracle answers a question the attacker cannot ask.
+//!   Where a table's key is attacker-chosen and its existence is a secret, that
+//!   is the case to design around.
 
 use crate::error::KernelError;
 use crate::expr::Expr;
