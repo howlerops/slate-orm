@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>slate — docs</title>
+<meta name="description" content="The concepts you need before the client APIs make sense: ordinals, the value model, identity, freshness, and where the design notes live." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%236cb6f2'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%230d1016'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%230d1016'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%230d1016'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="name" href="index.html" style="color: var(--text)">slate</a>
+    <nav>
+      <a href="index.html#quickstart">Quickstart</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero" style="padding-bottom: 32px">
+  <div class="wrap">
+    <h1 style="font-size: 34px">Five things to know first.</h1>
+    <p class="lead">
+      The client APIs are small, and they make more sense once these are clear.
+      Everything deeper lives in the repository's design notes, linked at the
+      bottom — this page is what you need before reading them.
+    </p>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>1 — Columns are ordinals, not names</h2>
+    <p>
+      Every reference a client builds is a column's <em>position</em>. The wire
+      carries positions, so a client that accepted names would have to hold a
+      second copy of the schema to resolve them — and that copy can disagree
+      with the server's.
+    </p>
+    <p>
+      The clients hold a schema anyway, for a different reason: to
+      <strong>check</strong> it. Every request carries a fingerprint of the
+      table as the client understands it, and the server refuses a declaration
+      that disagrees rather than answering with the wrong column. Declaring
+      your columns in the wrong <em>order</em> is caught on the first request,
+      not silently returned.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>2 — A u64 and an i64 are different values</h2>
+    <p>
+      The tuple codec orders values by type first, then by value. So
+      <code>u64(7)</code> and <code>i64(7)</code> sort to different places and
+      are different keys. A client that guessed a type from a language-native
+      integer would write rows that could not be found again.
+    </p>
+    <p>
+      That is why every client makes you say which one you mean —
+      <code>u64(7)</code> in Python, <code>slate.Uint(7)</code> in Go,
+      <code>uint(7n)</code> in TypeScript — and why the TypeScript client
+      refuses <code>number</code> for 64-bit integers entirely: above 2^53 a
+      JavaScript number is not the integer you typed, and a primary key is
+      where that shows up latest.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>3 — The head node does not authenticate</h2>
+    <div class="callout">
+      <p>
+        In <code>trusted-header</code> mode the node reads three headers —
+        principal, tenant, roles — and believes them. It is correct only behind
+        a proxy that sets those headers itself and strips any the client sent.
+      </p>
+      <p>
+        There is no default: a configuration with no <code>[auth]</code>
+        section is refused at startup rather than falling back to something.
+        A repeated identity header is refused too, rather than resolved, because
+        the server cannot tell whether the proxy in front of it appends or
+        replaces.
+      </p>
+    </div>
+    <p style="margin-top: 18px">
+      What the node <em>does</em> enforce is authorisation. RBAC grants and row
+      policies are compiled into the predicate the executor evaluates and the
+      key bounds it scans, inside the kernel, on every access path — including
+      index-only scans, aggregates and joins. There is no unauthenticated door,
+      because every read and write takes a security context.
+    </p>
+    <p>
+      One consequence worth knowing: <code>EXPLAIN</code> is its own action and
+      a blanket data grant deliberately excludes it. A plan is costed against
+      statistics describing rows a policy may hide, so a caller who can vary a
+      literal and watch the estimate move can recover values they cannot read.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>4 — Sessions keep your reads from going backwards</h2>
+    <p>
+      Reads can be served by replicas, which lag. A session carries a
+      watermark: it remembers the furthest point it has read or written, and
+      sends that as a floor on later reads. Without it, a read after a write
+      can be served by a node that has not caught up — correct, and surprising.
+    </p>
+    <p>
+      Every client turns this on by default and spells the opt-out at length
+      (<code>sessionWithoutMonotonicReads</code>), so choosing the cheaper,
+      surprising behaviour is deliberate.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>5 — Errors carry a kind, and one is deliberately not retryable</h2>
+    <p>
+      Every client maps failures to the same closed set of kinds. Three are
+      worth knowing:
+    </p>
+    <ul class="plain">
+      <li><b>not-leader</b> is retryable <em>elsewhere</em>, and carries the
+        node to try. It is distinguished from a plain outage because the
+        remedy differs.</li>
+      <li><b>unknown-outcome</b> is <em>not</em> retryable, on purpose. The
+        write may have landed, and retrying is how one write becomes two.</li>
+      <li><b>deadline-exceeded</b> has the same ambiguity as the above, and is
+        treated the same way.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Where the rest is</h2>
+    <div class="grid">
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/blob/main/docs/topology.md">Topology</a></h3>
+        <p>Writer leases, replicas, read tokens, and why promoting a replica in place is a restart.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/blob/main/docs/correctness.md">Correctness</a></h3>
+        <p>The oracles and the property suites, with worked examples — including several where a claim was withdrawn.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/blob/main/docs/performance.md">Performance</a></h3>
+        <p>Measurements with spread, the cost-model calibration, and the results that turned out to be noise.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/blob/main/docs/security-review.md">Security review</a></h3>
+        <p>Every finding, its status, and the two closed as inherent with the claim they contradicted narrowed.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/blob/main/docs/clickbench.md">ClickBench</a></h3>
+        <p>What the analytical queries needed, and which of them the planner still handles badly.</p>
+      </div>
+      <div class="card">
+        <h3><a href="https://github.com/howlerops/slate-orm/tree/main/ledger">The ledger</a></h3>
+        <p>One entry per change: why it exists, what it was weighed against, what was measured, where it stops.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="row">
+      <a href="index.html">Home</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://github.com/howlerops/slate-orm/tree/main/examples/explorer">Demo</a>
+    </div>
+    <div>Apache 2.0. Built on <a href="https://slatedb.io">SlateDB</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>
