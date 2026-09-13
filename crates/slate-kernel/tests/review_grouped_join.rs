@@ -106,13 +106,14 @@ fn root() -> SecurityContext {
 /// The single-table grouped read drops a query's `limit` and `offset` before it
 /// runs — `read::narrowed` says so in as many words, because "aggregating a
 /// windowed subset of an unordered result is not a meaningful request".
-/// `read::narrowed_join` clones the join and replaces only the two projections,
-/// so a join's `limit` survives into a grouped join and windows the row stream
-/// before the grouper ever sees it.
+/// `read::narrowed_join` used to clone the join and replace only the two
+/// projections, so a join's `limit` survived into a grouped join and windowed
+/// the row stream before the grouper ever saw it.
 ///
-/// A join has no order. Which rows the window keeps is therefore whichever ones
-/// the chosen algorithm happened to produce first, and the answer is a table of
-/// plausible numbers either way.
+/// A join has no order. Which rows the window kept was therefore whichever ones
+/// the chosen algorithm happened to produce first, and the answer was a table
+/// of plausible numbers either way: this fixture came back as counts of
+/// 3/3/3/3 building the left side and 4/2/4/2 building the right.
 #[tokio::test]
 async fn a_grouped_join_does_not_depend_on_which_algorithm_served_it() {
     let store = store().await;
@@ -226,4 +227,98 @@ async fn grouping_by_a_computed_value_agrees_down_every_access_path() {
             .unwrap();
         assert_eq!(got, expected(), "GROUP BY pages/10 differed on {name}");
     }
+}
+
+// --- grouping ordinals a join does not validate ---------------------------
+
+/// `Join::validate` refuses a `having` ordinal outside the joined space, in as
+/// many words: "a `having` ordinal past the joined width names no column at
+/// all, and would silently read as null — that is, as a condition nobody
+/// wrote." Nothing does the same for a `Grouping`'s ordinals, and the two
+/// arrive through the same call.
+///
+/// Two shapes follow, and both are recorded here as the current behaviour
+/// rather than asserted to be wrong — the fix is a refusal, which is a
+/// decision rather than an arithmetic error.
+///
+/// **Past the joined width**: every row groups under null, so a table of
+/// numbers comes back with one row in it.
+#[tokio::test]
+async fn a_grouping_ordinal_past_the_joined_width_groups_everything_under_null() {
+    let store = store().await;
+    let past = Ordinal(authors().columns().len() + books().columns().len() + 3);
+    let join = Join::equating(author_col("id"), book_col("author_id"));
+    let txn = store.begin().await.unwrap();
+    let groups = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([past], &[Aggregate::Count]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    assert_eq!(groups[0].key, vec![Value::Null]);
+}
+
+/// **A left-side computed value's ordinal** is worse, because it is *in* range.
+///
+/// `JoinSchema` packs by declared table width, so the ordinal a left-side
+/// query gives its first computed value — `left_width + 0` — is the right
+/// table's column 0 in the joined space. `JoinedRow::flatten` truncates the
+/// left row to the table's width, so the value never reaches the grouper; the
+/// group key is the right table's first column instead, with no error
+/// anywhere. `records.proto` refuses exactly this reference on `having`
+/// ("a computed value has no slot in it; the reference is refused rather than
+/// landing on whatever column happens to sit at that offset"); the kernel's
+/// `Grouping` accepts it.
+#[tokio::test]
+async fn a_left_side_computed_ordinal_lands_on_the_right_tables_first_column() {
+    let store = store().await;
+    let left_width = authors().columns().len();
+    let join = Join::equating(author_col("id"), book_col("author_id")).left(
+        Query::all().computing([Scalar::Upper(Box::new(Scalar::Column(author_col("region"))))]),
+    );
+    let txn = store.begin().await.unwrap();
+    let by_computed = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(left_width)], &[Aggregate::Count]),
+        )
+        .await
+        .unwrap();
+
+    // Which is exactly grouping by `books.id`, the right table's column 0.
+    let txn = store.begin().await.unwrap();
+    let by_book_id = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(left_width + book_col("id").0)], &[Aggregate::Count]),
+        )
+        .await
+        .unwrap();
+
+    // Pinned as it stands today, not asserted to be right: the two are the
+    // same answer, so the caller's ordinal named a column it did not write.
+    assert_eq!(
+        by_computed, by_book_id,
+        "if this ever stops holding, the kernel has learned to say something \
+         about a left-side computed ordinal — check it is a refusal and not a \
+         second silent meaning"
+    );
+    // And it is emphatically not the upper-cased region it names: that has
+    // three values, this has one group per book.
+    assert!(
+        by_computed.len() > 3,
+        "grouping by `upper(region)` would give three groups; this gave {}",
+        by_computed.len()
+    );
 }

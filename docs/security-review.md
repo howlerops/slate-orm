@@ -1,0 +1,497 @@
+# Security review
+
+An adversarial end-to-end review of the authentication, RBAC, row-level
+security, tenant isolation, wire protocol and configuration surfaces, done as
+one pass rather than feature by feature. Findings are ranked by impact, each
+with a test that exhibits it. The areas probed and found clean are listed at
+the end, because a review that only lists what it found tells the next person
+nothing about where not to look again.
+
+Everything below is reachable by an **ordinary authenticated caller** — a
+principal with a tenant and an `app`-shaped role — unless it says otherwise.
+Nothing here needs a superuser, and nothing here found a way to *obtain* one.
+
+Demonstrations:
+
+| file | what it holds |
+| --- | --- |
+| `crates/slate-kernel/tests/security_probe_cascade.rs` | findings 1, 2, 4, 5 |
+| `crates/slate-server/tests/security_probe.rs` | finding 2 over gRPC, finding 6 |
+| `crates/slate-kernel/tests/security_probe_explain.rs` | finding 3 |
+| `crates/slate-kernel/tests/security_probe_resources.rs` | finding 7 |
+| `crates/slate-kernel/tests/rls_probe.rs` | the paths probed and found clean |
+
+The probe tests assert current behaviour, so they pass today. Each one names
+what to change it to once the finding is fixed.
+
+---
+
+## 1. A `CASCADE` from a shared parent deletes other tenants' rows
+
+**Impact: high — cross-tenant data destruction, no read needed.**
+`crates/slate-kernel/src/record.rs`, `deletion_closure`.
+
+`delete` walks the foreign-key closure with `SecurityContext::superuser()`.
+That is deliberate and documented — a child hidden from the deleter is still a
+child — and the doc comment bounds it with two claims:
+
+> A cascade requires the caller to hold delete on the referencing table … And
+> when the child is tenant-scoped its foreign key carries the tenant — the
+> parent's key begins with it — so the search is confined to the caller's own
+> tenant by the key encoding rather than by a filter.
+
+The second claim only holds when the **parent** is itself tenant-scoped. A
+shared reference table — `plans`, `regions`, `categories`, the table every
+multi-tenant schema has — has a primary key that carries no tenant, so the
+equality the cascade search derives from it pins nothing about the tenant, and
+`referencing_rows` runs unpoliced over the whole child table.
+
+```
+orgs (shared)        pk (org_id)
+docs (tenant-scoped) pk (tenant_id, id), FK org_id -> orgs ON DELETE CASCADE
+```
+
+A caller in tenant A holding `delete` on both tables deletes org 1 and takes
+tenant B's `docs` with it. Demonstrated by
+`a_cascade_from_a_shared_parent_crosses_the_tenant_boundary`: after tenant A's
+delete, the table is empty rather than holding tenant B's row.
+
+The `RESTRICT` variant is the read-side of the same hole — a refusal tells
+tenant A that *somebody* references the org when nothing they can read does.
+`a_restrict_refusal_discloses_another_tenants_row`.
+
+**Fix.** The cascade search is the right shape; its *reach* is not. Two
+options, in order of preference:
+
+- Confine the search physically. When the child is tenant-scoped, prefix the
+  scan with the deleting principal's tenant (`keys::table_tenant_prefix`)
+  instead of relying on the foreign key to carry it. A child in another tenant
+  then simply is not found — which turns the cross-tenant `CASCADE` into a
+  dangling reference, so it has to be paired with the second option.
+- Refuse the schema. `Catalog::from_tables` can reject a `CASCADE` (and a
+  `RESTRICT`) edge from a non-tenant-scoped parent to a tenant-scoped child,
+  the same way it already rejects a tenant column that is not the key prefix.
+  That is the honest answer: the edge is not expressible safely, and a startup
+  refusal naming the two tables is much better than a silent cross-tenant
+  delete.
+
+Either way the doc comment on `delete` needs its second bound narrowed to
+"when the *parent* is tenant-scoped".
+
+---
+
+## 2. `insert_many` / `upsert_many` are a free cross-tenant existence oracle
+
+**Impact: high — cross-tenant disclosure of primary keys *and* unique-index
+values, over gRPC, with nothing written.**
+`crates/slate-kernel/src/record.rs`, `write_many`.
+
+The single-row `insert` runs `check_row` — the tenant restriction and the
+policy's `WITH CHECK` — *before* it reads storage, so its `DuplicatePrimaryKey`
+can only ever be about the caller's own tenant. `write_many` runs the same
+check **after** the reads and after `check_unique_slots`:
+
+```
+authorize → validate → intra-batch checks → check_constraints
+  → read_rows_concurrently(arbitrary keys)     ← unpoliced
+  → check_unique_slots(...)                    ← unpoliced
+  → per row: existing.is_some() && Insert -> DuplicatePrimaryKey
+             check_row(...)                    ← the tenant restriction, finally
+```
+
+So a caller in tenant A sends a row carrying `tenant_id = B` and reads the
+tenant boundary off the error code:
+
+| what is true in tenant B | what tenant A gets back |
+| --- | --- |
+| the primary key is taken | `ALREADY_EXISTS` (`DuplicatePrimaryKey`) |
+| a unique-index value is taken | `ALREADY_EXISTS` (`UniqueViolation`, **naming the index**) |
+| neither | `PERMISSION_DENIED` (`RowCheckFailed`) |
+
+Both probes fail, so nothing is written and the probe is free and repeatable.
+The unique-value probe is worse than the key probe: it discloses a *value*
+(`secret@two.example`), it batches — `check_unique_slots` runs over the whole
+batch before any per-row check — and `ErrorInfo.metadata["index"]` tells the
+attacker which column they just confirmed.
+
+Every wire insert goes through this path: `Write::apply` in
+`crates/slate-server/src/service.rs` calls `insert_many`/`upsert_many` even for
+a one-row request. Demonstrated over a real loopback gRPC connection by
+`a_client_probes_another_tenants_rows_through_insert`, and at the kernel level
+by `insert_many_discloses_another_tenants_primary_keys`,
+`insert_many_discloses_another_tenants_unique_values` and
+`upsert_many_discloses_another_tenants_primary_keys`.
+`the_single_row_insert_gives_the_same_answer_both_ways` and
+`update_many_gives_the_same_answer_both_ways` are the controls: those two paths
+are correct.
+
+**Fix (small and clearly correct).** In `write_many`, hoist the `WITH CHECK`
+above the reads, exactly as single-row `insert` does. After the existing
+`for row in rows { check_constraints(table, row)?; }` loop and *before*
+`read_rows_concurrently`, add:
+
+```rust
+for row in rows {
+    // Insert's WITH CHECK is a property of the row alone, so it can be
+    // decided before anything is read — and must be, or the reads below
+    // answer questions about tenants the caller cannot name.
+    if mode.may_insert() {
+        self.check_row(context, table, Action::Insert, row)?;
+    }
+}
+```
+
+`Action::Insert` is the right action to pre-check even for `Upsert`: the tenant
+restriction is the same expression for both, so a row outside the caller's
+tenant is refused either way, and a row inside it that turns out to exist still
+gets the full `Action::Update` check in the existing loop. For `BulkMode::Update`
+the pre-check must **not** be added — `update_many` is already
+indistinguishable, and pre-checking would make `RowCheckFailed` fire where
+`RowNotFound` fires today.
+
+That closes the cross-tenant case entirely. The same-tenant, RLS-hidden case
+(§4) survives it and needs a separate decision.
+
+---
+
+## 3. `EXPLAIN` reads other tenants' values out of the planner's histograms
+
+**Impact: high — verbatim recovery of column values from tenants the caller
+cannot read a single row of.**
+`crates/slate-kernel/src/stats.rs` (`Histogram`, `bounded_selectivity`),
+`crates/slate-kernel/src/explain.rs`, `crates/slate-serverd/src/seed.rs::analyze`.
+
+`analyze` is per-caller and correctly describes only the caller's slice — the
+RLS matrix pins that. But a deployed head node does **not** use a per-caller
+analysis: `analyze_on_start` runs `seed::analyze`, which reads every table as
+`SecurityContext::superuser()`, precisely because per-policy statistics would
+make the planner optimise for the wrong table. Those global statistics are then
+what every caller's plan is costed against.
+
+A row count is a number. A histogram bound is a **value**, sampled out of the
+table, and `bounded_selectivity` reports where the caller's literal falls
+relative to those bounds. `Explanation::estimated_rows` is on the wire
+(`convert.rs`), so a caller who can `Explain` a table can binary-search that
+comparison and recover the bounds themselves.
+
+`explain_recovers_a_value_from_a_tenant_the_caller_cannot_read` does exactly
+that: tenant A can read **zero** rows of `payroll` (asserted), and recovers
+tenant B's smallest salary *exactly* by binary search over
+`EXPLAIN ... WHERE salary >= v`, plus the shape of the whole distribution from
+eight more probes. Sixty-five bucket boundaries are recoverable this way, each
+one a real value belonging to whichever tenant it was sampled from.
+
+Equality is not affected: `equality_selectivity` reads only the distinct count,
+so `EXPLAIN ... WHERE email = 'x'` answers the same whether or not `x` exists.
+It is the ordered comparisons and `LIKE 'prefix%'` (`prefix_selectivity`, same
+histogram) that leak.
+
+**Fix.** There is no cheap one; pick a position deliberately.
+
+- **Cheapest and probably right for now:** make `Explain`/`ExplainMulti` a
+  privileged operation — a distinct `Action`, or a role check — rather than
+  something every reader may call. The planner keeps its global statistics and
+  nothing about query execution changes.
+- **Or** round what leaves the process: quantise `estimated_rows` to a coarse
+  ladder (powers of two, say) before it goes on the wire. This raises the cost
+  of the search rather than removing it, and it degrades the thing `EXPLAIN`
+  is for.
+- **Or** keep per-tenant statistics for tenant-scoped tables and cost with the
+  caller's. Correct, and much the most work.
+
+Whatever is chosen, `docs/correctness.md`'s "statistics describe only the
+permitted slice" needs a note that this is true of `analyze` and *not* of the
+statistics a deployed node plans with.
+
+---
+
+## 4. A write reports whether a row hidden by RLS occupies a key
+
+**Impact: medium — same-tenant existence oracle; contradicts a stated
+invariant.**
+`crates/slate-kernel/src/security.rs` module docs, `record.rs::insert`.
+
+`security.rs` says:
+
+> A write aimed at a row the policy hides reports the row as missing rather
+> than as forbidden, so the error cannot be used to probe for existence.
+
+True of `update`, `upsert` and `delete`. Not true of `insert`: a key occupied
+by a row the caller's policy hides answers `DuplicatePrimaryKey`, and a free
+key answers success. `an_insert_reports_whether_a_hidden_row_occupies_the_key`
+shows Alice failing to read Bob's note and then learning it is there by trying
+to take the key.
+
+This is the same oracle Postgres RLS has, and it is not obviously removable —
+the key really is taken, and pretending otherwise means either overwriting
+Bob's row or accepting a write that cannot be stored. The finding is that the
+invariant as written is false, and that §2 makes the same oracle reach across
+tenants where this one does not.
+
+**Fix.** Narrow the claim in `security.rs` to the update/delete paths and state
+the insert case, rather than changing behaviour. Fixing §2 is what actually
+matters.
+
+---
+
+## 5. `RESTRICT` discloses a referencing row in another tenant
+
+**Impact: medium — one bit per probe, cross-tenant.** Covered under §1; the
+demonstration is `a_restrict_refusal_discloses_another_tenants_row`. The same
+fix closes it.
+
+---
+
+## 6. Trusted-header mode: the client's copy of an identity header wins
+
+**Impact: medium — total impersonation, but only under a specific (and easy)
+proxy misconfiguration.**
+`crates/slate-server/src/auth.rs::MetadataIdentity`.
+
+`MetadataIdentity` reads `metadata.get(key)`, which returns the **first** value
+for a repeated header. The mode is documented as correct behind a proxy that
+"sets these three headers itself, and strips any copies the client supplied" —
+and the failure mode when the proxy *appends* instead of stripping is not
+graceful degradation, it is complete: the client's `slate-principal`,
+`slate-tenant` and `slate-roles` all win over the proxy's, because they arrive
+first. That is the difference between `proxy_set_header` and `add_header` in
+nginx, and between `set` and `append` in most mesh sidecar configs.
+
+`the_first_copy_of_a_duplicated_identity_header_wins` demonstrates a client
+authenticating as principal `666` in tenant `2` with role `admin` while the
+proxy's own headers say `1`, `1`, `app`.
+
+**Fix (one line each, clearly correct, defence in depth).** Refuse a repeated
+identity header rather than picking one. In `text()`:
+
+```rust
+fn text(metadata: &MetadataMap, key: &str) -> Result<Option<String>, Status> {
+    let mut values = metadata.get_all(key).iter();
+    let Some(value) = values.next() else { return Ok(None) };
+    if values.next().is_some() {
+        return Err(Status::new(
+            Code::Unauthenticated,
+            format!("`{key}` appears more than once; a proxy that sets the identity \
+                     headers must strip the client's copies rather than append to them"),
+        ));
+    }
+    value.to_str().map(|s| Some(s.to_owned())).map_err(...)
+}
+```
+
+A correct deployment never sees this error. A misconfigured one fails closed
+and says why, instead of serving whoever asked.
+
+---
+
+## 7. Unbounded per-request work and memory
+
+**Impact: medium — one authenticated caller can pin the node.**
+`crates/slate-kernel/src/{expr,aggregate,exec}.rs`,
+`crates/slate-serverd/src/serve.rs`.
+
+A join is the only thing with a budget: `DEFAULT_BUILD_LIMIT` and
+`JoinBuildTooLarge`, and a client-supplied `build_limit` is clamped down and
+never up (`build_limit_from_proto` — correct, and checked). Nothing else that
+holds unbounded state or does unbounded work per request has an equivalent.
+`security_probe_resources.rs` records four:
+
+- **`IN` list length is per-row work.** `MAX_POINT_GETS` and
+  `MAX_INDEX_RANGES` (1024 each) stop a long list *becoming an access path*;
+  they leave every value in the residual, where `Expr::In` re-scans the list
+  linearly for each candidate row. Measured on a 2,000-row table: `IN` with 8
+  values, 8 ms; with 50,000 values, **2.98 s** — 362x. tonic's 4 MB default
+  decode limit admits a few hundred thousand values, and the amplification is
+  multiplied by the table's row count.
+- **`GROUP BY` holds one entry per distinct key**, no cap
+  (`Grouper::groups`). Grouping a large table by a unique column is a
+  request-sized allocation of the whole table.
+- **`COUNT(DISTINCT)` holds every distinct encoded value**, no cap
+  (`Accumulator::Distinct`), and is documented as exact by design.
+- **`ORDER BY` with no `LIMIT` materialises the whole result** before the
+  first row (`QueryCursor::open`, the `None` arm). With a limit it uses the
+  bounded heap, which is the mitigation not being applied here.
+
+`slate-serverd` adds no concurrency limit, no request timeout and no
+`max_decoding_message_size` override, so these are as many concurrent copies
+as the caller opens connections. `Limits::max_transactions` (1024) bounds open
+transactions and nothing else.
+
+**Fix.** Give the three unbounded accumulators the treatment the join already
+has — a limit on the config, an error variant that names it, refused rather
+than killed. For the `IN` list, either cap the number of values a predicate may
+carry (refused at `expr_from_proto`, where the message is best) or turn a large
+`Expr::In` residual into a hash set once per plan rather than a linear scan per
+row. A request timeout and a concurrency limit in `serve.rs` are worth having
+regardless.
+
+---
+
+## 8. Schema disclosure to an authenticated caller with no grant
+
+**Impact: low.** `crates/slate-server/src/service.rs`,
+`crates/slate-server/src/fingerprint.rs`.
+
+Handlers resolve the table (`NOT_FOUND` for an unknown name) and run
+`fingerprint::check` before the kernel's RBAC check, which happens inside the
+planner. So a caller who is authenticated but holds no grant on `users` can
+still learn that `users` exists, and can confirm a guessed
+`(name, type, key)` layout for it one 64-bit fingerprint at a time. The
+fingerprint is not a secret and the check has to run before the values are
+read — it is on the request path for a good reason — so this is noted rather
+than pressed. Both are after authentication; neither is reachable
+unauthenticated.
+
+---
+
+## Probed and clean
+
+These were attacked deliberately and did not yield. Listing them so the next
+review spends its time elsewhere.
+
+**RLS across access paths** (`crates/slate-kernel/tests/rls_probe.rs`, 20
+tests, all green — this is the matrix extended to the paths it does not cover):
+
+- `IN` over a secondary index lowered to disjoint index ranges
+  (`Access::IndexScans`), ascending and descending.
+- A covering scan over an **expression index**, both ways round: with a policy
+  on a column the entry does not hold (the planner correctly refuses to claim
+  the scan covers the query, because `needed` is computed from the *secured*
+  predicate), and with a genuinely covering scan under tenant scoping alone,
+  where the tenant equality is evaluated against the value decoded out of the
+  entry's primary key. The `Index Only Scan` shape is asserted in the second
+  case so it cannot silently become a re-test of the ordinary path.
+- A partial index, forced by hint.
+- `count(*)`, `min`, `max`, `sum`, `avg`, `count(distinct)`, each forced onto
+  each index in turn, including index-only paths.
+- `GROUP BY` on an indexed column through an index-only read, and `GROUP BY`
+  on a value taken out of an expression index's entry — no group key from a
+  hidden row in either.
+- Hash join (both build sides), index nested-loop join, grouped join, and a
+  three-table chain.
+- `analyze` under a policy, including that no histogram bound comes from a
+  hidden row.
+- Deep offsets, `ORDER BY` on an unprojected column through the bounded heap,
+  an empty projection, and filters naming another tenant directly (as a scan,
+  as a forced index scan, and as an `IN` on the tenant column lowered to point
+  gets).
+
+**Why these hold, structurally.** The security filter is conjoined onto the
+caller's predicate *before* planning (`SecuredReads::plan`), and the whole
+conjunction stays in `Plan::residual` and is re-evaluated per row — bounds only
+narrow. Covering is decided by `plan::covers` against `needed`, which is built
+from that same secured predicate, so a policy on a column an index lacks
+prevents the index-only scan rather than being skipped by it. `Expr::columns`
+covers every variant, so nothing in a policy is invisible to that check. Joins
+and chains plan every side through `SecuredReads::plan`, and a nested loop's
+probe is a whole secured read with the join equality conjoined on. Three-valued
+logic means a column missing from a rebuilt row makes its comparison unknown,
+which does not admit.
+
+**Authentication** (`crates/slate-serverd/src/auth.rs`,
+`crates/slate-server/src/auth.rs`): no configuration produces a superuser (there
+is already a test for it, and it holds); `[auth]` is mandatory and every mode
+whose safety depends on something outside the process must name it off
+loopback; fields belonging to another mode are refused rather than ignored;
+bearer tokens are compared in constant time with the whole list walked, are
+read only from the environment or a file, have a 32-character floor, and
+duplicate secrets are refused at startup. `TokenIdentity` ignores the
+`slate-*` identity headers entirely, so token mode cannot be talked into
+trusting a header. The only authentication finding is §6.
+
+**Session ownership** (`crates/slate-server/src/session.rs`): a transaction
+handle is bound to the full `Principal` — id, tenant *and* role set — and a
+mismatch answers `NOT FOUND`, the same as an unknown handle. Transaction ids
+are v4 UUIDs.
+
+**Wire ordinal resolution** (`crates/slate-server/src/convert.rs`): every
+`ColumnRef` is bounds-checked against the input it names; a computed value is
+refused in a joined space (no slot for one), across inputs, and where a stored
+column is required; group-key and aggregate references are checked against the
+grouping's own arity; `check_input` stops a condition on one input naming
+another; `Shape::Joined { visible }` stops a step reading an input it has not
+reached. `primary_key_from_proto` checks arity *and* per-column type, and the
+refusal is `INVALID_ARGUMENT` — distinct from the deliberately
+indistinguishable `found: false`, which is the right way round.
+
+**Tenant isolation as a key prefix** (`crates/slate-kernel/src/keys.rs`,
+`slate-schema`): the tenant column is proved to be primary-key column zero at
+schema build time; index keys on a tenant-scoped table are tenant-prefixed,
+including unique-index slots, so a unique constraint does not span tenants;
+`Catalog::from_tables` refuses a duplicate `IndexId` across tables, which had
+been a real shared-key-range bug. Read tokens are bare sequence numbers and
+carry no tenant. Replica affinity uses the principal's tenant, never one dug
+out of the filter, and affinity only chooses *which* replica — every replica
+read goes through the same `SecuredReads`.
+
+**The configuration language** (`crates/slate-serverd/src/lang/`,
+`security.rs`): `:principal` and `:tenant` are `Value`s dropped into a slot the
+parser already typed, never text spliced before parsing, so there is no
+injection shape; a missing tenant lowers to `Value::Null`, which is *unknown*
+in every position including under `NOT` and `NOT IN`, and unknown never admits;
+placeholders are refused in the scopes lowered once at startup (`CHECK`,
+partial index, expression index); RLS with no applicable policy is
+`Expr::False`, not `Expr::True`; an empty grant list warns and denies; a policy
+with no grant behind it warns. A literal is typed by the column opposite it, so
+a mistyped one cannot silently compare type-first. I did not find a
+configuration that grants more than it reads as granting.
+
+**Foreign-key *checks*** (as opposed to cascades): `check_foreign_keys` and
+`visible_parents` use `SecuredReads::get`, so a parent hidden from the caller is
+absent for them, and the grant is required too.
+
+**Not examined in depth**, and therefore not cleared: the lease and leadership
+protocol (`lease.rs`, `leadership.rs`, `filelease.rs`), the S3 backend and its
+credential handling (`slate-slatedb`), the Python client, and the tuple codec's
+behaviour on adversarial encoded input beyond the existing
+`slate-tuple/tests/untrusted.rs`.
+
+---
+
+## Where the remaining risk is concentrated
+
+**Not in the read path.** The structural argument — the policy *is* the
+predicate, bounds only narrow, covering is decided from the secured predicate —
+holds up under pressure, and every new access path I could reach honoured it.
+That is the part of this system that was designed as a security surface, and it
+shows.
+
+**The risk is in the paths that were designed as *correctness* surfaces and
+inherited a security consequence.** All four real findings have that shape:
+
+- Referential integrity is deliberately not relative to who is asking, and the
+  bound that was supposed to keep it inside a tenant is a property of the key
+  encoding that a perfectly ordinary schema does not have (§1).
+- The bulk write path exists to overlap round trips, and overlapping them moved
+  the reads above the check that decides which keys the caller may name at all
+  (§2). The single-row path it was modelled on has the order right; the batch
+  version does not, and no test compared them.
+- Statistics exist so the planner does not optimise for the wrong table, which
+  is exactly why they must be global — and a global histogram is other tenants'
+  values in a structure everyone can query (§3).
+
+The common factor is that each is a place where a *non-security* requirement
+argued for reading or reporting more than the caller may see, the argument was
+written down carefully, and the bound the argument relied on was stated rather
+than enforced. `record.rs`'s cascade comment and `security.rs`'s "cannot be
+used to probe for existence" are both precise, well-reasoned, and wrong at the
+edges — which is a much harder failure to catch by reading than a missing
+check.
+
+Concretely, I would look next at:
+
+1. **Every remaining `superuser()` inside the kernel.** There is exactly one
+   (`deletion_closure`) and it is finding §1. Any future one deserves the same
+   treatment: not "is this justified" but "what physically stops it reaching
+   another tenant".
+2. **Every pair of single-row and batch operations.** §2 is a divergence
+   between two spellings of one operation. `update_many`/`update` and
+   `delete` are fine today; the next batch method added is the risk. A
+   differential test that runs each pair against a hostile row and asserts the
+   *same error variant* would have caught it and would catch the next one.
+3. **Everything derived from global state that a per-caller request can
+   observe:** statistics (§3), `EXPLAIN` output, plan choice, and timing. The
+   histogram is the sharpest instance because it holds literal values, but
+   `estimated_rows` is a channel out of superuser-gathered state in general.
+4. **Resource budgets** (§7). The join has one and nothing else does; that
+   asymmetry looks accidental rather than argued.
