@@ -1,0 +1,34 @@
+# A head node with a `main`, for the Python client's tests.
+#
+# This crate exists because `slate-server` ships no binary. It is a library:
+# `Head::new` plus `tonic::transport::Server`, assembled by whoever deploys it.
+# Every test in this directory is required to run against a real head node
+# rather than a mock, so something has to assemble one, and the assembly has to
+# live somewhere the Python tests may write to.
+#
+# It is deliberately NOT a member of the parent workspace. Adding it there would
+# mean editing the workspace manifest, which this work is not allowed to touch;
+# a detached workspace needs no edit outside this directory. The cost is a
+# second `Cargo.lock`, which is why the parent's is copied in by
+# `scripts/build_testserver.sh` rather than resolved afresh — two lockfiles that
+# disagree would compile two different servers and the tests would be measuring
+# whichever one they got.
+[workspace]
+
+[package]
+name = "slate-testserver"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[dependencies]
+slate-server = { path = "../../../crates/slate-server" }
+slate-kernel = { path = "../../../crates/slate-kernel" }
+slate-schema = { path = "../../../crates/slate-schema" }
+slate-tuple = { path = "../../../crates/slate-tuple" }
+
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = "0.14"
+serde_json = "1"

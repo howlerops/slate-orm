@@ -9,9 +9,11 @@ derive macro is a surface; the value is in the kernel underneath it, which owns
 the keyspace, index maintenance, and the point where access policy is enforced.
 
 > **Status: early.** The Rust record layer works end to end and is tested,
-> including a cost-based planner, index-only scans, aggregates, read replicas
-> and S3-compatible storage. The gRPC head node and the Python, Go and
-> TypeScript SDKs are not built yet. See [Status](#status).
+> including a cost-based planner, index-only scans, joins, aggregates, read
+> replicas and S3-compatible storage. There is a gRPC head node with writer
+> leadership, and a typed Python client over it in
+> [`clients/python`](clients/python). The Go and TypeScript SDKs are not built.
+> See [Status](#status).
 
 ```rust
 use slate_orm::{Aggregate, Expr, Query, Record, Records, SortKey, Value};
@@ -62,6 +64,12 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-derive` | `#[derive(Record)]` and generated column constants |
 | `slate-orm` | Typed surface; re-exports the rest |
 | `slate-server` | gRPC head node, writer leadership over an object-store lease |
+| `slate-headbench` | Benchmarks for the head node, against a real one over a socket |
+
+Outside the workspace, [`clients/python`](clients/python) is a typed Python
+client over the head node — and, more usefully,
+[`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md), fifteen things
+the first outside consumer of the wire found wrong or awkward about it.
 
 No `unsafe` anywhere (`#![forbid(unsafe_code)]` in every crate).
 

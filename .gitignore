@@ -1,2 +1,8 @@
 /target
 **/*.rs.bk
+
+# Python client
+clients/python/**/__pycache__/
+clients/python/.pytest_cache/
+clients/python/*.egg-info/
+clients/python/src/*.egg-info/

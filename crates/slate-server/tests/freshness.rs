@@ -408,32 +408,72 @@ async fn a_write_never_goes_to_a_replica() {
     );
 }
 
+/// A token no view in the pool has reached is refused, the writer included.
+///
+/// This test is older than the behaviour it now checks, and the gap between
+/// the two is the point. Its name always said "refused rather than served
+/// stale"; what it actually asserted was only that the *frozen replica* did
+/// not serve it, which the writer fallback satisfied by answering at sequence
+/// 0. So an impossible freshness came back as rows, and the assertion that was
+/// supposed to catch that passed. A Python client asking the same question
+/// from outside found it; `at_least = 2^40` against a writer at sequence 2
+/// returned every row and no error.
+///
+/// The writer is normally the most advanced node, which is the whole reason it
+/// is the fallback — but a token minted by a *previous* writer names a
+/// sequence this one need not have replayed, which is exactly the handover
+/// this pool exists to survive.
 #[tokio::test]
 async fn a_freshness_no_view_can_meet_is_refused_rather_than_served_stale() {
-    // With no replica at all and the writer removed from the picture there is
-    // nowhere to serve from — but a head node always has its writer, so the
-    // reachable version of this is a token from the future.
     let writer = Arc::new(MemoryStore::new());
     let serving = leader_with(Arc::clone(&writer), vec![Frozen::new("stale-replica")]).await;
     let mut client = serving.client().await;
 
-    // The writer is the fallback and it has not reached this sequence either,
-    // so what the caller gets is the writer's view, not a silent downgrade to
-    // the frozen replica.
+    let refused = client
+        .query(app(query(Some(pb::Freshness {
+            level: Some(pb::freshness::Level::AtLeast(u64::MAX)),
+        }))))
+        .await;
+    let status = refused.expect_err("an unreachable sequence returned rows");
+    assert_eq!(
+        status.code(),
+        Code::Unavailable,
+        "refused, but not as something a later attempt could satisfy: {status:?}"
+    );
+
+    // The control, without which the above passes against a node that refuses
+    // every read. A sequence the *writer* has reached and the frozen replica
+    // has not: write a row first, then ask for the sequence that write
+    // produced. `AtLeast(0)` would not do — the replica frozen at zero
+    // satisfies it, correctly, and the control would be asserting nothing.
+    client
+        .insert(app(pb::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row_to_proto(&doc(1, "kind-a", 5, None))],
+            upsert: false,
+        }))
+        .await
+        .expect("the write");
+    let reached = writer
+        .visible_sequence()
+        .expect("the writer tracks a sequence");
+    assert!(reached > 0, "the write did not advance the writer");
+
     let (_, served_by) = drain(
         client
             .query(app(query(Some(pb::Freshness {
-                level: Some(pb::freshness::Level::AtLeast(u64::MAX)),
+                level: Some(pb::freshness::Level::AtLeast(reached)),
             }))))
             .await
-            .unwrap()
+            .expect("a sequence the writer has reached is servable")
             .into_inner(),
     )
     .await;
     assert_ne!(
         served_by.expect("served_by").replica,
         "stale-replica",
-        "an impossible freshness was quietly served by a replica at sequence 0"
+        "a freshness only the writer can meet was served by a replica at zero"
     );
 }
 

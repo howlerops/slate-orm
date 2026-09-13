@@ -269,9 +269,37 @@ impl ReplicaPool {
 
         // Falling back to the writer costs the scarce resource, but serving a
         // read that is knowably too old would break the promise the token makes.
-        self.writer.as_ref().ok_or(KernelError::NoReplicaAvailable {
-            reason: "no replica caught up in time and no writer is in the pool",
-        })
+        let writer = self
+            .writer
+            .as_ref()
+            .ok_or(KernelError::NoReplicaAvailable {
+                reason: "no replica caught up in time and no writer is in the pool",
+            })?;
+
+        // And the writer is held to that promise like everything else. It is
+        // normally the most advanced node in the pool, which is why it is the
+        // fallback — but "normally" is not "provably". A token minted by a
+        // previous writer names a sequence this one need not have replayed,
+        // which is precisely the handover this pool exists to survive. Serving
+        // that read returns rows without the write the caller is holding a
+        // token for, and returns them silently, which is the worse half.
+        //
+        // A writer that reports no sequence at all is served, because the
+        // default `wait_for_sequence` refuses outright and every store that
+        // does not track progress would stop answering `AtLeast` reads
+        // entirely. That is the store declaring it cannot prove the promise
+        // rather than the pool declining to check, and it is the one branch
+        // here that takes freshness on trust.
+        match writer.visible_sequence() {
+            Some(visible) if token.satisfied_by(visible) => Ok(writer),
+            None => Ok(writer),
+            Some(_) => {
+                writer
+                    .wait_for_sequence(token.sequence(), self.policy.catch_up)
+                    .await?;
+                Ok(writer)
+            }
+        }
     }
 
     /// Replicas in descending preference order for `affinity`.

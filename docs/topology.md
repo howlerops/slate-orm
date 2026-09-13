@@ -537,9 +537,12 @@ it appears in.
 - **A read-only transaction pinned to a replica.** `ReplicaMode::Pinned` is the
   right substrate for a consistent multi-read export, and the session type for
   it is not a write transaction.
-- **`update_many`.** `insert_many` overlaps its reads across a batch; a
-  multi-row update still costs a round trip per row, here as in the kernel.
-- **Any performance number.** Nothing in the head node has been benchmarked.
-  The batch size on a query stream and the lease's fifteen-second term are both
-  chosen by argument, not measurement, and are marked as such where they are
-  defined.
+- **`delete_many`.** `insert_many` and `update_many` overlap their reads across
+  a batch; a multi-row delete still costs a round trip per key, because a
+  delete walks a foreign-key closure and two keys in one batch can reach the
+  same doomed row by different paths. Batching it means unioning those closures
+  before writing anything, which is a different change from the other two.
+- **The head node under concurrency.** It is measured now — see
+  `docs/performance.md` — but every measurement is one request at a time, so
+  the per-stream channel and the task-per-transaction design have never been
+  under pressure.

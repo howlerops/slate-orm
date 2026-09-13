@@ -511,3 +511,45 @@ async fn a_tenanted_read_also_names_the_store_it_read_from() {
         "twenty tenants all landed on {seen:?}; the assertion above never had to distinguish anything"
     );
 }
+
+// --- the writer is held to the token's promise too -------------------------
+
+/// A token the writer itself has not reached is refused, not served.
+///
+/// The fallback to the writer used to be unconditional, and it reads as safe:
+/// the writer is where writes land, so it is normally the most advanced node
+/// in the pool. "Normally" was doing load-bearing work in that sentence. A
+/// token minted by a *previous* writer names a sequence this one need not have
+/// replayed — precisely the handover this pool exists to survive — and serving
+/// it returns rows without the write the caller holds a token for. Silently,
+/// which is the worse half, since every other branch here proves the sequence
+/// before answering.
+///
+/// The sibling test above passes a writer at `u64::MAX`, which satisfies every
+/// token and so never asked the question. A Python client asked it from
+/// outside and got 8 rows for a sequence the writer had not reached.
+#[tokio::test]
+async fn a_token_the_writer_has_not_reached_is_refused() {
+    let with_writer = pool(vec![FakeReplica::at("a", 1) as Arc<dyn KvReadStore>])
+        .with_writer(FakeReplica::at("writer", 10));
+
+    // The control: a sequence the writer has reached is served by it, so the
+    // refusal below is about the sequence rather than about the pool refusing
+    // anything the replicas cannot take.
+    assert_eq!(
+        chosen(&with_writer, Freshness::AtLeast(ReadToken::new(10)), None).await,
+        "writer"
+    );
+
+    let refused = with_writer
+        .route(Freshness::AtLeast(ReadToken::new(11)), None)
+        .await
+        .map(|store| store.replica_name().to_owned());
+    assert!(
+        matches!(
+            refused,
+            Err(KernelError::ReplicaTooStale { .. } | KernelError::NoReplicaAvailable { .. })
+        ),
+        "the writer served a sequence it has not reached: {refused:?}"
+    );
+}
