@@ -285,6 +285,16 @@ pub(crate) struct Replica {
     /// The checkpoint id, for `pinned`.
     #[serde(default)]
     pub(crate) checkpoint: Option<String>,
+    /// How often this replica re-reads the manifest.
+    ///
+    /// Most of the replica's lag, and the number that decides whether a read
+    /// carrying a sequence can be served here at all: the pool waits
+    /// `[routing] catch_up` for a replica to reach that sequence, and a
+    /// replica can only reach it on a poll. Unset derives it from `catch_up`
+    /// rather than repeating a constant that has to stay below one — see
+    /// `storage::poll_interval`.
+    #[serde(default)]
+    pub(crate) poll_interval: Option<String>,
 }
 
 fn default_replica_mode() -> String {
@@ -330,6 +340,13 @@ fn default_lease_path() -> String {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Routing {
     /// How long to wait for a replica to catch up before giving up on it.
+    ///
+    /// Also, and not obviously, the setting that decides how often every
+    /// replica polls: a replica reaches a sequence on a poll, so a poll longer
+    /// than this budget means no read carrying a sequence can be served by a
+    /// replica at all. `[[replicas]] poll_interval` derives from this unless it
+    /// is set, and is refused if it is set at or above it. See
+    /// `storage::poll_interval`.
     #[serde(default)]
     pub(crate) catch_up: Option<String>,
     /// Route by tenant, rather than round-robin.

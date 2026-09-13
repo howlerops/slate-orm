@@ -655,6 +655,23 @@ async fn rows_at_least(
     table: &str,
     sequence: u64,
 ) -> Result<Vec<proto::Row>, tonic::Status> {
+    served_at_least(client, identity, table, sequence)
+        .await
+        .map(|(rows, _)| rows)
+}
+
+/// The same, and which view answered.
+///
+/// `served_by` is the only thing that distinguishes a read a replica served
+/// from one that waited out `catch_up` and fell through to the writer. Both
+/// return the right rows, which is why the poll interval could be wrong by a
+/// factor of forty and no test noticed.
+async fn served_at_least(
+    client: &mut proto::records_client::RecordsClient<tonic::transport::Channel>,
+    identity: &Identity,
+    table: &str,
+    sequence: u64,
+) -> Result<(Vec<proto::Row>, String), tonic::Status> {
     let request = identity.on(proto::QueryRequest {
         transaction: String::new(),
         query: Some(query(table)),
@@ -664,10 +681,14 @@ async fn rows_at_least(
     });
     let mut stream = client.query(request).await?.into_inner();
     let mut out = Vec::new();
+    let mut served_by = String::new();
     while let Some(message) = stream.message().await? {
+        if let Some(view) = message.served_by {
+            served_by = view.replica;
+        }
         out.extend(message.rows);
     }
-    Ok(out)
+    Ok((out, served_by))
 }
 
 #[tokio::test]
@@ -807,6 +828,76 @@ async fn a_second_node_over_one_local_database_serves_reads_and_does_not_fence_t
         leading.standing,
         proto::leadership_status::Standing::Leader as i32,
         "the first node stepped down, so something fenced it"
+    );
+}
+
+#[tokio::test]
+async fn a_read_your_writes_read_is_served_by_the_replica_and_not_the_writer() {
+    // The shipped daemon opened its replicas with `DbReaderOptions::default()`,
+    // whose `manifest_poll_interval` is **ten seconds**, against a
+    // `RoutingPolicy::catch_up` of 250 ms. So a read carrying a
+    // just-committed sequence could not be served by a replica at all: the
+    // pool waited its whole budget, no poll was due inside it, and the read
+    // fell through to the writer — the one node the read/write split exists to
+    // keep free. Measured at 251.87 ms [251.66-252.27] with 64 of 64 falling
+    // back, against 26.98 ms [10.90-46.32] and 0 of 64 at a 50 ms poll.
+    //
+    // Nothing about the *rows* was wrong, which is why nothing caught it: the
+    // writer answers the same query with the same answer. `served_by` is the
+    // difference, and this asserts on that.
+    //
+    // Deliberately at the default `catch_up`, with no `poll_interval` in the
+    // file, because the defect was in what the defaults do.
+    let files = Files::new();
+    let directory = files.path().join("data");
+    let base = CONFIG.replace(
+        "backend = \"memory\"",
+        &format!(
+            "backend = \"local\"\ndirectory = \"{}\"",
+            directory.display()
+        ),
+    );
+    let path = files.write(
+        "polled.toml",
+        &format!("{base}\n[[replicas]]\nname = \"replica-0\"\n"),
+    );
+    let seed = files.write("seed.toml", SEED);
+
+    let serving = Serving::start(&[
+        "--config",
+        &path.display().to_string(),
+        "--seed",
+        &seed.display().to_string(),
+    ]);
+    let mut client = connect(&serving).await;
+
+    let landed = client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(12),
+                str_value("kind-d"),
+                i64_value(30),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("write")
+        .into_inner()
+        .sequence
+        .expect("a single-statement write commits");
+
+    let (served, by) = served_at_least(&mut client, &APP, "docs", landed)
+        .await
+        .expect("read-your-writes");
+    assert_eq!(ids(&served), vec![2, 3, 12]);
+    assert_eq!(
+        by, "replica-0",
+        "the read fell back to the writer, which means the replica could not reach the sequence \
+         inside `catch_up` — the poll interval is longer than the budget again"
     );
 }
 

@@ -113,6 +113,10 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     let chosen = auth::choose(document.auth.as_ref(), &address, &mut warnings)?;
     let limits = limits(&document.limits)?;
     let routing = routing(&document.routing)?;
+    // Checked here rather than where the replicas are opened, because a
+    // warning has to reach `warnings` and the replicas are opened after those
+    // have been printed. See `storage::check_catch_up`.
+    storage::check_catch_up(&document.replicas, routing.catch_up, &mut warnings);
     let grace = config::optional_duration(document.shutdown.grace.as_ref(), "shutdown.grace")?
         .unwrap_or(Duration::from_secs(10));
     let term = storage::term(&document.lease)?;
@@ -183,11 +187,13 @@ async fn run(arguments: cli::Cli) -> Started<()> {
             Arc::clone(&leadership),
             Cadence::for_term(term),
         ));
-        let replicas = storage::open_read_only(&prepared, &document.replicas).await?;
+        let replicas =
+            storage::open_read_only(&prepared, &document.replicas, routing.catch_up).await?;
         (None, replicas)
     } else {
         tokio::spawn(maintain(Arc::clone(&leadership), Cadence::for_term(term)));
-        let (writer, replicas) = storage::open(&prepared, &document.replicas).await?;
+        let (writer, replicas) =
+            storage::open(&prepared, &document.replicas, routing.catch_up).await?;
         (Some(writer), replicas)
     };
 

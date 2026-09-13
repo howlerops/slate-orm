@@ -94,6 +94,40 @@ inputs, which skewed a four-replica split to 13%/37% before it was added.
 Reads with no tenant to key on fall back to round-robin, because there is no
 locality to preserve.
 
+### The poll interval and `catch_up` are one number, and were two
+
+`RoutingPolicy::catch_up` is how long the pool waits for a replica to reach a
+required sequence before giving up and sending the read to the writer. A
+replica can only reach that sequence when it next reads the manifest. So the
+poll interval is not a neighbouring setting: it is *what creates the lag*
+`catch_up` waits out, and a poll longer than the budget means no read carrying
+a sequence can ever be served by a replica.
+
+The shipped daemon had them 40× apart in the wrong direction. `SlateReader::open`
+takes `DbReaderOptions::default()`, whose `manifest_poll_interval` is **ten
+seconds**, against a `catch_up` of 250 ms — so every read-your-writes read waited
+out the whole budget and fell through to the writer, which is the one node this
+whole topology exists to keep free. Measured over the routing section:
+
+| poll | `AtLeast(just-committed)` | fell back to the writer |
+|---|---:|---:|
+| 50 ms | 26.98 ms [10.90–46.32] | 0 of 64 |
+| 10 s | 251.87 ms [251.66–252.27] | 64 of 64 |
+
+The tell is the spread rather than the median: ±0.2% is not a wait, it is a
+timeout expiring every single time. The controls did not move —
+`Freshness::Any` 206 vs 232 µs, `Latest` 205 vs 227 µs, `pool.route` 96 vs
+97 ns — so the replicas and the routing were fine and only the poll was wrong.
+
+Nothing about the *rows* was wrong, which is why nothing caught it: the writer
+answers the same query with the same answer. `served_by` is the difference, and
+that is what the regression test asserts on.
+
+`slate-serverd` now derives the poll from `catch_up` — a fifth of it, floored at
+20 ms — rather than carrying a second constant that has to be kept below the
+first by hand, and refuses a configured `[[replicas]] poll_interval` at or above
+`catch_up` rather than starting into that failure deliberately.
+
 ## The writer
 
 **Conflicts are ordinary.** A unique index is enforced by two writers colliding

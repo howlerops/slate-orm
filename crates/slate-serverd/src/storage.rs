@@ -56,6 +56,7 @@ use slate_kernel::memory::MemoryStore;
 use slate_server::lease::ObjectStoreLease;
 use slate_slatedb::{Durability, ReplicaMode, SlateReader, SlateStore};
 use slatedb::IsolationLevel;
+use slatedb::config::DbReaderOptions;
 use std::sync::Arc;
 
 /// The writer, whichever kind it is.
@@ -280,6 +281,7 @@ pub(crate) fn prepare(storage: &config::Storage) -> Started<Prepared> {
 pub(crate) async fn open(
     prepared: &Prepared,
     replicas: &[config::Replica],
+    catch_up: Duration,
 ) -> Started<(Writer, Vec<Arc<dyn KvReadStore>>)> {
     match prepared.kind {
         Kind::Memory => {
@@ -304,7 +306,8 @@ pub(crate) async fn open(
                     .with_durability(prepared.durability)
                     .with_isolation(prepared.isolation),
             );
-            let opened = open_replicas(replicas, &prepared.path, &prepared.objects).await?;
+            let opened =
+                open_replicas(replicas, &prepared.path, &prepared.objects, catch_up).await?;
             Ok((Writer::Slate(writer), opened))
         }
     }
@@ -326,14 +329,21 @@ pub(crate) async fn open(
 pub(crate) async fn open_read_only(
     prepared: &Prepared,
     replicas: &[config::Replica],
+    catch_up: Duration,
 ) -> Started<Vec<Arc<dyn KvReadStore>>> {
-    open_replicas(replicas, &prepared.path, &prepared.objects).await
+    if replicas.is_empty() {
+        return Err(Fault::new(
+            "this node lost the writer lease, and a node that is not the writer serves reads from replicas — of which none are configured. Add a `[[replicas]]` section so it has something to read from, or start it where it can take the lease",
+        ));
+    }
+    open_replicas(replicas, &prepared.path, &prepared.objects, catch_up).await
 }
 
 async fn open_replicas(
     replicas: &[config::Replica],
     path: &Path,
     objects: &Arc<dyn ObjectStore>,
+    catch_up: Duration,
 ) -> Started<Vec<Arc<dyn KvReadStore>>> {
     let mut opened: Vec<Arc<dyn KvReadStore>> = Vec::with_capacity(replicas.len());
     let mut names: Vec<&String> = Vec::with_capacity(replicas.len());
@@ -351,12 +361,126 @@ async fn open_replicas(
         names.push(&replica.name);
 
         let mode = replica_mode(replica)?;
-        let reader = SlateReader::open(&replica.name, path.clone(), Arc::clone(objects), mode)
-            .await
-            .map_err(|why| Fault::new(format!("cannot open replica `{}`: {why}", replica.name)))?;
+        let reader = SlateReader::open_with(
+            &replica.name,
+            path.clone(),
+            Arc::clone(objects),
+            mode,
+            DbReaderOptions {
+                manifest_poll_interval: poll_interval(replica, catch_up)?,
+                ..DbReaderOptions::default()
+            },
+        )
+        .await
+        .map_err(|why| Fault::new(format!("cannot open replica `{}`: {why}", replica.name)))?;
         opened.push(Arc::new(reader));
     }
     Ok(opened)
+}
+
+/// The shortest poll this daemon will derive on its own.
+///
+/// Not a tuning choice so much as a floor: a poll costs object-store requests
+/// per replica per interval whether or not anything changed, and a `catch_up`
+/// mistyped down to microseconds should not turn into a request loop. Twenty
+/// milliseconds is what `slate-slatedb`'s own examples and replica tests run
+/// at, which makes it the shortest interval this repository has evidence for
+/// rather than a number chosen here.
+const SHORTEST_DERIVED_POLL: Duration = Duration::from_millis(20);
+
+/// How often a replica re-reads the manifest.
+///
+/// # Why this is derived from `catch_up` and not a constant of its own
+///
+/// These are two views of one number and were, until this was written, two
+/// unrelated ones — with a measurement to show for it. `SlateReader::open`
+/// takes `DbReaderOptions::default()`, whose `manifest_poll_interval` is
+/// **ten seconds**, and `RoutingPolicy::catch_up` defaults to 250 ms. A read
+/// carrying a just-committed sequence therefore could not be served by a
+/// replica at all: the pool waited its whole budget, the replica had no poll
+/// due inside it, and every such read fell through to the writer — the one
+/// node the read/write split exists to keep free. Measured at 251.87 ms
+/// [251.66–252.27] with 64 of 64 falling back, against 26.98 ms
+/// [10.90–46.32] and 0 of 64 at a 50 ms poll. The tell is the spread: ±0.2%
+/// is not a wait, it is a timeout expiring every time.
+///
+/// A second independent default would fix today's numbers and leave the next
+/// person free to change one of them. A poll is *what creates* the lag
+/// `catch_up` waits out, so the relationship is not a coincidence to be
+/// maintained by care. A fifth of the budget gives a read four or five polls
+/// to land in, which is margin for one slow manifest read rather than a bet
+/// on the first one.
+///
+/// # And a configured one that cannot work is refused
+///
+/// A `poll_interval` at or above `catch_up` is the shipped defect written down
+/// deliberately: at exactly `catch_up` a read gets at most one poll and
+/// usually none, and above it none at all. What makes it worth refusing rather
+/// than warning is that nothing downstream can report it — the pool's fallback
+/// to the writer is deliberately silent, because it is the right thing to do
+/// when a replica is behind — so the only symptom is that every
+/// read-your-writes read costs the full budget and lands on the writer, which
+/// looks like slow storage. The two remedies are both one line, and the
+/// message names them.
+fn poll_interval(replica: &config::Replica, catch_up: Duration) -> Started<Duration> {
+    let Some(configured) = config::optional_duration(
+        replica.poll_interval.as_ref(),
+        &format!("replicas.{}.poll_interval", replica.name),
+    )?
+    else {
+        let derived = catch_up / 5;
+        return Ok(if derived < SHORTEST_DERIVED_POLL {
+            SHORTEST_DERIVED_POLL
+        } else {
+            derived
+        });
+    };
+
+    if configured >= catch_up {
+        return Err(Fault::new(format!(
+            "replica `{}`: `poll_interval = {configured:?}` is not shorter than `[routing] catch_up = {catch_up:?}`, so a read that asks for a sequence can never be served here — the pool would wait out its whole budget and fall back to the writer, silently, on every read-your-writes read. Lower `poll_interval` to well under `catch_up` (leaving it unset gives a fifth of it), or raise `catch_up` if this deployment is willing to wait that long",
+            replica.name
+        )));
+    }
+    Ok(configured)
+}
+
+/// Say so when `catch_up` is too short for the poll this daemon would derive.
+///
+/// The mirror of the refusal in [`poll_interval`], and a warning rather than a
+/// refusal for one reason: the number that does not fit is *ours*. An operator
+/// who set `catch_up = "50ms"` and no `poll_interval` wrote one number, and
+/// refusing to start over the interaction with a floor they never chose is the
+/// worst kind of refusal — it names a key that is not in their file. They are
+/// told instead, with both ways out.
+pub(crate) fn check_catch_up(
+    replicas: &[config::Replica],
+    catch_up: Duration,
+    warnings: &mut Vec<String>,
+) {
+    if catch_up / 5 >= SHORTEST_DERIVED_POLL {
+        return;
+    }
+    let derived: Vec<&str> = replicas
+        .iter()
+        .filter(|replica| replica.poll_interval.is_none())
+        .map(|replica| replica.name.as_str())
+        .collect();
+    // `split_first` rather than a length test and an index: one replica is the
+    // ordinary case and deserves the singular, and the empty case has to be
+    // silent — a deployment with no replicas at all, or one where every
+    // replica said what it wanted, has nothing wrong with it.
+    let Some((first, rest)) = derived.split_first() else {
+        return;
+    };
+    let (named, them) = if rest.is_empty() {
+        (format!("replica `{first}`"), "it")
+    } else {
+        (format!("replicas {}", derived.join(", ")), "them")
+    };
+    warnings.push(format!(
+        "`[routing] catch_up = {catch_up:?}` is shorter than five times the shortest manifest poll this daemon will derive ({SHORTEST_DERIVED_POLL:?}), so {named} will not reliably reach a sequence inside it and a read asking for one will fall back to the writer. Raise `catch_up`, or set `poll_interval` on {them} explicitly"
+    ));
 }
 
 fn replica_mode(replica: &config::Replica) -> Started<ReplicaMode> {
@@ -509,12 +633,14 @@ mod tests {
     async fn the_memory_backend_opens_and_refuses_replicas() {
         let prepared = prepare(&storage("backend = \"memory\"")).unwrap();
         assert!(!prepared.is_shared());
-        let (writer, replicas) = open(&prepared, &[]).await.unwrap();
+        let (writer, replicas) = open(&prepared, &[], Duration::from_millis(250))
+            .await
+            .unwrap();
         assert!(matches!(writer, Writer::Memory(_)));
         assert!(replicas.is_empty());
 
         let replica = toml::from_str::<config::Replica>("name = \"a\"").unwrap();
-        let error = match open(&prepared, &[replica]).await {
+        let error = match open(&prepared, &[replica], Duration::from_millis(250)).await {
             Err(fault) => fault.to_string(),
             Ok(_) => panic!("the memory backend accepted a replica"),
         };
@@ -564,7 +690,9 @@ mod tests {
         )))
         .unwrap();
         assert!(prepared.is_shared(), "another process could open this one");
-        let (writer, _) = open(&prepared, &[]).await.unwrap();
+        let (writer, _) = open(&prepared, &[], Duration::from_millis(250))
+            .await
+            .unwrap();
         assert!(matches!(writer, Writer::Slate(_)));
     }
 
@@ -618,11 +746,102 @@ mod tests {
             dir.path().display()
         )))
         .unwrap();
-        let error = match open_read_only(&prepared, &[]).await {
+        let error = match open_read_only(&prepared, &[], Duration::from_millis(250)).await {
             Err(fault) => fault.to_string(),
             Ok(_) => panic!("a follower with nothing to read from was accepted"),
         };
         assert!(error.contains("[[replicas]]"), "{error}");
+    }
+
+    fn replica(text: &str) -> config::Replica {
+        toml::from_str(text).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn a_replica_polls_a_fifth_of_the_catch_up_budget_by_default() {
+        // The defect this replaces: `SlateReader::open` takes
+        // `DbReaderOptions::default()`, whose poll is ten seconds, against a
+        // 250 ms `catch_up`. Every read carrying a sequence waited the whole
+        // budget and fell back to the writer — measured at 251.87 ms with 64
+        // of 64 falling back, against 26.98 ms and 0 of 64 at a 50 ms poll.
+        let derived = poll_interval(&replica("name = \"a\""), Duration::from_millis(250))
+            .expect("no poll_interval configured");
+        assert_eq!(derived, Duration::from_millis(50));
+        assert!(
+            derived < Duration::from_millis(250),
+            "a poll that does not fit inside the budget cannot serve a read that waits it out"
+        );
+
+        // Derived, not a constant: moving `catch_up` moves it, which is the
+        // whole reason it is not a second number to keep in step by hand.
+        assert_eq!(
+            poll_interval(&replica("name = \"a\""), Duration::from_secs(10)).unwrap(),
+            Duration::from_secs(2)
+        );
+    }
+
+    #[test]
+    fn a_derived_poll_never_goes_below_the_floor() {
+        // A `catch_up` mistyped down to microseconds must not turn into a
+        // request loop against the object store.
+        assert_eq!(
+            poll_interval(&replica("name = \"a\""), Duration::from_micros(10)).unwrap(),
+            SHORTEST_DERIVED_POLL
+        );
+    }
+
+    #[test]
+    fn a_configured_poll_at_or_above_catch_up_is_refused() {
+        // Exactly at the budget is refused as well as above it: at `catch_up`
+        // a read gets at most one poll and usually none, which is the shipped
+        // defect with a different number in it.
+        let error = poll_interval(
+            &replica("name = \"a\"\npoll_interval = \"250ms\""),
+            Duration::from_millis(250),
+        )
+        .expect_err("equal is not shorter")
+        .to_string();
+        assert!(error.contains("catch_up"), "{error}");
+        assert!(error.contains("fall back to the writer"), "{error}");
+
+        assert!(
+            poll_interval(
+                &replica("name = \"a\"\npoll_interval = \"249ms\""),
+                Duration::from_millis(250)
+            )
+            .is_ok(),
+            "the control: just below the budget is accepted, so the refusal is about the ordering"
+        );
+    }
+
+    #[test]
+    fn a_catch_up_shorter_than_the_floor_warns_rather_than_refusing() {
+        // The same trap from the other side, and a warning because the number
+        // that does not fit is the one this daemon chose.
+        let mut warnings = Vec::new();
+        check_catch_up(
+            &[replica("name = \"a\"")],
+            Duration::from_millis(50),
+            &mut warnings,
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("replica `a`"), "{}", warnings[0]);
+
+        // Not warned about when the replica said what it wanted, and not
+        // warned about at a budget the floor fits inside — the two controls
+        // that stop this firing on every start.
+        let mut quiet = Vec::new();
+        check_catch_up(
+            &[replica("name = \"a\"\npoll_interval = \"5ms\"")],
+            Duration::from_millis(50),
+            &mut quiet,
+        );
+        check_catch_up(
+            &[replica("name = \"a\"")],
+            Duration::from_millis(250),
+            &mut quiet,
+        );
+        assert!(quiet.is_empty(), "{quiet:?}");
     }
 
     #[test]
@@ -652,7 +871,7 @@ mod tests {
         .unwrap();
         let one = toml::from_str::<config::Replica>("name = \"a\"").unwrap();
         let two = toml::from_str::<config::Replica>("name = \"a\"").unwrap();
-        let error = match open(&prepared, &[one, two]).await {
+        let error = match open(&prepared, &[one, two], Duration::from_millis(250)).await {
             Err(fault) => fault.to_string(),
             Ok(_) => panic!("two replicas with one name were accepted"),
         };
