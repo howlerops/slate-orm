@@ -88,27 +88,54 @@ struct Total {
 impl Total {
     fn add(&mut self, value: &Value) -> Result<()> {
         match value {
-            Value::I64(v) => self.integer += i128::from(*v),
-            Value::U64(v) => self.integer += i128::from(*v),
-            Value::F64(v) => {
-                if !self.is_real {
-                    self.real = self.integer as f64;
-                    self.is_real = true;
-                }
-                self.real += *v;
-            }
+            Value::I64(v) => self.add_integer(i128::from(*v)),
+            Value::U64(v) => self.add_integer(i128::from(*v)),
+            Value::F64(v) => self.add_real(*v),
             other => {
                 return Err(KernelError::NotSummable {
                     found: other.type_name(),
                 });
             }
         }
-        if self.is_real {
-            // Keep the integer side consistent for a later integer input.
-            self.integer = 0;
-        }
         self.count += 1;
         Ok(())
+    }
+
+    /// Fold in an integer, on whichever side the total is currently kept.
+    ///
+    /// The `is_real` branch is the whole point. This used to add to `integer`
+    /// unconditionally and then, two lines later, zero `integer` whenever
+    /// `is_real` — so every integer arriving *after* the first float was
+    /// added and immediately discarded. Nothing caught it while a column had
+    /// one declared type and an aggregate therefore only ever saw one domain;
+    /// `Scalar` made `coalesce(price, amount)` over a nullable `f64` and an
+    /// `i64` an ordinary thing to write, and that produces a float on some
+    /// rows and an integer on others.
+    ///
+    /// It failed as an order dependence, which is the sharpest way it could
+    /// have shown up: `SUM` over the same six rows gave 1.5 read forwards and
+    /// 11.5 read backwards, because reading backwards put the float first and
+    /// dropped every integer behind it. An aggregate is a fold over a set and
+    /// nothing about the answer may depend on the order of the fold.
+    fn add_integer(&mut self, value: i128) {
+        if self.is_real {
+            // Exact for every integer up to 2^53, which is far past anything
+            // a single row contributes; a total that has already gone real
+            // was going to be approximate regardless.
+            self.real += value as f64;
+        } else {
+            self.integer += value;
+        }
+    }
+
+    /// Fold in a float, moving the total to the real side if it is not there.
+    fn add_real(&mut self, value: f64) {
+        if !self.is_real {
+            self.real = self.integer as f64;
+            self.integer = 0;
+            self.is_real = true;
+        }
+        self.real += value;
     }
 
     fn sum(&self) -> Value {

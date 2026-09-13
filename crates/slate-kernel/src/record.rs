@@ -55,6 +55,7 @@ use slate_schema::{
 };
 use slate_tuple::Value;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// How many distinct values [`RecordTransaction::analyze`] counts per column
 /// before giving up and calling the column unique.
@@ -405,6 +406,7 @@ impl<S: KvStore> RecordStore<S> {
             catalog: &self.catalog,
             security: &self.security,
             statistics: &self.statistics,
+            poisoned: AtomicBool::new(false),
         })
     }
 }
@@ -446,6 +448,25 @@ pub struct RecordTransaction<'a> {
     catalog: &'a Catalog,
     security: &'a SecurityCatalog,
     statistics: &'a Statistics,
+    /// Set when a write to the store itself fails, which makes the buffered
+    /// writes a partial statement rather than a whole one.
+    ///
+    /// A *check* failing — a duplicate key, a policy, a `CHECK`, a foreign key
+    /// — leaves nothing buffered, because every check runs before anything is
+    /// written, and the caller may go on using the transaction. A *write*
+    /// failing is different: a row and its index entries go in one at a time,
+    /// so a failure between them leaves some of them buffered, and committing
+    /// after that lands an index entry without its row or a row without its
+    /// entry. Measured: an `update` failing at the second write and then
+    /// committed left a table with one row and none of its `by_email` entries.
+    ///
+    /// This file's own module documentation claimed that never happens — "the
+    /// whole set lands or none of it does" — and it was true only for callers
+    /// that roll back. `transact` does, and so does the head node, so nothing
+    /// shipped was landing torn state; the claim was resting on a convention
+    /// rather than on the type. Now `commit` refuses, which is the difference
+    /// between a rule and an invariant.
+    poisoned: AtomicBool,
 }
 
 impl core::fmt::Debug for RecordTransaction<'_> {
@@ -1505,10 +1526,12 @@ impl<'a> RecordTransaction<'a> {
     fn remove_row(&self, table: &TableDef, row: &Row) -> Result<()> {
         for index in table.indexes().iter().filter(|index| index.admits(row)) {
             let entry = self.entry_for(table, index, row);
-            self.txn.delete(entry.key)?;
+            self.poison_on_err(self.txn.delete(entry.key))?;
         }
-        self.txn
-            .delete(keys::row_key(table, &row.primary_key_values(table)))?;
+        self.poison_on_err(
+            self.txn
+                .delete(keys::row_key(table, &row.primary_key_values(table))),
+        )?;
         Ok(())
     }
 
@@ -1722,15 +1745,17 @@ impl<'a> RecordTransaction<'a> {
                 self.check_unique(table, index, new, &primary_key).await?;
             }
             if let Some(old) = old_entry {
-                self.txn.delete(old.key)?;
+                self.poison_on_err(self.txn.delete(old.key))?;
             }
             if let Some(new) = new_entry {
-                self.txn.put(new.key, new.value)?;
+                self.poison_on_err(self.txn.put(new.key, new.value))?;
             }
         }
 
-        self.txn
-            .put(keys::row_key(table, &primary_key), encode_body(table, row))?;
+        self.poison_on_err(
+            self.txn
+                .put(keys::row_key(table, &primary_key), encode_body(table, row)),
+        )?;
         Ok(())
     }
 
@@ -1776,7 +1801,23 @@ impl<'a> RecordTransaction<'a> {
     /// Pass it to a later read as [`Freshness::AtLeast`](crate::Freshness) to
     /// read your own writes back from a replica.
     pub async fn commit(self) -> Result<Option<ReadToken>> {
+        // A write to the store failed earlier, so what is buffered is part of
+        // a statement rather than all of one. Refused rather than committed:
+        // see `poisoned`. The transaction is consumed either way, so a caller
+        // that ignores this error still cannot land the prefix.
+        if self.poisoned.load(Ordering::SeqCst) {
+            self.txn.rollback();
+            return Err(KernelError::TransactionPoisoned);
+        }
         Ok(self.txn.commit().await?.map(ReadToken::new))
+    }
+
+    /// Note a failed store write, so [`RecordTransaction::commit`] refuses.
+    fn poison_on_err<T>(&self, outcome: Result<T>) -> Result<T> {
+        if outcome.is_err() {
+            self.poisoned.store(true, Ordering::SeqCst);
+        }
+        outcome
     }
 
     /// Discard every buffered write.

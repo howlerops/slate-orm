@@ -514,6 +514,183 @@ async fn a_failed_bulk_insert_lands_nothing() {
     }
 }
 
+/// A bulk *update* failing partway leaves every row as it was.
+///
+/// `update_many` was added after this file was written and was not in it.
+/// That is the gap worth closing rather than an oversight worth noting: it
+/// moves more index entries per transaction than any other call — every row
+/// in the batch can move every one of its entries — so it is the write with
+/// the most ways to be torn, and it was the only one untested here.
+///
+/// The bulk *insert* above can only leave nothing behind, because there was
+/// nothing there. An update has a previous row per key, so a torn one leaves
+/// a mixture: some rows new, some old, and index entries pointing at both.
+/// `assert_consistent` catches a dangling entry; the row-by-row comparison
+/// below catches the mixture, which is consistent and still wrong.
+#[tokio::test]
+async fn a_failed_bulk_update_leaves_every_row_as_it_was() {
+    let before: Vec<Row> = (0..8)
+        .map(|i| user(i, &format!("user{i}@example.com"), 20 + i as i64))
+        .collect();
+    // Every row moves both index entries: a new email and a new age.
+    let after: Vec<Row> = (0..8)
+        .map(|i| user(i, &format!("moved{i}@example.com"), 50 + i as i64))
+        .collect();
+
+    for fail_at in [0usize, 1, 5, 12, 20, 24, 33] {
+        let store = store();
+        let table = users();
+
+        let txn = store.begin().await.unwrap();
+        txn.insert_many(&root(), &table, &before).await.unwrap();
+        txn.commit().await.unwrap();
+
+        store.backend().fail_after(fail_at);
+        let txn = store.begin().await.unwrap();
+        let updated = txn.update_many(&root(), &table, &after).await;
+        let committed = if updated.is_ok() {
+            txn.commit().await.is_ok()
+        } else {
+            // Disarmed *before* committing, and the commit is attempted even
+            // though the batch already failed. That is the case `write_many`'s
+            // own comment is about: a caller that saw the error, read it as
+            // "some of this worked", and committed anyway. It must land
+            // nothing, which is only true if nothing was buffered.
+            //
+            // Leaving the fault armed here would prove less than it looks:
+            // the commit's own writes would fail too, so nothing would land
+            // whether or not a prefix had been buffered. Measured — swallowing
+            // the write error inside `write_many` failed no test until this
+            // disarm was added.
+            store.backend().never_fail();
+            txn.commit().await.is_ok()
+        };
+        store.backend().never_fail();
+
+        let context = format!("bulk update failing at write {fail_at}");
+        assert_consistent(&store, &context).await;
+
+        let txn = store.begin().await.unwrap();
+        let mut rows = txn
+            .query(&root(), &table, Expr::True, ScanOrder::Ascending)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        // Ordinal 1: this table's key is (tenant_id, id) and ordinal 0 is the
+        // tenant uuid.
+        rows.sort_by_key(|r| match r.values()[1] {
+            Value::U64(id) => id,
+            ref other => panic!("id was {other:?}"),
+        });
+        // `committed` is true only when the batch itself succeeded. A commit
+        // that went through *after* a failed batch is the case above, and it
+        // must still leave the old rows.
+        let expected = if updated.is_ok() && committed {
+            &after
+        } else {
+            &before
+        };
+        assert_eq!(
+            rows.len(),
+            expected.len(),
+            "{context}: {} rows, expected {}",
+            rows.len(),
+            expected.len()
+        );
+        // Row by row, because a half-applied batch has the right *count* and
+        // the wrong contents — the failure this test exists for.
+        for (got, want) in rows.iter().zip(expected) {
+            assert_eq!(
+                got.values(),
+                want.values(),
+                "{context}: a partly applied batch, which is consistent and wrong"
+            );
+        }
+
+        // And the moved index entries agree with whichever set landed: a scan
+        // through `by_email` must find exactly the emails the rows carry.
+        let txn = store.begin().await.unwrap();
+        for row in expected {
+            let email = row.values()[2].clone();
+            let found = txn
+                .query(
+                    &root(),
+                    &table,
+                    Expr::eq(table.ordinal_of("email").unwrap(), email.clone()),
+                    ScanOrder::Ascending,
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            assert_eq!(
+                found.len(),
+                1,
+                "{context}: `{email:?}` is on a row but not reachable by index"
+            );
+        }
+    }
+}
+
+/// A *check* failing leaves the transaction usable; only a *write* poisons it.
+///
+/// This is the other half of the rule, and it was untested: making
+/// `poison_on_err` poison on every error rather than only on a failed store
+/// write broke nothing in the whole kernel suite. That is the wrong direction
+/// to be untested in — over-poisoning turns every refused row into a lost
+/// transaction, quietly, and a caller doing the obvious thing (try a row, take
+/// the rejection, write a different one) would silently lose the batch.
+///
+/// The distinction is the entire design: a check runs before anything is
+/// written, so a refusal leaves nothing buffered and there is nothing to be
+/// torn. A write failing between a row and its index entries is what cannot be
+/// committed.
+#[tokio::test]
+async fn a_refused_row_leaves_the_transaction_usable() {
+    let store = store();
+    let table = users();
+    let txn = store.begin().await.unwrap();
+    txn.insert(&root(), &table, &user(1, "taken@example.com", 30))
+        .await
+        .unwrap();
+
+    // A duplicate on the unique index: refused by a check, with no store write
+    // attempted for it.
+    let refused = txn
+        .insert(&root(), &table, &user(2, "taken@example.com", 31))
+        .await;
+    assert!(
+        refused.is_err(),
+        "the duplicate was accepted, so this tests nothing"
+    );
+
+    // The transaction goes on, and commits.
+    txn.insert(&root(), &table, &user(3, "free@example.com", 32))
+        .await
+        .expect("a good row after a refused one");
+    txn.commit()
+        .await
+        .expect("a refused check must not poison the transaction");
+
+    assert_consistent(&store, "after a refused row").await;
+    let txn = store.begin().await.unwrap();
+    let rows = txn
+        .query(&root(), &table, Expr::True, ScanOrder::Ascending)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        2,
+        "the rows that were not refused should be here"
+    );
+}
+
 /// The consistency check has to be able to fail.
 ///
 /// Every test above passes when the store is consistent *and* when the check

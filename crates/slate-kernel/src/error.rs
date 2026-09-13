@@ -87,6 +87,18 @@ pub enum KernelError {
     #[error("transaction conflicted with a concurrent commit; retry")]
     TransactionConflict,
 
+    /// A write to the store failed, so this transaction holds part of a
+    /// statement and will not commit.
+    ///
+    /// Deliberately *not* retryable in the sense [`TransactionConflict`] is:
+    /// the write failed for a reason of its own — a full disk, a fenced
+    /// writer — and the caller has to begin again rather than commit what is
+    /// buffered. Raised by `commit` rather than swallowed, so a caller that
+    /// read the earlier error as "some of this worked" is told otherwise
+    /// instead of landing a row without its index entries.
+    #[error("transaction holds a partly written statement and cannot commit; begin again")]
+    TransactionPoisoned,
+
     /// The caller's roles do not grant this action on this table.
     #[error("access denied: no role grants {action} on table `{table}`")]
     AccessDenied {

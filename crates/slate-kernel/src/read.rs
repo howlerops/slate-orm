@@ -88,6 +88,23 @@ fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join 
     let mut narrowed = join.clone();
     narrowed.left.projection = Projection::Columns(left.into_iter().collect());
     narrowed.right.projection = Projection::Columns(right.into_iter().collect());
+
+    // And the window goes, for the reason [`narrowed`] gives for dropping a
+    // single-table query's: aggregating a windowed subset of an unordered
+    // result is not a meaningful request. This path used to clone the join and
+    // replace only the two projections, so a join's own `limit` survived and
+    // windowed the row stream before the grouper saw it — and a join has no
+    // order, so *which* rows the window kept was whichever ones the chosen
+    // algorithm happened to produce first.
+    //
+    // It surfaced as the two hash build sides disagreeing: the same grouped
+    // join came back as counts of 4/2/4/2 building the right side and 3/3/3/3
+    // building the left, both entirely plausible-looking tables. The single-
+    // table path had already decided this case is meaningless and refused it;
+    // the join path simply forgot to, which made a deliberate rule look like
+    // an accident of which plan won.
+    narrowed.limit = None;
+    narrowed.offset = 0;
     narrowed
 }
 
