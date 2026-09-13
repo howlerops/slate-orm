@@ -1,0 +1,96 @@
+#!/bin/sh
+#
+# Refuse a commit that changes anything outside `ledger/` without a ledger
+# entry. See ledger/README.md.
+#
+# Deliberately a `sh` script with no dependencies: a hook that needs a
+# toolchain to run is a hook that stops running the first time somebody commits
+# from a container that does not have it.
+
+set -eu
+
+# Merge commits: the reasoning belongs to the commits being merged, and a merge
+# is often a conflict resolution nobody chose to make.
+if [ -e "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+[ -n "$staged" ] || exit 0
+
+# A revert undoes a change whose entry already exists; requiring a second entry
+# to undo it is paperwork. `git revert` writes the message before this runs.
+if [ -f "$(git rev-parse --git-dir)/COMMIT_EDITMSG" ] &&
+   head -n 1 "$(git rev-parse --git-dir)/COMMIT_EDITMSG" 2>/dev/null |
+   grep -qE '^Revert "'; then
+    exit 0
+fi
+
+outside=$(printf '%s\n' "$staged" | grep -v '^ledger/' || true)
+[ -n "$outside" ] || exit 0
+
+entries=$(printf '%s\n' "$staged" |
+    grep -E '^ledger/[0-9]{4}-[0-9]{2}-[0-9]{2}-.+\.md$' || true)
+
+if [ -z "$entries" ]; then
+    cat >&2 <<'MSG'
+
+  This commit changes files outside `ledger/` and adds no ledger entry.
+
+  Every change carries the reasoning that does not survive in a diff: what the
+  alternatives were, what was measured, where the fix stops. Write it down
+  while you still have it.
+
+      cp ledger/TEMPLATE.md ledger/$(date +%F)-a-short-slug.md
+      $EDITOR ledger/$(date +%F)-a-short-slug.md
+      git add ledger/
+
+  Exempt: merges, reverts, and commits that touch only the ledger.
+  `git commit --no-verify` bypasses this — but then the reasoning is nowhere,
+  so write the entry afterwards.
+
+MSG
+    exit 1
+fi
+
+# An entry that exists but says nothing is worse than none: it satisfies the
+# check and teaches everyone that the check is satisfiable without thinking.
+# So the required headings have to be present and to have something under them.
+status=0
+for entry in $entries; do
+    [ -f "$entry" ] || continue
+
+    for heading in "What changed" "Why" "Alternatives rejected" "Evidence" \
+                   "What this does not do"; do
+        if ! grep -qF "## $heading" "$entry"; then
+            printf '\n  %s is missing the "## %s" section.\n' "$entry" "$heading" >&2
+            status=1
+            continue
+        fi
+
+        # The lines under this heading, up to the next one.
+        body=$(awk -v h="## $heading" '
+            $0 == h { inside = 1; next }
+            /^## / { inside = 0 }
+            inside { print }
+        ' "$entry" | grep -vE '^[[:space:]]*$' || true)
+
+        if [ -z "$body" ]; then
+            printf '\n  %s has "## %s" with nothing under it.\n' "$entry" "$heading" >&2
+            status=1
+        fi
+    done
+
+    # The template's own prose, left in place, means the section was not written.
+    if grep -qF "One paragraph. The diff has the detail" "$entry" ||
+       grep -qF "This is the section" "$entry" ||
+       grep -qF "Where the fix stops. Known gaps" "$entry"; then
+        printf '\n  %s still contains the template prose. Replace it.\n' "$entry" >&2
+        status=1
+    fi
+done
+
+if [ "$status" -ne 0 ]; then
+    printf '\n  See ledger/README.md. `--no-verify` bypasses this.\n\n' >&2
+fi
+exit "$status"
