@@ -1156,6 +1156,32 @@ impl<'a> RecordTransaction<'a> {
             check_constraints(table, row)?;
         }
 
+        // And the row policy before any read too, which is the part that was
+        // missing. `insert` decides `WITH CHECK` before it reads anything;
+        // this path decided it *after* the batched reads, so the reads
+        // answered questions about rows the caller may not name. A caller sent
+        // a row carrying another tenant's key and read the boundary off the
+        // error: key taken came back `DuplicatePrimaryKey`, unique value taken
+        // came back `UniqueViolation` naming the index, and neither came back
+        // as the policy refusal. Free, repeatable, batched, and reachable from
+        // every wire insert.
+        //
+        // `Action::Insert` even for an upsert: the tenant restriction is the
+        // same expression either way, so a row outside the caller's tenant is
+        // refused by both, and a row inside it that turns out to exist still
+        // takes the full `Action::Update` check in the loop below.
+        //
+        // Deliberately not for `BulkMode::Update`. That path is already
+        // indistinguishable — a row the caller cannot see reports
+        // `RowNotFound` exactly as a missing one does — and pre-checking would
+        // make it report `RowCheckFailed` instead, which is the disclosure
+        // this is closing, reintroduced from the other side.
+        if mode.may_insert() {
+            for row in rows {
+                self.check_row(context, table, Action::Insert, row)?;
+            }
+        }
+
         let existing = self.read_rows_concurrently(table, &primary_keys).await?;
         self.check_unique_slots(table, rows, &primary_keys, &existing)
             .await?;

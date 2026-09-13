@@ -422,6 +422,29 @@ pub enum SchemaError {
         parent: String,
     },
 
+    /// A tenant-scoped table references a parent that is not tenant-scoped.
+    ///
+    /// The referential action would have to reach children in every tenant:
+    /// `Cascade` deletes them and `Restrict` reads them, and both run as a
+    /// superuser because referential integrity cannot depend on who is asking.
+    /// So one tenant's delete would destroy or disclose another's rows.
+    #[error(
+        "table `{table}`'s foreign key `{foreign_key}` is tenant-scoped but its parent \
+         `{parent}` is not, so ON DELETE {action:?} would reach rows in every tenant; \
+         give the parent a tenant column, or drop the foreign key and check the \
+         reference in the application"
+    )]
+    CrossTenantForeignKey {
+        /// The tenant-scoped child.
+        table: String,
+        /// The foreign key.
+        foreign_key: String,
+        /// The shared parent.
+        parent: String,
+        /// The action that would cross the boundary.
+        action: crate::ReferentialAction,
+    },
+
     /// A delete was refused because rows still reference the row deleted.
     #[error(
         "cannot delete from `{table}`: rows in `{child}` still reference it \

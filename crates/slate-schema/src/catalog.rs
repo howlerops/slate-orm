@@ -171,6 +171,40 @@ impl Catalog {
                         });
                     }
                 }
+
+                // A referential action from a *shared* parent to a
+                // tenant-scoped child cannot be honoured by one tenant.
+                //
+                // `delete`'s doc comment bounds the cascade search with "when
+                // the child is tenant-scoped its foreign key carries the
+                // tenant, so the search is confined to the caller's own tenant
+                // by the key encoding". That is true only when the *parent* is
+                // tenant-scoped too, because then the child's key begins with
+                // the tenant it inherited. A parent with no tenant column is
+                // shared, its children live in every tenant, and the closure
+                // walk — which runs as a superuser, correctly, since
+                // referential integrity cannot depend on who is asking —
+                // reaches all of them. Measured: tenant A deleting a shared
+                // parent row destroyed tenant B's children, and `Restrict`
+                // refused the delete in a way that disclosed that B's row
+                // exists.
+                //
+                // Refused at build rather than confined at the scan, which was
+                // the other candidate. Confining the walk to the caller's
+                // tenant stops the destruction and leaves the other tenants'
+                // children pointing at a parent that is gone — trading a
+                // security hole for a correctness one. The edge is not
+                // expressible safely by either action: `Cascade` writes rows
+                // the caller cannot name and `Restrict` reads them. Saying so
+                // at startup, naming both tables, is the honest answer.
+                if table.tenant_column().is_some() && parent.tenant_column().is_none() {
+                    return Err(SchemaError::CrossTenantForeignKey {
+                        table: table.name().to_owned(),
+                        foreign_key: key.name().to_owned(),
+                        parent: parent.name().to_owned(),
+                        action: key.on_delete(),
+                    });
+                }
             }
         }
         Ok(())

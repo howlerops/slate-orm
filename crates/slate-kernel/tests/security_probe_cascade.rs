@@ -19,9 +19,10 @@
 )]
 
 use slate_kernel::{
-    Action, Expr, Grant, KernelError, Policy, Principal, Query, RecordStore, SecurityCatalog,
+    Action, Expr, Grant, KernelError, Policy, Principal, RecordStore, SecurityCatalog,
     SecurityContext, memory::MemoryStore,
 };
+use slate_schema::SchemaError;
 use slate_schema::{Catalog, ForeignKeyDef, ReferentialAction, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
 
@@ -60,12 +61,6 @@ fn docs(action: ReferentialAction) -> TableDef {
         .expect("valid schema")
 }
 
-fn security() -> SecurityCatalog {
-    SecurityCatalog::new()
-        .grant(Grant::new("app", ORGS, Action::ALL))
-        .grant(Grant::new("app", DOCS, Action::ALL))
-}
-
 fn caller(tenant: u64) -> SecurityContext {
     SecurityContext::new(
         Principal::new(Value::U64(tenant))
@@ -74,110 +69,43 @@ fn caller(tenant: u64) -> SecurityContext {
     )
 }
 
-async fn seeded(action: ReferentialAction) -> RecordStore<MemoryStore> {
-    let catalog = Catalog::from_tables([orgs(), docs(action)]).expect("catalog");
-    let store = RecordStore::new(MemoryStore::new(), catalog, security());
-    let root = SecurityContext::superuser();
-    let txn = store.begin().await.unwrap();
-    txn.insert(
-        &root,
-        &orgs(),
-        &Row::new(vec![Value::U64(1), Value::Str("shared".into())]),
-    )
-    .await
-    .unwrap();
-    for (tenant, id, title) in [(TENANT_A, 1u64, "a's doc"), (TENANT_B, 2u64, "b's doc")] {
-        txn.insert(
-            &root,
-            &docs(action),
-            &Row::new(vec![
-                Value::U64(tenant),
-                Value::U64(id),
-                Value::U64(1),
-                Value::Str(title.into()),
-            ]),
-        )
-        .await
-        .unwrap();
+// `security()` and `seeded()` used to live here: they built a store over
+// `[orgs(), docs(action)]` so the two cascade findings could be exercised
+// against real rows. That catalog is refused now, so `seeded` would panic
+// rather than run — dead and broken rather than merely dead, which is why they
+// are gone instead of carrying an `allow(dead_code)`.
+
+/// FIXED: the schema that made a cross-tenant cascade possible is refused.
+///
+/// A shared parent — no tenant column — with a tenant-scoped child means the
+/// child rows live in every tenant, and the closure walk runs as a superuser
+/// because referential integrity cannot depend on who is asking. So one
+/// tenant's delete reached all of them. Measured before the fix: tenant A
+/// deleting org 1 left the `docs` table empty, tenant B's row included, and
+/// with `Restrict` the delete was refused in a way that disclosed B's row.
+///
+/// Refused at `Catalog::from_tables` rather than confined at the scan.
+/// Confining the walk stops the destruction and leaves other tenants' children
+/// pointing at a parent that is gone, trading a security hole for a
+/// correctness one. The edge is not expressible safely by either action, so
+/// the catalog says so at startup and names both tables.
+#[test]
+fn a_shared_parent_with_a_tenant_scoped_child_is_refused() {
+    for action in [ReferentialAction::Cascade, ReferentialAction::Restrict] {
+        let refused = Catalog::from_tables([orgs(), docs(action)]);
+        let Err(SchemaError::CrossTenantForeignKey {
+            table,
+            parent,
+            action: reported,
+            ..
+        }) = refused
+        else {
+            panic!("ON DELETE {action:?} from a shared parent was accepted");
+        };
+        assert_eq!(table, "docs");
+        assert_eq!(parent, "orgs");
+        assert_eq!(reported, action);
     }
-    txn.commit().await.unwrap();
-    store
-}
-
-/// FINDING: a cascade from a shared parent deletes another tenant's rows.
-#[tokio::test]
-async fn a_cascade_from_a_shared_parent_crosses_the_tenant_boundary() {
-    let action = ReferentialAction::Cascade;
-    let store = seeded(action).await;
-
-    let txn = store.begin().await.unwrap();
-    let deleted = txn
-        .delete(&caller(TENANT_A), &orgs(), &[Value::U64(1)])
-        .await
-        .unwrap();
-    assert!(deleted, "the org should have been deleted");
-    txn.commit().await.unwrap();
-
-    // What is left, seen by a superuser so the policy cannot hide the answer.
-    let txn = store.begin().await.unwrap();
-    let left = txn
-        .execute(&SecurityContext::superuser(), &docs(action), &Query::all())
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
-    let titles: Vec<String> = left
-        .iter()
-        .map(|r| match r.get(slate_schema::Ordinal(3)) {
-            Some(Value::Str(s)) => s.clone(),
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    // The finding, asserted as it actually behaves: tenant B's row is gone.
-    // Change this to `vec!["b's doc"]` once the cascade is confined.
-    assert_eq!(
-        titles,
-        Vec::<String>::new(),
-        "tenant A's delete of a shared parent left {titles:?}; \
-         if this now holds `b's doc` the cascade has been confined and the finding is fixed"
-    );
-}
-
-/// FINDING: a `RESTRICT` refusal tells tenant A that tenant B has a row.
-#[tokio::test]
-async fn a_restrict_refusal_discloses_another_tenants_row() {
-    let action = ReferentialAction::Restrict;
-    let store = seeded(action).await;
-
-    // First, tenant A deletes its own referencing row, so that the only thing
-    // left pointing at the org belongs to tenant B.
-    let txn = store.begin().await.unwrap();
-    txn.delete(
-        &caller(TENANT_A),
-        &docs(action),
-        &[Value::U64(TENANT_A), Value::U64(1)],
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
-
-    let txn = store.begin().await.unwrap();
-    let outcome = txn
-        .delete(&caller(TENANT_A), &orgs(), &[Value::U64(1)])
-        .await;
-    assert!(
-        outcome.is_err(),
-        "tenant A saw no reason not to delete the org; \
-         if this passes the RESTRICT does not fire and there is nothing to disclose"
-    );
-    let error = outcome.unwrap_err().to_string();
-    assert!(
-        error.to_lowercase().contains("referenc"),
-        "expected a referential refusal, got {error}"
-    );
-    // The refusal is the disclosure: nothing tenant A can read references the
-    // org, and yet the delete is refused.
 }
 
 // --- the write-side existence oracle ---------------------------------------
@@ -362,15 +290,19 @@ async fn insert_many_discloses_another_tenants_primary_keys() {
         .unwrap_err();
     txn.rollback();
 
+    // FIXED. Both are the policy refusal now, because `write_many` decides
+    // `WITH CHECK` before it reads anything, exactly as single-row `insert`
+    // does. The occupied key and the free one are indistinguishable, so there
+    // is nothing to read the boundary off.
     assert!(
-        matches!(occupied, KernelError::DuplicatePrimaryKey { .. }),
-        "expected the key-taken answer, got {occupied:?}"
+        matches!(occupied, KernelError::RowCheckFailed { .. }),
+        "a taken key in another tenant still answers differently: {occupied:?}"
     );
     assert!(
         matches!(free, KernelError::RowCheckFailed { .. }),
         "expected the policy refusal, got {free:?}"
     );
-    assert_ne!(
+    assert_eq!(
         core::mem::discriminant(&occupied),
         core::mem::discriminant(&free),
         "the two answers are distinguishable, which is the oracle"
@@ -396,13 +328,22 @@ async fn insert_many_discloses_another_tenants_unique_values() {
         .unwrap_err();
     txn.rollback();
 
+    // FIXED. The unique-index read no longer happens before the policy, so a
+    // taken email in another tenant is the same refusal as an untaken one.
+    // This was the sharper half of the finding: a key is guessable, an email
+    // address is the data.
     assert!(
-        matches!(taken, KernelError::UniqueViolation { .. }),
-        "expected the unique-index answer, got {taken:?}"
+        matches!(taken, KernelError::RowCheckFailed { .. }),
+        "a taken unique value in another tenant still answers differently: {taken:?}"
     );
     assert!(
         matches!(untaken, KernelError::RowCheckFailed { .. }),
         "expected the policy refusal, got {untaken:?}"
+    );
+    assert_eq!(
+        core::mem::discriminant(&taken),
+        core::mem::discriminant(&untaken),
+        "the two answers are distinguishable, which is the oracle"
     );
 }
 
@@ -448,13 +389,21 @@ async fn upsert_many_discloses_another_tenants_primary_keys() {
         .unwrap_err();
     txn.rollback();
 
+    // FIXED. `Action::Insert`'s check runs before the reads for an upsert too:
+    // the tenant restriction is the same expression either way, so a row
+    // outside the caller's tenant is refused without reading anything.
     assert!(
-        matches!(occupied, KernelError::RowNotFound { .. }),
-        "got {occupied:?}"
+        matches!(occupied, KernelError::RowCheckFailed { .. }),
+        "an occupied key in another tenant still answers differently: {occupied:?}"
     );
     assert!(
         matches!(free, KernelError::RowCheckFailed { .. }),
         "got {free:?}"
+    );
+    assert_eq!(
+        core::mem::discriminant(&occupied),
+        core::mem::discriminant(&free),
+        "the two answers are distinguishable, which is the oracle"
     );
 }
 
