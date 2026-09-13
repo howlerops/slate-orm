@@ -861,3 +861,80 @@ fn the_catalog_finds_who_references_a_table() {
     assert_eq!(key.on_delete(), ReferentialAction::Cascade);
     assert!(catalog.referencing(TableId(2)).is_empty());
 }
+
+// --- index ids are global, so the catalog has to say so --------------------
+
+/// Two tables cannot share an index id, because the keyspace is global.
+///
+/// Measured before this check existed: `people` (3 rows) and `widgets` (5
+/// rows) both declaring `IndexId(1)`, and an index scan of `people` returned
+/// 5 — the other table's entries, through the same key range, because
+/// `slate_kernel::keys::index_entry` writes the index space and the id and no
+/// table id. `TableBuilder` refuses a duplicate *within* a table, which reads
+/// like the check exists; it is the wrong scope for a global keyspace.
+///
+/// It is silent in the worst way: both tables build, the catalog validates,
+/// and the wrong rows come back from a query that looks correct. The head
+/// node's own test fixture had five tables on `IndexId(1)` when this was
+/// written, so its suite had been running against overlapping index keyspaces
+/// without anything noticing.
+///
+/// Refused here rather than fixed by putting the table id in the key. That is
+/// the deeper fix and it is a storage format change — every index entry ever
+/// written moves — where this costs one startup check and makes the collision
+/// unrepresentable.
+#[test]
+fn two_tables_cannot_share_an_index_id() {
+    let people = TableDef::builder("people", TableId(1))
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("people_by_kind", IndexId(1)).column("kind"))
+        .build()
+        .expect("valid");
+    let widgets = TableDef::builder("widgets", TableId(2))
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("widgets_by_kind", IndexId(1)).column("kind"))
+        .build()
+        .expect("valid");
+
+    let refused = Catalog::from_tables([people, widgets]);
+    let Err(SchemaError::DuplicateIndexId {
+        id,
+        index,
+        existing,
+        ..
+    }) = refused
+    else {
+        panic!("two tables shared an index id: {refused:?}");
+    };
+    assert_eq!(id, 1);
+    // Both sides named: "duplicate index id 1" would send the reader looking
+    // through every table in the catalog for the other one.
+    assert_eq!(index, "widgets_by_kind");
+    assert_eq!(existing, "people_by_kind");
+}
+
+/// The control: distinct ids across tables are fine, and so are several
+/// indexes on one table.
+#[test]
+fn distinct_index_ids_across_tables_are_accepted() {
+    let people = TableDef::builder("people", TableId(1))
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("people_by_kind", IndexId(1)).column("kind"))
+        .index(IndexDef::builder("people_by_id", IndexId(2)).column("id"))
+        .build()
+        .expect("valid");
+    let widgets = TableDef::builder("widgets", TableId(2))
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .primary_key(["id"])
+        .index(IndexDef::builder("widgets_by_kind", IndexId(3)).column("kind"))
+        .build()
+        .expect("valid");
+    assert!(Catalog::from_tables([people, widgets]).is_ok());
+}

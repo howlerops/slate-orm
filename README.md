@@ -64,6 +64,7 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-derive` | `#[derive(Record)]` and generated column constants |
 | `slate-orm` | Typed surface; re-exports the rest |
 | `slate-server` | gRPC head node, writer leadership over an object-store lease |
+| `slate-serverd` | The head node as a binary: one TOML file, no Rust to start it |
 | `slate-headbench` | Benchmarks for the head node, against a real one over a socket |
 
 Outside the workspace, [`clients/python`](clients/python) is a typed Python
@@ -627,6 +628,13 @@ Built and tested:
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
       zero book rows)
+- [x] A head node binary. One TOML file declares tables, columns, indexes
+      (unique, partial and expression), `CHECK`, foreign keys, grants and
+      policies — predicates in a small parsed language rather than a
+      `Deserialize` mirror of `Expr` that would go a variant short the day
+      `Expr` grows one. Authentication has no default: no `[auth]` section is a
+      refusal to start, and a mode whose safety rests on something outside the
+      process must name that thing before it will bind off loopback
 - [x] All fifteen protocol findings from the first outside client answered:
       eleven fixed, two argued and documented, two refused with reasons. A
       schema fingerprint on every request that names a table now catches a
@@ -662,10 +670,19 @@ Built and tested:
 Not built:
 
 - [ ] Go and TypeScript SDKs. The Python one is built
-      ([`clients/python`](clients/python)); the other two would each restate the
-      head node's startup by hand, because `slate-server` is a library with no
-      binary — see finding 1 in
-      [`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md)
+      ([`clients/python`](clients/python)), and they no longer have to restate
+      the head node's startup by hand — `slate-serverd` is a real binary now
+- [ ] A read-only head node. `Head::new` requires a writer store, and opening
+      the SlateDB writer *fences the healthy leader*, so a node that loses the
+      lease cannot serve reads at all. `slate-serverd` campaigns before opening
+      and refuses to start when it loses, which contradicts what
+      `slate-server`'s own docs claim about a fenced node
+- [ ] `ObjectStoreLease` over a local filesystem. `object_store`'s
+      `LocalFileSystem` returns `NotImplemented` for a conditional put, so a
+      local node takes the lease and can then never renew, release, or take
+      over an expired one — a `local` database is a one-start database.
+      Worked around in `slate-serverd` with an advisory `flock`, which is
+      host-local and not safe over NFS
 - [ ] A grouped join and ordered groups are not on the wire yet — the kernel
       does both now, so this is protocol work rather than a design gap, and
       there is no wire differential for them

@@ -130,6 +130,27 @@ pub enum SchemaError {
         table: String,
     },
 
+    /// Two tables declared the same index id.
+    ///
+    /// An index entry is keyed on the index id and not the table's, so the
+    /// index keyspace is global: two tables sharing an id share one key range,
+    /// and a scan of either walks both.
+    #[error(
+        "index `{index}` on table `{table}` uses id {id}, which index          `{existing}` on table `{existing_table}` already has; index ids are          global because an index entry's key does not name its table"
+    )]
+    DuplicateIndexId {
+        /// The repeated id.
+        id: u32,
+        /// The index being added.
+        index: String,
+        /// The table being added.
+        table: String,
+        /// The index already holding the id.
+        existing: String,
+        /// The table it belongs to.
+        existing_table: String,
+    },
+
     /// A row had the wrong number of columns for its table.
     #[error("table `{table}` expects {expected} column(s), row has {actual}")]
     ColumnCountMismatch {

@@ -44,6 +44,12 @@ pub const SALES: TableId = TableId(5);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
+    // Index ids are unique across the whole catalog, not per table: an index entry
+    // is keyed on the index id with no table id in it, so two tables sharing an id
+    // share one key range and a scan of either walks both. `Catalog::insert`
+    // refuses it now — before it did, every table below declared `IndexId(1)` and
+    // this fixture had five indexes in one keyspace. A decade per table, so there
+    // is room to add one and the id says which table it belongs to.
     TableDef::builder("docs", DOCS)
         .column("id", ValueType::U64)
         .column("kind", ValueType::Str)
@@ -66,7 +72,7 @@ pub fn users() -> TableDef {
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
         .index(
-            IndexDef::builder("by_email", IndexId(1))
+            IndexDef::builder("by_email", IndexId(10))
                 .column("email")
                 .unique(),
         )
@@ -97,7 +103,7 @@ pub fn authors() -> TableDef {
         .column("born", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_country", IndexId(1)).column("country"))
+        .index(IndexDef::builder("by_country", IndexId(20)).column("country"))
         .build()
         .expect("valid schema")
 }
@@ -111,7 +117,7 @@ pub fn books() -> TableDef {
         .column("year", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_author", IndexId(1)).column("author_id"))
+        .index(IndexDef::builder("by_author", IndexId(30)).column("author_id"))
         .build()
         .expect("valid schema")
 }
@@ -124,7 +130,7 @@ pub fn sales() -> TableDef {
         .column("units", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_book", IndexId(1)).column("book_id"))
+        .index(IndexDef::builder("by_book", IndexId(40)).column("book_id"))
         .build()
         .expect("valid schema")
 }

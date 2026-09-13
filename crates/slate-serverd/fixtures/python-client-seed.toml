@@ -1,0 +1,75 @@
+# The rows `clients/python/testserver` seeds, as configuration.
+#
+# The shape is the one `testserver` argues for and `multi.rs` argues for before
+# it, kept exactly so the Python tests see the same answers:
+#
+#   - `di` has no books, so a left outer join has an unmatched left row.
+#   - `orphan` has no author, so a right or full outer join has an unmatched
+#     right row — the case a nested loop cannot serve.
+#   - `cy` is owned by somebody else and `a-two` is too old, so each side's
+#     policy hides a row for a different reason.
+#   - tenant 2 repeats the same principal id, which is what a tenant check that
+#     only looked at the principal would let through.
+#
+# Order is insert order, and `books` references nothing, so any order works
+# here. It is written parents-first regardless, because the day a foreign key
+# is added is the day the order starts to matter.
+
+[[seed]]
+table = "docs"
+rows = [
+  { id = 1, kind = "kind-a", size = 5,  note = "first" },
+  { id = 2, kind = "kind-a", size = 15 },
+  { id = 3, kind = "kind-b", size = 25, note = "third" },
+  { id = 4, kind = "kind-b", size = 35 },
+  { id = 5, kind = "kind-c", size = 45, note = "fifth" },
+  { id = 6, kind = "kind-c", size = 55, note = "sixth" },
+  { id = 7, kind = "kind-d", size = 65 },
+]
+
+[[seed]]
+table = "authors"
+rows = [
+  { tenant_id = 1, id = 1, owner = 1, name = "ada", country = "UK", born = 1815 },
+  { tenant_id = 1, id = 2, owner = 1, name = "bo",  country = "US", born = 1900 },
+  { tenant_id = 1, id = 3, owner = 2, name = "cy",  country = "UK", born = 1950 },
+  { tenant_id = 1, id = 4, owner = 1, name = "di",  country = "FR", born = 1970 },
+  { tenant_id = 2, id = 1, owner = 1, name = "zz",  country = "UK", born = 1800 },
+]
+
+[[seed]]
+table = "books"
+rows = [
+  { tenant_id = 1, id = 10, author_id = 1, title = "a-one",   year = 2001 },
+  { tenant_id = 1, id = 11, author_id = 1, title = "a-two",   year = 1990 },
+  { tenant_id = 1, id = 12, author_id = 2, title = "b-one",   year = 2010 },
+  { tenant_id = 1, id = 13, author_id = 3, title = "c-one",   year = 2005 },
+  { tenant_id = 1, id = 14, author_id = 9, title = "orphan",  year = 2020 },
+  { tenant_id = 1, id = 15, author_id = 1, title = "a-three", year = 2003 },
+  { tenant_id = 2, id = 10, author_id = 1, title = "zz-book", year = 2001 },
+]
+
+[[seed]]
+table = "sales"
+rows = [
+  { tenant_id = 1, id = 20, book_id = 10, units = 5 },
+  { tenant_id = 1, id = 21, book_id = 10, units = 0 },
+  { tenant_id = 1, id = 22, book_id = 12, units = 7 },
+  { tenant_id = 1, id = 23, book_id = 99, units = 3 },
+  { tenant_id = 2, id = 20, book_id = 10, units = 4 },
+]
+
+# One the caller owns, one owned by somebody else in the same tenant, and one
+# the caller owns in a *different* tenant. The policy and the tenant scoping
+# hide a different one each.
+[[seed]]
+table = "users"
+rows = [
+  { tenant_id = 1, id = 1, owner = 1, email = "mine@example.com" },
+  { tenant_id = 1, id = 2, owner = 2, email = "theirs@example.com" },
+  { tenant_id = 2, id = 1, owner = 1, email = "other-tenant@example.com" },
+]
+
+[[seed]]
+table = "secrets"
+rows = [{ id = 1, value = "hidden" }]

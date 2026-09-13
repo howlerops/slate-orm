@@ -36,6 +36,22 @@ impl Catalog {
     /// Ids and names must both be unique: an id collision would overlay two
     /// tables in the same keyspace, and a name collision would make access
     /// rules ambiguous.
+    ///
+    /// So must *index* ids, and across the whole catalog rather than within a
+    /// table. An index entry is keyed on the index id alone — see
+    /// `slate_kernel::keys::index_entry`, which writes the index space and the
+    /// id and no table id — so the index keyspace is global while the only
+    /// check that existed was `TableBuilder`'s, which is per table. Two tables
+    /// declaring the same `IndexId` therefore shared one key range, and a scan
+    /// of either walked both: measured, before this check existed, as an index
+    /// scan of a three-row table returning five rows belonging to another one.
+    ///
+    /// Checked here rather than fixed by putting the table id in the key. That
+    /// would be the deeper fix and it is a storage format change — every index
+    /// entry ever written moves — where this is a startup refusal that costs
+    /// nothing and makes the collision unrepresentable. The key layout is
+    /// documented as it is, and a schema that cannot state the broken thing
+    /// does not need the format to defend against it.
     pub fn insert(&mut self, table: TableDef) -> Result<()> {
         if let Some(existing) = self
             .tables
@@ -45,6 +61,22 @@ impl Catalog {
             return Err(SchemaError::DuplicateTable {
                 table: existing.name().to_owned(),
             });
+        }
+        for index in table.indexes() {
+            if let Some((owner, clashing)) = self.tables.iter().find_map(|t| {
+                t.indexes()
+                    .iter()
+                    .find(|i| i.id() == index.id())
+                    .map(|i| (t, i))
+            }) {
+                return Err(SchemaError::DuplicateIndexId {
+                    id: index.id().0,
+                    index: index.name().to_owned(),
+                    table: table.name().to_owned(),
+                    existing: clashing.name().to_owned(),
+                    existing_table: owner.name().to_owned(),
+                });
+            }
         }
         self.tables.push(table);
         Ok(())

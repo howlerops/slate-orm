@@ -516,35 +516,59 @@ roles = ["app"]
 }
 
 #[tokio::test]
-async fn analyze_on_start_measures_the_seeded_rows() {
+async fn analyze_on_start_changes_what_the_planner_believes() {
+    // Two nodes over the same fixture, differing only in `analyze_on_start`,
+    // and the assertion is that their estimates differ.
+    //
+    // The obvious test — "the estimate is small, so it must have been
+    // measured" — was written first and is worthless: with four rows and a
+    // policy on the predicate, the *unanalysed* estimate is already small,
+    // because `TableStats::assumed`'s thousand rows are multiplied down by two
+    // selectivities. A mutation that ignored the flag entirely passed it.
     let files = Files::new();
-    let config = format!("{CONFIG}\n[planner]\nanalyze_on_start = true\n");
-    let path = files.write("analyzed.toml", &config);
     let seed = files.write("seed.toml", SEED);
-    let serving = Serving::start(&[
-        "--config",
-        &path.display().to_string(),
-        "--seed",
-        &seed.display().to_string(),
-    ]);
-    let mut client = connect(&serving).await;
+    let plain = files.write("plain.toml", CONFIG);
+    let measured = files.write(
+        "measured.toml",
+        &format!("{CONFIG}\n[planner]\nanalyze_on_start = true\n"),
+    );
 
-    // Four rows were seeded; the planner's estimate for an unfiltered scan
-    // should reflect the measurement rather than `TableStats::assumed`, which
-    // is a thousand.
-    let explained = client
-        .explain(APP.on(proto::ExplainRequest {
-            transaction: String::new(),
-            query: Some(query("docs")),
-            freshness: None,
-        }))
-        .await
-        .expect("explain")
-        .into_inner();
+    async fn estimate(path: &std::path::Path, seed: &std::path::Path) -> f64 {
+        let serving = Serving::start(&[
+            "--config",
+            &path.display().to_string(),
+            "--seed",
+            &seed.display().to_string(),
+        ]);
+        let mut client = connect(&serving).await;
+        client
+            .explain(APP.on(proto::ExplainRequest {
+                transaction: String::new(),
+                query: Some(query("docs")),
+                freshness: None,
+            }))
+            .await
+            .expect("explain")
+            .into_inner()
+            .estimated_rows
+    }
+
+    let assumed = estimate(&plain, &seed).await;
+    let analysed = estimate(&measured, &seed).await;
+
     assert!(
-        explained.estimated_rows < 100.0,
-        "the estimate should come from `analyze`, not from the default of a thousand: {}",
-        explained.display
+        (assumed - analysed).abs() > f64::EPSILON,
+        "`analyze_on_start` changed nothing: both estimates are {assumed}"
+    );
+    // And it moved towards the truth. Two rows survive the policy and the
+    // tenant restriction, out of four seeded.
+    assert!(
+        analysed < assumed,
+        "the measured estimate ({analysed}) should be below the assumed one ({assumed})"
+    );
+    assert!(
+        analysed <= 4.0,
+        "the measured estimate should not exceed the rows there are: {analysed}"
     );
 }
 
@@ -638,13 +662,37 @@ async fn a_second_node_over_one_local_database_refuses_to_start() {
         second.output()
     );
 
-    // And the first node is untouched: still serving, still the leader.
+    // And the first node is untouched. A *read* is not evidence of that — a
+    // fenced SlateDB writer can still be read from — so this writes. A second
+    // node that had opened the database on its way to losing the campaign
+    // would have fenced this one, and `begin` would fail.
     let mut client = connect(&first).await;
-    assert_eq!(
-        ids(&rows(&mut client, &APP, query("docs")).await.expect("query")),
-        Vec::<u64>::new(),
-        "nothing was seeded, and the first node is still answering"
-    );
+    let transaction = client
+        .begin(APP.on(proto::BeginRequest {}))
+        .await
+        .expect("begin")
+        .into_inner()
+        .transaction;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(1),
+                str_value("kind-a"),
+                i64_value(20),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("the first node is still the writer");
+    client
+        .commit(APP.on(proto::CommitRequest { transaction }))
+        .await
+        .expect("commit on an unfenced writer");
+
     let standing = client
         .leadership(APP.on(proto::LeadershipRequest {}))
         .await

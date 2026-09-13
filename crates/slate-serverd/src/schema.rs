@@ -66,6 +66,31 @@ pub(crate) fn catalog(tables: &[config::Table]) -> Started<Catalog> {
         }
     }
 
+    // Index ids are a *global* keyspace: an index entry's key is
+    // `0x02 <index id>` with no table id in it (`slate_kernel::keys`). Two
+    // tables sharing an index id therefore share a key range, and a scan of
+    // one would walk over the other's entries and decode them as its own rows.
+    //
+    // The schema layer does not catch this. `TableBuilder::build` rejects a
+    // duplicate id *within* a table and `Catalog::from_tables` does not look
+    // across them, so the check has to be here — and `clients/python/
+    // testserver` gives five of its six tables an index with id 1, which is
+    // how this was noticed. Reported upstream rather than fixed here; a
+    // configuration file at least cannot express it.
+    let mut index_ids: BTreeMap<u32, (&str, &str)> = BTreeMap::new();
+    for table in tables {
+        for index in &table.indexes {
+            if let Some((other_table, other_index)) =
+                index_ids.insert(index.id, (&table.name, &index.name))
+            {
+                return Err(Fault::new(format!(
+                    "index `{}` on `{}` and index `{other_index}` on `{other_table}` both have id {}; an index entry's key carries the index id and not the table's, so the two would share a range of the keyspace",
+                    index.name, table.name, index.id
+                )));
+            }
+        }
+    }
+
     let mut built = Vec::with_capacity(tables.len());
     for table in tables {
         built.push(
@@ -480,6 +505,24 @@ primary_key = ["id"]
         .unwrap_err()
         .to_string();
         assert!(error.contains("names no table"), "{error}");
+    }
+
+    #[test]
+    fn two_tables_with_one_index_id_are_refused() {
+        // Not a stylistic rule: the index keyspace has no table id in it, so
+        // this is two tables writing entries into one range.
+        let error = tables(&format!(
+            "{DOCS}\n[[tables.indexes]]\nname = \"by_kind\"\nid = 1\ncolumns = [\"kind\"]\n\
+             [[tables]]\nname = \"other\"\nid = 2\ncolumns = [{{ name = \"id\", type = \"u64\" }}, {{ name = \"tag\", type = \"str\" }}]\nprimary_key = [\"id\"]\n\
+             [[tables.indexes]]\nname = \"by_tag\"\nid = 1\ncolumns = [\"tag\"]\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("share a range of the keyspace"), "{error}");
+        assert!(
+            error.contains("by_kind") && error.contains("by_tag"),
+            "{error}"
+        );
     }
 
     #[test]

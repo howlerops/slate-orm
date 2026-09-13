@@ -1,0 +1,181 @@
+# The fixture `clients/python/testserver` serves, as configuration.
+#
+# This file exists to answer one question with a file rather than an opinion:
+# can `slate-serverd` replace the 936 lines of Rust the Python SDK had to write
+# in order to have a process to connect to? Everything in `testserver/src/
+# main.rs` up to its oracle is here — six tables, two index shapes, a unique
+# index, a tenant column, five grants, four policies of three different shapes,
+# and the twenty-six seeded rows — and none of it is Rust.
+#
+# What is *not* here is the oracle. `testserver` also runs a fixed list of
+# reads in process against `slate-kernel` and writes the answers to JSON, so
+# the Python tests can require the wire and the kernel to agree. That is a test
+# instrument rather than a server feature, and it stays where it is.
+#
+# Start it with:
+#   slate-serverd --config python-client.toml --seed python-client-seed.toml
+#
+# Index ids are unique across the whole file, not merely within a table. The
+# index keyspace is `0x02 <index id>` with no table id in it, so two tables
+# sharing an index id share a range of the keyspace and a scan of either walks
+# both. `testserver` gives five tables an index with id 1, which is what turned
+# this comment into a bug report: `Catalog::insert` refuses the collision now,
+# so it is unrepresentable rather than merely avoided here.
+
+[listen]
+address = "127.0.0.1:0"
+
+[auth]
+# The Python harness sends `slate-principal`/`slate-tenant`/`slate-roles`,
+# which is what `MetadataIdentity` reads. Correct here for the same reason
+# `testserver` says it is: loopback, a test fixture, nothing worth stealing.
+mode = "trusted-header"
+
+[storage]
+backend = "memory"
+
+# ── docs: no tenant, two ordinary indexes ───────────────────────────────────
+
+[[tables]]
+name = "docs"
+id = 1
+columns = [
+  { name = "id",   type = "u64" },
+  { name = "kind", type = "str" },
+  { name = "size", type = "i64" },
+  { name = "note", type = "str", nullable = true },
+]
+primary_key = ["id"]
+
+[[tables.indexes]]
+name = "by_kind"
+id = 1
+columns = ["kind"]
+
+[[tables.indexes]]
+name = "by_size"
+id = 2
+columns = [{ column = "size", direction = "asc" }]
+
+# ── users: tenant-scoped, unique index, owner policy ────────────────────────
+
+[[tables]]
+name = "users"
+id = 2
+columns = [
+  { name = "tenant_id", type = "u64" },
+  { name = "id",        type = "u64" },
+  { name = "owner",     type = "u64" },
+  { name = "email",     type = "str" },
+]
+primary_key = ["tenant_id", "id"]
+tenant_column = "tenant_id"
+
+[[tables.indexes]]
+name = "by_email"
+id = 3
+columns = ["email"]
+unique = true
+
+# ── authors, books, sales: the join fixture ─────────────────────────────────
+
+[[tables]]
+name = "authors"
+id = 3
+columns = [
+  { name = "tenant_id", type = "u64" },
+  { name = "id",        type = "u64" },
+  { name = "owner",     type = "u64" },
+  { name = "name",      type = "str" },
+  { name = "country",   type = "str" },
+  { name = "born",      type = "i64" },
+]
+primary_key = ["tenant_id", "id"]
+tenant_column = "tenant_id"
+
+[[tables.indexes]]
+name = "by_country"
+id = 4
+columns = ["country"]
+
+[[tables]]
+name = "books"
+id = 4
+columns = [
+  { name = "tenant_id", type = "u64" },
+  { name = "id",        type = "u64" },
+  { name = "author_id", type = "u64" },
+  { name = "title",     type = "str" },
+  { name = "year",      type = "i64" },
+]
+primary_key = ["tenant_id", "id"]
+tenant_column = "tenant_id"
+
+[[tables.indexes]]
+name = "by_author"
+id = 5
+columns = ["author_id"]
+
+[[tables]]
+name = "sales"
+id = 5
+columns = [
+  { name = "tenant_id", type = "u64" },
+  { name = "id",        type = "u64" },
+  { name = "book_id",   type = "u64" },
+  { name = "units",     type = "i64" },
+]
+primary_key = ["tenant_id", "id"]
+tenant_column = "tenant_id"
+
+[[tables.indexes]]
+name = "by_book"
+id = 6
+columns = ["book_id"]
+
+# ── secrets: declared, deliberately not granted ─────────────────────────────
+#
+# The error-mapping tests need a `PERMISSION_DENIED` that is not a row policy
+# quietly returning fewer rows: a policy is invisible by design, and a test that
+# cannot tell "denied" from "empty" is not testing the denial.
+
+[[tables]]
+name = "secrets"
+id = 6
+columns = [
+  { name = "id",    type = "u64" },
+  { name = "value", type = "str" },
+]
+primary_key = ["id"]
+
+# ── security ────────────────────────────────────────────────────────────────
+
+[[security.grants]]
+role = "app"
+tables = ["docs", "users", "authors", "books", "sales"]
+actions = ["all"]
+# Deliberately no grant on `secrets`.
+
+[[security.policies]]
+name = "own_rows"
+table = "users"
+actions = ["all"]
+using = "owner = :principal"
+
+[[security.policies]]
+name = "own_authors"
+table = "authors"
+actions = ["all"]
+using = "owner = :principal"
+
+[[security.policies]]
+name = "modern_books"
+table = "books"
+actions = ["all"]
+using = "year >= 2000"
+
+[[security.policies]]
+name = "real_sales"
+table = "sales"
+actions = ["all"]
+using = "units > 0"
