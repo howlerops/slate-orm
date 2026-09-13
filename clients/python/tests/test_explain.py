@@ -11,8 +11,11 @@ unless you go and ask.
 
 from __future__ import annotations
 
-from slate import Client, JoinQuery, Query, i64
+import pytest
 
+from slate import Client, Identity, JoinQuery, PermissionDenied, Query, i64
+
+from .conftest import Serving
 from .fixture import AUTHORS, BOOKS, DOCS, USERS
 
 
@@ -100,3 +103,24 @@ def test_a_covering_projection_is_reported_as_index_only(
         q.where(q.c.size.ge(i64(0))).select(q.c.size).using_index("by_size")
     )
     assert isinstance(plan.index_only, bool)
+
+
+def test_a_read_grant_does_not_carry_explain(server: Serving) -> None:
+    """`EXPLAIN` is its own action, and `Action::ALL` deliberately excludes it.
+
+    The `reader` role on this node holds `ALL` on `docs` and nothing else. It
+    can read the table and must not be able to explain a read of it: a plan is
+    costed against statistics covering rows a row policy may hide, so the plan
+    discloses what the rows do not.
+
+    This suite had no such test until the action existed — the server refused
+    every explain here and the failures read as a broken fixture, which is
+    exactly how a missing negative test looks from the inside.
+    """
+    reader = Identity("u64:9", tenant="u64:1", roles=["reader"])
+    with Client(server.address, identity=reader) as client:
+        session = client.session()
+        # The read itself is allowed.
+        list(session.query(Query(DOCS).limit(1)))
+        with pytest.raises(PermissionDenied):
+            session.explain(Query(DOCS))

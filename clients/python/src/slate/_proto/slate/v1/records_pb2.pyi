@@ -1962,9 +1962,11 @@ class UpdateRequest(_message.Message):
     to say "this column, this expression", which is a kernel evaluator applied
     to a write rather than to a read; and a write that walks a cursor, which the
     head node would have to implement over rows it had already streamed. The
-    second is the same objection that keeps a grouped join out — a second
-    implementation of something the kernel owns, with nothing to be an oracle
-    against — and the first is a kernel change, not a wire one.
+    second is the objection that kept a grouped join out until the kernel grew
+    one — a second implementation of something the kernel owns, with nothing to
+    be an oracle against — and the first is a kernel change, not a wire one.
+    That is the shape of the answer here too: when the kernel can walk a cursor
+    writing, the wire carries the request to it.
 
     A delete by predicate is the same shape: `Query` for the keys, then
     `Delete`, in one transaction.
@@ -2344,13 +2346,18 @@ Global___JoinResponse: _TypeAlias = JoinResponse  # noqa: Y015
 
 @_typing.final
 class AggregateQuery(_message.Message):
-    """Aggregates over one table, optionally per group.
+    """Aggregates over one table or over a join, optionally per group.
 
-    One table, deliberately. The kernel groups over a single-table cursor and
-    has no grouped join; offering one here would mean a second implementation of
-    grouping living in the head node, over rows it had already streamed — which
-    is how the projection narrowing that makes `COUNT(*)` read no columns at all
-    would be lost. See the crate docs for what that leaves undone.
+    One table used to be the only option, because the kernel grouped over a
+    single-table cursor: offering a grouped join here would have meant a second
+    implementation of grouping in the head node, over rows it had already
+    streamed, losing the projection narrowing that makes `COUNT(*)` read no
+    columns at all. The kernel groups a joined row stream itself now, so `join`
+    carries the same grouping to it rather than reimplementing anything.
+
+    Exactly one of `input` and `join` is set. Neither is refused, and so is
+    both — a request that names two sources is a client bug worth reporting
+    rather than a precedence rule worth inventing.
     """
 
     DESCRIPTOR: _descriptor.Descriptor
@@ -2359,6 +2366,19 @@ class AggregateQuery(_message.Message):
     GROUP_BY_FIELD_NUMBER: _builtins.int
     AGGREGATES_FIELD_NUMBER: _builtins.int
     HAVING_FIELD_NUMBER: _builtins.int
+    JOIN_FIELD_NUMBER: _builtins.int
+    SORT_FIELD_NUMBER: _builtins.int
+    LIMIT_FIELD_NUMBER: _builtins.int
+    OFFSET_FIELD_NUMBER: _builtins.int
+    limit: _builtins.int
+    """At most this many groups, after `having` and `sort`.
+
+    Over *groups*, unlike `Query.limit`, which is over rows. The ordering of
+    the three is SQL's: `having` decides which groups exist, `sort` arranges
+    them, `limit` and `offset` take a slice.
+    """
+    offset: _builtins.int
+    """Groups to discard first, after `having` and `sort`."""
     @_builtins.property
     def input(self) -> Global___Query:
         """Which rows to aggregate: the table, its filter, its computed values. Its
@@ -2391,6 +2411,28 @@ class AggregateQuery(_message.Message):
         ordinal that happens to be in range.
         """
 
+    @_builtins.property
+    def join(self) -> Global___JoinQuery:
+        """Aggregate over a join instead of over `input`. Its `ColumnRef.input`
+        positions and the `group_by` ordinals are in the join's schema — the left
+        table keeps its ordinals, each later input's shift past the width of
+        everything before it — which is the space `JoinQuery.having` already uses.
+
+        `having` and `sort` are the exception, as they are for one table: they
+        read the *group*, its keys then its aggregates.
+        """
+
+    @_builtins.property
+    def sort(self) -> _containers.RepeatedCompositeFieldContainer[Global___SortKey]:
+        """Order the groups. Empty leaves them in the kernel's order, ascending by
+        encoded group key, which is what this returned before there was a way to
+        ask for anything else.
+
+        Its `ColumnRef`s name the group — `group_key` and `aggregate` — for the
+        same reason `having` does: ordering by a raw column of a grouped result is
+        the same kind mismatch, and refusing it is what makes it visible.
+        """
+
     def __init__(
         self,
         *,
@@ -2398,12 +2440,18 @@ class AggregateQuery(_message.Message):
         group_by: _abc.Iterable[Global___ColumnRef] | None = ...,
         aggregates: _abc.Iterable[Global___Aggregate] | None = ...,
         having: Global___Expr | None = ...,
+        join: Global___JoinQuery | None = ...,
+        sort: _abc.Iterable[Global___SortKey] | None = ...,
+        limit: _builtins.int | None = ...,
+        offset: _builtins.int = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["having", b"having", "input", b"input"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "having", b"having", "input", b"input", "join", b"join", "limit", b"limit"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregates", b"aggregates", "group_by", b"group_by", "having", b"having", "input", b"input"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "aggregates", b"aggregates", "group_by", b"group_by", "having", b"having", "input", b"input", "join", b"join", "limit", b"limit", "offset", b"offset", "sort", b"sort"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    def WhichOneof(self, oneof_group: _Never) -> None: ...
+    _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
+    _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__limit) -> _WhichOneofReturnType__limit | None: ...
 
 Global___AggregateQuery: _TypeAlias = AggregateQuery  # noqa: Y015
 
@@ -2436,9 +2484,9 @@ Global___AggregateRequest: _TypeAlias = AggregateRequest  # noqa: Y015
 
 @_typing.final
 class AggregateResponse(_message.Message):
-    """Groups in batches, in the kernel's order: ascending by the encoded group key,
-    which is the same order the keyspace sorts in. There is no `ORDER BY` over
-    groups; see the crate docs for why one is not offered rather than
+    """Groups in batches. Unordered by default in the kernel's order — ascending by
+    the encoded group key, which is the same order the keyspace sorts in — or in
+    whatever `AggregateQuery.sort` asked for. See the crate docs for why
     approximated here.
     """
 

@@ -13,10 +13,12 @@ turn both of those into a threading exercise.
   builder has no way to set one — so the refusal is unreachable through this
   API rather than being a runtime surprise. `JoinQuery` carries the limit and
   offset that do apply.
-- An aggregate's input has no projection, no sort, no limit and no offset, for
-  the same reason: the projection is the kernel's to narrow (that is what lets
-  an index answer `COUNT(*)` without reading a row) and there is no ordering
-  over groups to limit.
+- An aggregate's *input* has no projection, no sort, no limit and no offset:
+  the projection is the kernel's to narrow (that is what lets an index answer
+  `COUNT(*)` without reading a row), and a sort or limit there would order and
+  cut the rows going *into* the groups, which is never what a caller means.
+  The sort, limit and offset that do apply are on the grouped result, over
+  groups, and live on the grouping itself.
 - There is no `input=` argument anywhere. An input's position is assigned by
   `JoinQuery.add`, in call order, which is the order the wire declares them in.
 """
@@ -35,6 +37,7 @@ from .schema import Table, fingerprint_of
 __all__ = [
     "Agg",
     "AggregateQuery",
+    "GroupedJoinQuery",
     "JoinAlgorithm",
     "JoinInput",
     "JoinQuery",
@@ -301,18 +304,60 @@ class Agg:
         return aggregate
 
 
-class AggregateQuery(_QueryBase):
-    """Aggregates over one table, optionally per group.
+class _Grouping:
+    """The grouping half of an aggregate: keys, aggregates, HAVING, and the
+    window over the *groups*.
 
-    One table, because the kernel groups over a single-table cursor and has no
-    grouped join. There is no join-shaped version of this to reach for.
+    Split from the source so that a grouped table and a grouped join can offer
+    the same grouping without either offering the other's source fields. The
+    alternative — one `AggregateQuery` holding both a table and a join and
+    ignoring whichever is unset — would make `.where()` and `.using_index()`
+    silently do nothing on the join-shaped one, which is the runtime surprise
+    this module's header says it exists to avoid.
     """
 
-    def __init__(self, table: Table) -> None:
-        super().__init__(table, input=0)
+    def __init__(self) -> None:
         self._group_by: list[ColumnRef] = []
         self._aggregates: list[Agg] = []
         self._having: Expr | None = None
+        self._sort: list[SortKey] = []
+        self._limit: int | None = None
+        self._offset = 0
+
+    def key(self, index: int) -> ColumnRef:
+        """The `index`th GROUP BY key, for `having` and `sort`."""
+        return group_key_ref(index)
+
+    def agg(self, index: int) -> ColumnRef:
+        """The `index`th aggregate, for `having` and `sort`.
+
+        `having` and `sort` are evaluated over the *group*, so they name keys
+        and aggregates rather than columns. A raw column here is a kind
+        mismatch the server refuses by name — SQL's "column must appear in the
+        GROUP BY clause", made decidable by `ColumnRef` carrying a kind at all.
+        """
+        return aggregate_ref(index)
+
+    def _grouping_proto(self, query: pb.AggregateQuery) -> None:
+        query.group_by.extend(c.to_proto() for c in self._group_by)
+        query.aggregates.extend(a.to_proto() for a in self._aggregates)
+        query.sort.extend(k.to_proto() for k in self._sort)
+        query.offset = self._offset
+        if self._having is not None:
+            query.having.CopyFrom(self._having.to_proto())
+        if self._limit is not None:
+            query.limit = self._limit
+
+
+class AggregateQuery(_QueryBase, _Grouping):
+    """Aggregates over one table, optionally per group.
+
+    For the join-shaped version see `GroupedJoinQuery`.
+    """
+
+    def __init__(self, table: Table) -> None:
+        _QueryBase.__init__(self, table, input=0)
+        _Grouping.__init__(self)
 
     def where(self, filter: Expr) -> AggregateQuery:
         """Which rows go into the aggregate. Over rows, not over groups."""
@@ -333,23 +378,24 @@ class AggregateQuery(_QueryBase):
         self._aggregates.extend(aggregates)
         return self
 
-    def key(self, index: int) -> ColumnRef:
-        """The `index`th GROUP BY key, for use in `having`."""
-        return group_key_ref(index)
-
-    def agg(self, index: int) -> ColumnRef:
-        """The `index`th aggregate, for use in `having`.
-
-        `having` is evaluated over the *group*, so it names keys and aggregates
-        rather than columns. A raw column here is a kind mismatch the server
-        refuses by name — SQL's "column must appear in the GROUP BY clause",
-        made decidable by `ColumnRef` carrying a kind at all.
-        """
-        return aggregate_ref(index)
-
     def having(self, having: Expr) -> AggregateQuery:
         """Which groups to keep."""
         self._having = having
+        return self
+
+    def sort(self, *keys: SortKey) -> AggregateQuery:
+        """Order the groups. Names keys and aggregates, not columns."""
+        self._sort = list(keys)
+        return self
+
+    def limit(self, limit: int | None) -> AggregateQuery:
+        """How many groups to return."""
+        self._limit = limit
+        return self
+
+    def offset(self, offset: int) -> AggregateQuery:
+        """How many groups to skip. Applied before the limit."""
+        self._offset = offset
         return self
 
     def using_index(self, name: str) -> AggregateQuery:
@@ -361,13 +407,8 @@ class AggregateQuery(_QueryBase):
         return self
 
     def to_proto(self) -> pb.AggregateQuery:
-        query = pb.AggregateQuery(
-            input=self._base_proto(),
-            group_by=[c.to_proto() for c in self._group_by],
-            aggregates=[a.to_proto() for a in self._aggregates],
-        )
-        if self._having is not None:
-            query.having.CopyFrom(self._having.to_proto())
+        query = pb.AggregateQuery(input=self._base_proto())
+        self._grouping_proto(query)
         return query
 
 
@@ -597,4 +638,59 @@ class JoinQuery:
             query.limit = self._limit
         if self._build_limit is not None:
             query.build_limit = self._build_limit
+        return query
+
+
+class GroupedJoinQuery(_Grouping):
+    """Aggregates over a join, per group.
+
+    Two inputs exactly. The kernel groups a two-table join and does not group a
+    chain, and the server refuses a third input by name rather than planning it
+    as something else — so this builder takes the join it is given and lets
+    that refusal arrive with its reason, rather than reimplementing the count
+    here where it could drift from the server's.
+
+    Group keys are named in the *joined* schema: `join.inputs()[1].c.author_id`
+    is the right side's column, and resolving it is the server's job. That is
+    the one thing this shape gets wrong most easily, so there is a test for it
+    in both other clients.
+    """
+
+    def __init__(self, join: JoinQuery) -> None:
+        super().__init__()
+        self.join = join
+
+    def group_by(self, *columns: ColumnRef) -> GroupedJoinQuery:
+        """Group by these. None means one group over every joined row."""
+        self._group_by = list(columns)
+        return self
+
+    def aggregate(self, *aggregates: Agg) -> GroupedJoinQuery:
+        """At least one. A grouped query with no aggregates is a query."""
+        self._aggregates.extend(aggregates)
+        return self
+
+    def having(self, having: Expr) -> GroupedJoinQuery:
+        """Which groups to keep."""
+        self._having = having
+        return self
+
+    def sort(self, *keys: SortKey) -> GroupedJoinQuery:
+        """Order the groups. Names keys and aggregates, not columns."""
+        self._sort = list(keys)
+        return self
+
+    def limit(self, limit: int | None) -> GroupedJoinQuery:
+        """How many groups to return."""
+        self._limit = limit
+        return self
+
+    def offset(self, offset: int) -> GroupedJoinQuery:
+        """How many groups to skip. Applied before the limit."""
+        self._offset = offset
+        return self
+
+    def to_proto(self) -> pb.AggregateQuery:
+        query = pb.AggregateQuery(join=self.join.to_proto())
+        self._grouping_proto(query)
         return query

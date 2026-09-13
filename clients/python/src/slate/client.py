@@ -44,7 +44,7 @@ from ._proto.slate.v1 import records_pb2 as pb
 from ._proto.slate.v1 import records_pb2_grpc as pb_grpc
 from .errors import Conflict, SlateError, from_rpc_error
 from .freshness import Freshness, ReadToken, ServedBy, Watermark
-from .query import AggregateQuery, JoinQuery, Query
+from .query import AggregateQuery, GroupedJoinQuery, JoinQuery, Query
 from .rows import Group, JoinedRow, Row
 from .schema import Table, fingerprint_of
 from .values import PyValue, to_value
@@ -593,9 +593,18 @@ class _Ops:
         return stream
 
     def aggregate(
-        self, aggregate: AggregateQuery, *, freshness: Freshness | None = None
+        self,
+        aggregate: AggregateQuery | GroupedJoinQuery,
+        *,
+        freshness: Freshness | None = None,
     ) -> GroupStream:
-        """Run a grouped aggregate."""
+        """Run a grouped aggregate, over one table or over a join.
+
+        One method for both because the response is identical — a stream of
+        `Group` — and a second one would duplicate the streaming, the
+        batching, the `served_by` header and the warnings to vary one field of
+        the request.
+        """
         request = pb.AggregateRequest(
             transaction=self._transaction_id(), aggregate=aggregate.to_proto()
         )

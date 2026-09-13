@@ -58,6 +58,7 @@ use slate_tuple::{Direction, Value, ValueType};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
+use tokio_stream::StreamExt;
 
 // --- the schema -----------------------------------------------------------
 //
@@ -98,7 +99,7 @@ fn users() -> TableDef {
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
         .index(
-            IndexDef::builder("by_email", IndexId(1))
+            IndexDef::builder("by_email", IndexId(3))
                 .column("email")
                 .unique(),
         )
@@ -116,7 +117,7 @@ fn authors() -> TableDef {
         .column("born", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_country", IndexId(1)).column("country"))
+        .index(IndexDef::builder("by_country", IndexId(4)).column("country"))
         .build()
         .expect("valid schema")
 }
@@ -130,7 +131,7 @@ fn books() -> TableDef {
         .column("year", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_author", IndexId(1)).column("author_id"))
+        .index(IndexDef::builder("by_author", IndexId(5)).column("author_id"))
         .build()
         .expect("valid schema")
 }
@@ -143,7 +144,7 @@ fn sales() -> TableDef {
         .column("units", ValueType::I64)
         .primary_key(["tenant_id", "id"])
         .tenant_column("tenant_id")
-        .index(IndexDef::builder("by_book", IndexId(1)).column("book_id"))
+        .index(IndexDef::builder("by_book", IndexId(6)).column("book_id"))
         .build()
         .expect("valid schema")
 }
@@ -178,11 +179,16 @@ fn at(table: &TableDef, column: &str) -> Ordinal {
 /// than the same one.
 fn security() -> SecurityCatalog {
     SecurityCatalog::new()
-        .grant(Grant::new("app", DOCS, Action::ALL))
-        .grant(Grant::new("app", USERS, Action::ALL))
-        .grant(Grant::new("app", AUTHORS, Action::ALL))
-        .grant(Grant::new("app", BOOKS, Action::ALL))
-        .grant(Grant::new("app", SALES, Action::ALL))
+        // `EVERYTHING` rather than `ALL`: `EXPLAIN` became its own action and
+        // `ALL` deliberately excludes it, so a suite that explains has to say
+        // so. The `reader` role below is the other half of that — it holds
+        // `ALL` and must *not* be able to explain.
+        .grant(Grant::new("app", DOCS, Action::EVERYTHING))
+        .grant(Grant::new("app", USERS, Action::EVERYTHING))
+        .grant(Grant::new("app", AUTHORS, Action::EVERYTHING))
+        .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
+        .grant(Grant::new("app", SALES, Action::EVERYTHING))
+        .grant(Grant::new("reader", DOCS, Action::ALL))
         // Deliberately no grant on `secrets`.
         .policy(Policy::new(
             "own_rows",
@@ -352,7 +358,10 @@ async fn seed(backing: &Arc<MemoryStore>) {
     txn.insert_many(
         &root,
         &secrets(),
-        &[Row::new(vec![Value::U64(1), Value::Str("hidden".to_owned())])],
+        &[Row::new(vec![
+            Value::U64(1),
+            Value::Str("hidden".to_owned()),
+        ])],
     )
     .await
     .expect("seed secrets");
@@ -496,7 +505,10 @@ async fn oracle(backing: &Arc<MemoryStore>) -> Json {
 
     // A plain scan, so a disagreement anywhere else is not just "the client
     // cannot read a row".
-    out.insert("docs_all".into(), run_query(&store, &d, &Query::all()).await);
+    out.insert(
+        "docs_all".into(),
+        run_query(&store, &d, &Query::all()).await,
+    );
 
     // Filter, sort, limit and offset together: the sort is what makes the
     // limit deterministic, which is the property `docs/correctness.md` says a
@@ -508,10 +520,7 @@ async fn oracle(backing: &Arc<MemoryStore>) -> Json {
             &d,
             &Query::all()
                 .filter(Expr::compare(at(&d, "size"), CmpOp::Ge, Value::I64(15)))
-                .sort_by([
-                    SortKey::desc(at(&d, "size")),
-                    SortKey::asc(at(&d, "id")),
-                ])
+                .sort_by([SortKey::desc(at(&d, "size")), SortKey::asc(at(&d, "id"))])
                 .limit(3)
                 .offset(1),
         )
@@ -600,20 +609,29 @@ async fn oracle(backing: &Arc<MemoryStore>) -> Json {
         CmpOp::Gt,
         schema.left(at(&a, "born")),
     );
-    out.insert("join_cross_condition".into(), run_join(&store, &a, &b, &cross).await);
+    out.insert(
+        "join_cross_condition".into(),
+        run_join(&store, &a, &b, &cross).await,
+    );
 
     // A per-input filter on the *second* input, so a client that put every
     // filter on input 0 would disagree here and nowhere else.
     let filtered = Join::equating(at(&a, "id"), at(&b, "author_id"))
         .right(Query::all().filter(Expr::like(at(&b, "title"), "a-%")));
-    out.insert("join_right_filtered".into(), run_join(&store, &a, &b, &filtered).await);
+    out.insert(
+        "join_right_filtered".into(),
+        run_join(&store, &a, &b, &filtered).await,
+    );
 
     // Two equalities, so a client that only ever sends the first is caught.
     let two_keys = Join::on([
         JoinKey::new(at(&a, "id"), at(&b, "author_id")),
         JoinKey::new(at(&a, "tenant_id"), at(&b, "tenant_id")),
     ]);
-    out.insert("join_two_keys".into(), run_join(&store, &a, &b, &two_keys).await);
+    out.insert(
+        "join_two_keys".into(),
+        run_join(&store, &a, &b, &two_keys).await,
+    );
 
     // A three-table chain: the wire has one shape for a join and a chain, and
     // the server dispatches on the count. A client that got the third input's
@@ -642,7 +660,10 @@ async fn oracle(backing: &Arc<MemoryStore>) -> Json {
     // A self-join: two inputs over one table, which is the case a qualified
     // name could not have addressed at all.
     let self_join = Join::equating(at(&b, "author_id"), at(&b, "author_id"));
-    out.insert("join_self_books".into(), run_join(&store, &b, &b, &self_join).await);
+    out.insert(
+        "join_self_books".into(),
+        run_join(&store, &b, &b, &self_join).await,
+    );
 
     // Aggregates over one group, one of each function that takes a column.
     out.insert(
@@ -816,7 +837,11 @@ impl KvReadStore for Frozen {
         Some(0)
     }
 
-    async fn wait_for_sequence(&self, sequence: u64, _timeout: Duration) -> Result<(), KernelError> {
+    async fn wait_for_sequence(
+        &self,
+        sequence: u64,
+        _timeout: Duration,
+    ) -> Result<(), KernelError> {
         Err(KernelError::ReplicaTooStale {
             replica: "stale-replica".to_owned(),
             required: sequence,
@@ -857,7 +882,9 @@ fn parse_args() -> Options {
                     .parse()
                     .expect("--port must be a number");
             }
-            "--oracle-out" => options.oracle_out = Some(args.next().expect("--oracle-out takes a path")),
+            "--oracle-out" => {
+                options.oracle_out = Some(args.next().expect("--oracle-out takes a path"))
+            }
             "--frozen-replica" => options.frozen_replica = true,
             "--follower" => options.follower = true,
             "--empty" => options.seed = false,
@@ -879,8 +906,11 @@ async fn main() {
     // file after seeing the address cannot race it.
     if let Some(path) = &options.oracle_out {
         let answers = oracle(&backing).await;
-        std::fs::write(path, serde_json::to_string_pretty(&answers).expect("serialise"))
-            .expect("write the oracle file");
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&answers).expect("serialise"),
+        )
+        .expect("write the oracle file");
     }
 
     let leadership = if options.follower {

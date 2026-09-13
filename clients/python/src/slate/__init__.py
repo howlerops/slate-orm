@@ -67,6 +67,7 @@ from .freshness import Freshness, ReadToken, ServedBy
 from .query import (
     Agg,
     AggregateQuery,
+    GroupedJoinQuery,
     JoinAlgorithm,
     JoinInput,
     JoinQuery,
@@ -120,6 +121,7 @@ __all__ = [
     "Freshness",
     "Group",
     "GroupStream",
+    "GroupedJoinQuery",
     "Identity",
     "InternalError",
     "InvalidRequest",
