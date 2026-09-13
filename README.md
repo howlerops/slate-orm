@@ -67,10 +67,21 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-serverd` | The head node as a binary: one TOML file, no Rust to start it |
 | `slate-headbench` | Benchmarks for the head node, against a real one over a socket |
 
-Outside the workspace, [`clients/python`](clients/python) is a typed Python
-client over the head node — and, more usefully,
-[`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md), fifteen things
-the first outside consumer of the wire found wrong or awkward about it.
+Outside the workspace:
+
+| directory | what it is |
+|---|---|
+| [`clients/python`](clients/python) | The typed Python client, and [`PROTOCOL-FINDINGS.md`](clients/python/PROTOCOL-FINDINGS.md) — fifteen things the first outside consumer of the wire found wrong or awkward about it |
+| [`clients/go`](clients/go) | The Go client |
+| [`clients/typescript`](clients/typescript) | The TypeScript client |
+| [`examples/explorer`](examples/explorer) | An interactive demo: one database, three SDKs, a switch between them, and a [conformance runner](examples/explorer/conformance) that requires all three to answer identically |
+| [`site`](site) | Two static pages. No build step |
+
+The conformance runner is worth singling out. Every client's own suite runs
+against the same head node, which catches *a* client being wrong and cannot
+catch two clients quietly disagreeing about something the server accepts from
+both. It is the only thing here that compares the clients to each other, and it
+found three real divergences on its first run.
 
 No `unsafe` anywhere (`#![forbid(unsafe_code)]` in every crate).
 
