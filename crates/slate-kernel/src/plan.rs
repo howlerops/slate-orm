@@ -601,7 +601,7 @@ pub fn plan_hinted(
     if unsatisfiable {
         return Plan {
             access: Access::Nothing,
-            residual: predicate,
+            residual: Arc::new(predicate.prepared()),
             order,
             sort: None,
             predicate_columns,
@@ -762,7 +762,10 @@ pub fn plan_hinted(
 
     Plan {
         access,
-        residual: predicate,
+        // Prepared once here rather than at each cursor: every consumer of a
+        // plan evaluates this per candidate row, and the cost of arranging an
+        // `IN` list for lookup should be paid once per plan, not per scan.
+        residual: Arc::new(predicate.prepared()),
         order,
         sort: must_sort.then(|| sort.to_vec()),
         predicate_columns,

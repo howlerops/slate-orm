@@ -142,6 +142,13 @@ impl CmpOp {
     }
 }
 
+/// How long an `IN` list must be before it is worth arranging for lookup.
+///
+/// Below this a linear scan wins on cache behaviour and costs no allocation.
+/// The value is not tuned; it is chosen well below where the amplification
+/// starts to matter and well above where the rewrite could cost anything.
+pub const IN_LOOKUP_THRESHOLD: usize = 16;
+
 /// A predicate over one table's rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -239,6 +246,27 @@ pub enum Expr {
         column: Ordinal,
         /// The candidate values.
         values: Vec<Value>,
+    },
+    /// `column IN (values)`, with the values arranged for lookup.
+    ///
+    /// Semantically identical to [`Expr::In`]. The difference is cost: `In`
+    /// scans its list once per candidate row, which makes the list length a
+    /// per-row multiplier — 8 values took 8 ms over 2,000 rows and 50,000
+    /// values took 2.98 s, and a caller chooses the list length. This form
+    /// holds the same values sorted, deduplicated and with nulls lifted out,
+    /// so a row costs one binary search.
+    ///
+    /// [`Expr::prepared`] builds it; nothing needs to construct it by hand,
+    /// and a hand-built one with unsorted values would answer wrongly, which
+    /// is why the values are behind an `Arc` rather than a public `Vec`.
+    InSorted {
+        /// The column being tested.
+        column: Ordinal,
+        /// The candidate values: sorted, deduplicated, never null.
+        values: Arc<Vec<Value>>,
+        /// Whether the original list contained a null, which makes a
+        /// non-match `Unknown` rather than `False`.
+        any_null: bool,
     },
     /// Conjunction.
     And(Vec<Expr>),
@@ -500,6 +528,26 @@ impl Expr {
                 let is_null = row.value(*column).is_none_or(Value::is_null);
                 Truth::from(is_null != *negated)
             }
+            Self::InSorted {
+                column,
+                values,
+                any_null,
+            } => {
+                let Some(actual) = row.value(*column) else {
+                    return Truth::Unknown;
+                };
+                if actual.is_null() {
+                    return Truth::Unknown;
+                }
+                if values.binary_search(actual).is_ok() {
+                    Truth::True
+                } else if *any_null {
+                    // A null candidate could have matched; we cannot say no.
+                    Truth::Unknown
+                } else {
+                    Truth::False
+                }
+            }
             Self::In { column, values } => {
                 let Some(actual) = row.value(*column) else {
                     return Truth::Unknown;
@@ -604,9 +652,51 @@ impl Expr {
                 column: f(*column),
                 values: values.clone(),
             },
+            Self::InSorted {
+                column,
+                values,
+                any_null,
+            } => Self::InSorted {
+                column: f(*column),
+                values: Arc::clone(values),
+                any_null: *any_null,
+            },
             Self::And(parts) => Self::And(parts.iter().map(|p| p.map_columns(f)).collect()),
             Self::Or(parts) => Self::Or(parts.iter().map(|p| p.map_columns(f)).collect()),
             Self::Not(inner) => Self::Not(Box::new(inner.map_columns(f))),
+        }
+    }
+
+    /// Rewrite for repeated evaluation.
+    ///
+    /// A residual is evaluated once per candidate row, so any per-row work
+    /// proportional to what the *caller* wrote is an amplifier they control.
+    /// This does that work once: an `IN` list at or above
+    /// [`IN_LOOKUP_THRESHOLD`] becomes an [`Expr::InSorted`], which costs a
+    /// binary search per row instead of a scan of the list.
+    ///
+    /// Short lists are left alone. A linear scan of a handful of values beats
+    /// a binary search on cache behaviour alone, and rewriting would allocate
+    /// for every trivial `IN` in exchange for nothing.
+    #[must_use]
+    pub fn prepared(&self) -> Self {
+        match self {
+            Self::In { column, values } if values.len() >= IN_LOOKUP_THRESHOLD => {
+                let any_null = values.iter().any(Value::is_null);
+                let mut sorted: Vec<Value> =
+                    values.iter().filter(|v| !v.is_null()).cloned().collect();
+                sorted.sort();
+                sorted.dedup();
+                Self::InSorted {
+                    column: *column,
+                    values: Arc::new(sorted),
+                    any_null,
+                }
+            }
+            Self::And(parts) => Self::And(parts.iter().map(Self::prepared).collect()),
+            Self::Or(parts) => Self::Or(parts.iter().map(Self::prepared).collect()),
+            Self::Not(inner) => Self::Not(Box::new(inner.prepared())),
+            other => other.clone(),
         }
     }
 
@@ -627,6 +717,7 @@ impl Expr {
             | Self::Compare { .. }
             | Self::IsNull { .. }
             | Self::In { .. }
+            | Self::InSorted { .. }
             | Self::Like { .. }
             | Self::Matches { .. } => None,
             Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
@@ -660,6 +751,7 @@ impl Expr {
             Self::Compare { column, .. }
             | Self::IsNull { column, .. }
             | Self::In { column, .. }
+            | Self::InSorted { column, .. }
             | Self::Like { column, .. }
             | Self::Matches { column, .. } => {
                 out.insert(*column);

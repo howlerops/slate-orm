@@ -510,6 +510,15 @@ impl TableStats {
                 let each = self.equality_selectivity(*column);
                 (each * values.len() as f64).clamp(0.0, 1.0)
             }
+            // Same estimate as `In`, from the deduplicated length. A list with
+            // repeats estimated *higher* before it was prepared, which was
+            // always wrong — the duplicates select the same rows — so the two
+            // forms can disagree here, and the prepared one is the correct
+            // side of the disagreement.
+            Expr::InSorted { column, values, .. } => {
+                let each = self.equality_selectivity(*column);
+                (each * values.len() as f64).clamp(0.0, 1.0)
+            }
             // Independence: the standard assumption, and the standard way to be
             // wrong. See the module docs.
             Expr::And(parts) => parts

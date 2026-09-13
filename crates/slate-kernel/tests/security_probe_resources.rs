@@ -59,13 +59,14 @@ async fn seeded() -> RecordStore<MemoryStore> {
     store
 }
 
-/// A large `IN` list is accepted and costs O(list) per scanned row.
+/// Was: a large `IN` list cost O(list) per scanned row, so the caller chose
+/// the multiplier. The list is now arranged for lookup once per plan, so a
+/// row costs a binary search.
 ///
-/// `MAX_POINT_GETS` and `MAX_INDEX_RANGES` stop a large list becoming an
-/// access path; they do not stop it staying in the residual, where it is
-/// re-scanned linearly for every candidate row.
+/// `MAX_POINT_GETS` and `MAX_INDEX_RANGES` still stop a large list becoming an
+/// access path; what changed is what happens when it stays in the residual.
 #[tokio::test]
-async fn a_large_in_list_is_accepted_and_costs_per_row() {
+async fn a_large_in_list_no_longer_costs_the_list_length_per_row() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
 
@@ -89,17 +90,91 @@ async fn a_large_in_list_is_accepted_and_costs_per_row() {
     let dear = start.elapsed();
     assert_eq!(n, 0, "neither list matches anything");
 
-    // Recorded rather than asserted as a hard threshold: on a loaded machine
-    // the ratio moves, but the shape does not.
-    println!(
-        "IN(8) over {ROWS} rows: {cheap:?}; IN(50000): {dear:?} \
-         ({}x)",
-        dear.as_secs_f64() / cheap.as_secs_f64().max(f64::MIN_POSITIVE)
-    );
+    let ratio = dear.as_secs_f64() / cheap.as_secs_f64().max(f64::MIN_POSITIVE);
+    println!("IN(8) over {ROWS} rows: {cheap:?}; IN(50000): {dear:?} ({ratio:.1}x)");
+
+    // Was 362x, measured. Now 4.0-4.7x over five runs, and what remains is
+    // the one-time arrangement of 50,000 values rather than per-row work.
+    // The bound is loose because this runs on a shared machine; 20x would
+    // still be a regression of the kind this test exists to catch.
     assert!(
-        dear > cheap * 20,
-        "expected the list length to show up per row: {cheap:?} vs {dear:?}"
+        ratio < 20.0,
+        "the list length should no longer be a per-row multiplier: \
+         {cheap:?} vs {dear:?} ({ratio:.1}x)"
     );
+}
+
+/// The prepared form must answer exactly what the plain one does, including
+/// the three-valued cases: a null candidate in the list makes a non-match
+/// `Unknown`, and a null in the *column* is `Unknown` whatever the list holds.
+///
+/// An oracle rather than a case list, because the interesting inputs here are
+/// the ones nobody thinks to write down.
+#[test]
+fn the_prepared_in_agrees_with_the_plain_one_on_every_input() {
+    use slate_kernel::Truth;
+    use slate_schema::Row;
+
+    let candidates = [
+        Value::Null,
+        Value::I64(-1),
+        Value::I64(0),
+        Value::I64(1),
+        Value::I64(2),
+        Value::I64(7),
+        Value::Str("x".to_owned()),
+    ];
+
+    // Lists long enough to be rewritten, short enough to stay as they are, and
+    // the awkward shapes: duplicates, nulls, unsorted, empty.
+    let lists: Vec<Vec<Value>> = vec![
+        vec![],
+        vec![Value::I64(1)],
+        vec![Value::Null],
+        vec![Value::I64(2), Value::I64(1), Value::I64(2)],
+        (0..40).map(|i| Value::I64(40 - i)).collect(),
+        (0..40)
+            .map(|i| {
+                if i % 7 == 0 {
+                    Value::Null
+                } else {
+                    Value::I64(i)
+                }
+            })
+            .collect(),
+        (0..40).map(|_| Value::I64(3)).collect(),
+    ];
+
+    for list in &lists {
+        let plain = Expr::In {
+            column: Ordinal(0),
+            values: list.clone(),
+        };
+        let prepared = plain.prepared();
+        for candidate in &candidates {
+            let row = Row::new(vec![candidate.clone()]);
+            let a = plain.evaluate(&row);
+            let b = prepared.evaluate(&row);
+            assert_eq!(
+                a,
+                b,
+                "disagreement on {candidate:?} against a list of {} \
+                 (plain {a:?}, prepared {b:?})",
+                list.len()
+            );
+            // And the answer is actually right, not merely consistent.
+            let expected = if candidate.is_null() {
+                Truth::Unknown
+            } else if list.iter().any(|v| !v.is_null() && v == candidate) {
+                Truth::True
+            } else if list.iter().any(Value::is_null) {
+                Truth::Unknown
+            } else {
+                Truth::False
+            };
+            assert_eq!(a, expected, "the shared answer is wrong for {candidate:?}");
+        }
+    }
 }
 
 /// A `GROUP BY` on a unique column holds one entry per row, with no cap.
@@ -161,4 +236,44 @@ async fn an_unlimited_sort_materialises_the_whole_result() {
         .await
         .unwrap();
     assert_eq!(rows.len() as u64, ROWS);
+}
+
+/// A repeated value in an `IN` list selects the same rows once, so the
+/// estimate must not count it twice.
+///
+/// This is the one behavioural difference between the plain and prepared
+/// forms, and it is a fix rather than a discrepancy: `predicate_selectivity`
+/// multiplies the per-value equality selectivity by the list length, so
+/// `IN (3, 3, 3, ...)` estimated forty times too many rows before the list
+/// was deduplicated. Asserted because a comment in `stats.rs` claims it.
+#[test]
+fn a_repeated_value_is_not_counted_twice_in_the_estimate() {
+    use slate_kernel::TableStats;
+
+    // Defaults for the column, so the estimate is driven by the list length
+    // alone — which is the thing under test.
+    let stats = TableStats::with_row_count(1_000);
+
+    let repeated = Expr::In {
+        column: Ordinal(0),
+        values: (0..40).map(|_| Value::I64(3)).collect(),
+    };
+    let once = Expr::In {
+        column: Ordinal(0),
+        values: vec![Value::I64(3)],
+    };
+
+    let plain = stats.predicate_selectivity(&repeated);
+    let prepared = stats.predicate_selectivity(&repeated.prepared());
+    let truth = stats.predicate_selectivity(&once);
+
+    assert!(
+        plain > prepared,
+        "the plain form over-counts the duplicates: {plain} vs {prepared}"
+    );
+    assert!(
+        (prepared - truth).abs() < f64::EPSILON,
+        "the prepared form should estimate what one copy estimates: \
+         {prepared} vs {truth}"
+    );
 }
