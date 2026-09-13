@@ -1052,6 +1052,298 @@ current position, which is that 15 s is a "starting point" with nothing
 attached: it is now a starting point with a 20-second failover attached to it,
 and that is the number an operator has to agree to.
 
+### 6. Under concurrency
+
+Everything above is one request at a time, which left the two designs the head
+node actually rests on — the per-stream `mpsc::channel(2)` in `service.rs` and
+the task-per-transaction registry in `session.rs` — never once under pressure.
+`examples/head_concurrency.rs` puts them under it.
+
+**How this section is arranged, and why.** The server and the load generator
+run on **separate tokio runtimes with different thread names**, still sharing
+the same four cores through the OS scheduler. Not to isolate them — a benchmark
+whose client is on the box should say so — but so that
+`/proc/self/task/*/schedstat` can attribute the CPU. `srv` and `cli` below are
+cores' worth spent by each side; `cores` is the whole process.
+
+The load is **closed loop**: each client waits for its own reply before sending
+again. Throughput is therefore a completion rate and latency percentiles are
+honest, but nothing here can be read as an open-loop saturation curve.
+
+The four sweeps below come from one run; the sub-sections after them
+(`max_transactions`, the slow consumer, the lease) come from a second run of
+the same binary about twenty minutes later, and each says what it was compared
+against inside itself.
+
+**Read the `cpu/op` column first.** It is `cores ÷ ops/s` — CPU spent per
+operation across both sides — and it is the only column here that other agents'
+builds cannot move. Throughput is `cores the process was given ÷ cpu/op`, and
+only the first of those two depends on what else was compiling. Runs were taken
+at machine load between 3 and 9; the tables below are the median of five 1.2 s
+windows per point with the range beside them.
+
+#### The empty RPC, which nothing else can beat
+
+| clients | ops/s | [min – max] | p50 | p99 | cores | srv | cli | cpu/op |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | 6,824 | [6,519 – 9,577] | 133 µs | 288 µs | 1.19 | 0.41 | 0.75 | 175 µs |
+| 2 | 14,057 | [12,699 – 14,990] | 132 µs | 359 µs | 1.67 | 0.67 | 1.00 | 119 µs |
+| 4 | 22,730 | [19,578 – 24,386] | 151 µs | 766 µs | 1.87 | 0.85 | 1.02 | 82 µs |
+| 8 | 34,266 | [33,809 – 34,854] | 210 µs | 717 µs | 2.78 | 1.22 | 1.56 | 81 µs |
+| 16 | 40,690 | [37,244 – 41,968] | 363 µs | 1.13 ms | 2.86 | 1.24 | 1.62 | 70 µs |
+| 32 | 38,799 | [35,066 – 45,214] | 733 µs | 2.70 ms | 2.41 | 0.99 | 1.42 | 62 µs |
+| 64 | 51,327 | [50,888 – 52,686] | 1.16 ms | 2.89 ms | 3.43 | 1.38 | 2.04 | 67 µs |
+| 128 | **53,693** | [50,987 – 54,260] | 2.20 ms | 5.74 ms | 3.60 | 1.45 | 2.15 | 67 µs |
+
+#### Point read, streaming query, and write
+
+`Get` by primary key; a ten-row streaming query, which is the shape that spawns
+a task, hands the routing result back over a `oneshot` and pushes rows through
+the `mpsc::channel(2)`; and a one-row autocommit insert at
+`Durability::Visible`.
+
+| clients | get ops/s | get p50 | get p99 | get cpu/op | stream ops/s | stream p50 | stream p99 | stream cpu/op |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 5,246 | 187 µs | 277 µs | 246 µs | 3,478 | 278 µs | 414 µs | 366 µs |
+| 2 | 11,252 | 169 µs | 342 µs | 174 µs | 6,533 | 290 µs | 519 µs | 323 µs |
+| 4 | 17,068 | 215 µs | 552 µs | 155 µs | 11,128 | 333 µs | 820 µs | 242 µs |
+| 8 | 25,556 | 284 µs | 870 µs | 115 µs | 17,229 | 420 µs | 1.24 ms | 173 µs |
+| 16 | 26,445 | 522 µs | 2.05 ms | 97 µs | 19,605 | 722 µs | 2.19 ms | 168 µs |
+| 32 | 25,843 | 1.08 ms | 4.53 ms | 88 µs | 21,706 | 1.33 ms | 3.61 ms | 160 µs |
+| 64 | 30,084 | 1.89 ms | 7.13 ms | 84 µs | 24,717 | 2.40 ms | 5.85 ms | 143 µs |
+| 128 | **32,627** | 3.44 ms | 10.72 ms | 88 µs | **25,953** | 4.59 ms | 11.15 ms | 142 µs |
+
+| clients | write ops/s | [min – max] | p50 | p99 | cores | cpu/op |
+|---:|---:|---|---:|---:|---:|---:|
+| 1 | 4,484 | [4,013 – 4,620] | 202 µs | 417 µs | 1.11 | 247 µs |
+| 2 | 6,106 | [5,873 – 6,692] | 283 µs | 838 µs | 1.37 | 225 µs |
+| 4 | 8,813 | [8,560 – 9,003] | 374 µs | 2.70 ms | 1.51 | 171 µs |
+| 8 | 10,945 | [10,708 – 11,827] | 620 µs | 3.29 ms | 1.58 | 144 µs |
+| 16 | 20,340 | [20,120 – 21,095] | 733 µs | 1.83 ms | 3.23 | 159 µs |
+| 32 | 21,916 | [21,680 – 22,689] | 1.36 ms | 3.18 ms | 3.35 | 153 µs |
+| 64 | **22,193** | [21,140 – 22,764] | 2.72 ms | 5.64 ms | 3.30 | 149 µs |
+| 128 | 21,398 | [20,359 – 22,478] | 5.84 ms | 11.24 ms | 3.24 | 152 µs |
+
+**Zero errors at every point of every table, up to 128 concurrent clients.**
+No refusal, no timeout, no dropped stream, no lost row: every `get` asserted it
+found its row, every stream asserted it received exactly ten, and every insert
+asserted it wrote one.
+
+#### Where the box becomes the bottleneck, and how to tell
+
+At the top of each table `cpu/op` has gone flat: **67 µs** for an empty RPC,
+**88 µs** for a `get`, **142 µs** for a ten-row stream, **152 µs** for a write.
+It stops falling by about eight clients — below that, per-operation cost is
+dominated by a runtime that is mostly idle — and from there it does not rise.
+*Nothing inside the head node gets more expensive as callers are added.*
+
+What does happen is that the process runs out of cores, and the identity is
+exact:
+
+| workload | cores the process got at 128 | cpu/op | cores ÷ cpu/op | measured ops/s |
+|---|---:|---:|---:|---:|
+| empty RPC | 3.60 | 67 µs | 53,700 | **53,693** |
+| get | 2.88 | 88 µs | 32,600 | **32,627** |
+| 10-row stream | 3.68 | 142 µs | 25,900 | **25,953** |
+| write | 3.24 | 152 µs | 21,300 | **21,398** |
+
+Four workloads, four predictions from two measured columns, all within 1%.
+Throughput here **is** the box divided by the cost of the work, and the cost of
+the work stops changing at eight clients.
+
+So the answer to "past what concurrency am I measuring the box" is: **past
+about 8 clients for a point read, and about 16 for a stream or a write.** Above
+those, throughput moves by less than 30% while p50 grows in direct proportion
+to the client count — a `get` goes from 284 µs at eight clients to 3.44 ms at
+128, twelve times, for 1.28× the throughput. That is queueing, and on this
+machine the queue is for a core rather than for anything in `slate-server`.
+
+The `cli` column says the rest of it plainly: **the load generator uses between
+a third and three-fifths of every core the process gets** — 2.15 of 3.60 on the
+empty RPC. A real client one network hop away would not be spending those, so
+these ceilings are floors for what the same head node would do with the box to
+itself, and no attempt is made here to say by how much.
+
+#### Concurrent durable commits share a flush
+
+This is the one where the answer could have gone either way, and the difference
+between the two is a factor of sixty-four.
+
+| clients | ops/s | p50 | p90 | p99 | worst | cpu/op |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 10 | 101.25 ms | 102.83 ms | 106.58 ms | 106.58 ms | 2.08 ms |
+| 2 | 20 | 101.07 ms | 101.88 ms | 103.73 ms | 103.85 ms | 892 µs |
+| 4 | 40 | 101.18 ms | 101.96 ms | 103.73 ms | 103.84 ms | 536 µs |
+| 8 | 79 | 101.19 ms | 102.05 ms | 104.60 ms | 104.99 ms | 319 µs |
+| 16 | 158 | 101.28 ms | 102.67 ms | 104.03 ms | 105.81 ms | 238 µs |
+| 32 | 316 | 101.15 ms | 102.66 ms | 106.90 ms | 108.10 ms | 192 µs |
+| 64 | 633 | 101.10 ms | 102.20 ms | 103.07 ms | 104.17 ms | 164 µs |
+
+**Throughput is exactly ten times the client count and latency does not move.**
+Sixty-four writers each see the same 101.1 ms a single writer sees, and between
+them get 633 durable commits a second. The p99 rises from 106.6 ms to 103.1 ms
+— that is, it does not rise; the numbers are inside each other's noise at every
+row.
+
+That settles the question section 3 could only pose. A durable commit costs one
+`flush_interval` of *waiting*, and waiting is shareable: every commit that
+arrives inside the same 100 ms window rides the same WAL flush out. The 100×
+gap between writing a hundred rows in one commit and a hundred rows one at a
+time is about **round trips**, not about the flush — and a deployment that
+cannot batch its writes can get the same effect by having a hundred callers.
+
+The measurement was run three times over ninety minutes and produced 10 / 20 /
+40 / 79 / 158 / 316 / 633 every time, to the integer.
+
+#### The write sweep, and a hypothesis withdrawn in the middle of writing it
+
+The write table above says "a fresh database at every point" for a reason. The
+first version of the sweep ran ascending on one database, and produced this:
+
+| clients | 1 | 2 | 4 | 8 | 16 | 32 | **64** | **128** |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ops/s, ascending, one database | 3,947 | 7,347 | 12,481 | 18,982 | 25,058 | 22,344 | **9,982** | **9,887** |
+| cpu/op | 325 µs | 280 µs | 213 µs | 157 µs | 128 µs | 150 µs | **382 µs** | **387 µs** |
+
+Read on its own that is a clean finding: write throughput peaks at sixteen
+concurrent writers and collapses by 2.5× at sixty-four, with CPU per write
+rising to match — contention in the write path, exactly where the brief said to
+look for it. It was drafted.
+
+Then the same sweep run **descending**, on the table the ascending pass had
+left behind:
+
+| clients | 128 | 64 | 32 | 16 | 8 | 4 | 2 | 1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ops/s, descending | 5,886 | 5,129 | 5,452 | 5,589 | 7,856 | 2,643 | 1,752 | **1,258** |
+| cpu/op | 382 µs | 385 µs | 356 µs | 410 µs | 457 µs | 729 µs | 736 µs | **815 µs** |
+
+A *single* writer, on the big table, costs 815 µs of CPU per row and manages
+1,258 a second — against 4,484 a second and 247 µs on a fresh one. There is no
+concurrency in that row at all. The collapse was **the table growing under the
+benchmark**: the sweep writes about six hundred thousand rows across its own
+levels, so the widest level always runs against the largest and most
+un-compacted database.
+
+Rebuilding the fixture between points removes it, and what is left is the table
+printed above: **write throughput rises to about 22,000 a second by sixteen
+clients and is flat from there to 128, with `cpu/op` flat at ~150 µs.** There is
+no write-path contention to find in this range.
+
+The lesson is one this document has now learned twice in different clothes.
+`scan_tuning` measures forward and reversed "so a warming server cannot be
+mistaken for a faster plan"; the same trick, applied to a benchmark whose
+workload *is* mutation, turned a finding into an artefact. A sweep that changes
+the fixture as it runs has to be run in both directions before any of it is
+believed.
+
+#### At and past `max_transactions`
+
+Sixty-four clients looping on begin → insert → commit against a node capped at
+sixteen open transactions, for one 1.2 s window:
+
+| | |
+|---|---:|
+| accepted | 2,604 |
+| refused with `ResourceExhausted` | 21,199 |
+| failed some other way | **0** |
+| mean latency of an accepted `Begin` | 3.32 ms |
+| mean latency of a **refused** `Begin` | **2.45 ms** |
+
+**The refusal is cheaper than the acceptance, which is the whole question.**
+`Sessions::begin` checks the registry before it spawns anything, so a client
+past the limit is told so rather than queued behind one that got in; the 89% of
+attempts that were refused cost less each than the 11% that succeeded. Nothing
+hung, nothing timed out, and no attempt failed in any other way.
+
+And the cost of transactions that are simply *open* — each one a task, an
+`mpsc::channel(1)` and a pinned snapshot — measured against point reads from
+four other clients:
+
+| open transactions | ops/s | p50 | p90 | p99 |
+|---:|---:|---:|---:|---:|
+| 0 | 13,427 | 257 µs | 446 µs | 867 µs |
+| 64 | 13,528 | 253 µs | 445 µs | 1.12 ms |
+| 512 | 13,215 | 259 µs | 456 µs | 1.39 ms |
+| 1,023 | 12,536 | 272 µs | 489 µs | 1.31 ms |
+
+**A thousand and twenty-three idle transactions cost 6% of read throughput and
+15 µs of median latency**, which is inside this harness's run-to-run spread.
+The task-per-transaction design is not paying for itself in the steady state.
+With 1,024 open the next `Begin` was refused in 496 µs.
+
+#### A slow consumer, and an abandoned one
+
+A **slow** consumer stops draining its stream; `mpsc::channel(2)` means the
+server's scan task parks after two batches. Eight of those, then thirty-two,
+held open against a whole-table scan while four other clients work.
+The write baseline is measured *first* here, before any stalled stream exists,
+because the writes themselves grow the table:
+
+| | ops/s | p50 | p90 | p99 |
+|---|---:|---:|---:|---:|
+| point reads, nothing else running | 13,550 | 246 µs | 437 µs | 1.47 ms |
+| point reads, 8 stalled streams | 14,015 | 235 µs | 427 µs | 1.21 ms |
+| point reads, 32 stalled streams | **5,899** | 278 µs | **1.74 ms** | **6.06 ms** |
+| writes, nothing stalled | 9,870 | 346 µs | 588 µs | 1.58 ms |
+| writes, 8 stalled streams | **4,364** | 874 µs | 1.38 ms | 2.36 ms |
+| writes, 32 stalled streams | **4,229** | 811 µs | 1.40 ms | 4.59 ms |
+
+**Eight parked stream consumers halve write throughput. Thirty-two also halve
+read throughput, and put 4× on the read p99 while leaving the p50 alone.**
+
+What it is *not* is a block: nothing deadlocked, no request failed, and a point
+read's median never moved. What it is, read off the code rather than measured
+separately, is that each parked scan is holding an open snapshot — and with no
+replicas configured, `Freshness::Any` routes to the writer, so all thirty-two
+of those snapshots are pinned on the writer that the inserts are also using. A
+deployment with replicas would put them somewhere else. That attribution is a
+reading of `service.rs` and `pool.rs`, not a measurement, and the number that
+is measured is the 2.3× on writes.
+
+An **abandoned** consumer drops the stream entirely, and `Scan::run` is written
+to return when its send fails — "an abandoned scan should stop reading object
+storage". Whether it does cannot be seen from the client side at all, so it is
+counted in server CPU over a fixed 600 ms window, eight whole-table scans of
+88,000 rows each:
+
+| | server CPU over 600 ms |
+|---|---:|
+| nothing running | 0.002 core-seconds |
+| 8 scans drained to the end | **1.935 core-seconds** |
+| 8 scans abandoned after one batch | **0.016 core-seconds** |
+
+**An abandoned scan costs 0.8% of a completed one.** A head node that ignored
+the hang-up would have spent the same 1.9 core-seconds either way, and it spends
+1/120th. The back pressure works and so does the cancellation.
+
+#### A lease renewal is still invisible, now with something to see
+
+Section 5 asked this one request at a time against an in-memory object store,
+where a renewal is 756 ns, and found nothing — which is not much of a test. The
+sharper version puts eight clients under load and gives the renewal something
+to stall *with*: a lease whose conditional PUT takes 15 ms, which is at the fast
+end of what S3 does, renewing every 100 ms.
+
+| arm | ops/s | p50 | p90 | p99 | worst | renewals in the arm |
+|---|---:|---:|---:|---:|---:|---:|
+| no renewal at all | 17,956 | 353 µs | 629 µs | 3.19 ms | 24.68 ms | — |
+| renew every 20 ms, in-memory PUT | 19,583 | 331 µs | 596 µs | 2.14 ms | 21.14 ms | 238 |
+| renew every 100 ms, **15 ms PUT** | 16,700 | 448 µs | 671 µs | **1.65 ms** | **20.42 ms** | 42 (slowest 19.18 ms) |
+
+**Forty-two renewals, each taking fifteen to nineteen milliseconds, are not
+visible anywhere in the distribution** — the arm that has them has the *lowest*
+p99 and the *lowest* worst sample of the three. The renewal count is printed
+because an arm that quietly renewed zero times would be the first arm wearing a
+different label; 42 over 4.5 s at a 100 ms cadence is what it should be, and 238
+is what the 20 ms arm should give.
+
+The reason is that `Leadership::renew` awaits the store and holds only a
+`tokio::sync::Mutex` that no request path touches; the write path's own check is
+a watch-channel read at 17 ns. That is read off `leadership.rs`; what is
+measured is that a 19 ms stall inside the renewal reaches no caller.
+
+
 ### What was boring, and is reported as boring
 
 Four things were measured, came back with no difference, and are worth as much
@@ -1063,11 +1355,22 @@ as the findings:
   inside noise. The token costs nothing when it does not have to wait.
 - **A replica read against a writer read**: 1.8 µs, inside noise.
 - **Lease renewal against serving reads**: inside noise at 250× the real
-  renewal rate.
+  renewal rate — and still inside noise under eight concurrent clients with a
+  15 ms conditional PUT, which is the version of the question with something in
+  it to find.
+- **A thousand open transactions against the read path**: 6% of throughput and
+  15 µs of median latency, inside the run-to-run spread.
+- **Concurrency against the head node's own cost**: `cpu/op` is flat from eight
+  clients to a hundred and twenty-eight on all four workloads. Nothing in the
+  head node gets more expensive as callers are added; the box runs out of cores
+  first, and the identity `cores ÷ cpu/op = ops/s` holds to within 1%.
+- **Write concurrency against the write path**: flat at ~22,000 inserts a
+  second from sixteen clients to a hundred and twenty-eight, once the fixture
+  stops growing under the benchmark.
 
 And one constant was examined and left alone: `rows_per_message = 256` is
-inside the range the measurements support, and the one argument for lowering it
-rests on a threshold nobody can yet explain.
+inside the measured range at both ends — 32 at the bottom, about 1,000 at the
+top — and the one argument for lowering it turned out to be a socket option.
 
 ### What could not be measured here
 
@@ -1078,9 +1381,20 @@ rests on a threshold nobody can yet explain.
 - **A remote client.** Client and server share four cores and a loopback
   socket, so the 130 µs transport term includes the client stub and excludes the
   network.
-- **Concurrency.** Every measurement is one request at a time. What the head
-  node costs under a hundred concurrent callers — where the `mpsc::channel(2)`
-  per stream and the one-task-per-transaction design in `session.rs` would
-  actually be under pressure — is not measured, and is the obvious next
-  benchmark.
-- **The 2.3 ms step at a batch of 125 rows.** Reproducible, and unexplained.
+- **A head node with the machine to itself.** Section 6 gets to 128 concurrent
+  clients, but the load generator spends between a third and three-fifths of
+  every core the process is given, and other builds were on the box throughout.
+  The ceilings there are lower bounds on what the same head node does with a
+  real client elsewhere, and nothing here says by how much.
+- **Concurrency above 128 clients**, and concurrency against a *replica* fleet:
+  every read in section 6 routes to the writer, because no replicas are
+  configured. The slow-consumer finding in particular would look different with
+  somewhere else for those snapshots to be pinned.
+- **Whether the stalled-stream cost is the pinned snapshot.** Eight parked
+  stream consumers halve write throughput; that is measured. The attribution to
+  the snapshot each one holds on the writer is read off `service.rs` and
+  `pool.rs` and is not measured separately.
+- **The residual ~250 µs rise** in first-row latency across a batch of about
+  125 once `TCP_NODELAY` is set. It is consistent with the per-row cost of a
+  larger batch and it is at the edge of this harness's resolution, and neither
+  of those is a demonstration.

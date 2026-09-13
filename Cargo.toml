@@ -9,6 +9,7 @@ members = [
     "crates/slate-orm",
     "crates/slate-clickbench",
     "crates/slate-server",
+    "crates/slate-serverd",
     "crates/slate-headbench",
 ]
 

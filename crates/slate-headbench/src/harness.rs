@@ -14,6 +14,7 @@
 //! manifest and genuinely lags. What is missing is the network under the object
 //! store, and that omission is stated wherever it changes what a number means.
 
+use futures::TryStreamExt;
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{KvReadStore, KvStore, RecordStore, ReplicaPool, SecurityCatalog};
 use slate_schema::Catalog;
@@ -117,12 +118,47 @@ impl Drop for Serving {
 }
 
 /// Serve `head` on a loopback port the operating system chooses.
+///
+/// `TCP_NODELAY` is on, which is what `tonic::transport::Server` does by
+/// default — and what this harness was **not** doing. See
+/// [`serve_with_nagle`], which exists so the difference can be measured rather
+/// than argued about.
 pub async fn serve<S: KvStore + KvReadStore>(head: Head<S>) -> Serving {
+    serve_with_nagle(head, false).await
+}
+
+/// The same, with Nagle's algorithm left on when `nagle` is true.
+///
+/// # Why this switch exists
+///
+/// `tonic::transport::Server` sets `tcp_nodelay` to **true** by default, but
+/// its own documentation says the setting "is ignored when using this method"
+/// for [`serve_with_incoming`], which is what a harness that wants to choose
+/// its own port has to call. So every measurement this crate has taken ran
+/// against a socket with Nagle's algorithm enabled, while every real
+/// deployment runs against one without it.
+///
+/// That is not a detail. Nagle holds a small write back until the previous
+/// one is acknowledged, and Linux delays an acknowledgement by up to 40 ms —
+/// so a response written as *two* small segments (a stream's header message,
+/// then its first batch of rows) can stall for tens of milliseconds while a
+/// response written as one does not. A unary reply is one write and never
+/// notices; a stream is two and does.
+///
+/// [`serve_with_incoming`]: tonic::transport::Server::serve_with_incoming
+pub async fn serve_with_nagle<S: KvStore + KvReadStore>(head: Head<S>, nagle: bool) -> Serving {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind a loopback port");
     let address = listener.local_addr().expect("local address");
-    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+    let incoming =
+        tokio_stream::wrappers::TcpListenerStream::new(listener).map_ok(move |connection| {
+            // `set_nodelay` can only fail on a socket that is already broken,
+            // and a broken connection is the server's problem a moment later
+            // rather than the harness's now.
+            let _ = connection.set_nodelay(!nagle);
+            connection
+        });
 
     let server = tokio::spawn(async move {
         let _ = tonic::transport::Server::builder()

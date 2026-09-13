@@ -148,6 +148,7 @@ fn show(measure: &Measure) {
 
 fn wire_key(tenant: u64, id: u64) -> pb::Row {
     pb::Row {
+        computed: Vec::new(),
         values: vec![
             slate_server::convert::value_to_proto(&Value::U64(tenant)),
             slate_server::convert::value_to_proto(&Value::U64(id)),
@@ -159,9 +160,9 @@ fn wire_freshness(freshness: Freshness) -> Option<pb::Freshness> {
     use pb::freshness::Level;
     Some(pb::Freshness {
         level: Some(match freshness {
-            Freshness::Any => Level::Any(true),
+            Freshness::Any => Level::Any(0),
             Freshness::AtLeast(token) => Level::AtLeast(token.sequence()),
-            Freshness::Latest => Level::Latest(true),
+            Freshness::Latest => Level::Latest(0),
         }),
     })
 }
@@ -264,6 +265,7 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
     let wired = client
         .get(principal_request(
             pb::GetRequest {
+                schema: None,
                 transaction: String::new(),
                 table: "events".to_owned(),
                 primary_key: Some(wire_key(TENANT, 7)),
@@ -307,6 +309,7 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
         client
             .get(principal_request(
                 pb::GetRequest {
+                    schema: None,
                     transaction: String::new(),
                     table: "events".to_owned(),
                     primary_key: Some(wire_key(TENANT, 7)),
@@ -419,6 +422,7 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
         client
             .insert(principal_request(
                 pb::InsertRequest {
+                    schema: None,
                     transaction: String::new(),
                     table: "events".to_owned(),
                     rows: vec![row_to_proto(&row(TENANT, next_id()))],
@@ -650,6 +654,7 @@ async fn section_commit() {
             client
                 .insert(principal_request(
                     pb::InsertRequest {
+                        schema: None,
                         transaction: String::new(),
                         table: "events".to_owned(),
                         rows: vec![row_to_proto(&row(TENANT, next_id()))],
@@ -685,6 +690,7 @@ async fn section_commit() {
             client
                 .insert(principal_request(
                     pb::InsertRequest {
+                        schema: None,
                         transaction: String::new(),
                         table: "events".to_owned(),
                         rows: rows.clone(),
@@ -708,6 +714,7 @@ async fn section_commit() {
                 client
                     .insert(principal_request(
                         pb::InsertRequest {
+                            schema: None,
                             transaction: handle.clone(),
                             table: "events".to_owned(),
                             rows: vec![wire_row.clone()],
@@ -732,6 +739,7 @@ async fn section_commit() {
             client
                 .insert(principal_request(
                     pb::InsertRequest {
+                        schema: None,
                         transaction: handle.clone(),
                         table: "events".to_owned(),
                         rows,
@@ -782,6 +790,7 @@ async fn one_row_in_a_transaction(client: &mut RecordsClient<Channel>) {
     client
         .insert(principal_request(
             pb::InsertRequest {
+                schema: None,
                 transaction: handle.clone(),
                 table: "events".to_owned(),
                 rows: vec![row_to_proto(&row(TENANT, next_id()))],
@@ -1024,6 +1033,7 @@ async fn grpc_get(
     let response = client
         .get(principal_request(
             pb::GetRequest {
+                schema: None,
                 transaction: String::new(),
                 table: "events".to_owned(),
                 primary_key: Some(wire_key(TENANT, id)),

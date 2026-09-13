@@ -44,4 +44,5 @@
 pub mod counting;
 pub mod fixture;
 pub mod harness;
+pub mod load;
 pub mod stats;
