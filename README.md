@@ -628,6 +628,20 @@ Built and tested:
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
       zero book rows)
+- [x] A read-only head node. `Head::read_only` serves reads from replicas with
+      no writer store at all, so a node that loses the campaign starts as a
+      reader rather than fencing the healthy leader or refusing to run — which
+      is what the docs had claimed all along and the library could not do,
+      because building a `Head` required opening the writer and that open *is*
+      the fence
+- [x] `ObjectStoreLease` refuses a store it cannot renew on.
+      `object_store`'s `LocalFileSystem` has no conditional update, so a local
+      node used to take a lease it could never keep and let the term lapse
+      under a healthy leader. Acquisition now probes the capability first and
+      steps down terminally rather than polling forever; `backend = "local"`
+      uses an advisory `flock`, which is host-local and not safe over NFS. The
+      create-only lease that would remove that caveat is specified — and argued
+      against — in `filelease.rs`
 - [x] A head node binary. One TOML file declares tables, columns, indexes
       (unique, partial and expression), `CHECK`, foreign keys, grants and
       policies — predicates in a small parsed language rather than a
@@ -686,17 +700,10 @@ Not built:
 - [ ] Go and TypeScript SDKs. The Python one is built
       ([`clients/python`](clients/python)), and they no longer have to restate
       the head node's startup by hand — `slate-serverd` is a real binary now
-- [ ] A read-only head node. `Head::new` requires a writer store, and opening
-      the SlateDB writer *fences the healthy leader*, so a node that loses the
-      lease cannot serve reads at all. `slate-serverd` campaigns before opening
-      and refuses to start when it loses, which contradicts what
-      `slate-server`'s own docs claim about a fenced node
-- [ ] `ObjectStoreLease` over a local filesystem. `object_store`'s
-      `LocalFileSystem` returns `NotImplemented` for a conditional put, so a
-      local node takes the lease and can then never renew, release, or take
-      over an expired one — a `local` database is a one-start database.
-      Worked around in `slate-serverd` with an advisory `flock`, which is
-      host-local and not safe over NFS
+- [ ] In-place promotion of a read-only node. A writer store is an opened
+      database and may only be opened once the lease is won, so promotion is a
+      restart — every request handler currently assumes the store it has is the
+      store it started with. Specified in [`docs/topology.md`](docs/topology.md)
 - [ ] A grouped join and ordered groups are not on the wire yet — the kernel
       does both now, so this is protocol work rather than a design gap, and
       there is no wire differential for them
