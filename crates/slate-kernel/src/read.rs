@@ -12,6 +12,7 @@ use crate::exec::QueryCursor;
 use crate::expr::Expr;
 use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinKey, JoinPlan, JoinSchema, Side};
 use crate::keys;
+use crate::limits::ExecutionLimits;
 use crate::plan::{Plan, Projection, plan_hinted};
 use crate::query::Query;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
@@ -179,6 +180,7 @@ pub(crate) struct SecuredReads<'a> {
     pub(crate) snapshot: &'a dyn KvSnapshot,
     pub(crate) security: &'a SecurityCatalog,
     pub(crate) statistics: &'a Statistics,
+    pub(crate) limits: ExecutionLimits,
 }
 
 impl<'a> SecuredReads<'a> {
@@ -272,7 +274,7 @@ impl<'a> SecuredReads<'a> {
         let mut cursor = self
             .execute(context, table, &narrowed(query, aggregates, &[]))
             .await?;
-        let mut accumulators = Accumulators::new(aggregates);
+        let mut accumulators = Accumulators::with_limits(aggregates, self.limits);
         while let Some(row) = cursor.next().await? {
             accumulators.push(&row)?;
         }
@@ -299,7 +301,7 @@ impl<'a> SecuredReads<'a> {
                 &narrowed(query, &grouping.aggregates, &columns),
             )
             .await?;
-        let mut grouper = Grouper::new(grouping);
+        let mut grouper = Grouper::with_limits(grouping, self.limits);
         while let Some(row) = cursor.next().await? {
             grouper.push(&row)?;
         }
@@ -335,7 +337,7 @@ impl<'a> SecuredReads<'a> {
         let mut cursor =
             JoinCursor::open(self, context, left_table, right_table, &narrowed, &plan).await?;
 
-        let mut grouper = Grouper::new(grouping);
+        let mut grouper = Grouper::with_limits(grouping, self.limits);
         while let Some(joined) = cursor.next().await? {
             // Flattened rather than grouped through a two-sided view, because
             // the accumulators take a `Row` and a second row-like type
@@ -569,6 +571,7 @@ impl<'a> SecuredReads<'a> {
     ) -> Result<QueryCursor<'a>> {
         let plan = self.plan(context, table, query)?;
         let cursor = QueryCursor::open(
+            self.limits,
             self.snapshot,
             table,
             plan,

@@ -367,6 +367,24 @@ pub(crate) struct LimitSettings {
     /// How many rows go in one message of a query stream.
     #[serde(default)]
     pub(crate) rows_per_message: Option<usize>,
+    /// How many requests may be in flight at once across all connections.
+    ///
+    /// Unset means unbounded, which is what shipped: a caller could open as
+    /// many concurrent requests as they had sockets.
+    #[serde(default)]
+    pub(crate) max_concurrent_requests: Option<usize>,
+    /// How long one request may run before it is cancelled.
+    #[serde(default)]
+    pub(crate) request_timeout: Option<String>,
+    /// Distinct `GROUP BY` keys one request may hold.
+    #[serde(default)]
+    pub(crate) max_groups: Option<usize>,
+    /// Distinct values one `COUNT(DISTINCT)` may hold.
+    #[serde(default)]
+    pub(crate) max_distinct: Option<usize>,
+    /// Rows an `ORDER BY` with no `LIMIT` may materialise.
+    #[serde(default)]
+    pub(crate) max_sort_rows: Option<usize>,
 }
 
 /// What the planner is told about the data.

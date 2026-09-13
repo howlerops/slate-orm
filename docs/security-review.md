@@ -1,7 +1,7 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2, 3, 5 and 6 are fixed and
-> their probes now assert the refusal; 4, 7 and 8 are open. Each finding carries
+> **Status, later the same session.** Findings 1, 2, 3, 5, 6 and 7 are fixed
+> and their probes now assert the refusal; 4 and 8 are open. Each finding carries
 > its own status line below. The fixes are in the commits that reference this
 > file.
 
@@ -339,10 +339,29 @@ and says why, instead of serving whoever asked.
 
 ## 7. Unbounded per-request work and memory
 
-**Status: OPEN.** Only joins have a budget. An `IN` list stays in the residual
-and is re-scanned per row (8 values 8 ms, 50,000 values 2.98 s over 2,000 rows);
-`GROUP BY`, `COUNT(DISTINCT)` and an unlimited `ORDER BY` hold the whole result
-with no cap; the daemon has no concurrency limit and no request timeout.
+**Status: FIXED, in two different ways, because two different things were
+wrong.**
+
+The `IN` list was a *cost* bug, not a missing cap: the values stayed in the
+residual and were rescanned per row. `Expr::InSorted` arranges them once per
+plan, so a row costs a binary search. Five runs: 4.03–4.68x for 50,000 values
+against 8, down from 362x. No cap was added, because the amplification it would
+have capped is gone.
+
+The three accumulators were genuinely unbounded, and now refuse:
+`ExecutionLimits` gives `GROUP BY`, `COUNT(DISTINCT)` and an unlimited
+`ORDER BY` a ceiling each, with `TooManyGroups`, `TooManyDistinctValues` and
+`SortTooLarge` naming the limit that was passed. Refused rather than truncated
+— a silently short answer is worse than an error. The `ORDER BY` message says
+that adding a `LIMIT` uses the bounded heap instead, which is the mitigation
+that already existed and was unreachable without one.
+
+The daemon gains `max_concurrent_requests` and `request_timeout`, both unset by
+default: a concurrency limit low enough to protect a small node is low enough
+to break a large one, and there is no right number without knowing the machine.
+Having no way to *say* one was the defect. Zero is refused for every one of
+these settings rather than read as "no limit", because a config that disables
+the feature it appears to configure is worse than one that will not start.
 
 **Impact: medium — one authenticated caller can pin the node.**
 `crates/slate-kernel/src/{expr,aggregate,exec}.rs`,

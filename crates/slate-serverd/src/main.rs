@@ -59,7 +59,7 @@ mod value;
 use clap::Parser;
 use core::time::Duration;
 use error::{Fault, Started};
-use slate_kernel::{KvReadStore, KvStore, RoutingPolicy, Statistics};
+use slate_kernel::{ExecutionLimits, KvReadStore, KvStore, RoutingPolicy, Statistics};
 use slate_schema::Catalog;
 use slate_server::{Cadence, Head, HeadConfig, Leadership, Limits, maintain};
 use std::net::SocketAddr;
@@ -112,6 +112,18 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     let security = security::catalog(&document.security, &catalog, &mut warnings)?;
     let chosen = auth::choose(document.auth.as_ref(), &address, &mut warnings)?;
     let limits = limits(&document.limits)?;
+    let execution = execution_limits(&document.limits)?;
+    let concurrency = document.limits.max_concurrent_requests;
+    if concurrency == Some(0) {
+        return Err(Fault::new(
+            "`[limits] max_concurrent_requests = 0` would serve nobody; \
+             leave it unset for no limit",
+        ));
+    }
+    let request_timeout = config::optional_duration(
+        document.limits.request_timeout.as_ref(),
+        "limits.request_timeout",
+    )?;
     let routing = routing(&document.routing)?;
     // Checked here rather than where the replicas are opened, because a
     // warning has to reach `warnings` and the replicas are opened after those
@@ -231,6 +243,9 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     );
 
     let common = Common {
+        execution,
+        concurrency,
+        request_timeout,
         catalog,
         security,
         limits,
@@ -268,6 +283,12 @@ struct Common {
     catalog: Catalog,
     security: slate_kernel::SecurityCatalog,
     limits: Limits,
+    /// The kernel's per-request ceilings. See [`ExecutionLimits`].
+    execution: ExecutionLimits,
+    /// Requests in flight per connection, unset for unbounded.
+    concurrency: Option<usize>,
+    /// How long one request may run, unset for no timeout.
+    request_timeout: Option<Duration>,
     routing: RoutingPolicy,
     grace: Duration,
     fixture: Option<seed::Fixture>,
@@ -285,6 +306,9 @@ async fn start<S: KvStore + KvReadStore>(
     closing: Option<Arc<slate_slatedb::SlateStore>>,
 ) -> Started<()> {
     let Common {
+        execution,
+        concurrency,
+        request_timeout,
         catalog,
         security,
         limits,
@@ -318,14 +342,24 @@ async fn start<S: KvStore + KvReadStore>(
         HeadConfig::new(catalog, security)
             .with_statistics(statistics)
             .with_routing(routing)
-            .with_limits(limits),
+            .with_limits(limits)
+            .with_execution_limits(execution),
         writer,
         replicas,
         Arc::clone(&leadership),
         authenticator,
     );
 
-    announce_and_serve(head, listener, bound, leadership, grace).await?;
+    announce_and_serve(
+        head,
+        listener,
+        bound,
+        leadership,
+        grace,
+        concurrency,
+        request_timeout,
+    )
+    .await?;
 
     if let Some(store) = closing {
         store
@@ -355,6 +389,9 @@ async fn start<S: KvStore + KvReadStore>(
 /// so.
 async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()> {
     let Common {
+        execution,
+        concurrency,
+        request_timeout,
         catalog,
         security,
         limits,
@@ -381,13 +418,23 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
     let head = Head::<S>::read_only(
         HeadConfig::new(catalog, security)
             .with_routing(routing)
-            .with_limits(limits),
+            .with_limits(limits)
+            .with_execution_limits(execution),
         replicas,
         Arc::clone(&leadership),
         authenticator,
     );
 
-    announce_and_serve(head, listener, bound, leadership, grace).await
+    announce_and_serve(
+        head,
+        listener,
+        bound,
+        leadership,
+        grace,
+        concurrency,
+        request_timeout,
+    )
+    .await
 }
 
 /// The handshake, then serving.
@@ -403,6 +450,8 @@ async fn announce_and_serve<S: KvStore + KvReadStore>(
     bound: SocketAddr,
     leadership: Arc<Leadership>,
     grace: Duration,
+    concurrency: Option<usize>,
+    request_timeout: Option<Duration>,
 ) -> Started<()> {
     println!("LISTENING {bound}");
     use std::io::Write;
@@ -410,7 +459,15 @@ async fn announce_and_serve<S: KvStore + KvReadStore>(
         .flush()
         .map_err(|why| Fault::new(format!("cannot write the banner: {why}")))?;
 
-    serve::run(head, listener, leadership, grace).await
+    serve::run(
+        head,
+        listener,
+        leadership,
+        grace,
+        concurrency,
+        request_timeout,
+    )
+    .await
 }
 
 fn limits(settings: &config::LimitSettings) -> Started<Limits> {
@@ -435,6 +492,35 @@ fn limits(settings: &config::LimitSettings) -> Started<Limits> {
             ));
         }
         limits.rows_per_message = rows;
+    }
+    Ok(limits)
+}
+
+/// The kernel's per-request ceilings, from the same `[limits]` table.
+///
+/// Zero is refused for each rather than treated as "no limit": a zero here
+/// would refuse every grouped query, and a config that silently disables the
+/// feature it appears to configure is worse than one that will not start.
+/// Unbounded is spelled by leaving the key out.
+fn execution_limits(settings: &config::LimitSettings) -> Started<ExecutionLimits> {
+    let mut limits = ExecutionLimits::default();
+    for (value, name, field) in [
+        (settings.max_groups, "max_groups", 0usize),
+        (settings.max_distinct, "max_distinct", 1),
+        (settings.max_sort_rows, "max_sort_rows", 2),
+    ] {
+        let Some(value) = value else { continue };
+        if value == 0 {
+            return Err(Fault::new(format!(
+                "`[limits] {name} = 0` would refuse every such query; \
+                 leave it unset for the default"
+            )));
+        }
+        match field {
+            0 => limits.max_groups = value,
+            1 => limits.max_distinct = value,
+            _ => limits.max_sort_rows = value,
+        }
     }
     Ok(limits)
 }

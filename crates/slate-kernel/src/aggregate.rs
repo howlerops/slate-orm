@@ -8,6 +8,7 @@
 
 use crate::error::{KernelError, Result};
 use crate::expr::Expr;
+use crate::limits::ExecutionLimits;
 use crate::query::SortKey;
 use slate_schema::{Ordinal, Row};
 use slate_tuple::{Direction, Value, encode, encode_value_into};
@@ -178,15 +179,24 @@ enum Accumulator {
 pub struct Accumulators {
     specs: Vec<Aggregate>,
     state: Vec<Accumulator>,
+    /// Distinct values one `COUNT(DISTINCT)` here may hold before refusing.
+    max_distinct: usize,
 }
 
 impl Accumulators {
-    /// Start accumulating `specs`.
+    /// Start accumulating `specs` under the default limits.
     #[must_use]
     pub fn new(specs: &[Aggregate]) -> Self {
+        Self::with_limits(specs, ExecutionLimits::default())
+    }
+
+    /// Start accumulating `specs`, refusing beyond `limits`.
+    #[must_use]
+    pub fn with_limits(specs: &[Aggregate], limits: ExecutionLimits) -> Self {
         Self {
             specs: specs.to_vec(),
             state: specs.iter().map(|a| a.accumulator()).collect(),
+            max_distinct: limits.max_distinct,
         }
     }
 
@@ -233,6 +243,14 @@ impl Accumulators {
                         // not allocate: on a low-cardinality column that is
                         // nearly every row.
                         if !seen.contains(&encoded) {
+                            // Checked here rather than after inserting so the
+                            // limit is a ceiling on what is held, not one
+                            // value past it.
+                            if seen.len() >= self.max_distinct {
+                                return Err(KernelError::TooManyDistinctValues {
+                                    limit: self.max_distinct,
+                                });
+                            }
                             seen.insert(encoded);
                         }
                     }
@@ -393,6 +411,8 @@ impl Grouping {
 #[derive(Debug)]
 pub struct Grouper<'g> {
     grouping: &'g Grouping,
+    /// What this request may spend. See [`ExecutionLimits`].
+    limits: ExecutionLimits,
     /// Keyed on the *encoded* grouping values rather than ordered on the
     /// values themselves. An ordered map gives group order for free, which was
     /// worth having until it was measured: a million distinct keys cost
@@ -408,11 +428,18 @@ pub struct Grouper<'g> {
 }
 
 impl<'g> Grouper<'g> {
-    /// Start grouping for `grouping`.
+    /// Start grouping for `grouping` under the default limits.
     #[must_use]
     pub fn new(grouping: &'g Grouping) -> Self {
+        Self::with_limits(grouping, ExecutionLimits::default())
+    }
+
+    /// Start grouping for `grouping`, refusing beyond `limits`.
+    #[must_use]
+    pub fn with_limits(grouping: &'g Grouping, limits: ExecutionLimits) -> Self {
         Self {
             grouping,
+            limits,
             groups: HashMap::new(),
             encoded: Vec::new(),
         }
@@ -428,13 +455,21 @@ impl<'g> Grouper<'g> {
         match self.groups.get_mut(self.encoded.as_slice()) {
             Some((_, accumulators)) => accumulators.push(row)?,
             None => {
+                // A new group is about to be held, so the ceiling is checked
+                // before it is rather than after.
+                if self.groups.len() >= self.limits.max_groups {
+                    return Err(KernelError::TooManyGroups {
+                        limit: self.limits.max_groups,
+                    });
+                }
                 let key: Vec<Value> = self
                     .grouping
                     .group
                     .iter()
                     .map(|c| row.get(*c).cloned().unwrap_or(Value::Null))
                     .collect();
-                let mut accumulators = Accumulators::new(&self.grouping.aggregates);
+                let mut accumulators =
+                    Accumulators::with_limits(&self.grouping.aggregates, self.limits);
                 accumulators.push(row)?;
                 self.groups
                     .insert(self.encoded.clone(), (key, accumulators));

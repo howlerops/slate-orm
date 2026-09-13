@@ -38,6 +38,7 @@ use crate::explain::{Explanation, JoinExplanation};
 use crate::expr::{Expr, Truth};
 use crate::join::{Join, JoinCursor, JoinSchema};
 use crate::keys::{self, IndexEntry};
+use crate::limits::ExecutionLimits;
 use crate::plan::Projection;
 use crate::query::Query;
 use crate::read::{self, SecuredReads};
@@ -175,6 +176,7 @@ pub struct RecordStore<S> {
     security: SecurityCatalog,
     retry: RetryPolicy,
     statistics: Statistics,
+    limits: ExecutionLimits,
 }
 
 impl<S> RecordStore<S> {
@@ -184,6 +186,7 @@ impl<S> RecordStore<S> {
     /// store wired up without rules is closed rather than open.
     pub const fn new(store: S, catalog: Catalog, security: SecurityCatalog) -> Self {
         Self {
+            limits: ExecutionLimits::new_default(),
             store,
             catalog,
             security,
@@ -202,6 +205,23 @@ impl<S> RecordStore<S> {
     pub fn with_statistics(mut self, statistics: Statistics) -> Self {
         self.statistics = statistics;
         self
+    }
+
+    /// Refuse requests that would exceed `limits`.
+    ///
+    /// The defaults are far above any reasonable query; a deployment that
+    /// knows its own memory should say so rather than inherit a number chosen
+    /// without knowing the machine. See [`ExecutionLimits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: ExecutionLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// What one request may spend here.
+    #[must_use]
+    pub const fn limits(&self) -> ExecutionLimits {
+        self.limits
     }
 
     /// The statistics the planner is using.
@@ -250,6 +270,7 @@ impl<S: KvReadStore> RecordStore<S> {
     /// applies, because both go through the same read layer.
     pub async fn snapshot(&self) -> Result<RecordSnapshot<'_>> {
         Ok(RecordSnapshot {
+            limits: self.limits,
             snapshot: self.store.snapshot().await?,
             catalog: &self.catalog,
             security: &self.security,
@@ -402,6 +423,7 @@ impl<S: KvStore> RecordStore<S> {
     /// a correct writer needs anyway.
     pub async fn begin(&self) -> Result<RecordTransaction<'_>> {
         Ok(RecordTransaction {
+            limits: self.limits,
             txn: self.store.begin().await?,
             catalog: &self.catalog,
             security: &self.security,
@@ -467,6 +489,7 @@ pub struct RecordTransaction<'a> {
     /// rather than on the type. Now `commit` refuses, which is the difference
     /// between a rule and an invariant.
     poisoned: AtomicBool,
+    limits: ExecutionLimits,
 }
 
 impl core::fmt::Debug for RecordTransaction<'_> {
@@ -502,6 +525,7 @@ impl<'a> RecordTransaction<'a> {
             snapshot: self.snapshot(),
             security: self.security,
             statistics: self.statistics,
+            limits: self.limits,
         }
     }
 
@@ -1874,6 +1898,7 @@ pub struct RecordSnapshot<'a> {
     catalog: &'a Catalog,
     security: &'a SecurityCatalog,
     statistics: &'a Statistics,
+    limits: ExecutionLimits,
 }
 
 impl core::fmt::Debug for RecordSnapshot<'_> {
@@ -1894,11 +1919,36 @@ impl<'a> RecordSnapshot<'a> {
         security: &'a SecurityCatalog,
         statistics: &'a Statistics,
     ) -> Self {
+        Self::over_with_limits(
+            snapshot,
+            catalog,
+            security,
+            statistics,
+            ExecutionLimits::new_default(),
+        )
+    }
+
+    /// As [`RecordSnapshot::over`], with the caller's own limits.
+    ///
+    /// A router builds its snapshots itself, so it does not inherit the
+    /// store's limits the way `RecordStore::snapshot` does and has to pass
+    /// them. Defaulting silently would give a pooled read a different ceiling
+    /// from a direct one, which is the kind of difference nobody finds until
+    /// it matters.
+    #[must_use]
+    pub fn over_with_limits(
+        snapshot: Box<dyn KvSnapshot + Send + 'a>,
+        catalog: &'a Catalog,
+        security: &'a SecurityCatalog,
+        statistics: &'a Statistics,
+        limits: ExecutionLimits,
+    ) -> Self {
         Self {
             snapshot,
             catalog,
             security,
             statistics,
+            limits,
         }
     }
 
@@ -1913,6 +1963,7 @@ impl<'a> RecordSnapshot<'a> {
             snapshot: self.snapshot.as_ref(),
             security: self.security,
             statistics: self.statistics,
+            limits: self.limits,
         }
     }
 

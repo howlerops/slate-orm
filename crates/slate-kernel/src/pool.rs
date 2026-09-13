@@ -29,6 +29,7 @@
 //! staleness rather than quietly serving an older view.
 
 use crate::error::{KernelError, Result};
+use crate::limits::ExecutionLimits;
 use crate::record::RecordSnapshot;
 use crate::store::KvReadStore;
 use crate::token::Freshness;
@@ -76,6 +77,7 @@ pub struct ReplicaPool {
     catalog: Catalog,
     security: SecurityCatalog,
     statistics: Statistics,
+    limits: ExecutionLimits,
     policy: RoutingPolicy,
     next: AtomicUsize,
 }
@@ -111,9 +113,20 @@ impl ReplicaPool {
             catalog,
             security,
             statistics: Statistics::new(),
+            limits: ExecutionLimits::default(),
             policy: RoutingPolicy::default(),
             next: AtomicUsize::new(0),
         }
+    }
+
+    /// Refuse reads through this pool that would exceed `limits`.
+    ///
+    /// A pooled read must have the same ceiling as a direct one, or which node
+    /// served it would decide whether it was refused.
+    #[must_use]
+    pub fn with_limits(mut self, limits: ExecutionLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Supply table statistics for the planner. See [`Statistics`].
@@ -199,11 +212,12 @@ impl ReplicaPool {
         affinity: Option<&Value>,
     ) -> Result<(RecordSnapshot<'_>, &Arc<dyn KvReadStore>)> {
         let store = self.route(freshness, affinity).await?;
-        let snapshot = RecordSnapshot::over(
+        let snapshot = RecordSnapshot::over_with_limits(
             store.snapshot().await?,
             &self.catalog,
             &self.security,
             &self.statistics,
+            self.limits,
         );
         Ok((snapshot, store))
     }

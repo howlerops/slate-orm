@@ -237,6 +237,34 @@ pub enum KernelError {
         /// The limit that was passed.
         limit: usize,
     },
+    #[error(
+        "grouping produced more than {limit} distinct keys; \
+         group by fewer columns, filter first, or raise the limit"
+    )]
+    /// A `GROUP BY` produced more distinct keys than the node will hold.
+    TooManyGroups {
+        /// The limit that was passed.
+        limit: usize,
+    },
+    #[error(
+        "COUNT(DISTINCT) saw more than {limit} distinct values; \
+         filter first, or raise the limit"
+    )]
+    /// A `COUNT(DISTINCT)` saw more distinct values than the node will hold.
+    TooManyDistinctValues {
+        /// The limit that was passed.
+        limit: usize,
+    },
+    #[error(
+        "an ORDER BY with no LIMIT selected more than {limit} rows; \
+         add a LIMIT, which sorts with a bounded heap instead"
+    )]
+    /// An `ORDER BY` with no `LIMIT` selected more rows than the node will
+    /// materialise. A `LIMIT` makes the sort bounded and this unreachable.
+    SortTooLarge {
+        /// The limit that was passed.
+        limit: usize,
+    },
 }
 
 impl KernelError {

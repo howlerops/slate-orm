@@ -71,6 +71,8 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     listener: TcpListener,
     leadership: Arc<Leadership>,
     grace: Duration,
+    concurrency: Option<usize>,
+    request_timeout: Option<Duration>,
 ) -> Started<()> {
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
         .map(|accepted| accepted.map(without_nagle));
@@ -81,7 +83,22 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     // wrapped around the whole call would cut the *serving* short rather than
     // the draining.
     let server = tokio::spawn(async move {
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        // Applied to the builder rather than per handler: these bound the node
+        // as a whole, and a caller's leverage here is the number of requests
+        // they can have in flight, not the number per connection.
+        //
+        // Left unset by default. A concurrency limit low enough to protect a
+        // small node is low enough to break a large one, and there is no
+        // number that is right without knowing the machine — but until now
+        // there was no way to say one at all, which is the actual defect.
+        if let Some(limit) = concurrency {
+            builder = builder.concurrency_limit_per_connection(limit);
+        }
+        if let Some(timeout) = request_timeout {
+            builder = builder.timeout(timeout);
+        }
+        builder
             .add_service(head.into_service())
             .serve_with_incoming_shutdown(incoming, async {
                 // A sender dropped without sending means the process is

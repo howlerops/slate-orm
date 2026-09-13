@@ -17,6 +17,7 @@ pub mod expr;
 pub mod join;
 pub mod keys;
 pub mod latency;
+pub mod limits;
 pub mod memory;
 pub mod plan;
 pub mod pool;
@@ -41,6 +42,9 @@ pub use join::{
     JoinedRow, PROBE_CONCURRENCY, Side,
 };
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
+pub use limits::{
+    DEFAULT_DISTINCT_LIMIT, DEFAULT_GROUP_LIMIT, DEFAULT_SORT_LIMIT, ExecutionLimits,
+};
 pub use plan::{
     Access, Plan, Projection, implies, plan, plan_full, plan_hinted, plan_projected, plan_with,
 };

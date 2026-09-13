@@ -24,6 +24,7 @@
 
 use crate::error::{KernelError, Result};
 use crate::expr::Expr;
+use crate::limits::ExecutionLimits;
 use crate::plan::{Access, Plan};
 use crate::query::{NullsOrder, SortKey};
 use crate::read::{self, IndexCursor, RawRow, RowCursor};
@@ -442,6 +443,7 @@ impl<'a> QueryCursor<'a> {
     /// The window is taken here rather than applied afterwards because a sort
     /// needs it: sorting to return ten rows should not hold a million.
     pub(crate) async fn open(
+        limits: ExecutionLimits,
         snapshot: &'a dyn KvSnapshot,
         table: &'a TableDef,
         plan: Plan,
@@ -568,8 +570,18 @@ impl<'a> QueryCursor<'a> {
                 }
                 Some(_) => Vec::new(),
                 None => {
+                    // The one path with no bound of its own: without a limit
+                    // there is no window to keep, so every selected row is
+                    // held before the first is returned. Refused at a ceiling
+                    // rather than left to the OOM killer, and the error says
+                    // that a LIMIT makes the sort bounded instead.
                     let mut rows = Vec::new();
                     while let Some(row) = cursor.next_admitted().await? {
+                        if rows.len() >= limits.max_sort_rows {
+                            return Err(KernelError::SortTooLarge {
+                                limit: limits.max_sort_rows,
+                            });
+                        }
                         rows.push(row);
                     }
                     rows.sort_by(|a, b| compare_rows(a, b, &keys));

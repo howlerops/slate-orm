@@ -177,9 +177,11 @@ fn the_prepared_in_agrees_with_the_plain_one_on_every_input() {
     }
 }
 
-/// A `GROUP BY` on a unique column holds one entry per row, with no cap.
+/// A `GROUP BY` on a unique column still holds one entry per row. What
+/// changed is that there is now a ceiling; below it the behaviour is the same,
+/// and this pins that the cap did not quietly become a truncation.
 #[tokio::test]
-async fn a_group_by_holds_every_distinct_key_with_no_limit() {
+async fn a_group_by_holds_every_distinct_key_below_the_ceiling() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
     let groups = txn
@@ -201,7 +203,7 @@ async fn a_group_by_holds_every_distinct_key_with_no_limit() {
 
 /// `COUNT(DISTINCT)` holds every distinct encoded value, with no cap.
 #[tokio::test]
-async fn count_distinct_holds_every_value_with_no_limit() {
+async fn count_distinct_holds_every_value_below_the_ceiling() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
     let values = txn
@@ -221,7 +223,7 @@ async fn count_distinct_holds_every_value_with_no_limit() {
 /// With a limit the executor uses a bounded heap; without one it collects
 /// everything, and nothing caps that.
 #[tokio::test]
-async fn an_unlimited_sort_materialises_the_whole_result() {
+async fn an_unlimited_sort_still_materialises_everything_below_the_ceiling() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
     let rows = txn
@@ -276,4 +278,114 @@ fn a_repeated_value_is_not_counted_twice_in_the_estimate() {
         "the prepared form should estimate what one copy estimates: \
          {prepared} vs {truth}"
     );
+}
+
+/// Each unbounded accumulator now refuses at a ceiling rather than growing
+/// until the node dies. Set very low so the test is about the refusal rather
+/// than about allocating a gigabyte.
+mod limits {
+    use super::*;
+    use slate_kernel::{Aggregate, ExecutionLimits, Grouping, KernelError, SortKey};
+
+    async fn store_limited_to(limits: ExecutionLimits) -> RecordStore<MemoryStore> {
+        let catalog = Catalog::from_tables([table()]).expect("catalog");
+        let store = RecordStore::new(MemoryStore::new(), catalog, security()).with_limits(limits);
+        let root = SecurityContext::superuser();
+        let txn = store.begin().await.unwrap();
+        for i in 0..100u64 {
+            txn.insert(
+                &root,
+                &table(),
+                &Row::new(vec![Value::U64(i), Value::I64(i as i64)]),
+            )
+            .await
+            .unwrap();
+        }
+        txn.commit().await.unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn a_group_by_past_the_ceiling_is_refused_and_names_it() {
+        let limits = ExecutionLimits {
+            max_groups: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        // 100 distinct keys against a ceiling of 10.
+        let grouping = Grouping::by([Ordinal(1)], &[Aggregate::Count]);
+        let err = txn
+            .grouped(&app(), &table(), &Query::all(), &grouping)
+            .await
+            .expect_err("grouping past the ceiling must be refused");
+
+        assert!(
+            matches!(err, KernelError::TooManyGroups { limit: 10 }),
+            "expected TooManyGroups naming the limit, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("10"),
+            "the message should name the limit: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_count_distinct_past_the_ceiling_is_refused() {
+        let limits = ExecutionLimits {
+            max_distinct: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        let err = txn
+            .aggregate(
+                &app(),
+                &table(),
+                &Query::all(),
+                &[Aggregate::CountDistinct(Ordinal(1))],
+            )
+            .await
+            .expect_err("counting more distinct values than the ceiling must be refused");
+
+        assert!(
+            matches!(err, KernelError::TooManyDistinctValues { limit: 10 }),
+            "expected TooManyDistinctValues, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unlimited_sort_past_the_ceiling_is_refused_but_a_limited_one_is_not() {
+        let limits = ExecutionLimits {
+            max_sort_rows: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        let sorted = Query::all().sort_by([SortKey::asc(Ordinal(1))]);
+        let err = txn
+            .execute(&app(), &table(), &sorted)
+            .await
+            .err()
+            .expect("an unlimited sort past the ceiling must be refused");
+        assert!(
+            matches!(err, KernelError::SortTooLarge { limit: 10 }),
+            "expected SortTooLarge, got {err:?}"
+        );
+
+        // The point of the error message: a LIMIT uses the bounded heap, so
+        // the same query with one is not affected by this ceiling at all.
+        let windowed = Query::all().sort_by([SortKey::asc(Ordinal(1))]).limit(5);
+        let rows = txn
+            .execute(&app(), &table(), &windowed)
+            .await
+            .expect("a limited sort uses the bounded heap and is not capped")
+            .collect()
+            .await
+            .expect("collecting the window");
+        assert_eq!(rows.len(), 5);
+    }
 }

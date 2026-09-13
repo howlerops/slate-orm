@@ -479,3 +479,51 @@ fn print_schema_publishes_ordinals_and_types() {
         finished.stdout
     );
 }
+
+// ── per-request ceilings ────────────────────────────────────────────────────
+
+/// Zero is refused for each ceiling rather than read as "no limit". A config
+/// that silently disables the feature it appears to configure is worse than
+/// one that will not start, and unbounded is spelled by leaving the key out.
+#[test]
+fn a_zero_execution_ceiling_is_refused_and_says_how_to_mean_unbounded() {
+    for key in ["max_groups", "max_distinct", "max_sort_rows"] {
+        let output = refused(&format!("{GOOD}\n[limits]\n{key} = 0\n"));
+        assert!(
+            output.contains(key),
+            "the refusal should name the setting: {output}"
+        );
+        assert!(
+            output.contains("unset"),
+            "the refusal should say how to mean unbounded: {output}"
+        );
+    }
+}
+
+#[test]
+fn a_zero_concurrency_limit_is_refused_because_it_would_serve_nobody() {
+    let output = refused(&format!("{GOOD}\n[limits]\nmax_concurrent_requests = 0\n"));
+    assert!(
+        output.contains("max_concurrent_requests"),
+        "the refusal should name the setting: {output}"
+    );
+}
+
+#[test]
+fn the_ceilings_and_the_timeout_are_accepted_when_they_are_sensible() {
+    accepted(&format!(
+        "{GOOD}\n[limits]\n\
+         max_groups = 1000\n\
+         max_distinct = 1000\n\
+         max_sort_rows = 10000\n\
+         max_concurrent_requests = 64\n\
+         request_timeout = \"30s\"\n"
+    ));
+}
+
+/// Leaving them out is the documented way to mean unbounded, and has to keep
+/// working — every configuration written before these existed does it.
+#[test]
+fn omitting_them_entirely_is_still_a_valid_configuration() {
+    accepted(GOOD);
+}

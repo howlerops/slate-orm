@@ -51,9 +51,9 @@ use crate::proto::records_server::{Records, RecordsServer};
 use crate::session::{Limits, MultiCursor, MultiExplanation, MultiRow, Sessions};
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
-    Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken, RecordSnapshot,
-    RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog, SecurityContext,
-    Statistics,
+    ExecutionLimits, Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken,
+    RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog,
+    SecurityContext, Statistics,
 };
 use slate_schema::{Catalog, Row, TableDef, TableId};
 use slate_tuple::Value;
@@ -86,6 +86,8 @@ pub struct HeadConfig {
     pub security: SecurityCatalog,
     /// What the planner believes about the data.
     pub statistics: Statistics,
+    /// Per-request ceilings on the operators that hold unbounded state.
+    pub execution: ExecutionLimits,
     /// How reads are spread across replicas.
     pub routing: RoutingPolicy,
     /// What the node will spend on open transactions and stream batches.
@@ -101,6 +103,7 @@ impl HeadConfig {
             catalog,
             security,
             statistics: Statistics::new(),
+            execution: ExecutionLimits::default(),
             routing: RoutingPolicy::default(),
             limits: Limits::default(),
         }
@@ -110,6 +113,17 @@ impl HeadConfig {
     #[must_use]
     pub fn with_statistics(mut self, statistics: Statistics) -> Self {
         self.statistics = statistics;
+        self
+    }
+
+    /// Refuse requests that would exceed `limits`.
+    ///
+    /// These reach every store this node builds — the writer and each replica
+    /// — because a ceiling that applied to only one of them would depend on
+    /// which node served the read.
+    #[must_use]
+    pub fn with_execution_limits(mut self, limits: ExecutionLimits) -> Self {
+        self.execution = limits;
         self
     }
 
@@ -216,10 +230,12 @@ impl<S> Head<S> {
             statistics,
             routing,
             limits,
+            execution,
         } = config;
 
         let pool = ReplicaPool::new(replicas, catalog, security)
             .with_statistics(statistics)
+            .with_limits(execution)
             .with_policy(routing);
 
         Self {
@@ -269,14 +285,17 @@ impl<S: KvStore + KvReadStore> Head<S> {
             statistics,
             routing,
             limits,
+            execution,
         } = config;
 
         let pool = ReplicaPool::new(replicas, catalog.clone(), security.clone())
             .with_statistics(statistics.clone())
+            .with_limits(execution)
             .with_policy(routing)
             .with_writer(Arc::clone(&writer) as Arc<dyn KvReadStore>);
-        let store =
-            RecordStore::new(Arc::clone(&writer), catalog, security).with_statistics(statistics);
+        let store = RecordStore::new(Arc::clone(&writer), catalog, security)
+            .with_statistics(statistics)
+            .with_limits(execution);
 
         Self {
             pool: Arc::new(pool),
