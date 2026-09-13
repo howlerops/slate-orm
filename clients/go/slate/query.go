@@ -1,0 +1,215 @@
+package slate
+
+import (
+	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
+)
+
+// Ordinal is a column's position in its table, counting from zero.
+//
+// Positions rather than names, because that is what the wire carries: a name
+// would have to be resolved somewhere, and resolving it here would mean this
+// client holding a second copy of the schema that could disagree with the
+// server's.
+type Ordinal uint32
+
+// Expr is a predicate over one table's rows.
+type Expr struct{ wire *pb.Expr }
+
+// True admits every row. The zero value of a filter.
+func True() Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Literal{Literal: true}}}
+}
+
+// False admits none.
+func False() Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Literal{Literal: false}}}
+}
+
+func compare(col Ordinal, op pb.CmpOp, v Value) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Compare{Compare: &pb.Compare{
+		Column: columnRef(col),
+		Op:     op,
+		Value:  v.toProto(),
+	}}}}
+}
+
+// Eq is `column = value`.
+func Eq(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_EQ, v) }
+
+// Ne is `column <> value`.
+func Ne(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_NE, v) }
+
+// Lt is `column < value`.
+func Lt(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_LT, v) }
+
+// Le is `column <= value`.
+func Le(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_LE, v) }
+
+// Gt is `column > value`.
+func Gt(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_GT, v) }
+
+// Ge is `column >= value`.
+func Ge(col Ordinal, v Value) Expr { return compare(col, pb.CmpOp_CMP_OP_GE, v) }
+
+// IsNull is `column IS NULL`.
+func IsNull(col Ordinal) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_IsNull{IsNull: &pb.IsNull{
+		Column: columnRef(col), Negated: false,
+	}}}}
+}
+
+// IsNotNull is `column IS NOT NULL`.
+func IsNotNull(col Ordinal) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_IsNull{IsNull: &pb.IsNull{
+		Column: columnRef(col), Negated: true,
+	}}}}
+}
+
+// In is `column IN (values)`.
+func In(col Ordinal, values ...Value) Expr {
+	wire := make([]*pb.Value, 0, len(values))
+	for _, v := range values {
+		wire = append(wire, v.toProto())
+	}
+	return Expr{&pb.Expr{Node: &pb.Expr_InList{InList: &pb.InList{
+		Column: columnRef(col), Values: wire,
+	}}}}
+}
+
+// Like is `column LIKE pattern`, with `%` and `_` as the wildcards.
+func Like(col Ordinal, pattern string) Expr {
+	return like(col, pattern, false, false)
+}
+
+// ILike is `column ILIKE pattern`, matching without regard to case.
+func ILike(col Ordinal, pattern string) Expr {
+	return like(col, pattern, false, true)
+}
+
+// NotLike is `column NOT LIKE pattern`.
+func NotLike(col Ordinal, pattern string) Expr {
+	return like(col, pattern, true, false)
+}
+
+func like(col Ordinal, pattern string, negated, insensitive bool) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Like{Like: &pb.Like{
+		Column:      columnRef(col),
+		Pattern:     pattern,
+		Negated:     negated,
+		Insensitive: insensitive,
+	}}}}
+}
+
+// And is the conjunction of every part. With no parts it is [True], which is
+// the identity for `AND` and keeps a built-up filter from becoming `False` by
+// accident when a loop adds nothing.
+func And(parts ...Expr) Expr {
+	if len(parts) == 0 {
+		return True()
+	}
+	return Expr{&pb.Expr{Node: &pb.Expr_Conjunction{Conjunction: exprList(parts)}}}
+}
+
+// Or is the disjunction. With no parts it is [False], the identity for `OR`.
+func Or(parts ...Expr) Expr {
+	if len(parts) == 0 {
+		return False()
+	}
+	return Expr{&pb.Expr{Node: &pb.Expr_Disjunction{Disjunction: exprList(parts)}}}
+}
+
+// Not inverts a predicate.
+func Not(inner Expr) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Negation{Negation: inner.wire}}}
+}
+
+func exprList(parts []Expr) *pb.ExprList {
+	out := make([]*pb.Expr, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, p.wire)
+	}
+	return &pb.ExprList{Exprs: out}
+}
+
+func columnRef(col Ordinal) *pb.ColumnRef {
+	return &pb.ColumnRef{Of: &pb.ColumnRef_Column{Column: uint32(col)}}
+}
+
+// Direction is which way a sort key orders.
+type Direction int
+
+// The sort directions.
+const (
+	// Asc orders smallest first.
+	Asc Direction = iota
+	// Desc orders largest first.
+	Desc
+)
+
+// SortKey is one column of an ordering.
+type SortKey struct {
+	Column    Ordinal
+	Direction Direction
+}
+
+// Query selects rows from one table.
+//
+// A struct with exported fields rather than a chain of builder methods: Go
+// composite literals already read as a builder, and a chain would need a
+// second way to say "no limit" that is not the zero value.
+type Query struct {
+	// Table is the table's name, as the server's catalog spells it.
+	Table string
+	// Filter admits rows. The zero value means every row.
+	Filter *Expr
+	// Sort orders the answer. Empty is the access path's own order.
+	Sort []SortKey
+	// Limit caps the rows returned. Nil is no cap.
+	Limit *uint64
+	// Offset discards rows before the limit applies.
+	Offset uint64
+	// Columns is the projection. Empty means every column.
+	//
+	// Naming fewer is what lets an index answer without reading a row, so it
+	// is worth naming them where a caller knows.
+	Columns []Ordinal
+	// Descending reads the table backwards where the access path allows it.
+	Descending bool
+}
+
+// Limit is a convenience for setting [Query.Limit].
+func Limit(n uint64) *uint64 { return &n }
+
+// Filter is a convenience for setting [Query.Filter].
+func Filter(e Expr) *Expr { return &e }
+
+func (q Query) toProto() *pb.Query {
+	out := &pb.Query{Table: q.Table, Offset: q.Offset}
+	if q.Filter != nil {
+		out.Filter = q.Filter.wire
+	}
+	if q.Limit != nil {
+		out.Limit = q.Limit
+	}
+	if q.Descending {
+		out.Order = pb.ScanOrder_SCAN_ORDER_DESCENDING
+	}
+	if len(q.Columns) > 0 {
+		refs := make([]*pb.ColumnRef, 0, len(q.Columns))
+		for _, c := range q.Columns {
+			refs = append(refs, columnRef(c))
+		}
+		out.Projection = &pb.Projection{Columns: refs}
+	}
+	for _, key := range q.Sort {
+		direction := pb.SortDirection_SORT_DIRECTION_ASC
+		if key.Direction == Desc {
+			direction = pb.SortDirection_SORT_DIRECTION_DESC
+		}
+		out.Sort = append(out.Sort, &pb.SortKey{
+			Column:    columnRef(key.Column),
+			Direction: direction,
+		})
+	}
+	return out
+}
