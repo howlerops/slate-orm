@@ -1,0 +1,60 @@
+/**
+ * The contract's tagged value encoding, for the TypeScript adapter.
+ *
+ * Three adapters encode values identically or the conformance runner is
+ * comparing formatting rather than answers. The rules, and why:
+ *
+ * - **Tagged**, because an `i64` and a `u64` of the same magnitude are
+ *   different values to this database.
+ * - **64-bit integers as strings**, because a JSON number above 2^53 does not
+ *   survive `JSON.parse` — this client already refuses `number` for them.
+ * - **Doubles as fixed-precision strings**, because Go, Python and JavaScript
+ *   each have their own shortest-round-trip float formatter and they do not
+ *   always agree on the last digit.
+ */
+import { type Value } from "@slate-orm/client";
+
+export function formatFloat(value: number): string {
+  if (!Number.isFinite(value)) return "null";
+  return value.toFixed(6);
+}
+
+export function encode(value: Value): Record<string, unknown> {
+  switch (value.kind) {
+    case "null":
+      return { null: true };
+    case "bool":
+      return { bool: value.value };
+    case "string":
+      return { str: value.value };
+    case "int":
+      return { i64: value.value.toString() };
+    case "uint":
+      return { u64: value.value.toString() };
+    case "float":
+      return { f64: formatFloat(value.value) };
+    case "bytes":
+      return { bytes: Buffer.from(value.value).toString("hex") };
+    case "uuid":
+      return { uuid: Buffer.from(value.value).toString("hex") };
+    case "vector":
+      return { vector: value.value.map(formatFloat) };
+  }
+}
+
+export function encodeRow(row: Value[] | undefined): Record<string, unknown>[] | null {
+  return row ? row.map(encode) : null;
+}
+
+export function decode(tagged: Record<string, unknown>): Value {
+  if (typeof tagged !== "object" || tagged === null) {
+    throw new TypeError("a value must be a tagged object");
+  }
+  if ("null" in tagged) return { kind: "null" };
+  if ("bool" in tagged) return { kind: "bool", value: Boolean(tagged["bool"]) };
+  if ("str" in tagged) return { kind: "string", value: String(tagged["str"]) };
+  if ("i64" in tagged) return { kind: "int", value: BigInt(String(tagged["i64"])) };
+  if ("u64" in tagged) return { kind: "uint", value: BigInt(String(tagged["u64"])) };
+  if ("f64" in tagged) return { kind: "float", value: Number(tagged["f64"]) };
+  throw new TypeError(`a value carried no known kind: ${Object.keys(tagged).join(", ")}`);
+}

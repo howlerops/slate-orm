@@ -10,6 +10,17 @@ clients/python/testserver/target/
 
 # Python client
 clients/python/**/__pycache__/
+**/__pycache__/
 clients/python/.pytest_cache/
 clients/python/*.egg-info/
 clients/python/src/*.egg-info/
+
+# The explorer demo. Each backend builds where it lives, and none of it is
+# source: `node_modules` and `dist` are npm's, and `backends/go/go` is a stray
+# binary from `go build` with no -o. Same lesson as the test server's `target`:
+# a nested build directory escapes a root-anchored rule, so name each one.
+examples/explorer/backends/node/node_modules/
+examples/explorer/backends/node/dist/
+examples/explorer/backends/go/go
+examples/explorer/web/node_modules/
+examples/explorer/web/dist/

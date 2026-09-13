@@ -1,0 +1,17 @@
+{
+  "name": "@slate-orm/explorer-node-adapter",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/main.js"
+  },
+  "dependencies": {
+    "@slate-orm/client": "file:../../../../clients/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

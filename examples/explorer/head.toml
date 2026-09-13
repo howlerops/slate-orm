@@ -1,0 +1,98 @@
+# The head node the three adapters share.
+#
+# One database, three clients: that is the whole point of the demo, and it is
+# also what makes the conformance runner meaningful — a disagreement cannot be
+# blamed on the data.
+
+[listen]
+address = "127.0.0.1:7421"
+
+[auth]
+mode = "trusted-header"
+
+[storage]
+backend = "memory"
+
+[[tables]]
+name = "authors"
+id = 1
+columns = [
+  { name = "id",      type = "u64" },
+  { name = "name",    type = "str" },
+  { name = "country", type = "str" },
+  { name = "born",    type = "i64" },
+]
+primary_key = ["id"]
+
+[[tables]]
+name = "books"
+id = 2
+columns = [
+  { name = "id",        type = "u64" },
+  { name = "author_id", type = "u64" },
+  { name = "title",     type = "str" },
+  { name = "year",      type = "i64" },
+  { name = "rating",    type = "f64" },
+]
+primary_key = ["id"]
+
+[[tables]]
+name = "sales"
+id = 3
+columns = [
+  { name = "id",      type = "u64" },
+  { name = "book_id", type = "u64" },
+  { name = "units",   type = "i64" },
+]
+primary_key = ["id"]
+
+# `app` can do everything, including EXPLAIN.
+[[security.grants]]
+role = "app"
+tables = ["authors", "books", "sales"]
+actions = ["everything"]
+
+# `reader` can read and nothing else — notably not EXPLAIN, which is its own
+# action precisely because a plan is costed against rows a policy may hide.
+[[security.grants]]
+role = "reader"
+tables = ["authors", "books", "sales"]
+actions = ["read"]
+
+# `stranger` holds a role with no grant at all. Every table is denied, and the
+# demo shows the refusal rather than an empty table — the difference between
+# "nothing matched" and "you may not ask" is one the UI makes visible.
+[[security.grants]]
+role = "stranger"
+tables = ["sales"]
+actions = ["read"]
+
+# Row-level security on `books`.
+#
+# Worth reading carefully, because the first version of this file was wrong in
+# an instructive way: **adding any policy to a table turns row-level security
+# on for that table**, and once it is on, every role needs a policy for every
+# action it performs. A single read-scoped policy therefore locked `app` out of
+# writing — correctly, fail-closed — and the seeder failed with "row-level
+# security forbids writing this row".
+#
+# So there are two policies: one that restricts what a `reader` may see, and one
+# that lets `app` keep doing everything. Nothing in any adapter enforces either.
+
+# A reader sees only books published in or after 1960. Switching identity in the
+# UI shows this holding, identically, through all three SDKs.
+[[security.policies]]
+name = "modern_only"
+table = "books"
+actions = ["read"]
+roles = ["reader"]
+using = "year >= 1960"
+
+# And `app` keeps unrestricted access, which RLS being on would otherwise take
+# away.
+[[security.policies]]
+name = "app_sees_everything"
+table = "books"
+actions = ["read", "insert", "update", "delete"]
+roles = ["app"]
+using = "true"
