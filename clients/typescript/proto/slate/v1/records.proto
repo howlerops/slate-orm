@@ -1,0 +1,1209 @@
+syntax = "proto3";
+
+package slate.v1;
+
+// The head node's wire surface over the record layer.
+//
+// Two things are deliberately absent.
+//
+// There is no principal on any request. Who is asking is decided by the
+// server's `Authenticator` from the request's transport metadata, never from a
+// field a client fills in, because a field a client fills in is not an identity
+// — it is a request to be trusted. There is likewise no way to ask for
+// superuser: `SecurityContext::superuser` is not reachable from this file.
+//
+// There is no schema. The catalog is the server's, and a request names a table
+// and its columns by the names and ordinals that catalog already has. A client
+// that could describe a table could describe one that is not there.
+//
+// The traffic is one-way, and that is the whole of the distinction: a client
+// may *assert* what it believes a table's columns are and be refused if it is
+// wrong (`SchemaCheck`), and nothing here will tell it what they are instead.
+// An assertion needs no round trip, cannot go stale in a cache, and does not
+// let a client discover a table it was not already told about.
+//
+// ── How a column is addressed, everywhere ────────────────────────────────────
+//
+// A join's row comes from several tables, a computed value occupies a slot no
+// table declares, and a grouped row is keys followed by aggregates. Three
+// shapes, and the temptation is three encodings. There is one: `ColumnRef`.
+//
+// A `ColumnRef` names a *producer* and an index within it. It never carries a
+// flat ordinal that the client had to compute, because computing one needs the
+// widths of the tables involved and this protocol does not publish widths —
+// and because an ordinal computed from a width is silently re-pointed the day
+// a column is added to an earlier table. The server holds the catalog, so the
+// server does the arithmetic. See `ColumnRef` for the alternatives rejected.
+
+// A null. A one-value enum rather than an absent field: proto3 cannot tell an
+// unset field from a zero one, so "the client sent a null" and "the client sent
+// nothing" would be the same message. They are not the same thing — the second
+// is a client built against a newer schema whose value this server cannot read,
+// and turning that silently into a null is how a filter comes to mean something
+// other than what was written.
+enum NullValue {
+  NULL_VALUE = 0;
+}
+
+// A `oneof` arm that carries nothing, for the same reason `NullValue` exists.
+//
+// A `bool` inside a `oneof` has two spellings for one choice, and the false
+// one is what a client that zeroed the struct sends. `Freshness{latest:false}`
+// selected `latest` while meaning nothing of the kind, and the server had to
+// read it back as `ANY` — a wire where a field means something other than what
+// it says, in a file whose opening argument is that an unset `oneof` must
+// never be defaulted. A one-value enum makes the false spelling
+// unrepresentable rather than reinterpreted.
+//
+// The `bool` fields it replaces are `reserved`, and the reason is sharper here
+// than usual. A `bool` and a one-value enum are *both varints*, so reusing the
+// number would not even be a wire-type change: an old client's `false` would
+// decode cleanly as `UNIT` and select the arm it was trying not to select —
+// `latest: false` would become a demand for the writer, and `nested_loop:
+// false` would force a nested loop. Reserving the number leaves it an unknown
+// field, which a decoder drops, so the `oneof` is simply unset — which for all
+// three of these is the safe reading and is what the old server did with the
+// false spelling anyway.
+enum Unit {
+  UNIT = 0;
+}
+
+// One element of a row or a predicate, mirroring `slate_tuple::Value`.
+message Value {
+  oneof kind {
+    NullValue null_value = 1;
+    bool bool_value = 2;
+    bytes bytes_value = 3;
+    string string_value = 4;
+    int64 int64_value = 5;
+    uint64 uint64_value = 6;
+    double double_value = 7;
+    // Exactly sixteen bytes, big-endian, as `Uuid::as_bytes` gives them.
+    bytes uuid_value = 8;
+    Vector vector_value = 9;
+  }
+}
+
+// A dense f32 vector, for embeddings.
+message Vector {
+  repeated float elements = 1;
+}
+
+// A row: one value per column of its table, in ordinal order. Also used for a
+// primary key, in which case it holds only the key columns, in key order.
+//
+// The computed values are a *separate* list rather than a tail of `values`,
+// for the reason `JoinedRow` keeps its inputs apart and `Group` keeps its keys
+// apart from its aggregates: the client should not have to do the arithmetic
+// that `ColumnRef` exists to remove. Concatenated, reading the nth computed
+// value meant `table_width + n` — a width this protocol does not publish, and
+// one that moves the day a column is added to the table. That is the same
+// silent re-pointing `ColumnRef` removed from the request side, and it was
+// still here on the way back.
+//
+// A projection narrows which *stored* columns are decoded; it never removes a
+// computed value, because the value was computed rather than read and
+// withholding it would save nothing.
+//
+// `computed` is empty on a row travelling the other way — an insert, an
+// update, a primary key — and a request that sets it is refused rather than
+// having it dropped: a computed value is not something a client can store.
+message Row {
+  repeated Value values = 1;
+  repeated Value computed = 2;
+}
+
+// What a client believes the shape of a table is, so the server can refuse a
+// request written against a different one.
+//
+// ── The hole this closes ─────────────────────────────────────────────────────
+//
+// `ColumnRef` removed the arithmetic *across* tables. It did not remove the
+// ordinal *within* one: a request still says "input 1's column 3", and a
+// client outside Rust knows that `title` is column 3 only because it wrote
+// that down. The Rust caller's constants are generated from the same
+// declaration the server serves, so they cannot disagree; a hand-written
+// `Table` in another language can, and when it does the server accepts the
+// reference — it is a legitimate ordinal — and the query returns plausible
+// rows about the wrong column. That is the "same query, different answer"
+// failure the reference model exists to prevent, moved one level down rather
+// than removed.
+//
+// So the client states its belief and the server checks it. The check is
+// `optional`: a request without one is served exactly as before, because a
+// protocol that only works for clients that opted into a new field is a
+// protocol that broke.
+//
+// ── What is fingerprinted, and what deliberately is not ──────────────────────
+//
+// Only the facts a client must restate in order to address a column, and only
+// facts it can state: the table's name, and for each ordinal in order the
+// column's name and type, and which ordinals form the primary key. Nothing
+// else. A fingerprint that covered more would change when something a client
+// does not depend on changed, and a check that fails on a migration nobody's
+// client cares about is a check every operator learns to disable.
+//
+// Left out, each for a reason:
+//
+//   nullability, DEFAULT, CHECK, foreign keys — none of them addresses a
+//     column. A write that violates one is refused by name at write time,
+//     which is a better error than a fingerprint mismatch, and adding a CHECK
+//     must not invalidate every reader in the fleet.
+//   indexes — a hint is advice and an unusable one is already a warning, so
+//     adding an index for performance must not break a client that never
+//     names it.
+//   table ids, index ids, schema versions, `added_in`/`dropped_in` — a client
+//     cannot state them. A fingerprint a client cannot compute is a constant
+//     it has to be told, which is the schema on the wire by another route.
+//
+// ── How it survives a migration ──────────────────────────────────────────────
+//
+// This is the property that makes it worth having, and it comes from the
+// schema layer rather than from here: **an ordinal never moves.** A column is
+// appended; a dropped column keeps its ordinal for ever and holds nothing; a
+// rename records the previous name and keeps resolving it. So every migration
+// this project supports leaves every existing reference pointing at the same
+// column, and the fingerprint is built to say so:
+//
+//   adding a column   the client's `columns` is a *prefix* of the table, and
+//                     the server hashes exactly that prefix. An old client
+//                     keeps working through the deployment, which is the whole
+//                     point — it is the case where a whole-catalog fingerprint
+//                     would take down every client at once.
+//   dropping a column the ordinal and the declaration are unchanged, so the
+//                     fingerprint is unchanged. A client that still *writes*
+//                     the column is refused by name, which is the error it
+//                     wanted.
+//   renaming a column the server knows the previous name, and accepts a
+//                     declaration using either. The schema layer promises that
+//                     code written against the old name keeps working; a check
+//                     that broke on a rename would contradict it.
+//   DEFAULT, CHECK,   not fingerprinted at all.
+//   foreign keys
+//
+// What it does refuse is a declaration that is *wrong*: a column inserted in
+// the middle, two same-typed columns swapped, a name that was never this
+// column's, a key of the wrong shape. Those are the cases that otherwise
+// return rows.
+//
+// ── Why the client asserts rather than the server advertising ────────────────
+//
+// The obvious cheaper design is one opaque fingerprint on every response, for
+// the client to compare at startup. It was rejected because a mismatch is then
+// uninterpretable: the client cannot tell "your declaration is wrong" from
+// "the server has one more column than when you were written", and the only
+// safe reaction to an uninterpretable mismatch is to refuse to start — which
+// is precisely the additive migration taking down the fleet. The party holding
+// both statements is the server, so the claim travels to the server, which can
+// be exactly as tolerant as its own schema rules are and can refuse with a
+// message saying which. It also refuses *the request that would have been
+// wrong*, rather than hoping somebody ran the startup check.
+//
+// ── The fingerprint ──────────────────────────────────────────────────────────
+//
+// FNV-1a, 64-bit (offset basis 0xcbf29ce484222325, prime 0x100000001b3) over
+// this byte string, where `s(x)` is the decimal byte length of `x`, a colon,
+// and `x` in UTF-8, and `d(n)` is `n` in decimal followed by a semicolon:
+//
+//   "slate.v1.schema/1"
+//   s(table name)
+//   for each column, ordinal 0 upwards:  d(ordinal) s(column name) s(type)
+//   "key" d(number of key columns)  then d(ordinal) for each, in key order
+//   "columns" d(number of columns)
+//
+// The type is spelled as `slate_tuple::ValueType` names it: `bool`, `bytes`,
+// `string`, `i64`, `u64`, `f64`, `uuid`, `vector`.
+//
+// Length-prefixed rather than delimited, so that no column name can be spelled
+// to look like the end of a field; FNV-1a rather than SHA-256 because every
+// language has to reimplement this exactly and ten lines that can be checked
+// by eye beat a dependency. It is a check against drift, not against an
+// adversary — a client that wanted to lie about its schema can simply not send
+// one.
+//
+// The key is written as ordinals, not names, so that a rename cannot change it
+// twice.
+message SchemaCheck {
+  // How many columns the client declares, which is how much of the table the
+  // fingerprint covers. Fewer than the table has is a prefix and is accepted;
+  // more is refused, because the client is addressing columns this table does
+  // not have.
+  //
+  // Sent as well as hashed so that the commonest disagreement — a client older
+  // or newer than the catalog — is reported as a count rather than as an
+  // opaque number that differs.
+  uint32 columns = 1;
+  fixed64 fingerprint = 2;
+}
+
+// Which slot of a row a predicate, sort key, projection or aggregate is about.
+//
+// ── The model ────────────────────────────────────────────────────────────────
+//
+// Every read this service offers produces rows with a *shape*, and every shape
+// is a concatenation of producers:
+//
+//   a single-table query   input 0's columns, then input 0's computed values
+//   a join or a chain      input 0, then input 1, … in the order declared
+//   a grouped result       the GROUP BY keys, then the aggregates
+//
+// A `ColumnRef` names one producer and an index inside it. The server turns
+// that into the flat ordinal the kernel evaluates against, because only the
+// server knows how wide each table is.
+//
+// ── Why not a flat ordinal, as the kernel itself uses ────────────────────────
+//
+// The kernel packs a joined row by table width and a client could do the same
+// arithmetic. It would need every table's width, which this file deliberately
+// does not publish; and the day a column is added to an earlier table, every
+// reference past it points somewhere else, with no error anywhere — the "same
+// query, different answer" failure this project treats as the worst kind.
+//
+// A fixed stride (input i's column c at i×1024+c) removes the width lookup and
+// replaces it with a hard limit on table width that wraps silently past it.
+// `ColumnRef` is that idea with an unbounded stride.
+//
+// Qualified names (`books.title`) were rejected twice over: this protocol
+// addresses columns by ordinal precisely so a predicate needs no fallible name
+// lookup, and a self-join has two inputs sharing one table name. An input is a
+// position, which a self-join distinguishes and a name cannot.
+//
+// A separate expression type per shape — `JoinExpr`, `GroupExpr` — was
+// rejected for the reason the kernel gives for not having one: it would be a
+// second and third place for three-valued null semantics to be got wrong.
+//
+// ── What it buys beyond tidiness ─────────────────────────────────────────────
+//
+// Two refusals become decidable that a flat ordinal makes undecidable. A
+// `HAVING` naming a column that is not grouped is a *kind* mismatch here, not
+// an ordinal that happens to fall in range. And a computed value referenced
+// from across a join — which the kernel's joined space has no slot for — is
+// likewise a kind that cannot appear there, rather than an ordinal that lands
+// on some other table's column.
+message ColumnRef {
+  // Which input of the request, counting from zero in the order the request
+  // declares them. Always zero for a single-table read, which is why a client
+  // that never joins can leave it unset. Must be zero on `group_key` and
+  // `aggregate`, which name a grouped result rather than an input.
+  uint32 input = 1;
+  // Unset is refused rather than defaulted to column zero: a reference with
+  // no kind is a client built against a schema this server does not have, and
+  // guessing turns its predicate into a different predicate.
+  oneof of {
+    // A column that input's table declares, by its ordinal in that table.
+    uint32 column = 2;
+    // The nth value the query for that input computes, counting from zero.
+    uint32 computed = 3;
+    // The nth GROUP BY key. Only inside a grouped result's `having`.
+    uint32 group_key = 4;
+    // The nth aggregate. Only inside a grouped result's `having`.
+    uint32 aggregate = 5;
+  }
+}
+
+// A comparison operator. `CMP_OP_UNSPECIFIED` is refused rather than defaulted:
+// defaulting it would make a malformed predicate mean equality.
+enum CmpOp {
+  CMP_OP_UNSPECIFIED = 0;
+  CMP_OP_EQ = 1;
+  CMP_OP_NE = 2;
+  CMP_OP_LT = 3;
+  CMP_OP_LE = 4;
+  CMP_OP_GT = 5;
+  CMP_OP_GE = 6;
+}
+
+// A predicate, mirroring `slate_kernel::Expr`.
+//
+// One type for every shape of row: a single table's, a joined row's, a group's.
+// That is the kernel's own arrangement and it is the reason three-valued logic
+// has exactly one implementation — the same evaluator the mandatory security
+// filter goes through.
+message Expr {
+  oneof node {
+    // `Expr::True` when true, `Expr::False` when false.
+    bool literal = 1;
+    Compare compare = 2;
+    CompareColumns compare_columns = 3;
+    IsNull is_null = 4;
+    Like like = 5;
+    Matches matches = 6;
+    InList in_list = 7;
+    ExprList conjunction = 8;
+    ExprList disjunction = 9;
+    Expr negation = 10;
+  }
+}
+
+message ExprList {
+  repeated Expr exprs = 1;
+}
+
+// Each of the messages below once carried `uint32 column = 1`, a flat ordinal.
+// The field number is reserved rather than reused: a wire type change on the
+// same number is the one kind of schema break that can be misread rather than
+// rejected, and reserving it makes an old client fail to parse instead.
+message Compare {
+  reserved 1;
+  ColumnRef column = 4;
+  CmpOp op = 2;
+  Value value = 3;
+}
+
+message CompareColumns {
+  reserved 1, 3;
+  ColumnRef left = 4;
+  CmpOp op = 2;
+  ColumnRef right = 5;
+}
+
+message IsNull {
+  reserved 1;
+  ColumnRef column = 3;
+  bool negated = 2;
+}
+
+message Like {
+  reserved 1;
+  ColumnRef column = 5;
+  string pattern = 2;
+  bool negated = 3;
+  bool insensitive = 4;
+}
+
+message Matches {
+  reserved 1;
+  ColumnRef column = 5;
+  string pattern = 2;
+  bool negated = 3;
+  bool insensitive = 4;
+}
+
+message InList {
+  reserved 1;
+  ColumnRef column = 3;
+  repeated Value values = 2;
+}
+
+// ── Computed values ──────────────────────────────────────────────────────────
+
+// Which part of a timestamp. Timestamps are seconds since the epoch in an
+// integer column, which is what the kernel's `TimeUnit` assumes; there is no
+// date type to be more precise about.
+//
+// `UNSPECIFIED` is refused for the same reason `CMP_OP_UNSPECIFIED` is: there
+// is no unit that is a safe guess, and truncating to the wrong one returns a
+// plausible number.
+enum TimeUnit {
+  TIME_UNIT_UNSPECIFIED = 0;
+  TIME_UNIT_SECOND = 1;
+  TIME_UNIT_MINUTE = 2;
+  TIME_UNIT_HOUR = 3;
+  TIME_UNIT_DAY = 4;
+}
+
+// How to measure the distance between two vectors. Refused when unspecified:
+// cosine and L2 rank differently, so a default would silently answer a
+// different nearest-neighbour question.
+enum Metric {
+  METRIC_UNSPECIFIED = 0;
+  METRIC_L2 = 1;
+  METRIC_L2_SQUARED = 2;
+  METRIC_COSINE = 3;
+  METRIC_NEGATIVE_INNER_PRODUCT = 4;
+}
+
+// A value computed from a row, mirroring `slate_kernel::Scalar`.
+//
+// A query's computed values are appended after its table's own columns, so
+// `ColumnRef.computed` addresses one and a filter, a sort key, a GROUP BY key
+// or an aggregate takes it without any of them learning what an expression is.
+// That is the kernel's arrangement, unchanged; the wire only has to name the
+// slots.
+//
+// A later computed value may read an earlier one — `computed: 0` inside the
+// expression for computed value 1 is legal, and reading forwards is not.
+message Scalar {
+  oneof node {
+    ColumnRef column = 1;
+    Value literal = 2;
+    ScalarPair add = 3;
+    ScalarPair sub = 4;
+    ScalarPair mul = 5;
+    ScalarPair div = 6;
+    Scalar length = 7;
+    ScalarList concat = 8;
+    Scalar lower = 9;
+    Scalar upper = 10;
+    TimePart extract = 11;
+    TimePart date_trunc = 12;
+    Case case = 13;
+    ScalarList coalesce = 14;
+    Distance distance = 15;
+    RegexpReplace regexp_replace = 16;
+  }
+}
+
+message ScalarPair {
+  Scalar left = 1;
+  Scalar right = 2;
+}
+
+message ScalarList {
+  repeated Scalar scalars = 1;
+}
+
+message TimePart {
+  TimeUnit unit = 1;
+  Scalar value = 2;
+}
+
+message Case {
+  repeated CaseBranch branches = 1;
+  // What to produce when no branch held. Required: SQL's `CASE` with no
+  // `ELSE` produces null, and sending an explicit null literal says so, where
+  // an absent field would be a client that forgot.
+  Scalar otherwise = 2;
+}
+
+message CaseBranch {
+  Expr when = 1;
+  Scalar then = 2;
+}
+
+message Distance {
+  Scalar left = 1;
+  Scalar right = 2;
+  Metric metric = 3;
+}
+
+message RegexpReplace {
+  Scalar value = 1;
+  string pattern = 2;
+  string replacement = 3;
+}
+
+// ── Aggregates ───────────────────────────────────────────────────────────────
+
+// Refused when unspecified: every one of these returns a number, and a
+// defaulted aggregate would return a plausible one for a question nobody asked.
+enum AggregateFunction {
+  AGGREGATE_FUNCTION_UNSPECIFIED = 0;
+  // `COUNT(*)`: every row, including one whose every column is null. The only
+  // function that takes no column, and the only one that reads none — which is
+  // what lets any usable index answer it.
+  AGGREGATE_FUNCTION_COUNT = 1;
+  // `COUNT(column)`: rows where the column is not null.
+  AGGREGATE_FUNCTION_COUNT_COLUMN = 2;
+  AGGREGATE_FUNCTION_MIN = 3;
+  AGGREGATE_FUNCTION_MAX = 4;
+  AGGREGATE_FUNCTION_SUM = 5;
+  AGGREGATE_FUNCTION_AVG = 6;
+  // Exact, over the encoded value, so two rows count as one exactly when they
+  // would collide in an index.
+  AGGREGATE_FUNCTION_COUNT_DISTINCT = 7;
+}
+
+message Aggregate {
+  AggregateFunction function = 1;
+  // The column or computed value it reads. Absent for `COUNT`, and required
+  // by every other function — an aggregate over nothing is refused rather
+  // than read as `COUNT(*)`, which is a different number.
+  ColumnRef column = 2;
+}
+
+// One row of a grouped result.
+//
+// The keys and the aggregates are kept apart rather than concatenated, for the
+// same reason a joined row keeps its inputs apart: the client should not have
+// to do the arithmetic that `ColumnRef` exists to remove. `having` addresses
+// them as `group_key` and `aggregate`, which is the same split.
+message Group {
+  // The GROUP BY keys, in the order they were requested.
+  repeated Value key = 1;
+  // The aggregates, in the order they were requested.
+  repeated Value values = 2;
+}
+
+// ── Queries ──────────────────────────────────────────────────────────────────
+
+enum ScanOrder {
+  SCAN_ORDER_ASCENDING = 0;
+  SCAN_ORDER_DESCENDING = 1;
+}
+
+enum SortDirection {
+  SORT_DIRECTION_ASC = 0;
+  SORT_DIRECTION_DESC = 1;
+}
+
+// Where nulls go in a sort. Unspecified means the direction's natural place —
+// which is what the storage already does, and therefore the only setting that
+// can be served without materialising the whole result.
+enum NullsOrder {
+  NULLS_ORDER_UNSPECIFIED = 0;
+  NULLS_ORDER_FIRST = 1;
+  NULLS_ORDER_LAST = 2;
+}
+
+message SortKey {
+  reserved 1;
+  // A column of the query's own input, or one of its computed values.
+  ColumnRef column = 4;
+  SortDirection direction = 2;
+  NullsOrder nulls = 3;
+}
+
+// Columns to return. `all_columns` wins over `columns`; with neither set the
+// projection is empty, which is what a count wants.
+//
+// Only stored columns can be named. A computed value is returned whatever the
+// projection says, because it was computed rather than read and leaving it out
+// would save no work — so naming one here is refused rather than ignored.
+message Projection {
+  reserved 2;
+  bool all_columns = 1;
+  repeated ColumnRef columns = 3;
+}
+
+// An access path to take instead of the cheapest one. Advice, not an
+// instruction: see `Query.hint`.
+message AccessHint {
+  // `bool table_scan`. A zeroed message selected `table_scan: false`, which is
+  // not a request for a table scan; see `Unit`.
+  reserved 1;
+  oneof path {
+    string index = 2;
+    Unit table_scan = 3;
+  }
+}
+
+message Query {
+  // Table name, resolved against the server's catalog.
+  string table = 1;
+  // Rows to keep. Absent means every row.
+  Expr filter = 2;
+  ScanOrder order = 3;
+  // Absent means every column.
+  Projection projection = 4;
+  repeated SortKey sort = 5;
+  optional uint64 limit = 6;
+  uint64 offset = 7;
+  // Ignored when it names an index the table does not have, matching the
+  // kernel: a query that stops working because an index was renamed is worse
+  // than one that gets slower. `ExplainResponse.warnings` says when this
+  // happened, so "my hint did nothing" is still debuggable.
+  AccessHint hint = 8;
+  // Values computed per row, returned in `Row.computed`. `ColumnRef.computed`
+  // names one. See `Scalar`.
+  repeated Scalar compute = 9;
+  // What the client believes this table's columns are. Absent means unchecked;
+  // present and disagreeing is `INVALID_ARGUMENT` before anything is read. See
+  // `SchemaCheck` — this is the one field that stops a hand-written schema
+  // silently naming the wrong column.
+  //
+  // On a join it is per input, because each input names its own table's
+  // ordinals and a client can be right about one table and wrong about
+  // another.
+  SchemaCheck schema = 10;
+}
+
+// ── Joins and chains ─────────────────────────────────────────────────────────
+
+// Which rows survive a join.
+//
+// `INNER = 0` is a default rather than a refusal, unlike `CmpOp`: SQL spells
+// an inner join as plain `JOIN`, and it is what `JoinType::default()` is. A
+// value this server does not know is still refused.
+enum JoinType {
+  JOIN_TYPE_INNER = 0;
+  // Every row accumulated so far, with this input absent where it matched
+  // nothing.
+  JOIN_TYPE_LEFT = 1;
+  // Every row of this input, with everything before it absent where it
+  // matched nothing.
+  JOIN_TYPE_RIGHT = 2;
+  JOIN_TYPE_FULL = 3;
+}
+
+enum Side {
+  SIDE_LEFT = 0;
+  SIDE_RIGHT = 1;
+}
+
+// An algorithm to run instead of the cheapest one.
+//
+// Unlike `AccessHint`, this is not advice. An index hint chooses between plans
+// that return the same rows, so ignoring it costs time; an algorithm cannot
+// always be honoured — a nested loop streams one side and never learns about a
+// row of the other that matched nothing — and a request for one on a right or
+// full outer join is refused rather than quietly served by a hash join.
+message JoinAlgorithm {
+  // `bool nested_loop`, which had the same two spellings for one choice that
+  // `Freshness.latest` had; see `Unit`.
+  reserved 2;
+  oneof algorithm {
+    // Read one side into memory and stream the other past it. The side named
+    // is the one held in memory.
+    //
+    // Past the first join of a chain the side is not a choice the executor
+    // has: the accumulated rows are already in memory. The kernel's own type
+    // still carries one there, so this passes it through rather than having an
+    // opinion the kernel does not.
+    Side hash_build = 1;
+    Unit nested_loop = 3;
+  }
+}
+
+// One equality of a join condition.
+message JoinOn {
+  // A column of an input already read — that is, one with a lower index than
+  // the input this condition belongs to. Joining back to any earlier input, not
+  // only the previous one, is what the positional model is for.
+  ColumnRef earlier = 1;
+  // A column of the input this condition belongs to.
+  ColumnRef own = 2;
+}
+
+// One table of a join, and how it attaches to the ones before it.
+message JoinInput {
+  // What to read from this table: its filter, projection, scan direction and
+  // computed values, in its own ordinals.
+  //
+  // Its `sort`, `limit` and `offset` are refused rather than ignored. Limiting
+  // a side before joining it changes the answer, ordering one does not order
+  // the join, and the kernel documents all three as ignored — so a client that
+  // set one would be relying on an accident. `JoinQuery` carries the limit and
+  // offset that do apply.
+  Query query = 1;
+  // How this input attaches. Empty on the first input, and required on every
+  // other: a cross join is not offered, because nobody asks for one by
+  // accident and this would be the accident.
+  repeated JoinOn on = 2;
+  JoinType join_type = 3;
+  // A condition only a formed row can answer — `input 0's a < input 1's b`, or
+  // an equality the join is not keyed on. It may name any input up to and
+  // including this one.
+  //
+  // It behaves like SQL's `ON`, not `WHERE`: a preserved row whose other side
+  // is absent reads as null there, so the condition is unknown and the pair is
+  // not admitted — but the preserved row itself still comes back, unmatched.
+  //
+  // It cannot name a computed value of another input. The kernel's joined
+  // ordinal space is packed by declared table width, so a computed value has
+  // no slot in it; the reference is refused rather than landing on whatever
+  // column happens to sit at that offset.
+  Expr having = 4;
+  // Run this algorithm for this input's join instead of costing one. For
+  // measuring what the alternative would have cost, and for a caller who knows
+  // something the statistics do not.
+  JoinAlgorithm force = 5;
+}
+
+// A read over several tables, joined in the order written.
+//
+// Left-deep and explicit: there is no join-order search. That is the part of
+// query optimisation that genuinely needs one — the space is factorial and the
+// estimates feeding it compound — and a wrong order costs round trips rather
+// than a constant factor, so it is the caller's decision.
+//
+// Every input is a secured read of its own: authorised against the caller's
+// roles, with its own row-level filter folded in before planning. A join sees
+// no row that a single-table query would have hidden, on any input, because it
+// never asks storage for rows — it asks cursors that have already applied
+// their policies.
+message JoinQuery {
+  // Two or more tables. The first is read on its own; each of the rest joins
+  // onto everything before it. Every `ColumnRef.input` in this request is a
+  // position in this list, so the same table twice is two inputs and a
+  // self-join needs no other machinery.
+  repeated JoinInput inputs = 1;
+  // Maximum joined rows to return.
+  optional uint64 limit = 2;
+  // Joined rows to discard first.
+  uint64 offset = 3;
+  // Rows a **hash** build side may hold in memory before the read is refused.
+  //
+  // It is a property of one algorithm, not of the request. A nested loop has
+  // no build side and holds nothing, so this bounds nothing there — lowering
+  // it protects a node only on the plans the planner costed as hash joins, and
+  // on the others it does exactly nothing. `ExplainJoin` says which each input
+  // got; a caller that must have the bound should force `hash_build` and take
+  // the plan it asked for.
+  //
+  // A client may lower this and not raise it: the server's own limit is what
+  // stops a mistyped join key turning into an out-of-memory kill, and a limit
+  // a client can raise is not a limit. Raising it is clamped and reported in
+  // `warnings`, not refused.
+  optional uint64 build_limit = 4;
+}
+
+// One row of a join or chain: one entry per input, in the order declared.
+//
+// The inputs are kept apart rather than concatenated into one wide row, so
+// each decodes into its own type and none has to know another's width — and so
+// a client reads the result the same way it wrote the request.
+message JoinedRow {
+  repeated JoinedInput inputs = 1;
+}
+
+message JoinedInput {
+  // Absent when an outer join preserved a row that matched nothing on this
+  // input. Message presence in proto3 is reliable, unlike scalar presence,
+  // which is why this needs no companion flag where `Value.kind` did.
+  Row row = 1;
+}
+
+// ── Freshness and routing ────────────────────────────────────────────────────
+
+// How fresh a read has to be. Absent means `ANY`.
+message Freshness {
+  // `bool any` and `bool latest`. Both had two spellings for one choice, and
+  // the false spelling of `latest` — what a client that zeroed the struct
+  // sends — had to be read back as `ANY`, so the wire said "the writer" and
+  // meant "any replica". `Unit` makes it unrepresentable. The numbers are not
+  // reused, because both are varints: an old client's `false` would decode as
+  // `UNIT` on a new field of the same number and turn "any replica" into a
+  // demand for the writer. Reserved, it is an unknown field and dropped, and
+  // an unset level has always meant `ANY`. See `Unit`.
+  reserved 1, 3;
+  oneof level {
+    // Only a view that has reached this sequence — the number a commit
+    // returned. This is read-your-writes.
+    uint64 at_least = 2;
+    // Any replica, however far behind. The same as leaving the whole message
+    // absent, which is what a client with nothing to say should do.
+    Unit any = 4;
+    // The writer, which is the only view that can see an unflushed write.
+    Unit latest = 5;
+  }
+}
+
+// Which view served a read, so a client can meter routing and thread a
+// watermark without guessing.
+//
+// One per response, including a response that read several tables. A join is
+// several reads of *one* snapshot: the head node routes once, opens one view,
+// and reads every input through it. So there is one replica and one sequence
+// to report, and the freshness a client asked for applies to the whole result
+// rather than to whichever table happened to be read first. Two views would
+// mean a join across two points in time, which is not a state the database was
+// ever in.
+message ServedBy {
+  string replica = 1;
+  // The sequence that view is known to include, or zero when it does not
+  // track one.
+  uint64 sequence = 2;
+}
+
+// ── Transactions and writes ──────────────────────────────────────────────────
+
+message BeginRequest {}
+
+message BeginResponse {
+  // An opaque handle. It is a capability: anyone holding it can use the
+  // transaction, so it is a v4 UUID and is additionally pinned to the
+  // principal that opened it.
+  string transaction = 1;
+}
+
+message CommitRequest {
+  string transaction = 1;
+}
+
+message CommitResponse {
+  // The sequence the writes landed at. Absent when the transaction wrote
+  // nothing. Pass it back as `Freshness.at_least` to read them from a replica.
+  optional uint64 sequence = 1;
+}
+
+message RollbackRequest {
+  string transaction = 1;
+}
+
+message RollbackResponse {}
+
+// A transaction handle, or empty for a single-statement transaction the server
+// opens, commits and — on a conflict — retries by itself.
+message InsertRequest {
+  string transaction = 1;
+  string table = 2;
+  // Whole rows: one value per column the table declares, in ordinal order,
+  // including a null for any column that has been dropped. `Row.computed` must
+  // be empty.
+  repeated Row rows = 3;
+  // Replace a row whose primary key is already present, rather than refusing.
+  bool upsert = 4;
+  // See `SchemaCheck`. Worth more on a write than on a read: a write is
+  // positional across the *whole* row, so a declaration that disagrees writes
+  // every value into the wrong column, and it is only caught by luck — when
+  // two columns happen to have different types.
+  SchemaCheck schema = 5;
+}
+
+// An update is a **row replacement**: it names whole rows by their primary
+// keys and writes them entire. There is no `SET column = expression`, and no
+// predicate form.
+//
+// That is the kernel's shape and it is not hidden here. `UPDATE ... SET size =
+// size + 1 WHERE kind = 'x'` is a query followed by an update of the rows it
+// returned, and it is atomic if — and only if — the client opens a transaction
+// around the pair. Two things would have to exist for the SQL spelling: a way
+// to say "this column, this expression", which is a kernel evaluator applied
+// to a write rather than to a read; and a write that walks a cursor, which the
+// head node would have to implement over rows it had already streamed. The
+// second is the objection that kept a grouped join out until the kernel grew
+// one — a second implementation of something the kernel owns, with nothing to
+// be an oracle against — and the first is a kernel change, not a wire one.
+// That is the shape of the answer here too: when the kernel can walk a cursor
+// writing, the wire carries the request to it.
+//
+// A delete by predicate is the same shape: `Query` for the keys, then
+// `Delete`, in one transaction.
+message UpdateRequest {
+  string transaction = 1;
+  string table = 2;
+  // Whole rows, as on `InsertRequest`. Every row must already exist: an update
+  // of a missing row fails the whole batch rather than inserting it.
+  repeated Row rows = 3;
+  // See `SchemaCheck`, and `InsertRequest.schema` for why a write wants one
+  // more than a read does.
+  SchemaCheck schema = 4;
+}
+
+message DeleteRequest {
+  string transaction = 1;
+  string table = 2;
+  // Primary key values only, in key order — as many values as the table has
+  // key columns, of the types it declares them with. A key of the wrong arity
+  // or the wrong types is refused, rather than encoding to a key nothing is
+  // stored at and reading as a row that is not there.
+  repeated Row primary_keys = 3;
+  // See `SchemaCheck`. The key columns are part of the fingerprint, so this
+  // also checks the shape of the keys above.
+  SchemaCheck schema = 4;
+}
+
+message WriteResponse {
+  // Set only for a single-statement write, which commits. A write inside a
+  // transaction has no sequence until that transaction commits.
+  optional uint64 sequence = 1;
+  // How many rows the write acted on. Read it as "how many rows the server
+  // agreed to", not "how many rows changed" — those are the same number for
+  // only one of the three writes.
+  //
+  //   Delete  how many of the keys existed, which is a fact the caller did not
+  //           already have. A row the caller's policy hides counts as absent,
+  //           so this cannot be used to probe for one.
+  //   Insert  `len(rows)`, echoed. An insert is all-or-nothing — a duplicate
+  //           key fails the whole batch rather than applying a prefix — so any
+  //           other number would mean the response arrived after a partial
+  //           write, which cannot happen. An upsert reports the same 1 for a
+  //           row it replaced as for a row it created; distinguishing them
+  //           would need a read the write path does not do.
+  //   Update  `len(rows)`, echoed, and all-or-nothing for the same reason: a
+  //           row that is not there fails the batch.
+  //
+  // Left as an echo rather than made `optional` and unset: a client reading it
+  // as a count gets the right number for every write that succeeded, and an
+  // absent field would make the common `affected == len(rows)` assertion
+  // language-specific rather than merely uninformative.
+  uint64 affected = 2;
+}
+
+// ── Reads ────────────────────────────────────────────────────────────────────
+
+// Read one row by its primary key.
+//
+// One key, and not `repeated`, which is the one asymmetry with `Insert`,
+// `Update` and `Delete`. It is deliberate. The batched read already exists and
+// is a `Query` with `IN` over the primary key: the planner turns that into the
+// point reads it actually is, issued together — sixteen in flight — which is
+// the whole win that makes `insert_many` worth having. A `repeated Row
+// primary_keys` here could not do that. `Expr::In` names one column, so the
+// overlap is available for a single-column key and not for a composite one,
+// and the server would have to fall back to a loop; the result would be a
+// batch operation that costs one round trip on some tables and fifty on
+// others, with nothing in the response to say which. That is a worse thing to
+// have on a wire than an asymmetry.
+message GetRequest {
+  string transaction = 1;
+  string table = 2;
+  // As many values as the table has key columns, in key order, of the types it
+  // declares them with.
+  //
+  // Checked, rather than encoded and looked up. `found: false` is
+  // *deliberately* indistinguishable from "a row your policy hides", which is
+  // right — but it made a malformed key indistinguishable from a legitimate
+  // miss and from an authorisation outcome, all at once, and a client bug read
+  // as an absent row. A key that cannot be this table's is `INVALID_ARGUMENT`
+  // and says what the key columns are, the way the insert path already did.
+  Row primary_key = 3;
+  Freshness freshness = 4;
+  // See `SchemaCheck`. The key columns are part of the fingerprint, so this
+  // also checks the shape of the key above.
+  SchemaCheck schema = 5;
+}
+
+message GetResponse {
+  Row row = 1;
+  // A row the caller's policy hides reads as absent, so this cannot be used to
+  // test whether a forbidden row exists.
+  bool found = 2;
+  ServedBy served_by = 3;
+}
+
+message QueryRequest {
+  // A transaction handle, or empty to read outside one.
+  //
+  // The two are not the same read, and the difference is not visible in the
+  // messages that come back, so it is stated here. **A read inside a
+  // transaction is materialised.** A cursor borrows the transaction, and the
+  // transaction lives inside a task that owns it, so nothing can stream out of
+  // it; the server collects the whole result and then replays it through the
+  // same batched `QueryResponse` a streaming read uses. The wire shape is
+  // identical and the memory profile is not — the result set is in the head
+  // node's memory before the first message leaves.
+  //
+  // So a large read should be made outside a transaction, where it streams and
+  // the channel gives back pressure. Inside one is for the small read that
+  // decides what to write next, which is what a read in a write transaction
+  // nearly always is. The same applies to `Join` and `Aggregate`; an aggregate
+  // is materialised either way, because grouping folds every row before any
+  // group is final.
+  string transaction = 1;
+  Query query = 2;
+  Freshness freshness = 3;
+}
+
+// Rows arrive in batches. The first message is always sent, even when the
+// result is empty, because it carries `served_by` — and `warnings`.
+message QueryResponse {
+  repeated Row rows = 1;
+  ServedBy served_by = 2;
+  // Things the server did with *this* request that the request did not ask
+  // for: an index hint it could not use, a build limit it clamped.
+  //
+  // On the first message only, with `served_by`, and empty on the rest.
+  //
+  // These used to be on `Explain` alone, which meant that finding out why a
+  // hint did nothing required issuing a different RPC and trusting that the
+  // planner had made the same decision on a request that ran at a different
+  // moment against a possibly different view. A warning is about the request
+  // that carried it or it is about nothing.
+  repeated string warnings = 3;
+}
+
+message JoinRequest {
+  string transaction = 1;
+  JoinQuery join = 2;
+  Freshness freshness = 3;
+}
+
+// Joined rows in batches, with the same first-message-carries-`served_by` rule
+// `QueryResponse` uses.
+message JoinResponse {
+  repeated JoinedRow rows = 1;
+  ServedBy served_by = 2;
+  // As on `QueryResponse`: an unusable hint on any input, a clamped build
+  // limit. First message only.
+  repeated string warnings = 3;
+}
+
+// Aggregates over one table or over a join, optionally per group.
+//
+// One table used to be the only option, because the kernel grouped over a
+// single-table cursor: offering a grouped join here would have meant a second
+// implementation of grouping in the head node, over rows it had already
+// streamed, losing the projection narrowing that makes `COUNT(*)` read no
+// columns at all. The kernel groups a joined row stream itself now, so `join`
+// carries the same grouping to it rather than reimplementing anything.
+//
+// Exactly one of `input` and `join` is set. Neither is refused, and so is
+// both — a request that names two sources is a client bug worth reporting
+// rather than a precedence rule worth inventing.
+message AggregateQuery {
+  // Which rows to aggregate: the table, its filter, its computed values. Its
+  // projection is set by the aggregates themselves — exactly the columns they
+  // read, which is what lets an index answer without touching a row — so
+  // naming one here is refused rather than silently overridden.
+  //
+  // Its `sort`, `limit` and `offset` are refused too: they would limit the
+  // *rows* going in, which is not what a client asking for a limit on an
+  // aggregate means, and the kernel has no ordering over groups to apply one
+  // to. See the crate docs.
+  Query input = 1;
+  // Group by these. Empty means one group over every matching row, which is
+  // the plain aggregate case.
+  repeated ColumnRef group_by = 2;
+  // At least one. An aggregate query with no aggregates is a query.
+  repeated Aggregate aggregates = 3;
+  // Which groups to keep, over the group rather than over a row: its keys are
+  // `group_key`, its aggregates are `aggregate`. A `ColumnRef` naming a raw
+  // column here is refused — that is SQL's "column must appear in the GROUP BY
+  // clause", and the kind mismatch is what makes it detectable rather than an
+  // ordinal that happens to be in range.
+  Expr having = 4;
+  // Aggregate over a join instead of over `input`. Its `ColumnRef.input`
+  // positions and the `group_by` ordinals are in the join's schema — the left
+  // table keeps its ordinals, each later input's shift past the width of
+  // everything before it — which is the space `JoinQuery.having` already uses.
+  //
+  // `having` and `sort` are the exception, as they are for one table: they
+  // read the *group*, its keys then its aggregates.
+  JoinQuery join = 5;
+  // Order the groups. Empty leaves them in the kernel's order, ascending by
+  // encoded group key, which is what this returned before there was a way to
+  // ask for anything else.
+  //
+  // Its `ColumnRef`s name the group — `group_key` and `aggregate` — for the
+  // same reason `having` does: ordering by a raw column of a grouped result is
+  // the same kind mismatch, and refusing it is what makes it visible.
+  repeated SortKey sort = 6;
+  // At most this many groups, after `having` and `sort`.
+  //
+  // Over *groups*, unlike `Query.limit`, which is over rows. The ordering of
+  // the three is SQL's: `having` decides which groups exist, `sort` arranges
+  // them, `limit` and `offset` take a slice.
+  optional uint64 limit = 7;
+  // Groups to discard first, after `having` and `sort`.
+  uint64 offset = 8;
+}
+
+message AggregateRequest {
+  string transaction = 1;
+  AggregateQuery aggregate = 2;
+  Freshness freshness = 3;
+}
+
+// Groups in batches. Unordered by default in the kernel's order — ascending by
+// the encoded group key, which is the same order the keyspace sorts in — or in
+// whatever `AggregateQuery.sort` asked for. See the crate docs for why
+// approximated here.
+message AggregateResponse {
+  repeated Group groups = 1;
+  ServedBy served_by = 2;
+  // As on `QueryResponse`. First message only.
+  repeated string warnings = 3;
+}
+
+// ── Explaining ───────────────────────────────────────────────────────────────
+
+message ExplainRequest {
+  string transaction = 1;
+  Query query = 2;
+  Freshness freshness = 3;
+}
+
+message ExplainResponse {
+  string table = 1;
+  // The access path, as `AccessSummary` prints it.
+  string access = 2;
+  // The predicate re-checked on every candidate row, including the mandatory
+  // security filter — which is why this is worth returning: it is the proof
+  // that a policy reached the executor.
+  string residual = 3;
+  bool descending = 4;
+  double estimated_rows = 5;
+  double estimated_cost = 6;
+  optional uint64 limit = 7;
+  uint64 offset = 8;
+  // Whether the whole result must be materialised before the first row.
+  bool sorts = 9;
+  // Whether no row is read at all: the index answers the query.
+  bool index_only = 10;
+  // The one-line human form.
+  string display = 11;
+  // Things the server did with the request that the request did not ask for,
+  // such as ignoring an unusable hint. The same list `QueryResponse` carries,
+  // for the same request. Set only on a response to `Explain`; an
+  // `ExplainResponse` nested inside `JoinExplainResponse` describes a plan
+  // rather than a request, so its `warnings` and `served_by` are always empty
+  // and the outer message carries the request's.
+  repeated string warnings = 12;
+  ServedBy served_by = 13;
+}
+
+message ExplainJoinRequest {
+  string transaction = 1;
+  JoinQuery join = 2;
+  Freshness freshness = 3;
+}
+
+// How each input will be read, and how each is combined with the ones before.
+//
+// Both are shown because a join's cost is almost entirely its inputs'. A join
+// that looks expensive is usually an input that is, and printing only the
+// algorithm would hide it.
+message JoinExplainResponse {
+  // One per input, in request order. The first has no algorithm: nothing is
+  // joined to it.
+  repeated JoinInputPlan inputs = 1;
+  double estimated_rows = 2;
+  double estimated_cost = 3;
+  // The multi-line human form.
+  string display = 4;
+  repeated string warnings = 5;
+  ServedBy served_by = 6;
+}
+
+message JoinInputPlan {
+  // How this input's table is read. For an input joined by a nested loop this
+  // is the shape of one probe rather than a plan run once.
+  ExplainResponse plan = 1;
+  JoinType join_type = 2;
+  // Absent on the first input.
+  JoinAlgorithm algorithm = 3;
+  // Rows the planner expects to be accumulated once this input has joined.
+  double estimated_rows = 4;
+  double estimated_cost = 5;
+}
+
+// ── Leadership ───────────────────────────────────────────────────────────────
+
+message LeadershipRequest {}
+
+// What this node believes about who may write. Believes, not knows: see the
+// `lease` module. A node that has lost the lease without noticing still
+// reports itself the leader, and the storage layer's fence — not this — is
+// what stops it writing.
+message LeadershipStatus {
+  enum Standing {
+    STANDING_UNSPECIFIED = 0;
+    // Not the leader, and trying to become one.
+    STANDING_FOLLOWER = 1;
+    // Holds the lease and will accept writes.
+    STANDING_LEADER = 2;
+    // Was the leader and has stopped: fenced, or the lease was lost. Terminal
+    // for this process; reads are still served from replicas.
+    STANDING_STEPPED_DOWN = 3;
+  }
+  Standing standing = 1;
+  // The lease generation this node holds, when it is the leader.
+  optional uint64 generation = 2;
+  // Who the lease says holds it, when that is known. A client can use this to
+  // find the node that will accept its writes.
+  string holder = 3;
+  // Why this node stepped down, when it has.
+  string stepped_down_because = 4;
+}
+
+service Records {
+  rpc Begin(BeginRequest) returns (BeginResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Rollback(RollbackRequest) returns (RollbackResponse);
+
+  rpc Insert(InsertRequest) returns (WriteResponse);
+  rpc Update(UpdateRequest) returns (WriteResponse);
+  rpc Delete(DeleteRequest) returns (WriteResponse);
+
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Query(QueryRequest) returns (stream QueryResponse);
+  rpc Join(JoinRequest) returns (stream JoinResponse);
+  rpc Aggregate(AggregateRequest) returns (stream AggregateResponse);
+
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+  rpc ExplainJoin(ExplainJoinRequest) returns (JoinExplainResponse);
+
+  rpc Leadership(LeadershipRequest) returns (LeadershipStatus);
+}

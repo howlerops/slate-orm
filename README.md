@@ -633,6 +633,12 @@ Built and tested:
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
       zero book rows)
+- [x] Go and TypeScript clients ([`clients/go`](clients/go),
+      [`clients/typescript`](clients/typescript)), alongside the Python one.
+      Each runs its tests against a real `slate-serverd` started as a
+      subprocess — no mocks, because a mock agrees with the client's own
+      misunderstandings. Neither has a typed surface for joins or aggregates
+      yet; both say so
 - [x] A read-only head node. `Head::read_only` serves reads from replicas with
       no writer store at all, so a node that loses the campaign starts as a
       reader rather than fencing the healthy leader or refusing to run — which
@@ -702,9 +708,6 @@ Built and tested:
 
 Not built:
 
-- [ ] Go and TypeScript SDKs. The Python one is built
-      ([`clients/python`](clients/python)), and they no longer have to restate
-      the head node's startup by hand — `slate-serverd` is a real binary now
 - [ ] In-place promotion of a read-only node. A writer store is an opened
       database and may only be opened once the lease is won, so promotion is a
       restart — every request handler currently assumes the store it has is the
