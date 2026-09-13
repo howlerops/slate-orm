@@ -1,4 +1,11 @@
 /target
+
+# The Python client's test server is its own cargo workspace, so the root
+# `/target` rule does not reach its build output — 2.4k files and a 100 MB
+# binary, which GitHub refuses. Same root cause as the rot recorded in
+# 2026-09-13-python-grouped-join-and-a-rotted-testserver.md: being outside the
+# root workspace means the root's rules do not apply to it.
+clients/python/testserver/target/
 **/*.rs.bk
 
 # Python client
