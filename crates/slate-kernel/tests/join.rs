@@ -91,8 +91,8 @@ fn on_author() -> Join {
 
 fn open() -> SecurityCatalog {
     SecurityCatalog::new()
-        .grant(Grant::new("r", AUTHORS, Action::ALL))
-        .grant(Grant::new("r", BOOKS, Action::ALL))
+        .grant(Grant::new("r", AUTHORS, Action::EVERYTHING))
+        .grant(Grant::new("r", BOOKS, Action::EVERYTHING))
 }
 
 fn reader(tenant: u64) -> SecurityContext {
@@ -331,13 +331,13 @@ async fn a_policy_on_either_side_still_applies() {
         .policy(Policy::new(
             "uk_only",
             AUTHORS,
-            Action::ALL,
+            Action::EVERYTHING,
             |_: &SecurityContext| Expr::eq(author_col("country"), Value::Str("UK".into())),
         ))
         .policy(Policy::new(
             "early_books",
             BOOKS,
-            Action::ALL,
+            Action::EVERYTHING,
             |_: &SecurityContext| Expr::compare(book_col("id"), CmpOp::Lt, Value::U64(12)),
         ));
     let (store, _) = store(security).await;
@@ -422,7 +422,7 @@ async fn a_join_does_not_cross_tenants() {
 /// Reading with no grant is refused before anything is read, on either side.
 #[tokio::test]
 async fn a_join_needs_a_grant_on_both_tables() {
-    let only_authors = SecurityCatalog::new().grant(Grant::new("r", AUTHORS, Action::ALL));
+    let only_authors = SecurityCatalog::new().grant(Grant::new("r", AUTHORS, Action::EVERYTHING));
     let (store, _) = store(only_authors).await;
     let txn = store.begin().await.unwrap();
 
@@ -889,7 +889,7 @@ async fn an_outer_join_does_not_preserve_hidden_rows() {
     let security = open().policy(Policy::new(
         "uk_only",
         AUTHORS,
-        Action::ALL,
+        Action::EVERYTHING,
         |_: &SecurityContext| Expr::eq(author_col("country"), Value::Str("UK".into())),
     ));
     let (store, _) = store(security).await;

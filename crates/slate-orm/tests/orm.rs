@@ -199,7 +199,7 @@ fn f32_round_trips_but_refuses_to_narrow_lossily() {
 
 fn store() -> RecordStore<MemoryStore> {
     let catalog = Catalog::from_tables([User::table().clone()]).expect("catalog");
-    let security = SecurityCatalog::new().grant(Grant::new("member", USERS, Action::ALL));
+    let security = SecurityCatalog::new().grant(Grant::new("member", USERS, Action::EVERYTHING));
     RecordStore::new(MemoryStore::new(), catalog, security)
 }
 
@@ -513,8 +513,8 @@ fn two_table_store() -> RecordStore<MemoryStore> {
         MemoryStore::new(),
         catalog,
         SecurityCatalog::new()
-            .grant(Grant::new("member", User::table().id(), Action::ALL))
-            .grant(Grant::new("member", Post::table().id(), Action::ALL)),
+            .grant(Grant::new("member", User::table().id(), Action::EVERYTHING))
+            .grant(Grant::new("member", Post::table().id(), Action::EVERYTHING)),
     )
 }
 
@@ -688,9 +688,9 @@ async fn typed_chains_decode_every_table() {
         MemoryStore::new(),
         catalog,
         SecurityCatalog::new()
-            .grant(Grant::new("member", User::table().id(), Action::ALL))
-            .grant(Grant::new("member", Post::table().id(), Action::ALL))
-            .grant(Grant::new("member", Blog::table().id(), Action::ALL)),
+            .grant(Grant::new("member", User::table().id(), Action::EVERYTHING))
+            .grant(Grant::new("member", Post::table().id(), Action::EVERYTHING))
+            .grant(Grant::new("member", Blog::table().id(), Action::EVERYTHING)),
     );
     let ctx = context(1);
 

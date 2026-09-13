@@ -19,13 +19,14 @@
 )]
 
 use slate_kernel::{
-    Action, CmpOp, Expr, Grant, Principal, Query, RecordStore, SecurityCatalog, SecurityContext,
-    Statistics, memory::MemoryStore,
+    Action, CmpOp, Expr, Grant, Join, Principal, Query, RecordStore, SecurityCatalog,
+    SecurityContext, Statistics, memory::MemoryStore,
 };
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
 
 const PAYROLL: TableId = TableId(1);
+const DIRECTORY: TableId = TableId(2);
 const TENANT_A: u64 = 10;
 const TENANT_B: u64 = 20;
 
@@ -42,8 +43,27 @@ fn payroll() -> TableDef {
 
 const SALARY: Ordinal = Ordinal(2);
 
+/// A table Alice may explain freely, to join the restricted one to.
+fn directory() -> TableDef {
+    TableDef::builder("directory", DIRECTORY)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .build()
+        .expect("valid schema")
+}
+
+const DIRECTORY_ID: Ordinal = Ordinal(1);
+const PAYROLL_ID: Ordinal = Ordinal(1);
+
 fn security() -> SecurityCatalog {
     SecurityCatalog::new().grant(Grant::new("app", PAYROLL, [Action::Read]))
+}
+
+/// The same deployment, having decided its readers should keep `EXPLAIN`.
+fn security_granting_explain() -> SecurityCatalog {
+    SecurityCatalog::new().grant(Grant::new("app", PAYROLL, [Action::Read, Action::Explain]))
 }
 
 fn alice() -> SecurityContext {
@@ -60,8 +80,12 @@ fn secret_salaries() -> Vec<i64> {
 }
 
 async fn seeded() -> RecordStore<MemoryStore> {
+    seeded_with(security()).await
+}
+
+async fn seeded_with(security: SecurityCatalog) -> RecordStore<MemoryStore> {
     let catalog = Catalog::from_tables([payroll()]).expect("catalog");
-    let store = RecordStore::new(MemoryStore::new(), catalog, security());
+    let store = RecordStore::new(MemoryStore::new(), catalog, security);
     let root = SecurityContext::superuser();
     let txn = store.begin().await.unwrap();
     for (i, salary) in secret_salaries().into_iter().enumerate() {
@@ -87,32 +111,66 @@ async fn seeded() -> RecordStore<MemoryStore> {
     store.with_statistics(Statistics::new().with(PAYROLL, stats))
 }
 
-/// FINDING: tenant A can read tenant B's salaries out of `EXPLAIN`.
+/// Was the finding: tenant A read tenant B's salaries out of `EXPLAIN`.
+/// A plan is costed against statistics covering the whole table, so a caller
+/// who may `Read` is no longer thereby allowed to see one.
 #[tokio::test]
-async fn explain_recovers_a_value_from_a_tenant_the_caller_cannot_read() {
+async fn explain_is_refused_to_a_caller_holding_only_read() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
 
-    // The control: Alice can see nothing at all in this table.
+    // The control is unchanged: Alice can see nothing at all in this table.
     let visible = txn
         .count(&alice(), &payroll(), &Query::all())
         .await
         .unwrap();
     assert_eq!(visible, 0, "Alice should see none of tenant B's rows");
 
-    // The oracle: how many rows the planner thinks `salary >= v` reaches.
+    let refused = txn.explain(
+        &alice(),
+        &payroll(),
+        &Query::all().filter(Expr::compare(SALARY, CmpOp::Ge, Value::I64(1_000))),
+    );
+
+    let message = refused
+        .expect_err("a Read grant must no longer carry EXPLAIN")
+        .to_string();
+    assert!(
+        message.contains("explain"),
+        "the denial should name the action that was missing: {message}"
+    );
+    // The refusal must not leak what it refused to compute.
+    assert!(
+        !message.contains("1000") && !message.contains("1,000"),
+        "the denial must not echo the probe's literal: {message}"
+    );
+}
+
+/// What granting `Action::Explain` actually costs, stated as a test so that
+/// nobody grants it casually: the disclosure is gated, not removed. A caller
+/// who holds it recovers tenant B's smallest salary exactly, by binary search
+/// over an estimate derived from rows they cannot read.
+#[tokio::test]
+async fn granting_explain_reopens_the_recovery_in_full() {
+    let store = seeded_with(security_granting_explain()).await;
+    let txn = store.begin().await.unwrap();
+
+    let visible = txn
+        .count(&alice(), &payroll(), &Query::all())
+        .await
+        .unwrap();
+    assert_eq!(visible, 0, "Alice still reads none of tenant B's rows");
+
     let estimate = |v: i64| {
         txn.explain(
             &alice(),
             &payroll(),
             &Query::all().filter(Expr::compare(SALARY, CmpOp::Ge, Value::I64(v))),
         )
-        .unwrap()
+        .expect("the grant permits EXPLAIN")
         .estimated_rows
     };
 
-    // Binary search for the largest `v` whose estimate is still the maximum:
-    // that is the bottom of the distribution, which is a real salary.
     let low_estimate = estimate(0);
     let (mut lo, mut hi) = (0i64, 1_000_000i64);
     while lo < hi {
@@ -125,24 +183,65 @@ async fn explain_recovers_a_value_from_a_tenant_the_caller_cannot_read() {
     }
 
     let salaries = secret_salaries();
-    let smallest = *salaries.first().unwrap();
     assert_eq!(
-        lo, smallest,
-        "the estimate's first step should sit on tenant B's smallest salary"
+        lo,
+        *salaries.first().unwrap(),
+        "with the grant, the estimate's first step still sits on tenant B's \
+         smallest salary — this is the cost of reopening it"
     );
 
-    // And the whole shape is recoverable, not just one end: the estimate is
-    // strictly monotone across the range Alice cannot read.
     let across: Vec<f64> = (0..8).map(|i| estimate(1_000 + i * 240)).collect();
     assert!(
         across.windows(2).all(|w| w[0] > w[1]),
-        "the estimate traces tenant B's distribution: {across:?}"
+        "and the whole distribution is still traceable: {across:?}"
+    );
+}
+
+/// A join is explained per side, so a caller who may explain one table must
+/// not read the other's statistics by joining to it. Checking only the first
+/// table would leave exactly that open: Alice holds `Explain` on `directory`
+/// and only `Read` on `payroll`.
+#[tokio::test]
+async fn explain_on_one_table_does_not_carry_to_the_other_side_of_a_join() {
+    let security = SecurityCatalog::new()
+        .grant(Grant::new(
+            "app",
+            DIRECTORY,
+            [Action::Read, Action::Explain],
+        ))
+        .grant(Grant::new("app", PAYROLL, [Action::Read]));
+
+    let catalog = Catalog::from_tables([payroll(), directory()]).expect("catalog");
+    let store = RecordStore::new(MemoryStore::new(), catalog, security);
+    let txn = store.begin().await.unwrap();
+
+    // The permitted side alone explains, so the refusal below is about the
+    // other side rather than about EXPLAIN being off altogether.
+    txn.explain(&alice(), &directory(), &Query::all())
+        .expect("Alice holds Explain on directory");
+
+    let refused = txn.explain_join(
+        &alice(),
+        &directory(),
+        &payroll(),
+        &Join::equating(DIRECTORY_ID, PAYROLL_ID),
     );
 
-    // The top end too: the largest salary is where the estimate bottoms out.
-    let high = *salaries.last().unwrap();
+    let message = refused
+        .expect_err("joining to payroll must not borrow directory's grant")
+        .to_string();
     assert!(
-        estimate(high) > estimate(high + 1) || estimate(high + 1) <= estimate(high),
-        "sanity"
+        message.contains("payroll"),
+        "the denial should name the table that was missing the grant: {message}"
     );
+
+    // And in the other order, so the check cannot be passing merely because
+    // the restricted table happens to be second.
+    txn.explain_join(
+        &alice(),
+        &payroll(),
+        &directory(),
+        &Join::equating(PAYROLL_ID, DIRECTORY_ID),
+    )
+    .expect_err("nor with the restricted table first");
 }

@@ -235,6 +235,16 @@ cannot read still tells them how many there are. So does a `GROUP BY` key —
 a group for another user's id discloses that they have rows even with the rows
 withheld. `HAVING` and `analyze` are checked for the same reason.
 
+`analyze` is checked as a *read*, and passes: run under a policy it describes
+only the slice that policy admits. That is not what a deployed node does. The
+guidance in `record.rs` — analyse as a superuser, or the planner optimises for
+a table nobody is querying — means a real node's statistics describe every
+tenant, and a histogram bound is a value rather than a count. So the read path
+being clean does not make `EXPLAIN` clean, which is why explaining a plan is
+its own `Action::Explain` and not something a `read` grant carries. The
+demonstration, and what granting it back costs, are in
+`tests/security_probe_explain.rs`.
+
 Joins and chains keep their policy tests next to the rest of their behaviour,
 in `join.rs` and `chain.rs`.
 

@@ -52,7 +52,7 @@ fn row(tenant: u64, id: u64) -> Row {
 }
 
 fn open() -> SecurityCatalog {
-    SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL))
+    SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::EVERYTHING))
 }
 
 fn reader(tenant: u64) -> SecurityContext {
@@ -228,7 +228,7 @@ async fn a_row_policy_still_applies_to_a_point_get_set() {
     let security = open().policy(Policy::new(
         "small_only",
         NOTES,
-        Action::ALL,
+        Action::EVERYTHING,
         |_: &SecurityContext| Expr::compare(col("size"), CmpOp::Lt, Value::I64(10)),
     ));
     let (store, _) = store(security).await;

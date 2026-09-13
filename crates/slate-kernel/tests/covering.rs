@@ -81,7 +81,7 @@ async fn store(
 }
 
 fn open() -> SecurityCatalog {
-    SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL))
+    SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::EVERYTHING))
 }
 
 fn reader() -> SecurityContext {
@@ -195,7 +195,7 @@ async fn counting_through_an_index_reads_nothing() {
 async fn a_policy_on_an_uncovered_column_prevents_the_optimisation() {
     let owner = notes().ordinal_of("owner").expect("column");
     let security = SecurityCatalog::new()
-        .grant(Grant::new("r", NOTES, Action::ALL))
+        .grant(Grant::new("r", NOTES, Action::EVERYTHING))
         .policy(Policy::new(
             "own_notes",
             NOTES,

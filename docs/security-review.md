@@ -1,7 +1,7 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2, 5 and 6 are fixed and their
-> probes now assert the refusal; 3, 4, 7 and 8 are open. Each finding carries
+> **Status, later the same session.** Findings 1, 2, 3, 5 and 6 are fixed and
+> their probes now assert the refusal; 4, 7 and 8 are open. Each finding carries
 > its own status line below. The fixes are in the commits that reference this
 > file.
 
@@ -172,12 +172,24 @@ That closes the cross-tenant case entirely. The same-tenant, RLS-hidden case
 
 ## 3. `EXPLAIN` reads other tenants' values out of the planner's histograms
 
-**Status: OPEN, and the hardest of these.** Statistics have to be global to be
-correct — per-policy histograms would mis-optimise — so this is a design
-decision rather than a patch. The candidates are withholding `estimated_rows`
-from the wire, coarsening what `bounded_selectivity` reports, or gathering
-per-tenant statistics and accepting the plan quality cost. None is obviously
-right.
+**Status: FIXED by gating, not by removing the channel** — and the distinction
+matters enough that a test asserts it. Explaining a plan is now
+`Action::Explain`, a distinct action that `Action::ALL` deliberately excludes,
+so a `read` grant no longer carries it. The statistics stay global and nothing
+about planning or execution changed.
+
+The reopening knob is a grant rather than a flag, so it is per-role and
+per-table: `actions = ["all", "explain"]` in the daemon's TOML, or
+`everything`. `granting_explain_reopens_the_recovery_in_full` shows what that
+costs — the binary search still recovers tenant B's smallest salary exactly —
+so the cost is recorded next to the switch rather than in a commit message.
+
+Every table of a multi-table plan is checked, not just the first: an
+explanation reports an estimate per side, so a caller permitted to explain one
+table could otherwise read the other's statistics by joining to it. That case
+was found by mutation testing, not by design —
+`explain_on_one_table_does_not_carry_to_the_other_side_of_a_join` exists
+because gating only the first table passed the entire suite.
 
 **Impact: high — verbatim recovery of column values from tenants the caller
 cannot read a single row of.**

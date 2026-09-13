@@ -88,12 +88,12 @@ predicate = "kind <> 'forbidden'"
 [[security.grants]]
 role = "app"
 tables = ["docs"]
-actions = ["all"]
+actions = ["everything"]
 
 [[security.policies]]
 name = "big_enough"
 table = "docs"
-actions = ["read", "insert", "update", "delete"]
+actions = ["read", "insert", "update", "delete", "explain"]
 using = "size >= 10"
 "#;
 

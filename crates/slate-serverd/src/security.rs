@@ -113,8 +113,14 @@ fn table<'a>(catalog: &'a Catalog, name: &str, place: &str) -> Started<&'a Table
     })
 }
 
-/// Parse an action list. `all` is a spelling of the four, because writing them
-/// out is where a copied grant loses `delete` and nobody notices.
+/// Parse an action list.
+///
+/// `all` is a spelling of the four *data* actions, because writing them out is
+/// where a copied grant loses `delete` and nobody notices. It deliberately does
+/// not include `explain`: a plan is costed against statistics covering the
+/// whole table, so explaining a table whose rows a policy hides discloses
+/// those rows in summary. A deployment that wants its readers to keep `EXPLAIN`
+/// writes it: `actions = ["all", "explain"]`. `everything` is the shorthand.
 fn actions(names: &[String], place: &str) -> Started<Vec<Action>> {
     if names.is_empty() {
         return Err(Fault::at(
@@ -126,15 +132,18 @@ fn actions(names: &[String], place: &str) -> Started<Vec<Action>> {
     for name in names {
         match name.as_str() {
             "all" => out.extend(Action::ALL),
+            "everything" => out.extend(Action::EVERYTHING),
             "read" => out.push(Action::Read),
             "insert" => out.push(Action::Insert),
             "update" => out.push(Action::Update),
             "delete" => out.push(Action::Delete),
+            "explain" => out.push(Action::Explain),
             other => {
                 return Err(Fault::at(
                     place.to_owned(),
                     format!(
-                        "`{other}` is not an action; there are read, insert, update, delete and all"
+                        "`{other}` is not an action; there are read, insert, update, delete, \
+                         explain, all (the four data actions) and everything (those plus explain)"
                     ),
                 ));
             }

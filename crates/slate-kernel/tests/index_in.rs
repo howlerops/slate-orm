@@ -113,7 +113,7 @@ fn reader(tenant: u64) -> SecurityContext {
 
 async fn store() -> (RecordStore<LatencyStore<MemoryStore>>, Arc<IoCounters>) {
     let catalog = Catalog::from_tables([notes()]).expect("catalog");
-    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::ALL));
+    let security = SecurityCatalog::new().grant(Grant::new("r", NOTES, Action::EVERYTHING));
     let slow = LatencyStore::new(MemoryStore::new(), LatencyProfile::free());
     let counters = slow.counters();
     let store = RecordStore::new(slow, catalog, security);

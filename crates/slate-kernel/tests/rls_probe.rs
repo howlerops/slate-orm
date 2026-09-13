@@ -81,12 +81,16 @@ fn the_positional_ordinals_are_the_columns_they_claim() {
 
 fn security() -> SecurityCatalog {
     SecurityCatalog::new()
-        .grant(Grant::new("reader", DOCS, [Action::Read]))
-        .grant(Grant::new("reader", LOOKUPS, [Action::Read]))
+        .grant(Grant::new("reader", DOCS, [Action::Read, Action::Explain]))
+        .grant(Grant::new(
+            "reader",
+            LOOKUPS,
+            [Action::Read, Action::Explain],
+        ))
         .policy(Policy::new(
             "own_documents",
             DOCS,
-            Action::ALL,
+            Action::EVERYTHING,
             |ctx: &SecurityContext| Expr::eq(col("owner_id"), ctx.principal().id.clone()),
         ))
 }
@@ -696,7 +700,7 @@ async fn a_genuinely_covering_expression_scan_still_confines_the_tenant() {
     let store = RecordStore::new(
         MemoryStore::new(),
         catalog,
-        SecurityCatalog::new().grant(Grant::new("reader", DOCS, [Action::Read])),
+        SecurityCatalog::new().grant(Grant::new("reader", DOCS, [Action::Read, Action::Explain])),
     );
     let root = SecurityContext::superuser();
     let txn = store.begin().await.unwrap();

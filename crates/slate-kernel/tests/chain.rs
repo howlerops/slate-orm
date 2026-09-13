@@ -91,9 +91,9 @@ fn walk() -> Chain {
 
 fn open() -> SecurityCatalog {
     SecurityCatalog::new()
-        .grant(Grant::new("r", AUTHORS, Action::ALL))
-        .grant(Grant::new("r", BOOKS, Action::ALL))
-        .grant(Grant::new("r", PUBLISHERS, Action::ALL))
+        .grant(Grant::new("r", AUTHORS, Action::EVERYTHING))
+        .grant(Grant::new("r", BOOKS, Action::EVERYTHING))
+        .grant(Grant::new("r", PUBLISHERS, Action::EVERYTHING))
 }
 
 fn reader(tenant: u64) -> SecurityContext {
@@ -422,7 +422,7 @@ async fn a_policy_on_any_table_in_the_chain_applies() {
     let security = open().policy(Policy::new(
         "one_house",
         PUBLISHERS,
-        Action::ALL,
+        Action::EVERYTHING,
         |_: &SecurityContext| Expr::eq(p("house"), Value::Str("Harper".into())),
     ));
     let (store, _) = store(security).await;
@@ -443,8 +443,8 @@ async fn a_policy_on_any_table_in_the_chain_applies() {
 #[tokio::test]
 async fn a_chain_needs_a_grant_on_every_table() {
     let partial = SecurityCatalog::new()
-        .grant(Grant::new("r", AUTHORS, Action::ALL))
-        .grant(Grant::new("r", BOOKS, Action::ALL));
+        .grant(Grant::new("r", AUTHORS, Action::EVERYTHING))
+        .grant(Grant::new("r", BOOKS, Action::EVERYTHING));
     let (store, _) = store(partial).await;
     let defs = tables();
     let txn = store.begin().await.unwrap();

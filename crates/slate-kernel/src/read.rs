@@ -196,6 +196,28 @@ impl<'a> SecuredReads<'a> {
             .filter(|row| filter.admits(row)))
     }
 
+    /// Check the caller may see a *plan* for every table involved.
+    ///
+    /// Separate from the [`Action::Read`] each plan already authorises, and
+    /// checked on every table a multi-table plan touches rather than on the
+    /// first: an explanation reports an estimate per side, so a caller
+    /// permitted to explain one table would otherwise read statistics off the
+    /// other by joining to it.
+    ///
+    /// A plan is costed against statistics gathered over the whole table, so
+    /// its estimates describe rows the caller's row policy may hide. See
+    /// [`Action::Explain`].
+    pub(crate) fn authorize_explain(
+        self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+    ) -> Result<()> {
+        for table in tables {
+            self.security.authorize(context, table, Action::Explain)?;
+        }
+        Ok(())
+    }
+
     /// Plan `query` with the caller's security filter folded in.
     pub(crate) fn plan(
         self,

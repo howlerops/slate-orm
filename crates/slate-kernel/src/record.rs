@@ -573,6 +573,7 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         query: &Query,
     ) -> Result<Explanation> {
+        self.reads().authorize_explain(context, &[table])?;
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
     }
@@ -603,6 +604,7 @@ impl<'a> RecordTransaction<'a> {
         right: &TableDef,
         join: &Join,
     ) -> Result<JoinExplanation> {
+        self.reads().authorize_explain(context, &[left, right])?;
         let plan = self.reads().plan_join(context, left, right, join)?;
         Ok(JoinExplanation::of(left, right, &plan, join))
     }
@@ -628,6 +630,7 @@ impl<'a> RecordTransaction<'a> {
         tables: &[&TableDef],
         chain: &Chain,
     ) -> Result<ChainPlan> {
+        self.reads().authorize_explain(context, tables)?;
         let schema = JoinSchema::over(tables.iter().copied());
         self.reads().plan_chain(context, tables, chain, &schema)
     }
@@ -768,6 +771,15 @@ impl<'a> RecordTransaction<'a> {
     /// Statistics gathered under a restrictive policy describe that slice
     /// rather than the table, which would make the planner optimise for the
     /// wrong shape — analyse as a superuser unless you mean otherwise.
+    ///
+    /// Analysing as a superuser is therefore the recommendation, and it has a
+    /// consequence worth stating where the recommendation is: the resulting
+    /// histogram bounds are *values sampled from every tenant's rows*, and
+    /// every caller's plan is costed against them. That is why explaining a
+    /// plan is [`Action::Explain`] rather than something a reader may do —
+    /// a caller who can vary a literal and watch the estimate move can
+    /// recover those bounds. Statistics gathered per caller do not have the
+    /// problem and do have the planning one.
     ///
     /// Distinct values are counted exactly up to
     /// [`DISTINCT_TRACKING_LIMIT`]; a column with more than that is treated as
@@ -1958,6 +1970,7 @@ impl<'a> RecordSnapshot<'a> {
         table: &TableDef,
         query: &Query,
     ) -> Result<Explanation> {
+        self.reads().authorize_explain(context, &[table])?;
         let plan = self.reads().plan(context, table, query)?;
         Ok(Explanation::of(table, &plan, query))
     }
@@ -1988,6 +2001,7 @@ impl<'a> RecordSnapshot<'a> {
         right: &TableDef,
         join: &Join,
     ) -> Result<JoinExplanation> {
+        self.reads().authorize_explain(context, &[left, right])?;
         let plan = self.reads().plan_join(context, left, right, join)?;
         Ok(JoinExplanation::of(left, right, &plan, join))
     }
@@ -2013,6 +2027,7 @@ impl<'a> RecordSnapshot<'a> {
         tables: &[&TableDef],
         chain: &Chain,
     ) -> Result<ChainPlan> {
+        self.reads().authorize_explain(context, tables)?;
         let schema = JoinSchema::over(tables.iter().copied());
         self.reads().plan_chain(context, tables, chain, &schema)
     }

@@ -151,25 +151,25 @@ pub fn at(table: &TableDef, column: &str) -> slate_schema::Ordinal {
 /// the rows it owns.
 pub fn security() -> SecurityCatalog {
     SecurityCatalog::new()
-        .grant(Grant::new("app", DOCS, Action::ALL))
-        .grant(Grant::new("app", USERS, Action::ALL))
+        .grant(Grant::new("app", DOCS, Action::EVERYTHING))
+        .grant(Grant::new("app", USERS, Action::EVERYTHING))
         .policy(Policy::new(
             "own_rows",
             USERS,
-            Action::ALL,
+            Action::EVERYTHING,
             |context: &SecurityContext| {
                 let owner = users().ordinal_of("owner").expect("owner");
                 Expr::eq(owner, context.principal().id.clone())
             },
         ))
-        .grant(Grant::new("app", AUTHORS, Action::ALL))
-        .grant(Grant::new("app", BOOKS, Action::ALL))
-        .grant(Grant::new("app", SALES, Action::ALL))
+        .grant(Grant::new("app", AUTHORS, Action::EVERYTHING))
+        .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
+        .grant(Grant::new("app", SALES, Action::EVERYTHING))
         // Hides rows by who owns them.
         .policy(Policy::new(
             "own_authors",
             AUTHORS,
-            Action::ALL,
+            Action::EVERYTHING,
             |context: &SecurityContext| {
                 Expr::eq(at(&authors(), "owner"), context.principal().id.clone())
             },
@@ -179,13 +179,13 @@ pub fn security() -> SecurityCatalog {
         .policy(Policy::new(
             "modern_books",
             BOOKS,
-            Action::ALL,
+            Action::EVERYTHING,
             |_: &SecurityContext| Expr::compare(at(&books(), "year"), CmpOp::Ge, Value::I64(2000)),
         ))
         .policy(Policy::new(
             "real_sales",
             SALES,
-            Action::ALL,
+            Action::EVERYTHING,
             |_: &SecurityContext| Expr::compare(at(&sales(), "units"), CmpOp::Gt, Value::I64(0)),
         ))
 }

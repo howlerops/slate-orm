@@ -45,11 +45,42 @@ pub enum Action {
     Update,
     /// Removing rows.
     Delete,
+    /// Asking for a plan without running it.
+    ///
+    /// Separate from [`Action::Read`] because it is not a weaker version of
+    /// one. A plan is costed against statistics gathered over the *whole*
+    /// table, by design — per-policy histograms would make the planner
+    /// optimise for a table nobody is querying — so a plan's estimated
+    /// cardinality describes rows the caller may not read, and a caller who
+    /// can vary a literal and watch the estimate move can recover the
+    /// histogram bounds themselves, which are sampled values.
+    ///
+    /// A caller who can already read every row of a table learns nothing from
+    /// this. The grant exists for the case that is not true: a table-level
+    /// grant plus a row policy, which is the ordinary tenant arrangement.
+    Explain,
 }
 
 impl Action {
-    /// Every action, for granting blanket access.
+    /// Every action on *rows*, for granting blanket data access.
+    ///
+    /// Deliberately excludes [`Action::Explain`], which is not a data action:
+    /// it reads statistics describing rows the grantee's row policy may hide.
+    /// A deployment that wants its readers to keep `EXPLAIN` grants it
+    /// alongside this, which is the reopening knob and is per-role and
+    /// per-table rather than global. Including it here would mean every
+    /// existing blanket grant silently kept the disclosure, and a blanket
+    /// grant plus a row policy is precisely the arrangement that has it.
     pub const ALL: [Self; 4] = [Self::Read, Self::Insert, Self::Update, Self::Delete];
+
+    /// Every action, data and `EXPLAIN` alike.
+    pub const EVERYTHING: [Self; 5] = [
+        Self::Read,
+        Self::Insert,
+        Self::Update,
+        Self::Delete,
+        Self::Explain,
+    ];
 
     /// A human-readable name, used in error messages.
     #[must_use]
@@ -59,6 +90,7 @@ impl Action {
             Self::Insert => "insert",
             Self::Update => "update",
             Self::Delete => "delete",
+            Self::Explain => "explain",
         }
     }
 }
