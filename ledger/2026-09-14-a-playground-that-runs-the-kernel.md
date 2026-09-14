@@ -85,6 +85,21 @@ than a reader's connection.
 `site/check/quickstarts.py` still passes, so the page's existing code blocks
 were not disturbed.
 
+**On the deployed site**, the published bundle was downloaded and driven in
+Chromium: `Table Scan on books (rows=12 cost=1.60 decodes=[0,1,2,3])` and, with
+the projection narrowed, `Index Only Scan using by_author on books (rows=12
+cost=1.00 decodes=[1])`. No console or page errors. Served as
+`application/wasm`, gzipped to 589 KB over the wire.
+
+That verification had to be done that way for a reason worth recording: the
+published `slate_wasm_bg.wasm` is **not byte-identical** to a local build of
+the same commit. `index.html`, `style.css`, `playground.js` and `slate_wasm.js`
+all are; the wasm is not, because a Rust release build is not reproducible
+across machines by default. So "the live file is the file I tested" is not
+available as an argument, and the live file was fetched and executed instead.
+The CI job independently browser-checks its own build of each commit, which is
+the standing version of the same check.
+
 ## What this does not do
 
 Filters, sort, projection, limit, offset. No joins, aggregates or grouped
@@ -101,6 +116,12 @@ kernel and not in this panel.
 Nothing lazy-loads the bundle: 596 KiB is paid by every visitor to the landing
 page, including one who never touches the panel. Deferring it until the panel
 scrolls into view is a real improvement and is not done.
+
+The wasm is not reproducible: two builds of one commit differ. Nothing here
+needs it to be, since both are checked by running them, but it does mean a
+future "is the deployed bundle the audited one?" question cannot be answered
+with a checksum. `--remap-path-prefix` and a pinned toolchain would get most of
+the way there and were not attempted.
 
 The size budget is a number in a shell script, not a measurement of what a
 reader can tolerate. 900 KiB was chosen as "meaningfully above today's 596 with
