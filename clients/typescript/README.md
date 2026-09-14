@@ -108,10 +108,38 @@ cannot tell "no match" from "matched, and the columns are null".
 that as the reason, rather than counted here where the count could drift from
 the kernel's.
 
+## Schema checks
+
+Optional, and worth turning on. Declare a table and every request naming it
+carries a fingerprint the server checks:
+
+```ts
+const client = Client.connect(addr, identity).declaring({
+  books: {
+    name: "books",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "author_id", type: "u64" },
+      { name: "title", type: "string" },
+      { name: "year", type: "i64" },
+    ],
+    primaryKey: ["id"],
+  },
+});
+```
+
+This client resolves nothing from a declaration — the wire carries ordinals and
+always did. What it buys is the check. Declaring `{id, title, year}` for a table
+that is really `{id, year, title}` otherwise produces a client that reads titles
+as years, silently and forever; declared, the first request is refused.
+
+Per-table and opt-in: a table with no declaration sends no claim and behaves
+exactly as before.
+
 ## What is not here
 
-No vector similarity search, no `SchemaCheck` plumbing, no computed values in a
-query or a join input.
+No vector similarity search, and no computed values in a query or a join
+input.
 
 The proto is loaded at runtime by `@grpc/proto-loader` rather than compiled
 ahead of time, so there is no codegen step and no `protoc` needed to build

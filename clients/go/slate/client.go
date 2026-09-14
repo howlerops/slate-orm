@@ -80,6 +80,7 @@ type Client struct {
 	conn     *grpc.ClientConn
 	rpc      pb.RecordsClient
 	identity Identity
+	schemas  Schemas
 }
 
 // Dial connects to a head node at `target`.
@@ -97,6 +98,23 @@ func Dial(target string, identity Identity, opts ...grpc.DialOption) (*Client, e
 		return nil, fmt.Errorf("slate: dialling %s: %w", target, err)
 	}
 	return &Client{conn: conn, rpc: pb.NewRecordsClient(conn), identity: identity}, nil
+}
+
+// Declaring attaches table declarations, so every request naming one of them
+// carries a schema check.
+//
+// Optional and per-table: a table with no declaration sends no claim and is
+// served as before. Worth doing for any table whose column *order* this client
+// hard-codes, which is all of them — see [TableDef].
+func (c *Client) Declaring(schemas Schemas) *Client {
+	c.schemas = schemas
+	return c
+}
+
+// Schema is this client's declaration of a table, if it has one.
+func (c *Client) Schema(table string) (TableDef, bool) {
+	def, ok := c.schemas[table]
+	return def, ok
 }
 
 // Close releases the connection.
@@ -244,6 +262,7 @@ func (s *Session) Insert(ctx context.Context, table string, rows ...[]Value) (Wr
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return s.client.rpc.Insert(ctx, &pb.InsertRequest{
 			Table: table, Rows: rowsToProto(rows),
+			Schema: s.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -253,6 +272,7 @@ func (s *Session) Upsert(ctx context.Context, table string, rows ...[]Value) (Wr
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return s.client.rpc.Insert(ctx, &pb.InsertRequest{
 			Table: table, Rows: rowsToProto(rows), Upsert: true,
+			Schema: s.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -262,6 +282,7 @@ func (s *Session) Update(ctx context.Context, table string, rows ...[]Value) (Wr
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return s.client.rpc.Update(ctx, &pb.UpdateRequest{
 			Table: table, Rows: rowsToProto(rows),
+			Schema: s.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -271,6 +292,7 @@ func (s *Session) Delete(ctx context.Context, table string, keys ...[]Value) (Wr
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return s.client.rpc.Delete(ctx, &pb.DeleteRequest{
 			Table: table, PrimaryKeys: rowsToProto(keys),
+			Schema: s.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -285,6 +307,7 @@ func (s *Session) Get(ctx context.Context, table string, key []Value) ([]Value, 
 		Table:      table,
 		PrimaryKey: rowToProto(key),
 		Freshness:  s.freshness(),
+		Schema:     s.client.schemas.claimFor(table),
 	})
 	if err != nil {
 		return nil, false, fromRPC(err)
@@ -476,6 +499,7 @@ func (t *Transaction) Insert(ctx context.Context, table string, rows ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Insert(ctx, &pb.InsertRequest{
 			Transaction: t.id, Table: table, Rows: rowsToProto(rows),
+			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -485,6 +509,7 @@ func (t *Transaction) Upsert(ctx context.Context, table string, rows ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Insert(ctx, &pb.InsertRequest{
 			Transaction: t.id, Table: table, Rows: rowsToProto(rows), Upsert: true,
+			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -494,6 +519,7 @@ func (t *Transaction) Update(ctx context.Context, table string, rows ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Update(ctx, &pb.UpdateRequest{
 			Transaction: t.id, Table: table, Rows: rowsToProto(rows),
+			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -503,6 +529,7 @@ func (t *Transaction) Delete(ctx context.Context, table string, keys ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Delete(ctx, &pb.DeleteRequest{
 			Transaction: t.id, Table: table, PrimaryKeys: rowsToProto(keys),
+			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})
 }
@@ -511,6 +538,7 @@ func (t *Transaction) Delete(ctx context.Context, table string, keys ...[]Value)
 func (t *Transaction) Get(ctx context.Context, table string, key []Value) ([]Value, bool, error) {
 	response, err := t.session.client.rpc.Get(t.session.ctx(ctx), &pb.GetRequest{
 		Transaction: t.id, Table: table, PrimaryKey: rowToProto(key),
+		Schema: t.session.client.schemas.claimFor(table),
 	})
 	if err != nil {
 		return nil, false, fromRPC(err)

@@ -97,10 +97,38 @@ tell "no match" from "matched, and the columns are null".
 that as the reason, rather than counted here where the count could drift from
 the kernel's.
 
+## Schema checks
+
+Optional, and worth turning on. Declare a table and every request naming it
+carries a fingerprint the server checks:
+
+```go
+client := must(slate.Dial(addr, identity)).Declaring(slate.Schemas{
+    "books": {
+        Name: "books",
+        Columns: []slate.ColumnDef{
+            {Name: "id", Type: slate.TypeUint},
+            {Name: "author_id", Type: slate.TypeUint},
+            {Name: "title", Type: slate.TypeString},
+            {Name: "year", Type: slate.TypeInt},
+        },
+        PrimaryKey: []string{"id"},
+    },
+})
+```
+
+This client resolves nothing from a declaration — the wire carries ordinals and
+always did. What it buys is the check. Declaring `{id, title, year}` for a table
+that is really `{id, year, title}` otherwise produces a client that reads titles
+as years, silently and forever; declared, the first request is refused.
+
+Per-table and opt-in: a table with no declaration sends no claim and behaves
+exactly as before.
+
 ## What is not here
 
-No vector similarity search surface, no schema-check plumbing (`SchemaCheck`),
-no computed values in a `Query` or a join input.
+No vector similarity search surface, and no computed values in a `Query` or a
+join input.
 
 The Python client in `clients/python` is the fuller one; where the two
 disagree about the protocol, that is a bug in one of them rather than a

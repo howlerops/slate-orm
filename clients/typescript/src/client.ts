@@ -5,6 +5,7 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
 import { fromServiceError, SlateError } from "./errors.js";
+import { claimFor, type Schemas } from "./schema.js";
 import {
   applyGrouping,
   type Group,
@@ -154,10 +155,29 @@ function rowFromWire(row: unknown): Value[] {
 export class Client {
   readonly #raw: RawClient;
   readonly #identity: Identity;
+  #schemas: Schemas | undefined;
 
   private constructor(raw: RawClient, identity: Identity) {
     this.#raw = raw;
     this.#identity = identity;
+  }
+
+  /**
+   * Attach table declarations, so every request naming one carries a schema
+   * check.
+   *
+   * Optional and per-table: a table with no declaration sends no claim and is
+   * served as before. Worth doing for any table whose column *order* this
+   * client hard-codes, which is all of them — see `TableDef`.
+   */
+  declaring(schemas: Schemas): this {
+    this.#schemas = schemas;
+    return this;
+  }
+
+  /** @internal */
+  claim(table: string): Record<string, unknown> | undefined {
+    return claimFor(this.#schemas, table);
   }
 
   /**
@@ -317,22 +337,39 @@ export class Session {
 
   /** Add rows, refusing a primary key that is taken. */
   insert(table: string, ...rows: Value[][]): Promise<WriteResult> {
-    return this.#write("Insert", { table, rows: rows.map(rowToWire) });
+    return this.#write("Insert", {
+      table,
+      rows: rows.map(rowToWire),
+      schema: this.#client.claim(table),
+    });
   }
 
   /** Add rows, replacing any whose primary key is taken. */
   upsert(table: string, ...rows: Value[][]): Promise<WriteResult> {
-    return this.#write("Insert", { table, rows: rows.map(rowToWire), upsert: true });
+    return this.#write("Insert", {
+      table,
+      rows: rows.map(rowToWire),
+      upsert: true,
+      schema: this.#client.claim(table),
+    });
   }
 
   /** Replace rows, refusing one whose primary key is not there. */
   update(table: string, ...rows: Value[][]): Promise<WriteResult> {
-    return this.#write("Update", { table, rows: rows.map(rowToWire) });
+    return this.#write("Update", {
+      table,
+      rows: rows.map(rowToWire),
+      schema: this.#client.claim(table),
+    });
   }
 
   /** Remove rows by primary key. */
   delete(table: string, ...keys: Value[][]): Promise<WriteResult> {
-    return this.#write("Delete", { table, primaryKeys: keys.map(rowToWire) });
+    return this.#write("Delete", {
+      table,
+      primaryKeys: keys.map(rowToWire),
+      schema: this.#client.claim(table),
+    });
   }
 
   /**
@@ -350,6 +387,7 @@ export class Session {
       table,
       primaryKey: rowToWire(key),
       freshness: this.#freshness(),
+      schema: this.#client.claim(table),
     });
     this.#observeServedBy(response.servedBy);
     return response.found ? rowFromWire(response.row) : undefined;
@@ -526,6 +564,7 @@ export class Transaction {
       transaction: this.#id,
       table,
       rows: rows.map(rowToWire),
+      schema: this.#client.claim(table),
     });
   }
 
@@ -536,6 +575,7 @@ export class Transaction {
       table,
       rows: rows.map(rowToWire),
       upsert: true,
+      schema: this.#client.claim(table),
     });
   }
 
@@ -545,6 +585,7 @@ export class Transaction {
       transaction: this.#id,
       table,
       rows: rows.map(rowToWire),
+      schema: this.#client.claim(table),
     });
   }
 
@@ -554,6 +595,7 @@ export class Transaction {
       transaction: this.#id,
       table,
       primaryKeys: keys.map(rowToWire),
+      schema: this.#client.claim(table),
     });
   }
 
@@ -563,6 +605,7 @@ export class Transaction {
       transaction: this.#id,
       table,
       primaryKey: rowToWire(key),
+      schema: this.#client.claim(table),
     });
     return response.found ? rowFromWire(response.row) : undefined;
   }

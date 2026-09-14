@@ -86,3 +86,11 @@ export {
   type Grouping,
   type Group,
 } from "./join.js";
+export {
+  fingerprint,
+  ordinalOf,
+  type ColumnDef,
+  type ColumnType,
+  type Schemas,
+  type TableDef,
+} from "./schema.js";

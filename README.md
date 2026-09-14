@@ -661,8 +661,8 @@ Built and tested:
       [`clients/typescript`](clients/typescript)), alongside the Python one.
       Each runs its tests against a real `slate-serverd` started as a
       subprocess — no mocks, because a mock agrees with the client's own
-      misunderstandings. All three cover joins, grouped joins and ordered
-      groups; none covers computed values, vectors or schema checks
+      misunderstandings. All three cover joins, grouped joins, ordered groups
+      and schema checks; none covers computed values or vectors
 - [x] A read-only head node. `Head::read_only` serves reads from replicas with
       no writer store at all, so a node that loses the campaign starts as a
       reader rather than fencing the healthy leader or refusing to run — which

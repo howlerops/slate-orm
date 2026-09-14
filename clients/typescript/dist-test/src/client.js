@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { fromServiceError, SlateError } from "./errors.js";
+import { claimFor } from "./schema.js";
 import { applyGrouping, joinToWire, } from "./join.js";
 import { queryToWire } from "./query.js";
 import { valueFromWire, valueToWire } from "./value.js";
@@ -70,9 +71,26 @@ function rowFromWire(row) {
 export class Client {
     #raw;
     #identity;
+    #schemas;
     constructor(raw, identity) {
         this.#raw = raw;
         this.#identity = identity;
+    }
+    /**
+     * Attach table declarations, so every request naming one carries a schema
+     * check.
+     *
+     * Optional and per-table: a table with no declaration sends no claim and is
+     * served as before. Worth doing for any table whose column *order* this
+     * client hard-codes, which is all of them — see `TableDef`.
+     */
+    declaring(schemas) {
+        this.#schemas = schemas;
+        return this;
+    }
+    /** @internal */
+    claim(table) {
+        return claimFor(this.#schemas, table);
     }
     /**
      * Connect to a head node.
@@ -206,19 +224,36 @@ export class Session {
     }
     /** Add rows, refusing a primary key that is taken. */
     insert(table, ...rows) {
-        return this.#write("Insert", { table, rows: rows.map(rowToWire) });
+        return this.#write("Insert", {
+            table,
+            rows: rows.map(rowToWire),
+            schema: this.#client.claim(table),
+        });
     }
     /** Add rows, replacing any whose primary key is taken. */
     upsert(table, ...rows) {
-        return this.#write("Insert", { table, rows: rows.map(rowToWire), upsert: true });
+        return this.#write("Insert", {
+            table,
+            rows: rows.map(rowToWire),
+            upsert: true,
+            schema: this.#client.claim(table),
+        });
     }
     /** Replace rows, refusing one whose primary key is not there. */
     update(table, ...rows) {
-        return this.#write("Update", { table, rows: rows.map(rowToWire) });
+        return this.#write("Update", {
+            table,
+            rows: rows.map(rowToWire),
+            schema: this.#client.claim(table),
+        });
     }
     /** Remove rows by primary key. */
     delete(table, ...keys) {
-        return this.#write("Delete", { table, primaryKeys: keys.map(rowToWire) });
+        return this.#write("Delete", {
+            table,
+            primaryKeys: keys.map(rowToWire),
+            schema: this.#client.claim(table),
+        });
     }
     /**
      * Read one row by primary key.
@@ -231,6 +266,7 @@ export class Session {
             table,
             primaryKey: rowToWire(key),
             freshness: this.#freshness(),
+            schema: this.#client.claim(table),
         });
         this.#observeServedBy(response.servedBy);
         return response.found ? rowFromWire(response.row) : undefined;
@@ -391,6 +427,7 @@ export class Transaction {
             transaction: this.#id,
             table,
             rows: rows.map(rowToWire),
+            schema: this.#client.claim(table),
         });
     }
     /** Add or replace rows inside the transaction. */
@@ -400,6 +437,7 @@ export class Transaction {
             table,
             rows: rows.map(rowToWire),
             upsert: true,
+            schema: this.#client.claim(table),
         });
     }
     /** Replace rows inside the transaction. */
@@ -408,6 +446,7 @@ export class Transaction {
             transaction: this.#id,
             table,
             rows: rows.map(rowToWire),
+            schema: this.#client.claim(table),
         });
     }
     /** Remove rows by primary key inside the transaction. */
@@ -416,6 +455,7 @@ export class Transaction {
             transaction: this.#id,
             table,
             primaryKeys: keys.map(rowToWire),
+            schema: this.#client.claim(table),
         });
     }
     /** Read one row inside the transaction, seeing its uncommitted writes. */
@@ -424,6 +464,7 @@ export class Transaction {
             transaction: this.#id,
             table,
             primaryKey: rowToWire(key),
+            schema: this.#client.claim(table),
         });
         return response.found ? rowFromWire(response.row) : undefined;
     }

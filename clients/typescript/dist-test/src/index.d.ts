@@ -3,3 +3,4 @@ export { SlateError, isKind, LEADER_KEY, type Kind } from "./errors.js";
 export { type Value, nullValue, bool, bytes, str, int, uint, float, uuid, vector, valuesEqual, formatUuid, } from "./value.js";
 export { type Ordinal, type Expr, type Query, type SortKey, type Direction, alwaysTrue, alwaysFalse, eq, ne, lt, le, gt, ge, isNull, isNotNull, isIn, like, ilike, notLike, and, or, not, } from "./query.js";
 export { JoinBuilder, newJoin, at, key0, count, countOf, countDistinctOf, minOf, maxOf, sumOf, avgOf, groupKey, agg, groupEq, groupNe, groupLt, groupLe, groupGt, groupGe, type Column, type On, type JoinInput, type JoinQuery, type JoinType, type Algorithm, type Aggregate, type AggregateFunction, type GroupRef, type GroupSortKey, type Grouping, type Group, } from "./join.js";
+export { fingerprint, ordinalOf, type ColumnDef, type ColumnType, type Schemas, type TableDef, } from "./schema.js";

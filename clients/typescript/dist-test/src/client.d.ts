@@ -1,5 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import { SlateError } from "./errors.js";
+import { type Schemas } from "./schema.js";
 import { type Group, type Grouping, type JoinQuery } from "./join.js";
 import { type Query } from "./query.js";
 import { type Value } from "./value.js";
@@ -67,6 +68,17 @@ export interface Leadership {
 export declare class Client {
     #private;
     private constructor();
+    /**
+     * Attach table declarations, so every request naming one carries a schema
+     * check.
+     *
+     * Optional and per-table: a table with no declaration sends no claim and is
+     * served as before. Worth doing for any table whose column *order* this
+     * client hard-codes, which is all of them — see `TableDef`.
+     */
+    declaring(schemas: Schemas): this;
+    /** @internal */
+    claim(table: string): Record<string, unknown> | undefined;
     /**
      * Connect to a head node.
      *
