@@ -669,7 +669,11 @@ Built and tested:
       filter that silently skipped a binary, a checker leaning on ambient
       installs, and a readiness grep defeated by ANSI colour. Deploys: Pages
       publishes `site/` from `main`, and a tag builds `slate-serverd` for two
-      targets
+      targets and attaches them. The release *build* — both targets, the
+      aarch64 cross toolchain, and `--check` on the shipped binary against the
+      landing page's own TOML — runs on every push as well, so the one thing a
+      release workflow is usually first asked to do on release day is already
+      answered
 - [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
       `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the
       kernel. Not the same plan as explaining the read underneath: grouping

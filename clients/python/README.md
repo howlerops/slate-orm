@@ -140,6 +140,15 @@ asserted rather than trusted: `tests/test_generated.py` regenerates into a
 temporary directory and requires byte equality. Regenerate with
 `python scripts/generate_proto.py`.
 
+Which is why the generators are pinned to exact versions in the `dev` extra.
+The paragraph above objects to a wheel whose contents depend on which
+`grpcio-tools` the installing machine resolved — and with a `>=` pin the
+*freshness test* had that same dependency. It went red in CI with nothing
+changed in this repository, on a `grpcio-tools` release that emitted a
+different `_pb2_grpc.py`. Raising a pin is a deliberate change: bump it,
+regenerate, and commit the stubs together, so the diff shows what the new
+version did.
+
 Types come from `mypy-protobuf` rather than protoc's own `--pyi_out`, because
 protoc types the messages and leaves the *service stub* untyped — and an
 untyped stub is exactly the boundary where a wrong field name survives type

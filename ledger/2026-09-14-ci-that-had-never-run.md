@@ -146,6 +146,26 @@ column stops answering to its old names. Three mutations, each killed:
 never enumerating previous names, removing the cap, and dropping the current
 name from the front of the list.
 
+## Where the count ended up
+
+Eleven findings, all of them real, none reachable by reading the file:
+
+1. `bitnami/minio:latest` withdrawn upstream
+2. `minio/minio` denied on Docker Hub
+3. `--bin` filtering across two `-p` packages, silently
+4. the quickstart checker leaning on ambient installs
+5. a readiness grep defeated by ANSI colour
+6. three snippets sharing one primary key on one node
+7. the Python harness skipping — green — when cargo was absent
+8. install lines naming packages published nowhere
+9. `clippy::indexing_slicing` introduced after the last local run
+10. vite bound to `::1` while everything asked `127.0.0.1`
+11. committed protobuf stubs regenerating differently under a floating pin
+
+Plus two in the tooling written to support them: the pre-commit hook's
+mismatched heading checks, and the `paths:`-beside-`tags:` trap that would have
+made a tagged release publish nothing.
+
 ## What this does not do
 
 Pages needs **Settings → Pages → Source: GitHub Actions** turned on by hand
