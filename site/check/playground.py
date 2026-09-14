@@ -94,7 +94,37 @@ for (let i = 0; i < count; i++) await boxes.nth(i).check();
 await page.locator('[data-play="value"]').fill("not-a-number");
 const refused = await read();
 
+// 5. A write, and the index answering for it. The panel's whole claim about
+//    being a record layer rather than a query engine.
+await page.locator('[data-play="value"]').fill("2");
+const beforeWrite = await read();
+const fields = page.locator('[data-play="fields"] input');
+for (const [i, v] of ["9100", "2", "A New Book", "2001"].entries()) {
+  await fields.nth(i).fill(v);
+}
+await page.locator('[data-play="insert"]').click();
+const afterWrite = await read();
+
+// 6. Two conditions.
+await page.locator('[data-play="value"]').fill("1");
+await page.locator('[data-play="column2"]').selectOption({ index: 3 });
+await page.locator('[data-play="op2"]').selectOption("gt");
+await page.locator('[data-play="value2"]').fill("1970");
+const conjunction = await read();
+
+// 7. The join panel.
+await page.locator(".play-join summary").click();
+await page.locator('[data-play="groupby"]').selectOption("2");
+await page.locator('[data-play="runjoin"]').click();
+await page.waitForTimeout(300);
+const join = {
+  plan: await page.locator('[data-play="joinplan"]').innerText(),
+  status: await page.locator('[data-play="joinstatus"]').innerText(),
+  rows: await page.locator('[data-play="joinrows"] tbody tr').count(),
+};
+
 console.log(JSON.stringify({
+  beforeWrite, afterWrite, conjunction, join,
   initial, scan, covering, refused, problems,
   eagerlyFetched: eagerlyFetched.length,
   lazilyFetched: lazilyFetched.length,
@@ -191,6 +221,21 @@ def main() -> int:
         "and it is fetched once they do",
         seen["lazilyFetched"] >= 1,
         "the panel came up without fetching any wasm, which cannot be right",
+    )
+    check(
+        "an inserted row appears in the current query",
+        seen["afterWrite"]["rows"] == seen["beforeWrite"]["rows"] + 1,
+        f"{seen['beforeWrite']['rows']} then {seen['afterWrite']['rows']}",
+    )
+    check(
+        "a second condition narrows the result",
+        seen["conjunction"]["rows"] == 3,
+        f"Le Guin after 1970 should be three books, got {seen['conjunction']['rows']}",
+    )
+    check(
+        "the join panel groups and shows a join plan",
+        "Join" in seen["join"]["plan"] and seen["join"]["rows"] >= 1,
+        f"{seen['join']}",
     )
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")
 

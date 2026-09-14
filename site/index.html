@@ -316,6 +316,25 @@ actions = ["everything"]</code></pre>
         <label>value
           <input data-play="value" value="1" size="12">
         </label>
+        <label>and
+          <select data-play="column2"></select>
+        </label>
+        <label>op
+          <select data-play="op2">
+            <option value="">(none)</option>
+            <option value="eq">=</option>
+            <option value="ne">!=</option>
+            <option value="lt">&lt;</option>
+            <option value="le">&lt;=</option>
+            <option value="gt">&gt;</option>
+            <option value="ge">&gt;=</option>
+            <option value="like">like</option>
+            <option value="ilike">ilike</option>
+          </select>
+        </label>
+        <label>value
+          <input data-play="value2" size="12">
+        </label>
         <label>sort
           <select data-play="sort"></select>
         </label>
@@ -343,6 +362,43 @@ actions = ["everything"]</code></pre>
 
       <div class="play-rows" data-play="rows"></div>
       <div class="note" data-play="status"></div>
+
+      <div class="play-write">
+        <span>write</span>
+        <span data-play="fields"></span>
+        <button type="button" class="button" data-play="insert">insert</button>
+        <button type="button" class="plain" data-play="remove">delete by key</button>
+        <button type="button" class="plain" data-play="reset">reset</button>
+        <span class="note" data-play="wrote"></span>
+      </div>
+
+      <details class="play-join">
+        <summary>Join <code>authors</code> to <code>books</code>, and group it</summary>
+        <div class="play-controls">
+          <label>country
+            <input data-play="country" value="US" size="8">
+          </label>
+          <label>group by
+            <select data-play="groupby">
+              <option value="">(none — joined rows)</option>
+              <option value="2">authors.country</option>
+              <option value="1">authors.name</option>
+            </select>
+          </label>
+          <label>also compute
+            <select data-play="agg">
+              <option value="">count(*) only</option>
+              <option value="min">+ min(books.year)</option>
+              <option value="max">+ max(books.year)</option>
+            </select>
+          </label>
+          <button type="button" class="button" data-play="runjoin">run</button>
+        </div>
+        <div class="play-badges" data-play="joinbadges"></div>
+        <pre data-play="joinplan"></pre>
+        <div class="play-rows" data-play="joinrows"></div>
+        <div class="note" data-play="joinstatus"></div>
+      </details>
     </div>
 
     <noscript>
