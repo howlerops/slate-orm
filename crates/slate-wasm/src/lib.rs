@@ -249,6 +249,48 @@ impl Playground {
         serde_json::to_string(&tables).expect("the schema serialises")
     }
 
+    /// Insert a row, given one string per column.
+    ///
+    /// Strings because that is what an HTML form has, and because the parsing
+    /// is the interesting part: each is turned into the column's declared type
+    /// or refused. A `Str` written into a `U64` column would not fail at the
+    /// storage layer — the kernel's value order is type-first, so it would
+    /// sort among the strings and simply never match a numeric predicate.
+    #[must_use]
+    pub fn insert(&self, table: &str, values: &str) -> String {
+        match self.write(table, values, Write::Insert) {
+            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
+
+    /// Replace a row that already exists, by primary key.
+    #[must_use]
+    pub fn update(&self, table: &str, values: &str) -> String {
+        match self.write(table, values, Write::Update) {
+            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
+
+    /// Delete by primary key. `values` is the key alone, not a whole row.
+    #[must_use]
+    pub fn delete(&self, table: &str, key: &str) -> String {
+        match self.remove(table, key) {
+            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
+
+    /// Throw the database away and seed a fresh one.
+    ///
+    /// The panel needs this because a reader who deletes half the fixture and
+    /// reloads the page would otherwise get their own wreckage back — the
+    /// store lives in the tab, not on a server, so nothing else restores it.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     /// Run a query and return the rows and the plan.
     ///
     /// Errors come back as JSON `{"error": "..."}` rather than as a thrown
@@ -264,18 +306,100 @@ impl Playground {
     }
 }
 
+/// Which write, for the shared body below.
+#[derive(Clone, Copy)]
+enum Write {
+    Insert,
+    Update,
+}
+
 impl Playground {
+    /// `insert` and `update` differ by one call; everything before it —
+    /// finding the table, parsing a string per column against its declared
+    /// type — is the same, and duplicating it is how the two drift.
+    fn write(&self, table: &str, values: &str, which: Write) -> Result<String, String> {
+        let table = self.table(table)?;
+        let raw: Vec<String> = serde_json::from_str(values).map_err(|e| e.to_string())?;
+        if raw.len() != table.columns().len() {
+            return Err(format!(
+                "{} takes {} values, got {}",
+                table.name(),
+                table.columns().len(),
+                raw.len()
+            ));
+        }
+
+        let mut row = Vec::with_capacity(raw.len());
+        for (text, column) in raw.iter().zip(table.columns()) {
+            row.push(
+                literal(text, column.value_type())
+                    .map_err(|e| format!("{}: {e}", column.name()))?,
+            );
+        }
+        let row = Row::new(row);
+
+        block_on(async {
+            let txn = self.store.begin().await?;
+            match which {
+                Write::Insert => txn.insert(&self.context, &table, &row).await?,
+                Write::Update => txn.update(&self.context, &table, &row).await?,
+            }
+            txn.commit().await?;
+            Ok::<_, slate_kernel::KernelError>(())
+        })
+        .map_err(|e| e.to_string())?;
+
+        Ok(match which {
+            Write::Insert => "inserted".to_owned(),
+            Write::Update => "updated".to_owned(),
+        })
+    }
+
+    fn remove(&self, table: &str, key: &str) -> Result<String, String> {
+        let table = self.table(table)?;
+        let raw: Vec<String> = serde_json::from_str(key).map_err(|e| e.to_string())?;
+
+        let mut values = Vec::with_capacity(raw.len());
+        for (text, ordinal) in raw.iter().zip(table.primary_key()) {
+            let column = table
+                .column(*ordinal)
+                .ok_or_else(|| "the primary key names a column that is not there".to_owned())?;
+            values.push(
+                literal(text, column.value_type())
+                    .map_err(|e| format!("{}: {e}", column.name()))?,
+            );
+        }
+
+        let gone = block_on(async {
+            let txn = self.store.begin().await?;
+            let gone = txn.delete(&self.context, &table, &values).await?;
+            txn.commit().await?;
+            Ok::<_, slate_kernel::KernelError>(gone)
+        })
+        .map_err(|e| e.to_string())?;
+
+        Ok(if gone {
+            "deleted".to_owned()
+        } else {
+            "no row with that key".to_owned()
+        })
+    }
+
+    fn table(&self, name: &str) -> Result<TableDef, String> {
+        match name {
+            "authors" => Ok(fixture::authors()),
+            "books" => Ok(fixture::books()),
+            other => Err(format!("no such table: {other}")),
+        }
+    }
+
     /// The body of [`Playground::run`], with a real error type.
     ///
     /// Split out so the native test suite can assert on the failures rather
     /// than on their JSON rendering.
     fn answer(&self, spec: &str) -> Result<Answer, String> {
         let spec: QuerySpec = serde_json::from_str(spec).map_err(|e| e.to_string())?;
-        let table = match spec.table.as_str() {
-            "authors" => fixture::authors(),
-            "books" => fixture::books(),
-            other => return Err(format!("no such table: {other}")),
-        };
+        let table = self.table(&spec.table)?;
 
         let query = build(&spec, &table)?;
 

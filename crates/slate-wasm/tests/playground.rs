@@ -256,3 +256,175 @@ fn an_unknown_table_is_refused_by_name() {
             .contains("sales")
     );
 }
+
+/// A write, and the index answering for it without reading the row.
+///
+/// This is the assertion the whole crate exists to support. A query engine
+/// over a key-value store can filter rows; a *record layer* keeps the
+/// secondary index in step with every write, inside the same transaction, so
+/// that a row inserted a moment ago is reachable through the index alone.
+///
+/// The control is the index-only plan. Asserting merely that the new book
+/// comes back would pass against a store with no index at all — the table scan
+/// would find it. Requiring `Index Only Scan` means the answer came from the
+/// index entry, which exists only if the write maintained it.
+#[test]
+fn an_inserted_row_is_reachable_through_the_index_without_reading_it() {
+    let playground = Playground::new();
+
+    let covering = json!({
+        "table": "books",
+        "filter": { "column": 1, "op": "eq", "value": "2" },
+        "columns": [1],
+    });
+
+    let before = run(&playground, covering.clone());
+    assert!(
+        before["plan"]["indexOnly"].as_bool().expect("indexOnly"),
+        "the premise of this test is an index-only plan: {}",
+        before["plan"]["display"]
+    );
+    let was = before["returned"].as_u64().expect("a count");
+
+    let inserted: Json = serde_json::from_str(&playground.insert(
+        "books",
+        &json!(["9001", "2", "Numbers in the Dark", "1993"]).to_string(),
+    ))
+    .expect("JSON");
+    assert_eq!(inserted["ok"], json!("inserted"), "got {inserted}");
+
+    let after = run(&playground, covering);
+    assert!(
+        after["plan"]["indexOnly"].as_bool().expect("indexOnly"),
+        "still answered from the index alone"
+    );
+    assert_eq!(
+        after["returned"].as_u64().expect("a count"),
+        was + 1,
+        "the index gained an entry for the new row, inside the write"
+    );
+}
+
+#[test]
+fn a_deleted_row_leaves_no_index_entry_behind() {
+    let playground = Playground::new();
+    let covering = json!({
+        "table": "books",
+        "filter": { "column": 1, "op": "eq", "value": "1" },
+        "columns": [1],
+    });
+
+    let was = run(&playground, covering.clone())["returned"]
+        .as_u64()
+        .expect("a count");
+
+    let gone: Json =
+        serde_json::from_str(&playground.delete("books", &json!(["1"]).to_string())).expect("JSON");
+    assert_eq!(gone["ok"], json!("deleted"), "got {gone}");
+
+    let after = run(&playground, covering);
+    assert_eq!(
+        after["returned"].as_u64().expect("a count"),
+        was - 1,
+        "a dangling index entry would still be counted by an index-only scan"
+    );
+}
+
+#[test]
+fn an_update_moves_the_index_entry_rather_than_duplicating_it() {
+    let playground = Playground::new();
+    let under = |author: &str| {
+        json!({
+            "table": "books",
+            "filter": { "column": 1, "op": "eq", "value": author },
+            "columns": [1],
+        })
+    };
+
+    let first = run(&playground, under("1"))["returned"]
+        .as_u64()
+        .expect("a count");
+    let second = run(&playground, under("2"))["returned"]
+        .as_u64()
+        .expect("a count");
+
+    // Book 1 belongs to author 1; give it to author 2.
+    let moved: Json = serde_json::from_str(&playground.update(
+        "books",
+        &json!(["1", "2", "A Wizard of Earthsea", "1968"]).to_string(),
+    ))
+    .expect("JSON");
+    assert_eq!(moved["ok"], json!("updated"), "got {moved}");
+
+    assert_eq!(
+        run(&playground, under("1"))["returned"]
+            .as_u64()
+            .expect("a count"),
+        first - 1,
+        "the old entry has to go, or the row stays findable under an author it left"
+    );
+    assert_eq!(
+        run(&playground, under("2"))["returned"]
+            .as_u64()
+            .expect("a count"),
+        second + 1,
+        "and the new one has to exist"
+    );
+}
+
+#[test]
+fn a_duplicate_primary_key_is_refused_and_leaves_nothing_behind() {
+    let playground = Playground::new();
+    let clash: Json = serde_json::from_str(&playground.insert(
+        "books",
+        &json!(["1", "3", "Another Earthsea", "1970"]).to_string(),
+    ))
+    .expect("JSON");
+    assert!(
+        clash["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("primary key"),
+        "got {clash}"
+    );
+
+    // And the refusal did not half-apply: author 3's index entries are
+    // unchanged, so no entry was written before the key check refused.
+    let under_three = run(
+        &playground,
+        json!({
+            "table": "books",
+            "filter": { "column": 1, "op": "eq", "value": "3" },
+            "columns": [1],
+        }),
+    );
+    assert_eq!(under_three["returned"].as_u64().expect("a count"), 4);
+}
+
+#[test]
+fn a_write_with_a_wrong_typed_value_is_refused_by_column_name() {
+    let playground = Playground::new();
+    let bad: Json = serde_json::from_str(&playground.insert(
+        "books",
+        &json!(["9002", "not-an-author", "A Title", "1999"]).to_string(),
+    ))
+    .expect("JSON");
+    let message = bad["error"].as_str().expect("a refusal");
+    assert!(
+        message.contains("author_id"),
+        "the refusal should name the column: {message}"
+    );
+}
+
+#[test]
+fn reset_restores_the_fixture() {
+    let mut playground = Playground::new();
+    let _ = playground.delete("books", &json!(["1"]).to_string());
+    playground.reset();
+    let answer = run(&playground, json!({ "table": "books" }));
+    assert_eq!(
+        rows(&answer).len(),
+        4824,
+        "a fresh database, not the reader's wreckage"
+    );
+}
