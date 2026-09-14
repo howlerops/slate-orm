@@ -39,6 +39,19 @@ if (panel) {
       }
     }
 
+    // Default the filter to an indexed column when the table has one. The
+    // picker used to open on the first column, which for both fixture tables
+    // is the primary key, so the first plan a reader ever saw was a one-row
+    // Point Get: true, and the least interesting thing the planner does.
+    //
+    // It also disagreed with the prose directly above the panel, which tells
+    // the reader to filter on the indexed column and then narrow the
+    // projection. Opening there means step one is already done: the plan on
+    // screen is a table scan over 4,824 rows, and unchecking three boxes
+    // turns it index-only. That is the demonstration; `id = 1` was not.
+    const interesting = table.columns.find((c) => table.indexed.includes(c.ordinal));
+    if (interesting) el("column").value = String(interesting.ordinal);
+
     // Every column selected by default: that is the shape that *cannot* be
     // index-only, so the reader starts from the uninteresting plan and
     // narrows towards the interesting one.

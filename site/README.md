@@ -47,10 +47,17 @@ joins `authors` to `books` and groups the result.
 The bundle is fetched when the panel is scrolled to, or when the Load button is
 pressed — never on page load, so a reader who never scrolls here pays nothing.
 
+It sits second on the page, right after the quickstart, and both the header nav
+and the hero link to it. It used to sit fifth with nothing linking to it, and
+the first thing anyone said about it was to ask whether it had deployed at all.
+`site/check/playground.py` asserts the position and the link count, because a
+panel nobody can find is indistinguishable from one that never shipped.
+
 The most useful thing the panel shows is counter-intuitive: filtering on the
-indexed `author_id` still plans as a *table scan*. On object storage a point
-read costs about as much as scanning twenty-four thousand rows, so an index
-that still has to fetch rows loses. Narrow the columns to the indexed one and
+indexed `author_id` — where the picker opens, so it is the first plan on
+screen — still plans as a *table scan*. On object
+storage a point read costs about as much as scanning twenty-four thousand
+rows, so an index that still has to fetch rows loses. Narrow the columns to the indexed one and
 the plan becomes an index-only scan at two-thirds the cost. That is the whole
 argument for covering indexes, on the reader's own query.
 

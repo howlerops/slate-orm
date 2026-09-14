@@ -45,6 +45,21 @@ page.on("request", (r) => fetched.push(r.url()));
 
 await page.goto(url, { waitUntil: "load" });
 
+// Something a reader cannot reach may as well not be deployed: the panel was
+// the fifth section on the page with nothing linking to it, and the first
+// report of it was "I don't see the playground". These assert the two things
+// that made it findable, because both are one careless edit from regressing.
+const reachable = {
+  links: await page.locator('a[href="#playground"]').count(),
+  beforeTheProse: await page.evaluate(() => {
+    const play = document.querySelector("#playground");
+    const what = document.querySelector("#what");
+    if (!play || !what) return false;
+    // DOCUMENT_POSITION_FOLLOWING: #what comes after #playground.
+    return Boolean(play.compareDocumentPosition(what) & 4);
+  }),
+};
+
 // Deliberately *before* scrolling or clicking: at this point the panel is
 // below the fold and the wasm must not have been requested.
 await page.waitForTimeout(400);
@@ -73,8 +88,15 @@ const read = async () => {
   };
 };
 
-// 1. It loads and answers something.
+// 1. It loads and answers something. The column the picker opens on is read
+//    here rather than assumed: the default used to be the primary key, which
+//    made the first plan a one-row Point Get and the panel look like a
+//    lookup form rather than a planner.
 const initial = await read();
+initial.column = await page.locator('[data-play="column"]').inputValue();
+initial.columnLabel = await page
+  .locator('[data-play="column"] option:checked')
+  .innerText();
 
 // 2. Filtering on the indexed column, reading every column: a table scan,
 //    because the point reads an index scan implies cost more than the scan.
@@ -124,7 +146,7 @@ const join = {
 };
 
 console.log(JSON.stringify({
-  beforeWrite, afterWrite, conjunction, join,
+  beforeWrite, afterWrite, conjunction, join, reachable,
   initial, scan, covering, refused, problems,
   eagerlyFetched: eagerlyFetched.length,
   lazilyFetched: lazilyFetched.length,
@@ -186,6 +208,21 @@ def main() -> int:
         "the wasm module loads and the panel answers",
         seen["initial"]["rows"] > 0 and bool(seen["initial"]["plan"]),
         f"initial: {seen['initial']}",
+    )
+    check(
+        "the panel opens with the filter on an indexed column",
+        seen["initial"]["columnLabel"].endswith("·idx"),
+        f"opens on {seen['initial']['columnLabel']!r}, so the first plan is not a scan",
+    )
+    check(
+        "the page links to the playground, more than once",
+        seen["reachable"]["links"] >= 2,
+        f"{seen['reachable']['links']} link(s) to #playground",
+    )
+    check(
+        "and the playground comes before the prose sections",
+        seen["reachable"]["beforeTheProse"],
+        "#playground is below #what again; it was moved up for a reason",
     )
     check(
         "a filter on the indexed column plans as a table scan",

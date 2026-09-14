@@ -15,6 +15,7 @@
     <span class="name">slate</span>
     <nav>
       <a href="#quickstart">Quickstart</a>
+      <a href="#playground">Playground</a>
       <a href="#what">What it does</a>
       <a href="docs.html">Docs</a>
       <a href="https://github.com/howlerops/slate-orm">GitHub</a>
@@ -37,6 +38,7 @@
     </p>
     <div class="actions">
       <a class="button primary" href="#quickstart">Quickstart</a>
+      <a class="button" href="#playground">Run a query in your browser</a>
       <a class="button" href="https://github.com/howlerops/slate-orm">Read the source</a>
       <a class="button" href="https://github.com/howlerops/slate-orm/tree/main/examples/explorer">Run the demo</a>
     </div>
@@ -162,116 +164,6 @@ actions = ["everything"]</code></pre>
   </div>
 </section>
 
-<section id="what">
-  <div class="wrap">
-    <h2>What it does</h2>
-    <div class="grid">
-      <div class="card">
-        <h3>Rows on a KV store</h3>
-        <p>
-          An order-preserving tuple codec puts rows and secondary index entries
-          in one keyspace. Index maintenance is atomic with the write.
-        </p>
-      </div>
-      <div class="card">
-        <h3>A planner that costs</h3>
-        <p>
-          Table scans, index scans, point gets, ranges from <code>IN</code>
-          lists and <code>LIKE</code> prefixes, covering scans that never touch
-          a row, and histograms for range selectivity.
-        </p>
-      </div>
-      <div class="card">
-        <h3>Joins and aggregates</h3>
-        <p>
-          Hash and index nested-loop, cost-chosen, all four join types, chains
-          of three or more tables, grouped joins and grouped chains, ordered
-          and limited over groups.
-        </p>
-      </div>
-      <div class="card">
-        <h3>Security in the kernel</h3>
-        <p>
-          RBAC and row policies are compiled into the predicate the executor
-          evaluates and the bounds it scans — not checked by a wrapper a caller
-          could route around.
-        </p>
-      </div>
-      <div class="card">
-        <h3>One writer, many readers</h3>
-        <p>
-          A lease-fenced writer and read replicas, with read tokens so a
-          session never reads its own writes backwards.
-        </p>
-      </div>
-      <div class="card">
-        <h3>Three clients</h3>
-        <p>
-          Python, Go and TypeScript, tested against a real head node and
-          against <em>each other</em> — one contract, three SDKs, identical
-          answers.
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
-    <h2>How it is built</h2>
-    <p>
-      The interesting part of this project is not the feature list, it is the
-      evidence. Most of what is here exists because a test found it.
-    </p>
-    <ul class="plain">
-      <li><b>Oracles, not examples.</b> Every plan agrees with a full scan.
-        Every join algorithm agrees with every other. A grouped join agrees
-        with folding the join by hand. An n-way chain agrees with nested
-        two-way joins.</li>
-      <li><b>Mutation testing.</b> Changes are checked by breaking them and
-        requiring a <em>named</em> test to fail. Several tests exist only
-        because a mutation survived — and several of those revealed a test
-        whose assertion the bug also satisfied.</li>
-      <li><b>Crash and fault injection.</b> Torn writes, object-store failures,
-        overlapping writers across a lease change, and a restart suite over
-        the S3 path.</li>
-      <li><b>An adversarial security review</b>, with each finding either fixed
-        and pinned by a probe, or closed as inherent with the claim it
-        contradicted narrowed to the truth.</li>
-      <li><b>A ledger.</b> Every change carries an entry saying why it exists,
-        what it was weighed against, and where it stops. A pre-commit hook
-        refuses the commit otherwise.</li>
-    </ul>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
-    <h2>What it is not</h2>
-    <div class="callout">
-      <p>
-        <strong>Not production-proven.</strong> Nothing runs this in anger. The
-        correctness work is real and the operational track record is zero.
-      </p>
-      <p>
-        <strong>No SQL.</strong> Queries are built from typed client APIs.
-        There is no parser and no plan for one.
-      </p>
-      <p>
-        <strong>No in-place promotion</strong> of a read replica to writer —
-        promotion is a restart. No multi-writer. No cross-shard transactions,
-        because there is no sharding.
-      </p>
-      <p>
-        The repository's <a href="https://github.com/howlerops/slate-orm#readme">README</a>
-        keeps a list of what is not built, and it is kept honest: an item is
-        removed when it is built, or withdrawn in writing with the reasoning
-        that retired it.
-      </p>
-    </div>
-  </div>
-</section>
-
 <section id="playground">
   <div class="wrap">
     <h2>Run a query</h2>
@@ -282,9 +174,9 @@ actions = ["everything"]</code></pre>
       <code>EXPLAIN</code> it would return.
     </p>
     <p class="lead">
-      <code>books</code> has a secondary index on <code>author_id</code>.
-      Filter on it and watch the plan — then narrow the columns to just that
-      one and watch it change.
+      <code>books</code> has a secondary index on <code>author_id</code>, and
+      the filter already sits on it. Untick every column but that one and
+      watch the plan stop reading rows altogether.
     </p>
 
     <div class="play-start" data-play="start">
@@ -404,6 +296,116 @@ actions = ["everything"]</code></pre>
     <noscript>
       <p class="note">The playground needs JavaScript and WebAssembly.</p>
     </noscript>
+  </div>
+</section>
+
+<section id="what">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Rows on a KV store</h3>
+        <p>
+          An order-preserving tuple codec puts rows and secondary index entries
+          in one keyspace. Index maintenance is atomic with the write.
+        </p>
+      </div>
+      <div class="card">
+        <h3>A planner that costs</h3>
+        <p>
+          Table scans, index scans, point gets, ranges from <code>IN</code>
+          lists and <code>LIKE</code> prefixes, covering scans that never touch
+          a row, and histograms for range selectivity.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Joins and aggregates</h3>
+        <p>
+          Hash and index nested-loop, cost-chosen, all four join types, chains
+          of three or more tables, grouped joins and grouped chains, ordered
+          and limited over groups.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Security in the kernel</h3>
+        <p>
+          RBAC and row policies are compiled into the predicate the executor
+          evaluates and the bounds it scans — not checked by a wrapper a caller
+          could route around.
+        </p>
+      </div>
+      <div class="card">
+        <h3>One writer, many readers</h3>
+        <p>
+          A lease-fenced writer and read replicas, with read tokens so a
+          session never reads its own writes backwards.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Three clients</h3>
+        <p>
+          Python, Go and TypeScript, tested against a real head node and
+          against <em>each other</em> — one contract, three SDKs, identical
+          answers.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>How it is built</h2>
+    <p>
+      The interesting part of this project is not the feature list, it is the
+      evidence. Most of what is here exists because a test found it.
+    </p>
+    <ul class="plain">
+      <li><b>Oracles, not examples.</b> Every plan agrees with a full scan.
+        Every join algorithm agrees with every other. A grouped join agrees
+        with folding the join by hand. An n-way chain agrees with nested
+        two-way joins.</li>
+      <li><b>Mutation testing.</b> Changes are checked by breaking them and
+        requiring a <em>named</em> test to fail. Several tests exist only
+        because a mutation survived — and several of those revealed a test
+        whose assertion the bug also satisfied.</li>
+      <li><b>Crash and fault injection.</b> Torn writes, object-store failures,
+        overlapping writers across a lease change, and a restart suite over
+        the S3 path.</li>
+      <li><b>An adversarial security review</b>, with each finding either fixed
+        and pinned by a probe, or closed as inherent with the claim it
+        contradicted narrowed to the truth.</li>
+      <li><b>A ledger.</b> Every change carries an entry saying why it exists,
+        what it was weighed against, and where it stops. A pre-commit hook
+        refuses the commit otherwise.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What it is not</h2>
+    <div class="callout">
+      <p>
+        <strong>Not production-proven.</strong> Nothing runs this in anger. The
+        correctness work is real and the operational track record is zero.
+      </p>
+      <p>
+        <strong>No SQL.</strong> Queries are built from typed client APIs.
+        There is no parser and no plan for one.
+      </p>
+      <p>
+        <strong>No in-place promotion</strong> of a read replica to writer —
+        promotion is a restart. No multi-writer. No cross-shard transactions,
+        because there is no sharding.
+      </p>
+      <p>
+        The repository's <a href="https://github.com/howlerops/slate-orm#readme">README</a>
+        keeps a list of what is not built, and it is kept honest: an item is
+        removed when it is built, or withdrawn in writing with the reasoning
+        that retired it.
+      </p>
+    </div>
   </div>
 </section>
 
