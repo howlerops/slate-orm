@@ -79,7 +79,7 @@ with Client("127.0.0.1:7421", identity=Identity("u64:1", roles=["app"])) as clie
     query.where(query.c.year.ge(1960)).sort(desc(query.c.year)).limit(20)
     for row in session.query(query):
         print(row)</code></pre>
-        <div class="install">pip install slate-client &nbsp;·&nbsp; <code>clients/python</code></div>
+        <div class="install">pip install ./clients/python &nbsp;·&nbsp; not on PyPI yet</div>
       </div>
 
       <div data-panel="go" hidden>
@@ -98,7 +98,7 @@ rows, err := session.Query(ctx, slate.Query{
     Sort:   []slate.SortKey{{Column: 3, Direction: slate.Desc}},
     Limit:  slate.Limit(20),
 })</code></pre>
-        <div class="install">go get github.com/howlerops/slate-orm/clients/go &nbsp;·&nbsp; <code>clients/go</code></div>
+        <div class="install">go get github.com/howlerops/slate-orm/clients/go &nbsp;·&nbsp; a module path is its import path, so this one works today</div>
       </div>
 
       <div data-panel="ts" hidden>
@@ -120,7 +120,7 @@ for await (const row of session.query({
 })) {
   console.log(row);
 }</code></pre>
-        <div class="install">npm install @slate-orm/client &nbsp;·&nbsp; <code>clients/typescript</code></div>
+        <div class="install">npm install ./clients/typescript &nbsp;·&nbsp; not on npm yet</div>
       </div>
 
       <div data-panel="toml" hidden>

@@ -43,7 +43,7 @@ use slate_kernel::{
     JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric, Projection, ReadToken,
     ScanOrder, Side, TimeUnit,
 };
-use slate_kernel::{Chain, ChainPlan, ChainRow, Scalar};
+use slate_kernel::{Chain, ChainPlan, ChainRow, JoinSchema, Scalar};
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value};
 use tonic::Status;
@@ -2159,18 +2159,46 @@ pub fn grouped_explanation_to_proto(
     warnings: Vec<String>,
     served_by: pb::ServedBy,
 ) -> pb::AggregateExplainResponse {
+    // Named, not numbered. The first version of this printed the raw joined
+    // ordinals and the `Debug` form of each aggregate — `Group by [2]
+    // computing [Count, Max(Ordinal(6))]` — which is legible with the schema
+    // open beside it and meaningless without. The names are right here in
+    // `tables`, and this string is the one thing about a grouped plan a person
+    // reads first.
+    let schema = JoinSchema::over(tables.iter().copied());
+    let name_of = |joined: Ordinal| -> String {
+        let Some((position, at)) = schema.locate(joined) else {
+            return format!("#{}", joined.0);
+        };
+        match tables.get(position).and_then(|t| t.column(at)) {
+            // Qualified only when there is more than one input: `books.year`
+            // reads as noise on a single-table grouping, where every column is
+            // from the one table by construction.
+            Some(column) if tables.len() > 1 => {
+                format!("{}.{}", tables[position].name(), column.name())
+            }
+            Some(column) => column.name().to_owned(),
+            None => format!("#{}", joined.0),
+        }
+    };
+    let describe = |aggregate: &Aggregate| match aggregate {
+        Aggregate::Count => "count(*)".to_owned(),
+        Aggregate::CountColumn(c) => format!("count({})", name_of(*c)),
+        Aggregate::CountDistinct(c) => format!("count(distinct {})", name_of(*c)),
+        Aggregate::Min(c) => format!("min({})", name_of(*c)),
+        Aggregate::Max(c) => format!("max({})", name_of(*c)),
+        Aggregate::Sum(c) => format!("sum({})", name_of(*c)),
+        Aggregate::Avg(c) => format!("avg({})", name_of(*c)),
+    };
+
+    let keys: Vec<String> = grouping.group.iter().copied().map(name_of).collect();
     let heading = format!(
         "Group by [{}] computing [{}]",
-        grouping
-            .group
-            .iter()
-            .map(|ordinal| ordinal.0.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
+        keys.join(", "),
         grouping
             .aggregates
             .iter()
-            .map(|aggregate| format!("{aggregate:?}"))
+            .map(describe)
             .collect::<Vec<_>>()
             .join(", ")
     );

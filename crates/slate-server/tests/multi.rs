@@ -2361,6 +2361,19 @@ async fn explaining_a_grouped_join_is_not_explaining_the_join() {
         "the display does not say what is being grouped: {}",
         grouped.display
     );
+    // Named, and qualified because there are two inputs. A heading of raw
+    // ordinals — which is what this printed first — is unreadable without the
+    // schema open beside it, and this is the line a person reads first.
+    assert!(
+        grouped.display.contains("Group by [authors.name]"),
+        "the group key is not named: {}",
+        grouped.display
+    );
+    assert!(
+        grouped.display.contains("max(books.year)"),
+        "the aggregate is not named: {}",
+        grouped.display
+    );
     let _ = space;
 }
 
@@ -2449,6 +2462,18 @@ async fn explaining_a_grouped_table_answers_in_the_input_field() {
     let plan = answer.input.expect("a grouped table explains as a table");
     assert!(answer.join.is_none(), "the join field must stay unset");
     assert_eq!(plan.table, "books");
+    // Unqualified on a single table: every column is that table's by
+    // construction, and `books.author_id` there is noise.
+    assert!(
+        answer.display.contains("count(*)"),
+        "the aggregate is not named: {}",
+        answer.display
+    );
+    assert!(
+        !answer.display.contains("books."),
+        "a single-table grouping qualified its columns: {}",
+        answer.display
+    );
     assert!(
         answer.display.starts_with("Group by ["),
         "the display does not say what is being grouped: {}",

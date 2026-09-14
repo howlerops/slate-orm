@@ -111,7 +111,20 @@ for entry in $entries; do
 
     for heading in "What changed" "Why" "Alternatives rejected" "Evidence" \
                    "What this does not do"; do
-        if ! grep -qF "## $heading" "$entry"; then
+        # Anchored, and a prefix: `## Why the trigger mattered` is a Why
+        # section. The presence check used to be an unanchored substring while
+        # the body check below was an exact match, so a heading like that was
+        # *found* and then reported as "has `## Why` with nothing under it" —
+        # a message describing a state the file was not in.
+        #
+        # The `^` is the smaller half of the fix and the test suite cannot see
+        # it: without the anchor a line of prose mentioning `## Why` satisfies
+        # this check, the body extraction below then finds nothing, and the
+        # commit is refused either way — with a worse message. Behaviour
+        # identical, so no allow/refuse case can kill that mutation, and
+        # pretending otherwise would be the sort of thing this file exists to
+        # stop.
+        if ! grep -q "^## $heading" "$entry"; then
             printf '\n  %s is missing the "## %s" section.\n' "$entry" "$heading" >&2
             status=1
             continue
@@ -119,7 +132,7 @@ for entry in $entries; do
 
         # The lines under this heading, up to the next one.
         body=$(awk -v h="## $heading" '
-            $0 == h { inside = 1; next }
+            index($0, h) == 1 { inside = 1; next }
             /^## / { inside = 0 }
             inside { print }
         ' "$entry" | grep -vE '^[[:space:]]*$' || true)

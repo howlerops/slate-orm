@@ -69,6 +69,33 @@ def panels() -> dict[str, str]:
     return found
 
 
+INSTALL = re.compile(r'<div class="install">(.*?)(?:&nbsp;|</div>)', re.DOTALL)
+
+
+def check_install_lines() -> list[str]:
+    """The install line under each snippet names something that exists.
+
+    The page used to say `pip install slate-client` and `npm install
+    @slate-orm/client`. Neither package is published anywhere, so the first
+    command a reader runs fails — and this checker, which executes the *code*,
+    was satisfied because it installs the packages by path itself.
+
+    So the prose gets a check too, of the only kind that is cheap and certain:
+    an install line naming a local path must name a path that is really there.
+    A registry name is not verified here — that needs the network and a
+    decision about which registries count — but the two that were wrong are
+    now local paths, and if somebody switches them back to registry names on
+    the day the packages are published, this stops covering them and the
+    comment above says so.
+    """
+    problems = []
+    for line in INSTALL.findall((ROOT / "site" / "index.html").read_text()):
+        for word in re.findall(r"\./[\w./-]+", line):
+            if not (ROOT / word).exists():
+                problems.append(f"{word!r} in an install line does not exist")
+    return problems
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -308,7 +335,6 @@ def main() -> int:
     arguments = parser.parse_args()
 
     page = panels()
-    port = free_port()
     work = Path(tempfile.mkdtemp(prefix="slate-quickstart-"))
     failures: list[str] = []
 
@@ -324,16 +350,38 @@ def main() -> int:
         else:
             print(f"ok    the TOML on the page validates — {checked.stdout.strip()}")
 
-        # 2. The same TOML, storage swapped, actually started.
-        config = work / "run.toml"
-        config.write_text(runnable_toml(page["toml"], port))
-        node = Node(config, work / "head.log", port)
-        node.wait()
-        print(f"ok    a head node started from it on 127.0.0.1:{port}")
+        # The prose beside the code, to the extent it is checkable.
+        wrong = check_install_lines()
+        if wrong:
+            failures.append("install lines")
+            print("FAIL  an install line names something that is not there")
+            for problem in wrong:
+                print(f"        {problem}")
+        else:
+            print("ok    every install line naming a path names one that exists")
 
-        try:
-            wanted = arguments.only or sorted(CHECKS)
-            for name in wanted:
+        # 2. One node *per snippet*, each from the same TOML with storage
+        #    swapped.
+        #
+        #    Per snippet and not one shared node, because all three insert the
+        #    same primary key — which is right, they are three renderings of
+        #    one example — so on a shared node the first wins and the other two
+        #    get `already_exists`. This started as one node and passed, because
+        #    the three were only ever run one at a time with `--only`. The
+        #    first run of all three together, in CI, failed twice over.
+        #
+        #    A node each is also the more faithful thing: a reader following
+        #    the quickstart has an empty database, not one two other languages
+        #    have already written to.
+        wanted = arguments.only or sorted(CHECKS)
+        for name in wanted:
+            port = free_port()
+            config = work / f"run-{name}.toml"
+            config.write_text(runnable_toml(page["toml"], port))
+            node = Node(config, work / f"head-{name}.log", port)
+            node.wait()
+
+            try:
                 key = {"python": "py", "go": "go", "typescript": "ts"}[name]
                 snippet = substitute(page[key], port, name)
                 result = CHECKS[name](snippet, work)
@@ -347,9 +395,12 @@ def main() -> int:
                     print(f"FAIL  the {name} snippet ran but never printed {EXPECTED!r}")
                     print("\n".join("        " + line for line in output.rstrip().splitlines()))
                 else:
-                    print(f"ok    the {name} snippet inserts a row and reads it back")
-        finally:
-            node.stop()
+                    print(
+                        f"ok    the {name} snippet inserts a row and reads it back "
+                        f"(its own node on 127.0.0.1:{port})"
+                    )
+            finally:
+                node.stop()
     finally:
         if arguments.keep:
             print(f"\nscratch tree kept at {work}")

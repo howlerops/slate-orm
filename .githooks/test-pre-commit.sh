@@ -109,6 +109,16 @@ check 'echo x > src.txt
     refuse 'an entry missing a section'
 
 check 'echo x > src.txt
+       entry | sed "s/^## Why$/## Why this exists at all/" > ledger/2026-01-01-a.md
+       git add .' \
+    allow 'a heading that says more than the bare word'
+
+check 'echo x > src.txt
+       entry | sed "s/^## Why$/## Whyever not/" > ledger/2026-01-01-a.md
+       git add .' \
+    allow 'a heading that merely starts with it, which is close enough to accept'
+
+check 'echo x > src.txt
        entry > ledger/2026-01-01-a.md
        echo "One paragraph. The diff has the detail" >> ledger/2026-01-01-a.md
        git add .' \
