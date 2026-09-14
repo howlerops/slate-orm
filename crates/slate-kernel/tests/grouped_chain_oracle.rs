@@ -25,6 +25,7 @@
 )]
 
 use proptest::prelude::*;
+use slate_kernel::latency::{IoCounters, LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
     Action, Aggregate, Chain, ChainRow, Expr, Grant, Group, Grouping, Join, JoinSchema, JoinStep,
@@ -556,4 +557,166 @@ fn the_per_row_term_is_symmetric_so_grouping_cannot_flip_the_algorithm() {
             );
         }
     }
+}
+
+// --- does it actually narrow? ----------------------------------------------
+
+/// A counting store holding the same fixture, plus an index on `author_id`.
+///
+/// The oracle above proves the answer is right whatever is projected. This
+/// proves the projection is *narrow*, which is invisible to a correctness test
+/// and shows up only as reads that did not happen.
+async fn counted() -> (
+    RecordStore<LatencyStore<MemoryStore>>,
+    std::sync::Arc<IoCounters>,
+) {
+    let catalog = Catalog::from_tables(tables()).expect("catalog");
+    let backing = MemoryStore::new();
+    let loader = RecordStore::new(backing.clone(), catalog.clone(), SecurityCatalog::new());
+
+    let seeded_store = seeded().await;
+    let owned = tables();
+    let read = seeded_store.begin().await.unwrap();
+    let write = loader.begin().await.unwrap();
+    for table in &owned {
+        for row in read
+            .query(
+                &root(),
+                table,
+                Expr::True,
+                slate_kernel::ScanOrder::Ascending,
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+        {
+            write.insert(&root(), table, &row).await.unwrap();
+        }
+    }
+    write.commit().await.unwrap();
+
+    let counting = LatencyStore::new(backing, LatencyProfile::free());
+    let counters = counting.counters();
+    (RecordStore::new(counting, catalog, security()), counters)
+}
+
+/// A grouped chain reads no more of a table than something downstream takes
+/// out of it.
+///
+/// Yesterday this was the opposite: `grouped_chain` ran the caller's chain
+/// unnarrowed, so every step read every column and `COUNT(*)` over a chain
+/// could never be index-only. The doc comment said so and called the fix a
+/// transitive closure; it is one pass, because every reference is written in
+/// the absolute joined space.
+#[tokio::test]
+async fn a_grouped_chain_reads_only_what_something_downstream_needs() {
+    let (store, counters) = counted().await;
+    let at = schema();
+
+    // `books` is forced onto the index that holds `author_id` and nothing
+    // else. Covered, the entries answer outright; uncovered, each one costs a
+    // point read — which is what turns "narrowed" into a number.
+    let narrow_chain = || {
+        let mut one = JoinStep::equating(at.at(0, a("id")), b("author_id"));
+        one.query = slate_kernel::Query::all().using_index(IndexId(20));
+        Chain::start().join(one)
+    };
+
+    let owned = vec![authors(), books()];
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    // Grouping on the left table's id: nothing needs a book's row.
+    let by_author = Grouping::by([at.at(0, a("id"))], &[Aggregate::Count]);
+    let txn = store.begin().await.unwrap();
+    counters.reset();
+    let groups = txn
+        .group_by_chain(&reader(), &refs, &narrow_chain(), &by_author)
+        .await
+        .unwrap();
+    let covered = counters.gets();
+    assert!(!groups.is_empty(), "premise: the chain produces groups");
+
+    // The control: an aggregate over a column only the row holds.
+    let with_year = Grouping::by(
+        [at.at(0, a("id"))],
+        &[Aggregate::Count, Aggregate::Max(at.at(1, b("year")))],
+    );
+    counters.reset();
+    let widened = txn
+        .group_by_chain(&reader(), &refs, &narrow_chain(), &with_year)
+        .await
+        .unwrap();
+    let uncovered = counters.gets();
+
+    assert_eq!(
+        widened.len(),
+        groups.len(),
+        "the two groupings differ in what they compute, not in what they group"
+    );
+    assert!(
+        covered < uncovered,
+        "a grouping needing nothing from the book row should read fewer rows \
+         than one needing `year`: {covered} vs {uncovered}"
+    );
+}
+
+/// Narrowing must not read away a column a *later step* still needs.
+///
+/// This is the case that makes a chain different from a two-table join, and the
+/// reason the narrowing gathers columns from every step rather than from the
+/// grouping. A step's `having` naming the first table has to survive a
+/// projection chosen for a grouping that does not mention it.
+#[tokio::test]
+async fn narrowing_keeps_a_column_a_later_step_names() {
+    let store = seeded().await;
+    let at = schema();
+    let owned = tables();
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    // The last step's condition names `authors.name` — a column the grouping
+    // never mentions, and which a naive narrowing would drop.
+    let mut first = JoinStep::equating(at.at(0, a("id")), b("author_id"));
+    first.join_type = JoinType::Inner;
+    let mut second = JoinStep::equating(at.at(1, b("publisher_id")), p("id"));
+    // `> "N"` keeps Ursula, whose two books have publishers that exist. `< "N"`
+    // would keep only Iain, whose one book names a publisher that does not, so
+    // the inner join would drop it and the test would prove nothing.
+    second.having = Expr::compare(
+        at.at(0, a("name")),
+        slate_kernel::CmpOp::Gt,
+        Value::Str("N".to_owned()),
+    );
+    let chain = Chain::start().join(first).join(second);
+
+    let grouping = Grouping::by([at.at(2, p("house"))], &[Aggregate::Count]);
+    let got = sorted(rt_grouped(&store, &refs, &chain, &grouping).await);
+
+    // The same question, answered by folding the chain's own rows — which are
+    // produced by the *unnarrowed* path, so a column read away by narrowing
+    // shows up as a disagreement rather than as an error.
+    let rows = chain_rows(&store, &chain).await;
+    let expected = fold(&rows, &[at.at(2, p("house"))], &[Aggregate::Count]);
+
+    assert_eq!(
+        got, expected,
+        "narrowing dropped a column the last step's `having` needed"
+    );
+    assert!(
+        !expected.is_empty(),
+        "premise: the condition keeps at least one row"
+    );
+}
+
+async fn rt_grouped(
+    store: &RecordStore<MemoryStore>,
+    refs: &[&TableDef],
+    chain: &Chain,
+    grouping: &Grouping,
+) -> Vec<Group> {
+    let txn = store.begin().await.unwrap();
+    txn.group_by_chain(&reader(), refs, chain, grouping)
+        .await
+        .unwrap()
 }

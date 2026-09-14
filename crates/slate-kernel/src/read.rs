@@ -109,6 +109,84 @@ fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join 
     narrowed
 }
 
+/// The chain to run for a grouped read: every step reading only the columns
+/// something downstream will take *out of its row*.
+///
+/// The two-table version, [`narrowed_join`], has one condition and knows it up
+/// front. A chain does not: a step's `having` may name any table read before
+/// it, and a step's join key names an earlier table in the joined space. So the
+/// set of columns a table must produce is gathered from every step, not from
+/// the grouping alone. Narrowing to the grouping's columns and stopping there
+/// reads away a column a later step still needs, and the symptom is a null
+/// rather than an error.
+///
+/// What has to survive, per table:
+///
+/// - the grouping's columns, in the joined space;
+/// - every step's `having` columns, also joined-space, because the condition is
+///   evaluated over the accumulated row after the pair is formed;
+/// - every step's join keys — the `left` side in the joined space, the `right`
+///   side already in that step's own ordinals.
+///
+/// A `filter` needs nothing here: the projection says what a row *carries*, and
+/// the planner computes what to *decode* from the secured predicate, so a
+/// filter on an unprojected column still works. That is late materialisation
+/// doing its job, and it is why this list is shorter than it looks.
+///
+/// This was described in yesterday's note as needing "the transitive closure of
+/// every step's references". It does not. Every reference is written in the
+/// joined space, which is absolute — needing column 7 does not create a need
+/// for some other column — so one pass collects them all. The closure was a
+/// worry about a shape the design does not have.
+fn narrowed_chain(chain: &Chain, schema: &JoinSchema, grouping: &Grouping) -> Chain {
+    let mut wanted: Vec<BTreeSet<Ordinal>> = vec![BTreeSet::new(); schema.len()];
+    let mut want = |joined: Ordinal, into: &mut Vec<BTreeSet<Ordinal>>| {
+        // Outside the joined space: nothing to read for it, and it reads as
+        // null on every path alike. Same rule the two-table version applies.
+        if let Some((position, at)) = schema.locate(joined) {
+            if let Some(set) = into.get_mut(position) {
+                set.insert(at);
+            }
+        }
+    };
+
+    for ordinal in grouping.columns() {
+        want(ordinal, &mut wanted);
+    }
+    for (index, step) in chain.steps.iter().enumerate() {
+        // Step `index` adds the table at position `index + 1`; the first table
+        // is the chain's own `first`.
+        let position = index + 1;
+        for ordinal in step.having.columns() {
+            want(ordinal, &mut wanted);
+        }
+        for key in &step.on {
+            want(key.left, &mut wanted);
+            if let Some(set) = wanted.get_mut(position) {
+                set.insert(key.right);
+            }
+        }
+    }
+
+    let mut narrowed = chain.clone();
+    if let Some(first) = wanted.first() {
+        narrowed.first.projection = Projection::Columns(first.iter().copied().collect());
+    }
+    for (index, step) in narrowed.steps.iter_mut().enumerate() {
+        if let Some(set) = wanted.get(index + 1) {
+            step.query.projection = Projection::Columns(set.iter().copied().collect());
+        }
+    }
+
+    // And the window goes, for the reason `narrowed_join` gives at length:
+    // aggregating a windowed subset of an unordered result is not a meaningful
+    // request, and leaving it in made two join algorithms disagree about the
+    // same grouped join. A chain has no order either.
+    narrowed.limit = None;
+    narrowed.offset = 0;
+    narrowed
+}
+
 /// A row as it is stored: its key already decoded, its body still bytes.
 ///
 /// Kept undecoded so the executor can filter on a few columns before paying to
@@ -356,16 +434,10 @@ impl<'a> SecuredReads<'a> {
     /// space [`JoinSchema::over`] defines, so a group key may name any table in
     /// the chain and every step's security still applies.
     ///
-    /// Unlike the two-table case this does **not** narrow each step's
-    /// projection to what the grouping needs. A step's condition may name any
-    /// earlier table, so the set of columns a step depends on is not the set
-    /// the grouping asks for, and narrowing to the latter would read away a
-    /// column a later step's `having` still needs. The two-table version can
-    /// narrow because there is exactly one condition and it is known up front.
-    /// Doing this properly means computing the transitive closure of every
-    /// step's references, which is worth doing and is not done here — so a
-    /// grouped chain reads wider than a grouped join, and `COUNT(*)` over one
-    /// does not get the index-only treatment.
+    /// Each step reads only the columns something downstream takes out of its
+    /// row — see [`narrowed_chain`], which gathers them from every step rather
+    /// than from the grouping alone, because a step's condition may name any
+    /// table read before it.
     pub(crate) async fn grouped_chain(
         self,
         context: &SecurityContext,
@@ -374,9 +446,10 @@ impl<'a> SecuredReads<'a> {
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
         let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
-        let plan = self.plan_chain(context, tables, chain, &schema)?;
+        let narrowed = narrowed_chain(chain, &schema, grouping);
+        let plan = self.plan_chain(context, tables, &narrowed, &schema)?;
         let mut cursor =
-            chain::run(self, context, tables, chain, &plan, Arc::clone(&schema)).await?;
+            chain::run(self, context, tables, &narrowed, &plan, Arc::clone(&schema)).await?;
 
         let mut grouper = Grouper::with_limits(grouping, self.limits);
         while let Some(row) = cursor.next().await? {
