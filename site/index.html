@@ -14,6 +14,10 @@
   <span class="name">slate</span>
   <span class="what">query workbench</span>
   <span class="engine" data-app="engine">starting…</span>
+  <div class="modes" role="tablist" aria-label="view">
+    <button type="button" role="tab" data-mode="query" aria-selected="true">Query</button>
+    <button type="button" role="tab" data-mode="storage" aria-selected="false">Storage</button>
+  </div>
   <nav>
     <a href="docs.html" class="button primary">Docs</a>
     <a href="https://github.com/howlerops/slate-orm" class="button">GitHub</a>
@@ -53,6 +57,10 @@
         Writes land in this tab only. Reload, or press <b>Reset data</b>, to
         get the fixture back.
       </p>
+      <p>
+        The <b>Storage</b> tab shows what is actually stored: every row and
+        index entry as a key, and the real S3 bucket those keys land in.
+      </p>
     </div>
   </aside>
 
@@ -79,7 +87,6 @@ SELECT pickup_zone, count(*) FROM trips
       <button type="button" role="tab" data-tab="results" aria-selected="true">Results</button>
       <button type="button" role="tab" data-tab="plan" aria-selected="false">Plan</button>
       <button type="button" role="tab" data-tab="spec" aria-selected="false">Spec</button>
-      <button type="button" role="tab" data-tab="keyspace" aria-selected="false">Keyspace</button>
       <button type="button" role="tab" data-tab="log" aria-selected="false">Log</button>
     </div>
 
@@ -102,29 +109,39 @@ SELECT pickup_zone, count(*) FROM trips
         <pre data-app="spec"></pre>
       </div>
 
-      <div data-pane="keyspace" class="pane" hidden>
-        <p class="note">
-          What is actually stored. Rows and secondary index entries live in
-          <b>one ordered key space</b> — there is no separate index structure —
-          and an object store has no folders, so the paths below are prefixes
-          rendered as if they were. The byte columns give that away: a
-          directory does not have a size.
-        </p>
-        <div class="keyspace" data-app="keyspace"></div>
-
-        <p class="note">
-          Those keys are not what an operator sees. SlateDB batches them into
-          SSTs, a write-ahead log and a manifest, and <em>that</em> is what
-          lands in the bucket. The listing below is a real one, taken by
-          seeding this same 100,000-trip sample into a real SlateDB store over
-          a real object store —
-          <code>cargo run -p slate-slatedb --example bucket_layout</code>.
-        </p>
-        <div class="bucket" data-app="bucket"></div>
-      </div>
-
       <div data-pane="log" class="pane" hidden>
         <div class="log" data-app="log"></div>
+      </div>
+    </div>
+  </section>
+  <section class="storage" hidden>
+    <div class="storage-head">
+      <h2>Every byte this database holds</h2>
+      <p>
+        Two views of the same data. The <b>keyspace</b> is what the record
+        layer writes: one ordered key space, rows under one prefix and
+        secondary index entries under another — there is no separate index
+        structure. The <b>bucket</b> is what an operator sees: SlateDB batches
+        those keys into SSTs, a write-ahead log and a manifest, and the object
+        store holds files.
+      </p>
+      <p class="note">
+        The keyspace below is read live from the store in this tab, so it moves
+        when you insert a row. The bucket listing is a real one, captured by
+        seeding this same 100,000-trip sample into a real SlateDB store over a
+        real object store —
+        <code>cargo run -p slate-slatedb --example bucket_layout</code> — and
+        shipped with the page. There is no SlateDB in a browser.
+      </p>
+    </div>
+    <div class="storage-panes">
+      <div class="storage-col">
+        <div class="storage-caption">keyspace <span data-app="keytotal"></span></div>
+        <div class="tree-storage" data-app="keyspace"></div>
+      </div>
+      <div class="storage-col">
+        <div class="storage-caption">bucket <span data-app="buckettotal"></span></div>
+        <div class="bucket" data-app="bucket"></div>
       </div>
     </div>
   </section>

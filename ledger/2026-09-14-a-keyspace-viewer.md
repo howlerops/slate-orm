@@ -1,4 +1,4 @@
-# A folder view of the keyspace, and a real bucket listing beside it
+# A folder view of the whole database, and the real bucket beside it
 
 - **Date:** 2026-09-14
 - **Author:** Claude (agent session), at the request of the repository owner
@@ -10,12 +10,15 @@
 
 ## What changed
 
-A **Keyspace** tab in the workbench, showing two things.
+A **Storage** view — a top level of the application, switched from the header
+beside Query, not a tab inside the results pane — showing two things.
 
-The first is the live keyspace: one prefix per table and one per index, with
-key counts, byte totals, and three real keys per prefix in hex beside what they
-decode to. It reads the store's own committed map through a cloned
-`MemoryStore` handle, so it moves when the reader inserts a row.
+The first is the live keyspace as a folder tree: `rows/` and `index/`, a
+folder per table or index under each, and opening one pages through the real
+keys twenty-five at a time — in the order the store holds them, with what each
+decodes to and how many bytes its value takes. It reads the store's own
+committed map through a cloned `MemoryStore` handle, so it moves when the
+reader inserts a row.
 
 The second is a real bucket listing — the SSTs, WAL, manifests and compaction
 records SlateDB writes — captured by a new example that seeds the site's own
@@ -61,8 +64,17 @@ store handle, and wrong the moment a reader inserts a row. A keyspace viewer
 that does not move when the data moves is worse than no viewer — it teaches
 something false about the one property it exists to demonstrate.
 
-**Render every key, not three per prefix.** 210,319 keys is not a panel, it is
-a hex dump. Three is enough to see the prefix repeat and the suffix advance.
+**Render every key at once.** 210,319 keys is not a view, it is a hex dump
+that locks the tab. Twenty-five at a time with a pager, fetched when a folder
+is opened rather than eagerly — each fetch walks the whole store, and opening
+six folders eagerly would walk it six times before the reader asked for
+anything.
+
+**Leave it as a tab in the results pane.** That is where it was first built and
+where the owner did not find it: "I want a top level view of the ENTIRE DB".
+A storage browser sharing a pane with query results is a storage browser
+nobody opens, and the pane is a third of the window. As a mode it gets the
+whole width, which a tree of keys needs.
 
 **Re-implement the key layout in JavaScript.** The hex split and the decode go
 through the kernel's own `decode_row_key` and `decode_index_entry`. A second
@@ -118,8 +130,10 @@ is true and the total is not the steady-state size on disk.
 **It is one bucket at one moment.** No compaction over time, no second writer,
 no fencing, none of the things `docs/topology.md` is about.
 
-**Three sample keys per prefix, always the first three in order.** No paging,
-no search, no way to look up a particular row's key.
+**Paging is forward-only and starts from the top.** No search, no jump to a
+key, no way to look up a particular row's entry — and paging deep into 100,000
+keys means walking the store once per page, which is fine at twenty-five and
+would not be at two thousand.
 
 **Values are counted, never shown.** A row's encoded bytes are not rendered, so
 the tuple codec — the thing that makes a prefix of the key a prefix of the

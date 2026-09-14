@@ -252,6 +252,12 @@ body.app {
 
 /* --- the console --- */
 
+/* `display: grid` beats the browser's own `[hidden] { display: none }`, so
+ * hiding this by setting `.hidden` did nothing and the query console stayed
+ * on screen behind the storage view. Caught by a check asserting it was
+ * hidden; the same trap applies to any element given a display in CSS. */
+.console[hidden], .tree[hidden], .storage[hidden] { display: none; }
+
 .console {
   display: grid;
   grid-template-rows: auto minmax(90px, 0.32fr) auto 1fr;
@@ -350,48 +356,82 @@ body.app {
   .bar .engine { display: none; }
 }
 
-/* --- the keyspace viewer -------------------------------------------------
+/* --- the storage browser -------------------------------------------------
  *
- * Folders, drawn from prefixes. The indentation is a lie told on purpose —
- * there are no directories in an object store and none in the kernel either —
- * and the byte columns are what keep it from being a lie anybody believes.
+ * A top-level view, not a tab: the whole database as folders, with the
+ * keyspace on the left and the bucket it lands in on the right.
+ *
+ * "Folder" is the right word for what a reader sees and the wrong word for
+ * what is there — an object store has no directories and neither does the
+ * kernel, there is one ordered key space and a prefix is a contiguous range
+ * in it. The byte columns are what keep the metaphor honest: a directory does
+ * not have a size.
  */
-.keyspace { padding: 4px 14px 20px; font-size: 12.5px; }
-.ks-total {
-  font-family: var(--mono); color: var(--dim); padding: 6px 0 12px;
-  border-bottom: 1px solid var(--line); margin-bottom: 12px;
+.storage {
+  grid-column: 1 / -1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 40px;
 }
-.ks-space { margin-bottom: 18px; }
-.ks-caption {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--dimmer); margin-bottom: 6px;
+.storage[hidden] { display: none; }
+.storage-head { padding: 22px 24px 16px; border-bottom: 1px solid var(--line); }
+.storage-head h2 {
+  font-size: 19px; margin: 0 0 10px; font-weight: 620; letter-spacing: -0.01em;
 }
-.ks-group { border-bottom: 1px solid var(--line); }
-.ks-group summary {
+.storage-head p { color: var(--dim); font-size: 13.5px; max-width: 78ch; margin: 0 0 10px; }
+.storage-head p.note { color: var(--dimmer); font-size: 12.5px; }
+.storage-head b { color: var(--text); font-weight: 600; }
+
+.storage-panes {
+  display: grid; grid-template-columns: 1.35fr 1fr; gap: 0; align-items: start;
+}
+.storage-col { min-width: 0; }
+.storage-col + .storage-col { border-left: 1px solid var(--line); }
+.storage-caption {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--dimmer); padding: 16px 24px 10px; display: flex; gap: 10px;
+  align-items: baseline; border-bottom: 1px solid var(--line);
+}
+.storage-caption span { color: var(--dim); font-family: var(--mono); letter-spacing: 0; text-transform: none; }
+
+.tree-storage { padding: 10px 16px 24px; }
+.fs-folder > summary, .fs-leaf > summary {
   display: flex; gap: 12px; align-items: baseline; cursor: pointer;
-  padding: 6px 4px; list-style: none;
+  padding: 6px 8px; list-style: none; border-radius: 5px;
 }
-.ks-group summary::-webkit-details-marker { display: none; }
-.ks-group summary::before { content: "▸"; color: var(--dimmer); font-size: 10px; }
-.ks-group[open] summary::before { content: "▾"; }
-.ks-group summary:hover { background: var(--panel); }
-.ks-path { font-family: var(--mono); color: var(--text); flex: 1; }
-.ks-count { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
-.ks-bytes { color: var(--dimmer); font-family: var(--mono); font-size: 11.5px; }
-.ks-key {
-  display: flex; gap: 14px; padding: 3px 4px 3px 26px; align-items: baseline;
-  flex-wrap: wrap;
+.fs-folder > summary::-webkit-details-marker,
+.fs-leaf > summary::-webkit-details-marker { display: none; }
+.fs-folder > summary::before, .fs-leaf > summary::before {
+  content: "▸"; color: var(--dimmer); font-size: 10px;
 }
-.ks-key code {
+.fs-folder[open] > summary::before, .fs-leaf[open] > summary::before { content: "▾"; }
+.fs-folder > summary:hover, .fs-leaf > summary:hover { background: var(--panel); }
+.fs-folder { margin-bottom: 10px; }
+.fs-leaf { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 6px; }
+.fs-name { font-family: var(--mono); color: var(--text); font-size: 13px; }
+.fs-note { color: var(--dimmer); font-size: 11.5px; }
+.fs-count { margin-left: auto; color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
+.fs-bytes { color: var(--dimmer); font-family: var(--mono); font-size: 11.5px; }
+
+.fs-keys { padding: 4px 0 8px 22px; }
+.fs-key { display: flex; gap: 12px; align-items: baseline; padding: 2px 0; flex-wrap: wrap; }
+.fs-key code {
   font-size: 11.5px; background: var(--panel-2); color: var(--accent);
   padding: 1px 6px; border-radius: 4px; white-space: nowrap;
 }
-.ks-key span { color: var(--dim); font-size: 11.5px; }
+.fs-key span { color: var(--dim); font-size: 11.5px; }
+.fs-key .fs-vb { color: var(--dimmer); margin-left: auto; font-family: var(--mono); }
+.fs-more {
+  margin-top: 6px; background: none; border: 1px solid var(--line);
+  border-radius: 5px; color: var(--dim); font: inherit; font-size: 11.5px;
+  padding: 4px 10px; cursor: pointer;
+}
+.fs-more:hover { color: var(--text); border-color: var(--accent-dim); }
+.fs-more.done { border: 0; padding-left: 0; color: var(--dimmer); cursor: default; }
 
-/* The bucket listing: a real one, captured by an example and shipped static. */
-.bucket { padding: 4px 14px 24px; font-size: 12.5px; }
+.bucket { padding: 10px 24px 24px; font-size: 12.5px; }
 .bk-row {
-  display: flex; gap: 12px; align-items: baseline; padding: 5px 4px;
+  display: flex; gap: 12px; align-items: baseline; padding: 5px 0;
   border-bottom: 1px solid var(--line);
 }
 .bk-row code {
@@ -402,4 +442,21 @@ body.app {
 .bk-bytes {
   color: var(--dim); font-family: var(--mono); font-size: 11.5px;
   white-space: nowrap; min-width: 70px; text-align: right;
+}
+
+/* The header's view switch. */
+.modes { display: flex; gap: 2px; margin-left: 8px; }
+.modes button {
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--dim); font: inherit; font-size: 13px; font-weight: 550;
+  padding: 5px 14px; cursor: pointer;
+}
+.modes button[aria-selected="true"] {
+  color: var(--text); background: var(--panel-2); border-color: var(--line);
+}
+.modes button:hover { color: var(--text); }
+
+@media (max-width: 900px) {
+  .storage-panes { grid-template-columns: 1fr; }
+  .storage-col + .storage-col { border-left: 0; border-top: 1px solid var(--line); }
 }

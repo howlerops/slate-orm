@@ -127,13 +127,16 @@ index answers for it in the same breath, which the browser check asserts by
 requiring the plan to still be index-only afterwards. Writes live in the tab
 only; **Reset data** puts the fixture back.
 
-### The Keyspace tab: what is actually stored
+### The Storage view: what is actually stored
 
 Two things, and the difference between them is the point.
 
+Reached from **Storage** in the header, beside Query — a top-level view, with
+the whole window, because a tree of keys does not fit in a results pane.
+
 **The keyspace** is read live from the store, so it moves when the reader
-writes. It shows one prefix per table and one per index, with real keys in hex
-and what they decode to:
+writes. `rows/` and `index/`, a folder per table or index, and opening one
+pages through the real keys twenty-five at a time:
 
 ```
 rows/trips                  100,000 keys   814.7 KB keys + 6.5 MB values

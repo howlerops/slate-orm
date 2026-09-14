@@ -260,51 +260,94 @@ function renderPlan(result) {
     : "";
 }
 
-/// The keyspace, rendered as folders.
+/// The keyspace, as a folder tree over the real keys.
 ///
-/// Built on demand rather than after every query: it walks every key in the
-/// store, which for 100,000 trips is 200,000 entries, and doing that on each
-/// keystroke would make the editor feel broken.
+/// Two levels: `rows/` and `index/`, then one folder per table or index.
+/// Opening a folder pages through the keys themselves, in the order the store
+/// holds them — which is the point. A viewer that listed prefixes and stopped
+/// would be a table of contents; the keys are the thing.
 function renderKeyspace() {
   const box = $("keyspace");
   if (!state.playground) return;
   const groups = JSON.parse(state.playground.keyspace());
   const totals = groups.reduce(
-    (a, g) => ({
-      keys: a.keys + g.keys,
-      bytes: a.bytes + g.keyBytes + g.valueBytes,
-    }),
+    (a, g) => ({ keys: a.keys + g.keys, bytes: a.bytes + g.keyBytes + g.valueBytes }),
     { keys: 0, bytes: 0 },
   );
+  $("keytotal").textContent = `${totals.keys.toLocaleString()} keys · ${bytes(totals.bytes)}`;
 
   const spaces = [
-    ["rows", "rows — one key per row, ordered by primary key"],
-    ["index", "index entries — one key per row per index, ordered by the indexed value"],
+    ["rows", "one key per row, ordered by primary key"],
+    ["index", "one key per row per index, ordered by the indexed value"],
   ];
 
-  let html = `<div class="ks-total">${totals.keys.toLocaleString()} keys · ${bytes(totals.bytes)} in ${groups.length} prefixes</div>`;
+  box.innerHTML = "";
   for (const [space, caption] of spaces) {
     const mine = groups.filter((g) => g.space === space);
     if (!mine.length) continue;
-    html += `<div class="ks-space"><div class="ks-caption">${escape(caption)}</div>`;
+
+    const folder = document.createElement("details");
+    folder.className = "fs-folder";
+    folder.open = true;
+    folder.innerHTML =
+      `<summary><span class="fs-name">${escape(space)}/</span>` +
+      `<span class="fs-note">${escape(caption)}</span></summary>`;
+
     for (const group of mine) {
-      const samples = group.samples
-        .map(
-          (s) =>
-            `<div class="ks-key"><code>${escape(s.key)}</code>` +
-            `<span>${escape(s.decoded)}</span></div>`,
-        )
-        .join("");
-      html +=
-        `<details class="ks-group"><summary>` +
-        `<span class="ks-path">${escape(group.path)}</span>` +
-        `<span class="ks-count">${group.keys.toLocaleString()} keys</span>` +
-        `<span class="ks-bytes">${bytes(group.keyBytes)} keys + ${bytes(group.valueBytes)} values</span>` +
-        `</summary>${samples}</details>`;
+      const leaf = document.createElement("details");
+      leaf.className = "fs-leaf";
+      const name = group.path.slice(space.length + 1);
+      leaf.innerHTML =
+        `<summary><span class="fs-name">${escape(name)}/</span>` +
+        `<span class="fs-count">${group.keys.toLocaleString()} keys</span>` +
+        `<span class="fs-bytes">${bytes(group.keyBytes)} keys + ${bytes(group.valueBytes)} values</span>` +
+        `</summary><div class="fs-keys"></div>`;
+      // Keys are fetched when a folder is opened, not before: each call walks
+      // the whole store, and opening six folders eagerly would walk it six
+      // times before the reader had asked for anything.
+      leaf.addEventListener("toggle", () => {
+        if (leaf.open) showKeys(leaf.querySelector(".fs-keys"), group);
+      });
+      folder.append(leaf);
     }
-    html += "</div>";
+    box.append(folder);
   }
-  box.innerHTML = html;
+}
+
+/// How many keys one page of a folder shows.
+const PAGE = 25;
+
+function showKeys(box, group, offset = 0) {
+  if (offset === 0 && box.dataset.loaded) return;
+  const keys = JSON.parse(state.playground.keys(group.path, offset, PAGE));
+  if (offset === 0) box.innerHTML = "";
+  box.dataset.loaded = "1";
+
+  for (const key of keys) {
+    const row = document.createElement("div");
+    row.className = "fs-key";
+    row.innerHTML =
+      `<code>${escape(key.key)}</code><span>${escape(key.decoded)}</span>` +
+      `<span class="fs-vb">${key.valueBytes} B</span>`;
+    box.append(row);
+  }
+
+  const shown = offset + keys.length;
+  box.querySelector(".fs-more")?.remove();
+  if (shown < group.keys) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "fs-more";
+    button.textContent =
+      `${shown.toLocaleString()} of ${group.keys.toLocaleString()} — show ${PAGE} more`;
+    button.addEventListener("click", () => showKeys(box, group, shown));
+    box.append(button);
+  } else {
+    const end = document.createElement("div");
+    end.className = "fs-more done";
+    end.textContent = `all ${group.keys.toLocaleString()} keys`;
+    box.append(end);
+  }
 }
 
 /// The real bucket listing, captured by `examples/bucket_layout.rs`.
@@ -337,8 +380,8 @@ async function renderBucket() {
         );
       })
       .join("");
-    box.innerHTML =
-      `<div class="ks-total">${entries.length} objects · ${bytes(total)}</div>${rows}`;
+    $("buckettotal").textContent = `${entries.length} objects · ${bytes(total)}`;
+    box.innerHTML = rows;
     box.dataset.loaded = "1";
   } catch (error) {
     box.innerHTML = `<div class="empty">the bucket listing did not load: ${escape(error)}</div>`;
@@ -382,6 +425,24 @@ function select(name) {
   }
   for (const pane of document.querySelectorAll("[data-pane]")) {
     pane.hidden = pane.dataset.pane !== name;
+  }
+}
+
+/// Switch between the query console and the storage browser.
+///
+/// The keyspace is rebuilt on every visit rather than cached: the reader may
+/// have inserted a row since last time, and a storage view that does not move
+/// when the data moves is the one thing this view must not be.
+function mode(name) {
+  for (const button of document.querySelectorAll("[data-mode]")) {
+    button.setAttribute("aria-selected", String(button.dataset.mode === name));
+  }
+  document.querySelector(".console").hidden = name !== "query";
+  document.querySelector(".storage").hidden = name !== "storage";
+  document.querySelector(".tree").hidden = name !== "query";
+  if (name === "storage") {
+    renderKeyspace();
+    void renderBucket();
   }
 }
 
@@ -469,16 +530,10 @@ async function boot() {
       }
     });
     for (const tab of document.querySelectorAll("[data-tab]")) {
-      tab.addEventListener("click", () => {
-        select(tab.dataset.tab);
-        // Recomputed on every visit rather than cached: the reader may have
-        // inserted a row since last time, and a keyspace view that does not
-        // move when the data does is the one thing this panel must not be.
-        if (tab.dataset.tab === "keyspace") {
-          renderKeyspace();
-          void renderBucket();
-        }
-      });
+      tab.addEventListener("click", () => select(tab.dataset.tab));
+    }
+    for (const button of document.querySelectorAll("[data-mode]")) {
+      button.addEventListener("click", () => mode(button.dataset.mode));
     }
 
     // The data file is fetched in parallel with the module above, so the

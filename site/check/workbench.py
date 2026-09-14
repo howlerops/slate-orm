@@ -159,16 +159,34 @@ await page.waitForTimeout(400);
 out.afterResetStatus = await page.locator('[data-app="status"]').innerText();
 out.afterReset = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 7");
 
-// 9b. The keyspace viewer: prefixes, real keys, and the real bucket listing.
-await page.locator('[data-tab="keyspace"]').click();
-await page.waitForTimeout(700);
-out.keyspaceTotal = await page.locator(".ks-total").first().innerText();
-out.keyspaceGroups = await page.locator(".ks-group summary").allInnerTexts();
-await page.locator(".ks-group").first().click();
-await page.waitForTimeout(150);
-out.keyspaceKeys = await page.locator(".ks-group").first().locator(".ks-key").allInnerTexts();
+// 9b. The storage browser: a top-level view of the whole database as folders.
+out.modes = await page.locator("[data-mode]").allInnerTexts();
+await page.locator('[data-mode="storage"]').click();
+await page.waitForTimeout(900);
+out.storage = {
+  // The query console has to go away, or the two views stack. `display: grid`
+  // beats the browser's own `[hidden]` rule, which is exactly how they did.
+  consoleHidden: await page.locator(".console").isHidden(),
+  treeHidden: await page.locator(".tree").isHidden(),
+  keyTotal: await page.locator('[data-app="keytotal"]').innerText(),
+  bucketTotal: await page.locator('[data-app="buckettotal"]').innerText(),
+  folders: await page.locator(".fs-folder > summary").allInnerTexts(),
+  leaves: await page.locator(".fs-leaf > summary").allInnerTexts(),
+};
+await page.locator('.fs-leaf:has-text("trips/")').first().click();
+await page.waitForTimeout(400);
+out.storage.keys = await page.locator(".fs-keys .fs-key").allInnerTexts();
+out.storage.pager = await page.locator(".fs-more").first().innerText();
+await page.locator(".fs-more").first().click();
+await page.waitForTimeout(300);
+out.storage.afterPaging = await page.locator(".fs-keys .fs-key").count();
+// The *keys*, not just the count: a pager that fetched page one twice would
+// still show fifty rows. It did, until this line existed.
+out.storage.pagedKeys = await page.locator(".fs-keys .fs-key code").allInnerTexts();
 out.bucketRows = await page.locator(".bk-row").allInnerTexts();
-await page.locator('[data-tab="results"]').click();
+await page.locator('[data-mode="query"]').click();
+await page.waitForTimeout(200);
+out.backToQuery = await page.locator(".console").isVisible();
 
 // 10. The log kept every statement.
 await page.locator('[data-tab="log"]').click();
@@ -356,26 +374,55 @@ def main() -> int:
         seen["afterReset"]["rows"] == seen["beforeWrite"]["rows"],
         f"{seen['afterReset']['rows']} rows, expected {seen['beforeWrite']['rows']}",
     )
+    storage = seen["storage"]
     check(
-        "the keyspace viewer lists a prefix per table and per index",
-        any("rows/trips" in g for g in seen["keyspaceGroups"])
-        and any("index/trips.by_pickup_zone" in g for g in seen["keyspaceGroups"]),
-        f"{seen['keyspaceGroups']}",
+        "storage is a top-level view, not something buried in a tab",
+        seen["modes"] == ["Query", "Storage"],
+        f"{seen['modes']}",
+    )
+    check(
+        "and switching to it puts the query console away",
+        storage["consoleHidden"] and storage["treeHidden"],
+        f"console hidden {storage['consoleHidden']}, tree hidden {storage['treeHidden']}",
+    )
+    check(
+        "the whole database is there: every table and every index",
+        len(storage["leaves"]) == 6
+        and any("trips/" in l and "100,000 keys" in l for l in storage["leaves"])
+        and any("zones/" in l and "265 keys" in l for l in storage["leaves"]),
+        f"{storage['leaves']}",
+    )
+    check(
+        "rows and index entries are separate prefixes of one space",
+        len(storage["folders"]) == 2
+        and storage["folders"][0].startswith("rows/")
+        and storage["folders"][1].startswith("index/"),
+        f"{storage['folders']}",
     )
     check(
         "an index entry is one key per row, and carries no value",
         any(
-            "index/trips.by_pickup_zone" in g and "100,000 keys" in g and "0 B values" in g
-            for g in seen["keyspaceGroups"]
+            "by_pickup_zone/" in l and "100,000 keys" in l and "0 B values" in l
+            for l in storage["leaves"]
         ),
-        f"{seen['keyspaceGroups']}",
+        f"{storage['leaves']}",
     )
     check(
-        "and the keys shown are real, with the layout's own header",
-        seen["keyspaceKeys"]
-        and seen["keyspaceKeys"][0].startswith("01 00000003 | ")
-        and "trips row id=" in seen["keyspaceKeys"][0],
-        f"{seen['keyspaceKeys'][:1]}",
+        "opening a folder shows real keys, with the layout's own header",
+        storage["keys"]
+        and storage["keys"][0].startswith("01 00000003 | ")
+        and "trips row id=" in storage["keys"][0],
+        f"{storage['keys'][:1]}",
+    )
+    check(
+        "and 100,000 keys are paged rather than rendered at once",
+        "25 of 100,000" in storage["pager"] and storage["afterPaging"] == 50,
+        f"pager {storage['pager']!r}, after paging {storage['afterPaging']}",
+    )
+    check(
+        "and the second page is the next keys, not the first ones again",
+        len(set(storage["pagedKeys"])) == len(storage["pagedKeys"]) == 50,
+        f"{len(storage['pagedKeys'])} keys, {len(set(storage['pagedKeys']))} distinct",
     )
     check(
         "the bucket listing is a real one: SST, WAL and manifest",
@@ -383,6 +430,11 @@ def main() -> int:
         and any("wal/" in r for r in seen["bucketRows"])
         and any("manifest" in r for r in seen["bucketRows"]),
         f"{seen['bucketRows'][:3]}",
+    )
+    check(
+        "and switching back returns to the query console",
+        seen["backToQuery"],
+        "the console did not come back",
     )
     check(
         "the log keeps every statement that ran",

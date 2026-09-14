@@ -560,6 +560,48 @@ impl Playground {
         }
     }
 
+    /// One page of real keys under a prefix, for the storage browser.
+    ///
+    /// Paged rather than returned whole: `rows/trips` is 100,000 keys, and a
+    /// folder viewer that renders all of them is not a viewer. `offset` and
+    /// `limit` walk the range in key order — which is the order the store
+    /// holds them in, so paging through is paging through the actual layout
+    /// rather than through a list somebody sorted afterwards.
+    #[must_use]
+    pub fn keys(&self, path: &str, offset: usize, limit: usize) -> String {
+        let tables = [
+            fixture::authors(),
+            fixture::books(),
+            taxi::trips(),
+            taxi::zones(),
+        ];
+        let mut out: Vec<KeySample> = Vec::new();
+        let mut seen = 0usize;
+        for (key, value) in self.bytes.entries() {
+            let Some((space, id)) = header(&key) else {
+                continue;
+            };
+            let (this, _, table) = describe(space, id, &tables);
+            if this != path {
+                continue;
+            }
+            if seen < offset {
+                seen += 1;
+                continue;
+            }
+            if out.len() >= limit {
+                break;
+            }
+            out.push(KeySample {
+                key: hex(&key),
+                decoded: decode_key(space, &key, table.as_ref()),
+                value_bytes: value.len(),
+            });
+            seen += 1;
+        }
+        serde_json::to_string(&out).expect("the keys serialise")
+    }
+
     /// The keyspace, grouped by prefix, with real keys.
     ///
     /// Reads the store's own committed map, so it reflects writes the reader
