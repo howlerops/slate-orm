@@ -195,3 +195,79 @@ test("a correct declaration still reads", async () => {
   const rows = await session.query({ table: "docs" }).collect();
   assert.equal(rows.length, 1);
 });
+
+// A renamed column is accepted under its previous spelling.
+//
+// The ledger entry that added these checks recorded the opposite — "neither
+// client accepts a renamed column's previous spelling ... where the Python
+// client would be served" — on the reasoning that `TableDef` has nowhere to
+// record a previous name.
+//
+// It has nowhere to record one and does not need one. A client declares the
+// spelling *it* uses; the server enumerates every spelling the catalog would
+// accept and compares. So both pass, and no client models renames at all,
+// Python included. Withdrawn, and this is what withdraws it.
+test("a renamed column is accepted under its previous name", async () => {
+  const server = await start(`
+[[tables]]
+name = "papers"
+id = 40
+columns = [
+  { name = "id",   type = "u64" },
+  { name = "kind", type = "str", previous_names = ["category"] },
+]
+primary_key = ["id"]
+
+[[security.grants]]
+role = "app"
+tables = ["papers"]
+actions = ["everything"]
+`);
+  servers.push(server);
+
+  const spellings: Record<string, TableDef> = {
+    previous: {
+      name: "papers",
+      columns: [
+        { name: "id", type: "u64" },
+        { name: "category", type: "string" },
+      ],
+      primaryKey: ["id"],
+    },
+    current: {
+      name: "papers",
+      columns: [
+        { name: "id", type: "u64" },
+        { name: "kind", type: "string" },
+      ],
+      primaryKey: ["id"],
+    },
+  };
+
+  for (const [which, papers] of Object.entries(spellings)) {
+    const session = server.client().declaring({ papers }).session();
+    await session.insert("papers", [uint(1n), str("note")]);
+    await session.delete("papers", [uint(1n)]);
+    assert.ok(true, `the ${which} spelling was served`);
+  }
+
+  // The control: a name the table never had, current or previous.
+  const never = server
+    .client()
+    .declaring({
+      papers: {
+        name: "papers",
+        columns: [
+          { name: "id", type: "u64" },
+          { name: "genre", type: "string" },
+        ],
+        primaryKey: ["id"],
+      },
+    })
+    .session();
+  await assert.rejects(
+    () => never.insert("papers", [uint(2n), str("note")]),
+    (error: unknown) => isKind(error, "invalid-request"),
+    "a name the table never had was accepted",
+  );
+});

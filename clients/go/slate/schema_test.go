@@ -210,3 +210,73 @@ func TestACorrectDeclarationStillReads(t *testing.T) {
 		t.Errorf("got %d rows, want 1", len(rows))
 	}
 }
+
+// A renamed column is accepted under its previous spelling.
+//
+// The ledger entry that added these checks recorded the opposite —
+// "neither client accepts a renamed column's previous spelling, which the
+// server does accept ... where the Python client would be served" — on the
+// reasoning that `TableDef` has nowhere to record a previous name.
+//
+// It has nowhere to record one and does not need one. A client declares the
+// spelling *it* uses; the server enumerates every spelling the catalog would
+// accept (`fingerprint::accepted`, a product over each column's renames) and
+// compares. So the old name passes, the new name passes, and no client models
+// renames at all — Python included, which the entry claimed was better off.
+// Withdrawn, and this is what withdraws it.
+func TestARenamedColumnIsAcceptedUnderItsPreviousName(t *testing.T) {
+	const renamedTable = `
+[[tables]]
+name = "papers"
+id = 40
+columns = [
+  { name = "id",   type = "u64" },
+  { name = "kind", type = "str", previous_names = ["category"] },
+]
+primary_key = ["id"]
+
+[[security.grants]]
+role = "app"
+tables = ["papers"]
+actions = ["everything"]
+`
+	server := start(t, renamedTable)
+
+	old := slate.TableDef{
+		Name: "papers",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "category", Type: slate.TypeString}, // the previous spelling
+		},
+		PrimaryKey: []string{"id"},
+	}
+	current := old
+	current.Columns = []slate.ColumnDef{
+		{Name: "id", Type: slate.TypeUint},
+		{Name: "kind", Type: slate.TypeString},
+	}
+
+	for name, table := range map[string]slate.TableDef{"previous": old, "current": current} {
+		session := server.client(t).Declaring(slate.Schemas{"papers": table}).Session()
+		row := []slate.Value{slate.Uint(1), slate.String("note")}
+		if _, err := session.Insert(testContext(t), "papers", row); err != nil {
+			t.Errorf("declaring the %s spelling: %v", name, err)
+		}
+		if _, err := session.Delete(testContext(t), "papers", []slate.Value{slate.Uint(1)}); err != nil {
+			t.Errorf("cleaning up after the %s spelling: %v", name, err)
+		}
+	}
+
+	// The control: a name the table never had, current or previous.
+	never := old
+	never.Columns = []slate.ColumnDef{
+		{Name: "id", Type: slate.TypeUint},
+		{Name: "genre", Type: slate.TypeString},
+	}
+	session := server.client(t).Declaring(slate.Schemas{"papers": never}).Session()
+	_, err := session.Insert(testContext(t), "papers",
+		[]slate.Value{slate.Uint(2), slate.String("note")})
+	if !slate.IsKind(err, slate.KindInvalidRequest) {
+		t.Errorf("a name the table never had was accepted: %v", err)
+	}
+}

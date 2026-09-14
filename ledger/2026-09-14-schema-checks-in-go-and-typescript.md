@@ -84,6 +84,20 @@ Only what the wire can express. A `Get` carries its claim on the request and a
 read carries it on the `Query`; nothing carries one for a `Begin` or a
 `Commit`, which name no table.
 
-Neither client accepts a renamed column's previous spelling, which the server
+~~Neither client accepts a renamed column's previous spelling, which the server
 does accept. A client declaring the old name is refused where the Python client
-would be served.
+would be served.~~
+
+**Withdrawn, 2026-09-14.** Wrong on both halves. A client declares the spelling
+*it* uses, and the server enumerates every spelling the catalog would accept —
+`fingerprint::accepted`, a product over each column's renames — and compares
+against the set. So the previous name passes and the current name passes, and
+`TableDef` having nowhere to record a rename is not a gap but the reason there
+is nothing to record. The Python client models renames no more than these two
+do, so it was not better off either.
+
+The reasoning was written from the client's side alone, without reading the
+server's comparison. `TestARenamedColumnIsAcceptedUnderItsPreviousName` and
+`a renamed column is accepted under its previous name` now demonstrate it in Go
+and TypeScript, each with a control: a name the table never had is still
+refused.

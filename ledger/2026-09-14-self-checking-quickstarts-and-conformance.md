@@ -127,7 +127,9 @@ name packages that are not published anywhere, and nothing here notices.
 
 The conformance mode picks free ports for the adapters but the frontend still
 hard-codes the demo's three, so `--conformance` and the browser UI cannot share
-a stack. That is the next task's problem.
+a stack. That is the next task's problem. *(Closed by
+`2026-09-14-frontend-tests-and-configurable-ports.md`: the frontend reads
+`VITE_GO_URL` and friends, which `run.sh` exports.)*
 
 The TypeScript snippet is compiled with a `tsconfig` this checker writes, not
 the one a reader would have. It is strict and NodeNext, which is the shape that
