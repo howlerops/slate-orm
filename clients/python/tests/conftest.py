@@ -63,7 +63,27 @@ BINARY = TARGET_DIR / "debug" / "slate-testserver"
 
 
 def _build() -> pathlib.Path:
-    """Build the test server, once per session."""
+    """Build the test server once per session, or take one already built.
+
+    `SLATE_TESTSERVER` names a prebuilt binary. Two reasons, and neither is
+    speed: CI builds it once and hands the same binary to the suite rather than
+    installing the Rust toolchain to rebuild it, and a contributor working only
+    on this client can run the suite with no Rust installed.
+
+    A path that is set and missing is a hard error rather than a fallback: the
+    fallback would quietly test a different binary from the one the caller
+    named. Set and missing also fails rather than *skipping*, which matters
+    more than it looks — the `cargo`-missing branch below skips, and a skip is
+    green. In CI that would mean a suite reporting success having started no
+    server and exercised nothing, which is the failure this whole client is
+    least able to notice.
+    """
+    named = os.environ.get("SLATE_TESTSERVER")
+    if named:
+        path = pathlib.Path(named)
+        if not path.exists():
+            raise RuntimeError(f"SLATE_TESTSERVER={named} does not exist")
+        return path
     if shutil.which("cargo") is None:
         pytest.skip("cargo is not on PATH, so the head node cannot be built")
     environment = dict(os.environ, CARGO_TARGET_DIR=str(TARGET_DIR))

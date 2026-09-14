@@ -59,14 +59,30 @@ var (
 	buildErr   error
 )
 
-// binary builds slate-serverd once per test binary.
+// binary builds slate-serverd once per test binary, or takes one already built.
 //
-// `cargo build` rather than a prebuilt path so the suite tests the daemon in
-// this working tree, which is the only version whose protocol this client was
+// `cargo build` by default rather than a prebuilt path, so the suite tests the
+// daemon in this working tree — the only version whose protocol this client was
 // written against.
+//
+// `SLATE_SERVERD` overrides it with a path. Two reasons, and neither is speed:
+// CI builds the daemon once and hands the same binary to all three client
+// suites rather than three checkouts of the Rust toolchain building it three
+// times, and a contributor working only on this client can run the suite with
+// no Rust installed at all. A path that is set and does not exist is a hard
+// error — falling back to `cargo` there would quietly test a *different*
+// binary from the one the caller named.
 func binary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
+		if named := os.Getenv("SLATE_SERVERD"); named != "" {
+			if _, err := os.Stat(named); err != nil {
+				buildErr = fmt.Errorf("SLATE_SERVERD=%s: %w", named, err)
+				return
+			}
+			binaryPath = named
+			return
+		}
 		root, err := repoRoot()
 		if err != nil {
 			buildErr = err

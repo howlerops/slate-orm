@@ -80,11 +80,21 @@ await() {
   return 1
 }
 
-echo "building slate-serverd..."
-(cd "$root" && cargo build -q -p slate-serverd --bin slate-serverd)
+# `SLATE_SERVERD` names a prebuilt daemon, as it does for the three client
+# suites. CI builds it once and hands the same binary to every job that needs
+# one; here it also means the demo starts without a Rust toolchain present.
+if [ -n "${SLATE_SERVERD:-}" ]; then
+  [ -x "$SLATE_SERVERD" ] || { echo "SLATE_SERVERD=$SLATE_SERVERD is not executable" >&2; exit 1; }
+  serverd="$SLATE_SERVERD"
+  echo "using the slate-serverd at $serverd"
+else
+  echo "building slate-serverd..."
+  (cd "$root" && cargo build -q -p slate-serverd --bin slate-serverd)
+  serverd="$root/target/debug/slate-serverd"
+fi
 
 echo "starting the head node on $HEAD_ADDR"
-"$root/target/debug/slate-serverd" --config "$config" > "$run/head.log" 2>&1 &
+"$serverd" --config "$config" > "$run/head.log" 2>&1 &
 pids+=($!)
 await "$run/head.log" "the head node"
 

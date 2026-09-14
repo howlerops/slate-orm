@@ -112,15 +112,31 @@ def runnable_toml(page: str, port: int) -> str:
     return substitute(swapped, port, "TOML")
 
 
+def serverd() -> Path:
+    """The daemon to run: `SLATE_SERVERD`, or the one this tree has built.
+
+    The same variable the three client suites and the demo honour, so CI builds
+    the binary once. Set and missing is a hard error, as it is there.
+    """
+    named = os.environ.get("SLATE_SERVERD")
+    if named:
+        path = Path(named)
+        if not path.exists():
+            raise SystemExit(f"SLATE_SERVERD={named} does not exist")
+        return path
+    built = ROOT / "target" / "debug" / "slate-serverd"
+    if not built.exists():
+        raise SystemExit(f"{built} is not built; cargo build -p slate-serverd")
+    return built
+
+
 class Node:
     """A head node started from the page's own configuration."""
 
     def __init__(self, config: Path, log: Path, port: int) -> None:
         self.port = port
         self.log = log
-        binary = ROOT / "target" / "debug" / "slate-serverd"
-        if not binary.exists():
-            raise SystemExit(f"{binary} is not built; cargo build -p slate-serverd")
+        binary = serverd()
         self.handle = subprocess.Popen(
             [str(binary), "--config", str(config)],
             stdout=log.open("w"),
@@ -300,10 +316,7 @@ def main() -> int:
         # 1. The page's TOML, verbatim, through the validator.
         verbatim = work / "page.toml"
         verbatim.write_text(page["toml"])
-        checked = run(
-            [str(ROOT / "target" / "debug" / "slate-serverd"), "--config", str(verbatim), "--check"],
-            cwd=work,
-        )
+        checked = run([str(serverd()), "--config", str(verbatim), "--check"], cwd=work)
         if checked.returncode != 0:
             failures.append("toml")
             print("FAIL  the TOML on the page does not validate")

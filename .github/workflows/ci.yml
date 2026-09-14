@@ -2,9 +2,10 @@ name: CI
 
 # Every push, not just `main`. This workflow was added months ago, triggered on
 # `main` and pull requests only, and every branch since has been a feature
-# branch with no pull request open — so it had run exactly zero times, and
-# "the repository has CI" was true of the file and of nothing else. A check
-# that never fires is a check nobody has debugged.
+# branch with no pull request open — so it had run exactly zero times, and "the
+# repository has CI" was true of the file and of nothing else. Its first real
+# run failed immediately on an image tag that had been withdrawn upstream. A
+# check that never fires is a check nobody has debugged.
 on:
   push:
   pull_request:
@@ -21,7 +22,7 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  check:
+  rust:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
     steps:
@@ -39,27 +40,209 @@ jobs:
           PROPTEST_CASES: 200000
       - run: cargo doc --workspace --no-deps
 
+  # The daemon and the Python fixture, built once and handed to every job that
+  # needs one. Four jobs used to mean four checkouts of the Rust toolchain
+  # building the same binary; `SLATE_SERVERD` and `SLATE_TESTSERVER` are what
+  # let them share, and they are the same variables a contributor uses locally
+  # to run a client suite with no Rust installed.
+  binaries:
+    name: build the head node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p slate-serverd --bin slate-serverd -p slate-testserver
+      - uses: actions/upload-artifact@v4
+        with:
+          name: head-node
+          path: |
+            target/debug/slate-serverd
+            target/debug/slate-testserver
+          if-no-files-found: error
+          retention-days: 1
+
+  go:
+    name: Go client
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: clients/go/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-serverd
+      - run: go vet ./...
+        working-directory: clients/go
+      - run: go test ./...
+        working-directory: clients/go
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
+  python:
+    name: Python client
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-testserver
+      - run: pip install -e '.[dev]'
+        working-directory: clients/python
+      - run: python -m pytest -q
+        working-directory: clients/python
+        env:
+          SLATE_TESTSERVER: ${{ github.workspace }}/bin/slate-testserver
+
+  typescript:
+    name: TypeScript client
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-serverd
+      - run: npm ci
+        working-directory: clients/typescript
+      - run: npm test
+        working-directory: clients/typescript
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
+  frontend:
+    name: demo frontend units
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: examples/explorer/web/package-lock.json
+      - run: npm ci
+        working-directory: examples/explorer/web
+      - run: npm run typecheck
+        working-directory: examples/explorer/web
+      - run: npm test
+        working-directory: examples/explorer/web
+
+  hooks:
+    name: the pre-commit hook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The hook refuses a commit that changes anything outside `ledger/`
+      # without an entry, and refuses an entry that says nothing. It is the
+      # only check here that guards the *reasoning*, and it had no test until
+      # the day it started rejecting every commit in the repository silently.
+      - run: sh .githooks/test-pre-commit.sh
+
+  layout:
+    name: no crate outside the workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # A crate outside the workspace is never built by `cargo test
+      # --workspace`, so it rots silently. That happened to
+      # `clients/python/testserver`: three separate things broke in it
+      # unnoticed. This is the guard the fix asked for.
+      - run: python3 scripts/check_workspace.py
+
+  quickstarts:
+    name: the landing page's code
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-serverd
+      # Extracts the four `<pre><code>` panels out of `site/index.html`,
+      # validates the TOML with `--check`, starts a node from it, and runs the
+      # Python, Go and TypeScript snippets against that node. Its first run
+      # found the page's TOML invalid.
+      - run: python3 site/check/quickstarts.py
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
+  demo:
+    name: three SDKs, one database
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: examples/explorer/backends/go/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-serverd
+      - run: pip install -e clients/python
+      - run: npm ci
+        working-directory: clients/typescript
+      - run: npm ci
+        working-directory: examples/explorer/backends/node
+      - run: npm ci
+        working-directory: examples/explorer/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: examples/explorer/web
+      # The only thing anywhere that compares the three clients to *each
+      # other*. Each client's own suite compares it to the server, which
+      # catches one client being wrong and cannot catch two being wrong the
+      # same way — or two quietly disagreeing about something the server
+      # accepts from both.
+      - run: ./run.sh --conformance
+        working-directory: examples/explorer
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+      - run: ./run.sh --e2e
+        working-directory: examples/explorer
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
   minio:
     name: integration against MinIO
     runs-on: ubuntu-latest
-    services:
-      minio:
-        # The suite is hermetic by default (it runs a real S3 server in
-        # process), so this job exists to catch behaviour specific to a
-        # production-grade implementation: conditional writes, multipart
-        # thresholds, and error shapes.
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: slate-orm
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       SLATE_S3_BUCKET: slate-orm
       SLATE_S3_ENDPOINT: http://127.0.0.1:9000
@@ -69,6 +252,39 @@ jobs:
       SLATE_S3_ALLOW_HTTP: "true"
     steps:
       - uses: actions/checkout@v4
+      # Started as a step rather than a service container, and on the official
+      # image rather than Bitnami's.
+      #
+      # `bitnami/minio:latest` is what this used, and it does not exist —
+      # Bitnami withdrew those tags, so the very first run of this workflow
+      # failed on `manifest unknown` before checking anything out. The official
+      # image needs an explicit `server /data`, which the `services:` syntax
+      # cannot express, hence `docker run`.
+      #
+      # The bucket is a pre-made directory under the data volume: MinIO takes
+      # each top-level directory there as a bucket, which creates it with no
+      # client, no `mc`, and nothing to sign by hand.
+      - name: Start MinIO
+        run: |
+          mkdir -p /tmp/minio/${SLATE_S3_BUCKET}
+          chmod -R 777 /tmp/minio
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            -v /tmp/minio:/data \
+            minio/minio server /data
+          for _ in $(seq 60); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              echo "minio is live"; exit 0
+            fi
+            sleep 1
+          done
+          echo "minio never became live; its log:" >&2
+          docker logs minio >&2
+          exit 1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The suite is hermetic by default — it runs an S3 server in this
+      # process — so this job exists to catch behaviour specific to a
+      # production-grade implementation: conditional writes, multipart
+      # thresholds, and error shapes.
       - run: cargo test -p slate-slatedb --test s3

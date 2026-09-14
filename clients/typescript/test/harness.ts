@@ -71,7 +71,25 @@ const ROOT = repositoryRoot();
 
 let built = false;
 
+/**
+ * The daemon to run: built from this tree, or one already built.
+ *
+ * `cargo build` by default, so the suite tests the daemon in this working
+ * tree — the only version whose protocol this client was written against.
+ *
+ * `SLATE_SERVERD` overrides it with a path. Two reasons, and neither is speed:
+ * CI builds the daemon once and hands the same binary to all three client
+ * suites, and a contributor working only on this client can run the suite with
+ * no Rust installed. A path that is set and missing is a hard error — falling
+ * back to `cargo` there would quietly test a different binary from the one the
+ * caller named.
+ */
 function binary(): string {
+  const named = process.env["SLATE_SERVERD"];
+  if (named) {
+    if (!existsSync(named)) throw new Error(`SLATE_SERVERD=${named} does not exist`);
+    return named;
+  }
   if (!built) {
     const result = spawnSync(
       "cargo",
