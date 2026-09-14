@@ -38,11 +38,29 @@ const problems = [];
 page.on("pageerror", (e) => problems.push(`page error: ${e}`));
 page.on("console", (m) => { if (m.type() === "error") problems.push(`console: ${m.text()}`); });
 
+// Record every request, so "the bundle is not fetched until asked for" is
+// an observation rather than a claim about the code.
+const fetched = [];
+page.on("request", (r) => fetched.push(r.url()));
+
 await page.goto(url, { waitUntil: "load" });
+
+// Deliberately *before* scrolling or clicking: at this point the panel is
+// below the fold and the wasm must not have been requested.
+await page.waitForTimeout(400);
+const eagerlyFetched = fetched.filter((u) => u.endsWith(".wasm"));
+
+// Clicked only if it is still clickable. If something already started the
+// load the button is disabled by now, and clicking would time out with a
+// message about element stability rather than about the thing that is
+// actually wrong — which is what the `eagerlyFetched` count below reports.
+const load = page.locator('[data-play="load"]');
+if (await load.isEnabled()) await load.click();
 
 // The panel stays hidden until the module loads, so its visibility *is* the
 // "did wasm come up" assertion.
 await page.waitForSelector(".play:not([hidden])", { timeout: 60000 });
+const lazilyFetched = fetched.filter((u) => u.endsWith(".wasm"));
 
 const read = async () => {
   await page.waitForTimeout(120);
@@ -76,7 +94,11 @@ for (let i = 0; i < count; i++) await boxes.nth(i).check();
 await page.locator('[data-play="value"]').fill("not-a-number");
 const refused = await read();
 
-console.log(JSON.stringify({ initial, scan, covering, refused, problems }));
+console.log(JSON.stringify({
+  initial, scan, covering, refused, problems,
+  eagerlyFetched: eagerlyFetched.length,
+  lazilyFetched: lazilyFetched.length,
+}));
 await browser.close();
 """
 
@@ -159,6 +181,16 @@ def main() -> int:
         "a bad literal is refused in the panel rather than swallowed",
         "whole number" in seen["refused"]["status"],
         f"status: {seen['refused']['status']!r}",
+    )
+    check(
+        "the wasm is not fetched until the reader asks for it",
+        seen["eagerlyFetched"] == 0,
+        f"{seen['eagerlyFetched']} wasm request(s) before the button was clicked",
+    )
+    check(
+        "and it is fetched once they do",
+        seen["lazilyFetched"] >= 1,
+        "the panel came up without fetching any wasm, which cannot be right",
     )
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")
 

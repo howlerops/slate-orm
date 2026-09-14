@@ -8,7 +8,12 @@
 
 const panel = document.querySelector("[data-playground]");
 if (panel) {
+  // Scoped to the panel for its own controls; the start block is a *sibling*
+  // of the panel (it has to outlive the panel being hidden), so it is looked
+  // up from the document. Querying it through `panel` finds nothing, which is
+  // how the load button ended up wired to undefined the first time.
   const el = (name) => panel.querySelector(`[data-play="${name}"]`);
+  const outer = (name) => document.querySelector(`[data-play="${name}"]`);
 
   const state = { schema: [], playground: null, columns: new Set() };
 
@@ -130,7 +135,25 @@ if (panel) {
   const escape = (text) =>
     String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-  (async () => {
+  /**
+   * Fetch and start the kernel. Called once, by a click or by the panel
+   * scrolling into view — never on page load.
+   *
+   * The bundle is around 600 KB gzipped, which is a real cost to put on every
+   * reader of a landing page, most of whom will not touch the panel. Deferring
+   * it means a visitor who scrolls past pays nothing, and one who wants it
+   * waits a moment and knows why they are waiting.
+   */
+  let starting = null;
+  const start = () => {
+    if (starting) return starting;
+    outer("load").disabled = true;
+    outer("load").textContent = "Loading…";
+    starting = boot();
+    return starting;
+  };
+
+  async function boot() {
     try {
       const module = await import("./slate_wasm.js");
       await module.default();
@@ -156,12 +179,36 @@ if (panel) {
         run();
       });
 
+      outer("start").hidden = true;
       panel.hidden = false;
       run();
     } catch (error) {
-      // Left hidden rather than showing a broken panel: the prose above still
-      // explains what the playground would have shown.
+      // The panel stays hidden and the button says what happened, rather than
+      // a broken widget or a silent nothing. The prose above still explains
+      // what the playground would have shown.
+      outer("load").disabled = false;
+      outer("load").textContent = "Loading failed — try again";
       console.error("the playground did not load", error);
+      starting = null;
     }
-  })();
+  }
+
+  outer("load").addEventListener("click", start);
+
+  // And automatically once the panel is actually on screen, so a reader who
+  // scrolls to it does not have to ask twice. `rootMargin` starts the fetch
+  // slightly before it arrives; readers who never scroll here never trigger
+  // it, which is the entire point.
+  if ("IntersectionObserver" in window) {
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          watcher.disconnect();
+          start();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    watcher.observe(outer("start"));
+  }
 }

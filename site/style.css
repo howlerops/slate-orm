@@ -275,3 +275,12 @@ footer.site a { color: var(--dim); }
 }
 
 .play-rows td { font-family: var(--mono); }
+
+/* The load button, shown until the kernel is fetched. */
+.play-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
