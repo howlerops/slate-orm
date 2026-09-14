@@ -44,8 +44,15 @@ The first run found the TOML panel invalid: `bucket` sat directly under
 landing page since the page was written, and the page said the snippets had
 been executed. They had; the TOML had only been read.
 
-Still by hand — nothing runs it on a schedule. But it is now one command, which
-is the difference between a check that rots and a check somebody runs.
+CI runs it on every push (`.github/workflows/ci.yml`, the `quickstarts` job),
+which is where it found the two failures above and two more besides: the
+snippets sharing one node, and the install lines naming packages that are not
+published. Locally it is one command.
+
+The page is published from `main` by `.github/workflows/pages.yml`. That
+workflow deliberately does not re-run this check — it publishes `site/`
+verbatim — but the two are worth reading together, because a landing page whose
+first code block does not work is exactly what the checker is for.
 
 ## Keeping it honest
 

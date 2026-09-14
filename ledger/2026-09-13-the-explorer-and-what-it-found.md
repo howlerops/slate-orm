@@ -89,8 +89,10 @@ row policy hides two published before 1960), `stranger` is refused,
 
 No frontend yet — this is the backend and the contract.
 
-The runner is not wired into CI and needs a running stack, so nothing runs it
-automatically. It is a script someone has to invoke.
+~~The runner is not wired into CI and needs a running stack, so nothing runs it
+automatically.~~ *(Closed: `./run.sh --conformance` starts the stack itself,
+and the `demo` job runs it on every push. It reported `34 cases: the three SDKs
+agree on all of them` from inside CI on the first run that got that far.)*
 
 `groupBy: "decade"` is a documented refusal rather than a feature, and the
 computed-column support that would close it exists in the kernel and not in

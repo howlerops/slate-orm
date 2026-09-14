@@ -73,7 +73,8 @@ visible only to itself until it commits.
 ## Running the conformance check
 
 One command, which starts everything and stops it again. Its exit status is
-the suite's, so it is the thing to run in CI:
+the suite's, and CI runs it on every push — the `demo` job in
+`.github/workflows/ci.yml`, which also runs `--e2e` in a real Chromium:
 
 ```
 ./run.sh --conformance

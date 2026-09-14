@@ -142,10 +142,12 @@ size guard only catches the loud version of it.
 ## What this does not do
 
 The hook is a `pre-commit`, so it protects this repository's commits and not a
-CI job or another clone that has not run `git config core.hooksPath`. Its test
-suite is likewise run by hand — nothing runs `.githooks/test-pre-commit.sh` on
-a schedule, so the next silent-refusal bug is caught only if somebody thinks to
-run it.
+CI job or another clone that has not run `git config core.hooksPath`. ~~Its
+test suite is likewise run by hand — nothing runs
+`.githooks/test-pre-commit.sh` on a schedule.~~ CI runs it on every push now,
+and it has since caught a second bug in the hook: a heading found by substring
+and its body extracted by exact match, which reported a state the file was not
+in.
 
 The Go and Python clients have no equivalent of the TypeScript entry-point
 test. Go's module path *is* its import path, so the failure mode does not exist;

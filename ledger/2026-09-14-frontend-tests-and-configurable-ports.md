@@ -103,8 +103,11 @@ otherwise it would pass for want of data.
 
 ## What this does not do
 
-Neither suite runs on a schedule; the repository has no CI. `npm test` is fast
-enough to run on every change, `--e2e` takes about two minutes.
+~~Neither suite runs on a schedule; the repository has no CI.~~ **Wrong: it
+had one, which had never fired.** Both run in CI now, and `--e2e` found a
+portability bug there that no local run could — see
+`2026-09-14-ci-that-had-never-run.md`. `npm test` is still fast enough to run
+on every change; `--e2e` takes about two minutes.
 
 The e2e covers the five panels' central behaviour, not their controls
 exhaustively: the `like`/`ilike` operators, the table switcher, the projection,

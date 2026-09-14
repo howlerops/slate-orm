@@ -117,9 +117,12 @@ narrowing two commits ago.
 
 ## What this does not do
 
-Neither runs on a schedule. There is no CI in this repository to wire them
-into; both are one command now, which is the part that was missing, but "one
-command somebody has to think to run" is still a person in the loop.
+~~Neither runs on a schedule. There is no CI in this repository to wire them
+into~~ — **wrong, and twice over.** `.github/workflows/ci.yml` existed the
+whole time; it had simply never *run*, because it triggered on `main` and pull
+requests only. Both are wired into it now, and the quickstart checker failed on
+its first real run for two reasons no local invocation could produce. See
+`2026-09-14-ci-that-had-never-run.md`.
 
 The quickstart check does not verify the *prose* around the snippets — the
 install lines (`pip install slate-client`, `npm install @slate-orm/client`)
