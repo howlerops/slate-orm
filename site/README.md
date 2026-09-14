@@ -1,5 +1,8 @@
 # The site
 
+Published at **<https://howlerops.github.io/slate-orm/>**, from `main`, by
+[`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push.
+
 Two static pages and a stylesheet. No build step, no dependencies, no
 generator — open `index.html` in a browser, or:
 

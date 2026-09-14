@@ -1,8 +1,12 @@
 # slate-orm
 
+[![CI](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml/badge.svg)](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml)
+
 A **record layer** for [SlateDB](https://slatedb.io) — typed schemas, secondary
 indexes, query planning and row-level security over an ordered key-value store
 on object storage.
+
+Documentation: **<https://howlerops.github.io/slate-orm/>**
 
 The closest blueprint is FoundationDB's Record Layer rather than an ORM. The
 derive macro is a surface; the value is in the kernel underneath it, which owns
@@ -808,9 +812,6 @@ Not built:
       in `release.yml` needs a real `v*` tag and has never run. It is the last
       thing here still in the state this project spent a morning getting out of:
       written, plausible, never executed
-- [ ] GitHub Pages, until somebody turns it on. `pages.yml` publishes `site/`
-      from `main`, and the repository setting (Settings → Pages → Source:
-      GitHub Actions) is not something a workflow can set for itself
 
 ## License
 
