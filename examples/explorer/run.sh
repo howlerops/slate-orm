@@ -118,9 +118,49 @@ sed "s|^address = .*|address = \"$HEAD_ADDR\"|" "$here/head.toml" > "$config"
 grep -q "address = \"$HEAD_ADDR\"" "$config" ||
   { echo "head.toml has no [listen] address line to rewrite" >&2; exit 1; }
 
+# Job control, so every background service becomes its own process *group*.
+#
+# This is what makes the teardown below work. Each service is started as
+# `( cd ... && command ) &` and `$!` is that job's leader -- but `go run`
+# compiles and then runs the built binary as a child, and `npm start` spawns
+# node as a child, so killing the leader leaves a grandchild behind. CI saw it:
+# the runner's cleanup reported `Terminate orphan process: (go) (node) (go)`
+# after the demo job, meaning this script exited leaving three processes alive.
+#
+# Demonstrated rather than assumed. For a parent that spawns a child and waits,
+# killing the recorded pid leaves the child running; killing the group leaves
+# nothing. With `set -m` the group id is the leader's pid, so `kill -- -$pid`
+# reaches the whole tree.
+set -m
+
 pids=()
 cleanup() {
-  for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done
+  # Monitor mode off before reaping. The process *groups* it created still
+  # exist, so the group kills below still work -- but with it on, bash
+  # announces each job's death on stderr ("[2] Terminated ( cd ... )"), which
+  # is three lines of noise on every successful run and looks like something
+  # went wrong when nothing did.
+  set +m
+
+  # TERM the group first: the services close listeners and flush logs, and a
+  # head node killed outright can leave its lease held until it expires.
+  for pid in "${pids[@]:-}"; do
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  done
+
+  # Then give them a moment and insist. Without this a service that ignores
+  # TERM -- or is mid-compile -- survives, which is the failure this whole
+  # block exists to prevent.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    still=0
+    for pid in "${pids[@]:-}"; do kill -0 "$pid" 2>/dev/null && still=1; done
+    [ "$still" = 0 ] && break
+    sleep 0.2
+  done
+  for pid in "${pids[@]:-}"; do
+    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  done
+
   wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
