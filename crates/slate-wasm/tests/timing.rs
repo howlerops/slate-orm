@@ -13,7 +13,7 @@
 //!    contains the timed region, so the reported number can never exceed it.
 //!    A constant, or seconds mislabelled as milliseconds, breaks this.
 //! 2. **It orders queries by how much work they do.** A point get, a scan of
-//!    4,824 rows and a scan of 100,000 differ by orders of magnitude, so their
+//!    4,837 rows and a scan of 100,000 differ by orders of magnitude, so their
 //!    ordering is robust to a noisy machine in a way a ratio would not be.
 //!    A constant breaks this; so does timing the wrong region.
 //! 3. **It excludes what is not the kernel.** A `GROUP BY` does everything the
@@ -108,9 +108,14 @@ fn the_reported_time_never_exceeds_an_independent_clock() {
 fn the_reported_time_grows_with_the_work() {
     let playground = loaded();
     // Three queries whose costs differ by orders of magnitude: one row, one
-    // zone (4,837 rows through an index), and every row in the table. Their
-    // *ordering* is what is asserted, because it survives a noisy machine
-    // where a ratio would not.
+    // zone (4,837 of them), and every row in the table. Their *ordering* is
+    // what is asserted, because it survives a noisy machine where a ratio
+    // would not.
+    //
+    // The middle one plans as a *table scan*, not an index scan, which is the
+    // page's own headline: on object storage a point read costs about as much
+    // as scanning 24,000 rows, so an index that still has to fetch rows loses.
+    // It is here for the row count, not the access path.
     let point = best(&playground, "SELECT * FROM trips WHERE id = 500", 5).kernel;
     let zone = best(
         &playground,
