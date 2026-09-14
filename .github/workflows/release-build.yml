@@ -1,0 +1,78 @@
+# How the shipped binaries are built. Nothing here publishes anything.
+#
+# Split out from `release.yml` so that `ci.yml` can run it on every push
+# without being handed a repository-write token. A reusable workflow's jobs may
+# not request more permission than the job calling them was granted, so a
+# single workflow containing both the build and a `contents: write` publish job
+# cannot be called from CI at all — the run is rejected before it starts, with
+# `startup_failure` and no jobs. That is how this file came to exist.
+#
+# The separation is real rather than a workaround: "how the binaries are built"
+# and "how a release is published" are different questions, and only the first
+# one is safe to answer on every branch push.
+name: Release build
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One target failing should not cancel the other: a release with one of
+      # two binaries is worth having while the second is fixed.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Cross-compilation toolchain
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p slate-serverd --bin slate-serverd
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+
+      # `--check` on the shipped binary, against the configuration the landing
+      # page actually shows. Host architecture only: a cross-compiled binary
+      # cannot be run on the runner that built it, and adding an emulator to
+      # find out is more machinery than an unreleased project earns.
+      - name: It starts, and validates a configuration
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          python3 - <<'PY'
+          import html, pathlib, re
+          page = pathlib.Path("site/index.html").read_text()
+          panel = re.search(
+              r'<div data-panel="toml"[^>]*>\s*<pre><code>(.*?)</code></pre>',
+              page, re.DOTALL)
+          assert panel, "site/index.html has no TOML panel"
+          pathlib.Path("release-check.toml").write_text(html.unescape(panel.group(1)))
+          PY
+          ./target/${{ matrix.target }}/release/slate-serverd --config release-check.toml --check
+
+      - name: Name it after its target
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/slate-serverd \
+             dist/slate-serverd-${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slate-serverd-${{ matrix.target }}
+          path: dist/slate-serverd-${{ matrix.target }}
+          if-no-files-found: error

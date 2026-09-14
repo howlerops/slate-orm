@@ -1,94 +1,39 @@
-# Build the head node on a tag and attach it to a GitHub Release.
+# Publish the head node on a tag.
 #
 # `slate-serverd` is the only thing here that is shippable: one binary, one
 # TOML file, no runtime. The three client packages are deliberately *not*
-# published — see the note at the bottom of this file.
+# published — see the note at the bottom.
+#
+# The build itself lives in `release-build.yml`, which `ci.yml` also calls on
+# every push. A release workflow is otherwise exercised for the first time on
+# the day somebody cuts a release, which is the worst day to discover the
+# aarch64 linker is missing — and that is exactly the state `ci.yml` was in
+# until it was made to fire: active, plausible, and never once run.
 name: Release
 
-# A tag publishes. `ci.yml` calls this workflow on every push so the build half
-# is exercised continuously — see the note on `workflow_call` below.
 on:
   push:
     tags: ["v*"]
-  workflow_call:
   workflow_dispatch:
 
-# No workflow-level permissions: only the job that publishes needs to write,
-# and asking for `contents: write` up here would make every CI run that calls
-# this workflow carry a token that can push to the repository.
-
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
+  # Deliberately no `paths` filter on the trigger above, and worth saying why:
+  # adding one next to `tags` would apply it to the tag push, so tagging a
+  # commit that happened not to touch these files would build and publish
+  # nothing. A release workflow that silently does not run is worse than one
+  # that has never run.
   build:
-    name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      # One target failing should not cancel the other: a release with one of
-      # two binaries is worth having while the second is fixed.
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-gnu
-            linker: aarch64-linux-gnu-gcc
-            packages: gcc-aarch64-linux-gnu
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - name: Cross-compilation toolchain
-        if: matrix.packages != ''
-        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p slate-serverd --bin slate-serverd
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+    uses: ./.github/workflows/release-build.yml
 
-      # `--check` on the shipped binary, on the config the landing page shows.
-      # Only for the host architecture, because a cross-compiled binary cannot
-      # be run here — which is worth stating rather than leaving as an
-      # unexplained `if`.
-      - name: It starts, and validates a configuration
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          python3 - <<'PY'
-          import html, pathlib, re
-          page = pathlib.Path("site/index.html").read_text()
-          panel = re.search(
-              r'<div data-panel="toml"[^>]*>\s*<pre><code>(.*?)</code></pre>',
-              page, re.DOTALL)
-          assert panel, "site/index.html has no TOML panel"
-          pathlib.Path("release-check.toml").write_text(html.unescape(panel.group(1)))
-          PY
-          ./target/${{ matrix.target }}/release/slate-serverd --config release-check.toml --check
-
-      - name: Name it after its target
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/slate-serverd \
-             dist/slate-serverd-${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: slate-serverd-${{ matrix.target }}
-          path: dist/slate-serverd-${{ matrix.target }}
-          if-no-files-found: error
-
-  release:
+  publish:
     name: attach the binaries
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Only a tag publishes. A dispatch run, or a push that touched this file,
-    # builds and checks and stops there: releases are cut from tags, and a
-    # workflow that can publish one without a version number is a workflow that
-    # eventually does.
+    # Only a tag publishes. A `workflow_dispatch` run builds and checks and
+    # stops here: releases are cut from tags, and a workflow that can publish
+    # one without a version number is a workflow that eventually does.
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v4
@@ -101,35 +46,20 @@ jobs:
           files: dist/*
           generate_release_notes: true
           # Nothing here is production-ready and the README says so; a release
-          # that does not is a release read as a promise.
+          # that does not say so is read as a promise.
           prerelease: true
 
-# On `workflow_call`, and why not a `paths` filter.
-#
-# The obvious way to exercise this without a tag is `on: push: paths:
-# [".github/workflows/release.yml"]`. It does not work and it is a trap. Adding
-# `paths` next to `tags` does not add branch pushes — a `push` block with
-# `tags` set only ever matches tags — and the filter *would* then apply to the
-# tag push, so tagging a commit that happens not to touch this file would build
-# and publish nothing at all. A release workflow that silently does not run is
-# strictly worse than one that has never run.
-#
-# So `ci.yml` calls this workflow instead. `github.ref` inside a called
-# workflow is the caller's ref, so the `release` job's tag gate is false on a
-# branch push and it is skipped, while `build` runs in full. One definition of
-# how the binaries are built, exercised on every push, with no second copy to
-# drift.
-#
-# Unverified, and deliberately so: the `release` job itself. The
-# `softprops/action-gh-release` step needs a real `v*` tag, and pushing one
-# publishes a release that cannot be quietly withdrawn. It is the one thing
-# here that has to be exercised by a person who means it.
+# Unverified, and deliberately so: the `publish` job. Everything it depends on
+# runs on every push through `ci.yml`, but `softprops/action-gh-release` needs a
+# real `v*` tag, and pushing one publishes a release that cannot be quietly
+# withdrawn. It is the one thing here that has to be exercised by a person who
+# means it.
 #
 # Deliberately absent: publishing `slate-client` to PyPI, `@slate-orm/client`
 # to npm, or tagging the Go module for a proxy.
 #
 # Not an oversight and not laziness. Each needs a credential this repository
 # does not hold, a name nobody has claimed, and a decision about stability that
-# has not been made — the landing page's install lines name packages that do
-# not exist anywhere, which is a thing to fix by publishing on purpose or by
-# rewording the page, not by wiring up a token and finding out.
+# has not been made. The landing page's install lines used to name packages
+# that do not exist anywhere; the fix for that was to reword the page, not to
+# wire up a token and find out.

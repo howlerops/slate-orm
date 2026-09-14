@@ -222,10 +222,20 @@ is not installed. `ci.yml` was in exactly that state — active, plausible, neve
 run — and its first real run died in five seconds. Now the half that can be
 checked without publishing is checked continuously.
 
-`permissions: contents: write` moved from the workflow down to the `release`
-job at the same time. Left at the top it would have handed a repository-write
-token to every CI run that calls this workflow, to do a build that needs only
-read.
+Calling it from CI then failed a third time, and this one is worth recording
+because the failure mode is silent by design: `startup_failure`, **zero jobs**,
+no logs to read. A reusable workflow's jobs may not request more permission
+than the job calling them was granted, and the publish job asks for `contents:
+write` while the CI job calling it had the default. GitHub rejects the run
+before it starts rather than skipping the offending job — even though that job
+is gated off on a branch push and would never have run.
+
+The fix is not to hand every CI run a repository-write token. The build moved
+into `release-build.yml`, which needs no write at all and which both `ci.yml`
+and `release.yml` call; `release.yml` keeps the `publish` job and its
+`contents: write`. The split is real rather than a workaround — "how the
+binaries are built" and "how a release is published" are different questions,
+and only the first is safe to answer on every branch push.
 
 **What remains unverified, precisely:** the `softprops/action-gh-release` step.
 Everything before it — both targets compiling, the cross toolchain, the

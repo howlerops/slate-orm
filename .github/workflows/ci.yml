@@ -267,18 +267,18 @@ jobs:
 
   # The release build, called rather than copied.
   #
-  # This compiles `slate-serverd` for both release targets, installs the
-  # aarch64 cross toolchain, and runs the shipped binary's `--check` against
-  # the landing page's TOML. The publish job inside it is gated on a `v*` tag,
-  # so on a branch push it is skipped and nothing is uploaded.
+  # Compiles `slate-serverd` for both release targets, installs the aarch64
+  # cross toolchain, and runs the shipped binary's `--check` against the
+  # landing page's TOML. It publishes nothing — that half lives in
+  # `release.yml` and only a `v*` tag reaches it.
   #
   # It is here because a release workflow is otherwise first exercised on the
-  # day somebody cuts a release — which is the worst day to discover the
-  # aarch64 linker is missing — and that is precisely the state `ci.yml` itself
-  # was in until this morning.
+  # day somebody cuts a release, which is the worst day to discover the aarch64
+  # linker is missing, and that is precisely the state `ci.yml` itself was in
+  # until this morning.
   release-build:
     name: the release build
-    uses: ./.github/workflows/release.yml
+    uses: ./.github/workflows/release-build.yml
 
   minio:
     name: integration against MinIO
