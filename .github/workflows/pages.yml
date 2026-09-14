@@ -7,9 +7,11 @@
 # whose first code block does not work is the failure the checker exists for,
 # and it is worth saying out loud that the guard lives one workflow over.
 #
-# Requires Pages to be enabled for the repository with **Source: GitHub
-# Actions** (Settings → Pages). Without it the deploy step fails with a 404
-# rather than silently doing nothing.
+# Enables Pages itself on the first run (`enablement: true` below), so a fresh
+# clone of this repository does not need somebody to find Settings → Pages
+# before the site can publish. If the token is not permitted to do that, the
+# run fails with a `Not Found` from the Pages API and the setting has to be
+# changed by hand — which is what happened before this was added.
 name: Pages
 
 # Every push to `main`, with no `paths` filter, and that is deliberate.
@@ -54,7 +56,18 @@ jobs:
           for page in site/index.html site/docs.html site/style.css; do
             [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
           done
+      # `enablement: true` turns Pages on if it is off, rather than failing and
+      # waiting for somebody to visit Settings → Pages.
+      #
+      # The default is `false`, and the failure it produces is a bare `Not
+      # Found` from the Pages REST API — accurate, unhelpful, and the sort of
+      # thing that leaves a deploy permanently one manual step away from
+      # working. The token below already carries `pages: write`; if it did not,
+      # this fails with the same message as before and the setting has to be
+      # changed by hand.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

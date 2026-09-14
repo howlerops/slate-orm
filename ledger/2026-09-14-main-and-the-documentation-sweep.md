@@ -53,6 +53,12 @@ workspace member.
 **The Status list's defect count was stale** — eight when the real number
 reached eleven.
 
+Once the filter was gone the workflow fired, and failed — `Get Pages site
+failed ... Not Found`, because Pages was not enabled for the repository. The
+action takes `enablement: true`, which turns it on rather than failing, and
+that is now set. Leaving it at the default meant the deploy was permanently one
+Settings visit away from working, with a bare `Not Found` as the only clue.
+
 ## Alternatives rejected
 
 **Annotating the closed caveats across all thirty-three ledger entries.**
@@ -93,6 +99,12 @@ the trunk is not merely a pointer — it has been checked.
 with no path filter.
 
 ## What this does not do
+
+Whether Pages actually enables itself is not yet known at the time of writing —
+`enablement: true` needs the workflow token to be permitted to change that
+setting, and repository *settings* writes are exactly what was refused for the
+default branch. If it is refused here too, the failure names the setting and
+somebody has to visit Settings → Pages once.
 
 `main` is not yet the **default** branch, and this session cannot make it one.
 Until somebody changes it in Settings → General, the public repository page
