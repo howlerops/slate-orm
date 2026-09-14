@@ -30,3 +30,8 @@ examples/explorer/backends/go/go
 examples/explorer/web/node_modules/
 examples/explorer/web/dist/
 examples/explorer/web/dist-test/
+
+# Built by site/build-wasm.sh, never committed: a checked-in binary
+# drifts from the kernel it claims to be.
+site/slate_wasm.js
+site/slate_wasm_bg.wasm

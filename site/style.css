@@ -147,3 +147,131 @@ footer.site a { color: var(--dim); }
   header.site nav { gap: 14px; font-size: 13px; }
   header.site .wrap { gap: 12px; }
 }
+
+/* --- the playground ------------------------------------------------------
+ *
+ * Hidden until the wasm module loads (`[data-playground]` carries `hidden`),
+ * so a reader with wasm disabled, or one who arrives before a deploy has
+ * carried the binary, sees the prose rather than dead controls.
+ */
+.play {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 20px;
+  background: var(--panel);
+}
+
+.play-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: end;
+}
+
+.play-controls label,
+.play-columns label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.play-controls select,
+.play-controls input {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.play-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.play-columns label {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+
+.play-plan { margin-top: 16px; }
+
+.play-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.play-badges .badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+
+/* The one worth noticing: a plan that never reads a row. Uses the sheet's
+ * existing --good/--warn rather than two new hex values, so the playground
+ * agrees with the rest of the page about what "good" looks like. */
+.play-badges .badge[data-tone="good"] {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.play-badges .badge[data-tone="warn"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.play-plan pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.play-rows {
+  margin-top: 16px;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.play-rows table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.play-rows th,
+.play-rows td {
+  text-align: left;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.play-rows th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.play-rows td { font-family: var(--mono); }

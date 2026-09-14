@@ -20,6 +20,31 @@ files that share one `<header>`.
 The trade flips as soon as there are ten pages or the content wants to live in
 Markdown. Until then this is the smaller thing.
 
+## The playground runs the real kernel
+
+`index.html` has a panel that answers queries. It is not a mock: `slate-kernel`
+and `slate-schema` are compiled to WebAssembly (`crates/slate-wasm`) and the
+plan shown beside the rows is the same `Explanation` the head node returns for
+`EXPLAIN`.
+
+```sh
+sh site/build-wasm.sh            # builds slate_wasm{.js,_bg.wasm} into site/
+python3 site/check/playground.py  # drives it in a real browser
+```
+
+The two built files are **not committed** and are in `.gitignore`. A checked-in
+binary drifts from the kernel it claims to be and nothing notices; CI builds it
+before checking the site, and the Pages deploy builds it before publishing, so
+what ships is always the current kernel. `build-wasm.sh` also enforces a
+gzipped size budget, because the cost of this lands on a reader's connection.
+
+The most useful thing the panel shows is counter-intuitive: filtering on the
+indexed `author_id` still plans as a *table scan*. On object storage a point
+read costs about as much as scanning twenty-four thousand rows, so an index
+that still has to fetch rows loses. Narrow the columns to the indexed one and
+the plan becomes an index-only scan at two-thirds the cost. That is the whole
+argument for covering indexes, on the reader's own query.
+
 ## The quickstarts are checked by running them
 
 ```sh

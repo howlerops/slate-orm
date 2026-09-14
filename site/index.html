@@ -272,6 +272,80 @@ actions = ["everything"]</code></pre>
   </div>
 </section>
 
+<section id="playground">
+  <div class="wrap">
+    <h2>Run a query</h2>
+    <p>
+      This is the real record layer, compiled to WebAssembly and running in
+      this tab. No server: the planner, the executor and the in-memory store
+      are the same Rust the head node runs, and the plan below is the same
+      <code>EXPLAIN</code> it would return.
+    </p>
+    <p class="lead">
+      <code>books</code> has a secondary index on <code>author_id</code>.
+      Filter on it and watch the plan — then narrow the columns to just that
+      one and watch it change.
+    </p>
+
+    <div class="play" data-playground hidden>
+      <div class="play-controls">
+        <label>table
+          <select data-play="table"></select>
+        </label>
+        <label>where
+          <select data-play="column"></select>
+        </label>
+        <label>op
+          <select data-play="op">
+            <option value="eq">=</option>
+            <option value="ne">!=</option>
+            <option value="lt">&lt;</option>
+            <option value="le">&lt;=</option>
+            <option value="gt">&gt;</option>
+            <option value="ge">&gt;=</option>
+            <option value="like">like</option>
+            <option value="ilike">ilike</option>
+            <option value="matches">matches</option>
+          </select>
+        </label>
+        <label>value
+          <input data-play="value" value="1" size="12">
+        </label>
+        <label>sort
+          <select data-play="sort"></select>
+        </label>
+        <label>dir
+          <select data-play="direction">
+            <option value="asc">asc</option>
+            <option value="desc">desc</option>
+          </select>
+        </label>
+        <label>limit
+          <input data-play="limit" value="20" size="4" inputmode="numeric">
+        </label>
+      </div>
+
+      <div class="play-columns">
+        <span>columns</span>
+        <span data-play="columns"></span>
+        <button type="button" class="plain" data-play="all">all</button>
+      </div>
+
+      <div class="play-plan">
+        <div class="play-badges" data-play="badges"></div>
+        <pre data-play="plan"></pre>
+      </div>
+
+      <div class="play-rows" data-play="rows"></div>
+      <div class="note" data-play="status"></div>
+    </div>
+
+    <noscript>
+      <p class="note">The playground needs JavaScript and WebAssembly.</p>
+    </noscript>
+  </div>
+</section>
+
 <section>
   <div class="wrap">
     <h2>See it working</h2>
@@ -287,6 +361,8 @@ actions = ["everything"]</code></pre>
 cd slate-orm/examples/explorer && ./run.sh</code></pre>
   </div>
 </section>
+
+<script type="module" src="playground.js"></script>
 
 <footer class="site">
   <div class="wrap">

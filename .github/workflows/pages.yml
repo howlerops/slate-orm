@@ -48,14 +48,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # A last-line check that what is about to be published is the thing that
-      # was tested: the deploy takes `site/` verbatim, so a missing file here
-      # is a 404 in production rather than a build error.
-      - name: The pages exist
-        run: |
-          for page in site/index.html site/docs.html site/style.css; do
-            [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
-          done
       # `enablement: true` turns Pages on if it is off, rather than failing and
       # waiting for somebody to visit Settings → Pages.
       #
@@ -65,6 +57,32 @@ jobs:
       # working. The token below already carries `pages: write`; if it did not,
       # this fails with the same message as before and the setting has to be
       # changed by hand.
+      # The playground's wasm, built here rather than committed.
+      #
+      # Nothing in `site/` is generated except this, and it is generated on
+      # every deploy so the binary cannot drift from the kernel it claims to
+      # be. The cost is a Rust build in the deploy path; the alternative is a
+      # checked-in blob that is right until somebody forgets.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - run: sh site/build-wasm.sh
+
+      # After the build, not before it: two of these files are produced by the
+      # step above, and checking for them first is a guard that fails on every
+      # run. The deploy takes `site/` verbatim, so a file missing here is a 404
+      # in production rather than a build error.
+      - name: The pages exist
+        run: |
+          for page in site/index.html site/docs.html site/style.css \
+                      site/playground.js site/slate_wasm.js site/slate_wasm_bg.wasm; do
+            [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
+          done
+
       - uses: actions/configure-pages@v5
         with:
           enablement: true

@@ -221,6 +221,41 @@ jobs:
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
+  # The playground: the kernel compiled to wasm, driven in a real browser.
+  #
+  # It is the only part of the site that runs rather than describes, so it is
+  # the only part that can break in a way reading cannot catch — a renamed
+  # field in the binding, a control wired to nothing, a bundle that never
+  # loads. `build-wasm.sh` also enforces a size budget, so a dependency that
+  # doubles what a reader downloads fails here rather than on their connection.
+  playground:
+    name: the kernel in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned: `wasm-bindgen-cli` must match the `wasm-bindgen` the crate
+      # links, and a mismatch fails at load time in the browser rather than at
+      # build time here.
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - run: sh site/build-wasm.sh
+      - run: npm ci
+        working-directory: examples/explorer/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: examples/explorer/web
+      - run: python3 site/check/playground.py
+
   demo:
     name: three SDKs, one database
     runs-on: ubuntu-latest
