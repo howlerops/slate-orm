@@ -8,6 +8,7 @@ flag that swaps which client library serves the request.
 ./run.sh                 # head node + three adapters + the frontend
 ./run.sh --headless      # just the backend, for the conformance runner
 ./run.sh --conformance   # the stack on free ports, the suite, then teardown
+./run.sh --e2e           # the same, plus the frontend, driven in a browser
 ```
 
 ## What is here
@@ -90,6 +91,39 @@ Against a stack you already have up:
 ./run.sh --headless          # one terminal
 python3 conformance/conformance.py --verbose
 ```
+
+## Testing the frontend
+
+```
+cd web && npm test        # the contract layer, nothing running, ~150ms
+./run.sh --e2e            # the panels, in Chromium, against a live stack
+```
+
+The split is deliberate. `web/test/` covers what `src/api.ts` decides — where
+the adapter URLs come from, how a refusal is told apart from a result, how a
+tagged value renders — and runs with nothing started. `web/e2e/explorer.mjs`
+covers what unit tests structurally cannot: that switching SDK changes which
+adapter is asked.
+
+That last one is watched at the network layer, not read off the table. All
+three adapters answer identically — that is the demo — so a panel that ignored
+the switch and always used Go would render exactly the right rows for all
+three. A mutation proved it: pinning the panel's client to `"go"` left every
+case passing until the check started asserting on the request's origin.
+
+## Ports
+
+Nothing is hard-coded any more. The interactive modes use the demo's fixed
+ports; `--conformance` and `--e2e` take whatever the kernel gives them, so they
+can run beside a demo stack. Override any of them:
+
+```
+SLATE_HEAD_ADDR=127.0.0.1:8000 SLATE_GO_ADDR=127.0.0.1:8001 ./run.sh
+```
+
+`run.sh` exports `VITE_GO_URL`, `VITE_NODE_URL` and `VITE_PYTHON_URL` for the
+frontend, which falls back to the fixed ports when they are absent — so opening
+the UI by hand still needs no configuration.
 
 ## What this is not
 

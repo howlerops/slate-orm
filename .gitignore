@@ -29,3 +29,4 @@ examples/explorer/backends/node/dist/
 examples/explorer/backends/go/go
 examples/explorer/web/node_modules/
 examples/explorer/web/dist/
+examples/explorer/web/dist-test/

@@ -7,13 +7,45 @@
  * `conformance/conformance.py` will say so before the UI does.
  */
 
-export const ADAPTERS = {
+export type Sdk = "go" | "node" | "python";
+
+/** Where each adapter is, when nobody says otherwise: the ports `run.sh` uses
+ * for its interactive modes, so opening the UI needs no configuration. */
+export const DEFAULT_ADAPTERS: Record<Sdk, string> = {
   go: "http://127.0.0.1:7431",
   node: "http://127.0.0.1:7432",
   python: "http://127.0.0.1:7433",
-} as const;
+};
 
-export type Sdk = keyof typeof ADAPTERS;
+/**
+ * The adapter URLs, from the environment if it names them.
+ *
+ * Taking an env record rather than reading `import.meta.env` directly is what
+ * makes this testable: `import.meta.env` exists only under Vite, so a unit test
+ * running on plain node would otherwise be testing nothing. The exported
+ * constant below passes the real one, or `{}` where there is none.
+ *
+ * A blank value is treated as absent. An env var set to the empty string is
+ * what a shell produces from an unset variable it expanded anyway, and pointing
+ * the UI at `""` — which resolves against the page's own origin — is never what
+ * anybody meant.
+ */
+export function adaptersFrom(env: Record<string, string | undefined>): Record<Sdk, string> {
+  const named: Record<Sdk, string | undefined> = {
+    go: env["VITE_GO_URL"],
+    node: env["VITE_NODE_URL"],
+    python: env["VITE_PYTHON_URL"],
+  };
+  return {
+    go: named.go?.trim() || DEFAULT_ADAPTERS.go,
+    node: named.node?.trim() || DEFAULT_ADAPTERS.node,
+    python: named.python?.trim() || DEFAULT_ADAPTERS.python,
+  };
+}
+
+export const ADAPTERS: Record<Sdk, string> = adaptersFrom(
+  (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {},
+);
 export type Persona = "app" | "reader" | "stranger";
 
 /**

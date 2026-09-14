@@ -12,6 +12,7 @@
 #   ./run.sh --conformance   the stack on free ports, the conformance suite
 #                            against it, then tear it down. Exit status is the
 #                            suite's.
+#   ./run.sh --e2e           the same, plus the frontend, driven in a browser
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,7 +26,7 @@ mode="${1:-}"
 # demo stack is already up -- and, more to the point, must not fail with
 # "address already in use" and be mistaken for the SDKs disagreeing.
 port() {
-  if [ "$mode" = --conformance ]; then
+  if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then
     python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'
   else
     echo "$1"
@@ -36,6 +37,15 @@ HEAD_ADDR="${SLATE_HEAD_ADDR:-127.0.0.1:$(port 7421)}"
 GO_ADDR="${SLATE_GO_ADDR:-127.0.0.1:$(port 7431)}"
 NODE_ADDR="${SLATE_NODE_ADDR:-127.0.0.1:$(port 7432)}"
 PY_ADDR="${SLATE_PY_ADDR:-127.0.0.1:$(port 7433)}"
+WEB_PORT="${SLATE_WEB_PORT:-$(port 7440)}"
+
+# The frontend reads its three adapter URLs from the environment, defaulting to
+# the demo's fixed ports. Exported here rather than written into a file so that
+# a run on free ports needs no `.env` to clean up afterwards -- and so that the
+# UI and the conformance suite are pointed at one set of addresses by one line.
+export VITE_GO_URL="http://$GO_ADDR"
+export VITE_NODE_URL="http://$NODE_ADDR"
+export VITE_PYTHON_URL="http://$PY_ADDR"
 
 run="${TMPDIR:-/tmp}/slate-explorer-${HEAD_ADDR##*:}"
 mkdir -p "$run"
@@ -118,5 +128,22 @@ if [ "$mode" = --headless ]; then
   wait
 fi
 
-echo "starting the frontend"
-(cd "$here/web" && npm run dev)
+if [ "$mode" = --e2e ]; then
+  echo "starting the frontend on 127.0.0.1:$WEB_PORT"
+  (cd "$here/web" && npm run dev -- --port "$WEB_PORT" --strictPort) > "$run/web.log" 2>&1 &
+  pids+=($!)
+  # Vite prints `Local:` once it is serving. Same reasoning as `await`: a port
+  # poll answers yes before the first module has been transformed.
+  for _ in $(seq 90); do
+    grep -q "Local:" "$run/web.log" 2>/dev/null && break
+    sleep 1
+  done
+  grep -q "Local:" "$run/web.log" || { echo "vite never served:" >&2; tail -20 "$run/web.log" >&2; exit 1; }
+
+  status=0
+  (cd "$here/web" && node e2e/explorer.mjs "http://127.0.0.1:$WEB_PORT") || status=$?
+  exit "$status"
+fi
+
+echo "starting the frontend on 127.0.0.1:$WEB_PORT"
+(cd "$here/web" && npm run dev -- --port "$WEB_PORT" --strictPort)

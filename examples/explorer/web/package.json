@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "e2e": "node e2e/explorer.mjs"
   },
   "dependencies": {
     "@tanstack/solid-query": "^5.62.0",
@@ -15,6 +17,8 @@
     "solid-js": "^1.9.3"
   },
   "devDependencies": {
+    "@types/node": "^22.20.2",
+    "playwright": "^1.56.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vite-plugin-solid": "^2.11.0"
