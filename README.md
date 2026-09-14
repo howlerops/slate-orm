@@ -684,6 +684,12 @@ Built and tested:
       landing page's own TOML — runs on every push as well, so the one thing a
       release workflow is usually first asked to do on release day is already
       answered
+- [x] A tagged release. `v0.0.1` carries `slate-serverd` for x86_64 and
+      aarch64 Linux, built and attached by `release.yml`. Marked a prerelease,
+      deliberately: the status banner above says what this is. The upload step
+      was the last thing in this repository still in the state the CI work
+      spent a morning getting out of — written, plausible, never executed — and
+      it has now executed
 - [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
       `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the
       kernel. Not the same plan as explaining the read underneath: grouping
@@ -806,12 +812,6 @@ Not built:
       that has not been made, and wiring up a token to find out is the wrong
       order. The Go client needs no registry — a module path is its import
       path — and works today
-- [ ] The release upload itself. `release-build.yml` runs on every push, so
-      both targets, the aarch64 cross toolchain and `--check` on the shipped
-      binary are exercised continuously; the `softprops/action-gh-release` step
-      in `release.yml` needs a real `v*` tag and has never run. It is the last
-      thing here still in the state this project spent a morning getting out of:
-      written, plausible, never executed
 
 ## License
 

@@ -173,8 +173,16 @@ once; without it the deploy step fails with a 404. Nothing deploys from a
 feature branch, so that is a decision for whoever merges rather than a thing
 this commit does.
 
-The `publish` job in `release.yml` has still never run, because no tag has been
-pushed and this session cannot push one (403 — see the section above). Its
+~~The `publish` job in `release.yml` has still never run.~~ **It has now.**
+`v0.0.1` was tagged through the GitHub UI by the repository owner — this
+session cannot push a tag or create a release, and four separate routes were
+refused, the clearest being `Creating, editing, or deleting releases is not
+permitted for this session type`. The run was green on all three jobs and
+attached both binaries, 21.7 MB and 20.0 MB. So the *whole* of this workflow
+has been exercised, which is the state the rest of the entry is about.
+
+What follows was true until that tag, and is left because it is what the entry
+was written against: Its
 build half runs on every push through `ci.yml`, so the compile, the cross
 toolchain and the `--check` are exercised continuously; the
 `softprops/action-gh-release` step is not, and that is the single piece of all
