@@ -40,6 +40,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod fixture;
+pub mod sql;
 
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,11 @@ struct TableInfo {
     /// Ordinals carrying a secondary index, so the UI can mark which filters
     /// have a chance of avoiding a table scan.
     indexed: Vec<u32>,
+    /// Ordinals of the primary key. The workbench marks them because they are
+    /// the only columns `UPDATE` and `DELETE` will match on — a reader who
+    /// cannot see which column that is writes a statement that gets refused.
+    #[serde(rename = "primaryKey")]
+    primary_key: Vec<u32>,
 }
 
 #[derive(Serialize)]
@@ -73,39 +79,60 @@ struct ColumnInfo {
 }
 
 /// What the UI sends. Every field optional, because the panel builds it up.
-#[derive(Deserialize, Default)]
+///
+/// `Serialize` as well as `Deserialize` because the workbench shows the
+/// compiled spec beside the results: SQL typed in the editor is lowered onto
+/// this and the reader is shown what it became, which is the only honest way
+/// to offer SQL for a database that does not have any.
+///
+/// The `skip_serializing_if` attributes are for that panel rather than for
+/// the wire — a spec printed with six empty fields buries the two that the
+/// reader's query actually set.
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
-struct QuerySpec {
-    table: String,
+pub struct QuerySpec {
+    pub table: String,
     /// One condition, kept for the shape the panel started with.
-    filter: Option<FilterSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<FilterSpec>,
     /// Several, ANDed. Where this gets interesting is that the planner does
     /// not treat them alike: one conjunct may become a scan bound and the
     /// rest stay a residual predicate evaluated per row, and the plan says
     /// which is which.
-    filters: Vec<FilterSpec>,
-    sort: Vec<SortSpec>,
-    limit: Option<u64>,
-    offset: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<FilterSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sort: Vec<SortSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub offset: u64,
     /// Column ordinals to return. Empty means every column — which is also
     /// what makes an index-only scan impossible, so the UI exposes it.
-    columns: Vec<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<u32>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FilterSpec {
-    column: u32,
-    op: String,
-    value: String,
+/// For `skip_serializing_if`, which needs a path rather than a closure.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct SortSpec {
-    column: u32,
+pub struct FilterSpec {
+    pub column: u32,
+    pub op: String,
+    pub value: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SortSpec {
+    pub column: u32,
     #[serde(default)]
-    descending: bool,
+    pub descending: bool,
 }
 
 /// What comes back: the rows, and the plan that produced them.
@@ -142,28 +169,28 @@ struct PlanInfo {
 /// fixture has, and hard-coding it keeps the panel from offering key choices
 /// that produce nothing. What varies is the filter on each side, and whether
 /// the result is grouped.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
-struct JoinSpec {
+pub struct JoinSpec {
     /// Conditions on `authors`, ANDed.
-    authors: Vec<FilterSpec>,
+    pub authors: Vec<FilterSpec>,
     /// Conditions on `books`, ANDed.
-    books: Vec<FilterSpec>,
+    pub books: Vec<FilterSpec>,
     /// Group by this column of `authors` (ordinal in the *authors* table).
     /// Absent means return joined rows rather than groups.
-    group_by: Option<u32>,
+    pub group_by: Option<u32>,
     /// `count`, and optionally `min`/`max` over a `books` column.
-    aggregates: Vec<AggregateSpec>,
-    limit: Option<u64>,
+    pub aggregates: Vec<AggregateSpec>,
+    pub limit: Option<u64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct AggregateSpec {
-    kind: String,
+pub struct AggregateSpec {
+    pub kind: String,
     /// Ordinal within `books`, ignored by `count`.
     #[serde(default)]
-    column: u32,
+    pub column: u32,
 }
 
 /// Joined rows, or groups, with the plan for either.
@@ -188,6 +215,67 @@ struct InputPlan {
     index_only: bool,
     decodes: Vec<u32>,
     algorithm: String,
+}
+
+/// What one statement in the editor produced.
+///
+/// One shape for reads, joins and writes, because the workbench renders them
+/// in one results pane and a reader who ran three statements wants one log,
+/// not three dialects. The fields that do not apply are empty rather than
+/// absent, so the JavaScript never branches on a missing key.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SqlResult {
+    /// The statement as the reader wrote it, so the log can show it.
+    sql: String,
+    /// `select`, `join`, `group`, or `write`.
+    kind: String,
+    /// Headers for the grid.
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    returned: usize,
+    /// The spec this SQL compiled to — the same JSON an SDK would send.
+    /// This is the point of the exercise: the editor is a front end, and the
+    /// panel showing this is what keeps that claim checkable rather than
+    /// asserted.
+    spec: serde_json::Value,
+    plan: Option<PlanInfo>,
+    inputs: Vec<InputPlan>,
+    message: String,
+    error: Option<SqlFailure>,
+}
+
+#[derive(Serialize)]
+struct SqlFailure {
+    message: String,
+    /// Byte offset into the whole editor buffer, so the UI can point at it.
+    at: usize,
+}
+
+impl SqlResult {
+    fn blank(sql: &str, kind: &str) -> Self {
+        Self {
+            sql: sql.trim().to_owned(),
+            kind: kind.to_owned(),
+            columns: Vec::new(),
+            rows: Vec::new(),
+            returned: 0,
+            spec: serde_json::Value::Null,
+            plan: None,
+            inputs: Vec::new(),
+            message: String::new(),
+            error: None,
+        }
+    }
+
+    fn failed(sql: &str, at: usize, message: &str) -> Self {
+        let mut out = Self::blank(sql, "error");
+        out.error = Some(SqlFailure {
+            message: message.to_owned(),
+            at,
+        });
+        out
+    }
 }
 
 /// A seeded kernel: two tables, an index, and the rows the site talks about.
@@ -305,6 +393,11 @@ impl Playground {
                     .iter()
                     .flat_map(|index| index.columns().iter().map(|c| c.ordinal.0 as u32))
                     .collect(),
+                primary_key: table
+                    .primary_key()
+                    .iter()
+                    .map(|o| u32::try_from(o.0).unwrap_or(0))
+                    .collect(),
             })
             .collect();
         serde_json::to_string(&tables).expect("the schema serialises")
@@ -357,6 +450,18 @@ impl Playground {
             Ok(answer) => serde_json::to_string(&answer).expect("the answer serialises"),
             Err(message) => serde_json::json!({ "error": message }).to_string(),
         }
+    }
+
+    /// Run a buffer of SQL, one statement at a time.
+    ///
+    /// Returns an array with one entry per statement, so the editor can show
+    /// a log of what happened alongside the last statement's rows. Errors are
+    /// entries too, never exceptions: everything in here is something the
+    /// reader typed, and a refusal with the offset that caused it is more use
+    /// than a stack trace in a console.
+    #[must_use]
+    pub fn sql(&self, text: &str) -> String {
+        serde_json::to_string(&self.run_sql(text)).expect("the results serialise")
     }
 
     /// Throw the database away and seed a fresh one.
@@ -465,6 +570,11 @@ impl Playground {
     /// The body of [`Playground::join`].
     fn joined(&self, spec: &str) -> Result<JoinAnswer, String> {
         let spec: JoinSpec = serde_json::from_str(spec).map_err(|e| e.to_string())?;
+        self.joined_spec(spec)
+    }
+
+    /// The same, from a spec that is already a value. See [`Self::answer_spec`].
+    fn joined_spec(&self, spec: JoinSpec) -> Result<JoinAnswer, String> {
         let authors = fixture::authors();
         let books = fixture::books();
 
@@ -610,6 +720,190 @@ impl Playground {
         })
     }
 
+    /// The body of [`Playground::sql`], with real types.
+    ///
+    /// Statements stop at the first refusal. A buffer is usually a sequence —
+    /// insert a row, then select it back — so running the rest after one has
+    /// failed reports errors about a state the reader did not ask for.
+    fn run_sql(&self, buffer: &str) -> Vec<SqlResult> {
+        let tables = [fixture::authors(), fixture::books()];
+        let schema = sql::Schema(&tables);
+        let mut out = Vec::new();
+        for (offset, statement) in sql::split(buffer) {
+            let result = match sql::parse(&statement, &schema) {
+                // The parser reports an offset within its own statement; the
+                // editor holds the whole buffer, so it is shifted here. Doing
+                // it in the parser would make it wrong for every other caller.
+                Err(e) => SqlResult::failed(&statement, offset + e.at, &e.message),
+                Ok(parsed) => self.statement(&statement, parsed),
+            };
+            let refused = result.error.is_some();
+            out.push(result);
+            if refused {
+                break;
+            }
+        }
+        if out.is_empty() {
+            out.push(SqlResult::failed(buffer, 0, "there is nothing to run"));
+        }
+        out
+    }
+
+    /// Run one parsed statement through the binding's existing paths.
+    ///
+    /// Every arm here calls something that was already there and already
+    /// tested. That is deliberate: SQL is a way of *writing* a spec, not a
+    /// second way of reaching the kernel, so there is no query path that only
+    /// the editor can reach and no plan that only the editor can produce.
+    fn statement(&self, text: &str, parsed: sql::Statement) -> SqlResult {
+        match parsed {
+            sql::Statement::Select(spec) => {
+                let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
+                let columns = self
+                    .table(&spec.table)
+                    .map(|t| t.columns().iter().map(|c| c.name().to_owned()).collect())
+                    .unwrap_or_default();
+                match self.answer_spec(&spec) {
+                    Err(message) => SqlResult::failed(text, 0, &message),
+                    Ok(answer) => {
+                        let mut out = SqlResult::blank(text, "select");
+                        out.columns = columns;
+                        out.returned = answer.returned;
+                        out.rows = answer.rows;
+                        out.plan = Some(answer.plan);
+                        out.spec = spec_json;
+                        out
+                    }
+                }
+            }
+            sql::Statement::Join(spec) => {
+                let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
+                let grouped = spec.group_by;
+                let labels: Vec<String> = spec
+                    .aggregates
+                    .iter()
+                    .map(|a| match a.kind.as_str() {
+                        "count" => "count(*)".to_owned(),
+                        other => format!(
+                            "{other}({})",
+                            fixture::books()
+                                .column(Ordinal(a.column as usize))
+                                .map_or_else(|| a.column.to_string(), |c| c.name().to_owned())
+                        ),
+                    })
+                    .collect();
+                match self.joined_spec(spec) {
+                    Err(message) => SqlResult::failed(text, 0, &message),
+                    Ok(answer) => {
+                        let mut out = SqlResult::blank(
+                            text,
+                            if grouped.is_some() { "group" } else { "join" },
+                        );
+                        out.columns = match grouped {
+                            Some(key) => {
+                                let mut headers = vec![
+                                    fixture::authors()
+                                        .column(Ordinal(key as usize))
+                                        .map_or_else(|| key.to_string(), |c| c.name().to_owned()),
+                                ];
+                                // `count` is always there, added by the
+                                // binding when the reader named no aggregate.
+                                if labels.is_empty() {
+                                    headers.push("count(*)".to_owned());
+                                } else {
+                                    headers.extend(labels);
+                                }
+                                headers
+                            }
+                            None => fixture::authors()
+                                .columns()
+                                .iter()
+                                .map(|c| format!("authors.{}", c.name()))
+                                .chain(
+                                    fixture::books()
+                                        .columns()
+                                        .iter()
+                                        .map(|c| format!("books.{}", c.name())),
+                                )
+                                .collect(),
+                        };
+                        out.returned = answer.returned;
+                        out.rows = if answer.groups.is_empty() {
+                            answer.rows
+                        } else {
+                            answer.groups
+                        };
+                        out.inputs = answer.inputs;
+                        out.message = answer.display;
+                        out.spec = spec_json;
+                        out
+                    }
+                }
+            }
+            sql::Statement::Insert { table, values } => {
+                let json = serde_json::to_string(&values).unwrap_or_default();
+                self.wrote(text, self.write(&table, &json, Write::Insert))
+            }
+            sql::Statement::Delete { table, key } => {
+                let json = serde_json::to_string(&[key]).unwrap_or_default();
+                self.wrote(text, self.remove(&table, &json))
+            }
+            sql::Statement::Update { table, key, set } => {
+                self.wrote(text, self.patch(&table, &key, &set))
+            }
+        }
+    }
+
+    fn wrote(&self, text: &str, outcome: Result<String, String>) -> SqlResult {
+        match outcome {
+            Err(message) => SqlResult::failed(text, 0, &message),
+            Ok(message) => {
+                let mut out = SqlResult::blank(text, "write");
+                out.message = message;
+                out
+            }
+        }
+    }
+
+    /// `UPDATE ... SET` as a read, an edit, and the binding's whole-row write.
+    ///
+    /// The kernel's update replaces a row; the SQL says which columns change.
+    /// Reading the row first is the only way to bridge that, and it is done
+    /// with the *same* query path everything else uses rather than a private
+    /// point-get, so a row hidden by a row policy stays hidden here too. That
+    /// matters: a read-modify-write that could see more than the reader can is
+    /// how a policy gets bypassed by an editor.
+    fn patch(&self, table: &str, key: &str, set: &[(u32, String)]) -> Result<String, String> {
+        let def = self.table(table)?;
+        let pk = *def
+            .primary_key()
+            .first()
+            .ok_or_else(|| format!("`{table}` has no primary key"))?;
+        let spec = QuerySpec {
+            table: table.to_owned(),
+            filters: vec![FilterSpec {
+                column: u32::try_from(pk.0).unwrap_or(0),
+                op: "eq".to_owned(),
+                value: key.to_owned(),
+            }],
+            ..QuerySpec::default()
+        };
+        let found = self.answer_spec(&spec)?;
+        let mut row = found
+            .rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("no row in `{table}` with that key"))?;
+        for (ordinal, value) in set {
+            let slot = row
+                .get_mut(*ordinal as usize)
+                .ok_or_else(|| format!("`{table}` has no column {ordinal}"))?;
+            *slot = value.clone();
+        }
+        let json = serde_json::to_string(&row).map_err(|e| e.to_string())?;
+        self.write(table, &json, Write::Update)
+    }
+
     fn table(&self, name: &str) -> Result<TableDef, String> {
         match name {
             "authors" => Ok(fixture::authors()),
@@ -624,9 +918,18 @@ impl Playground {
     /// than on their JSON rendering.
     fn answer(&self, spec: &str) -> Result<Answer, String> {
         let spec: QuerySpec = serde_json::from_str(spec).map_err(|e| e.to_string())?;
+        self.answer_spec(&spec)
+    }
+
+    /// The same, from a spec that is already a value.
+    ///
+    /// The SQL editor lands here, which is the point of taking this split: a
+    /// statement is parsed into the very spec the JSON path deserialises, so
+    /// there is one query path and one `EXPLAIN`, not one per front end.
+    fn answer_spec(&self, spec: &QuerySpec) -> Result<Answer, String> {
         let table = self.table(&spec.table)?;
 
-        let query = build(&spec, &table)?;
+        let query = build(spec, &table)?;
 
         // One snapshot answers both, and the *same* `Query` value is handed to
         // `explain` and to `execute`. Explaining a query rebuilt to look like

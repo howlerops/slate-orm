@@ -91,7 +91,8 @@ cargo test -p <the crates you touched> --no-fail-fast   # see the disk note belo
 cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
 sh .githooks/test-pre-commit.sh                         # the hook's own suite
 python3 scripts/check_workspace.py                      # every crate is a member
-python3 site/check/quickstarts.py                       # the landing page's code
+python3 site/check/quickstarts.py                       # the docs page's code
+python3 site/check/workbench.py                         # the kernel, in a browser
 cd examples/explorer && ./run.sh --conformance          # the three SDKs agree
 cd examples/explorer && ./run.sh --e2e                  # the demo, in a browser
 ```

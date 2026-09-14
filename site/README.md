@@ -3,63 +3,97 @@
 Published at **<https://howlerops.github.io/slate-orm/>**, from `main`, by
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push.
 
-Two static pages and a stylesheet. No build step, no dependencies, no
-generator — open `index.html` in a browser, or:
+Two pages and a stylesheet. `index.html` is the **workbench** — an application
+that runs slate's kernel in the browser. `docs.html` is everything written
+down: what the project is, the quickstart, and the concepts the clients assume.
+No build step for the pages themselves, but the workbench needs the wasm built
+first:
 
 ```sh
+sh site/build-wasm.sh
 python3 -m http.server --directory site 8000
 ```
 
-## Why there is no build step
+## Why the home page is an application
 
-The site's job is to let someone find the quickstart and start using an SDK.
-That is two pages. A static-site generator would add a toolchain that has to be
+It used to be a landing page with a query panel two thirds of the way down.
+Nobody found the panel — the first report about it was somebody asking whether
+it had deployed at all — and a panel of dropdowns can only ask the questions
+its author thought of.
+
+So the workbench is the home page: a schema tree, an editor, results, and the
+plan beside them. The claim this project makes that is most worth checking is
+"the planner picks an access path, and the choice is not the obvious one". You
+cannot check that by reading; you check it by writing a query and looking at
+what it did. The prose moved to `docs.html`, one click away in the header.
+
+The cost is real and is not hidden: every visitor now downloads roughly 690 KB
+of gzipped WebAssembly on arrival, where before it was fetched only for readers
+who scrolled to the panel. That is the price of the page being the thing rather
+than describing it. `docs.html` loads none of it.
+
+## Why there is no build step for the pages
+
+Two pages. A static-site generator would add a toolchain that has to be
 installed, upgraded and eventually migrated, in exchange for templating two
-files that share one `<header>`.
+files that share one `<header>`. The trade flips as soon as there are ten
+pages or the content wants to live in Markdown.
 
-The trade flips as soon as there are ten pages or the content wants to live in
-Markdown. Until then this is the smaller thing.
+## The workbench runs the real kernel
 
-## The playground runs the real kernel
-
-`index.html` has a panel that answers queries. It is not a mock: `slate-kernel`
-and `slate-schema` are compiled to WebAssembly (`crates/slate-wasm`) and the
-plan shown beside the rows is the same `Explanation` the head node returns for
-`EXPLAIN`.
+Not a mock and not a reimplementation: `slate-kernel` and `slate-schema` are
+compiled to WebAssembly (`crates/slate-wasm`), and the plan shown beside the
+rows is the same `Explanation` the head node returns for `EXPLAIN`.
 
 ```sh
 sh site/build-wasm.sh            # builds slate_wasm{.js,_bg.wasm} into site/
-python3 site/check/playground.py  # drives it in a real browser
+python3 site/check/workbench.py  # drives it in a real browser
 ```
 
 The two built files are **not committed** and are in `.gitignore`. A checked-in
 binary drifts from the kernel it claims to be and nothing notices; CI builds it
 before checking the site, and the Pages deploy builds it before publishing, so
-what ships is always the current kernel. `build-wasm.sh` also enforces a
-gzipped size budget, because the cost of this lands on a reader's connection.
+what ships is always the current kernel. `build-wasm.sh` enforces a gzipped
+size budget, because the cost of this lands on a reader's connection.
 
-It reads, writes and joins. Insert a book and the index answers for it in the
-same breath — an index-only scan goes from four rows to five without ever
-reading a row, which is what "the index is maintained inside the write" means
-when you can watch it. Two conditions can be ANDed, and a collapsed section
-joins `authors` to `books` and groups the result.
+### The SQL is a front end, and says so
 
-The bundle is fetched when the panel is scrolled to, or when the Load button is
-pressed — never on page load, so a reader who never scrolls here pays nothing.
+slate has no SQL. The kernel takes a `Query`; the clients and the wire take a
+structured spec. The editor accepts a small `SELECT`/`INSERT`/`UPDATE`/`DELETE`
+subset (`crates/slate-wasm/src/sql.rs`) and **parses it into that spec** — the
+same `QuerySpec` the dropdowns used to build and the same one an SDK sends.
+The **Spec** tab shows what your statement compiled to, so the translation is
+visible rather than claimed.
 
-It sits second on the page, right after the quickstart, and both the header nav
-and the hero link to it. It used to sit fifth with nothing linking to it, and
-the first thing anyone said about it was to ask whether it had deployed at all.
-`site/check/playground.py` asserts the position and the link count, because a
-panel nobody can find is indistinguishable from one that never shipped.
+That is the whole design of it. A parser producing a `Query` directly would be
+a second route into the executor, and the two would drift. Going through the
+spec means SQL adds no execution path at all, which is what makes the round-
+trip property in `crates/slate-wasm/tests/sql.rs` worth having: generate a
+spec, render it as SQL, parse it back, require the same spec.
 
-The most useful thing the panel shows is counter-intuitive: filtering on the
-indexed `author_id` — where the picker opens, so it is the first plan on
-screen — still plans as a *table scan*. On object
-storage a point read costs about as much as scanning twenty-four thousand
-rows, so an index that still has to fetch rows loses. Narrow the columns to the indexed one and
-the plan becomes an index-only scan at two-thirds the cost. That is the whole
-argument for covering indexes, on the reader's own query.
+Anything outside the grammar is refused with the offset that caused it, and
+the editor puts the caret there. `OR` is rejected rather than quietly ANDed:
+the spec has no disjunction to lower it onto, and a wrong answer is worse than
+a refusal.
+
+### What the panel is for
+
+The most useful thing it shows is counter-intuitive: filtering on the indexed
+`author_id` still plans as a *table scan*. On object storage a point read costs
+about as much as scanning twenty-four thousand rows, so an index that still has
+to fetch rows loses. Narrow the projection to the indexed column and the plan
+becomes an index-only scan at two-thirds the cost. Two statements, one
+observation, on the reader's own query.
+
+A row from an index-only scan comes back with its unread columns as `null` —
+late materialization, not missing data — so the grid renders those cells as a
+muted `·` rather than the word "null". Printing "null" there would be a claim
+about the data that is false.
+
+Writes work, and are the other half of a record layer: insert a book and the
+index answers for it in the same breath, which the browser check asserts by
+requiring the plan to still be index-only afterwards. Writes live in the tab
+only; **Reset data** puts the fixture back.
 
 ## The quickstarts are checked by running them
 
@@ -68,7 +102,7 @@ cargo build -p slate-serverd --bin slate-serverd
 python3 site/check/quickstarts.py
 ```
 
-That extracts the four `<pre><code>` panels out of `index.html`, validates the
+That extracts the four `<pre><code>` panels out of `docs.html`, validates the
 TOML panel with `slate-serverd --check`, starts a node from it, and runs the
 Python, Go and TypeScript snippets against that node. Each must insert a row
 and read it back — asserting on the row rather than on an exit status, because
@@ -85,8 +119,8 @@ Two concessions, both asserted rather than assumed:
 
 The first run found the TOML panel invalid: `bucket` sat directly under
 `[storage]`, where the field is `[storage.s3] bucket`. It had been on the
-landing page since the page was written, and the page said the snippets had
-been executed. They had; the TOML had only been read.
+page since the page was written, and the page said the snippets had been
+executed. They had; the TOML had only been read.
 
 CI runs it on every push (`.github/workflows/ci.yml`, the `quickstarts` job),
 which is where it found the two failures above and two more besides: the
@@ -95,16 +129,21 @@ published. Locally it is one command.
 
 The page is published from `main` by `.github/workflows/pages.yml`. That
 workflow deliberately does not re-run this check — it publishes `site/`
-verbatim — but the two are worth reading together, because a landing page whose
+verbatim — but the two are worth reading together, because a quickstart whose
 first code block does not work is exactly what the checker is for.
 
 ## Keeping it honest
 
-The landing page makes claims about what is built. Every one of them is
-supposed to be true on `main`, and the "What it is not" section is supposed to
-match the README's not-built list. **If you change what the project does,
-change this too** — a landing page that oversells is the most-read stale
-documentation a project has.
+`docs.html` makes claims about what is built. Every one of them is supposed to
+be true on `main`, and its "What it is not" section is supposed to match the
+README's not-built list. **If you change what the project does, change this
+too** — a front page that oversells is the most-read stale documentation a
+project has.
+
+The workbench has a second, sharper version of the same duty: it does not
+describe behaviour, it exhibits it. If the kernel changes, the page changes
+with it on the next deploy, and `site/check/workbench.py` fails in CI if the
+change broke the browser. That is the argument for it being the home page.
 
 Deliberately absent, because there is nothing to put in them: a logo wall, an
 adoption count, a comparison table, and any claim about production readiness

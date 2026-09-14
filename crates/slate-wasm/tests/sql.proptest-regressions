@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8e4b8edec639167220b0b2da429a0a5946a973f7a7c4bd83c4b3c4ad6e2b7c25 # shrinks to spec = QuerySpec { table: "books", filter: None, filters: [FilterSpec { column: 0, op: "lt", value: "0" }], sort: [], limit: None, offset: 0, columns: [] }
+cc 86184ec12bf35ffc1193c2bb05ac3daf7db220573d7fb22f319a75a80d557881 # shrinks to spec = QuerySpec { table: "books", filter: None, filters: [FilterSpec { column: 2, op: "eq", value: "'" }], sort: [], limit: None, offset: 0, columns: [] }

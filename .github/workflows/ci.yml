@@ -254,7 +254,7 @@ jobs:
         working-directory: examples/explorer/web
       - run: npx playwright install --with-deps chromium
         working-directory: examples/explorer/web
-      - run: python3 site/check/playground.py
+      - run: python3 site/check/workbench.py
 
   demo:
     name: three SDKs, one database

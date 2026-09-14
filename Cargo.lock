@@ -3833,6 +3833,7 @@ name = "slate-wasm"
 version = "0.0.1"
 dependencies = [
  "futures",
+ "proptest",
  "serde",
  "serde_json",
  "slate-kernel",

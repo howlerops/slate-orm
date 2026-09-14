@@ -79,7 +79,7 @@ jobs:
       - name: The pages exist
         run: |
           for page in site/index.html site/docs.html site/style.css \
-                      site/playground.js site/slate_wasm.js site/slate_wasm_bg.wasm; do
+                      site/workbench.js site/slate_wasm.js site/slate_wasm_bg.wasm; do
             [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
           done
 

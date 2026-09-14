@@ -48,20 +48,23 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
 
-      # `--check` on the shipped binary, against the configuration the landing
-      # page actually shows. Host architecture only: a cross-compiled binary
-      # cannot be run on the runner that built it, and adding an emulator to
-      # find out is more machinery than an unreleased project earns.
+      # `--check` on the shipped binary, against the configuration the docs
+      # page actually shows (it moved there when the workbench took over the
+      # landing page; the assert below is what would have caught the move).
+      #
+      # Host architecture only: a cross-compiled binary cannot be run on the
+      # runner that built it, and adding an emulator to find out is more
+      # machinery than an unreleased project earns.
       - name: It starts, and validates a configuration
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           python3 - <<'PY'
           import html, pathlib, re
-          page = pathlib.Path("site/index.html").read_text()
+          page = pathlib.Path("site/docs.html").read_text()
           panel = re.search(
               r'<div data-panel="toml"[^>]*>\s*<pre><code>(.*?)</code></pre>',
               page, re.DOTALL)
-          assert panel, "site/index.html has no TOML panel"
+          assert panel, "site/docs.html has no TOML panel"
           pathlib.Path("release-check.toml").write_text(html.unescape(panel.group(1)))
           PY
           ./target/${{ matrix.target }}/release/slate-serverd --config release-check.toml --check

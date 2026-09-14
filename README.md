@@ -6,7 +6,11 @@ A **record layer** for [SlateDB](https://slatedb.io) — typed schemas, secondar
 indexes, query planning and row-level security over an ordered key-value store
 on object storage.
 
-Documentation: **<https://howlerops.github.io/slate-orm/>**
+Run a query against it in your browser:
+**<https://howlerops.github.io/slate-orm/>** — the kernel compiled to
+WebAssembly, with the planner's `EXPLAIN` beside every answer.
+Documentation is one click away, at
+**<https://howlerops.github.io/slate-orm/docs.html>**.
 
 The closest blueprint is FoundationDB's Record Layer rather than an ORM. The
 derive macro is a surface; the value is in the kernel underneath it, which owns
@@ -669,7 +673,7 @@ Built and tested:
       pull requests, and every branch since it was added has been a feature
       branch with no pull request. Eleven jobs now, on every push — the Rust
       workspace, the three client suites, the demo frontend, the pre-commit
-      hook's own tests, a workspace-layout guard, the landing page's
+      hook's own tests, a workspace-layout guard, the docs page's
       quickstarts, and the conformance runner and a browser e2e over all three
       SDKs. Getting it green found **eleven** real defects, several of which
       exist only away from a developer's machine: two withdrawn or unreachable
@@ -681,7 +685,7 @@ Built and tested:
       publishes `site/` from `main`, and a tag builds `slate-serverd` for two
       targets and attaches them. The release *build* — both targets, the
       aarch64 cross toolchain, and `--check` on the shipped binary against the
-      landing page's own TOML — runs on every push as well, so the one thing a
+      docs page's own TOML — runs on every push as well, so the one thing a
       release workflow is usually first asked to do on release day is already
       answered
 - [x] A tagged release. `v0.0.1` carries `slate-serverd` for x86_64 and
@@ -807,7 +811,7 @@ Not built:
       not currently worth fixing
       (`cargo run --release -p slate-kernel --example correlation`)
 - [ ] Publishing. `slate-client` is not on PyPI and `@slate-orm/client` is not
-      on npm; the landing page says so and installs them by path. Each needs a
+      on npm; the docs page says so and installs them by path. Each needs a
       credential, a name nobody has claimed, and a decision about stability
       that has not been made, and wiring up a token to find out is the wrong
       order. The Go client needs no registry — a module path is its import
