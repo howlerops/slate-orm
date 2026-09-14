@@ -36,6 +36,7 @@
 
 use crate::fingerprint;
 use crate::proto as pb;
+use crate::session::GroupedExplanation;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
     Aggregate, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group, Grouping, Join,
@@ -2030,6 +2031,11 @@ pub fn explanation_to_proto(
         display: explanation.to_string(),
         warnings,
         served_by,
+        decodes: explanation
+            .decodes
+            .iter()
+            .map(|ordinal| ordinal.0 as u32)
+            .collect(),
     }
 }
 
@@ -2136,5 +2142,66 @@ pub fn chain_plan_to_proto(
         display,
         warnings,
         served_by,
+    }
+}
+
+/// A grouped read's plan in its wire form.
+///
+/// `display` is prefixed with the grouping rather than left to the underlying
+/// explanation, because the projections alone do not say which of the columns
+/// being read are group keys and which are being folded — and that is exactly
+/// what someone reading the plan of a grouped read wants to know first.
+#[must_use]
+pub fn grouped_explanation_to_proto(
+    explanation: &GroupedExplanation,
+    tables: &[&TableDef],
+    grouping: &Grouping,
+    warnings: Vec<String>,
+    served_by: pb::ServedBy,
+) -> pb::AggregateExplainResponse {
+    let heading = format!(
+        "Group by [{}] computing [{}]",
+        grouping
+            .group
+            .iter()
+            .map(|ordinal| ordinal.0.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        grouping
+            .aggregates
+            .iter()
+            .map(|aggregate| format!("{aggregate:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let (input, join) = match explanation {
+        GroupedExplanation::Table(plan) => {
+            (Some(explanation_to_proto(plan, Vec::new(), None)), None)
+        }
+        GroupedExplanation::Join(plan) => (
+            None,
+            Some(join_explanation_to_proto(plan, Vec::new(), None)),
+        ),
+        GroupedExplanation::Chain(chain, plan) => (
+            None,
+            Some(chain_plan_to_proto(plan, tables, chain, Vec::new(), None)),
+        ),
+    };
+
+    let body = input.as_ref().map_or_else(
+        || {
+            join.as_ref()
+                .map_or_else(String::new, |j| j.display.clone())
+        },
+        |i| i.display.clone(),
+    );
+
+    pb::AggregateExplainResponse {
+        input,
+        join,
+        display: format!("{heading}\n  {body}"),
+        warnings,
+        served_by: Some(served_by),
     }
 }

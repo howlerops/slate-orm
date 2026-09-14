@@ -28,8 +28,8 @@ use proptest::prelude::*;
 use slate_kernel::latency::{IoCounters, LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
-    Action, Aggregate, Chain, ChainRow, Expr, Grant, Group, Grouping, Join, JoinSchema, JoinStep,
-    JoinType, Policy, Principal, RecordStore, SecurityCatalog, SecurityContext,
+    Access, Action, Aggregate, Chain, ChainRow, Expr, Grant, Group, Grouping, Join, JoinSchema,
+    JoinStep, JoinType, Policy, Principal, RecordStore, SecurityCatalog, SecurityContext,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -157,6 +157,22 @@ fn security() -> SecurityCatalog {
         .grant(Grant::new("r", AUTHORS, Action::EVERYTHING))
         .grant(Grant::new("r", BOOKS, Action::EVERYTHING))
         .grant(Grant::new("r", PUBLISHERS, Action::EVERYTHING))
+        // The four data actions and *not* `Explain`, which is its own. A role
+        // that can read but cannot ask for a plan is the only identity that can
+        // tell a missing authorization check from a present one; `r` holds
+        // `EVERYTHING` and would pass either way.
+        .grant(Grant::new("no-plans", AUTHORS, Action::ALL))
+        .grant(Grant::new("no-plans", BOOKS, Action::ALL))
+        .grant(Grant::new("no-plans", PUBLISHERS, Action::ALL))
+}
+
+/// Reads everything, may not ask how.
+fn grouper() -> SecurityContext {
+    SecurityContext::new(
+        Principal::new(Value::U64(1))
+            .with_tenant(Value::U64(1))
+            .with_role("no-plans"),
+    )
 }
 
 fn reader() -> SecurityContext {
@@ -624,7 +640,7 @@ async fn a_grouped_chain_reads_only_what_something_downstream_needs() {
         Chain::start().join(one)
     };
 
-    let owned = vec![authors(), books()];
+    let owned = [authors(), books()];
     let refs: Vec<&TableDef> = owned.iter().collect();
 
     // Grouping on the left table's id: nothing needs a book's row.
@@ -719,4 +735,144 @@ async fn rt_grouped(
     txn.group_by_chain(&reader(), refs, chain, grouping)
         .await
         .unwrap()
+}
+
+// --- explaining a grouped read ---------------------------------------------
+
+/// The plan `EXPLAIN` reports is the plan that runs.
+///
+/// The temptation with an `EXPLAIN` is to check it against another plan, which
+/// only proves that two planners agree. This checks it against *I/O*: the
+/// explanation claims an index-only scan, and the same read is then run over a
+/// counting store and must touch no rows. Wrong in either direction fails —
+/// a plan that promises index-only and reads, or one that admits reads and
+/// does not make them.
+#[tokio::test]
+async fn a_grouped_chains_explanation_predicts_the_reads_it_makes() {
+    let (store, counters) = counted().await;
+    let at = schema();
+
+    let chain = || {
+        let mut one = JoinStep::equating(at.at(0, a("id")), b("author_id"));
+        one.query = slate_kernel::Query::all().using_index(IndexId(20));
+        Chain::start().join(one)
+    };
+    let owned = [authors(), books()];
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    // Grouping on the left's id: nothing downstream reads a book's row, so the
+    // `author_id` index covers the right-hand step outright.
+    let covered = Grouping::by([at.at(0, a("id"))], &[Aggregate::Count]);
+    // Grouping that maxes `year`, which only the row holds.
+    let uncovered = Grouping::by(
+        [at.at(0, a("id"))],
+        &[Aggregate::Count, Aggregate::Max(at.at(1, b("year")))],
+    );
+
+    let txn = store.begin().await.unwrap();
+    for (grouping, expected_index_only) in [(covered, true), (uncovered, false)] {
+        let (_, plan) = txn
+            .explain_grouped_chain(&reader(), &refs, &chain(), &grouping)
+            .unwrap();
+        let step = plan.steps.first().expect("the chain has one step");
+        let index_only = matches!(step.plan.access, Access::IndexScan { covering: true, .. });
+        assert_eq!(
+            index_only, expected_index_only,
+            "explained access for the book step: {:?}",
+            step.plan.access
+        );
+
+        counters.reset();
+        let groups = txn
+            .group_by_chain(&reader(), &refs, &chain(), &grouping)
+            .await
+            .unwrap();
+        assert!(!groups.is_empty(), "premise: the chain produces groups");
+        let reads = counters.gets();
+
+        if expected_index_only {
+            assert_eq!(
+                reads, 0,
+                "explained as index-only, and then read {reads} rows"
+            );
+        } else {
+            assert!(reads > 0, "explained as reading rows, and then read none");
+        }
+    }
+}
+
+/// Explaining a grouped join is not explaining the join.
+///
+/// The whole reason for a separate entry point: `explain_join` describes the
+/// caller's join, whose projections are whatever they wrote, and the grouped
+/// read runs a narrowed one. A caller asking "will my grouped read go
+/// index-only" cannot get the answer from the ungrouped explanation, and the
+/// ungrouped explanation is not merely less precise — on this fixture it says
+/// the opposite.
+#[tokio::test]
+async fn explaining_a_grouped_join_answers_a_different_question_from_explaining_the_join() {
+    let (store, _) = counted().await;
+    let at = schema();
+
+    let owned = [authors(), books()];
+    let (left, right) = (&owned[0], &owned[1]);
+
+    let mut join = Join::equating(at.at(0, a("id")), b("author_id"));
+    join.right = slate_kernel::Query::all().using_index(IndexId(20));
+
+    let grouping = Grouping::by([at.at(0, a("id"))], &[Aggregate::Count]);
+
+    let txn = store.begin().await.unwrap();
+    let plain = txn.explain_join(&reader(), left, right, &join).unwrap();
+    let grouped = txn
+        .explain_grouped_join(&reader(), left, right, &join, &grouping)
+        .unwrap();
+
+    assert!(
+        !plain.right.is_index_only(),
+        "premise: ungrouped, the right side must read rows to return them: {:?}",
+        plain.right.access
+    );
+    assert!(
+        grouped.right.is_index_only(),
+        "grouped, nothing downstream needs a book's row: {:?}",
+        grouped.right.access
+    );
+}
+
+/// `EXPLAIN` on a grouped read is `Action::Explain`, like every other plan.
+///
+/// A plan is costed against statistics describing rows a policy may hide, so
+/// the privilege is the same wherever the plan comes from. A new entry point is
+/// exactly where that gets forgotten: the two above call `authorize_explain`
+/// and this is what says so.
+#[tokio::test]
+async fn a_reader_may_group_but_may_not_explain_the_grouping() {
+    let store = seeded().await;
+    let at = schema();
+
+    let owned = [authors(), books()];
+    let refs: Vec<&TableDef> = owned.iter().collect();
+    let chain = Chain::start().join(JoinStep::equating(at.at(0, a("id")), b("author_id")));
+    let grouping = Grouping::by([at.at(0, a("id"))], &[Aggregate::Count]);
+
+    let txn = store.begin().await.unwrap();
+
+    // The premise: this identity can run the grouped read.
+    txn.group_by_chain(&grouper(), &refs, &chain, &grouping)
+        .await
+        .expect("this identity may group");
+
+    let refused = txn.explain_grouped_chain(&grouper(), &refs, &chain, &grouping);
+    assert!(
+        refused.is_err(),
+        "a reader without Explain got a plan for a grouped chain"
+    );
+
+    let join = Join::equating(at.at(0, a("id")), b("author_id"));
+    let refused = txn.explain_grouped_join(&grouper(), refs[0], refs[1], &join, &grouping);
+    assert!(
+        refused.is_err(),
+        "a reader without Explain got a plan for a grouped join"
+    );
 }

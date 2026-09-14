@@ -173,6 +173,13 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("app", AUTHORS, Action::EVERYTHING))
         .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
         .grant(Grant::new("app", SALES, Action::EVERYTHING))
+        // The four data actions and *not* `Explain`, which is its own. Only an
+        // identity that can run a read but cannot ask for its plan can tell a
+        // present authorization check from a missing one; `app` holds
+        // `EVERYTHING` and passes either way.
+        .grant(Grant::new("grouper", AUTHORS, Action::ALL))
+        .grant(Grant::new("grouper", BOOKS, Action::ALL))
+        .grant(Grant::new("grouper", SALES, Action::ALL))
         // Hides rows by who owns them.
         .policy(Policy::new(
             "own_authors",
@@ -469,6 +476,16 @@ pub fn app_in<T>(message: T, id: u64, tenant: u64) -> Request<T> {
         &format!("u64:{id}"),
         Some(&format!("u64:{tenant}")),
         "app",
+    )
+}
+
+/// Reads everything the `app` role can, and may not ask for a plan.
+pub fn grouper_in<T>(message: T, id: u64, tenant: u64) -> Request<T> {
+    as_principal(
+        message,
+        &format!("u64:{id}"),
+        Some(&format!("u64:{tenant}")),
+        "grouper",
     )
 }
 

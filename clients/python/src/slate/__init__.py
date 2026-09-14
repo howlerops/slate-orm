@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from .client import (
     Client,
+    AggregateExplanation,
     Explanation,
     GroupStream,
     Identity,
@@ -116,6 +117,7 @@ __all__ = [
     "Conflict",
     "DataLoss",
     "DeadlineExceeded",
+    "AggregateExplanation",
     "Explanation",
     "Expr",
     "Freshness",

@@ -71,6 +71,13 @@ export interface Explanation {
   readonly estimatedCost: number;
   readonly sorts: boolean;
   readonly indexOnly: boolean;
+  /**
+   * The columns this plan decodes: the projection plus whatever the residual
+   * reads. Often the only visible difference between a grouped read's plan and
+   * the plan of the read it groups, since narrowing the projection need not
+   * change the access path.
+   */
+  readonly decodes: number[];
   readonly display: string;
   readonly warnings: string[];
 }
@@ -412,11 +419,12 @@ export class Session {
   }
 
   /**
-   * Group a join.
+   * Group a join, or a chain of any length.
    *
-   * Two inputs exactly: the kernel groups a two-table join and does not group
-   * a chain. A third is refused by the server with that as the reason, rather
-   * than counted here where the count could drift from the kernel's.
+   * It was two inputs exactly when the kernel grouped only a two-table join
+   * and the server refused a third; it groups a chain now, and the refusal
+   * went with it. Nothing counts inputs here, where the count could drift from
+   * the kernel's.
    */
   aggregateJoin(over: JoinQuery, grouping: Grouping): GroupStream {
     const query = applyGrouping(
@@ -454,20 +462,58 @@ export class Session {
       freshness: this.#freshness(),
     });
     this.#observeServedBy(r["servedBy"]);
-    const inputs = ((r["inputs"] as Record<string, unknown>[]) ?? []).map((input) => {
-      const algorithm = input["algorithm"] as Record<string, unknown> | undefined;
-      return {
-        plan: explanationFromWire((input["plan"] as Record<string, unknown>) ?? {}),
-        type: String(input["joinType"] ?? ""),
-        algorithm: algorithm ? String(algorithm["algorithm"] ?? "") : "",
-        estimatedRows: Number(input["estimatedRows"] ?? 0),
-        estimatedCost: Number(input["estimatedCost"] ?? 0),
-      };
+    return joinExplanationFromWire(r);
+  }
+
+  /**
+   * Ask for a grouped read's plan without running it.
+   *
+   * Not `explain` or `explainJoin` on the underlying read: grouping narrows
+   * each input's projection to the group keys and the aggregates' columns,
+   * which is what lets an index answer a `COUNT(*)` without touching a row.
+   * Comparing `decodes` between the two is how to see it where the access path
+   * is unchanged.
+   *
+   * Exactly one of `input` and `join` comes back, matching the request.
+   */
+  async explainAggregate(
+    over: Query,
+    grouping: Grouping,
+  ): Promise<AggregateExplanation> {
+    return this.#explainAggregate(
+      applyGrouping({ input: queryToWire(over, this.#client.claim(over.table)) }, grouping),
+    );
+  }
+
+  /** Ask for a grouped join's or grouped chain's plan. */
+  async explainAggregateJoin(
+    over: JoinQuery,
+    grouping: Grouping,
+  ): Promise<AggregateExplanation> {
+    return this.#explainAggregate(
+      applyGrouping(
+        { join: joinToWire(over, (table) => this.#client.claim(table)) },
+        grouping,
+      ),
+    );
+  }
+
+  async #explainAggregate(
+    aggregate: Record<string, unknown>,
+  ): Promise<AggregateExplanation> {
+    const r = await this.#client.call<Record<string, unknown>>("ExplainAggregate", {
+      aggregate,
+      freshness: this.#freshness(),
     });
+    this.#observeServedBy(r["servedBy"]);
+    // `@grpc/proto-loader` leaves an unset message field undefined rather than
+    // an empty object, so presence here is the wire's own oneof-in-spirit and
+    // not a guess about which fields came back populated.
+    const input = r["input"] as Record<string, unknown> | undefined;
+    const join = r["join"] as Record<string, unknown> | undefined;
     return {
-      inputs,
-      estimatedRows: Number(r["estimatedRows"] ?? 0),
-      estimatedCost: Number(r["estimatedCost"] ?? 0),
+      input: input ? explanationFromWire(input) : undefined,
+      join: join ? joinExplanationFromWire(join) : undefined,
       display: String(r["display"] ?? ""),
       warnings: (r["warnings"] as string[]) ?? [],
     };
@@ -873,6 +919,36 @@ export interface JoinExplanation {
   readonly warnings: string[];
 }
 
+/** The plan a grouped read would run under. */
+export interface AggregateExplanation {
+  /** Set when the aggregate reads one table; undefined otherwise. */
+  readonly input: Explanation | undefined;
+  /** Set when it aggregates a join or a chain; undefined otherwise. */
+  readonly join: JoinExplanation | undefined;
+  readonly display: string;
+  readonly warnings: string[];
+}
+
+function joinExplanationFromWire(r: Record<string, unknown>): JoinExplanation {
+  const inputs = ((r["inputs"] as Record<string, unknown>[]) ?? []).map((input) => {
+    const algorithm = input["algorithm"] as Record<string, unknown> | undefined;
+    return {
+      plan: explanationFromWire((input["plan"] as Record<string, unknown>) ?? {}),
+      type: String(input["joinType"] ?? ""),
+      algorithm: algorithm ? String(algorithm["algorithm"] ?? "") : "",
+      estimatedRows: Number(input["estimatedRows"] ?? 0),
+      estimatedCost: Number(input["estimatedCost"] ?? 0),
+    };
+  });
+  return {
+    inputs,
+    estimatedRows: Number(r["estimatedRows"] ?? 0),
+    estimatedCost: Number(r["estimatedCost"] ?? 0),
+    display: String(r["display"] ?? ""),
+    warnings: (r["warnings"] as string[]) ?? [],
+  };
+}
+
 function explanationFromWire(r: Record<string, unknown>): Explanation {
   return {
     table: String(r["table"] ?? ""),
@@ -883,6 +959,7 @@ function explanationFromWire(r: Record<string, unknown>): Explanation {
     estimatedCost: Number(r["estimatedCost"] ?? 0),
     sorts: Boolean(r["sorts"]),
     indexOnly: Boolean(r["indexOnly"]),
+    decodes: ((r["decodes"] as unknown[]) ?? []).map(Number),
     display: String(r["display"] ?? ""),
     warnings: (r["warnings"] as string[]) ?? [],
   };

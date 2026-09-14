@@ -43,6 +43,7 @@ class RecordsStub:
     Aggregate: _grpc.UnaryStreamMultiCallable[_records_pb2.AggregateRequest, _records_pb2.AggregateResponse]
     Explain: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainRequest, _records_pb2.ExplainResponse]
     ExplainJoin: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainJoinRequest, _records_pb2.JoinExplainResponse]
+    ExplainAggregate: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainAggregateRequest, _records_pb2.AggregateExplainResponse]
     Leadership: _grpc.UnaryUnaryMultiCallable[_records_pb2.LeadershipRequest, _records_pb2.LeadershipStatus]
 
 @_typing.type_check_only
@@ -60,6 +61,7 @@ class RecordsAsyncStub(RecordsStub):
     Aggregate: _aio.UnaryStreamMultiCallable[_records_pb2.AggregateRequest, _records_pb2.AggregateResponse]  # type: ignore[assignment]
     Explain: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainRequest, _records_pb2.ExplainResponse]  # type: ignore[assignment]
     ExplainJoin: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainJoinRequest, _records_pb2.JoinExplainResponse]  # type: ignore[assignment]
+    ExplainAggregate: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainAggregateRequest, _records_pb2.AggregateExplainResponse]  # type: ignore[assignment]
     Leadership: _aio.UnaryUnaryMultiCallable[_records_pb2.LeadershipRequest, _records_pb2.LeadershipStatus]  # type: ignore[assignment]
 
 class RecordsServicer(metaclass=_abc_1.ABCMeta):
@@ -146,6 +148,13 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
         request: _records_pb2.ExplainJoinRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_records_pb2.JoinExplainResponse, _abc.Awaitable[_records_pb2.JoinExplainResponse]]: ...
+
+    @_abc_1.abstractmethod
+    def ExplainAggregate(
+        self,
+        request: _records_pb2.ExplainAggregateRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.AggregateExplainResponse, _abc.Awaitable[_records_pb2.AggregateExplainResponse]]: ...
 
     @_abc_1.abstractmethod
     def Leadership(

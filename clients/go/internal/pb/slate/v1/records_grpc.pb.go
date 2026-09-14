@@ -19,19 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Records_Begin_FullMethodName       = "/slate.v1.Records/Begin"
-	Records_Commit_FullMethodName      = "/slate.v1.Records/Commit"
-	Records_Rollback_FullMethodName    = "/slate.v1.Records/Rollback"
-	Records_Insert_FullMethodName      = "/slate.v1.Records/Insert"
-	Records_Update_FullMethodName      = "/slate.v1.Records/Update"
-	Records_Delete_FullMethodName      = "/slate.v1.Records/Delete"
-	Records_Get_FullMethodName         = "/slate.v1.Records/Get"
-	Records_Query_FullMethodName       = "/slate.v1.Records/Query"
-	Records_Join_FullMethodName        = "/slate.v1.Records/Join"
-	Records_Aggregate_FullMethodName   = "/slate.v1.Records/Aggregate"
-	Records_Explain_FullMethodName     = "/slate.v1.Records/Explain"
-	Records_ExplainJoin_FullMethodName = "/slate.v1.Records/ExplainJoin"
-	Records_Leadership_FullMethodName  = "/slate.v1.Records/Leadership"
+	Records_Begin_FullMethodName            = "/slate.v1.Records/Begin"
+	Records_Commit_FullMethodName           = "/slate.v1.Records/Commit"
+	Records_Rollback_FullMethodName         = "/slate.v1.Records/Rollback"
+	Records_Insert_FullMethodName           = "/slate.v1.Records/Insert"
+	Records_Update_FullMethodName           = "/slate.v1.Records/Update"
+	Records_Delete_FullMethodName           = "/slate.v1.Records/Delete"
+	Records_Get_FullMethodName              = "/slate.v1.Records/Get"
+	Records_Query_FullMethodName            = "/slate.v1.Records/Query"
+	Records_Join_FullMethodName             = "/slate.v1.Records/Join"
+	Records_Aggregate_FullMethodName        = "/slate.v1.Records/Aggregate"
+	Records_Explain_FullMethodName          = "/slate.v1.Records/Explain"
+	Records_ExplainJoin_FullMethodName      = "/slate.v1.Records/ExplainJoin"
+	Records_ExplainAggregate_FullMethodName = "/slate.v1.Records/ExplainAggregate"
+	Records_Leadership_FullMethodName       = "/slate.v1.Records/Leadership"
 )
 
 // RecordsClient is the client API for Records service.
@@ -50,6 +51,7 @@ type RecordsClient interface {
 	Aggregate(ctx context.Context, in *AggregateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AggregateResponse], error)
 	Explain(ctx context.Context, in *ExplainRequest, opts ...grpc.CallOption) (*ExplainResponse, error)
 	ExplainJoin(ctx context.Context, in *ExplainJoinRequest, opts ...grpc.CallOption) (*JoinExplainResponse, error)
+	ExplainAggregate(ctx context.Context, in *ExplainAggregateRequest, opts ...grpc.CallOption) (*AggregateExplainResponse, error)
 	Leadership(ctx context.Context, in *LeadershipRequest, opts ...grpc.CallOption) (*LeadershipStatus, error)
 }
 
@@ -208,6 +210,16 @@ func (c *recordsClient) ExplainJoin(ctx context.Context, in *ExplainJoinRequest,
 	return out, nil
 }
 
+func (c *recordsClient) ExplainAggregate(ctx context.Context, in *ExplainAggregateRequest, opts ...grpc.CallOption) (*AggregateExplainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AggregateExplainResponse)
+	err := c.cc.Invoke(ctx, Records_ExplainAggregate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *recordsClient) Leadership(ctx context.Context, in *LeadershipRequest, opts ...grpc.CallOption) (*LeadershipStatus, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LeadershipStatus)
@@ -234,6 +246,7 @@ type RecordsServer interface {
 	Aggregate(*AggregateRequest, grpc.ServerStreamingServer[AggregateResponse]) error
 	Explain(context.Context, *ExplainRequest) (*ExplainResponse, error)
 	ExplainJoin(context.Context, *ExplainJoinRequest) (*JoinExplainResponse, error)
+	ExplainAggregate(context.Context, *ExplainAggregateRequest) (*AggregateExplainResponse, error)
 	Leadership(context.Context, *LeadershipRequest) (*LeadershipStatus, error)
 	mustEmbedUnimplementedRecordsServer()
 }
@@ -280,6 +293,9 @@ func (UnimplementedRecordsServer) Explain(context.Context, *ExplainRequest) (*Ex
 }
 func (UnimplementedRecordsServer) ExplainJoin(context.Context, *ExplainJoinRequest) (*JoinExplainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExplainJoin not implemented")
+}
+func (UnimplementedRecordsServer) ExplainAggregate(context.Context, *ExplainAggregateRequest) (*AggregateExplainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExplainAggregate not implemented")
 }
 func (UnimplementedRecordsServer) Leadership(context.Context, *LeadershipRequest) (*LeadershipStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method Leadership not implemented")
@@ -500,6 +516,24 @@ func _Records_ExplainJoin_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Records_ExplainAggregate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExplainAggregateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).ExplainAggregate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_ExplainAggregate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).ExplainAggregate(ctx, req.(*ExplainAggregateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Records_Leadership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LeadershipRequest)
 	if err := dec(in); err != nil {
@@ -560,6 +594,10 @@ var Records_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExplainJoin",
 			Handler:    _Records_ExplainJoin_Handler,
+		},
+		{
+			MethodName: "ExplainAggregate",
+			Handler:    _Records_ExplainAggregate_Handler,
 		},
 		{
 			MethodName: "Leadership",

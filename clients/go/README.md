@@ -93,9 +93,22 @@ A `JoinStream` yields one slice **per input**, `nil` where an outer join found
 no match — kept separate rather than concatenated, because a flat row cannot
 tell "no match" from "matched, and the columns are null".
 
-`AggregateJoin` takes exactly two inputs. A third is refused by the server with
-that as the reason, rather than counted here where the count could drift from
-the kernel's.
+`AggregateJoin` groups a join or a chain of any length. It took exactly two
+inputs while the kernel grouped only a two-table join and the server refused a
+third; the kernel groups a chain now and the refusal went with it. Nothing
+counts inputs here, where the count could drift from the kernel's.
+
+### Explaining a grouped read
+
+```go
+plan, err := session.ExplainAggregateJoin(ctx, b.Query(), grouping)
+```
+
+Not `ExplainJoin` on the same join. Grouping narrows each input's projection to
+the group keys and the aggregates' columns — which is what lets an index answer
+a `COUNT(*)` without reading a row — so the two describe different plans.
+`Explanation.Decodes` is where the difference shows when the access path does
+not change. Exactly one of `Input` and `Join` comes back, matching the request.
 
 ## Schema checks
 

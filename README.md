@@ -650,19 +650,32 @@ Built and tested:
       pins the symmetry, so the day it stops holding, the reasoning is caught
 - [x] A grouped join and ordered groups on the wire. `AggregateQuery` carries
       a `join` and its own `sort`/`limit`/`offset` over *groups*, with a
-      differential against the kernel per shape. Three inputs is refused with
-      the reason rather than planned as something else, because the kernel
-      groups a two-table join and does not group a chain
+      differential against the kernel per shape. Three inputs was refused with
+      the reason at the time, because the kernel then grouped a two-table join
+      and not a chain; the entry two above is where that stopped being true
 - [x] A grouped join, and `ORDER BY`/`LIMIT` over groups — one hash-grouping
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
       zero book rows)
+- [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
+      `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the
+      kernel. Not the same plan as explaining the read underneath: grouping
+      narrows each input's projection to the group keys and the aggregates'
+      columns, which is what lets an index answer a `COUNT(*)` without touching
+      a row. Running and explaining go through one narrowing function, so an
+      `EXPLAIN` cannot describe a plan nothing runs, and one kernel test ties
+      the claim to *I/O* rather than to a second plan: explained index-only
+      then reads zero rows, explained otherwise then reads some.
+      `ExplainResponse` gained `decodes` in the process — without it, two plans
+      that decode different amounts of every row printed identical strings
+      wherever the access path was unchanged
 - [x] Go and TypeScript clients ([`clients/go`](clients/go),
       [`clients/typescript`](clients/typescript)), alongside the Python one.
       Each runs its tests against a real `slate-serverd` started as a
       subprocess — no mocks, because a mock agrees with the client's own
-      misunderstandings. All three cover joins, grouped joins, ordered groups
-      and schema checks; none covers computed values or vectors
+      misunderstandings. All three cover joins, grouped joins, ordered groups,
+      schema checks and explaining a grouped read; none covers computed values
+      or vectors
 - [x] A read-only head node. `Head::read_only` serves reads from replicas with
       no writer store at all, so a node that loses the campaign starts as a
       reader rather than fencing the healthy leader or refusing to run — which

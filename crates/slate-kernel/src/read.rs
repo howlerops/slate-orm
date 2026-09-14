@@ -143,10 +143,10 @@ fn narrowed_chain(chain: &Chain, schema: &JoinSchema, grouping: &Grouping) -> Ch
     let want = |joined: Ordinal, into: &mut Vec<BTreeSet<Ordinal>>| {
         // Outside the joined space: nothing to read for it, and it reads as
         // null on every path alike. Same rule the two-table version applies.
-        if let Some((position, at)) = schema.locate(joined) {
-            if let Some(set) = into.get_mut(position) {
-                set.insert(at);
-            }
+        if let Some((position, at)) = schema.locate(joined)
+            && let Some(set) = into.get_mut(position)
+        {
+            set.insert(at);
         }
     };
 
@@ -371,14 +371,8 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
-        let columns: Vec<Ordinal> = grouping.group.clone();
-        let mut cursor = self
-            .execute(
-                context,
-                table,
-                &narrowed(query, &grouping.aggregates, &columns),
-            )
-            .await?;
+        let (narrowed, _) = self.plan_grouped(context, table, query, grouping)?;
+        let mut cursor = self.execute(context, table, &narrowed).await?;
         let mut grouper = Grouper::with_limits(grouping, self.limits);
         while let Some(row) = cursor.next().await? {
             grouper.push(&row)?;
@@ -405,13 +399,8 @@ impl<'a> SecuredReads<'a> {
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
         let schema = JoinSchema::of(left_table, right_table);
-        // Each side reads only what the grouping and the join itself need,
-        // which is what lets an index-only scan serve a grouped join the way it
-        // already serves a grouped table scan. A side's limit and offset are
-        // ignored here as they are ignored everywhere else in a join: they
-        // would change the answer rather than page it.
-        let narrowed = narrowed_join(join, &schema, grouping);
-        let plan = self.plan_join(context, left_table, right_table, &narrowed)?;
+        let (narrowed, plan) =
+            self.plan_grouped_join(context, left_table, right_table, join, grouping)?;
         let mut cursor =
             JoinCursor::open(self, context, left_table, right_table, &narrowed, &plan).await?;
 
@@ -446,8 +435,8 @@ impl<'a> SecuredReads<'a> {
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
         let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
-        let narrowed = narrowed_chain(chain, &schema, grouping);
-        let plan = self.plan_chain(context, tables, &narrowed, &schema)?;
+        let (narrowed, plan) =
+            self.plan_grouped_chain(context, tables, chain, grouping, &schema)?;
         let mut cursor =
             chain::run(self, context, tables, &narrowed, &plan, Arc::clone(&schema)).await?;
 
@@ -459,6 +448,72 @@ impl<'a> SecuredReads<'a> {
             grouper.push(&row.flatten(&schema))?;
         }
         Ok(grouper.finish())
+    }
+
+    /// Plan a single-table read *for a grouping*, and say what will run.
+    ///
+    /// The one-table sibling of [`SecuredReads::plan_grouped_join`], sharing
+    /// the narrowing with [`SecuredReads::grouped`] for the same reason: an
+    /// `EXPLAIN` that narrows on its own can describe a plan nothing runs.
+    ///
+    /// The projection is the group keys plus what the aggregates read, which is
+    /// why `COUNT(*)` over an indexed predicate touches no row at all.
+    pub(crate) fn plan_grouped(
+        self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        grouping: &Grouping,
+    ) -> Result<(Query, Plan)> {
+        let columns: Vec<Ordinal> = grouping.group.clone();
+        let narrowed = narrowed(query, &grouping.aggregates, &columns);
+        let plan = self.plan(context, table, &narrowed)?;
+        Ok((narrowed, plan))
+    }
+
+    /// Choose how to join two tables *for a grouping*, and say what will run.
+    ///
+    /// Returns the narrowed join alongside its plan, because the two belong
+    /// together: the plan describes that join and not the one the caller wrote.
+    ///
+    /// Each side reads only what the grouping and the join itself need, which
+    /// is what lets an index-only scan serve a grouped join the way it already
+    /// serves a grouped table scan. A side's limit and offset are ignored here
+    /// as they are ignored everywhere else in a join: they would change the
+    /// answer rather than page it.
+    ///
+    /// Both [`SecuredReads::grouped_join`] and `RecordStore::explain_grouped`
+    /// go through this rather than each narrowing for itself. Not tidiness: an
+    /// `EXPLAIN` that narrows separately is an `EXPLAIN` that can describe a
+    /// plan nothing runs, which is the one thing an `EXPLAIN` must never do,
+    /// and the drift would be invisible — both would still be plausible plans
+    /// for plausible joins.
+    pub(crate) fn plan_grouped_join(
+        self,
+        context: &SecurityContext,
+        left_table: &TableDef,
+        right_table: &TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<(Join, JoinPlan)> {
+        let schema = JoinSchema::of(left_table, right_table);
+        let narrowed = narrowed_join(join, &schema, grouping);
+        let plan = self.plan_join(context, left_table, right_table, &narrowed)?;
+        Ok((narrowed, plan))
+    }
+
+    /// The n-way version, and the same argument for sharing it.
+    pub(crate) fn plan_grouped_chain(
+        self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+        schema: &JoinSchema,
+    ) -> Result<(Chain, ChainPlan)> {
+        let narrowed = narrowed_chain(chain, schema, grouping);
+        let plan = self.plan_chain(context, tables, &narrowed, schema)?;
+        Ok((narrowed, plan))
     }
 
     /// Choose how to join two tables.

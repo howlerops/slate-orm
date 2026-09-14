@@ -1122,12 +1122,53 @@ message ExplainResponse {
   // and the outer message carries the request's.
   repeated string warnings = 12;
   ServedBy served_by = 13;
+  // Which columns this plan decodes: the projection, plus whatever the residual
+  // predicate reads, since those are decoded anyway.
+  //
+  // Here because the access path alone does not always tell two plans apart. A
+  // grouped read narrows its projection to the group keys and the aggregates'
+  // columns, and where no index can be used that changes nothing about how rows
+  // are *reached* -- so `ExplainAggregate` and `ExplainJoin` would print
+  // identical plans for two reads that decode different amounts of every row.
+  repeated uint32 decodes = 14;
 }
 
 message ExplainJoinRequest {
   string transaction = 1;
   JoinQuery join = 2;
   Freshness freshness = 3;
+}
+
+// The plan an `Aggregate` would run under, without running it.
+//
+// It carries an `AggregateQuery` rather than a `Query` or a `JoinQuery` because
+// grouping changes the plan. Each input's projection becomes the group keys
+// plus what the aggregates read -- which is what lets an index answer
+// `COUNT(*)` without touching a row -- so `Explain` and `ExplainJoin` on the
+// underlying read describe something else. "Did my grouped read go
+// index-only?" is a question only this can answer, and before this it could
+// not be asked at all.
+message ExplainAggregateRequest {
+  string transaction = 1;
+  // The same message `Aggregate` takes, so the plan described is the plan that
+  // request would run: `input` for one table, `join` for a join or a chain.
+  AggregateQuery aggregate = 2;
+  Freshness freshness = 3;
+}
+
+// Exactly one of `input` and `join` is set, matching the request.
+message AggregateExplainResponse {
+  // How the one table is read, when the aggregate names `input`.
+  ExplainResponse input = 1;
+  // How each input is read and combined, when the aggregate names `join`.
+  // Populated for a chain too: a chain is a join with more inputs.
+  JoinExplainResponse join = 2;
+  // The multi-line human form of whichever of the two is set, with the
+  // grouping's own keys and aggregates named -- the projections alone do not
+  // say which columns are keys and which are being folded.
+  string display = 3;
+  repeated string warnings = 4;
+  ServedBy served_by = 5;
 }
 
 // How each input will be read, and how each is combined with the ones before.
@@ -1204,6 +1245,7 @@ service Records {
 
   rpc Explain(ExplainRequest) returns (ExplainResponse);
   rpc ExplainJoin(ExplainJoinRequest) returns (JoinExplainResponse);
+  rpc ExplainAggregate(ExplainAggregateRequest) returns (AggregateExplainResponse);
 
   rpc Leadership(LeadershipRequest) returns (LeadershipStatus);
 }

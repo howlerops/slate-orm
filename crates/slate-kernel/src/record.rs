@@ -659,6 +659,75 @@ impl<'a> RecordTransaction<'a> {
         self.reads().plan_chain(context, tables, chain, &schema)
     }
 
+    /// The plan a *grouped* single-table read would run under.
+    ///
+    /// Differs from [`Self::explain`] on the same `Query` for the reason
+    /// [`Self::explain_grouped_join`] differs from `explain_join`: the
+    /// projection becomes the group keys plus what the aggregates read, which
+    /// is what lets `COUNT(*)` over an indexed predicate touch no row.
+    pub fn explain_grouped(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        grouping: &Grouping,
+    ) -> Result<Explanation> {
+        self.reads().authorize_explain(context, &[table])?;
+        let (narrowed, plan) = self.reads().plan_grouped(context, table, query, grouping)?;
+        Ok(Explanation::of(table, &plan, &narrowed))
+    }
+
+    /// The plan a *grouped* join would run under, without running it.
+    ///
+    /// Not the same plan as [`Self::explain_join`] on the same `Join`. Grouping
+    /// narrows each side's projection to the columns the group keys, the
+    /// aggregates and the join itself read, which is what lets an index answer
+    /// a grouped join without touching a row — so the interesting question,
+    /// "did my grouped read go index-only", is one only this can answer.
+    ///
+    /// It plans through the same function the grouped read does, so the two
+    /// cannot come to describe different joins.
+    pub fn explain_grouped_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<JoinExplanation> {
+        self.reads().authorize_explain(context, &[left, right])?;
+        let (narrowed, plan) = self
+            .reads()
+            .plan_grouped_join(context, left, right, join, grouping)?;
+        // Described against the *narrowed* join rather than the caller's: the
+        // projections are the difference worth seeing, and reporting the
+        // caller's projections beside the narrowed plan's cost would be the one
+        // combination that is true of nothing.
+        Ok(JoinExplanation::of(left, right, &plan, &narrowed))
+    }
+
+    /// The plan a *grouped* chain would run under, without running it.
+    ///
+    /// The n-way version of [`Self::explain_grouped_join`], narrowed for the
+    /// same reason — per step, from what every later step and the grouping
+    /// name, since a step's condition may reach back to any table read before
+    /// it.
+    /// Returns the narrowed chain beside its plan. A `ChainPlan` alone cannot
+    /// be described: rendering a step needs the step's own query, and using the
+    /// caller's would report a limit and offset the grouped read discards.
+    pub fn explain_grouped_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+    ) -> Result<(Chain, ChainPlan)> {
+        self.reads().authorize_explain(context, tables)?;
+        let schema = JoinSchema::over(tables.iter().copied());
+        self.reads()
+            .plan_grouped_chain(context, tables, chain, grouping, &schema)
+    }
+
     /// Compute `aggregates` over the rows `query` selects.
     ///
     /// The projection is narrowed to exactly the columns the aggregates read,
@@ -797,9 +866,10 @@ impl<'a> RecordTransaction<'a> {
     /// Every step is planned and secured as it is for an ungrouped chain, so
     /// this is no more privileged than the chain it is built on.
     ///
-    /// Reads wider than [`RecordTransaction::group_by_join`] does: see
-    /// `SecuredReads::grouped_chain` for why the per-step projection is not
-    /// narrowed to the grouping's columns.
+    /// Each step reads only the columns something downstream takes out of its
+    /// row — a later step's condition, a later step's join key, or the
+    /// grouping — so a grouped chain narrows the way a grouped join does. It
+    /// did not always; see `SecuredReads::grouped_chain`.
     pub async fn group_by_chain(
         &self,
         context: &SecurityContext,
@@ -2110,6 +2180,75 @@ impl<'a> RecordSnapshot<'a> {
         self.reads().plan_chain(context, tables, chain, &schema)
     }
 
+    /// The plan a *grouped* single-table read would run under.
+    ///
+    /// Differs from [`Self::explain`] on the same `Query` for the reason
+    /// [`Self::explain_grouped_join`] differs from `explain_join`: the
+    /// projection becomes the group keys plus what the aggregates read, which
+    /// is what lets `COUNT(*)` over an indexed predicate touch no row.
+    pub fn explain_grouped(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+        grouping: &Grouping,
+    ) -> Result<Explanation> {
+        self.reads().authorize_explain(context, &[table])?;
+        let (narrowed, plan) = self.reads().plan_grouped(context, table, query, grouping)?;
+        Ok(Explanation::of(table, &plan, &narrowed))
+    }
+
+    /// The plan a *grouped* join would run under, without running it.
+    ///
+    /// Not the same plan as [`Self::explain_join`] on the same `Join`. Grouping
+    /// narrows each side's projection to the columns the group keys, the
+    /// aggregates and the join itself read, which is what lets an index answer
+    /// a grouped join without touching a row — so the interesting question,
+    /// "did my grouped read go index-only", is one only this can answer.
+    ///
+    /// It plans through the same function the grouped read does, so the two
+    /// cannot come to describe different joins.
+    pub fn explain_grouped_join(
+        &self,
+        context: &SecurityContext,
+        left: &TableDef,
+        right: &TableDef,
+        join: &Join,
+        grouping: &Grouping,
+    ) -> Result<JoinExplanation> {
+        self.reads().authorize_explain(context, &[left, right])?;
+        let (narrowed, plan) = self
+            .reads()
+            .plan_grouped_join(context, left, right, join, grouping)?;
+        // Described against the *narrowed* join rather than the caller's: the
+        // projections are the difference worth seeing, and reporting the
+        // caller's projections beside the narrowed plan's cost would be the one
+        // combination that is true of nothing.
+        Ok(JoinExplanation::of(left, right, &plan, &narrowed))
+    }
+
+    /// The plan a *grouped* chain would run under, without running it.
+    ///
+    /// The n-way version of [`Self::explain_grouped_join`], narrowed for the
+    /// same reason — per step, from what every later step and the grouping
+    /// name, since a step's condition may reach back to any table read before
+    /// it.
+    /// Returns the narrowed chain beside its plan. A `ChainPlan` alone cannot
+    /// be described: rendering a step needs the step's own query, and using the
+    /// caller's would report a limit and offset the grouped read discards.
+    pub fn explain_grouped_chain(
+        &self,
+        context: &SecurityContext,
+        tables: &[&TableDef],
+        chain: &Chain,
+        grouping: &Grouping,
+    ) -> Result<(Chain, ChainPlan)> {
+        self.reads().authorize_explain(context, tables)?;
+        let schema = JoinSchema::over(tables.iter().copied());
+        self.reads()
+            .plan_grouped_chain(context, tables, chain, grouping, &schema)
+    }
+
     /// Compute `aggregates` over the rows `query` selects.
     ///
     /// The projection is narrowed to exactly the columns the aggregates read,
@@ -2248,9 +2387,10 @@ impl<'a> RecordSnapshot<'a> {
     /// Every step is planned and secured as it is for an ungrouped chain, so
     /// this is no more privileged than the chain it is built on.
     ///
-    /// Reads wider than [`RecordSnapshot::group_by_join`] does: see
-    /// `SecuredReads::grouped_chain` for why the per-step projection is not
-    /// narrowed to the grouping's columns.
+    /// Each step reads only the columns something downstream takes out of its
+    /// row — a later step's condition, a later step's join key, or the
+    /// grouping — so a grouped chain narrows the way a grouped join does. It
+    /// did not always; see `SecuredReads::grouped_chain`.
     pub async fn group_by_chain(
         &self,
         context: &SecurityContext,

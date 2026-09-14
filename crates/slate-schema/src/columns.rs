@@ -92,6 +92,24 @@ impl ColumnSet {
         self.len >= columns
     }
 
+    /// The columns in the set, ascending.
+    ///
+    /// Allocates, so it is for describing a plan rather than for running one —
+    /// the inner loop asks [`ColumnSet::contains`] and never needs a list.
+    #[must_use]
+    pub fn ordinals(&self) -> Vec<Ordinal> {
+        let mut out = Vec::with_capacity(self.len);
+        for (index, word) in self.words.iter().enumerate() {
+            let mut bits = *word;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                out.push(Ordinal(index * BITS + bit));
+                bits &= bits - 1;
+            }
+        }
+        out
+    }
+
     /// Whether every column of `other` is also in this set.
     #[must_use]
     pub fn contains_all(&self, other: &Self) -> bool {

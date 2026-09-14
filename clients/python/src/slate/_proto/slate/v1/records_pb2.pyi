@@ -2564,6 +2564,7 @@ class ExplainResponse(_message.Message):
     DISPLAY_FIELD_NUMBER: _builtins.int
     WARNINGS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
+    DECODES_FIELD_NUMBER: _builtins.int
     table: _builtins.str
     access: _builtins.str
     """The access path, as `AccessSummary` prints it."""
@@ -2595,6 +2596,18 @@ class ExplainResponse(_message.Message):
 
     @_builtins.property
     def served_by(self) -> Global___ServedBy: ...
+    @_builtins.property
+    def decodes(self) -> _containers.RepeatedScalarFieldContainer[_builtins.int]:
+        """Which columns this plan decodes: the projection, plus whatever the residual
+        predicate reads, since those are decoded anyway.
+
+        Here because the access path alone does not always tell two plans apart. A
+        grouped read narrows its projection to the group keys and the aggregates'
+        columns, and where no index can be used that changes nothing about how rows
+        are *reached* -- so `ExplainAggregate` and `ExplainJoin` would print
+        identical plans for two reads that decode different amounts of every row.
+        """
+
     def __init__(
         self,
         *,
@@ -2611,10 +2624,11 @@ class ExplainResponse(_message.Message):
         display: _builtins.str = ...,
         warnings: _abc.Iterable[_builtins.str] | None = ...,
         served_by: Global___ServedBy | None = ...,
+        decodes: _abc.Iterable[_builtins.int] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "limit", b"limit", "served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "access", b"access", "descending", b"descending", "display", b"display", "estimated_cost", b"estimated_cost", "estimated_rows", b"estimated_rows", "index_only", b"index_only", "limit", b"limit", "offset", b"offset", "residual", b"residual", "served_by", b"served_by", "sorts", b"sorts", "table", b"table", "warnings", b"warnings"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "access", b"access", "decodes", b"decodes", "descending", b"descending", "display", b"display", "estimated_cost", b"estimated_cost", "estimated_rows", b"estimated_rows", "index_only", b"index_only", "limit", b"limit", "offset", b"offset", "residual", b"residual", "served_by", b"served_by", "sorts", b"sorts", "table", b"table", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
     _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015
@@ -2648,6 +2662,95 @@ class ExplainJoinRequest(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___ExplainJoinRequest: _TypeAlias = ExplainJoinRequest  # noqa: Y015
+
+@_typing.final
+class ExplainAggregateRequest(_message.Message):
+    """The plan an `Aggregate` would run under, without running it.
+
+    It carries an `AggregateQuery` rather than a `Query` or a `JoinQuery` because
+    grouping changes the plan. Each input's projection becomes the group keys
+    plus what the aggregates read -- which is what lets an index answer
+    `COUNT(*)` without touching a row -- so `Explain` and `ExplainJoin` on the
+    underlying read describe something else. "Did my grouped read go
+    index-only?" is a question only this can answer, and before this it could
+    not be asked at all.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    AGGREGATE_FIELD_NUMBER: _builtins.int
+    FRESHNESS_FIELD_NUMBER: _builtins.int
+    transaction: _builtins.str
+    @_builtins.property
+    def aggregate(self) -> Global___AggregateQuery:
+        """The same message `Aggregate` takes, so the plan described is the plan that
+        request would run: `input` for one table, `join` for a join or a chain.
+        """
+
+    @_builtins.property
+    def freshness(self) -> Global___Freshness: ...
+    def __init__(
+        self,
+        *,
+        transaction: _builtins.str = ...,
+        aggregate: Global___AggregateQuery | None = ...,
+        freshness: Global___Freshness | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "freshness", b"freshness"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "freshness", b"freshness", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___ExplainAggregateRequest: _TypeAlias = ExplainAggregateRequest  # noqa: Y015
+
+@_typing.final
+class AggregateExplainResponse(_message.Message):
+    """Exactly one of `input` and `join` is set, matching the request."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    INPUT_FIELD_NUMBER: _builtins.int
+    JOIN_FIELD_NUMBER: _builtins.int
+    DISPLAY_FIELD_NUMBER: _builtins.int
+    WARNINGS_FIELD_NUMBER: _builtins.int
+    SERVED_BY_FIELD_NUMBER: _builtins.int
+    display: _builtins.str
+    """The multi-line human form of whichever of the two is set, with the
+    grouping's own keys and aggregates named -- the projections alone do not
+    say which columns are keys and which are being folded.
+    """
+    @_builtins.property
+    def input(self) -> Global___ExplainResponse:
+        """How the one table is read, when the aggregate names `input`."""
+
+    @_builtins.property
+    def join(self) -> Global___JoinExplainResponse:
+        """How each input is read and combined, when the aggregate names `join`.
+        Populated for a chain too: a chain is a join with more inputs.
+        """
+
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]: ...
+    @_builtins.property
+    def served_by(self) -> Global___ServedBy: ...
+    def __init__(
+        self,
+        *,
+        input: Global___ExplainResponse | None = ...,
+        join: Global___JoinExplainResponse | None = ...,
+        display: _builtins.str = ...,
+        warnings: _abc.Iterable[_builtins.str] | None = ...,
+        served_by: Global___ServedBy | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["input", b"input", "join", b"join", "served_by", b"served_by"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["display", b"display", "input", b"input", "join", b"join", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___AggregateExplainResponse: _TypeAlias = AggregateExplainResponse  # noqa: Y015
 
 @_typing.final
 class JoinExplainResponse(_message.Message):

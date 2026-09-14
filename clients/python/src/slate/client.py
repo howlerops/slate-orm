@@ -153,6 +153,7 @@ class Explanation:
 
     __slots__ = (
         "access",
+        "decodes",
         "descending",
         "display",
         "estimated_cost",
@@ -175,6 +176,11 @@ class Explanation:
         #: is the proof that a policy reached the executor.
         self.residual = wire.residual
         self.descending = wire.descending
+        #: The columns this plan decodes: the projection plus whatever the
+        #: residual reads. Often the only visible difference between a grouped
+        #: read's plan and the plan of the read it groups, since narrowing the
+        #: projection need not change the access path.
+        self.decodes = tuple(wire.decodes)
         self.estimated_rows = wire.estimated_rows
         self.estimated_cost = wire.estimated_cost
         self.limit = wire.limit if wire.HasField("limit") else None
@@ -220,6 +226,31 @@ class JoinExplanation:
 
     def __repr__(self) -> str:
         return f"JoinExplanation({self.display!r})"
+
+
+class AggregateExplanation:
+    """The plan a grouped read would run under.
+
+    Exactly one of `input` and `join` is set, matching the request: `input` for
+    an aggregate over one table, `join` for one over a join or a chain.
+
+    Separate from `Explanation` and `JoinExplanation` because grouping changes
+    the plan — each input's projection becomes the group keys plus what the
+    aggregates read — so explaining the underlying read describes something the
+    aggregate will not run.
+    """
+
+    __slots__ = ("display", "input", "join", "served_by", "warnings")
+
+    def __init__(self, wire: pb.AggregateExplainResponse) -> None:
+        self.input = Explanation(wire.input) if wire.HasField("input") else None
+        self.join = JoinExplanation(wire.join) if wire.HasField("join") else None
+        self.display = wire.display
+        self.warnings = tuple(wire.warnings)
+        self.served_by = ServedBy.from_proto(wire.served_by)
+
+    def __repr__(self) -> str:
+        return f"AggregateExplanation({self.display!r})"
 
 
 class LeadershipStatus:
@@ -636,6 +667,27 @@ class _Ops:
         if wire_freshness is not None:
             request.freshness.CopyFrom(wire_freshness)
         return JoinExplanation(self._unary(self._conn.stub.ExplainJoin, request))
+
+    def explain_aggregate(
+        self, aggregate: AggregateQuery | GroupedJoinQuery, *, freshness: Freshness | None = None
+    ) -> AggregateExplanation:
+        """The plan a grouped read would run under.
+
+        Not `explain` or `explain_join` on the underlying read: grouping
+        narrows each input's projection to the group keys and the aggregates'
+        columns, which is what lets an index answer `COUNT(*)` without touching
+        a row. Comparing `decodes` between the two is how you see it where the
+        access path does not change.
+        """
+        request = pb.ExplainAggregateRequest(
+            transaction=self._transaction_id(), aggregate=aggregate.to_proto()
+        )
+        wire_freshness = self._freshness(freshness)
+        if wire_freshness is not None:
+            request.freshness.CopyFrom(wire_freshness)
+        return AggregateExplanation(
+            self._unary(self._conn.stub.ExplainAggregate, request)
+        )
 
 
 class Session(_Ops):

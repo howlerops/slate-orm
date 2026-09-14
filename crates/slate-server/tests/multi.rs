@@ -136,6 +136,11 @@ fn app_request<T>(message: T) -> tonic::Request<T> {
     common::app_in(message, 1, 1)
 }
 
+/// Same reads, no `Explain`.
+fn reader_request<T>(message: T) -> tonic::Request<T> {
+    common::grouper_in(message, 1, 1)
+}
+
 // --- comparing the two paths ----------------------------------------------
 
 /// One row of a multi-table result, in a shape both paths can produce.
@@ -2228,4 +2233,256 @@ async fn a_group_key_on_the_right_side_of_the_join_resolves() {
     expected.sort();
     assert_eq!(actual, expected);
     assert!(!expected.is_empty(), "the fixture should produce groups");
+}
+
+// --- explaining a grouped read --------------------------------------------
+
+/// `ExplainAggregate` describes the grouped read; `ExplainJoin` describes the
+/// join underneath it, and they are not the same plan.
+///
+/// The distinction is the whole reason for the RPC. Grouping narrows each
+/// side's projection to the group keys, the aggregates and the join keys, so a
+/// `COUNT(*)` over an indexed join can be answered without reading a row —
+/// and `ExplainJoin`, which describes the caller's join, says it cannot.
+#[tokio::test]
+async fn explaining_a_grouped_join_is_not_explaining_the_join() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"));
+
+    let plain = client
+        .explain_join(app_request(pb::ExplainJoinRequest {
+            transaction: String::new(),
+            join: Some(join_to_proto(&a, &b, &join)),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+
+    let mut wire = join_to_proto(&a, &b, &join);
+    wire.limit = None;
+    let grouped = client
+        .explain_aggregate(app_request(pb::ExplainAggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(pb::AggregateQuery {
+                input: None,
+                join: Some(wire),
+                // Grouped on a column that is *not* a join key, and computing
+                // over another that is not either. A plan that ignored the
+                // grouping would still narrow — to the join keys alone — and
+                // "narrower than ungrouped" would pass; what must hold is that
+                // these columns are the ones decoded.
+                group_by: vec![column_ref(0, at(&a, "name").0)],
+                aggregates: vec![
+                    pb::Aggregate {
+                        function: pb::AggregateFunction::Count as i32,
+                        column: None,
+                    },
+                    pb::Aggregate {
+                        function: pb::AggregateFunction::Max as i32,
+                        column: Some(column_ref(1, at(&b, "year").0)),
+                    },
+                ],
+                having: None,
+                sort: Vec::new(),
+                limit: None,
+                offset: 0,
+            }),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+
+    let joined = grouped.join.expect("a grouped join explains as a join");
+    assert!(
+        grouped.input.is_none(),
+        "the one-table field must stay unset for a join"
+    );
+    assert_eq!(joined.inputs.len(), 2, "one plan per input");
+
+    // The right side is `books`. Ungrouped it is read whole, because the caller
+    // asked for its rows; grouped, only the join key and whatever the security
+    // predicate reads, because nothing downstream takes anything else out of
+    // it. `decodes` is where that shows: on this fixture there is no index the
+    // planner will use, so the *access path* is a table scan either way and the
+    // two plans are otherwise identical strings. Which is the reason `decodes`
+    // is on the wire at all.
+    let decoded = |answer: &pb::JoinExplainResponse| {
+        answer
+            .inputs
+            .iter()
+            .filter_map(|input| input.plan.as_ref())
+            .map(|plan| plan.decodes.clone())
+            .collect::<Vec<_>>()
+    };
+    let (before, after) = (decoded(&plain), decoded(&joined));
+    assert_ne!(
+        before, after,
+        "the grouped plan and the join's plan decode the same columns, so the \
+         narrowing is not reaching the explanation:\n{}\nvs\n{}",
+        plain.display, joined.display
+    );
+    for (input, (wide, narrow)) in before.iter().zip(after.iter()).enumerate() {
+        assert!(
+            narrow.len() <= wide.len(),
+            "grouping made input {input} decode more, not less: {wide:?} -> {narrow:?}"
+        );
+    }
+
+    // And the grouping's own columns are the ones decoded, in each input's own
+    // ordinals.
+    let decodes = |input: usize| {
+        joined.inputs[input]
+            .plan
+            .as_ref()
+            .map(|plan| plan.decodes.clone())
+            .unwrap_or_default()
+    };
+    assert!(
+        decodes(0).contains(&(at(&a, "name").0 as u32)),
+        "the group key authors.name is not decoded: {:?}",
+        decodes(0)
+    );
+    assert!(
+        decodes(1).contains(&(at(&b, "year").0 as u32)),
+        "the aggregated books.year is not decoded: {:?}",
+        decodes(1)
+    );
+
+    // And the grouping itself is named, since two plans over the same
+    // projections are indistinguishable without it.
+    assert!(
+        grouped.display.starts_with("Group by ["),
+        "the display does not say what is being grouped: {}",
+        grouped.display
+    );
+    let _ = space;
+}
+
+/// The same, for a chain: three inputs, each planned, with the grouping named.
+#[tokio::test]
+async fn explaining_a_grouped_chain_plans_every_input() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let (a, b, sl) = (authors(), books(), sales());
+    let tables: Vec<&TableDef> = vec![&a, &b, &sl];
+    let space = JoinSchema::over(tables.iter().copied());
+    let chain = Chain::from(Query::all())
+        .join(JoinStep::equating(
+            space.at(0, at(&a, "id")),
+            at(&b, "author_id"),
+        ))
+        .join(JoinStep::equating(
+            space.at(1, at(&b, "id")),
+            at(&sl, "book_id"),
+        ));
+
+    let mut wire = chain_to_proto(&tables, &chain);
+    wire.limit = None;
+    let answer = client
+        .explain_aggregate(app_request(pb::ExplainAggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(pb::AggregateQuery {
+                input: None,
+                join: Some(wire),
+                group_by: vec![column_ref(0, at(&a, "id").0)],
+                aggregates: vec![pb::Aggregate {
+                    function: pb::AggregateFunction::Count as i32,
+                    column: None,
+                }],
+                having: None,
+                sort: Vec::new(),
+                limit: None,
+                offset: 0,
+            }),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+
+    let joined = answer.join.expect("a grouped chain explains as a join");
+    assert_eq!(
+        joined.inputs.len(),
+        3,
+        "a three-table chain must plan three inputs: {}",
+        answer.display
+    );
+    assert!(
+        joined.estimated_cost > 0.0,
+        "a costed chain with no cost: {}",
+        answer.display
+    );
+    assert!(
+        answer.display.starts_with("Group by ["),
+        "the display does not say what is being grouped: {}",
+        answer.display
+    );
+}
+
+/// Grouping one table is explained too, and lands in the other field.
+///
+/// `input` and `join` are mutually exclusive, and a client that reads the
+/// wrong one gets nothing rather than something wrong — which is only true if
+/// the server actually sets the one matching the request.
+#[tokio::test]
+async fn explaining_a_grouped_table_answers_in_the_input_field() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    let answer = client
+        .explain_aggregate(app_request(pb::ExplainAggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(count_over("books")),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+
+    let plan = answer.input.expect("a grouped table explains as a table");
+    assert!(answer.join.is_none(), "the join field must stay unset");
+    assert_eq!(plan.table, "books");
+    assert!(
+        answer.display.starts_with("Group by ["),
+        "the display does not say what is being grouped: {}",
+        answer.display
+    );
+}
+
+/// A plan is `Action::Explain`, wherever it is asked for.
+///
+/// The `reader` role holds every data action and not `Explain`, so it can run
+/// the aggregate and must not be able to ask how. A new RPC is exactly where
+/// that check gets forgotten.
+#[tokio::test]
+async fn a_reader_may_aggregate_but_may_not_explain_the_aggregate() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+
+    // The premise: the identity can run it.
+    let ran = client
+        .aggregate(reader_request(pb::AggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(count_over("books")),
+            freshness: None,
+        }))
+        .await;
+    assert!(ran.is_ok(), "premise: a reader may aggregate");
+
+    let refused = client
+        .explain_aggregate(reader_request(pb::ExplainAggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(count_over("books")),
+            freshness: None,
+        }))
+        .await;
+    let status = refused.expect_err("a reader got a plan for an aggregate");
+    assert_eq!(status.code(), tonic::Code::PermissionDenied, "{status:?}");
 }

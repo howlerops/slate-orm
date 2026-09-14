@@ -324,3 +324,65 @@ test("every join algorithm agrees", async () => {
   }
   assert.deepEqual(new Set(answers).size, 1, `algorithms disagreed: ${answers}`);
 });
+
+// Explaining a grouped join is not explaining the join.
+//
+// The reason `explainAggregate` exists. Grouping narrows each input's
+// projection to the group keys, the aggregates' columns and the join keys, so
+// the two plans decode different amounts of every row — and on a fixture with
+// no usable index the access path is the same either way, which is why this
+// asserts on `decodes`. That field is on the wire precisely because nothing
+// else could tell the two plans apart.
+test("explaining a grouped join is not explaining the join", async () => {
+  const session = await library();
+  const plain = await session.explainJoin(authorsBooks());
+  // Group by authors.country (0,2) and take MAX(books.year) (1,3) — columns
+  // that are deliberately not the join keys. A plan that ignored the grouping
+  // would still narrow, to the join keys alone, and "narrower than ungrouped"
+  // would pass. What must hold is that *these* columns are what it decodes.
+  const grouped = await session.explainAggregateJoin(authorsBooks(), {
+    groupBy: [at(0, 2)],
+    aggregates: [count(), maxOf(at(1, 3))],
+  });
+
+  assert.ok(grouped.join, "a grouped join explains as a join");
+  assert.equal(grouped.input, undefined, "the one-table field stays unset for a join");
+  assert.equal(grouped.join.inputs.length, plain.inputs.length);
+
+  let narrowed = false;
+  for (const [at_, wide] of plain.inputs.entries()) {
+    const narrow = grouped.join.inputs[at_]!.plan.decodes;
+    assert.ok(
+      narrow.length <= wide.plan.decodes.length,
+      `grouping widened input ${at_}: ${wide.plan.decodes} -> ${narrow}`,
+    );
+    if (narrow.length < wide.plan.decodes.length) narrowed = true;
+  }
+  assert.ok(
+    narrowed,
+    `grouping narrowed nothing, so this is not the grouped read's plan:\n${plain.display}\nvs\n${grouped.display}`,
+  );
+  assert.ok(grouped.display.startsWith("Group by ["), grouped.display);
+
+  // The grouping's own columns, in each input's own ordinals.
+  assert.ok(
+    grouped.join.inputs[0]!.plan.decodes.includes(2),
+    `the group key authors.country is not decoded: ${grouped.join.inputs[0]!.plan.decodes}`,
+  );
+  assert.ok(
+    grouped.join.inputs[1]!.plan.decodes.includes(3),
+    `the aggregated books.year is not decoded: ${grouped.join.inputs[1]!.plan.decodes}`,
+  );
+});
+
+test("explaining a grouped table answers in the input field", async () => {
+  const session = await library();
+  const plan = await session.explainAggregate(
+    { table: "books" },
+    { groupBy: [at(0, 1)], aggregates: [count()] },
+  );
+
+  assert.ok(plan.input, "a grouped table explains as a table");
+  assert.equal(plan.join, undefined, "the join field stays unset for one table");
+  assert.equal(plan.input.table, "books");
+});

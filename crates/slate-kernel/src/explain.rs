@@ -12,7 +12,7 @@ use crate::plan::{Access, Plan};
 use crate::query::Query;
 use crate::store::ScanOrder;
 use core::fmt;
-use slate_schema::TableDef;
+use slate_schema::{Ordinal, TableDef};
 
 /// How a query will be run.
 #[derive(Debug, Clone)]
@@ -38,6 +38,17 @@ pub struct Explanation {
     /// The expensive part is not the comparison but the materialisation: a
     /// sorted plan cannot return its first row until it has found its last.
     pub sorts: bool,
+    /// The columns this plan decodes: the projection, plus whatever the
+    /// residual predicate reads, since those are decoded anyway.
+    ///
+    /// Here because the access path alone does not always show the difference
+    /// between two plans that matter differently. A grouped read narrows its
+    /// projection to the group keys and the aggregates' columns, and on a table
+    /// with no usable index that changes nothing about *how* rows are reached —
+    /// so `ExplainAggregate` and `ExplainJoin` printed byte-identical plans for
+    /// two reads that decode different amounts of every row. This is the field
+    /// that tells them apart.
+    pub decodes: Vec<Ordinal>,
 }
 
 /// The access path, in terms a reader recognises.
@@ -155,6 +166,7 @@ impl Explanation {
             limit: query.limit,
             offset: query.offset,
             sorts: plan.sort.is_some(),
+            decodes: plan.output_columns.ordinals(),
         }
     }
 
@@ -190,6 +202,18 @@ impl fmt::Display for Explanation {
         if self.offset > 0 {
             write!(f, " offset={}", self.offset)?;
         }
+        // Printed because it is often the only visible difference between a
+        // grouped read's plan and the plan of the read it groups: narrowing the
+        // projection need not change the access path.
+        write!(
+            f,
+            " decodes=[{}]",
+            self.decodes
+                .iter()
+                .map(|ordinal| ordinal.0.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        )?;
         f.write_str(")")
     }
 }

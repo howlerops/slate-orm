@@ -1,6 +1,7 @@
 package slate_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
@@ -255,7 +256,7 @@ func TestGroupedAggregate(t *testing.T) {
 		slate.Query{Table: "books"},
 		slate.Grouping{
 			GroupBy:    []slate.Column{slate.Key0(1)},
-			Aggregates: []slate.Aggregate{slate.Count(), slate.MaxOf(3)},
+			Aggregates: []slate.Aggregate{slate.Count(), slate.MaxOf(slate.Key0(3))},
 		})
 	if err != nil {
 		t.Fatalf("aggregating: %v", err)
@@ -491,5 +492,106 @@ func TestAForcedAlgorithmReachesThePlanner(t *testing.T) {
 	}
 	if got := planFor(slate.HashBuildLeft); got != "hash" {
 		t.Errorf("forcing a hash join gave the %q plan", got)
+	}
+}
+
+// ExplainAggregate describes the grouped read, not the read it groups.
+//
+// The whole point of the separate RPC. Grouping narrows each input's
+// projection to the group keys, the aggregates' columns and the join keys, so
+// the two plans decode different amounts of every row — and on a fixture with
+// no usable index the access path is the same either way, which is why the
+// assertion is on Decodes rather than on IndexOnly or on the display string.
+func TestExplainingAGroupedJoinIsNotExplainingTheJoin(t *testing.T) {
+	session := library(t)
+	join := authorsBooks(slate.Inner)
+
+	plain, err := session.ExplainJoin(testContext(t), join)
+	if err != nil {
+		t.Fatalf("explaining the join: %v", err)
+	}
+	// Group by authors.country (ordinal 2), max over books.year (ordinal 3 of
+	// input 1). Chosen so that the columns
+	// the grouping names are *not* the join keys: a plan that ignored the
+	// grouping entirely would still narrow — to the join keys alone — and
+	// "narrower than ungrouped" would pass. What must hold is that these
+	// columns, and not some other narrow set, are what the plan decodes.
+	grouped, err := session.ExplainAggregateJoin(testContext(t), join, slate.Grouping{
+		GroupBy:    []slate.Column{slate.At(0, 2)},
+		Aggregates: []slate.Aggregate{slate.Count(), slate.MaxOf(slate.At(1, 3))},
+	})
+	if err != nil {
+		t.Fatalf("explaining the grouped join: %v", err)
+	}
+	if grouped.Join == nil {
+		t.Fatal("a grouped join must explain as a join")
+	}
+	if grouped.Input != nil {
+		t.Error("the one-table field must stay unset for a join")
+	}
+	if len(grouped.Join.Inputs) != len(plain.Inputs) {
+		t.Fatalf("input counts differ: %d vs %d", len(plain.Inputs), len(grouped.Join.Inputs))
+	}
+
+	narrowed := false
+	for i := range plain.Inputs {
+		wide := plain.Inputs[i].Plan.Decodes
+		narrow := grouped.Join.Inputs[i].Plan.Decodes
+		if len(narrow) > len(wide) {
+			t.Errorf("grouping made input %d decode more: %v -> %v", i, wide, narrow)
+		}
+		if len(narrow) < len(wide) {
+			narrowed = true
+		}
+	}
+	if !narrowed {
+		t.Errorf("grouping narrowed nothing, so the plan is not the grouped read's:\n%s\nvs\n%s",
+			plain.Display, grouped.Display)
+	}
+	if !strings.HasPrefix(grouped.Display, "Group by [") {
+		t.Errorf("the display does not say what is being grouped: %q", grouped.Display)
+	}
+
+	// The grouping's own columns, in each input's own ordinals.
+	if !contains(grouped.Join.Inputs[0].Plan.Decodes, 2) {
+		t.Errorf("the group key authors.country is not decoded: %v",
+			grouped.Join.Inputs[0].Plan.Decodes)
+	}
+	if !contains(grouped.Join.Inputs[1].Plan.Decodes, 3) {
+		t.Errorf("the aggregated books.year is not decoded: %v",
+			grouped.Join.Inputs[1].Plan.Decodes)
+	}
+}
+
+func contains(haystack []uint32, needle uint32) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// One table lands in the other field, and only in it.
+func TestExplainingAGroupedTableAnswersInTheInputField(t *testing.T) {
+	session := library(t)
+
+	plan, err := session.ExplainAggregate(testContext(t),
+		slate.Query{Table: "books"},
+		slate.Grouping{
+			GroupBy:    []slate.Column{slate.Key0(1)},
+			Aggregates: []slate.Aggregate{slate.Count()},
+		})
+	if err != nil {
+		t.Fatalf("explaining a grouped table: %v", err)
+	}
+	if plan.Input == nil {
+		t.Fatal("a grouped table must explain as a table")
+	}
+	if plan.Join != nil {
+		t.Error("the join field must stay unset for one table")
+	}
+	if plan.Input.Table != "books" {
+		t.Errorf("the plan names %q", plan.Input.Table)
 	}
 }

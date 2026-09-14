@@ -40,15 +40,17 @@
 use crate::auth::Authenticator;
 use crate::convert::{
     GroupedSource, MultiRead, aggregate_from_proto_query, chain_plan_to_proto,
-    explanation_to_proto, freshness_from_proto, group_to_proto, join_explanation_to_proto,
-    join_from_proto, multi_row_to_proto, primary_key_from_proto, query_from_proto, row_from_proto,
-    row_to_proto, row_to_proto_split, two_tables,
+    explanation_to_proto, freshness_from_proto, group_to_proto, grouped_explanation_to_proto,
+    join_explanation_to_proto, join_from_proto, multi_row_to_proto, primary_key_from_proto,
+    query_from_proto, row_from_proto, row_to_proto, row_to_proto_split, two_tables,
 };
 use crate::fingerprint;
 use crate::leadership::{Leadership, Standing};
 use crate::proto as pb;
 use crate::proto::records_server::{Records, RecordsServer};
-use crate::session::{Limits, MultiCursor, MultiExplanation, MultiRow, Sessions};
+use crate::session::{
+    GroupedExplanation, Limits, MultiCursor, MultiExplanation, MultiRow, Sessions,
+};
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
     Action, ExecutionLimits, Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken,
@@ -1146,6 +1148,83 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             &explanation,
             &definitions,
             &read,
+            warnings,
+            served_by,
+        )))
+    }
+
+    /// The plan a grouped read would run under.
+    ///
+    /// Separate from `Explain` and `ExplainJoin` because grouping changes the
+    /// plan: each input's projection becomes the group keys plus what the
+    /// aggregates read. Explaining the underlying `Query` or `JoinQuery`
+    /// therefore describes a read the `Aggregate` would not make, and the
+    /// difference is precisely the one worth asking about — whether the
+    /// grouped read goes index-only.
+    async fn explain_aggregate(
+        &self,
+        request: Request<pb::ExplainAggregateRequest>,
+    ) -> Result<Response<pb::AggregateExplainResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let Some(wire) = request.aggregate else {
+            return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
+        };
+        let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
+        let grouping = read.grouping();
+
+        // The tables in request order, which is the order `chain_plan_to_proto`
+        // walks. Resolved here rather than per branch because the conversion
+        // needs them whichever source this is.
+        let definitions = match &read.source {
+            GroupedSource::Table { table, .. } => vec![self.definition(*table)?],
+            GroupedSource::Join { left, right, .. } => {
+                vec![self.definition(*left)?, self.definition(*right)?]
+            }
+            GroupedSource::Chain { tables, .. } => self.definitions(tables)?,
+        };
+
+        if !request.transaction.is_empty() {
+            let explanation = self
+                .sessions
+                .explain_aggregate(&request.transaction, &context, read)
+                .await?;
+            return Ok(Response::new(grouped_explanation_to_proto(
+                &explanation,
+                &definitions,
+                &grouping,
+                warnings,
+                in_transaction(),
+            )));
+        }
+
+        let freshness = freshness_from_proto(request.freshness.as_ref())?;
+        let affinity = Self::affinity_over(&definitions, &context);
+        let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+        let explanation = match &read.source {
+            GroupedSource::Table { table, query } => {
+                let table = self.definition(*table)?;
+                view.explain_grouped(&context, table, query, &grouping)
+                    .map(|plan| GroupedExplanation::Table(Box::new(plan)))
+            }
+            GroupedSource::Join { left, right, join } => {
+                let left = self.definition(*left)?;
+                let right = self.definition(*right)?;
+                view.explain_grouped_join(&context, left, right, join, &grouping)
+                    .map(|plan| GroupedExplanation::Join(Box::new(plan)))
+            }
+            GroupedSource::Chain { chain, .. } => view
+                .explain_grouped_chain(&context, &definitions, chain, &grouping)
+                .map(|(narrowed, plan)| {
+                    GroupedExplanation::Chain(Box::new(narrowed), Box::new(plan))
+                }),
+        }
+        .map_err(|e| from_kernel(&e))?;
+
+        Ok(Response::new(grouped_explanation_to_proto(
+            &explanation,
+            &definitions,
+            &grouping,
             warnings,
             served_by,
         )))

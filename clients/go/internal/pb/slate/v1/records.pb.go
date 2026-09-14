@@ -691,7 +691,7 @@ func (x LeadershipStatus_Standing) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LeadershipStatus_Standing.Descriptor instead.
 func (LeadershipStatus_Standing) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{60, 0}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{62, 0}
 }
 
 // One element of a row or a predicate, mirroring `slate_tuple::Value`.
@@ -5113,8 +5113,17 @@ type ExplainResponse struct {
 	// `ExplainResponse` nested inside `JoinExplainResponse` describes a plan
 	// rather than a request, so its `warnings` and `served_by` are always empty
 	// and the outer message carries the request's.
-	Warnings      []string  `protobuf:"bytes,12,rep,name=warnings,proto3" json:"warnings,omitempty"`
-	ServedBy      *ServedBy `protobuf:"bytes,13,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
+	Warnings []string  `protobuf:"bytes,12,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	ServedBy *ServedBy `protobuf:"bytes,13,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
+	// Which columns this plan decodes: the projection, plus whatever the residual
+	// predicate reads, since those are decoded anyway.
+	//
+	// Here because the access path alone does not always tell two plans apart. A
+	// grouped read narrows its projection to the group keys and the aggregates'
+	// columns, and where no index can be used that changes nothing about how rows
+	// are *reached* -- so `ExplainAggregate` and `ExplainJoin` would print
+	// identical plans for two reads that decode different amounts of every row.
+	Decodes       []uint32 `protobuf:"varint,14,rep,packed,name=decodes,proto3" json:"decodes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5240,6 +5249,13 @@ func (x *ExplainResponse) GetServedBy() *ServedBy {
 	return nil
 }
 
+func (x *ExplainResponse) GetDecodes() []uint32 {
+	if x != nil {
+		return x.Decodes
+	}
+	return nil
+}
+
 type ExplainJoinRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Transaction   string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
@@ -5300,6 +5316,160 @@ func (x *ExplainJoinRequest) GetFreshness() *Freshness {
 	return nil
 }
 
+// The plan an `Aggregate` would run under, without running it.
+//
+// It carries an `AggregateQuery` rather than a `Query` or a `JoinQuery` because
+// grouping changes the plan. Each input's projection becomes the group keys
+// plus what the aggregates read -- which is what lets an index answer
+// `COUNT(*)` without touching a row -- so `Explain` and `ExplainJoin` on the
+// underlying read describe something else. "Did my grouped read go
+// index-only?" is a question only this can answer, and before this it could
+// not be asked at all.
+type ExplainAggregateRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Transaction string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	// The same message `Aggregate` takes, so the plan described is the plan that
+	// request would run: `input` for one table, `join` for a join or a chain.
+	Aggregate     *AggregateQuery `protobuf:"bytes,2,opt,name=aggregate,proto3" json:"aggregate,omitempty"`
+	Freshness     *Freshness      `protobuf:"bytes,3,opt,name=freshness,proto3" json:"freshness,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExplainAggregateRequest) Reset() {
+	*x = ExplainAggregateRequest{}
+	mi := &file_slate_v1_records_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExplainAggregateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExplainAggregateRequest) ProtoMessage() {}
+
+func (x *ExplainAggregateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExplainAggregateRequest.ProtoReflect.Descriptor instead.
+func (*ExplainAggregateRequest) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *ExplainAggregateRequest) GetTransaction() string {
+	if x != nil {
+		return x.Transaction
+	}
+	return ""
+}
+
+func (x *ExplainAggregateRequest) GetAggregate() *AggregateQuery {
+	if x != nil {
+		return x.Aggregate
+	}
+	return nil
+}
+
+func (x *ExplainAggregateRequest) GetFreshness() *Freshness {
+	if x != nil {
+		return x.Freshness
+	}
+	return nil
+}
+
+// Exactly one of `input` and `join` is set, matching the request.
+type AggregateExplainResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// How the one table is read, when the aggregate names `input`.
+	Input *ExplainResponse `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`
+	// How each input is read and combined, when the aggregate names `join`.
+	// Populated for a chain too: a chain is a join with more inputs.
+	Join *JoinExplainResponse `protobuf:"bytes,2,opt,name=join,proto3" json:"join,omitempty"`
+	// The multi-line human form of whichever of the two is set, with the
+	// grouping's own keys and aggregates named -- the projections alone do not
+	// say which columns are keys and which are being folded.
+	Display       string    `protobuf:"bytes,3,opt,name=display,proto3" json:"display,omitempty"`
+	Warnings      []string  `protobuf:"bytes,4,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	ServedBy      *ServedBy `protobuf:"bytes,5,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AggregateExplainResponse) Reset() {
+	*x = AggregateExplainResponse{}
+	mi := &file_slate_v1_records_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AggregateExplainResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AggregateExplainResponse) ProtoMessage() {}
+
+func (x *AggregateExplainResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AggregateExplainResponse.ProtoReflect.Descriptor instead.
+func (*AggregateExplainResponse) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *AggregateExplainResponse) GetInput() *ExplainResponse {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *AggregateExplainResponse) GetJoin() *JoinExplainResponse {
+	if x != nil {
+		return x.Join
+	}
+	return nil
+}
+
+func (x *AggregateExplainResponse) GetDisplay() string {
+	if x != nil {
+		return x.Display
+	}
+	return ""
+}
+
+func (x *AggregateExplainResponse) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
+}
+
+func (x *AggregateExplainResponse) GetServedBy() *ServedBy {
+	if x != nil {
+		return x.ServedBy
+	}
+	return nil
+}
+
 // How each input will be read, and how each is combined with the ones before.
 //
 // Both are shown because a join's cost is almost entirely its inputs'. A join
@@ -5322,7 +5492,7 @@ type JoinExplainResponse struct {
 
 func (x *JoinExplainResponse) Reset() {
 	*x = JoinExplainResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[57]
+	mi := &file_slate_v1_records_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5334,7 +5504,7 @@ func (x *JoinExplainResponse) String() string {
 func (*JoinExplainResponse) ProtoMessage() {}
 
 func (x *JoinExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[57]
+	mi := &file_slate_v1_records_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5347,7 +5517,7 @@ func (x *JoinExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinExplainResponse.ProtoReflect.Descriptor instead.
 func (*JoinExplainResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{57}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *JoinExplainResponse) GetInputs() []*JoinInputPlan {
@@ -5409,7 +5579,7 @@ type JoinInputPlan struct {
 
 func (x *JoinInputPlan) Reset() {
 	*x = JoinInputPlan{}
-	mi := &file_slate_v1_records_proto_msgTypes[58]
+	mi := &file_slate_v1_records_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5421,7 +5591,7 @@ func (x *JoinInputPlan) String() string {
 func (*JoinInputPlan) ProtoMessage() {}
 
 func (x *JoinInputPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[58]
+	mi := &file_slate_v1_records_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5434,7 +5604,7 @@ func (x *JoinInputPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinInputPlan.ProtoReflect.Descriptor instead.
 func (*JoinInputPlan) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{58}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *JoinInputPlan) GetPlan() *ExplainResponse {
@@ -5480,7 +5650,7 @@ type LeadershipRequest struct {
 
 func (x *LeadershipRequest) Reset() {
 	*x = LeadershipRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[59]
+	mi := &file_slate_v1_records_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5492,7 +5662,7 @@ func (x *LeadershipRequest) String() string {
 func (*LeadershipRequest) ProtoMessage() {}
 
 func (x *LeadershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[59]
+	mi := &file_slate_v1_records_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5505,7 +5675,7 @@ func (x *LeadershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeadershipRequest.ProtoReflect.Descriptor instead.
 func (*LeadershipRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{59}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{61}
 }
 
 // What this node believes about who may write. Believes, not knows: see the
@@ -5528,7 +5698,7 @@ type LeadershipStatus struct {
 
 func (x *LeadershipStatus) Reset() {
 	*x = LeadershipStatus{}
-	mi := &file_slate_v1_records_proto_msgTypes[60]
+	mi := &file_slate_v1_records_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5540,7 +5710,7 @@ func (x *LeadershipStatus) String() string {
 func (*LeadershipStatus) ProtoMessage() {}
 
 func (x *LeadershipStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[60]
+	mi := &file_slate_v1_records_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5553,7 +5723,7 @@ func (x *LeadershipStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeadershipStatus.ProtoReflect.Descriptor instead.
 func (*LeadershipStatus) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{60}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *LeadershipStatus) GetStanding() LeadershipStatus_Standing {
@@ -5857,7 +6027,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x0eExplainRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12%\n" +
 	"\x05query\x18\x02 \x01(\v2\x0f.slate.v1.QueryR\x05query\x121\n" +
-	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xa2\x03\n" +
+	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xbc\x03\n" +
 	"\x0fExplainResponse\x12\x14\n" +
 	"\x05table\x18\x01 \x01(\tR\x05table\x12\x16\n" +
 	"\x06access\x18\x02 \x01(\tR\x06access\x12\x1a\n" +
@@ -5875,12 +6045,23 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	" \x01(\bR\tindexOnly\x12\x18\n" +
 	"\adisplay\x18\v \x01(\tR\adisplay\x12\x1a\n" +
 	"\bwarnings\x18\f \x03(\tR\bwarnings\x12/\n" +
-	"\tserved_by\x18\r \x01(\v2\x12.slate.v1.ServedByR\bservedByB\b\n" +
+	"\tserved_by\x18\r \x01(\v2\x12.slate.v1.ServedByR\bservedBy\x12\x18\n" +
+	"\adecodes\x18\x0e \x03(\rR\adecodesB\b\n" +
 	"\x06_limit\"\x92\x01\n" +
 	"\x12ExplainJoinRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12'\n" +
 	"\x04join\x18\x02 \x01(\v2\x13.slate.v1.JoinQueryR\x04join\x121\n" +
-	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xfb\x01\n" +
+	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xa6\x01\n" +
+	"\x17ExplainAggregateRequest\x12 \n" +
+	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x126\n" +
+	"\taggregate\x18\x02 \x01(\v2\x18.slate.v1.AggregateQueryR\taggregate\x121\n" +
+	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xe5\x01\n" +
+	"\x18AggregateExplainResponse\x12/\n" +
+	"\x05input\x18\x01 \x01(\v2\x19.slate.v1.ExplainResponseR\x05input\x121\n" +
+	"\x04join\x18\x02 \x01(\v2\x1d.slate.v1.JoinExplainResponseR\x04join\x12\x18\n" +
+	"\adisplay\x18\x03 \x01(\tR\adisplay\x12\x1a\n" +
+	"\bwarnings\x18\x04 \x03(\tR\bwarnings\x12/\n" +
+	"\tserved_by\x18\x05 \x01(\v2\x12.slate.v1.ServedByR\bservedBy\"\xfb\x01\n" +
 	"\x13JoinExplainResponse\x12/\n" +
 	"\x06inputs\x18\x01 \x03(\v2\x17.slate.v1.JoinInputPlanR\x06inputs\x12%\n" +
 	"\x0eestimated_rows\x18\x02 \x01(\x01R\restimatedRows\x12%\n" +
@@ -5961,7 +6142,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x04Side\x12\r\n" +
 	"\tSIDE_LEFT\x10\x00\x12\x0e\n" +
 	"\n" +
-	"SIDE_RIGHT\x10\x012\xbb\x06\n" +
+	"SIDE_RIGHT\x10\x012\x96\a\n" +
 	"\aRecords\x128\n" +
 	"\x05Begin\x12\x16.slate.v1.BeginRequest\x1a\x17.slate.v1.BeginResponse\x12;\n" +
 	"\x06Commit\x12\x17.slate.v1.CommitRequest\x1a\x18.slate.v1.CommitResponse\x12A\n" +
@@ -5974,7 +6155,8 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x04Join\x12\x15.slate.v1.JoinRequest\x1a\x16.slate.v1.JoinResponse0\x01\x12F\n" +
 	"\tAggregate\x12\x1a.slate.v1.AggregateRequest\x1a\x1b.slate.v1.AggregateResponse0\x01\x12>\n" +
 	"\aExplain\x12\x18.slate.v1.ExplainRequest\x1a\x19.slate.v1.ExplainResponse\x12J\n" +
-	"\vExplainJoin\x12\x1c.slate.v1.ExplainJoinRequest\x1a\x1d.slate.v1.JoinExplainResponse\x12E\n" +
+	"\vExplainJoin\x12\x1c.slate.v1.ExplainJoinRequest\x1a\x1d.slate.v1.JoinExplainResponse\x12Y\n" +
+	"\x10ExplainAggregate\x12!.slate.v1.ExplainAggregateRequest\x1a\".slate.v1.AggregateExplainResponse\x12E\n" +
 	"\n" +
 	"Leadership\x12\x1b.slate.v1.LeadershipRequest\x1a\x1a.slate.v1.LeadershipStatusb\x06proto3"
 
@@ -5991,81 +6173,83 @@ func file_slate_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
-var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 61)
+var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
 var file_slate_v1_records_proto_goTypes = []any{
-	(NullValue)(0),                 // 0: slate.v1.NullValue
-	(Unit)(0),                      // 1: slate.v1.Unit
-	(CmpOp)(0),                     // 2: slate.v1.CmpOp
-	(TimeUnit)(0),                  // 3: slate.v1.TimeUnit
-	(Metric)(0),                    // 4: slate.v1.Metric
-	(AggregateFunction)(0),         // 5: slate.v1.AggregateFunction
-	(ScanOrder)(0),                 // 6: slate.v1.ScanOrder
-	(SortDirection)(0),             // 7: slate.v1.SortDirection
-	(NullsOrder)(0),                // 8: slate.v1.NullsOrder
-	(JoinType)(0),                  // 9: slate.v1.JoinType
-	(Side)(0),                      // 10: slate.v1.Side
-	(LeadershipStatus_Standing)(0), // 11: slate.v1.LeadershipStatus.Standing
-	(*Value)(nil),                  // 12: slate.v1.Value
-	(*Vector)(nil),                 // 13: slate.v1.Vector
-	(*Row)(nil),                    // 14: slate.v1.Row
-	(*SchemaCheck)(nil),            // 15: slate.v1.SchemaCheck
-	(*ColumnRef)(nil),              // 16: slate.v1.ColumnRef
-	(*Expr)(nil),                   // 17: slate.v1.Expr
-	(*ExprList)(nil),               // 18: slate.v1.ExprList
-	(*Compare)(nil),                // 19: slate.v1.Compare
-	(*CompareColumns)(nil),         // 20: slate.v1.CompareColumns
-	(*IsNull)(nil),                 // 21: slate.v1.IsNull
-	(*Like)(nil),                   // 22: slate.v1.Like
-	(*Matches)(nil),                // 23: slate.v1.Matches
-	(*InList)(nil),                 // 24: slate.v1.InList
-	(*Scalar)(nil),                 // 25: slate.v1.Scalar
-	(*ScalarPair)(nil),             // 26: slate.v1.ScalarPair
-	(*ScalarList)(nil),             // 27: slate.v1.ScalarList
-	(*TimePart)(nil),               // 28: slate.v1.TimePart
-	(*Case)(nil),                   // 29: slate.v1.Case
-	(*CaseBranch)(nil),             // 30: slate.v1.CaseBranch
-	(*Distance)(nil),               // 31: slate.v1.Distance
-	(*RegexpReplace)(nil),          // 32: slate.v1.RegexpReplace
-	(*Aggregate)(nil),              // 33: slate.v1.Aggregate
-	(*Group)(nil),                  // 34: slate.v1.Group
-	(*SortKey)(nil),                // 35: slate.v1.SortKey
-	(*Projection)(nil),             // 36: slate.v1.Projection
-	(*AccessHint)(nil),             // 37: slate.v1.AccessHint
-	(*Query)(nil),                  // 38: slate.v1.Query
-	(*JoinAlgorithm)(nil),          // 39: slate.v1.JoinAlgorithm
-	(*JoinOn)(nil),                 // 40: slate.v1.JoinOn
-	(*JoinInput)(nil),              // 41: slate.v1.JoinInput
-	(*JoinQuery)(nil),              // 42: slate.v1.JoinQuery
-	(*JoinedRow)(nil),              // 43: slate.v1.JoinedRow
-	(*JoinedInput)(nil),            // 44: slate.v1.JoinedInput
-	(*Freshness)(nil),              // 45: slate.v1.Freshness
-	(*ServedBy)(nil),               // 46: slate.v1.ServedBy
-	(*BeginRequest)(nil),           // 47: slate.v1.BeginRequest
-	(*BeginResponse)(nil),          // 48: slate.v1.BeginResponse
-	(*CommitRequest)(nil),          // 49: slate.v1.CommitRequest
-	(*CommitResponse)(nil),         // 50: slate.v1.CommitResponse
-	(*RollbackRequest)(nil),        // 51: slate.v1.RollbackRequest
-	(*RollbackResponse)(nil),       // 52: slate.v1.RollbackResponse
-	(*InsertRequest)(nil),          // 53: slate.v1.InsertRequest
-	(*UpdateRequest)(nil),          // 54: slate.v1.UpdateRequest
-	(*DeleteRequest)(nil),          // 55: slate.v1.DeleteRequest
-	(*WriteResponse)(nil),          // 56: slate.v1.WriteResponse
-	(*GetRequest)(nil),             // 57: slate.v1.GetRequest
-	(*GetResponse)(nil),            // 58: slate.v1.GetResponse
-	(*QueryRequest)(nil),           // 59: slate.v1.QueryRequest
-	(*QueryResponse)(nil),          // 60: slate.v1.QueryResponse
-	(*JoinRequest)(nil),            // 61: slate.v1.JoinRequest
-	(*JoinResponse)(nil),           // 62: slate.v1.JoinResponse
-	(*AggregateQuery)(nil),         // 63: slate.v1.AggregateQuery
-	(*AggregateRequest)(nil),       // 64: slate.v1.AggregateRequest
-	(*AggregateResponse)(nil),      // 65: slate.v1.AggregateResponse
-	(*ExplainRequest)(nil),         // 66: slate.v1.ExplainRequest
-	(*ExplainResponse)(nil),        // 67: slate.v1.ExplainResponse
-	(*ExplainJoinRequest)(nil),     // 68: slate.v1.ExplainJoinRequest
-	(*JoinExplainResponse)(nil),    // 69: slate.v1.JoinExplainResponse
-	(*JoinInputPlan)(nil),          // 70: slate.v1.JoinInputPlan
-	(*LeadershipRequest)(nil),      // 71: slate.v1.LeadershipRequest
-	(*LeadershipStatus)(nil),       // 72: slate.v1.LeadershipStatus
+	(NullValue)(0),                   // 0: slate.v1.NullValue
+	(Unit)(0),                        // 1: slate.v1.Unit
+	(CmpOp)(0),                       // 2: slate.v1.CmpOp
+	(TimeUnit)(0),                    // 3: slate.v1.TimeUnit
+	(Metric)(0),                      // 4: slate.v1.Metric
+	(AggregateFunction)(0),           // 5: slate.v1.AggregateFunction
+	(ScanOrder)(0),                   // 6: slate.v1.ScanOrder
+	(SortDirection)(0),               // 7: slate.v1.SortDirection
+	(NullsOrder)(0),                  // 8: slate.v1.NullsOrder
+	(JoinType)(0),                    // 9: slate.v1.JoinType
+	(Side)(0),                        // 10: slate.v1.Side
+	(LeadershipStatus_Standing)(0),   // 11: slate.v1.LeadershipStatus.Standing
+	(*Value)(nil),                    // 12: slate.v1.Value
+	(*Vector)(nil),                   // 13: slate.v1.Vector
+	(*Row)(nil),                      // 14: slate.v1.Row
+	(*SchemaCheck)(nil),              // 15: slate.v1.SchemaCheck
+	(*ColumnRef)(nil),                // 16: slate.v1.ColumnRef
+	(*Expr)(nil),                     // 17: slate.v1.Expr
+	(*ExprList)(nil),                 // 18: slate.v1.ExprList
+	(*Compare)(nil),                  // 19: slate.v1.Compare
+	(*CompareColumns)(nil),           // 20: slate.v1.CompareColumns
+	(*IsNull)(nil),                   // 21: slate.v1.IsNull
+	(*Like)(nil),                     // 22: slate.v1.Like
+	(*Matches)(nil),                  // 23: slate.v1.Matches
+	(*InList)(nil),                   // 24: slate.v1.InList
+	(*Scalar)(nil),                   // 25: slate.v1.Scalar
+	(*ScalarPair)(nil),               // 26: slate.v1.ScalarPair
+	(*ScalarList)(nil),               // 27: slate.v1.ScalarList
+	(*TimePart)(nil),                 // 28: slate.v1.TimePart
+	(*Case)(nil),                     // 29: slate.v1.Case
+	(*CaseBranch)(nil),               // 30: slate.v1.CaseBranch
+	(*Distance)(nil),                 // 31: slate.v1.Distance
+	(*RegexpReplace)(nil),            // 32: slate.v1.RegexpReplace
+	(*Aggregate)(nil),                // 33: slate.v1.Aggregate
+	(*Group)(nil),                    // 34: slate.v1.Group
+	(*SortKey)(nil),                  // 35: slate.v1.SortKey
+	(*Projection)(nil),               // 36: slate.v1.Projection
+	(*AccessHint)(nil),               // 37: slate.v1.AccessHint
+	(*Query)(nil),                    // 38: slate.v1.Query
+	(*JoinAlgorithm)(nil),            // 39: slate.v1.JoinAlgorithm
+	(*JoinOn)(nil),                   // 40: slate.v1.JoinOn
+	(*JoinInput)(nil),                // 41: slate.v1.JoinInput
+	(*JoinQuery)(nil),                // 42: slate.v1.JoinQuery
+	(*JoinedRow)(nil),                // 43: slate.v1.JoinedRow
+	(*JoinedInput)(nil),              // 44: slate.v1.JoinedInput
+	(*Freshness)(nil),                // 45: slate.v1.Freshness
+	(*ServedBy)(nil),                 // 46: slate.v1.ServedBy
+	(*BeginRequest)(nil),             // 47: slate.v1.BeginRequest
+	(*BeginResponse)(nil),            // 48: slate.v1.BeginResponse
+	(*CommitRequest)(nil),            // 49: slate.v1.CommitRequest
+	(*CommitResponse)(nil),           // 50: slate.v1.CommitResponse
+	(*RollbackRequest)(nil),          // 51: slate.v1.RollbackRequest
+	(*RollbackResponse)(nil),         // 52: slate.v1.RollbackResponse
+	(*InsertRequest)(nil),            // 53: slate.v1.InsertRequest
+	(*UpdateRequest)(nil),            // 54: slate.v1.UpdateRequest
+	(*DeleteRequest)(nil),            // 55: slate.v1.DeleteRequest
+	(*WriteResponse)(nil),            // 56: slate.v1.WriteResponse
+	(*GetRequest)(nil),               // 57: slate.v1.GetRequest
+	(*GetResponse)(nil),              // 58: slate.v1.GetResponse
+	(*QueryRequest)(nil),             // 59: slate.v1.QueryRequest
+	(*QueryResponse)(nil),            // 60: slate.v1.QueryResponse
+	(*JoinRequest)(nil),              // 61: slate.v1.JoinRequest
+	(*JoinResponse)(nil),             // 62: slate.v1.JoinResponse
+	(*AggregateQuery)(nil),           // 63: slate.v1.AggregateQuery
+	(*AggregateRequest)(nil),         // 64: slate.v1.AggregateRequest
+	(*AggregateResponse)(nil),        // 65: slate.v1.AggregateResponse
+	(*ExplainRequest)(nil),           // 66: slate.v1.ExplainRequest
+	(*ExplainResponse)(nil),          // 67: slate.v1.ExplainResponse
+	(*ExplainJoinRequest)(nil),       // 68: slate.v1.ExplainJoinRequest
+	(*ExplainAggregateRequest)(nil),  // 69: slate.v1.ExplainAggregateRequest
+	(*AggregateExplainResponse)(nil), // 70: slate.v1.AggregateExplainResponse
+	(*JoinExplainResponse)(nil),      // 71: slate.v1.JoinExplainResponse
+	(*JoinInputPlan)(nil),            // 72: slate.v1.JoinInputPlan
+	(*LeadershipRequest)(nil),        // 73: slate.v1.LeadershipRequest
+	(*LeadershipStatus)(nil),         // 74: slate.v1.LeadershipStatus
 }
 var file_slate_v1_records_proto_depIdxs = []int32{
 	0,   // 0: slate.v1.Value.null_value:type_name -> slate.v1.NullValue
@@ -6186,43 +6370,50 @@ var file_slate_v1_records_proto_depIdxs = []int32{
 	46,  // 115: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
 	42,  // 116: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
 	45,  // 117: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
-	70,  // 118: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
-	46,  // 119: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	67,  // 120: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
-	9,   // 121: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
-	39,  // 122: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
-	11,  // 123: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
-	47,  // 124: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	49,  // 125: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	51,  // 126: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	53,  // 127: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	54,  // 128: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	55,  // 129: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	57,  // 130: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	59,  // 131: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	61,  // 132: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	64,  // 133: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	66,  // 134: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	68,  // 135: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	71,  // 136: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	48,  // 137: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	50,  // 138: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	52,  // 139: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	56,  // 140: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	56,  // 141: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	56,  // 142: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	58,  // 143: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	60,  // 144: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	62,  // 145: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	65,  // 146: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	67,  // 147: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	69,  // 148: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	72,  // 149: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	137, // [137:150] is the sub-list for method output_type
-	124, // [124:137] is the sub-list for method input_type
-	124, // [124:124] is the sub-list for extension type_name
-	124, // [124:124] is the sub-list for extension extendee
-	0,   // [0:124] is the sub-list for field type_name
+	63,  // 118: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	45,  // 119: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
+	67,  // 120: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
+	71,  // 121: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
+	46,  // 122: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	72,  // 123: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
+	46,  // 124: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	67,  // 125: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
+	9,   // 126: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
+	39,  // 127: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
+	11,  // 128: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
+	47,  // 129: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	49,  // 130: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	51,  // 131: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	53,  // 132: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	54,  // 133: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	55,  // 134: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	57,  // 135: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	59,  // 136: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	61,  // 137: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	64,  // 138: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	66,  // 139: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	68,  // 140: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	69,  // 141: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	73,  // 142: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	48,  // 143: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	50,  // 144: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	52,  // 145: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	56,  // 146: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	56,  // 147: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	56,  // 148: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	58,  // 149: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	60,  // 150: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	62,  // 151: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	65,  // 152: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	67,  // 153: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	71,  // 154: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	70,  // 155: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	74,  // 156: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	143, // [143:157] is the sub-list for method output_type
+	129, // [129:143] is the sub-list for method input_type
+	129, // [129:129] is the sub-list for extension type_name
+	129, // [129:129] is the sub-list for extension extendee
+	0,   // [0:129] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }
@@ -6296,14 +6487,14 @@ func file_slate_v1_records_proto_init() {
 	file_slate_v1_records_proto_msgTypes[44].OneofWrappers = []any{}
 	file_slate_v1_records_proto_msgTypes[51].OneofWrappers = []any{}
 	file_slate_v1_records_proto_msgTypes[55].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[60].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[62].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_slate_v1_records_proto_rawDesc), len(file_slate_v1_records_proto_rawDesc)),
 			NumEnums:      12,
-			NumMessages:   61,
+			NumMessages:   63,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

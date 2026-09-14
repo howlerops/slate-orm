@@ -578,8 +578,38 @@ type Explanation struct {
 	EstimatedCost float64
 	Sorts         bool
 	IndexOnly     bool
-	Display       string
-	Warnings      []string
+	// Decodes is the columns this plan decodes: the projection plus whatever
+	// the residual reads. Often the only visible difference between a grouped
+	// read's plan and the plan of the read it groups, since narrowing the
+	// projection need not change the access path.
+	Decodes  []uint32
+	Display  string
+	Warnings []string
+}
+
+// explanationFrom converts one plan.
+//
+// Factored out because there were two copies of these ten assignments, and a
+// field added to one and not the other is the kind of omission that shows up
+// as a zero value rather than as an error -- which is exactly what `Decodes`
+// would have done.
+func explanationFrom(wire *pb.ExplainResponse) Explanation {
+	if wire == nil {
+		return Explanation{}
+	}
+	return Explanation{
+		Table:         wire.Table,
+		Access:        wire.Access,
+		Residual:      wire.Residual,
+		Descending:    wire.Descending,
+		EstimatedRows: wire.EstimatedRows,
+		EstimatedCost: wire.EstimatedCost,
+		Sorts:         wire.Sorts,
+		IndexOnly:     wire.IndexOnly,
+		Decodes:       wire.Decodes,
+		Display:       wire.Display,
+		Warnings:      wire.Warnings,
+	}
 }
 
 // Explain asks for a plan without running it.
@@ -596,18 +626,8 @@ func (s *Session) Explain(ctx context.Context, query Query) (*Explanation, error
 		return nil, fromRPC(err)
 	}
 	s.observeServedBy(response.ServedBy)
-	return &Explanation{
-		Table:         response.Table,
-		Access:        response.Access,
-		Residual:      response.Residual,
-		Descending:    response.Descending,
-		EstimatedRows: response.EstimatedRows,
-		EstimatedCost: response.EstimatedCost,
-		Sorts:         response.Sorts,
-		IndexOnly:     response.IndexOnly,
-		Display:       response.Display,
-		Warnings:      response.Warnings,
-	}, nil
+	plan := explanationFrom(response)
+	return &plan, nil
 }
 
 // Leadership is what a node says about who holds the writer lease.
@@ -789,11 +809,12 @@ func (s *Session) Aggregate(
 	return s.aggregate(ctx, wire, "")
 }
 
-// AggregateJoin groups a join.
+// AggregateJoin groups a join, or a chain of any length.
 //
-// Two inputs exactly: the kernel groups a two-table join and does not group a
-// chain. A third is refused by the server with that as the reason, rather than
-// counted here where the count could drift from the kernel's.
+// It was two inputs exactly when the kernel grouped only a two-table join and
+// the server refused a third; it groups a chain now, and the refusal went with
+// it. Nothing counts inputs here, where the count could drift from the
+// kernel's.
 func (s *Session) AggregateJoin(
 	ctx context.Context,
 	over JoinQuery,
@@ -970,6 +991,11 @@ func (s *Session) ExplainJoin(ctx context.Context, join JoinQuery) (*JoinExplana
 		return nil, fromRPC(err)
 	}
 	s.observeServedBy(response.ServedBy)
+	return joinExplanationFrom(response), nil
+}
+
+// joinExplanationFrom converts a join or chain plan.
+func joinExplanationFrom(response *pb.JoinExplainResponse) *JoinExplanation {
 	out := &JoinExplanation{
 		EstimatedRows: response.EstimatedRows,
 		EstimatedCost: response.EstimatedCost,
@@ -999,21 +1025,97 @@ func (s *Session) ExplainJoin(ctx context.Context, join JoinQuery) (*JoinExplana
 				plan.Algorithm = "hash"
 			}
 		}
-		if input.Plan != nil {
-			plan.Plan = Explanation{
-				Table:         input.Plan.Table,
-				Access:        input.Plan.Access,
-				Residual:      input.Plan.Residual,
-				Descending:    input.Plan.Descending,
-				EstimatedRows: input.Plan.EstimatedRows,
-				EstimatedCost: input.Plan.EstimatedCost,
-				Sorts:         input.Plan.Sorts,
-				IndexOnly:     input.Plan.IndexOnly,
-				Display:       input.Plan.Display,
-				Warnings:      input.Plan.Warnings,
-			}
-		}
+		plan.Plan = explanationFrom(input.Plan)
 		out.Inputs = append(out.Inputs, plan)
+	}
+	return out
+}
+
+// AggregateExplanation is the plan a grouped read would run under.
+//
+// Exactly one of Input and Join is set, matching the request: Input for an
+// aggregate over one table, Join for one over a join or a chain.
+type AggregateExplanation struct {
+	Input    *Explanation
+	Join     *JoinExplanation
+	Display  string
+	Warnings []string
+}
+
+// ExplainAggregate asks for a grouped read's plan without running it.
+//
+// Not Explain or ExplainJoin on the underlying read: grouping narrows each
+// input's projection to the group keys and the aggregates' columns, which is
+// what lets an index answer a COUNT(*) without touching a row. Comparing
+// Decodes between the two is how to see it where the access path is unchanged.
+//
+// Needs the `explain` action on every table involved, as every plan does.
+func (s *Session) ExplainAggregate(
+	ctx context.Context,
+	over Query,
+	grouping Grouping,
+) (*AggregateExplanation, error) {
+	wire := &pb.AggregateQuery{Input: over.toProto(s.client.schemas.claimFor(over.Table))}
+	grouping.apply(wire)
+	return s.explainAggregate(ctx, wire, "")
+}
+
+// ExplainAggregateJoin asks for a grouped join's or grouped chain's plan.
+func (s *Session) ExplainAggregateJoin(
+	ctx context.Context,
+	over JoinQuery,
+	grouping Grouping,
+) (*AggregateExplanation, error) {
+	wire := &pb.AggregateQuery{Join: over.toProto(s.client.schemas)}
+	grouping.apply(wire)
+	return s.explainAggregate(ctx, wire, "")
+}
+
+// ExplainAggregate asks for a grouped read's plan inside the transaction.
+func (t *Transaction) ExplainAggregate(
+	ctx context.Context,
+	over Query,
+	grouping Grouping,
+) (*AggregateExplanation, error) {
+	wire := &pb.AggregateQuery{
+		Input: over.toProto(t.session.client.schemas.claimFor(over.Table)),
+	}
+	grouping.apply(wire)
+	return t.session.explainAggregate(ctx, wire, t.id)
+}
+
+// ExplainAggregateJoin asks for a grouped join's plan inside the transaction.
+func (t *Transaction) ExplainAggregateJoin(
+	ctx context.Context,
+	over JoinQuery,
+	grouping Grouping,
+) (*AggregateExplanation, error) {
+	wire := &pb.AggregateQuery{Join: over.toProto(t.session.client.schemas)}
+	grouping.apply(wire)
+	return t.session.explainAggregate(ctx, wire, t.id)
+}
+
+func (s *Session) explainAggregate(
+	ctx context.Context,
+	wire *pb.AggregateQuery,
+	transaction string,
+) (*AggregateExplanation, error) {
+	request := &pb.ExplainAggregateRequest{Aggregate: wire, Transaction: transaction}
+	if transaction == "" {
+		request.Freshness = s.freshness()
+	}
+	response, err := s.client.rpc.ExplainAggregate(s.ctx(ctx), request)
+	if err != nil {
+		return nil, fromRPC(err)
+	}
+	s.observeServedBy(response.ServedBy)
+	out := &AggregateExplanation{Display: response.Display, Warnings: response.Warnings}
+	if response.Input != nil {
+		plan := explanationFrom(response.Input)
+		out.Input = &plan
+	}
+	if response.Join != nil {
+		out.Join = joinExplanationFrom(response.Join)
 	}
 	return out, nil
 }

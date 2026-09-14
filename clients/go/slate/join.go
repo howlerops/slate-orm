@@ -230,31 +230,41 @@ const (
 type Aggregate struct {
 	Function AggregateFunction
 	// Column is what it reads. Ignored by [CountRows], required by the rest.
-	Column Ordinal
+	//
+	// A [Column], not a bare [Ordinal]: aggregating a join has to be able to
+	// name a column of an input other than the first. It could not, and the
+	// server said so — "an aggregate names column 6 of table `authors`, which
+	// has 3 columns" — because a bare ordinal is resolved against input 0.
+	// Python's client took a qualified reference from the start; this one had
+	// the wrong type and no test that reached across a join to notice.
+	Column Column
 }
 
 // Count is `COUNT(*)`.
 func Count() Aggregate { return Aggregate{Function: CountRows} }
 
 // CountOf is `COUNT(column)`, which skips nulls.
-func CountOf(c Ordinal) Aggregate { return Aggregate{Function: CountColumn, Column: c} }
+//
+// For a grouped table every column is on input 0, and [Key0] spells that:
+// `CountOf(Key0(2))`. For a grouped join, [At] names the input.
+func CountOf(c Column) Aggregate { return Aggregate{Function: CountColumn, Column: c} }
 
 // CountDistinctOf is `COUNT(DISTINCT column)`.
-func CountDistinctOf(c Ordinal) Aggregate {
+func CountDistinctOf(c Column) Aggregate {
 	return Aggregate{Function: CountDistinct, Column: c}
 }
 
 // MinOf is `MIN(column)`.
-func MinOf(c Ordinal) Aggregate { return Aggregate{Function: Min, Column: c} }
+func MinOf(c Column) Aggregate { return Aggregate{Function: Min, Column: c} }
 
 // MaxOf is `MAX(column)`.
-func MaxOf(c Ordinal) Aggregate { return Aggregate{Function: Max, Column: c} }
+func MaxOf(c Column) Aggregate { return Aggregate{Function: Max, Column: c} }
 
 // SumOf is `SUM(column)`.
-func SumOf(c Ordinal) Aggregate { return Aggregate{Function: Sum, Column: c} }
+func SumOf(c Column) Aggregate { return Aggregate{Function: Sum, Column: c} }
 
 // AvgOf is `AVG(column)`.
-func AvgOf(c Ordinal) Aggregate { return Aggregate{Function: Avg, Column: c} }
+func AvgOf(c Column) Aggregate { return Aggregate{Function: Avg, Column: c} }
 
 func (a Aggregate) toProto() *pb.Aggregate {
 	functions := map[AggregateFunction]pb.AggregateFunction{
@@ -270,7 +280,7 @@ func (a Aggregate) toProto() *pb.Aggregate {
 	// `COUNT(*)` reads no column, and sending one would be a different
 	// aggregate. Every other function requires it.
 	if a.Function != CountRows {
-		out.Column = columnRef(a.Column)
+		out.Column = a.Column.ref()
 	}
 	return out
 }

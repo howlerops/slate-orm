@@ -661,6 +661,41 @@ a trade-off. Because the split is on `Row` itself it applies inside a
 one is refused rather than having it dropped: an insert that appeared to accept
 values it discarded is the same failure in the opposite direction.
 
+### Explaining a grouped read is a different question
+
+`Explain` and `ExplainJoin` describe the read as written. An `Aggregate` does
+not run that read: grouping narrows each input's projection to the group keys
+plus what the aggregates take out of the row, which is what lets an index
+answer a `COUNT(*)` without a single row fetch. So the plan of the underlying
+`Query` or `JoinQuery` is a plan the aggregate will not execute, and "will my
+grouped read go index-only" had no way to be asked.
+
+`ExplainAggregate` takes the whole `AggregateQuery` — the same message
+`Aggregate` takes — rather than a grouping bolted onto `ExplainJoinRequest`.
+That is what makes the answer honest by construction: the message explained is
+the message that would run, and the one-table case, which narrows too, is
+covered by the same RPC rather than left out.
+
+Underneath, the narrowing lives in one function per shape, returning the
+narrowed read beside its plan, and both the execution path and the explain path
+call it. An `EXPLAIN` that narrowed separately could come to describe a plan
+nothing runs — and the divergence would be invisible, since both halves would
+remain plausible plans for plausible joins.
+
+#### `decodes`, and why it had to exist
+
+The first version of this shipped an RPC that could not show its own point.
+Narrowing a projection changes what a plan *decodes* and nothing about how it
+*reaches* rows, so wherever no index applies, the grouped and ungrouped plans
+rendered as identical strings — access path, cost, row estimate, all the same.
+`ExplainResponse` published only the access path.
+
+`decodes` is the plan's output columns: the projection plus whatever the
+residual reads, since those are decoded anyway. It is the field the difference
+is visible in, and the field every client's test for this asserts against. The
+residual's contribution is not incidental — on this engine the residual carries
+the security filter, so `decodes` is also where a policy's cost shows up.
+
 ### Warnings belong to the request that caused them
 
 An ignored index hint and a clamped build limit used to be reported by

@@ -47,8 +47,8 @@ use crate::leadership::Leadership;
 use crate::status::from_kernel;
 use slate_kernel::security::Principal;
 use slate_kernel::{
-    ChainCursor, ChainPlan, Explanation, Group, JoinCursor, JoinExplanation, KernelError, KvStore,
-    Query, ReadToken, RecordStore, RecordTransaction, SecurityContext,
+    Chain, ChainCursor, ChainPlan, Explanation, Group, JoinCursor, JoinExplanation, KernelError,
+    KvStore, Query, ReadToken, RecordStore, RecordTransaction, SecurityContext,
 };
 use slate_schema::{Row, TableDef, TableId};
 use slate_tuple::Value;
@@ -113,6 +113,24 @@ pub enum MultiExplanation {
     Join(Box<JoinExplanation>),
     /// Three or more tables.
     Chain(Box<ChainPlan>),
+}
+
+/// The plan a grouped read would run under, whichever source it groups.
+///
+/// Three variants rather than reusing [`MultiExplanation`] plus a table case,
+/// because a grouped read over one table is a first-class shape here: grouping
+/// narrows its projection too, so `Explain` on the underlying query describes
+/// something the aggregate will not run.
+#[derive(Debug)]
+pub enum GroupedExplanation {
+    /// Grouping one table.
+    Table(Box<Explanation>),
+    /// Grouping a two-table join.
+    Join(Box<JoinExplanation>),
+    /// Grouping a chain, with the narrowed chain the plan describes — a step
+    /// cannot be rendered without its own query, and the caller's would report
+    /// a limit the grouped read discards.
+    Chain(Box<Chain>, Box<ChainPlan>),
 }
 
 /// A cursor over either kernel shape, handing out [`MultiRow`]s.
@@ -214,6 +232,11 @@ enum Command {
         context: Box<SecurityContext>,
         read: Box<GroupedRead>,
         reply: oneshot::Sender<Result<Vec<Group>, KernelError>>,
+    },
+    ExplainAggregate {
+        context: Box<SecurityContext>,
+        read: Box<GroupedRead>,
+        reply: oneshot::Sender<Result<GroupedExplanation, KernelError>>,
     },
     Commit {
         reply: oneshot::Sender<Result<Option<ReadToken>, KernelError>>,
@@ -513,6 +536,22 @@ impl Sessions {
         .map_err(|error| from_kernel(&error))
     }
 
+    /// Explain a grouped read in an open transaction.
+    pub async fn explain_aggregate(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        read: GroupedRead,
+    ) -> Result<GroupedExplanation, Status> {
+        self.dispatch(id, context, |reply| Command::ExplainAggregate {
+            context: Box::new(context.clone()),
+            read: Box::new(read),
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
     /// Compute aggregates, per group, in an open transaction.
     pub async fn aggregate(
         &self,
@@ -779,6 +818,43 @@ async fn apply<S: KvStore>(
                 MultiRead::Chain(chain) => transaction
                     .explain_chain(&context, &definitions, chain)
                     .map(|plan| MultiExplanation::Chain(Box::new(plan))),
+            };
+            answer(reply, outcome)
+        }
+        Command::ExplainAggregate {
+            context,
+            read,
+            reply,
+        } => {
+            let grouping = read.grouping();
+            let outcome = match &read.source {
+                GroupedSource::Table { table, query } => {
+                    let definition = table!(*table, reply);
+                    transaction
+                        .explain_grouped(&context, definition, query, &grouping)
+                        .map(|plan| GroupedExplanation::Table(Box::new(plan)))
+                }
+                GroupedSource::Join { left, right, join } => {
+                    let left = table!(*left, reply);
+                    let right = table!(*right, reply);
+                    transaction
+                        .explain_grouped_join(&context, left, right, join, &grouping)
+                        .map(|plan| GroupedExplanation::Join(Box::new(plan)))
+                }
+                GroupedSource::Chain { tables, chain } => {
+                    let definitions = match resolve_all(store, tables) {
+                        Ok(definitions) => definitions,
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                            return None;
+                        }
+                    };
+                    transaction
+                        .explain_grouped_chain(&context, &definitions, chain, &grouping)
+                        .map(|(narrowed, plan)| {
+                            GroupedExplanation::Chain(Box::new(narrowed), Box::new(plan))
+                        })
+                }
             };
             answer(reply, outcome)
         }
