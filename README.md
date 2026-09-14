@@ -638,11 +638,9 @@ Built and tested:
 - [x] Grouping over a `Chain`, the n-way case of a grouped join, kernel and
       wire alike — the server's old "grouping a chain is not built" refusal is
       gone rather than left to become a lie. Group keys may
-      name any table in the chain. It reads *wider* than a grouped join does —
-      a step's condition can name any earlier table, so narrowing each step's
-      projection to the grouping's columns would read away a column a later
-      step still needs, and the transitive closure that would fix it is not
-      written
+      name any table in the chain, and each step reads only what something
+      downstream takes out of its row — so `COUNT(*)` over a chain can be
+      index-only, like a grouped join's
 - [x] **Withdrawn:** "a grouped join is not costed as grouped". The per-joined-row
       term is added to the hash cost and the loop cost *equally*, so it cancels
       out of the comparison and discounting it for a grouped join would change
