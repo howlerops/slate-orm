@@ -57,6 +57,18 @@ the join panel produces a plan containing `Join` with at least one group.
 Also still green: `site/check/quickstarts.py`, the hook's 14 cases, the
 workspace-layout guard, and the binding's 23 Rust tests.
 
+**On the deployed site**, driven with the published bytes: filter on
+`author_id = 2`, project onto that column so the plan is `Index Only Scan using
+by_author`, insert a book for author 2, and the same index-only query goes from
+four rows to five. The index answered for a row that did not exist a moment
+before, without reading it.
+
+The first attempt at that check reported `insertedRowAppears: false` and the
+panel was fine — the throwaway script had left the filter on `id` rather than
+`author_id`, so a row with id 9300 correctly did not match `id = 2`. Worth
+recording because it is the third time today a check has been wrong rather than
+the code, and the tell each time was a failure that made no sense.
+
 ## What this does not do
 
 The delete button takes the primary key from the first write field, because

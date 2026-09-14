@@ -38,6 +38,15 @@ before checking the site, and the Pages deploy builds it before publishing, so
 what ships is always the current kernel. `build-wasm.sh` also enforces a
 gzipped size budget, because the cost of this lands on a reader's connection.
 
+It reads, writes and joins. Insert a book and the index answers for it in the
+same breath — an index-only scan goes from four rows to five without ever
+reading a row, which is what "the index is maintained inside the write" means
+when you can watch it. Two conditions can be ANDed, and a collapsed section
+joins `authors` to `books` and groups the result.
+
+The bundle is fetched when the panel is scrolled to, or when the Load button is
+pressed — never on page load, so a reader who never scrolls here pays nothing.
+
 The most useful thing the panel shows is counter-intuitive: filtering on the
 indexed `author_id` still plans as a *table scan*. On object storage a point
 read costs about as much as scanning twenty-four thousand rows, so an index
