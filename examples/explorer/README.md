@@ -7,6 +7,7 @@ flag that swaps which client library serves the request.
 ```
 ./run.sh                 # head node + three adapters + the frontend
 ./run.sh --headless      # just the backend, for the conformance runner
+./run.sh --conformance   # the stack on free ports, the suite, then teardown
 ```
 
 ## What is here
@@ -69,6 +70,21 @@ grouped join behind the chart, the plan, and a transaction whose write is
 visible only to itself until it commits.
 
 ## Running the conformance check
+
+One command, which starts everything and stops it again. Its exit status is
+the suite's, so it is the thing to run in CI:
+
+```
+./run.sh --conformance
+./run.sh --conformance --verbose      # and every case that agreed
+```
+
+It picks free ports rather than the demo's fixed ones. That is not tidiness:
+a suite pinned to 7431 cannot run beside a demo stack, and the failure when
+something else holds the port is an unreachable adapter — which reads exactly
+like the SDKs disagreeing.
+
+Against a stack you already have up:
 
 ```
 ./run.sh --headless          # one terminal

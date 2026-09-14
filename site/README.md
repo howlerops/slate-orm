@@ -19,20 +19,33 @@ Markdown. Until then this is the smaller thing.
 
 ## The quickstarts are checked by running them
 
-The three snippets on the landing page and the TOML beside them were extracted
-from the page and executed against a head node started from that same TOML.
-All three insert a row and read it back.
-
-They are **not** checked automatically. There is no test that re-extracts them,
-so they can rot — and example code that does not compile is the most
-embarrassing kind of stale documentation. If you change a client's API, run
-them:
-
 ```sh
-# start a node from the TOML tab, then paste each snippet into a file and run it
+cargo build -p slate-serverd --bin slate-serverd
+python3 site/check/quickstarts.py
 ```
 
-Wiring that into CI is worth doing and is not done.
+That extracts the four `<pre><code>` panels out of `index.html`, validates the
+TOML panel with `slate-serverd --check`, starts a node from it, and runs the
+Python, Go and TypeScript snippets against that node. Each must insert a row
+and read it back — asserting on the row rather than on an exit status, because
+a snippet whose query silently returned nothing would still exit 0.
+
+Two concessions, both asserted rather than assumed:
+
+* The TOML names an S3 bucket, so what *runs* is a copy with the `[storage]`
+  stanza swapped for `memory`. The swap is done by splitting the file, so
+  everything outside that stanza is the page's text by construction.
+* Every snippet names `127.0.0.1:7421` and the check rewrites it to a free
+  port. The substitution must fire exactly once per snippet, so a snippet that
+  stops connecting to the head node fails instead of quietly passing.
+
+The first run found the TOML panel invalid: `bucket` sat directly under
+`[storage]`, where the field is `[storage.s3] bucket`. It had been on the
+landing page since the page was written, and the page said the snippets had
+been executed. They had; the TOML had only been read.
+
+Still by hand — nothing runs it on a schedule. But it is now one command, which
+is the difference between a check that rots and a check somebody runs.
 
 ## Keeping it honest
 

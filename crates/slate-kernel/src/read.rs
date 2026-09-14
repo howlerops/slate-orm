@@ -140,7 +140,7 @@ fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join 
 /// worry about a shape the design does not have.
 fn narrowed_chain(chain: &Chain, schema: &JoinSchema, grouping: &Grouping) -> Chain {
     let mut wanted: Vec<BTreeSet<Ordinal>> = vec![BTreeSet::new(); schema.len()];
-    let mut want = |joined: Ordinal, into: &mut Vec<BTreeSet<Ordinal>>| {
+    let want = |joined: Ordinal, into: &mut Vec<BTreeSet<Ordinal>>| {
         // Outside the joined space: nothing to read for it, and it reads as
         // null on every path alike. Same rule the two-table version applies.
         if let Some((position, at)) = schema.locate(joined) {

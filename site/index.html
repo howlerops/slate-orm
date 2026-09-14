@@ -132,7 +132,14 @@ mode = "trusted-header"   # no default; the node refuses to start without this
 
 [storage]
 backend = "s3"
+
+[storage.s3]
 bucket = "my-bucket"
+region = "us-east-1"
+# The variable holding the key, never the key: this file is the one that
+# gets committed, pasted into a ticket, and dropped into a chat window.
+access_key_id_env     = "AWS_ACCESS_KEY_ID"
+secret_access_key_env = "AWS_SECRET_ACCESS_KEY"
 
 [[tables]]
 name = "books"

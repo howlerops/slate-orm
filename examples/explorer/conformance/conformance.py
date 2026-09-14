@@ -11,7 +11,13 @@ The three adapters implement one HTTP contract (../CONTRACT.md) over one head
 node. This sends every case below to all three and requires the JSON to match
 exactly, `sdk` excluded.
 
-Run the demo first:
+Start the stack and run this against it, in one command:
+
+    ./run.sh --conformance
+
+which picks free ports, waits for every adapter to say it is listening, runs
+the cases, and tears the stack down again. Against a stack you already have
+up, run it directly:
 
     ./run.sh --headless      # in another terminal
     python3 conformance/conformance.py
@@ -28,7 +34,11 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-ADAPTERS = {
+# The demo's default ports. Overridable, because `./run.sh --conformance`
+# starts the whole stack on ports the kernel picked: a suite that can only run
+# on three fixed ports is a suite that cannot run twice at once, and one that
+# fails confusingly when something else already holds 7431.
+DEFAULTS = {
     "go": "http://127.0.0.1:7431",
     "node": "http://127.0.0.1:7432",
     "python": "http://127.0.0.1:7433",
@@ -179,12 +189,17 @@ def normalise(answer: Any) -> Any:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verbose", action="store_true", help="print every case")
+    for sdk, default in DEFAULTS.items():
+        parser.add_argument(f"--{sdk}", default=default, metavar="URL",
+                            help=f"the {sdk} adapter's base URL (default {default})")
     args = parser.parse_args()
+
+    adapters = {sdk: getattr(args, sdk) for sdk in DEFAULTS}
 
     failures: list[str] = []
     for name, path, body, identity in CASES:
         answers = {
-            sdk: normalise(call(base, path, body, identity)) for sdk, base in ADAPTERS.items()
+            sdk: normalise(call(base, path, body, identity)) for sdk, base in adapters.items()
         }
 
         down = [sdk for sdk, a in answers.items()
