@@ -200,9 +200,20 @@ problem. The local tag was deleted rather than left behind to imply a release
 exists.
 
 What was done instead, because "verify it" is the request and the tag was only
-the means: `release.yml` now builds on **every push that touches it**, not only
-on a tag. The `release` job — the one that publishes — stays gated on
-`refs/tags/v*`.
+the means: `ci.yml` **calls** `release.yml` as a reusable workflow on every
+push, so the build half runs continuously. The `release` job — the one that
+publishes — stays gated on `refs/tags/v*`, and `github.ref` inside a called
+workflow is the caller's ref, so on a branch push it is skipped.
+
+The first attempt at this was `on: push: paths:
+[".github/workflows/release.yml"]`, and it is worth recording why that is
+wrong, because it looked right and did nothing. A `push` block with `tags:`
+set matches *only* tags, so adding `paths:` next to it adds no branch pushes —
+the run simply never appeared. Worse, the filter would then have applied to the
+tag push itself, so tagging a commit that happened not to touch that file would
+have built and published nothing. A release workflow that silently does not run
+is strictly worse than one that has never run, which is the thing this entry is
+about.
 
 This is the same lesson the rest of this entry is about, applied before it
 bites. A release workflow otherwise runs for the first time on the day somebody
@@ -211,10 +222,15 @@ is not installed. `ci.yml` was in exactly that state — active, plausible, neve
 run — and its first real run died in five seconds. Now the half that can be
 checked without publishing is checked continuously.
 
+`permissions: contents: write` moved from the workflow down to the `release`
+job at the same time. Left at the top it would have handed a repository-write
+token to every CI run that calls this workflow, to do a build that needs only
+read.
+
 **What remains unverified, precisely:** the `softprops/action-gh-release` step.
 Everything before it — both targets compiling, the cross toolchain, the
 TOML-extraction from `site/index.html`, `--check` against the shipped binary,
-and the artifact naming — runs on a real runner. Pushing `git tag -a v0.0.1 -m
+and the artifact naming — runs on a real runner on every push. Pushing `git tag -a v0.0.1 -m
 ... && git push origin v0.0.1` from a checkout with tag permission is the one
 command that closes the gap, and it publishes a public prerelease, which is why
 it is a person's decision rather than this session's.

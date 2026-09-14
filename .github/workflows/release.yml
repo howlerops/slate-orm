@@ -5,24 +5,17 @@
 # published — see the note at the bottom of this file.
 name: Release
 
+# A tag publishes. `ci.yml` calls this workflow on every push so the build half
+# is exercised continuously — see the note on `workflow_call` below.
 on:
   push:
     tags: ["v*"]
-    # Also on a push that touches this file, which is the whole reason the
-    # build and the upload are separate jobs below.
-    #
-    # A release workflow is exercised for the first time on the day somebody
-    # cuts a release, which is the worst day to discover that the aarch64
-    # linker is not installed. `ci.yml` had exactly this shape — active,
-    # plausible, never once run — and its first real run failed in five
-    # seconds on a withdrawn image tag. Building on every change to this file
-    # means the half that can be checked without publishing anything is
-    # checked continuously; the upload stays gated on a tag.
-    paths: [".github/workflows/release.yml"]
+  workflow_call:
   workflow_dispatch:
 
-permissions:
-  contents: write
+# No workflow-level permissions: only the job that publishes needs to write,
+# and asking for `contents: write` up here would make every CI run that calls
+# this workflow carry a token that can push to the repository.
 
 env:
   CARGO_TERM_COLOR: always
@@ -90,6 +83,8 @@ jobs:
     name: attach the binaries
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     # Only a tag publishes. A dispatch run, or a push that touched this file,
     # builds and checks and stops there: releases are cut from tags, and a
     # workflow that can publish one without a version number is a workflow that
@@ -109,11 +104,26 @@ jobs:
           # that does not is a release read as a promise.
           prerelease: true
 
-# Unverified, and deliberately so: the `release` job itself. Everything above
-# it runs on every change to this file, but the `softprops/action-gh-release`
-# step needs a real `v*` tag, and pushing one publishes a release that cannot be
-# quietly withdrawn. It is the one thing here that has to be exercised by a
-# person who means it.
+# On `workflow_call`, and why not a `paths` filter.
+#
+# The obvious way to exercise this without a tag is `on: push: paths:
+# [".github/workflows/release.yml"]`. It does not work and it is a trap. Adding
+# `paths` next to `tags` does not add branch pushes — a `push` block with
+# `tags` set only ever matches tags — and the filter *would* then apply to the
+# tag push, so tagging a commit that happens not to touch this file would build
+# and publish nothing at all. A release workflow that silently does not run is
+# strictly worse than one that has never run.
+#
+# So `ci.yml` calls this workflow instead. `github.ref` inside a called
+# workflow is the caller's ref, so the `release` job's tag gate is false on a
+# branch push and it is skipped, while `build` runs in full. One definition of
+# how the binaries are built, exercised on every push, with no second copy to
+# drift.
+#
+# Unverified, and deliberately so: the `release` job itself. The
+# `softprops/action-gh-release` step needs a real `v*` tag, and pushing one
+# publishes a release that cannot be quietly withdrawn. It is the one thing
+# here that has to be exercised by a person who means it.
 #
 # Deliberately absent: publishing `slate-client` to PyPI, `@slate-orm/client`
 # to npm, or tagging the Go module for a proxy.
