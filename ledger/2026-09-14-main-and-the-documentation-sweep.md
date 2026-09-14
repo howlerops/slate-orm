@@ -100,11 +100,23 @@ with no path filter.
 
 ## What this does not do
 
-Whether Pages actually enables itself is not yet known at the time of writing —
-`enablement: true` needs the workflow token to be permitted to change that
-setting, and repository *settings* writes are exactly what was refused for the
-default branch. If it is refused here too, the failure names the setting and
-somebody has to visit Settings → Pages once.
+**Pages is not enabled, and cannot be enabled from here.** `enablement: true`
+was tried and refused: `Create Pages site failed. Error: Resource not
+accessible by integration`. Same wall as the default branch — repository
+settings are not writable by this session or by the workflow token.
+
+So the deploy job fails, correctly, and now fails *legibly*: a step runs on
+failure and prints the one thing a reader needs, which is Settings → Pages →
+Source: GitHub Actions. The setting has to be changed once by a person with
+admin, and then any push to `main` publishes.
+
+`enablement: true` is kept rather than reverted, even though it does not work
+here. Where a token *is* permitted — a fork, or this repository with different
+Actions permissions — it removes the manual step entirely, and where it is not,
+the message below it says so. The alternative was leaving `enablement: false`,
+whose error ("verify that the repository has Pages enabled ... or consider
+exploring the `enablement` parameter") reads like a suggestion to the person
+editing the workflow rather than an instruction to the person who can fix it.
 
 `main` is not yet the **default** branch, and this session cannot make it one.
 Until somebody changes it in Settings → General, the public repository page

@@ -68,6 +68,28 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+
+      # `enablement: true` above is best-effort: it needs the workflow token to
+      # be allowed to *create* the Pages site, and in this repository it is
+      # not — `Resource not accessible by integration`. That is an accurate
+      # message and a useless one to whoever has to act on it, so say what to
+      # do. The job still fails, which is right; it just fails legibly.
+      - name: If that failed, here is why and what to do
+        if: failure()
+        run: |
+          cat >&2 <<'MESSAGE'
+
+          GitHub Pages is not enabled for this repository, and this workflow is
+          not permitted to enable it.
+
+          A person with repository admin has to do it once:
+
+              Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+
+          Nothing else is needed. Re-run this workflow afterwards, or push
+          anything to `main`, and the site publishes.
+          MESSAGE
+          exit 1
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
