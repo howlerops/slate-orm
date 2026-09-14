@@ -19,7 +19,17 @@ regex.workspace = true
 thiserror.workspace = true
 # Only for the retry helper's backoff. The whole stack is async on tokio
 # already, so this adds no new runtime requirement.
-tokio = { workspace = true, features = ["time"] }
+#
+# Declared here rather than inherited with `workspace = true`, and that is the
+# whole point of the line. Feature declarations are additive: the workspace
+# dependency asks for `rt-multi-thread`, so inheriting it and adding `time`
+# gave this crate a multi-threaded runtime it does not use and cannot have
+# everywhere. `wasm32-unknown-unknown` refuses outright — "Only features
+# sync,macros,io-util,rt,time are supported on wasm" — which is how a library
+# crate quietly acquiring a binary's dependencies became visible.
+#
+# A library should ask for what it needs. `time`, for one `sleep`.
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
