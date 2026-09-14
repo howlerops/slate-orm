@@ -114,7 +114,7 @@ The most useful thing it shows is counter-intuitive: filtering on the indexed
 `pickup_zone` still plans as a *table scan*. On object storage a point read
 costs about as much as scanning twenty-four thousand rows, so an index that
 still has to fetch rows loses. Narrow the projection to the indexed column and
-the plan becomes an index-only scan — **3.6 ms against 43.5 ms** for the same
+the plan becomes an index-only scan — **2.9 ms against 31.0 ms** for the same
 4,837 rows, measured in the browser. Two statements, one observation, on the
 reader's own query.
 
@@ -123,25 +123,56 @@ reader's own query.
 It is the **kernel's** time — planning and executing, clocked inside the
 binding — not the round trip. The two are not close for a query that returns a
 lot of rows, so they are reported separately (medians of seven runs, headless
-Chromium, the built bytes):
+Chromium, the built bytes; the kernel column's spread is the range over those
+seven):
 
-| query | kernel | round trip | JSON |
-|---|---:|---:|---:|
-| `WHERE id = 500` | 0.1 ms | 0.1 ms | 0% |
-| `pickup_zone = 132`, index-only | 3.6 ms | 10.6 ms | 66% |
-| the same rows, every column | 43.5 ms | 49.7 ms | 12% |
-| full scan, grouped to 226 | 38.1 ms | 38.5 ms | 1% |
-| `SELECT * FROM trips` | 130 ms | 316 ms | 59% |
+| query | kernel | spread | round trip | JSON |
+|---|---:|---:|---:|---:|
+| `WHERE id = 500` | 0.0 ms | 0.0–0.4 | 0.2 ms | — |
+| `pickup_zone = 132`, index-only | 2.9 ms | 2.7–4.5 | 9.9 ms | 71% |
+| the same rows, every column | 31.0 ms | 27.6–32.3 | 40.0 ms | 22% |
+| full scan, grouped to 226 | 40.6 ms | 37.9–44.1 | 40.9 ms | 1% |
+| `SELECT * FROM trips` | 56.2 ms | 52.6–64.9 | 197.2 ms | 72% |
+| 200 `INSERT`s in one buffer | 0.7 ms | 0.6–1.3 | 3.8 ms | 82% |
 
 The status bar appends `+ N ms JSON` only when that overhead is worth
 mentioning. One number for all of these would say this database is slow at
 `SELECT *` when what is slow is `serde_json` building an 8.4 MB string and
 `JSON.parse` taking it apart again.
 
+**These numbers replace an earlier table that was measurably wrong.** It read
+130 ms for `SELECT * FROM trips` and 3.6 ms for the index-only scan, because
+the clock ran until *after* the rows had been turned into strings — a hundred
+thousand rows times eleven columns of `format!`, charged to the database. The
+clock now stops when the last `Row` is out of the cursor, and rendering happens
+outside it: 56.2 ms and 2.9 ms. The difference was the binding, not the kernel.
+
+**A single write cannot be timed in a browser, and the page does not pretend
+otherwise.** `performance.now()` is clamped to 0.1 ms in a page that is not
+cross-origin isolated, measured here rather than assumed. One `INSERT` into
+`trips` — the row and its `by_pickup_zone` entry, in one transaction — takes
+about **3.5 µs**, arrived at by dividing the 200-row buffer above, which is 25
+times finer than the clock can see. So a lone `INSERT` reads `0.00 ms` in the
+Log tab **293 times out of 300**, and the seven are the runs that happened to
+straddle a tick. An earlier version of the browser check asserted that one
+insert reported a non-zero time; it passed, by luck, and is now a check on the
+buffer instead. A check that passes 2% of the time is worse than no check.
+
+`crates/slate-wasm/tests/timing.rs` is what keeps the number a measurement
+rather than a plausible constant. It asserts three properties a clock has and a
+constant does not: it never exceeds an independent `std::time::Instant` around
+the whole call; it orders a point get, a 4,837-row read and a 100,000-row scan
+by how much work they do; and a `GROUP BY` — which reads the same rows as the
+plain `SELECT` of its key and then does strictly more per row — is never the
+slower of the two, which it becomes the moment rendering is charged to the
+kernel. What none of them catch is a clock wrong by a constant factor *inside*
+that bound; nothing short of a second implementation would.
+
 **The grid renders at most 1,000 rows** and says so when it truncates. The
 query is not capped — the status bar still reports 100,000 — the *table* is.
 Building 100,000 `<tr>` takes **29.5 seconds** and freezes the tab, measured,
-after a query the kernel finished in 114 ms.
+after a query the kernel finished in the 56 ms of the table above. Three orders
+of magnitude, all of it the page's.
 
 A row from an index-only scan comes back with its unread columns as `null` —
 late materialization, not missing data — so the grid renders those cells as a

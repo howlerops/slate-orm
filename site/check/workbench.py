@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -147,6 +148,13 @@ out.afterWrite = await type(
 );
 await page.locator('[data-tab="plan"]').click();
 out.afterWritePlan = await page.locator('[data-app="plan"]').innerText();
+// The Log tab times each statement separately, and a write is the one the
+// status bar cannot show on its own — a buffer's total is one number. This is
+// the only place a reader sees what the index maintenance cost, so check the
+// write actually carries a number rather than a blank where one should be.
+await page.locator('[data-tab="log"]').click();
+out.writeLog = await page.locator('[data-app="log"] .entry:not(.bad)').allInnerTexts();
+out.failedLog = await page.locator('[data-app="log"] .entry.bad').allInnerTexts();
 await page.locator('[data-tab="results"]').click();
 
 // 9. Reset puts the fixture back, so a reader cannot wreck the page for good.
@@ -237,6 +245,33 @@ out.keyboard = await read();
 // 12. The docs are one click away, which is the other half of the request
 //     this page was built for.
 out.docsLink = await page.locator('header a[href="docs.html"]').count();
+
+// 13. What a write costs, which is the number a record layer most wants to
+//     show and the one this page could not show at all until writes were
+//     timed. It cannot be asserted on a *single* insert: `performance.now()`
+//     is clamped to 0.1 ms in a page that is not cross-origin isolated, and
+//     one insert into `trips` — the row and its `by_pickup_zone` entry —
+//     takes about 3.5 microseconds, so it reads as `0.00 ms` 293 times out of
+//     300. An earlier version of this check asserted `> 0` on one insert and
+//     passed by luck.
+//
+//     Two hundred of them in one buffer sum to ~0.7 ms, which is seven clock
+//     grains and a number the status bar can honestly print. Last, because it
+//     leaves 200 rows in `trips` and the storage counts above are exact.
+// The log accumulates over the whole run and one earlier step fails on
+// purpose, so this is a baseline to compare against, not a count of zero.
+await page.locator('[data-tab="log"]').click();
+out.badBefore = await page.locator('[data-app="log"] .entry.bad').count();
+await page.locator('[data-tab="results"]').click();
+const many = [];
+for (let i = 0; i < 200; i++) {
+  many.push(`INSERT INTO trips VALUES (${800000 + i}, 7, 1, 1704067200, 600, 2, 5.5, 25.0, 3.0, 31.0, 'cash')`);
+}
+await type(many.join(";" + String.fromCharCode(10)));
+out.batchStatus = await page.locator('[data-app="status"]').innerText();
+await page.locator('[data-tab="log"]').click();
+out.batchLogged = await page.locator('[data-app="log"] .entry.bad').count();
+await page.locator('[data-tab="results"]').click();
 
 out.problems = problems;
 console.log(JSON.stringify(out));
@@ -514,6 +549,46 @@ def main() -> int:
         seen["docsLink"] >= 1,
         "no header link to docs.html",
     )
+    # Every statement in the buffer is timed, the write included. `> 0` rather
+    # than merely present: a binding that reported a blank, or a zero, for a
+    # write would otherwise pass — which it did, until writes were timed at all.
+    # Newest first, and it accumulates over the whole run, so the write is
+    # found by what it says rather than by where it sits. A statement that
+    # failed is excluded: there is no kernel time to report for a query that
+    # never ran, and printing a `0.00 ms` beside a parse error would be a
+    # measurement of nothing.
+    log = seen["writeLog"]
+    timed = [(line, re.search(r"\u00b7 ([0-9.]+) ms", line)) for line in log]
+    check(
+        "every statement that ran is timed",
+        len(log) >= 2 and all(m for _, m in timed),
+        f"{sum(1 for _, m in timed if m)} of {len(log)} lines carry a time",
+    )
+    check(
+        "and one that did not run is not",
+        seen["failedLog"]
+        and not any(re.search(r"\u00b7 [0-9.]+ ms", l) for l in seen["failedLog"]),
+        f"{seen['failedLog']}",
+    )
+    # A single write cannot be asserted non-zero — see the driver's step 13 —
+    # so what is checked here is that the write carries a number at all, and
+    # the magnitude is checked on a buffer of 200 below.
+    writes = [line for line, m in timed if m and "inserted" in line]
+    check(
+        "the write carries a time of its own",
+        len(writes) == 1,
+        f"{writes} among {len(log)} log lines",
+    )
+    batch = re.search(r"([0-9.]+) ms", seen["batchStatus"])
+    check(
+        "200 writes report what the index maintenance cost",
+        seen["batchLogged"] == seen["badBefore"]
+        and batch
+        and float(batch.group(1)) > 0,
+        f"{seen['batchStatus']!r}, "
+        f"{seen['batchLogged'] - seen['badBefore']} of the 200 failed",
+    )
+
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")
 
     print()

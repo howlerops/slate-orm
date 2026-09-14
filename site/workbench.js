@@ -184,7 +184,7 @@ function run() {
   const kernel = results.reduce((a, r) => a + (r.kernelMs ?? 0), 0);
   const marshalling = Math.max(0, took - kernel);
 
-  logAll(results, kernel);
+  logAll(results);
 
   const failed = results.find((r) => r.error);
   if (failed) {
@@ -246,7 +246,7 @@ function showError(result, buffer) {
 /// The query is not capped — `SELECT * FROM trips` really does return 100,000
 /// rows and the status bar says so. The *table* is, because building 100,000
 /// `<tr>` takes **29.5 seconds** and freezes the tab, measured. A page that
-/// locks up for half a minute after a 114 ms query is not showing anybody how
+/// locks up for half a minute after a 56 ms query is not showing anybody how
 /// fast the query was.
 const RENDER_CAP = 1000;
 
@@ -465,7 +465,7 @@ function renderSpec(result) {
   $("spec").textContent = JSON.stringify(result.spec, null, 2);
 }
 
-function logAll(results, took) {
+function logAll(results) {
   const box = $("log");
   for (const result of results) {
     const entry = document.createElement("div");
@@ -475,12 +475,14 @@ function logAll(results, took) {
       : result.kind === "write"
         ? result.message
         : `${result.returned} row${result.returned === 1 ? "" : "s"}`;
+    // Per statement, because the status bar sums a whole buffer and the
+    // interesting comparison is between the statements in it — an INSERT
+    // against the SELECT that reads it back, say.
+    const ms = result.error ? "" : ` · ${(result.kernelMs ?? 0).toFixed(2)} ms`;
     entry.innerHTML =
-      `<pre>${escape(result.sql)}</pre><span>${escape(outcome)}</span>`;
+      `<pre>${escape(result.sql)}</pre><span>${escape(outcome)}${escape(ms)}</span>`;
     box.prepend(entry);
   }
-  const last = box.firstChild;
-  if (last) last.dataset.took = `${took.toFixed(1)} ms`;
 }
 
 // --- tabs -----------------------------------------------------------------

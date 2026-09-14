@@ -535,7 +535,7 @@ impl Playground {
     #[must_use]
     pub fn insert(&self, table: &str, values: &str) -> String {
         match self.write(table, values, Write::Insert) {
-            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Ok((message, ms)) => serde_json::json!({ "ok": message, "ms": ms }).to_string(),
             Err(message) => serde_json::json!({ "error": message }).to_string(),
         }
     }
@@ -544,7 +544,7 @@ impl Playground {
     #[must_use]
     pub fn update(&self, table: &str, values: &str) -> String {
         match self.write(table, values, Write::Update) {
-            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Ok((message, ms)) => serde_json::json!({ "ok": message, "ms": ms }).to_string(),
             Err(message) => serde_json::json!({ "error": message }).to_string(),
         }
     }
@@ -553,7 +553,7 @@ impl Playground {
     #[must_use]
     pub fn delete(&self, table: &str, key: &str) -> String {
         match self.remove(table, key) {
-            Ok(message) => serde_json::json!({ "ok": message }).to_string(),
+            Ok((message, ms)) => serde_json::json!({ "ok": message, "ms": ms }).to_string(),
             Err(message) => serde_json::json!({ "error": message }).to_string(),
         }
     }
@@ -694,7 +694,7 @@ impl Playground {
     /// `insert` and `update` differ by one call; everything before it —
     /// finding the table, parsing a string per column against its declared
     /// type — is the same, and duplicating it is how the two drift.
-    fn write(&self, table: &str, values: &str, which: Write) -> Result<String, String> {
+    fn write(&self, table: &str, values: &str, which: Write) -> Result<(String, f64), String> {
         let table = self.table(table)?;
         let raw: Vec<String> = serde_json::from_str(values).map_err(|e| e.to_string())?;
         if raw.len() != table.columns().len() {
@@ -715,6 +715,14 @@ impl Playground {
         }
         let row = Row::new(row);
 
+        // The clock covers the transaction: begin, the write *and its index
+        // maintenance*, and the commit. That is the number worth showing for a
+        // record layer — "the index is updated inside the write" is the claim,
+        // and the cost of keeping it is what a reader cannot otherwise see.
+        //
+        // Parsing the strings into typed values happens above and is excluded:
+        // it is the binding's cost, not the store's.
+        let started = now_ms();
         block_on(async {
             let txn = self.store.begin().await?;
             match which {
@@ -725,14 +733,18 @@ impl Playground {
             Ok::<_, slate_kernel::KernelError>(())
         })
         .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
 
-        Ok(match which {
-            Write::Insert => "inserted".to_owned(),
-            Write::Update => "updated".to_owned(),
-        })
+        Ok((
+            match which {
+                Write::Insert => "inserted".to_owned(),
+                Write::Update => "updated".to_owned(),
+            },
+            elapsed,
+        ))
     }
 
-    fn remove(&self, table: &str, key: &str) -> Result<String, String> {
+    fn remove(&self, table: &str, key: &str) -> Result<(String, f64), String> {
         let table = self.table(table)?;
         let raw: Vec<String> = serde_json::from_str(key).map_err(|e| e.to_string())?;
 
@@ -747,6 +759,7 @@ impl Playground {
             );
         }
 
+        let started = now_ms();
         let gone = block_on(async {
             let txn = self.store.begin().await?;
             let gone = txn.delete(&self.context, &table, &values).await?;
@@ -754,12 +767,16 @@ impl Playground {
             Ok::<_, slate_kernel::KernelError>(gone)
         })
         .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
 
-        Ok(if gone {
-            "deleted".to_owned()
-        } else {
-            "no row with that key".to_owned()
-        })
+        Ok((
+            if gone {
+                "deleted".to_owned()
+            } else {
+                "no row with that key".to_owned()
+            },
+            elapsed,
+        ))
     }
 
     /// The body of [`Playground::join`].
@@ -843,21 +860,9 @@ impl Playground {
                         .await?;
                     let mut out = Vec::new();
                     while let Some(row) = cursor.next().await? {
-                        let mut line = Vec::new();
-                        for side in [&row.left, &row.right] {
-                            match side {
-                                Some(values) => line.extend(render(values)),
-                                // An outer join's missing side. Inner joins
-                                // never produce one, but rendering it as text
-                                // rather than skipping keeps the columns
-                                // aligned with the header.
-                                None => line.extend(std::iter::repeat_n(
-                                    "—".to_owned(),
-                                    tables[0].columns().len(),
-                                )),
-                            }
-                        }
-                        out.push(line);
+                        // Collected whole and rendered after the clock stops,
+                        // for the reason the single-table path does it.
+                        out.push(row);
                     }
                     Ok((explanation, out, Vec::new()))
                 }
@@ -865,6 +870,24 @@ impl Playground {
         })
         .map_err(|e| e.to_string())?;
         let elapsed = now_ms() - started;
+
+        let left_width = tables.first().map_or(0, |t| t.columns().len());
+        let rows: Vec<Vec<String>> = rows
+            .iter()
+            .map(|row| {
+                let mut line = Vec::new();
+                for side in [&row.left, &row.right] {
+                    match side {
+                        Some(values) => line.extend(render(values)),
+                        // An outer join's missing side. Inner joins never
+                        // produce one, but rendering it as text rather than
+                        // skipping keeps the columns aligned with the header.
+                        None => line.extend(std::iter::repeat_n("—".to_owned(), left_width)),
+                    }
+                }
+                line
+            })
+            .collect();
 
         let rendered_groups: Vec<Vec<String>> = groups
             .iter()
@@ -1082,12 +1105,13 @@ impl Playground {
         }
     }
 
-    fn wrote(&self, text: &str, outcome: Result<String, String>) -> SqlResult {
+    fn wrote(&self, text: &str, outcome: Result<(String, f64), String>) -> SqlResult {
         match outcome {
             Err(message) => SqlResult::failed(text, 0, &message),
-            Ok(message) => {
+            Ok((message, elapsed)) => {
                 let mut out = SqlResult::blank(text, "write");
                 out.message = message;
+                out.kernel_ms = elapsed;
                 out
             }
         }
@@ -1101,7 +1125,12 @@ impl Playground {
     /// point-get, so a row hidden by a row policy stays hidden here too. That
     /// matters: a read-modify-write that could see more than the reader can is
     /// how a policy gets bypassed by an editor.
-    fn patch(&self, table: &str, key: &str, set: &[(u32, String)]) -> Result<String, String> {
+    fn patch(
+        &self,
+        table: &str,
+        key: &str,
+        set: &[(u32, String)],
+    ) -> Result<(String, f64), String> {
         let def = self.table(table)?;
         let pk = *def
             .primary_key()
@@ -1117,6 +1146,7 @@ impl Playground {
             ..QuerySpec::default()
         };
         let found = self.answer_spec(&spec)?;
+        let read_ms = found.kernel_ms;
         let mut row = found
             .rows
             .into_iter()
@@ -1129,7 +1159,10 @@ impl Playground {
             *slot = value.clone();
         }
         let json = serde_json::to_string(&row).map_err(|e| e.to_string())?;
-        self.write(table, &json, Write::Update)
+        // Both halves: an `UPDATE ... SET` here is a read *and* a write, and
+        // reporting only the write would understate what the statement cost.
+        let (message, write_ms) = self.write(table, &json, Write::Update)?;
+        Ok((message, read_ms + write_ms))
     }
 
     /// One table, grouped.
@@ -1364,18 +1397,24 @@ impl Playground {
         // rows into JSON, which for a large result is most of the wall clock
         // and none of the database.
         let started = now_ms();
-        let (explanation, rows) = block_on(async {
+        let (explanation, raw) = block_on(async {
             let snapshot = self.store.snapshot().await?;
             let explanation = snapshot.explain(&self.context, &table, &query)?;
             let mut cursor = snapshot.execute(&self.context, &table, &query).await?;
             let mut out = Vec::new();
             while let Some(row) = cursor.next().await? {
-                out.push(render(&row));
+                // The `Row` is pushed, not its rendering. Formatting a hundred
+                // thousand rows into strings is a hundred thousand `format!`s
+                // and none of them are the database — an earlier version had
+                // `render` inside this loop and charged the kernel for them.
+                out.push(row);
             }
             Ok::<_, slate_kernel::KernelError>((explanation, out))
         })
         .map_err(|e| e.to_string())?;
         let elapsed = now_ms() - started;
+
+        let rows: Vec<Vec<String>> = raw.iter().map(render).collect();
 
         Ok(Answer {
             returned: rows.len(),
