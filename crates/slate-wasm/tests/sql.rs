@@ -211,6 +211,12 @@ prop_compose! {
             limit,
             offset,
             columns,
+            // The round trip covers ungrouped reads. Grouping has its own
+            // tests below: rendering it here would mean teaching the renderer
+            // the group-key rules too, and a renderer that has to know as much
+            // as the parser stops being an independent check of it.
+            group_by: Vec::new(),
+            aggregates: Vec::new(),
         }
     }
 }
@@ -398,7 +404,11 @@ fn a_join_through_sql_matches_the_join_spec() {
     let through_spec: Json = serde_json::from_str(
         &playground.join(
             &json!({
-                "authors": [{ "column": 2, "op": "eq", "value": "US" }],
+                "left": "authors",
+                "right": "books",
+                "leftKey": 0,
+                "rightKey": 1,
+                "leftWhere": [{ "column": 2, "op": "eq", "value": "US" }],
                 "limit": 5,
             })
             .to_string(),
@@ -621,13 +631,18 @@ fn refusals_name_what_was_wrong() {
         ("INSERT INTO books VALUES (1, 2)", "takes 4 values"),
         ("INSERT INTO books (id) VALUES (1)", "no column list"),
         ("SELECT count(*) FROM books", "needs a GROUP BY"),
+        // These two used to be refusals, when the parser knew one join and
+        // checked the `ON` clause against it. Any pair of tables and columns
+        // is legal now — `books.id = authors.id` is a meaningless join and a
+        // valid one, and every SQL engine will run it — so what is left to
+        // refuse is a key that does not name one column of each side.
         (
-            "SELECT * FROM books JOIN authors ON books.id = authors.id",
-            "authors JOIN books",
+            "SELECT * FROM trips JOIN zones ON trips.nosuch = zones.id",
+            "does not name one column of `trips` and one of `zones`",
         ),
         (
-            "SELECT * FROM authors JOIN books ON authors.id = books.id",
-            "authors.id = books.author_id",
+            "SELECT * FROM trips JOIN trips ON trips.id = trips.id",
+            "cannot be joined to itself",
         ),
         (
             "DROP TABLE books",
@@ -714,4 +729,271 @@ fn a_regular_expression_that_is_not_valid_is_refused_rather_than_run() {
     let playground = Playground::new();
     let message = refusal(&playground, "SELECT * FROM books WHERE title ~ '('");
     assert!(message.contains("regular expression"), "got {message:?}");
+}
+
+// --- single-table grouping ------------------------------------------------
+
+#[test]
+fn a_grouped_scan_agrees_with_folding_the_rows_by_hand() {
+    let playground = Playground::new();
+    let grouped = one(
+        &playground,
+        "SELECT author_id, count(*) FROM books GROUP BY author_id",
+    );
+    assert_eq!(grouped["kind"], "group");
+    assert_eq!(grouped["columns"], json!(["author_id", "count(*)"]));
+
+    // The oracle: read every row and fold it here. An assertion against
+    // numbers written down by hand would test the numbers somebody thought of;
+    // this tests the grouping against the same data the grouping read, and
+    // catches a key that goes missing as readily as a count that is wrong.
+    let all = one(&playground, "SELECT * FROM books");
+    let mut expected: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for row in all["rows"].as_array().unwrap() {
+        *expected
+            .entry(row[1].as_str().unwrap().to_owned())
+            .or_default() += 1;
+    }
+
+    let seen: std::collections::BTreeMap<String, u64> = grouped["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row[0].as_str().unwrap().to_owned(),
+                row[1].as_str().unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(seen, expected);
+}
+
+#[test]
+fn every_aggregate_agrees_with_folding_by_hand() {
+    let playground = Playground::new();
+    let grouped = one(
+        &playground,
+        "SELECT author_id, count(*), min(year), max(year), sum(year), avg(year) \
+         FROM books WHERE author_id < 10 GROUP BY author_id",
+    );
+    assert_eq!(
+        grouped["columns"],
+        json!([
+            "author_id",
+            "count(*)",
+            "min(year)",
+            "max(year)",
+            "sum(year)",
+            "avg(year)"
+        ])
+    );
+
+    let all = one(&playground, "SELECT * FROM books WHERE author_id < 10");
+    let mut years: std::collections::BTreeMap<u64, Vec<f64>> = std::collections::BTreeMap::new();
+    for row in all["rows"].as_array().unwrap() {
+        years
+            .entry(row[1].as_str().unwrap().parse().unwrap())
+            .or_default()
+            .push(row[3].as_str().unwrap().parse().unwrap());
+    }
+
+    for row in grouped["rows"].as_array().unwrap() {
+        let key: u64 = row[0].as_str().unwrap().parse().unwrap();
+        let mine = years.get(&key).unwrap_or_else(|| panic!("no group {key}"));
+        let num = |i: usize| -> f64 { row[i].as_str().unwrap().parse().unwrap() };
+        assert_eq!(num(1), mine.len() as f64, "count for {key}");
+        assert_eq!(num(2), mine.iter().copied().fold(f64::MAX, f64::min), "min");
+        assert_eq!(num(3), mine.iter().copied().fold(f64::MIN, f64::max), "max");
+        assert_eq!(num(4), mine.iter().sum::<f64>(), "sum for {key}");
+        let mean = mine.iter().sum::<f64>() / mine.len() as f64;
+        assert!((num(5) - mean).abs() < 1e-9, "avg for {key}");
+    }
+}
+
+#[test]
+fn a_grouped_scan_can_answer_from_the_index_alone() {
+    let playground = Playground::new();
+    // The point of grouping in a record layer rather than over a result set:
+    // the key and the aggregate both live in the index, so counting books per
+    // author can read no book rows at all. Asserting the counts alone would
+    // pass against an implementation that scanned the table.
+    let filtered = one(
+        &playground,
+        "SELECT author_id, count(*) FROM books WHERE author_id < 50 GROUP BY author_id",
+    );
+    assert_eq!(
+        filtered["plan"]["indexOnly"],
+        json!(true),
+        "{}",
+        filtered["plan"]
+    );
+    assert_eq!(filtered["plan"]["decodes"], json!([1]));
+
+    // But *only* with a predicate the index can range over. I expected the
+    // unfiltered group-by to go index-only too, and it does not: it plans as a
+    // table scan that decodes one column.
+    //
+    // The planner is not being careless. The cost model charges per row and
+    // has no notion of row width, so scanning 4,824 index entries and scanning
+    // 4,824 whole rows come to the *same* number — 1.0 + 4824 x 0.000125 =
+    // 1.603 — and the tie goes to the table scan. On object storage the two
+    // are not equal at all: the index entries are one column and the rows are
+    // four, which is fewer bytes fetched for the same row count.
+    //
+    // Recorded as a limitation rather than fixed here: widening the cost model
+    // to charge for bytes touches every plan this repository has measured, and
+    // is not something to slip into a page redesign.
+    let unfiltered = one(
+        &playground,
+        "SELECT author_id, count(*) FROM books GROUP BY author_id",
+    );
+    assert_eq!(unfiltered["plan"]["indexOnly"], json!(false));
+    assert_eq!(unfiltered["plan"]["decodes"], json!([1]));
+    let scan_cost = unfiltered["plan"]["estimatedCost"].as_f64().unwrap();
+    assert!(
+        (scan_cost - (1.0 + 4824.0 * 0.000125)).abs() < 1e-6,
+        "the tie this comment claims is not a tie any more: {scan_cost}"
+    );
+}
+
+#[test]
+fn count_of_a_column_is_not_count_of_rows() {
+    let playground = Playground::new();
+    let stars = one(
+        &playground,
+        "SELECT author_id, count(*) FROM books GROUP BY author_id",
+    );
+    let column = one(
+        &playground,
+        "SELECT author_id, count(title) FROM books GROUP BY author_id",
+    );
+    assert_eq!(column["columns"], json!(["author_id", "count(title)"]));
+    // No nulls in this fixture, so the two agree — but they are different
+    // aggregates and the binding must not fold one into the other. The header
+    // above is what proves they stayed distinct.
+    assert_eq!(stars["rows"], column["rows"]);
+}
+
+#[test]
+fn count_distinct_counts_values_not_rows() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT country, count(distinct born) FROM authors GROUP BY country",
+    );
+    assert_eq!(
+        answer["columns"],
+        json!(["country", "count(distinct born)"])
+    );
+
+    let all = one(&playground, "SELECT * FROM authors");
+    let mut distinct: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for row in all["rows"].as_array().unwrap() {
+        distinct
+            .entry(row[2].as_str().unwrap().to_owned())
+            .or_default()
+            .insert(row[3].as_str().unwrap().to_owned());
+    }
+    for row in answer["rows"].as_array().unwrap() {
+        let key = row[0].as_str().unwrap();
+        let seen: usize = row[1].as_str().unwrap().parse().unwrap();
+        assert_eq!(seen, distinct[key].len(), "distinct born in {key}");
+    }
+}
+
+#[test]
+fn grouping_narrows_what_the_plan_reads() {
+    let playground = Playground::new();
+    let ungrouped = one(&playground, "SELECT * FROM books");
+    let grouped = one(
+        &playground,
+        "SELECT author_id, count(*) FROM books GROUP BY author_id",
+    );
+    // Grouping is not a filter over a result set here: the planner narrows the
+    // projection to the group key and the aggregates' columns, so the two
+    // queries decode different things.
+    assert_eq!(ungrouped["plan"]["decodes"], json!([0, 1, 2, 3]));
+    assert_eq!(grouped["plan"]["decodes"], json!([1]));
+}
+
+#[test]
+fn grouped_refusals_name_what_was_wrong() {
+    let playground = Playground::new();
+    for (text, wanted) in [
+        (
+            "SELECT title, count(*) FROM books GROUP BY author_id",
+            "neither a group key nor an aggregate",
+        ),
+        ("SELECT count(*) FROM books", "needs a GROUP BY"),
+        (
+            "SELECT author_id, median(year) FROM books GROUP BY author_id",
+            "no such aggregate",
+        ),
+        (
+            "SELECT author_id, nosuch(year) FROM books GROUP BY author_id",
+            "no such aggregate",
+        ),
+        (
+            "SELECT author_id, max(nosuch) FROM books GROUP BY author_id",
+            "has no column `nosuch`",
+        ),
+        (
+            "SELECT author_id, count(*) FROM books GROUP BY nosuch",
+            "has no column `nosuch`",
+        ),
+    ] {
+        let message = refusal(&playground, text);
+        assert!(
+            message.contains(wanted),
+            "{text:?}\n  wanted {wanted:?}\n  got {message:?}"
+        );
+    }
+}
+
+#[test]
+fn grouping_by_two_columns_keys_on_the_pair() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT author_id, year, count(*) FROM books WHERE author_id < 5 GROUP BY author_id, year",
+    );
+    assert_eq!(answer["columns"], json!(["author_id", "year", "count(*)"]));
+    let rows = answer["rows"].as_array().unwrap();
+    assert!(rows.iter().all(|r| r.as_array().unwrap().len() == 3));
+
+    // Every (author, year) pair is distinct, and the counts still sum to the
+    // rows that went in.
+    let total: u64 = rows
+        .iter()
+        .map(|r| r[2].as_str().unwrap().parse::<u64>().unwrap())
+        .sum();
+    let all = one(&playground, "SELECT * FROM books WHERE author_id < 5");
+    assert_eq!(total, all["returned"].as_u64().unwrap());
+
+    let mut keys: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r[0].as_str().unwrap().to_owned(),
+                r[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let before = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), before, "a key appeared twice");
+
+    // And the *plan* has to describe the same two-key grouping. It is built
+    // separately from the one that runs — `explain_grouped` takes a `Grouping`
+    // and `group_by` takes the keys — so nothing but this assertion stops the
+    // two drifting. A mutation that explained only the first key passed every
+    // other test in this file.
+    let decodes = answer["plan"]["decodes"].as_array().unwrap();
+    assert!(
+        decodes.contains(&json!(1)) && decodes.contains(&json!(3)),
+        "the plan should read both group keys, got {decodes:?}"
+    );
 }

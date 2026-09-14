@@ -16,6 +16,8 @@ const $ = (name) => document.querySelector(`[data-app="${name}"]`);
 const state = {
   playground: null,
   schema: [],
+  /// The decompressed trip file, so Reset can re-seed without a refetch.
+  tripBytes: null,
   /// The last statement that produced rows, so the tabs describe one thing.
   shown: null,
 };
@@ -28,33 +30,34 @@ const escape = (text) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 
+//: Where the trip file lives, relative to the page.
+const TRIPS = "data/trips.bin.gz";
+
 const EXAMPLES = [
-  ["Everything, first 20", "SELECT * FROM books LIMIT 20"],
-  ["Filter on the indexed column", "SELECT * FROM books WHERE author_id = 2"],
+  ["Busiest pickup zones", "SELECT pickup_zone, count(*) FROM trips\n  GROUP BY pickup_zone ORDER BY count(*) DESC LIMIT 10"],
   [
-    "The same query, index-only",
-    "SELECT author_id FROM books WHERE author_id = 2",
+    "…with their names",
+    "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id\n  WHERE trips.pickup_zone = 132 LIMIT 20",
   ],
   [
-    "Two conditions",
-    "SELECT * FROM books WHERE author_id = 1 AND year > 1970",
+    "How people pay",
+    "SELECT payment, count(*), avg(total), max(tip) FROM trips\n  GROUP BY payment ORDER BY count(*) DESC",
   ],
   [
-    "A pattern, sorted",
-    "SELECT * FROM books WHERE title LIKE 'The %' ORDER BY year DESC LIMIT 10",
+    "count(*) is not count(column)",
+    "-- 4.7% of real trips have no passenger count.\nSELECT payment, count(*), count(passengers) FROM trips\n  GROUP BY payment",
+  ],
+  ["Long, expensive rides", "SELECT * FROM trips WHERE distance > 20 AND total > 100 LIMIT 50"],
+  [
+    "One zone, every column",
+    "SELECT * FROM trips WHERE pickup_zone = 132 LIMIT 50",
   ],
   [
-    "Join the two tables",
-    "SELECT * FROM authors JOIN books ON authors.id = books.author_id\n  WHERE country = 'US' LIMIT 20",
+    "…the same rows, index-only",
+    "SELECT pickup_zone FROM trips WHERE pickup_zone = 132 LIMIT 50",
   ],
-  [
-    "Count books per country",
-    "SELECT count(*), max(year) FROM authors JOIN books ON authors.id = books.author_id\n  GROUP BY country",
-  ],
-  [
-    "Write, and watch the index",
-    "INSERT INTO books VALUES (9001, 2, 'A New Book', 2024);\nSELECT author_id FROM books WHERE author_id = 2",
-  ],
+  ["Write a row, watch the index", "INSERT INTO trips VALUES (999001, 132, 1, 1704067200, 600, 2, 5.5, 25.0, 3.0, 31.0, 'cash');\nSELECT pickup_zone FROM trips WHERE pickup_zone = 132"],
+  ["The small fixture, for contrast", "SELECT * FROM books WHERE author_id = 2"],
 ];
 
 // --- the schema tree ------------------------------------------------------
@@ -292,6 +295,30 @@ function select(name) {
 
 // --- boot -----------------------------------------------------------------
 
+/// Fetch and decompress the trip file, and seed it.
+///
+/// `DecompressionStream` rather than a gzip library: it is in the platform,
+/// it streams, and shipping an inflate implementation to decompress a file
+/// the browser already knows how to decompress would be the only dependency
+/// on this page. Browsers without it (Safari before 16.4) get the workbench
+/// with an empty `trips`, and the status bar says so rather than failing
+/// silently.
+async function loadTrips() {
+  if (typeof DecompressionStream !== "function") {
+    return { error: "this browser cannot decompress the trip file" };
+  }
+  const response = await fetch(TRIPS);
+  if (!response.ok) return { error: `the trip file returned ${response.status}` };
+  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  // Kept so Reset can put them back. `reset()` rebuilds the store from
+  // nothing, which drops the trips with everything else — and a Reset button
+  // that leaves the main table empty until a page reload is worse than no
+  // Reset button. 2.4 MB held in the tab is the price.
+  state.tripBytes = bytes;
+  return JSON.parse(state.playground.load_trips(bytes));
+}
+
 async function boot() {
   try {
     const module = await import("./slate_wasm.js");
@@ -302,21 +329,40 @@ async function boot() {
     describeSchema();
     describeExamples();
 
-    const rows = state.schema
-      .map((t) => t.name)
-      .join(" + ");
-    $("engine").textContent = `kernel in wasm · ${rows}`;
+    // Started here, awaited at the end of boot: the schema tree, the examples
+    // and the editor are all usable while it is in flight.
+    status("loading 100,000 real taxi trips…");
+    const trips = loadTrips()
+      .then((outcome) => {
+        if (outcome.error) {
+          $("engine").textContent = "kernel in wasm · trips unavailable";
+          status(outcome.error, "bad");
+          return;
+        }
+        state.trips = outcome.ok;
+        $("engine").textContent =
+          `kernel in wasm · ${outcome.ok.toLocaleString()} trips, 265 zones`;
+      })
+      .catch((error) => {
+        status(`the trip file did not load: ${error}`, "bad");
+      });
+
+    $("engine").textContent = "kernel in wasm";
 
     $("run").addEventListener("click", run);
     $("reset").addEventListener("click", () => {
       state.playground.reset();
+      if (state.tripBytes) {
+        const outcome = JSON.parse(state.playground.load_trips(state.tripBytes));
+        if (outcome.error) status(outcome.error, "bad");
+      }
       // Deliberately *not* followed by `run()`. The editor may hold the
       // INSERT the reader just ran, and re-running it puts the row straight
       // back — a Reset button that does not reset. The browser check caught
       // exactly that: five rows where four were expected.
       state.shown = null;
       $("grid").innerHTML =
-        '<div class="empty">the fixture is back — run a query</div>';
+        '<div class="empty">the data is back — run a query</div>';
       $("badges").innerHTML = "";
       $("plan").textContent = "";
       $("plannote").textContent = "";
@@ -334,6 +380,11 @@ async function boot() {
       tab.addEventListener("click", () => select(tab.dataset.tab));
     }
 
+    // The data file is fetched in parallel with the module above, so the
+    // first paint does not wait for 1.2 MB. Until it lands `trips` is an
+    // empty table that queries correctly and returns nothing, which is a
+    // better failure than a page that will not answer at all.
+    await trips;
     run();
   } catch (error) {
     // The shell stays, with the reason in it. A workbench that fails to a

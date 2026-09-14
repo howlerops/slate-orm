@@ -39,6 +39,38 @@ installed, upgraded and eventually migrated, in exchange for templating two
 files that share one `<header>`. The trade flips as soon as there are ten
 pages or the content wants to live in Markdown.
 
+## The data is real
+
+100,000 New York yellow-taxi trips from January 2024, sampled from the TLC's
+published month, joined to their own 265-zone lookup table. The same corpus
+ClickHouse and DuckDB benchmark on. Fares, tips, trip distances and the 4.7% of
+rows with **no passenger count** are as published — which is why
+`count(*)` and `count(passengers)` are different numbers here, a distinction
+the generated books fixture could not draw.
+
+```sh
+python3 site/data/make-trips.py <yellow_tripdata_2024-01.parquet>
+```
+
+`site/data/trips.bin.gz` (1.26 MB) **is committed**, which is a deliberate
+exception to the rule that build outputs stay out of git. The wasm is rebuilt
+every deploy because it must not drift from the kernel; this file cannot drift
+from anything, and rebuilding it in CI would mean a 50 MB download, a pyarrow
+dependency and a sampling step that has to be deterministic to the byte.
+
+**Why 100,000 and not the month.** The whole month is 2,964,619 trips and loads
+into this same store in 17.8 s — that is measured, in
+`docs/performance.md` §7b. The limit is the tab, not the record layer: the
+in-memory store costs about 1.3 KB a row, so the month wants ~3.8 GB, and a
+`wasm32` tab has 4 GB of address space in theory and around 2 GB in practice.
+100,000 rows is ~130 MB and first paint — wasm fetched and compiled, 1.26 MB of
+data fetched, decoded, seeded, analysed, first query answered — measured
+**1.4 s** in headless Chromium.
+
+The books and authors fixture is still there, as the small-table contrast: at
+4,824 rows the planner makes different choices than at 100,000, and having both
+on one page shows a cost model responding to size rather than to a rule.
+
 ## The workbench runs the real kernel
 
 Not a mock and not a reimplementation: `slate-kernel` and `slate-schema` are

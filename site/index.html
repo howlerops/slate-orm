@@ -39,6 +39,12 @@
         There is no server.
       </p>
       <p>
+        The data is real: <b>100,000 New York yellow-taxi trips</b> from
+        January 2024, sampled from the TLC's published month, joined to their
+        own 265-zone lookup. Fares, tips and missing passenger counts are as
+        published.
+      </p>
+      <p>
         slate has no SQL. What you type is parsed into its <b>query spec</b>,
         the same structure the Python, Go and TypeScript clients send, and the
         <b>Spec</b> tab shows what your statement compiled to.
@@ -65,7 +71,9 @@
       autocapitalize="off"
       autocomplete="off"
       aria-label="SQL editor"
-    >SELECT * FROM books WHERE author_id = 2</textarea>
+    >-- 100,000 real New York taxi trips, January 2024.
+SELECT pickup_zone, count(*) FROM trips
+  GROUP BY pickup_zone ORDER BY count(*) DESC LIMIT 10</textarea>
 
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="results" aria-selected="true">Results</button>

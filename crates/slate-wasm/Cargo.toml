@@ -43,6 +43,9 @@ serde_json = "1"
 # For the SQL round-trip: the interesting statements are the ones nobody would
 # think to type. Same reason the kernel's planner oracle uses it.
 proptest.workspace = true
+# Only to read the committed trip file in the taxi tests. The browser uses the
+# platform's own `DecompressionStream`, so this is not a shipping dependency.
+flate2 = "1"
 
 [lints]
 workspace = true

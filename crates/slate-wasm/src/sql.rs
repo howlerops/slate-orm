@@ -584,38 +584,96 @@ impl Parser<'_> {
             table: table.name().to_owned(),
             ..QuerySpec::default()
         };
-        for item in &list {
-            match item {
-                SelectItem::Column { raw, at } => {
-                    spec.columns.push(self.resolve(raw, &table, *at)?);
-                }
-                SelectItem::Aggregate { at, .. } => {
-                    return Err(SqlError {
-                        message: "an aggregate needs a GROUP BY, which needs the join — \
-                                  try `SELECT count(*) FROM authors JOIN books ON authors.id \
-                                  = books.author_id GROUP BY country`"
-                            .to_owned(),
-                        at: *at,
-                    });
-                }
-            }
-        }
-
+        // The select list is resolved *after* GROUP BY is known, because what
+        // a bare column means depends on it: with no grouping it is a
+        // projection, and with grouping it has to be a group key. Resolving
+        // eagerly here is how the first version came to accept
+        // `SELECT title, count(*) ... GROUP BY author_id` and quietly drop the
+        // title.
         if self.eat("where") {
             spec.filters = self.conditions(&table)?;
         }
         if self.eat("group") {
-            return Err(SqlError {
-                message: "GROUP BY needs the join: the kernel groups a join's output, and \
-                          this fixture has one join to group"
-                    .to_owned(),
-                at: self.at(),
-            });
+            self.expect("by")?;
+            loop {
+                spec.group_by.push(self.column(&table)?);
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
+        }
+
+        let grouping = !spec.group_by.is_empty();
+        for item in &list {
+            match item {
+                SelectItem::Column { raw, at } => {
+                    let ordinal = self.resolve(raw, &table, *at)?;
+                    if grouping {
+                        // Every SQL engine has this error. The spec cannot
+                        // express "a column that is not in the group key", so
+                        // it is refused rather than silently dropped from the
+                        // output — which is the behaviour that makes a reader
+                        // trust a number that is not what they asked for.
+                        if !spec.group_by.contains(&ordinal) {
+                            return Err(SqlError {
+                                message: format!(
+                                    "`{raw}` is neither a group key nor an aggregate; add it \
+                                     to GROUP BY or wrap it in one"
+                                ),
+                                at: *at,
+                            });
+                        }
+                    } else {
+                        spec.columns.push(ordinal);
+                    }
+                }
+                SelectItem::Aggregate { kind, argument, at } => {
+                    if !grouping {
+                        return Err(SqlError {
+                            message: "an aggregate needs a GROUP BY — try \
+                                      `SELECT pickup_zone, count(*) FROM trips GROUP BY \
+                                      pickup_zone`"
+                                .to_owned(),
+                            at: *at,
+                        });
+                    }
+                    spec.aggregates
+                        .push(self.aggregate(kind, argument.as_deref(), &table, *at)?);
+                }
+            }
+        }
+        if grouping && spec.aggregates.is_empty() && !list.is_empty() {
+            // `SELECT zone FROM trips GROUP BY zone` — the distinct keys. The
+            // binding adds `count(*)` so the answer is not a bare column.
         }
         if self.eat("order") {
             self.expect("by")?;
             loop {
-                let column = self.column(&table)?;
+                // With a GROUP BY, ORDER BY orders the *groups*, and a group
+                // is `[keys..., aggregates...]` — a space with its own
+                // ordinals that has nothing to do with the table's.
+                //
+                // This clause used to be lowered onto the query either way,
+                // which put the sort on the rows going *into* the grouping.
+                // That is not a different way of saying the same thing: the
+                // groups come back ordered by key regardless, so the reader's
+                // ORDER BY was silently discarded and the sort was wasted
+                // work. A test asserting the refusal is what found it.
+                let at = self.at();
+                let item = self.select_item()?;
+                let column = if grouping {
+                    self.group_ordinal(&item, &spec, &table, at)?
+                } else {
+                    match &item {
+                        SelectItem::Column { raw, at } => self.resolve(raw, &table, *at)?,
+                        SelectItem::Aggregate { at, .. } => {
+                            return Err(SqlError {
+                                message: "an aggregate in ORDER BY needs a GROUP BY".to_owned(),
+                                at: *at,
+                            });
+                        }
+                    }
+                };
                 let descending = if self.eat("desc") {
                     true
                 } else {
@@ -637,16 +695,110 @@ impl Parser<'_> {
         Ok(Statement::Select(spec))
     }
 
+    /// Where an ORDER BY item sits in a group, which is `[keys, aggregates]`.
+    ///
+    /// Resolved against what the query already said rather than against the
+    /// table: `ORDER BY count(*)` means "the aggregate I asked for", and
+    /// ordering by an aggregate the select list does not compute would be
+    /// ordering by a number that is not in the answer.
+    fn group_ordinal(
+        &self,
+        item: &SelectItem,
+        spec: &QuerySpec,
+        table: &TableDef,
+        at: usize,
+    ) -> Result<u32, SqlError> {
+        match item {
+            SelectItem::Column { raw, at } => {
+                let ordinal = self.resolve(raw, table, *at)?;
+                spec.group_by
+                    .iter()
+                    .position(|k| *k == ordinal)
+                    .map(|i| u32::try_from(i).unwrap_or(0))
+                    .ok_or_else(|| SqlError {
+                        message: format!(
+                            "`{raw}` is not a group key, so the groups cannot be ordered by it"
+                        ),
+                        at: *at,
+                    })
+            }
+            SelectItem::Aggregate { kind, argument, .. } => {
+                let wanted = self.aggregate(kind, argument.as_deref(), table, at)?;
+                let position = spec
+                    .aggregates
+                    .iter()
+                    .position(|a| a.kind == wanted.kind && a.column == wanted.column)
+                    .ok_or_else(|| SqlError {
+                        message: "ORDER BY names an aggregate this query does not compute"
+                            .to_owned(),
+                        at,
+                    })?;
+                Ok(u32::try_from(spec.group_by.len() + position).unwrap_or(0))
+            }
+        }
+    }
+
+    /// `count(*)`, `avg(total)`, `count(distinct zone)`.
+    fn aggregate(
+        &self,
+        kind: &str,
+        argument: Option<&str>,
+        table: &TableDef,
+        at: usize,
+    ) -> Result<AggregateSpec, SqlError> {
+        let (kind, argument) = match (kind, argument) {
+            ("count", None) => ("count".to_owned(), None),
+            ("count", Some(name)) => {
+                // `count(column)` and `count(*)` differ on nulls, and the
+                // difference is not decoration: the kernel has both. Rather
+                // than silently treat one as the other, take the column.
+                ("count_column".to_owned(), Some(name))
+            }
+            (other, argument) => (other.to_owned(), argument),
+        };
+        let column = match argument {
+            None => 0,
+            Some(name) => self.resolve(name, table, at)?,
+        };
+        if !matches!(
+            kind.as_str(),
+            "count" | "count_column" | "min" | "max" | "sum" | "avg" | "count_distinct"
+        ) {
+            return Err(SqlError {
+                message: format!(
+                    "no such aggregate: `{kind}` — this has count, min, max, sum and avg"
+                ),
+                at,
+            });
+        }
+        if kind != "count" && argument.is_none() {
+            return Err(SqlError {
+                message: format!("`{kind}` needs a column"),
+                at,
+            });
+        }
+        Ok(AggregateSpec { kind, column })
+    }
+
     fn select_item(&mut self) -> Result<SelectItem, SqlError> {
         let at = self.at();
         let name = self.name()?;
         if self.eat_symbol("(") {
-            // `count(*)`, `max(year)`.
-            let argument = if self.eat_symbol("*") {
+            // `count(*)`, `max(year)`, `count(distinct pickup_zone)`.
+            let distinct = self.eat("distinct");
+            let argument = if !distinct && self.eat_symbol("*") {
                 None
             } else {
                 Some(self.name()?)
             };
+            if distinct {
+                self.expect_symbol(")")?;
+                return Ok(SelectItem::Aggregate {
+                    kind: "count_distinct".to_owned(),
+                    argument,
+                    at,
+                });
+            }
             self.expect_symbol(")")?;
             return Ok(SelectItem::Aggregate {
                 kind: name.to_ascii_lowercase(),
@@ -721,77 +873,96 @@ impl Parser<'_> {
 
     // --- the join ---------------------------------------------------------
 
-    /// `... FROM authors JOIN books ON authors.id = books.author_id ...`
+    /// `... FROM trips JOIN zones ON trips.pickup_zone = zones.id ...`
     ///
-    /// The fixture has exactly one join, so rather than pretend otherwise the
-    /// parser checks the ON clause names it and says so when it does not.
-    /// Accepting any pair of columns would produce an empty result and no
-    /// explanation of why.
+    /// Any pair of tables and any pair of columns, checked against the schema.
+    /// The previous version hard-coded `authors JOIN books`, which was fine
+    /// while that was the only join in the database and became a wall the
+    /// moment the taxi zones arrived — a lookup table you cannot join is a
+    /// list of names nobody can reach.
+    ///
+    /// What is still checked, because getting it wrong returns an empty result
+    /// with no explanation: both sides of the `ON` must name a real column,
+    /// and each must belong to a *different* one of the two tables.
     fn join_tail(
         &mut self,
         left: &TableDef,
         list: &[SelectItem],
         star: bool,
     ) -> Result<Statement, SqlError> {
-        let right_at = self.at();
         let right = self.table()?;
-        let (authors, books) = ("authors", "books");
-        if !left.name().eq_ignore_ascii_case(authors) || !right.name().eq_ignore_ascii_case(books) {
+        if right.name().eq_ignore_ascii_case(left.name()) {
             return Err(SqlError {
-                message: format!(
-                    "the only join this fixture has is `authors JOIN books`, not `{} JOIN {}`",
-                    left.name(),
-                    right.name()
-                ),
-                at: right_at,
+                message: format!("`{}` cannot be joined to itself here", left.name()),
+                at: self.at(),
             });
         }
 
         self.expect("on")?;
-        let on_at = self.at();
+        let first_at = self.at();
         let first = self.name()?;
         self.expect_symbol("=")?;
+        let second_at = self.at();
         let second = self.name()?;
-        let keys = {
-            let mut pair = [first.to_ascii_lowercase(), second.to_ascii_lowercase()];
-            pair.sort();
-            pair
+
+        // Either order: `trips.pickup_zone = zones.id` and
+        // `zones.id = trips.pickup_zone` are the same join.
+        let (left_key, right_key) = match (
+            self.resolve(&first, left, first_at),
+            self.resolve(&second, &right, second_at),
+        ) {
+            (Ok(l), Ok(r)) => (l, r),
+            _ => match (
+                self.resolve(&second, left, second_at),
+                self.resolve(&first, &right, first_at),
+            ) {
+                (Ok(l), Ok(r)) => (l, r),
+                _ => {
+                    return Err(SqlError {
+                        message: format!(
+                            "`{first} = {second}` does not name one column of `{}` and one of \
+                             `{}`",
+                            left.name(),
+                            right.name()
+                        ),
+                        at: first_at,
+                    });
+                }
+            },
         };
-        if keys != ["authors.id".to_owned(), "books.author_id".to_owned()] {
-            return Err(SqlError {
-                message: "the join key is `authors.id = books.author_id`; this fixture has \
-                          no other foreign key"
-                    .to_owned(),
-                at: on_at,
-            });
-        }
 
-        let mut spec = JoinSpec::default();
+        let mut spec = JoinSpec {
+            left: left.name().to_owned(),
+            right: right.name().to_owned(),
+            left_key,
+            right_key,
+            ..JoinSpec::default()
+        };
 
-        // A joined row is the author's columns followed by the book's, and
         // WHERE is split by which table each column belongs to — the kernel
         // pushes each side's conditions into that side's own scan, which is
-        // the difference between filtering 4,824 books and filtering the
+        // the difference between filtering 100,000 trips and filtering the
         // handful that survive. Sending them all to one side would still be
         // correct and would plan much worse.
         if self.eat("where") {
             loop {
                 let at = self.at();
                 let raw = self.name()?;
-                let (table, into): (&TableDef, &mut Vec<FilterSpec>) =
-                    if self.resolve(&raw, left, at).is_ok()
-                        && !raw.to_ascii_lowercase().starts_with("books.")
-                    {
-                        (left, &mut spec.authors)
-                    } else {
-                        (&right, &mut spec.books)
-                    };
+                let qualified_right = raw
+                    .to_ascii_lowercase()
+                    .starts_with(&format!("{}.", right.name().to_ascii_lowercase()));
+                let on_left = !qualified_right && self.resolve(&raw, left, at).is_ok();
+                let table = if on_left { left } else { &right };
                 let column = self.resolve(&raw, table, at)?;
                 // Rewind one token so `condition` reads the operator.
                 self.i -= 1;
                 let mut parsed = self.condition(table)?;
                 parsed.column = column;
-                into.push(parsed);
+                if on_left {
+                    spec.left_where.push(parsed);
+                } else {
+                    spec.right_where.push(parsed);
+                }
                 if !self.eat("and") {
                     break;
                 }
@@ -804,8 +975,8 @@ impl Parser<'_> {
             let raw = self.name()?;
             let key = self.resolve(&raw, left, at).map_err(|_| SqlError {
                 message: format!(
-                    "GROUP BY takes a column of `authors` (the join's left side); `{raw}` is \
-                     not one"
+                    "GROUP BY takes a column of `{}` (the join's left side); `{raw}` is not one",
+                    left.name()
                 ),
                 at,
             })?;
@@ -815,31 +986,14 @@ impl Parser<'_> {
         for item in list {
             match item {
                 SelectItem::Aggregate { kind, argument, at } => {
-                    let column = match argument {
-                        None => 0,
-                        Some(name) => self.resolve(name, &right, *at).map_err(|_| SqlError {
-                            message: format!(
-                                "`{kind}` takes a column of `books`; `{name}` is not one"
-                            ),
-                            at: *at,
-                        })?,
-                    };
-                    if kind == "count" && argument.is_some() {
-                        return Err(SqlError {
-                            message: "only `count(*)` is supported, not `count(column)`".to_owned(),
-                            at: *at,
-                        });
-                    }
-                    spec.aggregates.push(AggregateSpec {
-                        kind: kind.clone(),
-                        column,
-                    });
+                    let parsed = self.aggregate(kind, argument.as_deref(), &right, *at)?;
+                    spec.aggregates.push(parsed);
                 }
                 SelectItem::Column { raw, at } => {
                     // Selecting a bare column beside a GROUP BY would be the
                     // "not in the group key" error every SQL engine has. The
-                    // spec cannot express it at all, so it is refused here
-                    // rather than silently dropped from the output.
+                    // spec cannot express it, so it is refused rather than
+                    // silently dropped from the output.
                     if spec.group_by.is_some() {
                         return Err(SqlError {
                             message: format!(

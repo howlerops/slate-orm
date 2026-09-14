@@ -1498,7 +1498,7 @@ per row at every size that completes**, which is consistent with the story and
 confirms nothing, because the size that would confirm it is the size that will
 not finish.
 
-So, plainly:So, plainly:
+So, plainly:
 
 - **The cost model was not shown to break above 200,000 rows.** It was not
   shown to hold there either. What was measured is that it holds *at* 200,000,
@@ -1513,6 +1513,83 @@ Nothing here says the planner is wrong at a million rows, and nothing here says
 a bulk load of a million rows is slow — only that this harness could not
 perform one, four times, and could perform one of five hundred thousand rows in
 eleven seconds every time it tried.
+
+
+### 7b. The same question in memory, on the real NYC taxi month
+
+Section 7 could not get the SlateDB-on-S3 fixture past about half a million
+rows and could not attribute the wall. This does not settle that. It narrows
+it, which is worth writing down because the narrowing was free — it fell out
+of putting a real dataset behind the browser workbench.
+
+**The whole month loads, in memory.** 2,964,619 real January-2024 yellow-taxi
+trips — eleven columns, one secondary index — into `MemoryStore` through the
+same `insert_many` the S3 fixture uses:
+
+| rows | build `Row`s | `insert_many` | rate | `analyze` | RSS | bytes/row |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | 0.1 s | 0.30 s | 329k/s | 0.16 s | 132 MB | 1,282 |
+| 500,000 | 0.5 s | 3.49 s | 143k/s | 0.72 s | 643 MB | 1,278 |
+| 1,000,000 | 0.3 s | 6.89 s | 145k/s | 1.39 s | 1,330 MB | 1,326 |
+| 2,000,000 | 0.3 s | 14.71 s | 136k/s | 2.64 s | 2,607 MB | 1,301 |
+| 2,964,619 | 0.5 s | 17.77 s | 167k/s | 4.08 s | 3,839 MB | 1,293 |
+
+Release build, one process, 4 vCPU / 15 GB, nothing else running. Single run
+per size, so treat the rate column as an order of magnitude and not a
+measurement with a spread — the point of the table is the two things that do
+not happen.
+
+**Nothing stops at 600,000.** The write path takes six times that size without
+complaint, and the per-row rate is flat to within the noise of a single run
+from 500k up. So whatever section 7 hit is **not** `insert_many` itself and
+not the duplicate-key check as a matter of algorithm. It is in the SlateDB or
+object-store half — which is what that section's leading hypothesis said, and
+this is the first evidence separating the two halves rather than reasoning
+about them. The disk under the in-process S3 server remains the other
+candidate and is still not ruled out.
+
+**The in-memory representation costs about 1,290 bytes a row**, dead flat
+across a factor of thirty. These rows serialise to roughly 110 bytes, so the
+store is holding **twelve times** what the data weighs. That is not a
+surprise in kind — a `BTreeMap` of `Vec<u8>` keys to `Vec<u8>` values, two
+entries per row once the index entry is counted, plus a `String` per row for
+the payment type — but the factor had never been measured, and it is the
+number that decides what a browser tab can hold. It has not been investigated
+and no attempt was made to reduce it.
+
+**What this is not.** It is not a throughput benchmark: one run per size, no
+cold/warm separation, no comparison to anything. It is not the S3 path. It
+does not show the cost model is right at three million rows — only that the
+rows can be loaded and analysed there.
+
+### A cost-model limitation the workbench made visible
+
+An unfiltered `GROUP BY` over an indexed column plans as a **table scan**, not
+an index-only scan, and the reason is a tie:
+
+```
+SELECT author_id, count(*) FROM books GROUP BY author_id
+  -> Table Scan on books  (rows=4824 cost=1.60 decodes=[1])
+
+SELECT author_id, count(*) FROM books WHERE author_id < 50 GROUP BY author_id
+  -> Index Only Scan using by_author on books  (rows=565 cost=1.07 decodes=[1])
+```
+
+With a predicate the index has a range and wins. Without one, scanning 4,824
+index entries and scanning 4,824 whole rows both cost `1.0 + 4824 × 0.000125 =
+1.603`, and the tie goes to the table scan.
+
+The costs are equal and **the work is not**. The index entries are one column;
+the rows are four. On object storage that is the difference between fetching a
+few hundred kilobytes and a few megabytes, and the cost model — which charges
+per row and has no notion of row width — cannot see it.
+
+Recorded rather than fixed. Charging for bytes touches every plan in this
+document and every calibration in section 8, so it is a change to make
+deliberately with the oracle suites watching, not one to slip in beside a
+dataset swap. `a_grouped_scan_can_answer_from_the_index_alone` in
+`crates/slate-wasm/tests/sql.rs` pins the current behaviour *and* the
+arithmetic, so the day the tie stops being a tie, a test says so.
 
 
 ### What was boring, and is reported as boring

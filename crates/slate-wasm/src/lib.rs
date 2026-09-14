@@ -41,6 +41,7 @@
 
 pub mod fixture;
 pub mod sql;
+pub mod taxi;
 
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -111,6 +112,17 @@ pub struct QuerySpec {
     /// what makes an index-only scan impossible, so the UI exposes it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<u32>,
+    /// Group by these columns. Empty means return rows rather than groups.
+    ///
+    /// Grouping is not a filter applied after the fact: the kernel narrows the
+    /// projection to the group keys and the aggregates' columns, which is what
+    /// lets `count(*) per zone` be answered from an index without reading a
+    /// row. The plan says whether it managed to.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<u32>,
+    /// What to compute per group. `count(*)` when grouping with none named.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub aggregates: Vec<AggregateSpec>,
 }
 
 /// For `skip_serializing_if`, which needs a path rather than a closure.
@@ -136,6 +148,11 @@ pub struct SortSpec {
 }
 
 /// What comes back: the rows, and the plan that produced them.
+///
+/// A grouped read puts its groups in `rows` rather than in a second field.
+/// The two are the same shape to the reader — a header and cells — and the
+/// binding returning one of two field names depending on the query is how a
+/// UI ends up with two rendering paths that drift.
 #[derive(Serialize)]
 struct Answer {
     rows: Vec<Vec<String>>,
@@ -165,21 +182,34 @@ struct PlanInfo {
 
 /// What the UI sends for a join or a grouped join.
 ///
-/// The join is always `books.author_id = authors.id` — the only one the
-/// fixture has, and hard-coding it keeps the panel from offering key choices
-/// that produce nothing. What varies is the filter on each side, and whether
-/// the result is grouped.
+/// This used to hard-code `authors.id = books.author_id`, which was defensible
+/// while that was the only join in the database. With `trips` joining `zones`
+/// there are two, and a spec that can only express one of them would have made
+/// the zone names — the entire reason to carry a lookup table — unreachable.
+///
+/// The keys are still named explicitly rather than discovered: the parser
+/// checks the `ON` clause against the schema, so a pair of columns that would
+/// join to nothing is refused with a reason instead of returning an empty
+/// result.
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct JoinSpec {
-    /// Conditions on `authors`, ANDed.
-    pub authors: Vec<FilterSpec>,
-    /// Conditions on `books`, ANDed.
-    pub books: Vec<FilterSpec>,
-    /// Group by this column of `authors` (ordinal in the *authors* table).
-    /// Absent means return joined rows rather than groups.
+    /// The left table's name. Its columns come first in a joined row.
+    pub left: String,
+    /// The right table's name.
+    pub right: String,
+    /// The join key's ordinal in the left table.
+    pub left_key: u32,
+    /// And in the right table.
+    pub right_key: u32,
+    /// Conditions on the left table, ANDed.
+    pub left_where: Vec<FilterSpec>,
+    /// Conditions on the right table, ANDed.
+    pub right_where: Vec<FilterSpec>,
+    /// Group by this column of the *left* table. Absent means return joined
+    /// rows rather than groups.
     pub group_by: Option<u32>,
-    /// `count`, and optionally `min`/`max` over a `books` column.
+    /// Computed per group, over the *right* table's columns.
     pub aggregates: Vec<AggregateSpec>,
     pub limit: Option<u64>,
 }
@@ -319,8 +349,14 @@ impl Playground {
         // working.
         let security = SecurityCatalog::new()
             .grant(Grant::new("app", fixture::AUTHORS, Action::EVERYTHING))
-            .grant(Grant::new("app", fixture::BOOKS, Action::EVERYTHING));
-        let store = RecordStore::new(MemoryStore::new(), fixture::catalog(), security);
+            .grant(Grant::new("app", fixture::BOOKS, Action::EVERYTHING))
+            .grant(Grant::new("app", taxi::TRIPS, Action::EVERYTHING))
+            .grant(Grant::new("app", taxi::ZONES, Action::EVERYTHING));
+        // All four tables, including the two the taxi data will fill. A
+        // catalog cannot gain a table after the store is built, and a
+        // workbench whose schema tree changes shape when a download lands is
+        // one where every query written before it arrived stops parsing.
+        let store = RecordStore::new(MemoryStore::new(), taxi::catalog(), security);
 
         // Seeded as the superuser and queried as `app`, so the playground
         // exercises the ordinary authorised path rather than the one that
@@ -331,6 +367,9 @@ impl Playground {
             txn.insert_many(&root, &fixture::authors(), &fixture::author_rows())
                 .await
                 .expect("seed authors");
+            txn.insert_many(&root, &taxi::zones(), &taxi::zone_rows())
+                .await
+                .expect("seed zones");
             txn.insert_many(&root, &fixture::books(), &fixture::book_rows())
                 .await
                 .expect("seed books");
@@ -345,20 +384,7 @@ impl Playground {
             // these rows.
             // The transaction is scoped so its borrow of `store` ends before
             // `with_statistics` consumes it.
-            let stats = {
-                let txn = store.begin().await.expect("begin");
-                let authors = txn
-                    .analyze(&root, &fixture::authors())
-                    .await
-                    .expect("analyze authors");
-                let books = txn
-                    .analyze(&root, &fixture::books())
-                    .await
-                    .expect("analyze books");
-                Statistics::new()
-                    .with(fixture::AUTHORS, authors)
-                    .with(fixture::BOOKS, books)
-            };
+            let stats = analyze(&store, &root).await;
             store.with_statistics(stats)
         });
 
@@ -374,32 +400,37 @@ impl Playground {
     /// own catalog rather than from a copy that can drift from it.
     #[must_use]
     pub fn schema(&self) -> String {
-        let tables: Vec<TableInfo> = [fixture::authors(), fixture::books()]
-            .into_iter()
-            .map(|table| TableInfo {
-                name: table.name().to_owned(),
-                columns: table
-                    .columns()
-                    .iter()
-                    .enumerate()
-                    .map(|(i, column)| ColumnInfo {
-                        name: column.name().to_owned(),
-                        kind: column.value_type().name().to_owned(),
-                        ordinal: u32::try_from(i).unwrap_or(0),
-                    })
-                    .collect(),
-                indexed: table
-                    .indexes()
-                    .iter()
-                    .flat_map(|index| index.columns().iter().map(|c| c.ordinal.0 as u32))
-                    .collect(),
-                primary_key: table
-                    .primary_key()
-                    .iter()
-                    .map(|o| u32::try_from(o.0).unwrap_or(0))
-                    .collect(),
-            })
-            .collect();
+        let tables: Vec<TableInfo> = [
+            taxi::trips(),
+            taxi::zones(),
+            fixture::authors(),
+            fixture::books(),
+        ]
+        .into_iter()
+        .map(|table| TableInfo {
+            name: table.name().to_owned(),
+            columns: table
+                .columns()
+                .iter()
+                .enumerate()
+                .map(|(i, column)| ColumnInfo {
+                    name: column.name().to_owned(),
+                    kind: column.value_type().name().to_owned(),
+                    ordinal: u32::try_from(i).unwrap_or(0),
+                })
+                .collect(),
+            indexed: table
+                .indexes()
+                .iter()
+                .flat_map(|index| index.columns().iter().map(|c| c.ordinal.0 as u32))
+                .collect(),
+            primary_key: table
+                .primary_key()
+                .iter()
+                .map(|o| u32::try_from(o.0).unwrap_or(0))
+                .collect(),
+        })
+        .collect();
         serde_json::to_string(&tables).expect("the schema serialises")
     }
 
@@ -462,6 +493,25 @@ impl Playground {
     #[must_use]
     pub fn sql(&self, text: &str) -> String {
         serde_json::to_string(&self.run_sql(text)).expect("the results serialise")
+    }
+
+    /// Load the packed trip file, seed `trips`, and re-measure.
+    ///
+    /// Separate from the constructor because it arrives separately: the page
+    /// is usable on the books fixture while 1.2 MB is in flight, and a
+    /// visitor who never gets the file gets a working workbench with an empty
+    /// `trips` rather than a blank page.
+    ///
+    /// Re-analysing afterwards is not optional. Statistics measured over an
+    /// empty table say a hundred rows with a hundred distinct values, and the
+    /// planner would go on believing that over 100,000 real ones — every plan
+    /// the reader saw would be chosen from a fiction.
+    #[must_use]
+    pub fn load_trips(&mut self, bytes: &[u8]) -> String {
+        match self.seed_trips(bytes) {
+            Ok(rows) => serde_json::json!({ "ok": rows }).to_string(),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
     }
 
     /// Throw the database away and seed a fresh one.
@@ -575,15 +625,19 @@ impl Playground {
 
     /// The same, from a spec that is already a value. See [`Self::answer_spec`].
     fn joined_spec(&self, spec: JoinSpec) -> Result<JoinAnswer, String> {
-        let authors = fixture::authors();
-        let books = fixture::books();
+        let authors = self.table(&spec.left)?;
+        let books = self.table(&spec.right)?;
 
-        // `authors.id = books.author_id`. The left table is `authors`, so the
-        // joined row is the author's columns followed by the book's, and a
-        // group key of `authors.country` is ordinal 2 in both spaces.
-        let mut join = Join::on([JoinKey::new(Ordinal(0), Ordinal(1))]);
-        join.left = conditions(&spec.authors, &authors)?;
-        join.right = conditions(&spec.books, &books)?;
+        // The joined row is the left table's columns followed by the right's,
+        // so a group key on the left keeps its own ordinal and an aggregate on
+        // the right has to be shifted past every left column. That shift is
+        // the arithmetic `ColumnRef` exists to remove in the clients.
+        let mut join = Join::on([JoinKey::new(
+            Ordinal(spec.left_key as usize),
+            Ordinal(spec.right_key as usize),
+        )]);
+        join.left = conditions(&spec.left_where, &authors)?;
+        join.right = conditions(&spec.right_where, &books)?;
         if let Some(limit) = spec.limit {
             join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
         }
@@ -602,6 +656,8 @@ impl Playground {
                     let shifted = Ordinal(authors.columns().len() + wanted.column as usize);
                     aggregates.push(match wanted.kind.as_str() {
                         "count" => Aggregate::Count,
+                        "count_column" => Aggregate::CountColumn(shifted),
+                        "count_distinct" => Aggregate::CountDistinct(shifted),
                         "min" => Aggregate::Min(shifted),
                         "max" => Aggregate::Max(shifted),
                         "sum" => Aggregate::Sum(shifted),
@@ -726,7 +782,16 @@ impl Playground {
     /// insert a row, then select it back — so running the rest after one has
     /// failed reports errors about a state the reader did not ask for.
     fn run_sql(&self, buffer: &str) -> Vec<SqlResult> {
-        let tables = [fixture::authors(), fixture::books()];
+        // Every table the store has. A parser that knows fewer tables than the
+        // database holds refuses valid SQL with "no such table", which is the
+        // most confusing error a query editor can give: the schema tree on the
+        // left is listing the table it just said does not exist.
+        let tables = [
+            fixture::authors(),
+            fixture::books(),
+            taxi::trips(),
+            taxi::zones(),
+        ];
         let schema = sql::Schema(&tables);
         let mut out = Vec::new();
         for (offset, statement) in sql::split(buffer) {
@@ -759,14 +824,35 @@ impl Playground {
         match parsed {
             sql::Statement::Select(spec) => {
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
+                let grouped = !spec.group_by.is_empty();
                 let columns = self
                     .table(&spec.table)
-                    .map(|t| t.columns().iter().map(|c| c.name().to_owned()).collect())
+                    .map(|t| {
+                        if grouped {
+                            // The keys, then one per aggregate. A grouped
+                            // answer has nothing to do with the table's own
+                            // column list, and printing that header over it
+                            // would mislabel every cell.
+                            let mut headers: Vec<String> = spec
+                                .group_by
+                                .iter()
+                                .map(|o| {
+                                    t.column(Ordinal(*o as usize))
+                                        .map_or_else(|| o.to_string(), |c| c.name().to_owned())
+                                })
+                                .collect();
+                            headers.extend(labels(&spec.aggregates, &t));
+                            headers
+                        } else {
+                            t.columns().iter().map(|c| c.name().to_owned()).collect()
+                        }
+                    })
                     .unwrap_or_default();
                 match self.answer_spec(&spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
-                        let mut out = SqlResult::blank(text, "select");
+                        let mut out =
+                            SqlResult::blank(text, if grouped { "group" } else { "select" });
                         out.columns = columns;
                         out.returned = answer.returned;
                         out.rows = answer.rows;
@@ -779,19 +865,11 @@ impl Playground {
             sql::Statement::Join(spec) => {
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
                 let grouped = spec.group_by;
-                let labels: Vec<String> = spec
-                    .aggregates
-                    .iter()
-                    .map(|a| match a.kind.as_str() {
-                        "count" => "count(*)".to_owned(),
-                        other => format!(
-                            "{other}({})",
-                            fixture::books()
-                                .column(Ordinal(a.column as usize))
-                                .map_or_else(|| a.column.to_string(), |c| c.name().to_owned())
-                        ),
-                    })
-                    .collect();
+                let left_table = self
+                    .table(&spec.left)
+                    .unwrap_or_else(|_| fixture::authors());
+                let right_table = self.table(&spec.right).unwrap_or_else(|_| fixture::books());
+                let labels = labels(&spec.aggregates, &right_table);
                 match self.joined_spec(spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
@@ -802,7 +880,7 @@ impl Playground {
                         out.columns = match grouped {
                             Some(key) => {
                                 let mut headers = vec![
-                                    fixture::authors()
+                                    left_table
                                         .column(Ordinal(key as usize))
                                         .map_or_else(|| key.to_string(), |c| c.name().to_owned()),
                                 ];
@@ -815,15 +893,15 @@ impl Playground {
                                 }
                                 headers
                             }
-                            None => fixture::authors()
+                            None => left_table
                                 .columns()
                                 .iter()
-                                .map(|c| format!("authors.{}", c.name()))
+                                .map(|c| format!("{}.{}", left_table.name(), c.name()))
                                 .chain(
-                                    fixture::books()
+                                    right_table
                                         .columns()
                                         .iter()
-                                        .map(|c| format!("books.{}", c.name())),
+                                        .map(|c| format!("{}.{}", right_table.name(), c.name())),
                                 )
                                 .collect(),
                         };
@@ -904,10 +982,128 @@ impl Playground {
         self.write(table, &json, Write::Update)
     }
 
+    /// One table, grouped.
+    ///
+    /// Note what this does *not* manage to do, because the first version of
+    /// this comment claimed it did: `explain_grouped` takes a `Grouping` and
+    /// `group_by` takes the keys and aggregates separately, rebuilding an
+    /// equivalent one inside. So unlike the row path — where one `Query` value
+    /// goes to both `explain` and `execute` — these are two constructions from
+    /// the same two inputs, and only *equivalent by construction*.
+    ///
+    /// A mutation that narrowed the explained grouping to its first key, and
+    /// left the executed one alone, changed no test until one was written for
+    /// it. The test is `grouping_by_two_columns_keys_on_the_pair`, which now
+    /// asserts the plan as well as the groups.
+    fn grouped_spec(
+        &self,
+        spec: &QuerySpec,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<Answer, String> {
+        let keys: Vec<Ordinal> = spec.group_by.iter().map(|c| Ordinal(*c as usize)).collect();
+        for key in &keys {
+            if table.column(*key).is_none() {
+                return Err(format!("{} has no column {}", table.name(), key.0));
+            }
+        }
+        let aggregates = aggregates(&spec.aggregates, table)?;
+        let mut grouping = Grouping::by(keys.iter().copied(), &aggregates);
+
+        // ORDER BY, LIMIT and OFFSET belong to the *groups* when there is a
+        // grouping, not to the rows feeding it. `Grouping` is where the kernel
+        // keeps them, and the ordinals here are in group space — the keys,
+        // then the aggregates — which is what the parser resolved them
+        // against.
+        if !spec.sort.is_empty() {
+            grouping = grouping.sort_by(spec.sort.iter().map(|s| {
+                let column = Ordinal(s.column as usize);
+                if s.descending {
+                    SortKey::desc(column)
+                } else {
+                    SortKey::asc(column)
+                }
+            }));
+        }
+        if let Some(limit) = spec.limit {
+            grouping = grouping.limit(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
+        if spec.offset > 0 {
+            grouping = grouping.offset(usize::try_from(spec.offset).unwrap_or(usize::MAX));
+        }
+
+        // One `Grouping` value to both, which is the invariant the row path
+        // keeps with its one `Query`. It is reachable here only because
+        // `grouped` takes a whole `Grouping`; `group_by` takes the keys and
+        // rebuilds one, and going through that is what let an earlier version
+        // explain a different grouping than it ran.
+        let (explanation, groups) = block_on(async {
+            let snapshot = self.store.snapshot().await?;
+            let explanation = snapshot.explain_grouped(&self.context, table, query, &grouping)?;
+            let groups = snapshot
+                .grouped(&self.context, table, query, &grouping)
+                .await?;
+            Ok::<_, slate_kernel::KernelError>((explanation, groups))
+        })
+        .map_err(|e| e.to_string())?;
+
+        let rows: Vec<Vec<String>> = groups
+            .iter()
+            .map(|group| {
+                let mut line: Vec<String> = group.key.iter().map(text).collect();
+                line.extend(group.values.iter().map(text));
+                line
+            })
+            .collect();
+
+        Ok(Answer {
+            returned: rows.len(),
+            rows,
+            plan: PlanInfo {
+                table: table.name().to_owned(),
+                access: explanation.access.to_string(),
+                index_only: explanation.is_index_only(),
+                sorts: explanation.sorts,
+                descending: matches!(explanation.order, ScanOrder::Descending),
+                estimated_rows: explanation.estimated_rows,
+                estimated_cost: explanation.estimated_cost,
+                residual: explanation.residual.clone(),
+                decodes: explanation.decodes.iter().map(|o| o.0 as u32).collect(),
+                display: explanation.to_string(),
+            },
+        })
+    }
+
+    /// The body of [`Playground::load_trips`].
+    fn seed_trips(&mut self, bytes: &[u8]) -> Result<usize, String> {
+        let rows = taxi::decode(bytes)?;
+        let table = taxi::trips();
+        let root = SecurityContext::superuser();
+        let count = rows.len();
+
+        block_on(async {
+            let txn = self.store.begin().await?;
+            // One transaction for 100,000 rows. `insert_many` keeps index
+            // maintenance in the same batch, which is the whole point of the
+            // bulk path: a hundred thousand separate transactions would each
+            // pay a begin and a commit.
+            txn.insert_many(&root, &table, &rows).await?;
+            txn.commit().await?;
+            Ok::<_, slate_kernel::KernelError>(())
+        })
+        .map_err(|e| e.to_string())?;
+
+        let stats = block_on(analyze(&self.store, &root));
+        self.store.set_statistics(stats);
+        Ok(count)
+    }
+
     fn table(&self, name: &str) -> Result<TableDef, String> {
         match name {
             "authors" => Ok(fixture::authors()),
             "books" => Ok(fixture::books()),
+            "trips" => Ok(taxi::trips()),
+            "zones" => Ok(taxi::zones()),
             other => Err(format!("no such table: {other}")),
         }
     }
@@ -930,6 +1126,23 @@ impl Playground {
         let table = self.table(&spec.table)?;
 
         let query = build(spec, &table)?;
+
+        if !spec.group_by.is_empty() {
+            // Built without them: `build` puts sort, limit and offset on the
+            // query, and a LIMIT applied to the rows going into a grouping
+            // silently answers a different question — the first 10 rows'
+            // groups, not the first 10 groups.
+            let ungrouped = build(
+                &QuerySpec {
+                    sort: Vec::new(),
+                    limit: None,
+                    offset: 0,
+                    ..spec.clone()
+                },
+                &table,
+            )?;
+            return self.grouped_spec(spec, &table, &ungrouped);
+        }
 
         // One snapshot answers both, and the *same* `Query` value is handed to
         // `explain` and to `execute`. Explaining a query rebuilt to look like
@@ -1081,6 +1294,83 @@ fn literal(text: &str, kind: slate_tuple::ValueType) -> Result<Value, String> {
             .map_err(|_| format!("{text:?} is not true or false")),
         _ => Ok(Value::Str(text.to_owned())),
     }
+}
+
+/// Measure every table, for the planner.
+///
+/// One function rather than a list at each call site: the constructor and the
+/// trip loader both need this, and a loader that re-analysed `trips` while
+/// leaving `books` on the old numbers is the kind of drift that shows up as an
+/// unexplainable plan two screens away.
+async fn analyze(store: &RecordStore<MemoryStore>, root: &SecurityContext) -> Statistics {
+    let txn = store.begin().await.expect("begin");
+    let mut stats = Statistics::new();
+    for (id, table) in [
+        (fixture::AUTHORS, fixture::authors()),
+        (fixture::BOOKS, fixture::books()),
+        (taxi::TRIPS, taxi::trips()),
+        (taxi::ZONES, taxi::zones()),
+    ] {
+        stats = stats.with(id, txn.analyze(root, &table).await.expect("analyze"));
+    }
+    stats
+}
+
+/// Header text for each aggregate: `count(*)`, `avg(total)`.
+///
+/// Shared by the single-table and the join paths, because two copies of this
+/// is how a grouped join comes to label its columns differently from a grouped
+/// scan of the same data.
+fn labels(specs: &[AggregateSpec], table: &TableDef) -> Vec<String> {
+    if specs.is_empty() {
+        return vec!["count(*)".to_owned()];
+    }
+    specs
+        .iter()
+        .map(|a| {
+            let column = table
+                .column(Ordinal(a.column as usize))
+                .map_or_else(|| a.column.to_string(), |c| c.name().to_owned());
+            match a.kind.as_str() {
+                "count" => "count(*)".to_owned(),
+                "count_column" => format!("count({column})"),
+                "count_distinct" => format!("count(distinct {column})"),
+                other => format!("{other}({column})"),
+            }
+        })
+        .collect()
+}
+
+/// Lower the UI's aggregate list onto the kernel's, resolving ordinals
+/// against the table the aggregates read.
+///
+/// `count(*)` when the list is empty: a grouped query with no aggregate is a
+/// list of distinct keys, and returning nothing beside the key would make the
+/// result look broken rather than minimal.
+fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate>, String> {
+    if specs.is_empty() {
+        return Ok(vec![Aggregate::Count]);
+    }
+    let mut out = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let column = Ordinal(spec.column as usize);
+        if !matches!(spec.kind.as_str(), "count") && table.column(column).is_none() {
+            return Err(format!("{} has no column {}", table.name(), spec.column));
+        }
+        out.push(match spec.kind.as_str() {
+            "count" => Aggregate::Count,
+            // `count(column)` is not `count(*)`: it skips nulls. Keeping them
+            // apart here is why the parser bothers to tell them apart.
+            "count_column" => Aggregate::CountColumn(column),
+            "min" => Aggregate::Min(column),
+            "max" => Aggregate::Max(column),
+            "sum" => Aggregate::Sum(column),
+            "avg" => Aggregate::Avg(column),
+            "count_distinct" => Aggregate::CountDistinct(column),
+            other => return Err(format!("no such aggregate: {other}")),
+        });
+    }
+    Ok(out)
 }
 
 /// One side of a join: its conditions, ANDed, as a `Query`.

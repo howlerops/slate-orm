@@ -220,7 +220,9 @@ fn the_schema_comes_from_the_catalog() {
     let playground = Playground::new();
     let schema: Json = serde_json::from_str(&playground.schema()).expect("schema JSON");
     let tables = schema.as_array().expect("an array of tables");
-    assert_eq!(tables.len(), 2);
+    // trips, zones, authors, books. The taxi tables come first because the
+    // workbench lists them in this order and the real dataset is the point.
+    assert_eq!(tables.len(), 4, "{tables:#?}");
 
     let books = tables
         .iter()
@@ -514,7 +516,17 @@ fn a_contradiction_returns_nothing_rather_than_erroring() {
     assert_eq!(rows(&answer).len(), 0, "no book has two authors");
 }
 
-fn joined(playground: &Playground, spec: Json) -> Json {
+/// A join over the books fixture.
+///
+/// The spec names its tables now that there are two joins in the database
+/// (`trips` joins `zones`), so this fills in the pair these tests are about
+/// rather than repeating it in every case.
+fn joined(playground: &Playground, mut spec: Json) -> Json {
+    let object = spec.as_object_mut().expect("a spec object");
+    object.entry("left").or_insert(json!("authors"));
+    object.entry("right").or_insert(json!("books"));
+    object.entry("leftKey").or_insert(json!(0));
+    object.entry("rightKey").or_insert(json!(1));
     let text = playground.join(&spec.to_string());
     let answer: Json = serde_json::from_str(&text).expect("the binding returns JSON");
     assert!(answer.get("error").is_none(), "unexpected error: {answer}");
@@ -526,7 +538,7 @@ fn a_join_pairs_each_book_with_its_author() {
     let playground = Playground::new();
     let answer = joined(
         &playground,
-        json!({ "authors": [{ "column": 0, "op": "eq", "value": "1" }] }),
+        json!({ "leftWhere": [{ "column": 0, "op": "eq", "value": "1" }] }),
     );
 
     let rows = answer["rows"].as_array().expect("rows");
@@ -562,7 +574,7 @@ fn a_grouped_join_agrees_with_counting_the_fixture_by_hand() {
     let answer = joined(
         &playground,
         json!({
-            "authors": [{ "column": 2, "op": "eq", "value": "US" }],
+            "leftWhere": [{ "column": 2, "op": "eq", "value": "US" }],
             "groupBy": 2,
             "aggregates": [{ "kind": "count" }],
         }),
@@ -605,7 +617,7 @@ fn a_grouped_join_can_compute_min_and_max_over_the_book_side() {
     let answer = joined(
         &playground,
         json!({
-            "authors": [{ "column": 0, "op": "eq", "value": "1" }],
+            "leftWhere": [{ "column": 0, "op": "eq", "value": "1" }],
             "groupBy": 1,
             "aggregates": [
                 { "kind": "count" },
@@ -649,7 +661,12 @@ fn grouping_narrows_what_each_input_decodes() {
 fn an_unknown_aggregate_is_refused_by_name() {
     let playground = Playground::new();
     let text = playground.join(
-        &json!({ "groupBy": 0, "aggregates": [{ "kind": "median", "column": 3 }] }).to_string(),
+        &json!({
+            "left": "authors", "right": "books", "leftKey": 0, "rightKey": 1,
+            "groupBy": 0,
+            "aggregates": [{ "kind": "median", "column": 3 }],
+        })
+        .to_string(),
     );
     let answer: Json = serde_json::from_str(&text).expect("JSON");
     assert!(

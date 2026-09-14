@@ -47,9 +47,13 @@ await page.goto(url, { waitUntil: "load" });
 
 // The grid appearing *is* the "did the kernel come up" assertion: nothing
 // renders a row until the wasm module has loaded, seeded and answered.
+// The default query is a grouped scan over 100,000 real trips, so a *row*
+// on screen means the wasm loaded, the 1.2 MB trip file arrived, decoded,
+// seeded and was analysed, and the planner answered. One assertion for the
+// whole chain.
 await page.waitForFunction(
-  () => document.querySelector('[data-app="grid"] table'),
-  { timeout: 60000 },
+  () => document.querySelector('[data-app="grid"] tbody tr'),
+  { timeout: 90000 },
 );
 
 const read = async () => ({
@@ -72,6 +76,22 @@ const type = async (sql) => {
 const out = {};
 out.engine = await page.locator('[data-app="engine"]').innerText();
 out.initial = await read();
+out.initialFirstRow = await page.locator('[data-app="grid"] tbody tr').first().innerText();
+
+// The real dataset. These are facts about January 2024, not about the code:
+// if the sample is replaced or the join keys the wrong columns, they change.
+out.busiest = await type(
+  "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone ORDER BY count(*) DESC LIMIT 5",
+);
+out.busiestRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+out.named = await type(
+  "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id WHERE trips.pickup_zone = 132 LIMIT 5",
+);
+out.namedFirstRow = await page.locator('[data-app="grid"] tbody tr').first().innerText();
+out.counts = await type(
+  "SELECT payment, count(*), count(passengers) FROM trips GROUP BY payment",
+);
+out.countRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
 
 // 1. The schema tree describes the database, including which column carries
 //    an index — the one fact that makes the rest of the page worth reading.
@@ -80,22 +100,22 @@ out.indexMarks = await page.locator(".tree-columns .mark.idx").allInnerTexts();
 out.keyMarks = await page.locator(".tree-columns .mark.key").allInnerTexts();
 
 // 2. Clicking a table runs a query for it, rather than only filling the box.
-await page.locator('.tree-name[data-table="authors"]').click();
+await page.locator('.tree-name[data-table="zones"]').click();
 await page.waitForTimeout(160);
 out.clickedTable = { ...(await read()), sql: await page.locator('[data-app="editor"]').inputValue() };
 
 // 3. Clicking a column inserts it at the caret.
-await page.locator('[data-app="editor"]').fill("SELECT  FROM books");
+await page.locator('[data-app="editor"]').fill("SELECT  FROM trips");
 await page.locator('[data-app="editor"]').evaluate((el) => { el.selectionStart = el.selectionEnd = 7; });
-await page.locator('.tree-column[data-column="author_id"]').first().click();
+await page.locator('.tree-column[data-column="pickup_zone"]').first().click();
 out.insertedColumn = await page.locator('[data-app="editor"]').inputValue();
 
 // 4. The central claim, typed: same query, narrower projection, index-only.
-out.wide = await type("SELECT * FROM books WHERE author_id = 2");
+out.wide = await type("SELECT * FROM trips WHERE pickup_zone = 132 LIMIT 200");
 await page.locator('[data-tab="plan"]').click();
 out.widePlan = await page.locator('[data-app="plan"]').innerText();
 
-out.narrow = await type("SELECT author_id FROM books WHERE author_id = 2");
+out.narrow = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 132 LIMIT 200");
 out.narrowPlan = await page.locator('[data-app="plan"]').innerText();
 out.badges = await page.locator('[data-app="badges"] .badge').allInnerTexts();
 
@@ -107,7 +127,7 @@ await page.locator('[data-tab="results"]').click();
 
 // 6. A refusal is shown where the reader is looking, with the caret moved to
 //    the offending token.
-out.refused = await type("SELECT * FROM books WHERE author_id = 2 AND nosuch = 1");
+out.refused = await type("SELECT * FROM trips WHERE pickup_zone = 132 AND nosuch = 1");
 out.caret = await page.locator('[data-app="editor"]').evaluate((el) => el.selectionStart);
 
 // 7. A join, and a grouped join.
@@ -119,20 +139,25 @@ out.grouped = await type(
 );
 
 // 8. A write, and the index answering for it in the same breath.
-const before = await type("SELECT author_id FROM books WHERE author_id = 4");
+const before = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 7");
 out.beforeWrite = before;
 out.afterWrite = await type(
-  "INSERT INTO books VALUES (9100, 4, 'Written In The Browser', 2025);\\n" +
-  "SELECT author_id FROM books WHERE author_id = 4",
+  "INSERT INTO trips VALUES (999001, 7, 1, 1704067200, 600, 2, 5.5, 25.0, 3.0, 31.0, 'cash');\\n" +
+  "SELECT pickup_zone FROM trips WHERE pickup_zone = 7",
 );
 await page.locator('[data-tab="plan"]').click();
 out.afterWritePlan = await page.locator('[data-app="plan"]').innerText();
 await page.locator('[data-tab="results"]').click();
 
 // 9. Reset puts the fixture back, so a reader cannot wreck the page for good.
+//    It drops the 100,000 trips with everything else — the store is rebuilt
+//    from scratch — so the button re-seeds them from the bytes it kept. Before
+//    it did, this check reported zero rows where 72 were expected: a Reset
+//    that emptied the main table and left it empty.
 await page.locator('[data-app="reset"]').click();
-await page.waitForTimeout(200);
-out.afterReset = await type("SELECT author_id FROM books WHERE author_id = 4");
+await page.waitForTimeout(400);
+out.afterResetStatus = await page.locator('[data-app="status"]').innerText();
+out.afterReset = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 7");
 
 // 10. The log kept every statement.
 await page.locator('[data-tab="log"]').click();
@@ -210,25 +235,48 @@ def main() -> int:
         f"initial: {seen['initial']}",
     )
     check(
-        "the schema tree lists both tables",
-        len(seen["tables"]) == 2 and all("cols" in t for t in seen["tables"]),
+        "the real trip file loads and the engine says how much",
+        "100,000 trips" in seen["engine"] and "265 zones" in seen["engine"],
+        f"engine: {seen['engine']!r}",
+    )
+    check(
+        "the busiest pickup zone is JFK, as it is in the real month",
+        seen["busiestRows"] and seen["busiestRows"][0].split()[0] == "132",
+        f"got {seen['busiestRows'][:3]}",
+    )
+    check(
+        "the zone join puts the TLC's own names on a trip",
+        "JFK Airport" in seen["namedFirstRow"] and "Queens" in seen["namedFirstRow"],
+        f"{seen['namedFirstRow']!r}",
+    )
+    check(
+        "count(*) and count(column) differ, because the data has real nulls",
+        any(
+            len(row.split("\t")) == 3 and row.split("\t")[1] != row.split("\t")[2]
+            for row in seen["countRows"]
+        ),
+        f"{seen['countRows']}",
+    )
+    check(
+        "the schema tree lists every table",
+        len(seen["tables"]) == 4 and all("cols" in t for t in seen["tables"]),
         f"tables: {seen['tables']}",
     )
     check(
-        "and marks the indexed column and the primary keys",
-        len(seen["indexMarks"]) == 1 and len(seen["keyMarks"]) == 2,
+        "and marks the indexed columns and the primary keys",
+        len(seen["indexMarks"]) == 2 and len(seen["keyMarks"]) == 4,
         f"idx: {seen['indexMarks']}, pk: {seen['keyMarks']}",
     )
     check(
         "clicking a table queries it rather than only typing",
         seen["clickedTable"]["rows"] > 0
-        and "authors" in seen["clickedTable"]["sql"]
-        and seen["clickedTable"]["headers"][:1] == ["ID"],
+        and "zones" in seen["clickedTable"]["sql"]
+        and seen["clickedTable"]["headers"][:2] == ["ID", "BOROUGH"],
         f"{seen['clickedTable']}",
     )
     check(
         "clicking a column inserts it at the caret",
-        seen["insertedColumn"] == "SELECT author_id FROM books",
+        seen["insertedColumn"] == "SELECT pickup_zone FROM trips",
         f"got {seen['insertedColumn']!r}",
     )
     check(
@@ -259,7 +307,7 @@ def main() -> int:
     )
     check(
         "the spec tab shows what the SQL compiled to",
-        '"table": "books"' in seen["spec"] and '"columns"' in seen["spec"],
+        '"table": "trips"' in seen["spec"] and '"columns"' in seen["spec"],
         f"spec: {seen['spec']!r}",
     )
     check(
@@ -269,7 +317,7 @@ def main() -> int:
     )
     check(
         "and the caret moves to the token that was wrong",
-        seen["caret"] == len("SELECT * FROM books WHERE author_id = 2 AND "),
+        seen["caret"] == len("SELECT * FROM trips WHERE pickup_zone = 132 AND "),
         f"caret at {seen['caret']}",
     )
     check(

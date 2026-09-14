@@ -8,7 +8,8 @@ on object storage.
 
 Run a query against it in your browser:
 **<https://howlerops.github.io/slate-orm/>** — the kernel compiled to
-WebAssembly, with the planner's `EXPLAIN` beside every answer.
+WebAssembly, over 100,000 real New York taxi trips, with the planner's
+`EXPLAIN` beside every answer.
 Documentation is one click away, at
 **<https://howlerops.github.io/slate-orm/docs.html>**.
 
