@@ -153,11 +153,14 @@ once; without it the deploy step fails with a 404. Nothing deploys from a
 feature branch, so that is a decision for whoever merges rather than a thing
 this commit does.
 
-`release.yml` has never run — no tag has been pushed. Its build and `--check`
-steps are reachable with `workflow_dispatch` and its upload step is not, which
-is deliberate, and which also means the upload is the one part of all this
-still unverified. It is the same class of thing as the workflow that had never
-fired, and it is worth saying so rather than implying otherwise.
+The `publish` job in `release.yml` has still never run, because no tag has been
+pushed and this session cannot push one (403 — see the section above). Its
+build half runs on every push through `ci.yml`, so the compile, the cross
+toolchain and the `--check` are exercised continuously; the
+`softprops/action-gh-release` step is not, and that is the single piece of all
+this that remains in the state the whole entry is about — written, plausible,
+never run. Closing it is `git tag -a v0.0.1 -m ... && git push origin v0.0.1`
+from a checkout with tag permission, and it publishes a public prerelease.
 
 The `rust` job runs `cargo test --workspace`, which this container cannot do —
 the disk allowance is smaller than the build. Every crate has been verified
@@ -244,3 +247,28 @@ and the artifact naming — runs on a real runner on every push. Pushing `git ta
 ... && git push origin v0.0.1` from a checkout with tag permission is the one
 command that closes the gap, and it publishes a public prerelease, which is why
 it is a person's decision rather than this session's.
+
+## Eleven: the committed protobuf stubs went stale on somebody else's schedule
+
+The Python suite went red with nothing changed in the repository — not the
+`.proto`, not the stubs, not the client. `test_generated.py` regenerates the
+committed gRPC stubs and requires a byte-for-byte match; in CI,
+`slate/v1/records_pb2_grpc.py` differed. It passed here in the same hour.
+
+`grpcio-tools` was declared `>=1.60`. This container resolved 1.83.1, which is
+what the committed stubs were generated with; the runner resolved whatever was
+current that morning, and its output differed. Committed generated code and a
+floating generator cannot both be right — the test was pinned to upstream's
+release calendar rather than to anything in this repository.
+
+Both generators are now pinned exactly (`grpcio-tools==1.83.1`,
+`mypy-protobuf==5.1.0`), with a note that raising them is a deliberate act:
+bump the pin, regenerate, and commit the stubs in the same change so the diff
+shows what the new version did.
+
+The failure message was also part of the problem. It said "run
+`python scripts/generate_proto.py`" — which, run on the CI machine, would have
+silently rewritten the stubs to whatever generator happened to be installed and
+made the test pass while changing the shipped code. It now names the versions
+that produced the comparison and says that regenerating with a different
+generator is a change to the stubs rather than a fix to them.

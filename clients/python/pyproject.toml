@@ -29,8 +29,21 @@ dependencies = [
 # here rather than in a separate group because a type error in this package is
 # a test failure, not a lint.
 dev = [
-  "grpcio-tools>=1.60",
-  "mypy-protobuf>=3.6",
+  # The two code generators are pinned *exactly*, and everything else is not.
+  #
+  # Their output is committed, and `test_generated.py` regenerates it and
+  # requires the result to match byte for byte. With a floating `>=` that test
+  # passes or fails on upstream's release schedule rather than on anything in
+  # this repository: it went green here on 1.83.1 and red in CI the same hour,
+  # on whatever `pip` resolved to that morning, with no change to the `.proto`
+  # or to the stubs. Committed generated code and an unpinned generator cannot
+  # both be right.
+  #
+  # Raising these is a deliberate act: bump the pin, run
+  # `python scripts/generate_proto.py`, and commit the regenerated stubs in the
+  # same change so the diff shows what the new version did.
+  "grpcio-tools==1.83.1",
+  "mypy-protobuf==5.1.0",
   "mypy>=1.10",
   "pytest>=8",
   # A hanging stream is worse than a failing one: it stalls the suite and
