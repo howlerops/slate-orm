@@ -52,7 +52,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p slate-serverd --bin slate-serverd -p slate-testserver
+      # Two invocations, not one. `cargo build -p a -p b --bin x` applies the
+      # `--bin` filter across *both* packages, so a single command asking for
+      # `--bin slate-serverd` built the daemon and quietly skipped the Python
+      # fixture — and `upload-artifact` only errors when it finds *no* files,
+      # so the artifact uploaded happily with half its contents and the Python
+      # job failed two minutes later on a missing path.
+      - run: cargo build -p slate-serverd --bin slate-serverd
+      - run: cargo build -p slate-testserver --bin slate-testserver
+      # And say so here rather than at the download: a truncated artifact is
+      # cheaper to diagnose in the job that produced it.
+      - name: Both binaries exist
+        run: |
+          for b in slate-serverd slate-testserver; do
+            [ -x "target/debug/$b" ] || { echo "target/debug/$b was not built" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: head-node
@@ -188,6 +202,17 @@ jobs:
           name: head-node
           path: bin
       - run: chmod +x bin/slate-serverd
+      # The snippets import the published packages, so the packages have to be
+      # installable. This is not scaffolding around the check — it is the
+      # check: a reader following the quickstart installs these too, and the
+      # first CI run failed here on `No module named 'grpc'` and `Cannot find
+      # module '@slate-orm/client'`, both of which had been supplied by an
+      # ambient install on the machine where it was written.
+      - run: pip install -e clients/python
+      - run: npm ci
+        working-directory: clients/typescript
+      - run: npm run build
+        working-directory: clients/typescript
       # Extracts the four `<pre><code>` panels out of `site/index.html`,
       # validates the TOML with `--check`, starts a node from it, and runs the
       # Python, Go and TypeScript snippets against that node. Its first run

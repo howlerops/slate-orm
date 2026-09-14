@@ -150,13 +150,27 @@ if [ "$mode" = --e2e ]; then
   echo "starting the frontend on 127.0.0.1:$WEB_PORT"
   (cd "$here/web" && npm run dev -- --port "$WEB_PORT" --strictPort) > "$run/web.log" 2>&1 &
   pids+=($!)
-  # Vite prints `Local:` once it is serving. Same reasoning as `await`: a port
-  # poll answers yes before the first module has been transformed.
+
+  # Asked over HTTP rather than read out of the log.
+  #
+  # This used to grep the log for `Local:`, which vite prints when it is
+  # serving. It does not print that: it prints `Local` and `:` with an ANSI
+  # reset between them, so the literal string never appears — on a terminal, in
+  # a pipe, anywhere colour is on. It passed locally because colour was off
+  # there and on in CI, which is the most annoying shape a bug can have and the
+  # reason this only surfaced once CI existed.
+  #
+  # An HTTP poll has no such problem, and is a better signal besides: it asks
+  # the question the browser is about to ask.
   for _ in $(seq 90); do
-    grep -q "Local:" "$run/web.log" 2>/dev/null && break
+    curl -fsS -o /dev/null "http://127.0.0.1:$WEB_PORT/" 2>/dev/null && break
     sleep 1
   done
-  grep -q "Local:" "$run/web.log" || { echo "vite never served:" >&2; tail -20 "$run/web.log" >&2; exit 1; }
+  curl -fsS -o /dev/null "http://127.0.0.1:$WEB_PORT/" 2>/dev/null || {
+    echo "vite never served on $WEB_PORT:" >&2
+    tail -20 "$run/web.log" >&2
+    exit 1
+  }
 
   status=0
   (cd "$here/web" && node e2e/explorer.mjs "http://127.0.0.1:$WEB_PORT") || status=$?

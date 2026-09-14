@@ -277,3 +277,106 @@ pub fn claim(table: &TableDef) -> pb::SchemaCheck {
         fingerprint: of_table(table),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! The alias product, and the cap on it.
+    //!
+    //! `accepted` is where a renamed column becomes several acceptable
+    //! fingerprints, and it had no test — the Go and TypeScript suites each
+    //! cover *one* rename end to end, which exercises a product of one and
+    //! says nothing about the multiplication or about what happens when it is
+    //! cut off.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::{MAX_SPELLINGS, accepted, of_table};
+    use slate_schema::{TableDef, TableId};
+    use slate_tuple::ValueType;
+
+    /// A table whose `kind` column has been renamed `renames` times, most
+    /// recent last, and whose `label` column has been renamed once.
+    fn table(renames: &[&str]) -> TableDef {
+        let mut builder = TableDef::builder("papers", TableId(1))
+            .column("id", ValueType::U64)
+            .column("kind", ValueType::Str)
+            .primary_key(["id"]);
+        for previous in renames {
+            builder = builder.renamed_column("kind", *previous);
+        }
+        builder.build().expect("valid schema")
+    }
+
+    /// The fingerprint a client computes for one spelling of `papers`.
+    fn declared_as(name: &str) -> u64 {
+        of_table(
+            &TableDef::builder("papers", TableId(1))
+                .column("id", ValueType::U64)
+                .column(name, ValueType::Str)
+                .primary_key(["id"])
+                .build()
+                .expect("valid schema"),
+        )
+    }
+
+    #[test]
+    fn every_previous_spelling_of_a_column_is_accepted() {
+        let table = table(&["category", "genre"]);
+        let ok = accepted(&table, table.columns().len());
+
+        for spelling in ["kind", "category", "genre"] {
+            assert!(
+                ok.contains(&declared_as(spelling)),
+                "a client declaring `{spelling}` is refused"
+            );
+        }
+        // The control. Without it this passes against an `accepted` that
+        // returned every u64 it could think of.
+        assert!(
+            !ok.contains(&declared_as("flavour")),
+            "a name the table never had is accepted"
+        );
+    }
+
+    /// The current spelling comes first, because `of` takes the first as *the*
+    /// fingerprint — the one a correct client computes today.
+    #[test]
+    fn the_current_spelling_is_the_one_of_reports() {
+        let table = table(&["category"]);
+        assert_eq!(of_table(&table), declared_as("kind"));
+        assert_ne!(of_table(&table), declared_as("category"));
+    }
+
+    /// Renames multiply, and the cap cuts the multiplication off.
+    ///
+    /// Past `MAX_SPELLINGS` the enumeration keeps only current names, so a
+    /// table renamed pathologically often stops answering to its old ones.
+    /// That is a deliberate cliff and this is where it is written down: the
+    /// invariant that survives it is that the *current* spelling is always
+    /// accepted, which is the one a client written today sends.
+    #[test]
+    fn the_alias_product_is_capped_but_never_drops_the_current_spelling() {
+        // One column with n previous names yields n+1 spellings, so the cap
+        // bites somewhere past MAX_SPELLINGS-1 renames.
+        let many: Vec<String> = (0..MAX_SPELLINGS + 8).map(|i| format!("old{i}")).collect();
+        let names: Vec<&str> = many.iter().map(String::as_str).collect();
+        let table = table(&names);
+
+        let ok = accepted(&table, table.columns().len());
+        assert!(
+            ok.len() <= MAX_SPELLINGS,
+            "{} spellings enumerated, cap is {MAX_SPELLINGS}",
+            ok.len()
+        );
+        assert!(
+            ok.contains(&declared_as("kind")),
+            "the cap dropped the current spelling, which no client can avoid sending"
+        );
+    }
+
+    /// Under the cap, the count is exactly the product.
+    #[test]
+    fn two_renames_give_three_spellings_and_no_more() {
+        let table = table(&["category", "genre"]);
+        assert_eq!(accepted(&table, table.columns().len()).len(), 3);
+    }
+}

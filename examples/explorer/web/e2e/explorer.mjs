@@ -233,10 +233,100 @@ try {
     }
   });
 
+  await check("the rows panel's operators reach the database", async () => {
+    // The controls the panel offers, actually clicked. These were exercised
+    // only as HTTP bodies by the conformance runner, which cannot tell whether
+    // the *select* is wired to the request — a panel whose operator dropdown
+    // did nothing would pass every one of those cases.
+    await at(page, { panel: "rows" });
+    const rows = page.locator(".panel:has(h2:text-is('Rows'))");
+    const body = async () => {
+      await settled(page);
+      return rows.locator("tbody").innerText();
+    };
+
+    // `like` on the title, against a prefix only some books have.
+    await rows.locator('.field:has(span:text-is("where")) select').selectOption({ label: "title" });
+    await rows.locator('.field:has(span:text-is("op")) select').selectOption("like");
+    await rows.locator('.field:has(span:text-is("value")) input').fill("The %");
+    const liked = await body();
+    if (!/\bThe /.test(liked)) throw new Error(`a prefix pattern matched nothing: ${liked.slice(0, 120)}`);
+
+    // `ilike` with the wrong case must match what `like` did not.
+    await rows.locator('.field:has(span:text-is("op")) select').selectOption("ilike");
+    await rows.locator('.field:has(span:text-is("value")) input').fill("the %");
+    const insensitive = await body();
+    if (insensitive.trim() !== liked.trim()) {
+      throw new Error("ilike with the wrong case did not match what like matched");
+    }
+
+    // And the control: `like` with the wrong case matches nothing, so the two
+    // operators are genuinely different rather than both being ilike.
+    await rows.locator('.field:has(span:text-is("op")) select').selectOption("like");
+    await settled(page);
+    const sensitive = await rows.innerText();
+    if (!/no rows matched/.test(sensitive)) {
+      throw new Error("case-sensitive like matched a differently-cased prefix");
+    }
+  });
+
+  await check("the table switcher and the sort direction reach the database", async () => {
+    await at(page, { panel: "rows" });
+    const rows = page.locator(".panel:has(h2:text-is('Rows'))");
+
+    await rows.locator('.field:has(span:text-is("table")) select').selectOption("authors");
+    await rows.locator('.field:has(span:text-is("value")) input').fill("");
+    await settled(page);
+    // Lowercased because the stylesheet renders headers in caps. The
+    // assertion is about which columns came back, not about text-transform —
+    // the same trap that made an earlier check read `PERMISSION-DENIED` as a
+    // wrong error kind.
+    const headers = (await rows.locator("thead th").allInnerTexts()).map((h) =>
+      h.toLowerCase(),
+    );
+    if (!headers.some((h) => h.startsWith("country"))) {
+      throw new Error(`switching to authors kept the old columns: ${headers.join(", ")}`);
+    }
+
+    // Ascending, then descending, over the same column: the first rows must
+    // reverse. A direction control that did nothing leaves them identical.
+    const firstColumn = async () =>
+      (await rows.locator("tbody tr td:first-child").allInnerTexts()).join(",");
+    await rows.locator('.field:has(span:text-is("direction")) select').selectOption("asc");
+    const ascending = await firstColumn();
+    await rows.locator('.field:has(span:text-is("direction")) select').selectOption("desc");
+    await settled(page);
+    const descending = await firstColumn();
+    if (ascending === descending) {
+      throw new Error(`the direction control changed nothing: ${ascending}`);
+    }
+    if (ascending !== descending.split(",").reverse().join(",")) {
+      throw new Error(`descending is not ascending reversed: ${ascending} vs ${descending}`);
+    }
+  });
+
   await check("the grouped join draws a bar per author", async () => {
     await at(page, { panel: "groups" });
     const bars = await page.locator(".chart .row").count();
     if (bars < 2) throw new Error(`${bars} bars`);
+
+    // Geometry, not just count. The bars are divs whose width is a percentage
+    // of the largest value, so a CSS change that collapsed every bar to zero —
+    // or a chart that drew them all the same — would pass a count assertion
+    // and show a reader nothing.
+    const widths = await page
+      .locator(".chart .row .fill")
+      .evaluateAll((fills) => fills.map((f) => f.getBoundingClientRect().width));
+    if (!widths.every((w) => w > 0)) throw new Error(`a bar has no width: ${widths}`);
+    const values = (await page.locator(".chart .row .value").allInnerTexts()).map(Number);
+    if (new Set(values).size > 1 && new Set(widths.map(Math.round)).size === 1) {
+      throw new Error(`different counts drew identical bars: ${values} -> ${widths}`);
+    }
+    // The largest value's bar is the widest one.
+    const widest = widths.indexOf(Math.max(...widths));
+    if (values[widest] !== Math.max(...values)) {
+      throw new Error(`the widest bar is not the largest count: ${values} -> ${widths}`);
+    }
   });
 
   await check("HAVING removes groups, and removes the smallest ones", async () => {
