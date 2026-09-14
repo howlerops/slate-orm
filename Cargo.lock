@@ -3829,6 +3829,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate-wasm"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "serde",
+ "serde_json",
+ "slate-kernel",
+ "slate-schema",
+ "slate-tuple",
+ "tokio",
+ "uuid",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "slatedb"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

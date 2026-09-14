@@ -1,0 +1,45 @@
+# The record layer's kernel, compiled for a browser.
+#
+# Not a port and not a demo reimplementation: this links `slate-kernel` and
+# `slate-schema` exactly as the server does, over the same `MemoryStore` the
+# kernel's own test suite runs against. A query typed into the site's
+# playground is planned by the real planner and answered by the real executor,
+# and the plan shown beside the rows is the real `Explanation`.
+#
+# That is the whole reason this crate exists. A JavaScript stand-in would agree
+# with whatever the person writing it believed, which is the failure mode this
+# repository's conformance runner was built to catch between three clients.
+[package]
+name = "slate-wasm"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-tuple.workspace = true
+futures.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+
+# `uuid` reaches for a random number generator, and on `wasm32-unknown-unknown`
+# there is no ambient one — the crate refuses to compile rather than guess.
+# `js` routes it at the browser's `crypto.getRandomValues`.
+#
+# Target-scoped because it is genuinely wasm-specific, unlike the tokio feature
+# problem this build also uncovered, which was a bug in the kernel's own
+# manifest and was fixed there.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde_json = "1"
+
+[lints]
+workspace = true
