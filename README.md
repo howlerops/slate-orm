@@ -657,6 +657,19 @@ Built and tested:
       implementation over two sources rather than a second one, and an
       index-only scan still serves a grouped join (`count(*)` per author reads
       zero book rows)
+- [x] CI that runs, which it had never done. `.github/workflows/ci.yml`
+      existed and was active and had **zero runs**: it triggered on `main` and
+      pull requests, and every branch since it was added has been a feature
+      branch with no pull request. Eleven jobs now, on every push — the Rust
+      workspace, the three client suites, the demo frontend, the pre-commit
+      hook's own tests, a workspace-layout guard, the landing page's
+      quickstarts, and the conformance runner and a browser e2e over all three
+      SDKs. Its first four runs found eight real defects, three of which exist
+      only away from a developer's machine: a withdrawn Docker tag, a `--bin`
+      filter that silently skipped a binary, a checker leaning on ambient
+      installs, and a readiness grep defeated by ANSI colour. Deploys: Pages
+      publishes `site/` from `main`, and a tag builds `slate-serverd` for two
+      targets
 - [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
       `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the
       kernel. Not the same plan as explaining the read underneath: grouping

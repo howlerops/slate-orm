@@ -148,7 +148,14 @@ fi
 
 if [ "$mode" = --e2e ]; then
   echo "starting the frontend on 127.0.0.1:$WEB_PORT"
-  (cd "$here/web" && npm run dev -- --port "$WEB_PORT" --strictPort) > "$run/web.log" 2>&1 &
+  # `--host 127.0.0.1`, explicitly. Vite binds `localhost` by default, and on
+  # a machine where that resolves to `::1` first it listens on IPv6 only —
+  # nothing answers on 127.0.0.1, which is the address the e2e and the poll
+  # below both use. It printed `Local: http://localhost:60087/` and the poll
+  # timed out against it for ninety seconds. Binding the address we then ask
+  # for removes the question.
+  (cd "$here/web" && npm run dev -- --host 127.0.0.1 --port "$WEB_PORT" --strictPort) \
+    > "$run/web.log" 2>&1 &
   pids+=($!)
 
   # Asked over HTTP rather than read out of the log.
@@ -178,4 +185,4 @@ if [ "$mode" = --e2e ]; then
 fi
 
 echo "starting the frontend on 127.0.0.1:$WEB_PORT"
-(cd "$here/web" && npm run dev -- --port "$WEB_PORT" --strictPort)
+(cd "$here/web" && npm run dev -- --host 127.0.0.1 --port "$WEB_PORT" --strictPort)

@@ -2170,13 +2170,14 @@ pub fn grouped_explanation_to_proto(
         let Some((position, at)) = schema.locate(joined) else {
             return format!("#{}", joined.0);
         };
-        match tables.get(position).and_then(|t| t.column(at)) {
+        let Some(table) = tables.get(position) else {
+            return format!("#{}", joined.0);
+        };
+        match table.column(at) {
             // Qualified only when there is more than one input: `books.year`
             // reads as noise on a single-table grouping, where every column is
             // from the one table by construction.
-            Some(column) if tables.len() > 1 => {
-                format!("{}.{}", tables[position].name(), column.name())
-            }
+            Some(column) if tables.len() > 1 => format!("{}.{}", table.name(), column.name()),
             Some(column) => column.name().to_owned(),
             None => format!("#{}", joined.0),
         }

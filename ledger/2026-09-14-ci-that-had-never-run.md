@@ -79,6 +79,22 @@ itself. The page now says `pip install ./clients/python` and "not on PyPI yet",
 and the checker verifies that an install line naming a path names one that is
 really there.
 
+**9. `clippy::indexing_slicing`, which the workspace denies.** A
+`tables[position]` written after the last local clippy run. Trivial, and the
+point is the timing: the lint exists precisely so a panic cannot be introduced
+by an index, and the only thing between it and `main` was a command somebody
+remembered to type.
+
+**10. Vite bound the wrong stack.** The demo's frontend printed `Local:
+http://localhost:60087/` and the readiness poll timed out against
+`127.0.0.1:60087` for ninety seconds. `localhost` resolves to `::1` first on
+the runner, so vite listened on IPv6 only while the poll and the browser both
+asked for IPv4. `--host 127.0.0.1` binds the address everything else uses.
+
+This is the *second* bug in the same six lines: (5) was the log grep, and
+fixing it uncovered this one, which the grep had been hiding by failing earlier
+for an unrelated reason. A check that is wrong in two ways reports the first.
+
 ## Alternatives rejected
 
 **Leaving the trigger on `main` and opening a pull request to test it.** Would
@@ -114,10 +130,11 @@ where somebody would go looking.
 
 ## Evidence
 
-Run 4 (`09c543d`): **rust, minio, binaries, go, python, typescript, frontend,
-hooks, layout** all green; the conformance runner reported `34 cases: the three
-SDKs agree on all of them` inside CI. Runs 1–3 are the failures above, each
-fixed and re-run rather than reasoned about.
+Ten findings across six runs, each fixed and re-run rather than reasoned about.
+By run 5 (`2bc9e01`) nine of the eleven jobs were green — including the
+conformance runner reporting `34 cases: the three SDKs agree on all of them`
+from inside CI, and the quickstarts job running all three snippets against
+three separate nodes.
 
 `scripts/check_workspace.py` refuses a crate the root workspace does not list,
 a nested `[workspace]` marker, and a member whose manifest has gone. All three
