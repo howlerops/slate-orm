@@ -154,8 +154,12 @@ pub struct SortSpec {
 /// binding returning one of two field names depending on the query is how a
 /// UI ends up with two rendering paths that drift.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Answer {
     rows: Vec<Vec<String>>,
+    /// Milliseconds inside the kernel: planning and executing, and nothing
+    /// else. Not the time to get the answer into JavaScript — see `now_ms`.
+    kernel_ms: f64,
     plan: PlanInfo,
     /// How many rows the query actually returned, which is the number to
     /// compare against the plan's estimate.
@@ -229,6 +233,8 @@ pub struct AggregateSpec {
 struct JoinAnswer {
     /// One entry per row: the author's columns, then the book's.
     rows: Vec<Vec<String>>,
+    /// Milliseconds inside the kernel, as on [`Answer`].
+    kernel_ms: f64,
     /// Present when grouped: the key columns, then one value per aggregate.
     groups: Vec<Vec<String>>,
     returned: usize,
@@ -272,6 +278,15 @@ struct SqlResult {
     plan: Option<PlanInfo>,
     inputs: Vec<InputPlan>,
     message: String,
+    /// Milliseconds the kernel spent planning and executing this statement.
+    ///
+    /// Reported separately from whatever the page measures around the call,
+    /// because the two differ by the cost of turning rows into JSON — which
+    /// is nothing for twenty groups and most of the wall clock for a hundred
+    /// thousand rows. A panel that showed only the outer number would be
+    /// telling a reader that this database is slow at `SELECT *` when what is
+    /// slow is `serde_json`.
+    kernel_ms: f64,
     error: Option<SqlFailure>,
 }
 
@@ -294,6 +309,7 @@ impl SqlResult {
             plan: None,
             inputs: Vec::new(),
             message: String::new(),
+            kernel_ms: 0.0,
             error: None,
         }
     }
@@ -306,6 +322,35 @@ impl SqlResult {
         });
         out
     }
+}
+
+/// A monotonic millisecond clock, on both targets.
+///
+/// Exists so the workbench can report *the kernel's* time rather than the time
+/// to get an answer into JavaScript. Those are not close for a query that
+/// returns a lot of rows: `SELECT * FROM trips` spends 166 ms in this binding
+/// and 90 ms more in `JSON.parse`, and most of the 166 is `serde_json`
+/// building an 8.4 MB string — none of which is planning or executing.
+///
+/// `std::time::Instant` panics on `wasm32-unknown-unknown` (there is no clock
+/// source), so the browser's own `performance.now()` is imported instead. The
+/// native arm exists for the tests, which is the only reason this is not
+/// simply the JS call.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    #[wasm_bindgen(inline_js = "export function now() { return performance.now(); }")]
+    extern "C" {
+        fn now() -> f64;
+    }
+    now()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
 }
 
 /// One prefix of the keyspace, as the viewer shows it.
@@ -773,6 +818,7 @@ impl Playground {
         };
 
         let tables = [&authors, &books];
+        let started = now_ms();
         let (explanation, rows, groups) = block_on(async {
             let snapshot = self.store.snapshot().await?;
             match &grouping {
@@ -818,6 +864,7 @@ impl Playground {
             }
         })
         .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
 
         let rendered_groups: Vec<Vec<String>> = groups
             .iter()
@@ -864,6 +911,7 @@ impl Playground {
         ];
 
         Ok(JoinAnswer {
+            kernel_ms: elapsed,
             returned: if rendered_groups.is_empty() {
                 rows.len()
             } else {
@@ -956,6 +1004,7 @@ impl Playground {
                         out.columns = columns;
                         out.returned = answer.returned;
                         out.rows = answer.rows;
+                        out.kernel_ms = answer.kernel_ms;
                         out.plan = Some(answer.plan);
                         out.spec = spec_json;
                         out
@@ -1012,6 +1061,7 @@ impl Playground {
                             answer.groups
                         };
                         out.inputs = answer.inputs;
+                        out.kernel_ms = answer.kernel_ms;
                         out.message = answer.display;
                         out.spec = spec_json;
                         out
@@ -1137,6 +1187,7 @@ impl Playground {
         // `grouped` takes a whole `Grouping`; `group_by` takes the keys and
         // rebuilds one, and going through that is what let an earlier version
         // explain a different grouping than it ran.
+        let started = now_ms();
         let (explanation, groups) = block_on(async {
             let snapshot = self.store.snapshot().await?;
             let explanation = snapshot.explain_grouped(&self.context, table, query, &grouping)?;
@@ -1146,6 +1197,7 @@ impl Playground {
             Ok::<_, slate_kernel::KernelError>((explanation, groups))
         })
         .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
 
         let rows: Vec<Vec<String>> = groups
             .iter()
@@ -1159,6 +1211,7 @@ impl Playground {
         Ok(Answer {
             returned: rows.len(),
             rows,
+            kernel_ms: elapsed,
             plan: PlanInfo {
                 table: table.name().to_owned(),
                 access: explanation.access.to_string(),
@@ -1305,6 +1358,12 @@ impl Playground {
         // the one that ran is how an `EXPLAIN` comes to describe a plan
         // nothing executes; the kernel makes avoiding that free, so there is
         // no excuse for the other shape.
+        //
+        // The clock starts here and stops at the end of `block_on`, so it spans
+        // the snapshot, the plan and the execution — and excludes turning the
+        // rows into JSON, which for a large result is most of the wall clock
+        // and none of the database.
+        let started = now_ms();
         let (explanation, rows) = block_on(async {
             let snapshot = self.store.snapshot().await?;
             let explanation = snapshot.explain(&self.context, &table, &query)?;
@@ -1316,10 +1375,12 @@ impl Playground {
             Ok::<_, slate_kernel::KernelError>((explanation, out))
         })
         .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
 
         Ok(Answer {
             returned: rows.len(),
             rows,
+            kernel_ms: elapsed,
             plan: PlanInfo {
                 table: table.name().to_owned(),
                 access: explanation.access.to_string(),

@@ -166,11 +166,25 @@ function describeExamples() {
 function run() {
   if (!state.playground) return;
   const text = $("editor").value;
+  // Three numbers, because they are three different things and only one of
+  // them is the database:
+  //
+  //   kernel  — planning and executing, measured inside the binding
+  //   wasm    — that, plus serialising the answer to JSON
+  //   parse   — JavaScript turning that JSON back into objects
+  //
+  // For the examples on this page the last two round to nothing. For
+  // `SELECT * FROM trips` they are most of the wall clock: 166 ms of
+  // serialising and 90 ms of parsing around a scan. Showing only the outer
+  // number would say this database is slow at `SELECT *` when what is slow
+  // is the JSON.
   const started = performance.now();
   const results = JSON.parse(state.playground.sql(text));
   const took = performance.now() - started;
+  const kernel = results.reduce((a, r) => a + (r.kernelMs ?? 0), 0);
+  const marshalling = Math.max(0, took - kernel);
 
-  logAll(results, took);
+  logAll(results, kernel);
 
   const failed = results.find((r) => r.error);
   if (failed) {
@@ -185,10 +199,10 @@ function run() {
   renderRows(shown);
   renderPlan(shown);
   renderSpec(shown);
-  status(summarise(results, took));
+  status(summarise(results, kernel, marshalling));
 }
 
-function summarise(results, took) {
+function summarise(results, kernel, marshalling) {
   const last = state.shown;
   const writes = results.filter((r) => r.kind === "write").length;
   const parts = [];
@@ -196,7 +210,13 @@ function summarise(results, took) {
     parts.push(`${last.returned} row${last.returned === 1 ? "" : "s"}`);
   }
   if (writes) parts.push(`${writes} write${writes === 1 ? "" : "s"}`);
-  parts.push(`${took.toFixed(1)} ms`);
+  parts.push(`${kernel.toFixed(1)} ms`);
+  // Only mentioned when it is worth mentioning. Appending "+ 0.0 ms JSON" to
+  // every query would be noise; hiding it on the one query where it is a
+  // third of the time would be the lie this exists to avoid.
+  if (marshalling >= 1 && marshalling > kernel * 0.1) {
+    parts.push(`+ ${marshalling.toFixed(0)} ms JSON`);
+  }
   return parts.join(" · ");
 }
 
@@ -221,6 +241,15 @@ function showError(result, buffer) {
   editor.selectionStart = editor.selectionEnd = at;
 }
 
+/// How many rows the grid will build into the DOM.
+///
+/// The query is not capped — `SELECT * FROM trips` really does return 100,000
+/// rows and the status bar says so. The *table* is, because building 100,000
+/// `<tr>` takes **29.5 seconds** and freezes the tab, measured. A page that
+/// locks up for half a minute after a 114 ms query is not showing anybody how
+/// fast the query was.
+const RENDER_CAP = 1000;
+
 function renderRows(result) {
   const grid = $("grid");
   if (!result || (!result.columns.length && !result.rows.length)) {
@@ -234,7 +263,8 @@ function renderRows(result) {
   const decoded = result.plan ? new Set(result.plan.decodes) : null;
 
   const head = result.columns.map((c) => `<th>${escape(c)}</th>`).join("");
-  const body = result.rows
+  const shown = result.rows.slice(0, RENDER_CAP);
+  const body = shown
     .map((row) => {
       const cells = row
         .map((value, i) => {
@@ -250,6 +280,13 @@ function renderRows(result) {
   grid.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   if (!result.rows.length) {
     grid.innerHTML += '<div class="empty">no rows</div>';
+  } else if (result.rows.length > shown.length) {
+    // Said plainly, because a silently truncated table is a table that lies
+    // about what the query returned.
+    grid.innerHTML +=
+      `<div class="empty">showing the first ${shown.length.toLocaleString()} of ` +
+      `${result.rows.length.toLocaleString()} rows — the query returned them all, ` +
+      `the table is capped so the page stays usable</div>`;
   }
 }
 

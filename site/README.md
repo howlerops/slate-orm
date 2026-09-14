@@ -111,11 +111,37 @@ a refusal.
 ### What the panel is for
 
 The most useful thing it shows is counter-intuitive: filtering on the indexed
-`author_id` still plans as a *table scan*. On object storage a point read costs
-about as much as scanning twenty-four thousand rows, so an index that still has
-to fetch rows loses. Narrow the projection to the indexed column and the plan
-becomes an index-only scan at two-thirds the cost. Two statements, one
-observation, on the reader's own query.
+`pickup_zone` still plans as a *table scan*. On object storage a point read
+costs about as much as scanning twenty-four thousand rows, so an index that
+still has to fetch rows loses. Narrow the projection to the indexed column and
+the plan becomes an index-only scan — **3.6 ms against 43.5 ms** for the same
+4,837 rows, measured in the browser. Two statements, one observation, on the
+reader's own query.
+
+### The timing in the status bar
+
+It is the **kernel's** time — planning and executing, clocked inside the
+binding — not the round trip. The two are not close for a query that returns a
+lot of rows, so they are reported separately (medians of seven runs, headless
+Chromium, the built bytes):
+
+| query | kernel | round trip | JSON |
+|---|---:|---:|---:|
+| `WHERE id = 500` | 0.1 ms | 0.1 ms | 0% |
+| `pickup_zone = 132`, index-only | 3.6 ms | 10.6 ms | 66% |
+| the same rows, every column | 43.5 ms | 49.7 ms | 12% |
+| full scan, grouped to 226 | 38.1 ms | 38.5 ms | 1% |
+| `SELECT * FROM trips` | 130 ms | 316 ms | 59% |
+
+The status bar appends `+ N ms JSON` only when that overhead is worth
+mentioning. One number for all of these would say this database is slow at
+`SELECT *` when what is slow is `serde_json` building an 8.4 MB string and
+`JSON.parse` taking it apart again.
+
+**The grid renders at most 1,000 rows** and says so when it truncates. The
+query is not capped — the status bar still reports 100,000 — the *table* is.
+Building 100,000 `<tr>` takes **29.5 seconds** and freezes the tab, measured,
+after a query the kernel finished in 114 ms.
 
 A row from an index-only scan comes back with its unread columns as `null` —
 late materialization, not missing data — so the grid renders those cells as a

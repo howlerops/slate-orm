@@ -204,6 +204,25 @@ await page.locator('[data-tab="log"]').click();
 out.sink.logged = await page.locator('[data-app="log"] .entry').count();
 await page.locator('[data-tab="results"]').click();
 
+// 9d. The timing in the status bar is the kernel's, not the round trip.
+//     A grouped query returning 226 rows spends ~1% of its wall clock on
+//     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
+//     most of it there, so it is. One number for both would say this
+//     database is slow at `SELECT *` when what is slow is serde_json.
+// Named `timedGroup`, not `grouped`: `out.grouped` is the grouped *join*
+// several steps above, and reusing the name silently overwrote it — the join
+// check then read a trips group-by and failed on its headers.
+out.timedGroup = await type("SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone");
+out.groupedStatus = await page.locator('[data-app="status"]').innerText();
+// 100,000 rows: the query is fast and the *table* is what used to freeze the
+// tab for 29.5 seconds. The grid is capped now, so this has to come back
+// quickly and say what it truncated.
+const before100k = Date.now();
+out.everything = await type("SELECT * FROM trips");
+out.everythingMs = Date.now() - before100k;
+out.everythingStatus = await page.locator('[data-app="status"]').innerText();
+out.everythingNote = await page.locator('[data-app="grid"] .empty').innerText();
+
 // 10. The log kept every statement.
 await page.locator('[data-tab="log"]').click();
 out.log = await page.locator('[data-app="log"] .entry').count();
@@ -459,6 +478,26 @@ def main() -> int:
         and seen["sink"]["headers"][:3] == ["PICKUP_ZONE", "PASSENGERS", "COUNT(*)"]
         and len(seen["sink"]["headers"]) == 9,
         f"{seen['sink']}",
+    )
+    check(
+        "a grouped query reports its time with no JSON breakdown",
+        "ms" in seen["groupedStatus"] and "JSON" not in seen["groupedStatus"],
+        f"{seen['groupedStatus']!r}",
+    )
+    check(
+        "and a 100,000-row result separates the marshalling from the query",
+        "JSON" in seen["everythingStatus"],
+        f"{seen['everythingStatus']!r} — the JSON cost should be called out here",
+    )
+    check(
+        "a 100,000-row result does not build 100,000 rows into the page",
+        seen["everything"]["rows"] == 1000 and seen["everythingMs"] < 8000,
+        f"{seen['everything']['rows']} rows rendered in {seen['everythingMs']} ms",
+    )
+    check(
+        "and it says what it truncated rather than quietly showing less",
+        "100,000 rows" in seen["everythingNote"] and "1,000" in seen["everythingNote"],
+        f"{seen['everythingNote']!r}",
     )
     check(
         "the log keeps every statement that ran",
