@@ -1250,7 +1250,7 @@ impl Playground {
                 });
             }
         }
-        groups.sort_by(|a, b| b.keys.cmp(&a.keys));
+        groups.sort_by_key(|group| std::cmp::Reverse(group.keys));
         groups
     }
 

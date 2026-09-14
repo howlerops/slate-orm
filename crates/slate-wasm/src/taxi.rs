@@ -175,8 +175,12 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Row>, String> {
         "voided",
     ];
 
-    let mut out = Vec::with_capacity(bytes.len() / RECORD);
-    for (i, record) in bytes.chunks_exact(RECORD).enumerate() {
+    // `as_chunks` rather than `chunks_exact`: the record size is a constant, so
+    // this hands back `&[u8; RECORD]` and the length is known to the type
+    // system rather than assumed. The remainder is empty by the check above.
+    let (records, _) = bytes.as_chunks::<RECORD>();
+    let mut out = Vec::with_capacity(records.len());
+    for (i, record) in records.iter().enumerate() {
         let u16_at = |o: usize| -> u64 {
             u64::from(u16::from_le_bytes([
                 record.get(o).copied().unwrap_or(0),
