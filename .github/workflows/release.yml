@@ -1,0 +1,109 @@
+# Build the head node on a tag and attach it to a GitHub Release.
+#
+# `slate-serverd` is the only thing here that is shippable: one binary, one
+# TOML file, no runtime. The three client packages are deliberately *not*
+# published — see the note at the bottom of this file.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Buildable without tagging, so the cross-compilation can be debugged without
+  # burning a version number on it. A dispatch run uploads nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One target failing should not cancel the other: a release with one of
+      # two binaries is worth having while the second is fixed.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Cross-compilation toolchain
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p slate-serverd --bin slate-serverd
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+
+      # `--check` on the shipped binary, on the config the landing page shows.
+      # Only for the host architecture, because a cross-compiled binary cannot
+      # be run here — which is worth stating rather than leaving as an
+      # unexplained `if`.
+      - name: It starts, and validates a configuration
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          python3 - <<'PY'
+          import html, pathlib, re
+          page = pathlib.Path("site/index.html").read_text()
+          panel = re.search(
+              r'<div data-panel="toml"[^>]*>\s*<pre><code>(.*?)</code></pre>',
+              page, re.DOTALL)
+          assert panel, "site/index.html has no TOML panel"
+          pathlib.Path("release-check.toml").write_text(html.unescape(panel.group(1)))
+          PY
+          ./target/${{ matrix.target }}/release/slate-serverd --config release-check.toml --check
+
+      - name: Name it after its target
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/slate-serverd \
+             dist/slate-serverd-${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slate-serverd-${{ matrix.target }}
+          path: dist/slate-serverd-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: attach the binaries
+    needs: build
+    runs-on: ubuntu-latest
+    # A dispatch run builds and checks and stops there: releases are cut from
+    # tags, and a workflow that can publish one without a version number is a
+    # workflow that eventually does.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          # Nothing here is production-ready and the README says so; a release
+          # that does not is a release read as a promise.
+          prerelease: true
+
+# Deliberately absent: publishing `slate-client` to PyPI, `@slate-orm/client`
+# to npm, or tagging the Go module for a proxy.
+#
+# Not an oversight and not laziness. Each needs a credential this repository
+# does not hold, a name nobody has claimed, and a decision about stability that
+# has not been made — the landing page's install lines name packages that do
+# not exist anywhere, which is a thing to fix by publishing on purpose or by
+# rewording the page, not by wiring up a token and finding out.

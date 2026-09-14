@@ -1,0 +1,62 @@
+# Publish `site/` to GitHub Pages.
+#
+# Two static pages and a stylesheet with no build step, so this uploads the
+# directory as it stands. The quickstarts on those pages are *executed* by the
+# `quickstarts` job in `ci.yml` — this workflow deliberately does not repeat
+# that check, but it does depend on it having run: publishing a landing page
+# whose first code block does not work is the failure the checker exists for,
+# and it is worth saying out loud that the guard lives one workflow over.
+#
+# Requires Pages to be enabled for the repository with **Source: GitHub
+# Actions** (Settings → Pages). Without it the deploy step fails with a 404
+# rather than silently doing nothing.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# Read the repository, write a Pages deployment, and mint the OIDC token the
+# deploy action exchanges. No broader token than that.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one in flight: a half-applied
+# deploy is a site serving a mix of two versions.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A last-line check that what is about to be published is the thing that
+      # was tested: the deploy takes `site/` verbatim, so a missing file here
+      # is a 404 in production rather than a build error.
+      - name: The pages exist
+        run: |
+          for page in site/index.html site/docs.html site/style.css; do
+            [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
+          done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

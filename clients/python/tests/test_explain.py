@@ -236,3 +236,24 @@ def test_the_join_algorithm_is_spelled_the_way_the_other_clients_spell_it(
 
     assert plan.inputs[0].algorithm is None, "nothing is joined to the first input"
     assert plan.inputs[1].algorithm in {"hash", "nested loop"}, plan.inputs[1].algorithm
+
+
+def test_a_grouped_plan_can_be_asked_for_inside_a_transaction(
+    oracle_client: Client,
+) -> None:
+    """`Transaction` inherits this from the shared operations class.
+
+    Inherited and never exercised, which is why the ledger recorded it as
+    missing: reading the class list is not the same as running the code. A
+    transactional read goes to the writer and carries no freshness floor, so it
+    is a different request even though it is the same method.
+    """
+    aggregate = AggregateQuery(BOOKS)
+    aggregate.group_by(aggregate.c.author_id)
+    aggregate.aggregate(Agg.count())
+
+    with oracle_client.transaction() as tx:
+        plan = tx.explain_aggregate(aggregate)
+        assert plan.input is not None
+        assert plan.input.table == "books"
+        assert plan.display.startswith("Group by ["), plan.display

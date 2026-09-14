@@ -252,18 +252,26 @@ jobs:
       SLATE_S3_ALLOW_HTTP: "true"
     steps:
       - uses: actions/checkout@v4
-      # Started as a step rather than a service container, and on the official
-      # image rather than Bitnami's.
+      # Started as a step rather than a service container, and pulled from
+      # quay.io, which took two tries to get right.
       #
       # `bitnami/minio:latest` is what this used, and it does not exist —
-      # Bitnami withdrew those tags, so the very first run of this workflow
-      # failed on `manifest unknown` before checking anything out. The official
-      # image needs an explicit `server /data`, which the `services:` syntax
-      # cannot express, hence `docker run`.
+      # Bitnami withdrew those tags, so the workflow's first run in its life
+      # failed on `manifest unknown` before checking anything out. The obvious
+      # replacement, `minio/minio` on Docker Hub, answers `pull access denied
+      # ... repository does not exist`. quay.io is MinIO's own registry and
+      # serves it anonymously.
       #
-      # The bucket is a pre-made directory under the data volume: MinIO takes
-      # each top-level directory there as a bucket, which creates it with no
-      # client, no `mc`, and nothing to sign by hand.
+      # Pinned to a release rather than `latest`, which is the lesson the
+      # Bitnami tag taught in the other direction: an unpinned tag is one
+      # upstream decision away from vanishing, and a pinned one at least fails
+      # on the day it is removed rather than the day it changes.
+      #
+      # The official image needs an explicit `server /data`, which the
+      # `services:` syntax cannot express — hence `docker run`. The bucket is a
+      # pre-made directory under the data volume: MinIO takes each top-level
+      # directory there as a bucket, so it exists with no client, no `mc`, and
+      # nothing to sign by hand.
       - name: Start MinIO
         run: |
           mkdir -p /tmp/minio/${SLATE_S3_BUCKET}
@@ -271,7 +279,7 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
             -v /tmp/minio:/data \
-            minio/minio server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for _ in $(seq 60); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
               echo "minio is live"; exit 0

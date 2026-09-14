@@ -498,13 +498,27 @@ export class Session {
     );
   }
 
+  /** @internal */
+  explainAggregateIn(
+    aggregate: Record<string, unknown>,
+    transaction: string,
+  ): Promise<AggregateExplanation> {
+    return this.#explainAggregate(aggregate, transaction);
+  }
+
   async #explainAggregate(
     aggregate: Record<string, unknown>,
+    transaction?: string,
   ): Promise<AggregateExplanation> {
-    const r = await this.#client.call<Record<string, unknown>>("ExplainAggregate", {
-      aggregate,
-      freshness: this.#freshness(),
-    });
+    const request: Record<string, unknown> = { aggregate };
+    // A transaction's reads go to the writer and need no freshness floor —
+    // the same rule `#aggregate` follows, and for the same reason.
+    if (transaction !== undefined) request["transaction"] = transaction;
+    else request["freshness"] = this.#freshness();
+    const r = await this.#client.call<Record<string, unknown>>(
+      "ExplainAggregate",
+      request,
+    );
     this.#observeServedBy(r["servedBy"]);
     // `@grpc/proto-loader` leaves an unset message field undefined rather than
     // an empty object, so presence here is the wire's own oneof-in-spirit and
@@ -673,6 +687,25 @@ export class Transaction {
   /** Group a join inside the transaction. */
   aggregateJoin(over: JoinQuery, grouping: Grouping): GroupStream {
     return this.#session.aggregateIn(
+      applyGrouping(
+        { join: joinToWire(over, (table) => this.#client.claim(table)) },
+        grouping,
+      ),
+      this.#id,
+    );
+  }
+
+  /** The plan a grouped read would run under, inside the transaction. */
+  explainAggregate(over: Query, grouping: Grouping): Promise<AggregateExplanation> {
+    return this.#session.explainAggregateIn(
+      applyGrouping({ input: queryToWire(over, this.#client.claim(over.table)) }, grouping),
+      this.#id,
+    );
+  }
+
+  /** The plan a grouped join or chain would run under, inside the transaction. */
+  explainAggregateJoin(over: JoinQuery, grouping: Grouping): Promise<AggregateExplanation> {
+    return this.#session.explainAggregateIn(
       applyGrouping(
         { join: joinToWire(over, (table) => this.#client.claim(table)) },
         grouping,

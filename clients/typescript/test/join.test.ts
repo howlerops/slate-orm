@@ -389,3 +389,27 @@ test("explaining a grouped table answers in the input field", async () => {
   assert.equal(plan.join, undefined, "the join field stays unset for one table");
   assert.equal(plan.input.table, "books");
 });
+
+// The same plan, asked for inside a transaction.
+//
+// The ledger recorded that "no client exposes ExplainAggregate inside a
+// transaction except Go". Half wrong — Python's Transaction inherits it from
+// the shared operations class and always could — and now wrong for this one
+// too. A transactional read goes to the writer and carries no freshness
+// floor, which is the branch this exercises and the reason it is not simply
+// the same call with an id glued on.
+test("a grouped plan can be asked for inside a transaction", async () => {
+  const session = await library();
+  const tx = await session.begin();
+  try {
+    const plan = await tx.explainAggregateJoin(authorsBooks(), {
+      groupBy: [at(0, 2)],
+      aggregates: [count(), maxOf(at(1, 3))],
+    });
+    assert.ok(plan.join, "a grouped join explains as a join inside a transaction");
+    assert.equal(plan.join.inputs.length, 2);
+    assert.ok(plan.display.startsWith("Group by ["), plan.display);
+  } finally {
+    await tx.rollback();
+  }
+});
