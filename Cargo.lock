@@ -3803,6 +3803,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate-testserver"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "slate-kernel",
+ "slate-schema",
+ "slate-server",
+ "slate-tuple",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+]
+
+[[package]]
 name = "slate-tuple"
 version = "0.0.1"
 dependencies = [

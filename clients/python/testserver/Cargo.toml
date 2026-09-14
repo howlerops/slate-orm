@@ -1,19 +1,17 @@
 # A head node with a `main`, for the Python client's tests.
 #
-# This crate exists because `slate-server` ships no binary. It is a library:
-# `Head::new` plus `tonic::transport::Server`, assembled by whoever deploys it.
-# Every test in this directory is required to run against a real head node
-# rather than a mock, so something has to assemble one, and the assembly has to
-# live somewhere the Python tests may write to.
+# This crate exists because `slate-server` ships no binary and `slate-serverd`
+# — the one that does — deliberately cannot produce the arrangements these
+# tests need: a replica that will never catch up, and a lease somebody else
+# holds forever. Those belong in a fixture, not in a daemon an operator runs.
 #
-# It is deliberately NOT a member of the parent workspace. Adding it there would
-# mean editing the workspace manifest, which this work is not allowed to touch;
-# a detached workspace needs no edit outside this directory. The cost is a
-# second `Cargo.lock`, which is why the parent's is copied in by
-# `scripts/build_testserver.sh` rather than resolved afresh — two lockfiles that
-# disagree would compile two different servers and the tests would be measuring
-# whichever one they got.
-[workspace]
+# It is a member of the root workspace. It was not, once, and the reason given
+# was that the work which created it could not edit the workspace manifest.
+# That constraint is gone and the cost of the detachment was paid three times
+# in one day: `cargo test --workspace` never built this crate, so a missing
+# import, a catalog that stopped validating, and grants that predated a
+# security change all sat here broken until someone happened to run the Python
+# suite. One workspace, one lockfile, one build.
 
 [package]
 name = "slate-testserver"
@@ -23,9 +21,9 @@ publish = false
 
 [dependencies]
 slate-server = { path = "../../../crates/slate-server" }
-slate-kernel = { path = "../../../crates/slate-kernel" }
-slate-schema = { path = "../../../crates/slate-schema" }
-slate-tuple = { path = "../../../crates/slate-tuple" }
+slate-kernel.workspace = true
+slate-schema.workspace = true
+slate-tuple.workspace = true
 
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }

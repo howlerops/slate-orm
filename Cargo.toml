@@ -11,6 +11,15 @@ members = [
     "crates/slate-server",
     "crates/slate-serverd",
     "crates/slate-headbench",
+    # Not under `crates/`, because it is not part of the database: it is the
+    # Python client's test fixture, and it lives beside the tests that need it.
+    #
+    # It *is* a workspace member, and that matters. It spent its life detached,
+    # and three separate things rotted in it unnoticed — a `.map()` whose
+    # import was never added, index ids that stopped being unique per table,
+    # and grants that predated `EXPLAIN` becoming its own action. Every one was
+    # invisible because `cargo test --workspace` did not build it.
+    "clients/python/testserver",
 ]
 
 [workspace.package]
