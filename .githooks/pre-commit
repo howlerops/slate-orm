@@ -26,6 +26,55 @@ if [ -f "$(git rev-parse --git-dir)/COMMIT_EDITMSG" ] &&
     exit 0
 fi
 
+# --- a file too large to push ----------------------------------------------
+#
+# GitHub refuses any blob over 100 MB, and the refusal arrives at `git push`,
+# after the commit exists — which means rewriting history rather than amending.
+# That happened once: `git add -A` swept a nested workspace's `target/` in,
+# 2,412 files including a 102 MB binary, and the push was rejected.
+#
+# 50 MB rather than 100: a source file that large is a mistake well before it
+# is a push failure, and the message says how to proceed if it is not.
+#
+# Overridable so the hook's own test can trip it with a kilobyte instead of
+# committing 60 MB of random bytes to find out whether the guard works.
+limit=${SLATE_HOOK_SIZE_LIMIT:-52428800}
+#
+# The `if` rather than `[ ... ] && printf` is load-bearing under `set -e`: a
+# trailing `&&` whose test is false makes the loop, the pipeline, the command
+# substitution and so the assignment all exit non-zero, and the script dies
+# there — silently, with status 1, looking exactly like a rejection by a later
+# check. It did, on the very commit that added this guard.
+too_big=$(
+    git diff --cached --name-only --diff-filter=ACMR |
+    while IFS= read -r path; do
+        [ -f "$path" ] || continue
+        size=$(wc -c < "$path" 2>/dev/null || echo 0)
+        if [ "$size" -gt "$limit" ]; then
+            printf '%s (%s bytes)\n' "$path" "$size"
+        fi
+    done
+)
+if [ -n "$too_big" ]; then
+    cat >&2 <<MSG
+
+  This commit stages a file larger than $limit bytes:
+
+$(printf '%s\n' "$too_big" | sed 's/^/      /')
+
+  GitHub refuses a blob over 100 MB, and it refuses it at push time — after the
+  commit exists — so the fix then is rewriting history rather than amending.
+
+  Almost always this is build output a .gitignore does not reach: a rule like
+  \`/target\` is anchored to the repository root and does not match a nested
+  workspace's. Add the path, or \`git rm --cached\` it.
+
+  If the file genuinely belongs in the repository, \`git commit --no-verify\`.
+
+MSG
+    exit 1
+fi
+
 outside=$(printf '%s\n' "$staged" | grep -v '^ledger/' || true)
 [ -n "$outside" ] || exit 0
 

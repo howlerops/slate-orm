@@ -1,0 +1,23 @@
+# What goes into the source distribution beyond the package itself.
+#
+# setuptools puts the package, `pyproject.toml` and the README in without being
+# asked. Everything below is a file a *maintainer* picking up the sdist alone
+# would need, and which a consumer never does — the generated stubs are
+# committed, so nobody has to regenerate them to use the client.
+#
+# `tests/test_packaging.py` asserts these are here, because an sdist that
+# cannot rebuild its own generated code is a dead end that nothing else
+# notices: it installs, it imports, and it is unmaintainable.
+include scripts/generate_proto.py
+include PROTOCOL-FINDINGS.md
+
+# The `.proto` itself is *not* here, and deliberately: it lives in
+# `crates/slate-server/proto` and this package holds no copy. The generator
+# reads it from the repository, so a maintainer working from an sdist alone has
+# the script and needs the repository for the schema — which is the right
+# dependency, since a copy of the `.proto` here could drift from the server's.
+#
+# Never: the test server is a cargo crate built from the repository, and a
+# 100 MB target directory has no business in a Python sdist.
+prune testserver
+global-exclude __pycache__ *.py[co]

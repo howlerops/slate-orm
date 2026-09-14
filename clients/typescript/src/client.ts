@@ -1,8 +1,9 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { existsSync } from "node:fs";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
+
+import { directoryOf, findUpContaining } from "./paths.js";
 
 import { fromServiceError, SlateError } from "./errors.js";
 import { claimFor, type Schemas } from "./schema.js";
@@ -83,30 +84,20 @@ export interface Leadership {
 }
 
 /**
- * Where the `.proto` files are, found by walking up.
+ * Where the `.proto` files are.
  *
- * Not a fixed number of `..` segments: this module runs from `src/` in the
- * repository, from `dist/src/` once compiled, and from a package root once
- * installed, and a relative depth is correct in exactly one of those. Getting
- * it wrong fails at the first call rather than at import, which is why this
- * looks for the file rather than assuming a layout.
+ * Found by looking for the file rather than counting `..` segments: this
+ * module runs from `src/` in the repository, `dist/` once built, and a package
+ * root once installed, and a fixed depth is correct in exactly one of those.
  */
-function findProtoRoot(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    const candidate = path.join(dir, "proto");
-    if (existsSync(path.join(candidate, "slate", "v1", "records.proto"))) {
-      return candidate;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      throw new Error("slate: cannot find the bundled proto/slate/v1/records.proto");
-    }
-    dir = parent;
-  }
-}
-
-const PROTO_ROOT = findProtoRoot();
+const PROTO_ROOT = path.join(
+  findUpContaining(
+    directoryOf(import.meta.url),
+    [path.join("proto", "slate", "v1", "records.proto")],
+    "bundled proto directory",
+  ),
+  "proto",
+);
 
 // `longs: String` rather than Number: a u64 primary key above 2^53 would
 // silently lose precision, and a primary key is where that shows up latest.

@@ -9,6 +9,11 @@ clients/python/testserver/target/
 **/*.rs.bk
 
 # Python client
+# The TypeScript client compiles its tests beside the package build rather than
+# into it, so `dist/` holds exactly what ships. Neither is source.
+clients/typescript/dist/
+clients/typescript/dist-test/
+
 clients/python/**/__pycache__/
 **/__pycache__/
 clients/python/.pytest_cache/

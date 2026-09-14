@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
+import { directoryOf, findUpContaining } from "../src/paths.js";
+
 /**
  * Is this package importable the way it says it is?
  *
@@ -20,28 +22,18 @@ import { test } from "node:test";
  */
 
 /**
- * The package root, found by walking up.
+ * The package root, found by what is in it rather than by counting `..`.
  *
- * Not a fixed number of `..` segments: this file runs from `test/` in source
- * and `dist-test/test/` once compiled, so a relative depth is right in exactly
- * one of those. This is the third place in this repository that got that wrong
- * before getting it right — the harness and the proto loader were the others.
+ * This file runs from `test/` in source and `dist-test/test/` once compiled,
+ * so a relative depth is right in exactly one of those. Third place in this
+ * repository to get that wrong before getting it right — hence the shared
+ * helper.
  */
-function packageRoot(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    const manifest = path.join(dir, "package.json");
-    if (existsSync(manifest)) {
-      const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { name?: string };
-      if (parsed.name === "@slate-orm/client") return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) throw new Error("no @slate-orm/client package root found");
-    dir = parent;
-  }
-}
-
-const ROOT = packageRoot();
+const ROOT = findUpContaining(
+  directoryOf(import.meta.url),
+  ["package.json", "tsconfig.build.json"],
+  "@slate-orm/client package root",
+);
 
 test("the package's exports point at files the build produces", () => {
   const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as {

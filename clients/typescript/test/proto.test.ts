@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+import { directoryOf, findUpContaining } from "../src/paths.js";
 
 /**
  * The bundled `.proto` must match the one the server is built from.
@@ -16,23 +17,20 @@ import { test } from "node:test";
  * When this fails, copy the file across; do not edit the copy.
  */
 function repositoryRoot(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    if (existsSync(path.join(dir, "Cargo.toml")) && existsSync(path.join(dir, "crates"))) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) throw new Error("no repository root found");
-    dir = parent;
-  }
+  return findUpContaining(
+    directoryOf(import.meta.url),
+    ["Cargo.toml", "crates"],
+    "repository root",
+  );
 }
 
 test("the bundled proto matches the server's", () => {
   const root = repositoryRoot();
-  const here = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const packageRoot = existsSync(path.join(here, "proto"))
-    ? here
-    : path.join(root, "clients", "typescript");
+  const packageRoot = findUpContaining(
+    directoryOf(import.meta.url),
+    ["proto", "package.json"],
+    "package root",
+  );
 
   for (const relative of [
     path.join("slate", "v1", "records.proto"),
