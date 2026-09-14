@@ -95,6 +95,14 @@ echo "starting the go adapter on $GO_ADDR"
 (cd "$here/backends/go" && go run . --head "$HEAD_ADDR" --listen "$GO_ADDR") > "$run/go.log" 2>&1 &
 pids+=($!)
 
+# The node adapter resolves `@slate-orm/client` to a symlink into
+# `clients/typescript`, and imports its *built* `dist/`. Nothing rebuilds that
+# on its own, so a change to the client reaches the adapter only if somebody
+# remembers -- and the symptom is an adapter running yesterday's client, which
+# the conformance runner reports as the three SDKs disagreeing. It did, once.
+echo "building the typescript client the node adapter links to"
+(cd "$root/clients/typescript" && npm run build --silent)
+
 echo "starting the node adapter on $NODE_ADDR"
 (cd "$here/backends/node" && npm start --silent -- --head "$HEAD_ADDR" --listen "$NODE_ADDR") > "$run/node.log" 2>&1 &
 pids+=($!)

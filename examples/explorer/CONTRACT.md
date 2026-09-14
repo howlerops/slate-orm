@@ -98,6 +98,25 @@ Same body as `/api/query`.
 `estimatedCost` is **excluded**: it is a float the three clients may format
 differently, and the conformance runner compares text.
 
+### `POST /api/explain-aggregate`
+
+Same body as `/api/aggregate`.
+
+→ `{"inputs": [{"table": "...", "access": "...", "indexOnly": false,
+    "decodes": [0, 1], "algorithm": "hash"}, ...], "display": "Group by [...]"}`
+
+The plan of the **grouped** read, which is not the plan of the join underneath
+it. Grouping narrows each input's projection to the group keys and the
+aggregates' columns — which is what lets an index answer a `COUNT(*)` without
+reading a row — so `/api/explain` on the same join describes something else.
+
+`decodes` is where the difference shows. Wherever no index applies, narrowing
+changes what a plan decodes and nothing about how it reaches rows, so the two
+plans have the same `access` and the same `display` shape.
+
+`estimatedRows` and `estimatedCost` are **excluded**, as on `/api/explain`, for
+the same reason: floats the three clients may format differently.
+
 ### `POST /api/transaction`
 
 ```json

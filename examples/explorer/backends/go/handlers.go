@@ -119,7 +119,15 @@ func sortJoined(rows []map[string]any) {
 	sort.SliceStable(rows, func(i, j int) bool { return key(rows[i]) < key(rows[j]) })
 }
 
-func (s *server) aggregate(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+// buildAggregate turns the contract's aggregate body into the join and the
+// grouping it names.
+//
+// Shared by `aggregate` and `explainAggregate` for the same reason the kernel
+// shares its narrowing between running a grouped read and explaining one: an
+// explanation of a *different* request is worse than none, and two copies of
+// this twenty lines would diverge on the first change to either.
+func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, error) {
+	var none slate.JoinQuery
 	var spec struct {
 		GroupBy string `json:"groupBy"`
 		Having  *struct {
@@ -130,7 +138,7 @@ func (s *server) aggregate(ctx context.Context, session *slate.Session, body jso
 		Limit     *uint64 `json:"limit"`
 	}
 	if err := json.Unmarshal(body, &spec); err != nil {
-		return nil, fmt.Errorf("decoding the aggregate: %w", err)
+		return none, slate.Grouping{}, fmt.Errorf("decoding the aggregate: %w", err)
 	}
 
 	// Which column of the joined schema to group on. `decade` is not a column
@@ -144,10 +152,10 @@ func (s *server) aggregate(ctx context.Context, session *slate.Session, body jso
 	case "country":
 		key = slate.At(0, 2) // authors.country
 	case "decade":
-		return nil, fmt.Errorf(
+		return none, slate.Grouping{}, fmt.Errorf(
 			"grouping by decade needs a computed column, which this demo does not declare")
 	default:
-		return nil, fmt.Errorf("no such grouping: %s", spec.GroupBy)
+		return none, slate.Grouping{}, fmt.Errorf("no such grouping: %s", spec.GroupBy)
 	}
 
 	b := slate.NewJoin()
@@ -182,7 +190,15 @@ func (s *server) aggregate(ctx context.Context, session *slate.Session, body jso
 		{Column: slate.Key(0), Direction: slate.Asc},
 	}
 
-	stream, err := session.AggregateJoin(ctx, b.Query(), grouping)
+	return b.Query(), grouping, nil
+}
+
+func (s *server) aggregate(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	join, grouping, err := buildAggregate(body)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := session.AggregateJoin(ctx, join, grouping)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +215,48 @@ func (s *server) aggregate(ctx context.Context, session *slate.Session, body jso
 		out = append(out, entry)
 	}
 	return map[string]any{"groups": out}, nil
+}
+
+// explainAggregate is the plan of the *grouped* read, which is not the plan of
+// the join underneath it: grouping narrows each input's projection to the group
+// keys and the aggregates' columns. `decodes` is where that shows.
+func (s *server) explainAggregate(
+	ctx context.Context, session *slate.Session, body json.RawMessage,
+) (any, error) {
+	join, grouping, err := buildAggregate(body)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := session.ExplainAggregateJoin(ctx, join, grouping)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Join == nil {
+		return nil, fmt.Errorf("a grouped join explained as something other than a join")
+	}
+	inputs := make([]map[string]any, 0, len(plan.Join.Inputs))
+	for _, input := range plan.Join.Inputs {
+		inputs = append(inputs, map[string]any{
+			"table":     input.Plan.Table,
+			"access":    input.Plan.Access,
+			"indexOnly": input.Plan.IndexOnly,
+			"decodes":   decodesOf(input.Plan.Decodes),
+			"algorithm": input.Algorithm,
+		})
+	}
+	return map[string]any{"inputs": inputs, "display": plan.Display}, nil
+}
+
+// decodesOf renders a plan's decoded columns as a JSON array of numbers.
+//
+// `[]uint32(nil)` marshals to `null` and an empty slice to `[]`, and the
+// conformance runner compares the text — so a plan that decodes nothing must
+// not read as a plan that did not say.
+func decodesOf(columns []uint32) []uint32 {
+	if columns == nil {
+		return []uint32{}
+	}
+	return columns
 }
 
 func (s *server) explain(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {

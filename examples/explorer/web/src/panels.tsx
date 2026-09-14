@@ -284,6 +284,11 @@ export function Groups(props: Context): JSX.Element {
     queryFn: () => api.aggregate(props.sdk(), props.persona(), spec()),
   }));
 
+  const plan = createQuery(() => ({
+    queryKey: ["explain-aggregate", props.sdk(), props.persona(), spec()],
+    queryFn: () => api.explainAggregate(props.sdk(), props.persona(), spec()),
+  }));
+
   const bars = createMemo(() => {
     const answer = groups.data;
     if (!answer?.ok) return [];
@@ -336,6 +341,33 @@ export function Groups(props: Context): JSX.Element {
           <>
             <Bars rows={bars()} />
             <div class="note">{value.groups.length} groups</div>
+          </>
+        )}
+      </Result>
+
+      <h3 style={{ "margin-top": "18px" }}>How the database will do it</h3>
+      <p class="why">
+        The plan of the <em>grouped</em> read, which is not the plan of the join
+        underneath it. Grouping narrows each input to the group keys and the
+        aggregates&rsquo; columns — <code>decodes</code> is that list, and it is
+        the only visible difference where no index applies, because narrowing
+        changes what a row costs to read and not how it is found.
+      </p>
+      <Result answer={plan.data} pending={plan.isPending}>
+        {(value) => (
+          <>
+            <div class="badges">
+              <For each={value.inputs}>
+                {(input) => (
+                  <span class="badge" data-tone={input.indexOnly ? "good" : undefined}>
+                    {input.table} <b>{input.access}</b> decodes{" "}
+                    <b>[{input.decodes.join(", ")}]</b>
+                    {input.algorithm ? ` · ${input.algorithm}` : ""}
+                  </span>
+                )}
+              </For>
+            </div>
+            <pre>{value.display}</pre>
           </>
         )}
       </Result>

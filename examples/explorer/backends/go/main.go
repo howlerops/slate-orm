@@ -69,6 +69,7 @@ func main() {
 	mux.HandleFunc("/api/join", s.handle(s.join))
 	mux.HandleFunc("/api/aggregate", s.handle(s.aggregate))
 	mux.HandleFunc("/api/explain", s.handle(s.explain))
+	mux.HandleFunc("/api/explain-aggregate", s.handle(s.explainAggregate))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)

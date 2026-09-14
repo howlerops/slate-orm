@@ -301,9 +301,12 @@ test("a forced algorithm reaches the planner", async () => {
     return plan.inputs[1]!.algorithm;
   };
 
-  const nested = await planFor("nested-loop");
-  const hash = await planFor("hash-build-left");
-  assert.notEqual(nested, hash, `forcing changed nothing: both plans said ${nested}`);
+  // Named rather than merely different: the three clients have to spell the
+  // algorithm the same, and `notEqual` passes for any two distinct spellings —
+  // including `proto-loader`'s own `"hashBuild"`, which is what this returned
+  // while Go returned `"hash"`.
+  assert.equal(await planFor("nested-loop"), "nested loop");
+  assert.equal(await planFor("hash-build-left"), "hash");
 });
 
 // Every algorithm must return the same rows. This is the oracle the Rust suite

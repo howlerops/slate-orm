@@ -217,3 +217,22 @@ def test_a_read_grant_does_not_carry_explain_for_an_aggregate(server: Serving) -
         list(session.aggregate(aggregate))
         with pytest.raises(PermissionDenied):
             session.explain_aggregate(aggregate)
+
+
+def test_the_join_algorithm_is_spelled_the_way_the_other_clients_spell_it(
+    oracle_client: Client,
+) -> None:
+    """Three clients, one name.
+
+    This returned the raw protobuf message while Go returned `"hash"` and
+    TypeScript returned `proto-loader`'s `"hashBuild"` — three answers to one
+    question, and every client's own suite was satisfied, because each compared
+    itself to the server rather than to the others.
+    """
+    j = JoinQuery()
+    a = j.add(AUTHORS)
+    j.add(BOOKS, on=[(a.c.id, "author_id")])
+    plan = oracle_client.explain_join(j)
+
+    assert plan.inputs[0].algorithm is None, "nothing is joined to the first input"
+    assert plan.inputs[1].algorithm in {"hash", "nested loop"}, plan.inputs[1].algorithm

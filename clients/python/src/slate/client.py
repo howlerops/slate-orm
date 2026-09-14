@@ -198,6 +198,18 @@ class Explanation:
         return f"Explanation({self.display!r})"
 
 
+def _algorithm_of(wire: pb.JoinInputPlan) -> str | None:
+    """The join algorithm as a name, or `None` where the wire named none."""
+    if not wire.HasField("algorithm"):
+        return None
+    which = wire.algorithm.WhichOneof("algorithm")
+    if which == "hash_build":
+        return "hash"
+    if which == "nested_loop":
+        return "nested loop"
+    return None
+
+
 class JoinInputPlan:
     """How one input of a join will be read."""
 
@@ -206,7 +218,16 @@ class JoinInputPlan:
     def __init__(self, wire: pb.JoinInputPlan) -> None:
         self.plan = Explanation(wire.plan)
         self.join_type = wire.join_type
-        self.algorithm = wire.algorithm if wire.HasField("algorithm") else None
+        #: `"hash"`, `"nested loop"`, or `None` on the first input, which
+        #: nothing is joined to.
+        #:
+        #: A string, and *these* strings, because the three clients have to
+        #: spell it the same. This used to hand back the raw protobuf message
+        #: while Go returned `"hash"` and TypeScript returned whichever key
+        #: `proto-loader` gave the `oneof` — three answers to one question,
+        #: which is the failure the conformance runner exists to catch and
+        #: which nothing had asked either client about.
+        self.algorithm = _algorithm_of(wire)
         self.estimated_rows = wire.estimated_rows
         self.estimated_cost = wire.estimated_cost
 

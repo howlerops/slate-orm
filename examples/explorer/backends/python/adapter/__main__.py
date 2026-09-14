@@ -167,7 +167,14 @@ class Adapter:
         rows.sort(key=lambda row: json.dumps(row, sort_keys=True))
         return {"rows": rows}
 
-    def aggregate(self, session, body):
+    def _build_aggregate(self, body):
+        """The join and grouping the contract's aggregate body names.
+
+        Shared by `aggregate` and `explain_aggregate` for the same reason the
+        kernel shares its narrowing between running a grouped read and
+        explaining one: an explanation of a *different* request is worse than
+        none.
+        """
         join = JoinQuery()
         authors = join.add(AUTHORS)
         join.add(BOOKS, on=[(authors.c.id, "author_id")])
@@ -201,7 +208,10 @@ class Adapter:
         grouped.sort(direction(column), asc(grouped.key(0)))
         if body.get("limit") is not None:
             grouped.limit(int(body["limit"]))
+        return grouped
 
+    def aggregate(self, session, body):
+        grouped = self._build_aggregate(body)
         groups = []
         for group in session.aggregate(grouped):
             entry: dict[str, Any] = {"key": encode_row(list(group.key))}
@@ -210,6 +220,27 @@ class Adapter:
                 entry["count"] = encode(values[0])
             groups.append(entry)
         return {"groups": groups}
+
+    def explain_aggregate(self, session, body):
+        """The plan of the *grouped* read, which is not the plan of the join
+        underneath: grouping narrows each input's projection to the group keys
+        and the aggregates' columns. `decodes` is where that shows."""
+        plan = session.explain_aggregate(self._build_aggregate(body))
+        if plan.join is None:
+            raise ValueError("a grouped join explained as something other than a join")
+        return {
+            "inputs": [
+                {
+                    "table": input.plan.table,
+                    "access": input.plan.access,
+                    "indexOnly": input.plan.index_only,
+                    "decodes": list(input.plan.decodes),
+                    "algorithm": input.algorithm or "",
+                }
+                for input in plan.join.inputs
+            ],
+            "display": plan.display,
+        }
 
     def explain(self, session, body):
         plan = session.explain(build_query(body))
@@ -257,6 +288,7 @@ ROUTES = {
     "/api/join": "join",
     "/api/aggregate": "aggregate",
     "/api/explain": "explain",
+    "/api/explain-aggregate": "explain_aggregate",
     "/api/transaction": "transaction",
 }
 

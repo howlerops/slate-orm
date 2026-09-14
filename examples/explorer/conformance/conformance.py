@@ -147,6 +147,17 @@ CASES: list[tuple[str, str, Any, str]] = [
 
     ("a plan", "/api/explain", {"table": "books"}, "app"),
 
+    # The plan of a *grouped* read. Separate from the one above because
+    # grouping narrows each input's projection, so the two describe different
+    # reads — and `decodes` is the field that says so, since the access path is
+    # unchanged wherever no index applies.
+    ("a grouped plan", "/api/explain-aggregate",
+     {"groupBy": "author", "sort": "count", "direction": "desc"}, "app"),
+    ("a grouped plan by country", "/api/explain-aggregate",
+     {"groupBy": "country", "sort": "key", "direction": "asc"}, "app"),
+    ("a reader may not explain a grouping", "/api/explain-aggregate",
+     {"groupBy": "author"}, "reader"),
+
     ("a plan under a filter", "/api/explain",
      {"table": "books", "filter": {"op": "eq", "column": 0, "value": {"u64": "10"}}}, "app"),
 

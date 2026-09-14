@@ -39,7 +39,9 @@ import {
   SlateError,
   uint,
   type Expr,
+  type Grouping,
   type Identity,
+  type JoinQuery,
   type JoinType,
   type Ordinal,
   type Query,
@@ -112,6 +114,15 @@ function buildFilter(spec: FilterSpec | null | undefined): Expr | undefined {
     default:
       throw new Error(`no such filter operator: ${spec.op}`);
   }
+}
+
+/** The body of `/api/aggregate` and `/api/explain-aggregate`. */
+interface AggregateSpec {
+  groupBy?: string;
+  having?: { minCount: number } | null;
+  sort?: string;
+  direction?: string;
+  limit?: number;
 }
 
 interface QuerySpec {
@@ -193,16 +204,14 @@ class Adapter {
     return { rows };
   }
 
-  async aggregate(
-    session: Session,
-    body: {
-      groupBy?: string;
-      having?: { minCount: number } | null;
-      sort?: string;
-      direction?: string;
-      limit?: number;
-    },
-  ): Promise<unknown> {
+  /**
+   * The join and grouping the contract's aggregate body names.
+   *
+   * Shared by `aggregate` and `explainAggregate` for the same reason the kernel
+   * shares its narrowing between running a grouped read and explaining one: an
+   * explanation of a *different* request is worse than none.
+   */
+  #buildAggregate(body: AggregateSpec): { join: JoinQuery; grouping: Grouping } {
     let key;
     switch (body.groupBy) {
       case "author":
@@ -227,8 +236,9 @@ class Adapter {
 
     const column = body.sort === "key" ? groupKey(0) : agg(0);
     const direction = body.direction === "desc" ? ("desc" as const) : ("asc" as const);
-    const groups = await session
-      .aggregateJoin(b.query(), {
+    return {
+      join: b.query(),
+      grouping: {
         groupBy: [key],
         aggregates: [count()],
         ...(body.having ? { having: groupGe(agg(0), uint(body.having.minCount)) } : {}),
@@ -239,14 +249,40 @@ class Adapter {
           { column: groupKey(0), direction: "asc" },
         ],
         ...(body.limit !== undefined ? { limit: body.limit } : {}),
-      })
-      .collect();
+      },
+    };
+  }
+
+  async aggregate(session: Session, body: AggregateSpec): Promise<unknown> {
+    const { join, grouping } = this.#buildAggregate(body);
+    const groups = await session.aggregateJoin(join, grouping).collect();
 
     return {
       groups: groups.map((group) => ({
         key: encodeRow(group.key),
         ...(group.values[0] ? { count: encode(group.values[0]) } : {}),
       })),
+    };
+  }
+
+  /**
+   * The plan of the *grouped* read, which is not the plan of the join
+   * underneath: grouping narrows each input's projection to the group keys and
+   * the aggregates' columns. `decodes` is where that shows.
+   */
+  async explainAggregate(session: Session, body: AggregateSpec): Promise<unknown> {
+    const { join, grouping } = this.#buildAggregate(body);
+    const plan = await session.explainAggregateJoin(join, grouping);
+    if (!plan.join) throw new Error("a grouped join explained as something other than a join");
+    return {
+      inputs: plan.join.inputs.map((input) => ({
+        table: input.plan.table,
+        access: input.plan.access,
+        indexOnly: input.plan.indexOnly,
+        decodes: input.plan.decodes,
+        algorithm: input.algorithm,
+      })),
+      display: plan.display,
     };
   }
 
@@ -340,6 +376,7 @@ async function main(): Promise<void> {
     "/api/join": (s, b) => adapter.join(s, b),
     "/api/aggregate": (s, b) => adapter.aggregate(s, b),
     "/api/explain": (s, b) => adapter.explain(s, b),
+    "/api/explain-aggregate": (s, b) => adapter.explainAggregate(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

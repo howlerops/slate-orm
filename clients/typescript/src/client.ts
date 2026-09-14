@@ -929,13 +929,28 @@ export interface AggregateExplanation {
   readonly warnings: string[];
 }
 
+/**
+ * The join algorithm as a name, or `""` where the wire named none.
+ *
+ * These exact strings, because the three clients have to spell it the same.
+ * This used to return whichever key `proto-loader` gave the `oneof` —
+ * `"hashBuild"` — while Go returned `"hash"` and Python handed back the raw
+ * message. Three answers to one question, and nothing had asked.
+ */
+function algorithmName(algorithm: Record<string, unknown> | undefined): string {
+  if (!algorithm) return "";
+  if ("hashBuild" in algorithm) return "hash";
+  if ("nestedLoop" in algorithm) return "nested loop";
+  return "";
+}
+
 function joinExplanationFromWire(r: Record<string, unknown>): JoinExplanation {
   const inputs = ((r["inputs"] as Record<string, unknown>[]) ?? []).map((input) => {
     const algorithm = input["algorithm"] as Record<string, unknown> | undefined;
     return {
       plan: explanationFromWire((input["plan"] as Record<string, unknown>) ?? {}),
       type: String(input["joinType"] ?? ""),
-      algorithm: algorithm ? String(algorithm["algorithm"] ?? "") : "",
+      algorithm: algorithmName(algorithm),
       estimatedRows: Number(input["estimatedRows"] ?? 0),
       estimatedCost: Number(input["estimatedCost"] ?? 0),
     };

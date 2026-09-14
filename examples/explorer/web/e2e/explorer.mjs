@@ -254,6 +254,25 @@ try {
     await page.locator('.panel:has(h2:text-is("Grouped join")) input[type=number]').fill("0");
   });
 
+  await check("the grouped panel shows the plan of the grouped read", async () => {
+    await at(page, { panel: "groups" });
+    const panel = page.locator('.panel:has(h2:text-is("Grouped join"))');
+    const badges = await panel.locator(".badges .badge").allInnerTexts();
+    if (badges.length < 2) {
+      throw new Error(`a two-input grouped join showed ${badges.length} input plans`);
+    }
+    // `decodes` is the point of the panel: an empty list on every input means
+    // the plan came back without it, which is how the field being dropped
+    // anywhere between the kernel and the browser would look.
+    if (!badges.some((text) => /decodes \[\d/.test(text))) {
+      throw new Error(`no input reports a decoded column: ${badges.join(" | ")}`);
+    }
+    const plan = await panel.locator("pre").innerText();
+    if (!plan.startsWith("Group by [")) {
+      throw new Error(`the plan does not say what is being grouped: ${plan.slice(0, 80)}`);
+    }
+  });
+
   await check("a committed write becomes visible, a rolled-back one does not", async () => {
     await at(page, { panel: "transactions" });
     const panel = page.locator('.panel:has(h2:text-is("Transactions"))');

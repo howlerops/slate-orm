@@ -93,6 +93,21 @@ export interface Plan {
   display: string;
 }
 
+/** One input's plan inside a grouped read's explanation. */
+export interface GroupedInputPlan {
+  table: string;
+  access: string;
+  indexOnly: boolean;
+  /** The columns this input decodes — the point of the panel. */
+  decodes: number[];
+  algorithm: string;
+}
+
+export interface GroupedPlan {
+  inputs: GroupedInputPlan[];
+  display: string;
+}
+
 export interface JoinedRow {
   authors: Tagged[] | null;
   books: Tagged[] | null;
@@ -145,6 +160,18 @@ export const api = {
 
   explain: (sdk: Sdk, persona: Persona, spec: QuerySpec) =>
     call<Plan>(sdk, "/api/explain", spec, persona),
+
+  explainAggregate: (
+    sdk: Sdk,
+    persona: Persona,
+    spec: {
+      groupBy: string;
+      having?: { minCount: number } | null;
+      sort?: string;
+      direction?: string;
+      limit?: number;
+    },
+  ) => call<GroupedPlan>(sdk, "/api/explain-aggregate", spec, persona),
 
   transaction: (sdk: Sdk, persona: Persona, commit: boolean) =>
     call<{ visibleInside: boolean; visibleAfter: boolean }>(

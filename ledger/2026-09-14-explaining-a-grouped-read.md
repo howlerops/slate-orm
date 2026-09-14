@@ -148,7 +148,8 @@ right input's `decodes`. That kills it.
 The demo's `/api/explain` still explains the ungrouped read; the explorer's
 chart panel shows a grouped join and its plan panel does not describe it. The
 adapters' contract would need a field for the grouped plan, and none of the
-three implements one.
+three implements one. *(Closed by
+`2026-09-14-the-grouped-plan-in-the-demo.md`, the next commit.)*
 
 `AggregateExplainResponse.display` is the sub-plan's text with a `Group by
 [...] computing [...]` line prefixed, and that line prints ordinals and the
