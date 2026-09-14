@@ -1,9 +1,20 @@
 name: CI
 
+# Every push, not just `main`. This workflow was added months ago, triggered on
+# `main` and pull requests only, and every branch since has been a feature
+# branch with no pull request open — so it had run exactly zero times, and
+# "the repository has CI" was true of the file and of nothing else. A check
+# that never fires is a check nobody has debugged.
 on:
   push:
-    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A pull request from a branch in this repository would otherwise build twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
