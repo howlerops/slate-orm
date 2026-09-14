@@ -86,12 +86,28 @@ survivor count staying at 0 with the suppression in place.
 
 ## What this does not do
 
-**I could not reproduce the leak locally.** Runs before the fix left 0
-survivors here too; the orphans were only ever seen in CI, where the job runs
-`--conformance` and then `--e2e` back to back on a busier machine. So the fix
-is justified by the mechanism and the isolated probe, not by a local
-before-and-after — and a run that leaked here would have been better evidence
-than the one I have.
+~~I could not reproduce the leak locally.~~ **Confirmed in CI, which is where
+it happened.** The demo job on the commit before this one ended with
+
+```
+Cleaning up orphan processes
+Terminate orphan process: pid (3524) (go)
+Terminate orphan process: pid (3571) (node)
+Terminate orphan process: pid (3806) (go)
+```
+
+and on the commit carrying the fix it ends with
+
+```
+Cleaning up orphan processes
+```
+
+and nothing after it. Three orphans to none, same job, same two runs of the
+script back to back.
+
+It still could not be reproduced *locally* — runs before the fix left 0
+survivors here — which is why the isolated probe was needed to establish the
+mechanism before the CI run could confirm the cure.
 
 Nothing tests the teardown. There is no case that starts the stack, kills it
 and asserts nothing survives, so a future edit could reintroduce this and only
