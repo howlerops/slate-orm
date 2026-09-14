@@ -55,9 +55,17 @@ export const or = (...parts) => parts.length === 0
     : { wire: { disjunction: { exprs: parts.map((p) => p.wire) } } };
 /** Inverts a predicate. */
 export const not = (inner) => ({ wire: { negation: inner.wire } });
-/** A query in its wire form. */
-export function queryToWire(query) {
+/**
+ * A query in its wire form.
+ *
+ * `claim` is the caller's declaration of the table, or undefined where it has
+ * none — attached here rather than by each call site, because a read that
+ * forgets it is a read that is silently unchecked.
+ */
+export function queryToWire(query, claim) {
     const out = { table: query.table };
+    if (claim)
+        out["schema"] = claim;
     if (query.filter)
         out["filter"] = query.filter.wire;
     if (query.descending)

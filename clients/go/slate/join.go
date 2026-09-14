@@ -167,7 +167,9 @@ func (b *JoinBuilder) Query() JoinQuery { return JoinQuery{Inputs: b.inputs} }
 // Inputs is how many inputs have been added.
 func (b *JoinBuilder) Inputs() int { return len(b.inputs) }
 
-func (q JoinQuery) toProto() *pb.JoinQuery {
+// toProto renders the join. `schemas` supplies each input's declaration, so a
+// join checks every table it reads rather than none of them.
+func (q JoinQuery) toProto(schemas Schemas) *pb.JoinQuery {
 	out := &pb.JoinQuery{Offset: q.Offset, Limit: q.Limit, BuildLimit: q.BuildLimit}
 	for _, input := range q.Inputs {
 		query := Query{
@@ -178,7 +180,10 @@ func (q JoinQuery) toProto() *pb.JoinQuery {
 		if input.Filter != nil {
 			query.Filter = input.Filter
 		}
-		wire := &pb.JoinInput{Query: query.toProto(), JoinType: input.Type.wire()}
+		wire := &pb.JoinInput{
+			Query:    query.toProto(schemas.claimFor(input.Table)),
+			JoinType: input.Type.wire(),
+		}
 		for _, on := range input.On {
 			wire.On = append(wire.On, &pb.JoinOn{
 				Earlier: on.Earlier.ref(),

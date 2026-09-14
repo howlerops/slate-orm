@@ -104,8 +104,13 @@ export declare class JoinBuilder {
 }
 /** Starts a join. */
 export declare const newJoin: () => JoinBuilder;
-/** A join in its wire form. */
-export declare function joinToWire(join: JoinQuery): Record<string, unknown>;
+/**
+ * A join in its wire form.
+ *
+ * `claim` supplies each input's declaration by table name, so a join checks
+ * every table it reads rather than none of them.
+ */
+export declare function joinToWire(join: JoinQuery, claim?: (table: string) => Record<string, unknown> | undefined): Record<string, unknown>;
 /** What an aggregate computes. */
 export type AggregateFunction = "count" | "count-column" | "count-distinct" | "min" | "max" | "sum" | "avg";
 /** One computed value over a group. */

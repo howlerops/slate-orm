@@ -155,3 +155,58 @@ func TestAKeyNamingAMissingColumnDoesNotCollide(t *testing.T) {
 		t.Error("a key naming a column that does not exist hashes as ordinal 0")
 	}
 }
+
+// A *read* against a misdeclared table is refused too.
+//
+// The first version of this feature checked only the five requests with a
+// top-level `SchemaCheck` field — insert, upsert, update, delete, get — and
+// left every read unchecked. That is the larger half of the exposure: a client
+// that reads a table with its columns transposed gets transposed rows on every
+// query, which is precisely the silent corruption the check exists to stop.
+//
+// The claim rides on the `Query` message, so it covers `Query`, `Explain`,
+// `Join` and `Aggregate` alike.
+func TestAMisdeclaredTableIsRefusedOnRead(t *testing.T) {
+	server := start(t, "")
+	swapped := docsTable()
+	swapped.Columns[1], swapped.Columns[2] = swapped.Columns[2], swapped.Columns[1]
+	session := server.client(t).Declaring(slate.Schemas{"docs": swapped}).Session()
+	ctx := testContext(t)
+
+	stream, err := session.Query(ctx, slate.Query{Table: "docs"})
+	if err == nil {
+		_, err = stream.Collect()
+	}
+	if !slate.IsKind(err, slate.KindInvalidRequest) {
+		t.Errorf("a query against a misdeclared table: err = %v, want KindInvalidRequest", err)
+	}
+
+	if _, err := session.Explain(ctx, slate.Query{Table: "docs"}); !slate.IsKind(
+		err, slate.KindInvalidRequest,
+	) {
+		t.Errorf("explain against a misdeclared table: err = %v", err)
+	}
+}
+
+// And a correct declaration still reads.
+func TestACorrectDeclarationStillReads(t *testing.T) {
+	server := start(t, "")
+	session := server.client(t).Declaring(slate.Schemas{"docs": docsTable()}).Session()
+	ctx := testContext(t)
+
+	if _, err := session.Insert(ctx, "docs",
+		[]slate.Value{slate.Uint(1), slate.String("note"), slate.Int(10)}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	stream, err := session.Query(ctx, slate.Query{Table: "docs"})
+	if err != nil {
+		t.Fatalf("querying: %v", err)
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("got %d rows, want 1", len(rows))
+	}
+}

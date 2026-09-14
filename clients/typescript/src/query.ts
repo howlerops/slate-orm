@@ -123,9 +123,19 @@ export interface Query {
   readonly descending?: boolean;
 }
 
-/** A query in its wire form. */
-export function queryToWire(query: Query): Record<string, unknown> {
+/**
+ * A query in its wire form.
+ *
+ * `claim` is the caller's declaration of the table, or undefined where it has
+ * none — attached here rather than by each call site, because a read that
+ * forgets it is a read that is silently unchecked.
+ */
+export function queryToWire(
+  query: Query,
+  claim?: Record<string, unknown>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = { table: query.table };
+  if (claim) out["schema"] = claim;
   if (query.filter) out["filter"] = query.filter.wire;
   if (query.descending) out["order"] = "SCAN_ORDER_DESCENDING";
   if (query.limit !== undefined) out["limit"] = String(query.limit);

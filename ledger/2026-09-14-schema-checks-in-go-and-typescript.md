@@ -65,13 +65,24 @@ fingerprints of equal UTF-16 length and **passed under the bug**: swapping the
 prefix changed both hashes and they stayed different from each other. Pinning
 against Python's value for the same table kills it.
 
+## Addendum: reads, closed in the following commit
+
+The paragraph below originally said reads were **not** covered — that only the
+five requests with a top-level `SchemaCheck` field were checked, and a `Query`,
+`Join` or `Aggregate` carrying its claim on the `Query` message was left
+unchecked in both clients.
+
+That was the larger half of the exposure, since a client reading a transposed
+table gets transposed rows on *every* query rather than on the writes alone. It
+is closed: `Query.toProto` and `queryToWire` take the claim, so `query`,
+`explain`, `join`, `explainJoin`, `aggregate` and `aggregateJoin` all carry it,
+in both clients, inside a transaction and out. Two tests per client.
+
 ## What this does not do
 
-Only the five requests that carry a `SchemaCheck` field are checked: insert,
-upsert, update, delete and get. A `Query`, `Join` or `Aggregate` carries its
-claim on the `Query` message and neither client sets it there — so a read
-against a misdeclared table is still answered positionally-wrong. That is the
-larger half of the exposure and it is not closed here.
+Only what the wire can express. A `Get` carries its claim on the request and a
+read carries it on the `Query`; nothing carries one for a `Begin` or a
+`Commit`, which name no table.
 
 Neither client accepts a renamed column's previous spelling, which the server
 does accept. A client declaring the old name is refused where the Python client

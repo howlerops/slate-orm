@@ -162,3 +162,36 @@ test("a non-BMP column name hashes by its byte length", () => {
   };
   assert.equal(fingerprint(wide), 0x8763d37fb927fd16n);
 });
+
+/**
+ * A *read* against a misdeclared table is refused too.
+ *
+ * The first version of this checked only the five requests with a top-level
+ * `SchemaCheck` field and left every read unchecked — the larger half of the
+ * exposure, since a client reading a transposed table gets transposed rows on
+ * every query. The claim rides on the `Query` message, so it covers `query`,
+ * `explain`, `join` and `aggregate` alike.
+ */
+test("a misdeclared table is refused on read", async () => {
+  const swapped: TableDef = {
+    ...DOCS,
+    columns: [DOCS.columns[0]!, DOCS.columns[2]!, DOCS.columns[1]!],
+  };
+  const session = await declaring({ docs: swapped });
+
+  await assert.rejects(
+    () => session.query({ table: "docs" }).collect(),
+    (error: unknown) => {
+      assert.ok(isKind(error, "invalid-request"), `kind was ${(error as SlateError).kind}`);
+      return true;
+    },
+  );
+  await assert.rejects(() => session.explain({ table: "docs" }));
+});
+
+test("a correct declaration still reads", async () => {
+  const session = await declaring({ docs: DOCS });
+  await session.insert("docs", [uint(1), str("note"), int(10)]);
+  const rows = await session.query({ table: "docs" }).collect();
+  assert.equal(rows.length, 1);
+});

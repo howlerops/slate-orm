@@ -52,8 +52,13 @@ export class JoinBuilder {
 }
 /** Starts a join. */
 export const newJoin = () => new JoinBuilder();
-/** A join in its wire form. */
-export function joinToWire(join) {
+/**
+ * A join in its wire form.
+ *
+ * `claim` supplies each input's declaration by table name, so a join checks
+ * every table it reads rather than none of them.
+ */
+export function joinToWire(join, claim = () => undefined) {
     const out = {
         inputs: join.inputs.map((input, position) => {
             const query = {
@@ -63,7 +68,7 @@ export function joinToWire(join) {
                 ...(input.descending ? { descending: input.descending } : {}),
             };
             const wire = {
-                query: queryToWire(query),
+                query: queryToWire(query, claim(input.table)),
                 joinType: JOIN_TYPES[input.type ?? "inner"],
                 on: (input.on ?? []).map((on) => ({
                     earlier: columnWire(on.earlier),

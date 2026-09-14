@@ -183,8 +183,11 @@ func Limit(n uint64) *uint64 { return &n }
 // Filter is a convenience for setting [Query.Filter].
 func Filter(e Expr) *Expr { return &e }
 
-func (q Query) toProto() *pb.Query {
-	out := &pb.Query{Table: q.Table, Offset: q.Offset}
+// toProto renders the query. `claim` is the caller's declaration of the table,
+// or nil where it has none — attached here rather than by each call site,
+// because a read that forgets it is a read that is silently unchecked.
+func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
+	out := &pb.Query{Table: q.Table, Offset: q.Offset, Schema: claim}
 	if q.Filter != nil {
 		out.Filter = q.Filter.wire
 	}

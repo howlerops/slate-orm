@@ -274,7 +274,7 @@ export class Session {
     /** Read rows. */
     query(query) {
         const stream = this.#client.stream("Query", {
-            query: queryToWire(query),
+            query: queryToWire(query, this.#client.claim(query.table)),
             freshness: this.#freshness(),
         });
         return new RowStream(stream, (sb) => this.#observeServedBy(sb));
@@ -282,14 +282,14 @@ export class Session {
     /** Read joined rows. */
     join(join) {
         const stream = this.#client.stream("Join", {
-            join: joinToWire(join),
+            join: joinToWire(join, (table) => this.#client.claim(table)),
             freshness: this.#freshness(),
         });
         return new JoinStream(stream, (sb) => this.#observeServedBy(sb));
     }
     /** Group one table. */
     aggregate(over, grouping) {
-        const query = applyGrouping({ input: queryToWire(over) }, grouping);
+        const query = applyGrouping({ input: queryToWire(over, this.#client.claim(over.table)) }, grouping);
         return this.#aggregate(query, undefined);
     }
     /**
@@ -300,7 +300,7 @@ export class Session {
      * than counted here where the count could drift from the kernel's.
      */
     aggregateJoin(over, grouping) {
-        const query = applyGrouping({ join: joinToWire(over) }, grouping);
+        const query = applyGrouping({ join: joinToWire(over, (table) => this.#client.claim(table)) }, grouping);
         return this.#aggregate(query, undefined);
     }
     /** @internal */
@@ -324,7 +324,7 @@ export class Session {
      */
     async explainJoin(join) {
         const r = await this.#client.call("ExplainJoin", {
-            join: joinToWire(join),
+            join: joinToWire(join, (table) => this.#client.claim(table)),
             freshness: this.#freshness(),
         });
         this.#observeServedBy(r["servedBy"]);
@@ -355,7 +355,7 @@ export class Session {
      */
     async explain(query) {
         const r = await this.#client.call("Explain", {
-            query: queryToWire(query),
+            query: queryToWire(query, this.#client.claim(query.table)),
             freshness: this.#freshness(),
         });
         this.#observeServedBy(r["servedBy"]);
@@ -472,23 +472,23 @@ export class Transaction {
     join(join) {
         const stream = this.#client.stream("Join", {
             transaction: this.#id,
-            join: joinToWire(join),
+            join: joinToWire(join, (table) => this.#client.claim(table)),
         });
         return new JoinStream(stream, () => { });
     }
     /** Group one table inside the transaction. */
     aggregate(over, grouping) {
-        return this.#session.aggregateIn(applyGrouping({ input: queryToWire(over) }, grouping), this.#id);
+        return this.#session.aggregateIn(applyGrouping({ input: queryToWire(over, this.#client.claim(over.table)) }, grouping), this.#id);
     }
     /** Group a join inside the transaction. */
     aggregateJoin(over, grouping) {
-        return this.#session.aggregateIn(applyGrouping({ join: joinToWire(over) }, grouping), this.#id);
+        return this.#session.aggregateIn(applyGrouping({ join: joinToWire(over, (table) => this.#client.claim(table)) }, grouping), this.#id);
     }
     /** Read rows inside the transaction. */
     query(query) {
         const stream = this.#client.stream("Query", {
             transaction: this.#id,
-            query: queryToWire(query),
+            query: queryToWire(query, this.#client.claim(query.table)),
         });
         return new RowStream(stream, () => { });
     }

@@ -80,5 +80,11 @@ export interface Query {
     /** Reads the table backwards where the access path allows it. */
     readonly descending?: boolean;
 }
-/** A query in its wire form. */
-export declare function queryToWire(query: Query): Record<string, unknown>;
+/**
+ * A query in its wire form.
+ *
+ * `claim` is the caller's declaration of the table, or undefined where it has
+ * none — attached here rather than by each call site, because a read that
+ * forgets it is a read that is silently unchecked.
+ */
+export declare function queryToWire(query: Query, claim?: Record<string, unknown>): Record<string, unknown>;

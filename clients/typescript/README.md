@@ -133,6 +133,10 @@ always did. What it buys is the check. Declaring `{id, title, year}` for a table
 that is really `{id, year, title}` otherwise produces a client that reads titles
 as years, silently and forever; declared, the first request is refused.
 
+Every request naming the table carries it: writes, `get`, and reads alike —
+`query`, `explain`, `join` and the aggregates put the claim on the query, so a
+misdeclared table is refused before it can answer a transposed row.
+
 Per-table and opt-in: a table with no declaration sends no claim and behaves
 exactly as before.
 

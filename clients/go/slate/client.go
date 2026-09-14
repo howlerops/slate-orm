@@ -343,7 +343,8 @@ type RowStream struct {
 func (s *Session) Query(ctx context.Context, query Query) (*RowStream, error) {
 	ctx, cancel := context.WithCancel(s.ctx(ctx))
 	stream, err := s.client.rpc.Query(ctx, &pb.QueryRequest{
-		Query: query.toProto(), Freshness: s.freshness(),
+		Query:     query.toProto(s.client.schemas.claimFor(query.Table)),
+		Freshness: s.freshness(),
 	})
 	if err != nil {
 		cancel()
@@ -557,7 +558,8 @@ func (t *Transaction) Get(ctx context.Context, table string, key []Value) ([]Val
 func (t *Transaction) Query(ctx context.Context, query Query) (*RowStream, error) {
 	ctx, cancel := context.WithCancel(t.session.ctx(ctx))
 	stream, err := t.session.client.rpc.Query(ctx, &pb.QueryRequest{
-		Transaction: t.id, Query: query.toProto(),
+		Transaction: t.id,
+		Query:       query.toProto(t.session.client.schemas.claimFor(query.Table)),
 	})
 	if err != nil {
 		cancel()
@@ -587,7 +589,8 @@ type Explanation struct {
 // caller's policy may hide.
 func (s *Session) Explain(ctx context.Context, query Query) (*Explanation, error) {
 	response, err := s.client.rpc.Explain(s.ctx(ctx), &pb.ExplainRequest{
-		Query: query.toProto(), Freshness: s.freshness(),
+		Query:     query.toProto(s.client.schemas.claimFor(query.Table)),
+		Freshness: s.freshness(),
 	})
 	if err != nil {
 		return nil, fromRPC(err)
@@ -658,7 +661,7 @@ type JoinStream struct {
 func (s *Session) Join(ctx context.Context, join JoinQuery) (*JoinStream, error) {
 	ctx, cancel := context.WithCancel(s.ctx(ctx))
 	stream, err := s.client.rpc.Join(ctx, &pb.JoinRequest{
-		Join: join.toProto(), Freshness: s.freshness(),
+		Join: join.toProto(s.client.schemas), Freshness: s.freshness(),
 	})
 	if err != nil {
 		cancel()
@@ -671,7 +674,7 @@ func (s *Session) Join(ctx context.Context, join JoinQuery) (*JoinStream, error)
 func (t *Transaction) Join(ctx context.Context, join JoinQuery) (*JoinStream, error) {
 	ctx, cancel := context.WithCancel(t.session.ctx(ctx))
 	stream, err := t.session.client.rpc.Join(ctx, &pb.JoinRequest{
-		Transaction: t.id, Join: join.toProto(),
+		Transaction: t.id, Join: join.toProto(t.session.client.schemas),
 	})
 	if err != nil {
 		cancel()
@@ -781,7 +784,7 @@ func (s *Session) Aggregate(
 	over Query,
 	grouping Grouping,
 ) (*GroupStream, error) {
-	wire := &pb.AggregateQuery{Input: over.toProto()}
+	wire := &pb.AggregateQuery{Input: over.toProto(s.client.schemas.claimFor(over.Table))}
 	grouping.apply(wire)
 	return s.aggregate(ctx, wire, "")
 }
@@ -796,7 +799,7 @@ func (s *Session) AggregateJoin(
 	over JoinQuery,
 	grouping Grouping,
 ) (*GroupStream, error) {
-	wire := &pb.AggregateQuery{Join: over.toProto()}
+	wire := &pb.AggregateQuery{Join: over.toProto(s.client.schemas)}
 	grouping.apply(wire)
 	return s.aggregate(ctx, wire, "")
 }
@@ -807,7 +810,9 @@ func (t *Transaction) Aggregate(
 	over Query,
 	grouping Grouping,
 ) (*GroupStream, error) {
-	wire := &pb.AggregateQuery{Input: over.toProto()}
+	wire := &pb.AggregateQuery{
+		Input: over.toProto(t.session.client.schemas.claimFor(over.Table)),
+	}
 	grouping.apply(wire)
 	return t.session.aggregate(ctx, wire, t.id)
 }
@@ -818,7 +823,7 @@ func (t *Transaction) AggregateJoin(
 	over JoinQuery,
 	grouping Grouping,
 ) (*GroupStream, error) {
-	wire := &pb.AggregateQuery{Join: over.toProto()}
+	wire := &pb.AggregateQuery{Join: over.toProto(t.session.client.schemas)}
 	grouping.apply(wire)
 	return t.session.aggregate(ctx, wire, t.id)
 }
@@ -959,7 +964,7 @@ type JoinExplanation struct {
 // Needs the `explain` action on every table involved, not just one.
 func (s *Session) ExplainJoin(ctx context.Context, join JoinQuery) (*JoinExplanation, error) {
 	response, err := s.client.rpc.ExplainJoin(s.ctx(ctx), &pb.ExplainJoinRequest{
-		Join: join.toProto(), Freshness: s.freshness(),
+		Join: join.toProto(s.client.schemas), Freshness: s.freshness(),
 	})
 	if err != nil {
 		return nil, fromRPC(err)
