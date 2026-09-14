@@ -188,6 +188,22 @@ await page.locator('[data-mode="query"]').click();
 await page.waitForTimeout(200);
 out.backToQuery = await page.locator(".console").isVisible();
 
+// 9c. The kitchen sink, clicked from the sidebar like a reader would.
+//     Every example is executed by `crates/slate-wasm/tests/examples.rs`;
+//     this is the one that has to survive the *click*, because it is the only
+//     one that is two statements and the only one with a semicolon in it.
+await page.locator('.examples button:has-text("Kitchen sink")').click();
+await page.waitForTimeout(500);
+out.sink = {
+  status: await page.locator('[data-app="status"]').innerText(),
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').count(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+await page.locator('[data-tab="log"]').click();
+out.sink.logged = await page.locator('[data-app="log"] .entry').count();
+await page.locator('[data-tab="results"]').click();
+
 // 10. The log kept every statement.
 await page.locator('[data-tab="log"]').click();
 out.log = await page.locator('[data-app="log"] .entry').count();
@@ -435,6 +451,14 @@ def main() -> int:
         "and switching back returns to the query console",
         seen["backToQuery"],
         "the console did not come back",
+    )
+    check(
+        "the kitchen sink example runs when a reader clicks it",
+        seen["sink"]["refusal"] == 0
+        and seen["sink"]["rows"] == 20
+        and seen["sink"]["headers"][:3] == ["PICKUP_ZONE", "PASSENGERS", "COUNT(*)"]
+        and len(seen["sink"]["headers"]) == 9,
+        f"{seen['sink']}",
     )
     check(
         "the log keeps every statement that ran",

@@ -58,6 +58,35 @@ const EXAMPLES = [
   ],
   ["Write a row, watch the index", "INSERT INTO trips VALUES (999001, 132, 1, 1704067200, 600, 2, 5.5, 25.0, 3.0, 31.0, 'cash');\nSELECT pickup_zone FROM trips WHERE pickup_zone = 132"],
   ["The small fixture, for contrast", "SELECT * FROM books WHERE author_id = 2"],
+  [
+    "Kitchen sink",
+    "-- Everything the grammar has, in two statements.\n" +
+      "--\n" +
+      "-- One: a grouped join. The conditions are split by side, so each scan\n" +
+      "-- is narrowed before the hash join ever sees it -- look at the Plan tab.\n" +
+      "SELECT count(*), min(fare), max(total), avg(distance)\n" +
+      "  FROM zones JOIN trips ON zones.id = trips.pickup_zone\n" +
+      "  WHERE borough = 'Manhattan' AND total > 50 AND payment = 'credit card'\n" +
+      "  GROUP BY borough;\n" +
+      "\n" +
+      "-- Two: everything else at once. Six conditions over three types\n" +
+      "-- (u64, f64, text), a pattern and a regular expression, two group keys,\n" +
+      "-- seven aggregates, ordered by an aggregate and then by a key, paged.\n" +
+      "--\n" +
+      "-- It is two statements rather than one because ORDER BY and a second\n" +
+      "-- group key are not available on the join path. The grammar says so\n" +
+      "-- rather than quietly ignoring them.\n" +
+      "SELECT pickup_zone, passengers,\n" +
+      "       count(*), count(passengers), count(distinct dropoff_zone),\n" +
+      "       min(fare), max(tip), sum(total), avg(distance)\n" +
+      "  FROM trips\n" +
+      "  WHERE pickup_zone > 100 AND pickup_zone < 200\n" +
+      "    AND total > 20 AND distance < 10\n" +
+      "    AND payment LIKE 'c%' AND payment ~ '^credit'\n" +
+      "  GROUP BY pickup_zone, passengers\n" +
+      "  ORDER BY count(*) DESC, pickup_zone\n" +
+      "  LIMIT 20 OFFSET 5",
+  ],
 ];
 
 // --- the schema tree ------------------------------------------------------
