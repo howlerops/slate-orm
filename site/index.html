@@ -79,6 +79,7 @@ SELECT pickup_zone, count(*) FROM trips
       <button type="button" role="tab" data-tab="results" aria-selected="true">Results</button>
       <button type="button" role="tab" data-tab="plan" aria-selected="false">Plan</button>
       <button type="button" role="tab" data-tab="spec" aria-selected="false">Spec</button>
+      <button type="button" role="tab" data-tab="keyspace" aria-selected="false">Keyspace</button>
       <button type="button" role="tab" data-tab="log" aria-selected="false">Log</button>
     </div>
 
@@ -99,6 +100,27 @@ SELECT pickup_zone, count(*) FROM trips
           gRPC: the editor is a front end, not a second engine.
         </p>
         <pre data-app="spec"></pre>
+      </div>
+
+      <div data-pane="keyspace" class="pane" hidden>
+        <p class="note">
+          What is actually stored. Rows and secondary index entries live in
+          <b>one ordered key space</b> — there is no separate index structure —
+          and an object store has no folders, so the paths below are prefixes
+          rendered as if they were. The byte columns give that away: a
+          directory does not have a size.
+        </p>
+        <div class="keyspace" data-app="keyspace"></div>
+
+        <p class="note">
+          Those keys are not what an operator sees. SlateDB batches them into
+          SSTs, a write-ahead log and a manifest, and <em>that</em> is what
+          lands in the bucket. The listing below is a real one, taken by
+          seeding this same 100,000-trip sample into a real SlateDB store over
+          a real object store —
+          <code>cargo run -p slate-slatedb --example bucket_layout</code>.
+        </p>
+        <div class="bucket" data-app="bucket"></div>
       </div>
 
       <div data-pane="log" class="pane" hidden>

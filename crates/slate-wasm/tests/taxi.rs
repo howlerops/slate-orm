@@ -303,10 +303,22 @@ fn every_column_comes_from_the_field_the_format_says_it_does() {
         assert_eq!(number(&v[2]), u16_at(8), "dropoff_zone is bytes 8..10");
         assert_eq!(number(&v[3]), BASE + i32_at(0), "pickup_time is bytes 0..4");
         assert_eq!(number(&v[4]), u16_at(4), "duration is bytes 4..6");
-        assert!((float(&v[6]) - u16_at(11) as f64 / 100.0).abs() < 1e-9, "distance");
-        assert!((float(&v[7]) - i32_at(13) as f64 / 100.0).abs() < 1e-9, "fare");
-        assert!((float(&v[8]) - u16_at(17) as f64 / 100.0).abs() < 1e-9, "tip");
-        assert!((float(&v[9]) - i32_at(19) as f64 / 100.0).abs() < 1e-9, "total");
+        assert!(
+            (float(&v[6]) - u16_at(11) as f64 / 100.0).abs() < 1e-9,
+            "distance"
+        );
+        assert!(
+            (float(&v[7]) - i32_at(13) as f64 / 100.0).abs() < 1e-9,
+            "fare"
+        );
+        assert!(
+            (float(&v[8]) - u16_at(17) as f64 / 100.0).abs() < 1e-9,
+            "tip"
+        );
+        assert!(
+            (float(&v[9]) - i32_at(19) as f64 / 100.0).abs() < 1e-9,
+            "total"
+        );
     }
 
     // And the two zone columns really do carry different data, so a decoder

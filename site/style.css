@@ -349,3 +349,57 @@ body.app {
   .console { grid-template-rows: auto 160px auto minmax(320px, 60vh); }
   .bar .engine { display: none; }
 }
+
+/* --- the keyspace viewer -------------------------------------------------
+ *
+ * Folders, drawn from prefixes. The indentation is a lie told on purpose —
+ * there are no directories in an object store and none in the kernel either —
+ * and the byte columns are what keep it from being a lie anybody believes.
+ */
+.keyspace { padding: 4px 14px 20px; font-size: 12.5px; }
+.ks-total {
+  font-family: var(--mono); color: var(--dim); padding: 6px 0 12px;
+  border-bottom: 1px solid var(--line); margin-bottom: 12px;
+}
+.ks-space { margin-bottom: 18px; }
+.ks-caption {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dimmer); margin-bottom: 6px;
+}
+.ks-group { border-bottom: 1px solid var(--line); }
+.ks-group summary {
+  display: flex; gap: 12px; align-items: baseline; cursor: pointer;
+  padding: 6px 4px; list-style: none;
+}
+.ks-group summary::-webkit-details-marker { display: none; }
+.ks-group summary::before { content: "▸"; color: var(--dimmer); font-size: 10px; }
+.ks-group[open] summary::before { content: "▾"; }
+.ks-group summary:hover { background: var(--panel); }
+.ks-path { font-family: var(--mono); color: var(--text); flex: 1; }
+.ks-count { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
+.ks-bytes { color: var(--dimmer); font-family: var(--mono); font-size: 11.5px; }
+.ks-key {
+  display: flex; gap: 14px; padding: 3px 4px 3px 26px; align-items: baseline;
+  flex-wrap: wrap;
+}
+.ks-key code {
+  font-size: 11.5px; background: var(--panel-2); color: var(--accent);
+  padding: 1px 6px; border-radius: 4px; white-space: nowrap;
+}
+.ks-key span { color: var(--dim); font-size: 11.5px; }
+
+/* The bucket listing: a real one, captured by an example and shipped static. */
+.bucket { padding: 4px 14px 24px; font-size: 12.5px; }
+.bk-row {
+  display: flex; gap: 12px; align-items: baseline; padding: 5px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.bk-row code {
+  font-size: 11.5px; color: var(--text); background: none; padding: 0;
+  flex: 1; word-break: break-all;
+}
+.bk-kind { color: var(--dimmer); font-size: 11.5px; }
+.bk-bytes {
+  color: var(--dim); font-family: var(--mono); font-size: 11.5px;
+  white-space: nowrap; min-width: 70px; text-align: right;
+}

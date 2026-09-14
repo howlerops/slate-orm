@@ -308,6 +308,42 @@ impl SqlResult {
     }
 }
 
+/// One prefix of the keyspace, as the viewer shows it.
+///
+/// "Folder" is the right word for what a reader sees and the wrong word for
+/// what is there: an object store has no directories, and neither does the
+/// kernel. There is one ordered key space, and a prefix is a contiguous range
+/// in it. The viewer renders prefixes as folders because that is how people
+/// read paths — and the byte column is what gives the lie away, since a
+/// directory does not have a size.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyGroup {
+    /// `rows` or `index`.
+    space: String,
+    /// The path a reader sees, e.g. `rows/trips` or `index/by_pickup_zone`.
+    path: String,
+    /// Table or index name.
+    label: String,
+    /// The fixed-width id inside the key, as it appears there.
+    id: u32,
+    keys: usize,
+    key_bytes: usize,
+    value_bytes: usize,
+    /// A few real keys from this range, in order.
+    samples: Vec<KeySample>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeySample {
+    /// The key's bytes, hex, grouped as the layout describes them.
+    key: String,
+    /// What those bytes mean, decoded through the kernel's own decoder.
+    decoded: String,
+    value_bytes: usize,
+}
+
 /// A seeded kernel: two tables, an index, and the rows the site talks about.
 ///
 /// `Debug` is hand-written rather than derived: `RecordStore` holds the whole
@@ -316,6 +352,14 @@ impl SqlResult {
 #[wasm_bindgen]
 pub struct Playground {
     store: RecordStore<MemoryStore>,
+    /// A handle on the same bytes the store writes, for the keyspace viewer.
+    ///
+    /// `MemoryStore` is an `Arc` around the map, so this is the store's own
+    /// data and not a copy of it — which is the only way the viewer can be
+    /// worth anything. A snapshot taken at seed time would go stale the first
+    /// time a reader inserted a row, and showing a *stale* picture of a
+    /// keyspace is worse than showing none.
+    bytes: MemoryStore,
     context: SecurityContext,
 }
 
@@ -356,7 +400,8 @@ impl Playground {
         // catalog cannot gain a table after the store is built, and a
         // workbench whose schema tree changes shape when a download lands is
         // one where every query written before it arrived stops parsing.
-        let store = RecordStore::new(MemoryStore::new(), taxi::catalog(), security);
+        let bytes = MemoryStore::new();
+        let store = RecordStore::new(bytes.clone(), taxi::catalog(), security);
 
         // Seeded as the superuser and queried as `app`, so the playground
         // exercises the ordinary authorised path rather than the one that
@@ -390,6 +435,7 @@ impl Playground {
 
         Self {
             store,
+            bytes,
             context: SecurityContext::new(
                 Principal::new(Value::Str("reader".to_owned())).with_role("app"),
             ),
@@ -512,6 +558,18 @@ impl Playground {
             Ok(rows) => serde_json::json!({ "ok": rows }).to_string(),
             Err(message) => serde_json::json!({ "error": message }).to_string(),
         }
+    }
+
+    /// The keyspace, grouped by prefix, with real keys.
+    ///
+    /// Reads the store's own committed map, so it reflects writes the reader
+    /// has made. This is the one view in the workbench that is about *layout*
+    /// rather than about answers: a row and its index entry are two keys in
+    /// one ordered space, and until you have seen them next to each other the
+    /// sentence "index maintenance is atomic with the write" is just a claim.
+    #[must_use]
+    pub fn keyspace(&self) -> String {
+        serde_json::to_string(&self.keyspace_groups()).expect("the keyspace serialises")
     }
 
     /// Throw the database away and seed a fresh one.
@@ -1098,6 +1156,62 @@ impl Playground {
         Ok(count)
     }
 
+    /// The body of [`Playground::keyspace`].
+    fn keyspace_groups(&self) -> Vec<KeyGroup> {
+        // `entries()` clones the keys and refcounts the values, so this is a
+        // few megabytes for 200,000 entries rather than a second copy of the
+        // database. It is still the most expensive call in the binding, which
+        // is why the viewer asks for it on demand rather than on every query.
+        let entries = self.bytes.entries();
+        let tables = [
+            fixture::authors(),
+            fixture::books(),
+            taxi::trips(),
+            taxi::zones(),
+        ];
+
+        let mut groups: Vec<KeyGroup> = Vec::new();
+        for (key, value) in &entries {
+            let Some((space, id)) = header(key) else {
+                continue;
+            };
+            let (path, label, table_for_key) = describe(space, id, &tables);
+            let index = match groups.iter().position(|g| g.path == path) {
+                Some(i) => i,
+                None => {
+                    groups.push(KeyGroup {
+                        space: if space == 0x01 { "rows" } else { "index" }.to_owned(),
+                        path,
+                        label,
+                        id,
+                        keys: 0,
+                        key_bytes: 0,
+                        value_bytes: 0,
+                        samples: Vec::new(),
+                    });
+                    groups.len() - 1
+                }
+            };
+            let Some(group) = groups.get_mut(index) else {
+                continue;
+            };
+            group.keys += 1;
+            group.key_bytes += key.len();
+            group.value_bytes += value.len();
+            // Three samples per group: enough to see the prefix repeat and the
+            // suffix advance, few enough that the panel is not a hex dump.
+            if group.samples.len() < 3 {
+                group.samples.push(KeySample {
+                    key: hex(key),
+                    decoded: decode_key(space, key, table_for_key.as_ref()),
+                    value_bytes: value.len(),
+                });
+            }
+        }
+        groups.sort_by(|a, b| b.keys.cmp(&a.keys));
+        groups
+    }
+
     fn table(&self, name: &str) -> Result<TableDef, String> {
         match name {
             "authors" => Ok(fixture::authors()),
@@ -1314,6 +1428,108 @@ async fn analyze(store: &RecordStore<MemoryStore>, root: &SecurityContext) -> St
         stats = stats.with(id, txn.analyze(root, &table).await.expect("analyze"));
     }
     stats
+}
+
+/// The `<space byte><id : u32 BE>` header every key starts with.
+///
+/// Documented in `slate_kernel::keys`, and read here rather than imported
+/// because the constants are private to that module. If the layout changed,
+/// this viewer would show nonsense — which is what
+/// `the_viewer_reads_the_layout_the_kernel_writes` is for.
+fn header(key: &[u8]) -> Option<(u8, u32)> {
+    let space = *key.first()?;
+    let id = u32::from_be_bytes([*key.get(1)?, *key.get(2)?, *key.get(3)?, *key.get(4)?]);
+    Some((space, id))
+}
+
+/// Which table or index a key's header names, and what to call it.
+fn describe(space: u8, id: u32, tables: &[TableDef]) -> (String, String, Option<TableDef>) {
+    if space == 0x01 {
+        for table in tables {
+            if table.id().0 == id {
+                return (
+                    format!("rows/{}", table.name()),
+                    table.name().to_owned(),
+                    Some(table.clone()),
+                );
+            }
+        }
+        return (format!("rows/table {id}"), format!("table {id}"), None);
+    }
+    for table in tables {
+        for index in table.indexes() {
+            if index.id().0 == id {
+                return (
+                    format!("index/{}.{}", table.name(), index.name()),
+                    format!("{}.{}", table.name(), index.name()),
+                    Some(table.clone()),
+                );
+            }
+        }
+    }
+    (format!("index/{id}"), format!("index {id}"), None)
+}
+
+/// A key as hex, split into the parts the layout defines.
+///
+/// `01 00000003 | 02 000000000000007b` — the space byte, the big-endian id,
+/// then the encoded tuple. The separator is where the header ends, which is
+/// the thing worth seeing: everything after it is ordered tuple bytes, and
+/// that is why a prefix of the key is a prefix of the tuple.
+fn hex(key: &[u8]) -> String {
+    let byte = |b: &u8| format!("{b:02x}");
+    let head: String = key.iter().take(1).map(&byte).collect();
+    let id: String = key.iter().skip(1).take(4).map(&byte).collect();
+    let rest: Vec<String> = key.iter().skip(5).map(&byte).collect();
+    if rest.is_empty() {
+        return format!("{head} {id}");
+    }
+    format!("{head} {id} | {}", rest.join(""))
+}
+
+/// What a key means, through the kernel's own decoders.
+///
+/// Not a second implementation of the layout: `decode_row_key` and
+/// `decode_index_entry` are the functions the read path uses. A key this
+/// cannot decode is reported as such rather than guessed at.
+fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
+    let Some(table) = table else {
+        return "unknown table".to_owned();
+    };
+    if space == 0x01 {
+        return match slate_kernel::keys::decode_row_key(table, key) {
+            Ok(values) => {
+                let named: Vec<String> = table
+                    .primary_key()
+                    .iter()
+                    .zip(&values)
+                    .map(|(ordinal, value)| {
+                        let name = table
+                            .column(*ordinal)
+                            .map_or_else(|| ordinal.0.to_string(), |c| c.name().to_owned());
+                        format!("{name}={}", text(value))
+                    })
+                    .collect();
+                format!("{} row  {}", table.name(), named.join(", "))
+            }
+            Err(e) => format!("undecodable row key: {e}"),
+        };
+    }
+    for index in table.indexes() {
+        if let Ok((indexed, primary_key)) =
+            slate_kernel::keys::decode_index_entry(table, index, key, &[])
+        {
+            let indexed: Vec<String> = indexed.iter().map(text).collect();
+            let key_values: Vec<String> = primary_key.iter().map(text).collect();
+            return format!(
+                "{} = {}  ->  row {}",
+                index.name(),
+                indexed.join(", "),
+                key_values.join(", ")
+            );
+        }
+    }
+    "index entry".to_owned()
 }
 
 /// Header text for each aggregate: `count(*)`, `avg(total)`.

@@ -43,6 +43,11 @@ aws = ["slatedb/aws"]
 cache = ["slatedb/foyer"]
 
 [dev-dependencies]
+# For `examples/bucket_layout.rs`, which seeds the site's own taxi sample into
+# a real SlateDB bucket to show what lands in object storage. Dev-only: nothing
+# shipped by this crate depends on the browser binding.
+slate-wasm = { path = "../slate-wasm" }
+flate2 = "1"
 # For the object-store fault injector, whose trait methods return boxed streams.
 futures.workspace = true
 slate-schema.workspace = true

@@ -1,0 +1,13 @@
+[
+  { "path": "records/compacted/01M2GPGFBS7MC1HW1D7EZDNW6G.sst", "bytes": 11538479 },
+  { "path": "records/compactions/00000000000000000001.compactions", "bytes": 26 },
+  { "path": "records/compactions/00000000000000000002.compactions", "bytes": 42 },
+  { "path": "records/compactions/00000000000000000003.compactions", "bytes": 42 },
+  { "path": "records/manifest/00000000000000000001.manifest", "bytes": 130 },
+  { "path": "records/manifest/00000000000000000002.manifest", "bytes": 138 },
+  { "path": "records/manifest/00000000000000000003.manifest", "bytes": 146 },
+  { "path": "records/manifest/00000000000000000004.manifest", "bytes": 450 },
+  { "path": "records/manifest/00000000000000000005.manifest", "bytes": 450 },
+  { "path": "records/wal/00000000000000000001.sst", "bytes": 0 },
+  { "path": "records/wal/00000000000000000002.sst", "bytes": 11255018 }
+]

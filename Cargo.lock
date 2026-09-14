@@ -3812,6 +3812,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "bytes",
+ "flate2",
  "futures",
  "hyper",
  "hyper-util",
@@ -3820,6 +3821,7 @@ dependencies = [
  "slate-kernel",
  "slate-schema",
  "slate-tuple",
+ "slate-wasm",
  "slatedb",
  "tempfile",
  "tokio",

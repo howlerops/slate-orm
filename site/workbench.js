@@ -260,6 +260,98 @@ function renderPlan(result) {
     : "";
 }
 
+/// The keyspace, rendered as folders.
+///
+/// Built on demand rather than after every query: it walks every key in the
+/// store, which for 100,000 trips is 200,000 entries, and doing that on each
+/// keystroke would make the editor feel broken.
+function renderKeyspace() {
+  const box = $("keyspace");
+  if (!state.playground) return;
+  const groups = JSON.parse(state.playground.keyspace());
+  const totals = groups.reduce(
+    (a, g) => ({
+      keys: a.keys + g.keys,
+      bytes: a.bytes + g.keyBytes + g.valueBytes,
+    }),
+    { keys: 0, bytes: 0 },
+  );
+
+  const spaces = [
+    ["rows", "rows — one key per row, ordered by primary key"],
+    ["index", "index entries — one key per row per index, ordered by the indexed value"],
+  ];
+
+  let html = `<div class="ks-total">${totals.keys.toLocaleString()} keys · ${bytes(totals.bytes)} in ${groups.length} prefixes</div>`;
+  for (const [space, caption] of spaces) {
+    const mine = groups.filter((g) => g.space === space);
+    if (!mine.length) continue;
+    html += `<div class="ks-space"><div class="ks-caption">${escape(caption)}</div>`;
+    for (const group of mine) {
+      const samples = group.samples
+        .map(
+          (s) =>
+            `<div class="ks-key"><code>${escape(s.key)}</code>` +
+            `<span>${escape(s.decoded)}</span></div>`,
+        )
+        .join("");
+      html +=
+        `<details class="ks-group"><summary>` +
+        `<span class="ks-path">${escape(group.path)}</span>` +
+        `<span class="ks-count">${group.keys.toLocaleString()} keys</span>` +
+        `<span class="ks-bytes">${bytes(group.keyBytes)} keys + ${bytes(group.valueBytes)} values</span>` +
+        `</summary>${samples}</details>`;
+    }
+    html += "</div>";
+  }
+  box.innerHTML = html;
+}
+
+/// The real bucket listing, captured by `examples/bucket_layout.rs`.
+///
+/// Static, and labelled as static on the page. There is no SlateDB in the
+/// browser — the store here is a `BTreeMap` — so the alternative to shipping a
+/// real listing is describing one in prose, and a described bucket is the kind
+/// of thing that quietly stops being true.
+async function renderBucket() {
+  const box = $("bucket");
+  if (box.dataset.loaded) return;
+  try {
+    const entries = await (await fetch("data/bucket.json")).json();
+    const total = entries.reduce((a, e) => a + e.bytes, 0);
+    const rows = entries
+      .map((e) => {
+        // The SST holds the data; everything else is bookkeeping. Marking it
+        // is the difference between a file list and an explanation.
+        const kind = e.path.includes("/compacted/")
+          ? "the rows and the index entries, compacted"
+          : e.path.includes("/wal/")
+            ? "write-ahead log"
+            : e.path.includes("/manifest/")
+              ? "which SSTs are live"
+              : "compaction bookkeeping";
+        return (
+          `<div class="bk-row"><code>${escape(e.path)}</code>` +
+          `<span class="bk-kind">${escape(kind)}</span>` +
+          `<span class="bk-bytes">${bytes(e.bytes)}</span></div>`
+        );
+      })
+      .join("");
+    box.innerHTML =
+      `<div class="ks-total">${entries.length} objects · ${bytes(total)}</div>${rows}`;
+    box.dataset.loaded = "1";
+  } catch (error) {
+    box.innerHTML = `<div class="empty">the bucket listing did not load: ${escape(error)}</div>`;
+  }
+}
+
+const bytes = (n) =>
+  n >= 1 << 20
+    ? `${(n / (1 << 20)).toFixed(1)} MB`
+    : n >= 1024
+      ? `${(n / 1024).toFixed(1)} KB`
+      : `${n} B`;
+
 function renderSpec(result) {
   $("spec").textContent = JSON.stringify(result.spec, null, 2);
 }
@@ -377,7 +469,16 @@ async function boot() {
       }
     });
     for (const tab of document.querySelectorAll("[data-tab]")) {
-      tab.addEventListener("click", () => select(tab.dataset.tab));
+      tab.addEventListener("click", () => {
+        select(tab.dataset.tab);
+        // Recomputed on every visit rather than cached: the reader may have
+        // inserted a row since last time, and a keyspace view that does not
+        // move when the data does is the one thing this panel must not be.
+        if (tab.dataset.tab === "keyspace") {
+          renderKeyspace();
+          void renderBucket();
+        }
+      });
     }
 
     // The data file is fetched in parallel with the module above, so the

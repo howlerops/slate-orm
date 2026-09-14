@@ -159,6 +159,17 @@ await page.waitForTimeout(400);
 out.afterResetStatus = await page.locator('[data-app="status"]').innerText();
 out.afterReset = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 7");
 
+// 9b. The keyspace viewer: prefixes, real keys, and the real bucket listing.
+await page.locator('[data-tab="keyspace"]').click();
+await page.waitForTimeout(700);
+out.keyspaceTotal = await page.locator(".ks-total").first().innerText();
+out.keyspaceGroups = await page.locator(".ks-group summary").allInnerTexts();
+await page.locator(".ks-group").first().click();
+await page.waitForTimeout(150);
+out.keyspaceKeys = await page.locator(".ks-group").first().locator(".ks-key").allInnerTexts();
+out.bucketRows = await page.locator(".bk-row").allInnerTexts();
+await page.locator('[data-tab="results"]').click();
+
 // 10. The log kept every statement.
 await page.locator('[data-tab="log"]').click();
 out.log = await page.locator('[data-app="log"] .entry').count();
@@ -344,6 +355,34 @@ def main() -> int:
         "reset puts the fixture back",
         seen["afterReset"]["rows"] == seen["beforeWrite"]["rows"],
         f"{seen['afterReset']['rows']} rows, expected {seen['beforeWrite']['rows']}",
+    )
+    check(
+        "the keyspace viewer lists a prefix per table and per index",
+        any("rows/trips" in g for g in seen["keyspaceGroups"])
+        and any("index/trips.by_pickup_zone" in g for g in seen["keyspaceGroups"]),
+        f"{seen['keyspaceGroups']}",
+    )
+    check(
+        "an index entry is one key per row, and carries no value",
+        any(
+            "index/trips.by_pickup_zone" in g and "100,000 keys" in g and "0 B values" in g
+            for g in seen["keyspaceGroups"]
+        ),
+        f"{seen['keyspaceGroups']}",
+    )
+    check(
+        "and the keys shown are real, with the layout's own header",
+        seen["keyspaceKeys"]
+        and seen["keyspaceKeys"][0].startswith("01 00000003 | ")
+        and "trips row id=" in seen["keyspaceKeys"][0],
+        f"{seen['keyspaceKeys'][:1]}",
+    )
+    check(
+        "the bucket listing is a real one: SST, WAL and manifest",
+        any(".sst" in r and "compacted" in r for r in seen["bucketRows"])
+        and any("wal/" in r for r in seen["bucketRows"])
+        and any("manifest" in r for r in seen["bucketRows"]),
+        f"{seen['bucketRows'][:3]}",
     )
     check(
         "the log keeps every statement that ran",

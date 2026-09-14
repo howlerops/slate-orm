@@ -127,6 +127,44 @@ index answers for it in the same breath, which the browser check asserts by
 requiring the plan to still be index-only afterwards. Writes live in the tab
 only; **Reset data** puts the fixture back.
 
+### The Keyspace tab: what is actually stored
+
+Two things, and the difference between them is the point.
+
+**The keyspace** is read live from the store, so it moves when the reader
+writes. It shows one prefix per table and one per index, with real keys in hex
+and what they decode to:
+
+```
+rows/trips                  100,000 keys   814.7 KB keys + 6.5 MB values
+  01 00000003 | 1601        trips row id=1
+index/trips.by_pickup_zone  100,000 keys   1014.1 KB keys + 0 B values
+```
+
+Two things a reader can see there and nowhere else in this project. There is no
+separate index structure — the index is *more keys in the same ordered map*,
+exactly as many as there are rows. And those keys carry **no value at all**,
+because the primary key is in the key; that is what an index-only scan reads,
+and why it never touches a row.
+
+**The bucket** is a real listing, not a drawing. There is no SlateDB in a
+browser, so it was captured by seeding this same sample into a real SlateDB
+store over a real object store and walking the result:
+
+```sh
+cargo run --release -p slate-slatedb --example bucket_layout
+cargo run --release -p slate-slatedb --example bucket_layout -- --json > site/data/bucket.json
+```
+
+11 objects, 21.7 MB: one compacted SST holding the rows and the index entries,
+a write-ahead log, five manifests and three compaction records. `LocalFileSystem`
+rather than MinIO because SlateDB writes objects through `object_store` either
+way — the paths are what an S3 bucket holds, with a different scheme in front.
+
+The listing is **static and dated**: it is a snapshot of one load, and if the
+schema or the sample changes it has to be regenerated. Nothing checks that it
+is current.
+
 ## The quickstarts are checked by running them
 
 ```sh
