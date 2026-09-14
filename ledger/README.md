@@ -69,6 +69,19 @@ escape hatch gets switched off permanently the first time it blocks something
 urgent — but a bypassed commit is a commit whose reasoning is now nowhere, so
 write the entry afterwards.
 
+The hook itself has a test suite, `.githooks/test-pre-commit.sh`, and CI runs
+it on every push. It is there because the hook's own bugs are invisible from
+the outside: the first one refused *every* commit in the repository while
+printing nothing, and the second reported an entry as having a `## Why` section
+with nothing under it when the section was four sentences long. A check that is
+wrong is worse than one that is missing, because it is trusted.
+
+Note what CI does **not** do: it does not enforce the ledger. Nothing on the
+server side rejects a push whose commits have no entries — the hook is local,
+and `core.hooksPath` has to be set for it to run at all. The ledger holds
+because the people and agents working here think it is worth holding, not
+because it is impossible to skip.
+
 ## Reclaiming disk
 
 Not ledger business, but it is the note everyone needs and this is where
@@ -106,3 +119,28 @@ Not a changelog: no audience but the next person working here. Not a substitute
 for a commit message: the message says what this commit does, the entry says
 why the change exists at all and what it cost to decide. Not a place for status
 — nothing here should need updating as work proceeds.
+
+### Editing an entry after the fact: two different things
+
+That last line gets read as "never touch an old entry", and it is not quite
+that. Two cases pull in opposite directions, and the difference is whether the
+entry was *wrong when written*.
+
+**Withdraw what was false.** An entry claiming a gap that was never there, or a
+measurement that does not reproduce, is misinformation with a date on it. The
+standard in `CLAUDE.md` is explicit — withdraw the hypothesis and say that you
+did — so strike the sentence through, leave it legible, and put the correction
+beside it. Deleting it loses the more useful half: that the reasoning was made,
+and where it went wrong. Two entries carry corrections like this, one for a
+client limitation that the server never had and one for "the repository has no
+CI" when the repository had a workflow that had simply never run.
+
+**Leave what merely went out of date.** A "What this does not do" section
+describing an honest gap, closed by later work, is not wrong — it was true, and
+the entry is dated. Annotating every such section as work proceeds is exactly
+the status-tracking this file says the ledger is not, and it scales terribly:
+thirty entries all needing a footnote every time something lands. The later
+entry describing the fix is the record that it was fixed.
+
+A cross-reference on the way past is fine when it is one line and you are
+already editing the file. Going looking for them is not.

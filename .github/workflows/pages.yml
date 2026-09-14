@@ -12,12 +12,20 @@
 # rather than silently doing nothing.
 name: Pages
 
+# Every push to `main`, with no `paths` filter, and that is deliberate.
+#
+# The filter was `paths: ["site/**", ".github/workflows/pages.yml"]`, which
+# looks like an obvious saving and has a failure mode with no symptom. Creating
+# `main` did not match it — a branch-creation push has no diff to filter
+# against — so the site would not have published at all, and nothing anywhere
+# would have said so. The same shape of filter, in `release.yml`, would have
+# made a tagged release upload nothing.
+#
+# Publishing three static files costs seconds and is idempotent. A deploy that
+# silently does not happen costs a stale site nobody notices.
 on:
   push:
     branches: [main]
-    paths:
-      - "site/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 # Read the repository, write a Pages deployment, and mint the OIDC token the

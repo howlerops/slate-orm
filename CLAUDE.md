@@ -68,6 +68,40 @@ you left part of the task undone, say which part and why.
 change makes a doc comment, a README bullet or a design note wrong, fixing it is
 part of the change.
 
+## What runs, and where
+
+`main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
+branch** — thirteen jobs covering the Rust workspace, the Go, Python and
+TypeScript clients, the demo frontend, the pre-commit hook's own tests, a
+workspace-layout guard, the landing page's quickstarts, the three-SDK
+conformance runner, a browser e2e, MinIO, and the release build for both
+shipping targets.
+
+That sentence was false until recently in a way worth knowing about: the
+workflow existed, was marked active, and had run **zero times**, because it
+triggered only on `main` and pull requests while every branch was a feature
+branch with no pull request. Turning it on found eleven real defects in one
+morning. **A check that never fires is a check nobody has debugged** — which
+applies to anything you add here too.
+
+Locally, the useful subset:
+
+```sh
+cargo test -p <the crates you touched> --no-fail-fast   # see the disk note below
+cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
+sh .githooks/test-pre-commit.sh                         # the hook's own suite
+python3 scripts/check_workspace.py                      # every crate is a member
+python3 site/check/quickstarts.py                       # the landing page's code
+cd examples/explorer && ./run.sh --conformance          # the three SDKs agree
+cd examples/explorer && ./run.sh --e2e                  # the demo, in a browser
+```
+
+The client suites and the demo build `slate-serverd` with `cargo` by default.
+`SLATE_SERVERD=/path/to/slate-serverd` (and `SLATE_TESTSERVER` for the Python
+suite) points them at a prebuilt binary instead, which is how CI builds it once
+for every job and how you run a client suite with no Rust toolchain. A path
+that is set and missing is a hard error, never a silent fall back to building.
+
 ## Practical notes
 
 - `cargo fmt --all` touches other agents' in-flight files. Use
@@ -80,3 +114,16 @@ part of the change.
   hundreds of convincing, fictional compile errors.
 - `cargo test` stops at the first failing binary. Use `--no-fail-fast` before
   concluding how much is broken.
+- **A skip is green.** The Python harness used to *skip* its whole suite when
+  `cargo` was absent, which in CI reads as a passing suite that started no
+  server and exercised nothing. Prefer a hard error to a skip whenever the
+  thing being skipped is the point.
+- **A workflow filter that does not match is silent.** `paths:` beside `tags:`
+  in a `push` trigger adds no branch pushes *and* would stop a tagged release
+  publishing; a `paths:` filter also does not match when a branch is created,
+  which would have meant the site never deployed at all. Both are written up in
+  the workflow files. Prefer running something cheap unconditionally.
+- **Pin anything that generates committed code.** `grpcio-tools` was declared
+  `>=`, so the test that regenerates the Python protobuf stubs and compares
+  them byte for byte was pinned to upstream's release calendar. It went red
+  with nothing changed in the repository.

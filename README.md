@@ -11,9 +11,11 @@ the keyspace, index maintenance, and the point where access policy is enforced.
 > **Status: early.** The Rust record layer works end to end and is tested,
 > including a cost-based planner, index-only scans, joins, aggregates, read
 > replicas and S3-compatible storage. There is a gRPC head node with writer
-> leadership, and a typed Python client over it in
-> [`clients/python`](clients/python). The Go and TypeScript SDKs are not built.
-> See [Status](#status).
+> leadership, and typed [Python](clients/python), [Go](clients/go) and
+> [TypeScript](clients/typescript) clients over it, each tested against a real
+> daemon and required to agree with the other two. Everything below runs in CI
+> on every push. Nothing here is published to a package registry and none of it
+> is production-ready. See [Status](#status).
 
 ```rust
 use slate_orm::{Aggregate, Expr, Query, Record, Records, SortKey, Value};
@@ -66,8 +68,9 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-server` | gRPC head node, writer leadership over an object-store lease |
 | `slate-serverd` | The head node as a binary: one TOML file, no Rust to start it |
 | `slate-headbench` | Benchmarks for the head node, against a real one over a socket |
+| `slate-testserver` | The Python client's fixture daemon. Lives at `clients/python/testserver`, beside the tests that need it, and is a workspace member because three separate things rotted in it while it was not |
 
-Outside the workspace:
+Not Rust, and not in the workspace:
 
 | directory | what it is |
 |---|---|
@@ -664,10 +667,13 @@ Built and tested:
       workspace, the three client suites, the demo frontend, the pre-commit
       hook's own tests, a workspace-layout guard, the landing page's
       quickstarts, and the conformance runner and a browser e2e over all three
-      SDKs. Its first four runs found eight real defects, three of which exist
-      only away from a developer's machine: a withdrawn Docker tag, a `--bin`
-      filter that silently skipped a binary, a checker leaning on ambient
-      installs, and a readiness grep defeated by ANSI colour. Deploys: Pages
+      SDKs. Getting it green found **eleven** real defects, several of which
+      exist only away from a developer's machine: two withdrawn or unreachable
+      Docker images, a `--bin` filter that silently skipped a binary, a checker
+      leaning on ambient installs, a readiness grep defeated by ANSI colour, a
+      server bound to `::1` while everything asked `127.0.0.1`, a test harness
+      that *skipped* — green — when `cargo` was missing, and committed protobuf
+      stubs regenerating differently under an unpinned generator. Deploys: Pages
       publishes `site/` from `main`, and a tag builds `slate-serverd` for two
       targets and attaches them. The release *build* — both targets, the
       aarch64 cross toolchain, and `--check` on the shipped binary against the
@@ -790,6 +796,21 @@ Not built:
       out, and the plan chosen is unchanged in every shape tested, so this is
       not currently worth fixing
       (`cargo run --release -p slate-kernel --example correlation`)
+- [ ] Publishing. `slate-client` is not on PyPI and `@slate-orm/client` is not
+      on npm; the landing page says so and installs them by path. Each needs a
+      credential, a name nobody has claimed, and a decision about stability
+      that has not been made, and wiring up a token to find out is the wrong
+      order. The Go client needs no registry — a module path is its import
+      path — and works today
+- [ ] The release upload itself. `release-build.yml` runs on every push, so
+      both targets, the aarch64 cross toolchain and `--check` on the shipped
+      binary are exercised continuously; the `softprops/action-gh-release` step
+      in `release.yml` needs a real `v*` tag and has never run. It is the last
+      thing here still in the state this project spent a morning getting out of:
+      written, plausible, never executed
+- [ ] GitHub Pages, until somebody turns it on. `pages.yml` publishes `site/`
+      from `main`, and the repository setting (Settings → Pages → Source:
+      GitHub Actions) is not something a workflow can set for itself
 
 ## License
 
