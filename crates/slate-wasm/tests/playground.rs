@@ -428,3 +428,235 @@ fn reset_restores_the_fixture() {
         "a fresh database, not the reader's wreckage"
     );
 }
+
+/// Two conditions, and the planner splitting them.
+///
+/// The interesting property is not that `AND` narrows the result — any filter
+/// does. It is that the planner treats the conjuncts *differently*: the one on
+/// the indexed column can become a scan bound, and the rest stay a residual
+/// predicate evaluated per row. The plan reports the residual, so the split is
+/// visible rather than inferred.
+#[test]
+fn several_conditions_are_anded_and_the_plan_names_what_stays_residual() {
+    let playground = Playground::new();
+
+    let both = run(
+        &playground,
+        json!({
+            "table": "books",
+            "filters": [
+                { "column": 1, "op": "eq", "value": "1" },
+                { "column": 3, "op": "gt", "value": "1970" },
+            ],
+        }),
+    );
+
+    // Le Guin's books after 1970: The Dispossessed (1974), The Lathe of
+    // Heaven (1971), Tehanu (1990). Not Earthsea (1968) or Left Hand (1969).
+    let years: Vec<i64> = rows(&both)
+        .iter()
+        .map(|row| row[3].as_str().expect("a year").parse().expect("a number"))
+        .collect();
+    assert_eq!(years.len(), 3, "got {years:?}");
+    assert!(
+        years.iter().all(|y| *y > 1970),
+        "every row satisfies both: {years:?}"
+    );
+
+    // The control: each condition alone returns more, so the conjunction is
+    // doing work rather than one condition being ignored.
+    let author_only = run(
+        &playground,
+        json!({ "table": "books", "filters": [{ "column": 1, "op": "eq", "value": "1" }] }),
+    );
+    assert_eq!(
+        rows(&author_only).len(),
+        5,
+        "author 1 has five books in total"
+    );
+
+    let residual = both["plan"]["residual"].as_str().expect("a residual");
+    assert!(
+        !residual.is_empty(),
+        "at least one conjunct stays a per-row predicate; the plan should say so"
+    );
+}
+
+/// The single `filter` form still works, because the panel shipped with it.
+#[test]
+fn one_filter_and_a_list_of_one_agree() {
+    let playground = Playground::new();
+    let single = run(
+        &playground,
+        json!({ "table": "books", "filter": { "column": 1, "op": "eq", "value": "4" } }),
+    );
+    let listed = run(
+        &playground,
+        json!({ "table": "books", "filters": [{ "column": 1, "op": "eq", "value": "4" }] }),
+    );
+    assert_eq!(single["returned"], listed["returned"]);
+    assert_eq!(single["plan"]["access"], listed["plan"]["access"]);
+}
+
+#[test]
+fn a_contradiction_returns_nothing_rather_than_erroring() {
+    let playground = Playground::new();
+    let answer = run(
+        &playground,
+        json!({
+            "table": "books",
+            "filters": [
+                { "column": 1, "op": "eq", "value": "1" },
+                { "column": 1, "op": "eq", "value": "2" },
+            ],
+        }),
+    );
+    assert_eq!(rows(&answer).len(), 0, "no book has two authors");
+}
+
+fn joined(playground: &Playground, spec: Json) -> Json {
+    let text = playground.join(&spec.to_string());
+    let answer: Json = serde_json::from_str(&text).expect("the binding returns JSON");
+    assert!(answer.get("error").is_none(), "unexpected error: {answer}");
+    answer
+}
+
+#[test]
+fn a_join_pairs_each_book_with_its_author() {
+    let playground = Playground::new();
+    let answer = joined(
+        &playground,
+        json!({ "authors": [{ "column": 0, "op": "eq", "value": "1" }] }),
+    );
+
+    let rows = answer["rows"].as_array().expect("rows");
+    assert_eq!(rows.len(), 5, "author 1 has five books");
+    for row in rows {
+        // authors.id, authors.name, authors.country, authors.born,
+        // then books.id, books.author_id, books.title, books.year.
+        assert_eq!(row[0], json!("1"), "every row carries the author asked for");
+        assert_eq!(row[5], json!("1"), "and the book's author_id agrees");
+        assert_eq!(row[1], json!("Ursula K. Le Guin"));
+    }
+
+    assert_eq!(answer["inputs"].as_array().expect("inputs").len(), 2);
+    assert!(
+        answer["display"].as_str().expect("a plan").contains("Join"),
+        "got {}",
+        answer["display"]
+    );
+}
+
+/// Grouping, checked against a fold done here rather than against the kernel.
+///
+/// An aggregate test that asks the kernel for a count and then asks it again a
+/// different way is checking self-consistency. This counts the fixture's own
+/// rows in Rust and requires the grouped read to match, which is the shape the
+/// kernel's own `aggregate_oracle` uses and the only one that catches a
+/// grouping that is wrong in a self-consistent way.
+#[test]
+fn a_grouped_join_agrees_with_counting_the_fixture_by_hand() {
+    use std::collections::BTreeMap;
+
+    let playground = Playground::new();
+    let answer = joined(
+        &playground,
+        json!({
+            "authors": [{ "column": 2, "op": "eq", "value": "US" }],
+            "groupBy": 2,
+            "aggregates": [{ "kind": "count" }],
+        }),
+    );
+
+    // The oracle: which authors are in the US, then how many books they have.
+    let us: std::collections::BTreeSet<u64> = slate_wasm::fixture::author_rows()
+        .iter()
+        .filter(|row| matches!(row.values().get(2), Some(v) if format!("{v:?}").contains("US")))
+        .filter_map(|row| match row.values().first() {
+            Some(slate_tuple::Value::U64(id)) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut expected: BTreeMap<String, usize> = BTreeMap::new();
+    for book in slate_wasm::fixture::book_rows() {
+        if let Some(slate_tuple::Value::U64(author)) = book.values().get(1)
+            && us.contains(author)
+        {
+            *expected.entry("US".to_owned()).or_default() += 1;
+        }
+    }
+
+    let groups = answer["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1, "one country was asked for");
+    let counted: usize = groups[0][1]
+        .as_str()
+        .expect("a count")
+        .parse()
+        .expect("a number");
+    assert_eq!(
+        counted, expected["US"],
+        "the grouped join disagrees with counting the fixture directly"
+    );
+}
+
+#[test]
+fn a_grouped_join_can_compute_min_and_max_over_the_book_side() {
+    let playground = Playground::new();
+    let answer = joined(
+        &playground,
+        json!({
+            "authors": [{ "column": 0, "op": "eq", "value": "1" }],
+            "groupBy": 1,
+            "aggregates": [
+                { "kind": "count" },
+                { "kind": "min", "column": 3 },
+                { "kind": "max", "column": 3 },
+            ],
+        }),
+    );
+
+    let groups = answer["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1);
+    let row = groups[0].as_array().expect("a group");
+    assert_eq!(row[0], json!("Ursula K. Le Guin"), "grouped by author name");
+    assert_eq!(row[1], json!("5"), "five books");
+    // Earthsea 1968 is the earliest, Tehanu 1990 the latest.
+    assert_eq!(row[2], json!("1968"), "min(year)");
+    assert_eq!(row[3], json!("1990"), "max(year)");
+}
+
+/// Grouping changes the plan, not just the shape of the answer.
+#[test]
+fn grouping_narrows_what_each_input_decodes() {
+    let playground = Playground::new();
+    let filter = json!([{ "column": 0, "op": "eq", "value": "1" }]);
+
+    let plain = joined(&playground, json!({ "authors": filter.clone() }));
+    let grouped = joined(
+        &playground,
+        json!({ "authors": filter, "groupBy": 0, "aggregates": [{ "kind": "count" }] }),
+    );
+
+    let books_plain = plain["inputs"][1]["decodes"].as_array().expect("decodes");
+    let books_grouped = grouped["inputs"][1]["decodes"].as_array().expect("decodes");
+    assert!(
+        books_grouped.len() < books_plain.len(),
+        "a count(*) does not need every book column: {books_plain:?} vs {books_grouped:?}"
+    );
+}
+
+#[test]
+fn an_unknown_aggregate_is_refused_by_name() {
+    let playground = Playground::new();
+    let text = playground.join(
+        &json!({ "groupBy": 0, "aggregates": [{ "kind": "median", "column": 3 }] }).to_string(),
+    );
+    let answer: Json = serde_json::from_str(&text).expect("JSON");
+    assert!(
+        answer["error"]
+            .as_str()
+            .expect("a refusal")
+            .contains("median"),
+        "got {answer}"
+    );
+}

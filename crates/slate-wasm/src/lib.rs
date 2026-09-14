@@ -44,7 +44,8 @@ pub mod fixture;
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use slate_kernel::{
-    CmpOp, Expr, Query, RecordStore, ScanOrder, SortKey,
+    Aggregate, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey, Query, RecordStore, ScanOrder,
+    SortKey,
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
@@ -76,7 +77,13 @@ struct ColumnInfo {
 #[serde(default, rename_all = "camelCase")]
 struct QuerySpec {
     table: String,
+    /// One condition, kept for the shape the panel started with.
     filter: Option<FilterSpec>,
+    /// Several, ANDed. Where this gets interesting is that the planner does
+    /// not treat them alike: one conjunct may become a scan bound and the
+    /// rest stay a residual predicate evaluated per row, and the plan says
+    /// which is which.
+    filters: Vec<FilterSpec>,
     sort: Vec<SortSpec>,
     limit: Option<u64>,
     offset: u64,
@@ -127,6 +134,60 @@ struct PlanInfo {
     residual: String,
     decodes: Vec<u32>,
     display: String,
+}
+
+/// What the UI sends for a join or a grouped join.
+///
+/// The join is always `books.author_id = authors.id` — the only one the
+/// fixture has, and hard-coding it keeps the panel from offering key choices
+/// that produce nothing. What varies is the filter on each side, and whether
+/// the result is grouped.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct JoinSpec {
+    /// Conditions on `authors`, ANDed.
+    authors: Vec<FilterSpec>,
+    /// Conditions on `books`, ANDed.
+    books: Vec<FilterSpec>,
+    /// Group by this column of `authors` (ordinal in the *authors* table).
+    /// Absent means return joined rows rather than groups.
+    group_by: Option<u32>,
+    /// `count`, and optionally `min`/`max` over a `books` column.
+    aggregates: Vec<AggregateSpec>,
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AggregateSpec {
+    kind: String,
+    /// Ordinal within `books`, ignored by `count`.
+    #[serde(default)]
+    column: u32,
+}
+
+/// Joined rows, or groups, with the plan for either.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JoinAnswer {
+    /// One entry per row: the author's columns, then the book's.
+    rows: Vec<Vec<String>>,
+    /// Present when grouped: the key columns, then one value per aggregate.
+    groups: Vec<Vec<String>>,
+    returned: usize,
+    /// One per input, in the order the join reads them.
+    inputs: Vec<InputPlan>,
+    display: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InputPlan {
+    table: String,
+    access: String,
+    index_only: bool,
+    decodes: Vec<u32>,
+    algorithm: String,
 }
 
 /// A seeded kernel: two tables, an index, and the rows the site talks about.
@@ -282,6 +343,22 @@ impl Playground {
         }
     }
 
+    /// Join `authors` to `books`, and optionally group the result.
+    ///
+    /// Grouped and ungrouped go through one entry point because the plan for
+    /// the two is *not* the same and the difference is the point: grouping
+    /// narrows each input's projection to the group keys and the aggregates'
+    /// columns, so a `count(*)` per author can be answered without reading a
+    /// book row at all. Two entry points would let the panel show the wrong
+    /// one beside the right rows.
+    #[must_use]
+    pub fn join(&self, spec: &str) -> String {
+        match self.joined(spec) {
+            Ok(answer) => serde_json::to_string(&answer).expect("the answer serialises"),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
+
     /// Throw the database away and seed a fresh one.
     ///
     /// The panel needs this because a reader who deletes half the fixture and
@@ -385,6 +462,154 @@ impl Playground {
         })
     }
 
+    /// The body of [`Playground::join`].
+    fn joined(&self, spec: &str) -> Result<JoinAnswer, String> {
+        let spec: JoinSpec = serde_json::from_str(spec).map_err(|e| e.to_string())?;
+        let authors = fixture::authors();
+        let books = fixture::books();
+
+        // `authors.id = books.author_id`. The left table is `authors`, so the
+        // joined row is the author's columns followed by the book's, and a
+        // group key of `authors.country` is ordinal 2 in both spaces.
+        let mut join = Join::on([JoinKey::new(Ordinal(0), Ordinal(1))]);
+        join.left = conditions(&spec.authors, &authors)?;
+        join.right = conditions(&spec.books, &books)?;
+        if let Some(limit) = spec.limit {
+            join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
+
+        let grouping = match spec.group_by {
+            None => None,
+            Some(key) => {
+                let mut aggregates = Vec::with_capacity(spec.aggregates.len());
+                for wanted in &spec.aggregates {
+                    // A `books` ordinal has to be shifted into the joined
+                    // row's space, which begins after every `authors` column.
+                    // This is exactly the arithmetic `ColumnRef` exists to
+                    // remove in the clients, and doing it by hand here is the
+                    // reason the tests below check a `max(year)` against a
+                    // value computed independently.
+                    let shifted = Ordinal(authors.columns().len() + wanted.column as usize);
+                    aggregates.push(match wanted.kind.as_str() {
+                        "count" => Aggregate::Count,
+                        "min" => Aggregate::Min(shifted),
+                        "max" => Aggregate::Max(shifted),
+                        "sum" => Aggregate::Sum(shifted),
+                        "avg" => Aggregate::Avg(shifted),
+                        other => return Err(format!("no such aggregate: {other}")),
+                    });
+                }
+                if aggregates.is_empty() {
+                    aggregates.push(Aggregate::Count);
+                }
+                Some(Grouping::by([Ordinal(key as usize)], &aggregates))
+            }
+        };
+
+        let tables = [&authors, &books];
+        let (explanation, rows, groups) = block_on(async {
+            let snapshot = self.store.snapshot().await?;
+            match &grouping {
+                Some(grouping) => {
+                    let explanation = snapshot.explain_grouped_join(
+                        &self.context,
+                        &authors,
+                        &books,
+                        &join,
+                        grouping,
+                    )?;
+                    let groups = snapshot
+                        .group_by_join(&self.context, &authors, &books, &join, grouping)
+                        .await?;
+                    Ok::<_, slate_kernel::KernelError>((explanation, Vec::new(), groups))
+                }
+                None => {
+                    let explanation =
+                        snapshot.explain_join(&self.context, &authors, &books, &join)?;
+                    let mut cursor = snapshot
+                        .join(&self.context, &authors, &books, &join)
+                        .await?;
+                    let mut out = Vec::new();
+                    while let Some(row) = cursor.next().await? {
+                        let mut line = Vec::new();
+                        for side in [&row.left, &row.right] {
+                            match side {
+                                Some(values) => line.extend(render(values)),
+                                // An outer join's missing side. Inner joins
+                                // never produce one, but rendering it as text
+                                // rather than skipping keeps the columns
+                                // aligned with the header.
+                                None => line.extend(std::iter::repeat_n(
+                                    "—".to_owned(),
+                                    tables[0].columns().len(),
+                                )),
+                            }
+                        }
+                        out.push(line);
+                    }
+                    Ok((explanation, out, Vec::new()))
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+        let rendered_groups: Vec<Vec<String>> = groups
+            .iter()
+            .map(|group| {
+                let mut line: Vec<String> = group.key.iter().map(text).collect();
+                line.extend(group.values.iter().map(text));
+                line
+            })
+            .collect();
+
+        // `JoinExplanation` names its sides `left` and `right` rather than
+        // holding a list, and the algorithm belongs to the join as a whole
+        // rather than to a side — so it is reported once, on the right, which
+        // is the side the algorithm describes reading.
+        let algorithm = match explanation.algorithm {
+            JoinAlgorithm::Hash { .. } => "hash".to_owned(),
+            JoinAlgorithm::NestedLoop => "nested loop".to_owned(),
+        };
+        let inputs = vec![
+            InputPlan {
+                table: explanation.left.table.clone(),
+                access: explanation.left.access.to_string(),
+                index_only: explanation.left.is_index_only(),
+                decodes: explanation
+                    .left
+                    .decodes
+                    .iter()
+                    .map(|o| o.0 as u32)
+                    .collect(),
+                algorithm: String::new(),
+            },
+            InputPlan {
+                table: explanation.right.table.clone(),
+                access: explanation.right.access.to_string(),
+                index_only: explanation.right.is_index_only(),
+                decodes: explanation
+                    .right
+                    .decodes
+                    .iter()
+                    .map(|o| o.0 as u32)
+                    .collect(),
+                algorithm,
+            },
+        ];
+
+        Ok(JoinAnswer {
+            returned: if rendered_groups.is_empty() {
+                rows.len()
+            } else {
+                rendered_groups.len()
+            },
+            rows,
+            groups: rendered_groups,
+            inputs,
+            display: explanation.to_string(),
+        })
+    }
+
     fn table(&self, name: &str) -> Result<TableDef, String> {
         match name {
             "authors" => Ok(fixture::authors()),
@@ -443,8 +668,20 @@ impl Playground {
 fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
     let mut query = Query::all();
 
-    if let Some(filter) = &spec.filter {
-        query = query.filter(comparison(filter, table)?);
+    // `filter` and `filters` are both accepted and both ANDed in. The single
+    // form is not deprecated shorthand — it is what a one-condition panel
+    // sends, and refusing it would break the shape this binding shipped with.
+    let conditions: Vec<&FilterSpec> = spec.filter.iter().chain(spec.filters.iter()).collect();
+    if !conditions.is_empty() {
+        let mut parts = Vec::with_capacity(conditions.len());
+        for condition in conditions {
+            parts.push(comparison(condition, table)?);
+        }
+        // `Expr::all` rather than folding with `and`: it is the kernel's own
+        // constructor for a conjunction, and the planner reads conjuncts out
+        // of it to look for scan bounds. A hand-folded tree of nested `And`s
+        // is the same predicate and gives the planner more work to undo.
+        query = query.filter(Expr::all(parts));
     }
     if !spec.sort.is_empty() {
         let keys: Vec<SortKey> = spec
@@ -543,18 +780,32 @@ fn literal(text: &str, kind: slate_tuple::ValueType) -> Result<Value, String> {
     }
 }
 
+/// One side of a join: its conditions, ANDed, as a `Query`.
+fn conditions(specs: &[FilterSpec], table: &TableDef) -> Result<Query, String> {
+    if specs.is_empty() {
+        return Ok(Query::all());
+    }
+    let mut parts = Vec::with_capacity(specs.len());
+    for spec in specs {
+        parts.push(comparison(spec, table)?);
+    }
+    Ok(Query::all().filter(Expr::all(parts)))
+}
+
+/// One value as text.
+fn text(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(b) => b.to_string(),
+        Value::U64(n) => n.to_string(),
+        Value::I64(n) => n.to_string(),
+        Value::F64(n) => n.to_string(),
+        Value::Str(s) => s.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
 /// Values as text, for a table in a browser.
 fn render(row: &Row) -> Vec<String> {
-    row.values()
-        .iter()
-        .map(|value| match value {
-            Value::Null => "null".to_owned(),
-            Value::Bool(b) => b.to_string(),
-            Value::U64(n) => n.to_string(),
-            Value::I64(n) => n.to_string(),
-            Value::F64(n) => n.to_string(),
-            Value::Str(s) => s.clone(),
-            other => format!("{other:?}"),
-        })
-        .collect()
+    row.values().iter().map(text).collect()
 }
