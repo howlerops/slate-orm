@@ -22,22 +22,81 @@ mode="${1:-}"
 
 # Fixed ports for the interactive modes, because the frontend is configured
 # with them and a human reads them off the terminal. Free ports for
-# `--conformance`, which nobody reads and which must be able to run while a
-# demo stack is already up -- and, more to the point, must not fail with
-# "address already in use" and be mistaken for the SDKs disagreeing.
-port() {
-  if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then
-    python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'
-  else
-    echo "$1"
-  fi
+# `--conformance` and `--e2e`, which nobody reads and which must be able to run
+# while a demo stack is already up -- and, more to the point, must not fail
+# with "address already in use" and be mistaken for the SDKs disagreeing.
+#
+# Ports are chosen from *below* the kernel's ephemeral range, which is the
+# whole point and took a CI failure to learn.
+#
+# The obvious implementation asks the kernel for a free port with
+# `bind(("127.0.0.1", 0))`, reads the number and closes the socket. That draws
+# from the ephemeral range -- 32768-60999 on Linux by default -- and so does
+# every *outgoing connection* every service here makes. So between this script
+# releasing a port and the service binding it, the Go adapter dialling the head
+# node can be assigned that exact number, and the service dies with
+# `EADDRINUSE` on a port the harness had just declared free.
+#
+# That is not a theory about what might happen: the demo job failed this way on
+# port 38721, inside the ephemeral range, and it read as a broken demo rather
+# than a broken runner.
+#
+# Ports below the range are never handed out automatically, so nothing can take
+# one from under us. Each is still checked before being offered, because
+# something else on the machine may be *listening* there already.
+free_ports() {
+  python3 - <<'PORTS'
+import random
+import socket
+
+# The floor of the ephemeral range, read rather than assumed: a container can
+# be configured with a different one, and picking "below 32768" on a machine
+# whose range starts at 15000 would reintroduce exactly the bug.
+try:
+    with open("/proc/sys/net/ipv4/ip_local_port_range") as handle:
+        ephemeral_low = int(handle.read().split()[0])
+except (OSError, ValueError):
+    ephemeral_low = 32768
+
+high = max(ephemeral_low - 1, 10100)
+low = 10000
+
+chosen = []
+while len(chosen) < 5:
+    candidate = random.randint(low, min(high, ephemeral_low - 1))
+    if candidate in chosen:
+        continue
+    probe = socket.socket()
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("127.0.0.1", candidate))
+    except OSError:
+        continue  # somebody is listening there; try another
+    finally:
+        probe.close()
+    chosen.append(candidate)
+
+print(" ".join(str(port) for port in chosen))
+PORTS
 }
 
-HEAD_ADDR="${SLATE_HEAD_ADDR:-127.0.0.1:$(port 7421)}"
-GO_ADDR="${SLATE_GO_ADDR:-127.0.0.1:$(port 7431)}"
-NODE_ADDR="${SLATE_NODE_ADDR:-127.0.0.1:$(port 7432)}"
-PY_ADDR="${SLATE_PY_ADDR:-127.0.0.1:$(port 7433)}"
-WEB_PORT="${SLATE_WEB_PORT:-$(port 7440)}"
+if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then
+  # `read`, not `set --`. `set --` replaces the script's own positional
+  # parameters, which are forwarded to the conformance runner further down --
+  # so the five port numbers arrived as command-line arguments and it refused
+  # them. Caught on the first run after the change.
+  IFS=' ' read -r HEAD_PORT GO_PORT NODE_PORT PY_PORT WEB <<PICKED
+$(free_ports)
+PICKED
+else
+  HEAD_PORT=7421 GO_PORT=7431 NODE_PORT=7432 PY_PORT=7433 WEB=7440
+fi
+
+HEAD_ADDR="${SLATE_HEAD_ADDR:-127.0.0.1:$HEAD_PORT}"
+GO_ADDR="${SLATE_GO_ADDR:-127.0.0.1:$GO_PORT}"
+NODE_ADDR="${SLATE_NODE_ADDR:-127.0.0.1:$NODE_PORT}"
+PY_ADDR="${SLATE_PY_ADDR:-127.0.0.1:$PY_PORT}"
+WEB_PORT="${SLATE_WEB_PORT:-$WEB}"
 
 # The frontend reads its three adapter URLs from the environment, defaulting to
 # the demo's fixed ports. Exported here rather than written into a file so that
