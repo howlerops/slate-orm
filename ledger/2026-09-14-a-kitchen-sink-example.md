@@ -102,6 +102,10 @@ else on the page.
 cannot filter groups after aggregating — the one construct missing from
 "everything the grammar has".
 
+> **Closed on 2026-09-15** by `a-having-and-the-type-underneath-it`. The sink
+> now carries a `HAVING` over two of its aggregates, and there is a separate
+> example for the clause on its own.
+
 **No `OR`, no sub-queries, no window functions, no date arithmetic.** The first
 is a deliberate refusal recorded elsewhere; the rest do not exist. A reader who
 reads "kitchen sink" as "everything SQL has" will be disappointed, and the

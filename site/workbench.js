@@ -47,6 +47,16 @@ const EXAMPLES = [
     "count(*) is not count(column)",
     "-- 4.7% of real trips have no passenger count.\nSELECT payment, count(*), count(passengers) FROM trips\n  GROUP BY payment",
   ],
+  [
+    "Busy zones only (HAVING)",
+    "-- WHERE filters rows before grouping; HAVING filters the groups after.\n" +
+      "-- Swap this for `WHERE count(*) > 3000` and the parser will tell you\n" +
+      "-- why that cannot mean anything.\n" +
+      "SELECT pickup_zone, count(*), avg(duration) FROM trips\n" +
+      "  GROUP BY pickup_zone\n" +
+      "  HAVING count(*) > 300 AND avg(duration) > 900\n" +
+      "  ORDER BY count(*) DESC",
+  ],
   ["Long, expensive rides", "SELECT * FROM trips WHERE distance > 20 AND total > 100 LIMIT 50"],
   [
     "One zone, every column",
@@ -71,7 +81,8 @@ const EXAMPLES = [
       "\n" +
       "-- Two: everything else at once. Six conditions over three types\n" +
       "-- (u64, f64, text), a pattern and a regular expression, two group keys,\n" +
-      "-- seven aggregates, ordered by an aggregate and then by a key, paged.\n" +
+      "-- seven aggregates, a HAVING over two of them, ordered by an aggregate\n" +
+      "-- and then by a key, paged.\n" +
       "--\n" +
       "-- It is two statements rather than one because ORDER BY and a second\n" +
       "-- group key are not available on the join path. The grammar says so\n" +
@@ -84,6 +95,7 @@ const EXAMPLES = [
       "    AND total > 20 AND distance < 10\n" +
       "    AND payment LIKE 'c%' AND payment ~ '^credit'\n" +
       "  GROUP BY pickup_zone, passengers\n" +
+      "  HAVING count(*) > 5 AND avg(distance) < 5\n" +
       "  ORDER BY count(*) DESC, pickup_zone\n" +
       "  LIMIT 20 OFFSET 5",
   ],

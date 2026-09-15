@@ -123,6 +123,17 @@ pub struct QuerySpec {
     /// What to compute per group. `count(*)` when grouping with none named.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub aggregates: Vec<AggregateSpec>,
+    /// Which groups survive, ANDed. Ordinals are in *group* space —
+    /// `[keys..., aggregates...]` — the same space `sort` uses when there is a
+    /// grouping, and not the table's. `HAVING count(*) > 100` names ordinal
+    /// `group_by.len()`, not a column.
+    ///
+    /// A separate field from `filters` rather than a flag on it, because the
+    /// two are evaluated against different things at different times: a filter
+    /// can become a scan bound and skip rows before they are read, and a
+    /// having cannot — the group it tests does not exist until every row is in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub having: Vec<FilterSpec>,
 }
 
 /// For `skip_serializing_if`, which needs a path rather than a closure.
@@ -1193,6 +1204,14 @@ impl Playground {
         let aggregates = aggregates(&spec.aggregates, table)?;
         let mut grouping = Grouping::by(keys.iter().copied(), &aggregates);
 
+        // HAVING before ORDER BY, because it decides which groups exist and
+        // the sort only decides what order they come back in. The kernel
+        // applies them in that order regardless; setting them in the same
+        // order here is so that reading this says what happens.
+        if !spec.having.is_empty() {
+            grouping = grouping.having(having(&spec.having, &keys, &aggregates, table)?);
+        }
+
         // ORDER BY, LIMIT and OFFSET belong to the *groups* when there is a
         // grouping, not to the rows feeding it. `Grouping` is where the kernel
         // keeps them, and the ordinals here are in group space — the keys,
@@ -1727,6 +1746,100 @@ fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate
             "count_distinct" => Aggregate::CountDistinct(column),
             other => return Err(format!("no such aggregate: {other}")),
         });
+    }
+    Ok(out)
+}
+
+/// The type a group-space ordinal holds, for `HAVING`.
+///
+/// This exists because of one hazard, and it is a silent one. `Value` orders
+/// by *class* before it orders by magnitude, and `F64` ranks above the integer
+/// variants — so `F64(19.5) > I64(20)` is **true**, by rank, with the numbers
+/// playing no part. `I64` and `U64` share a rank and compare through `i128`,
+/// so they interoperate; a float against an integer does not.
+///
+/// `HAVING avg(fare) > 20` therefore has to parse `20` as `F64(20.0)`, and
+/// parsing it from the table column's type — as `WHERE` correctly does — would
+/// give `I64(20)` and admit every group. Nothing would error and the answer
+/// would be wrong, which is why the type comes from the aggregate rather than
+/// from the column it reads.
+fn group_value_type(
+    ordinal: u32,
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    table: &TableDef,
+) -> Result<slate_tuple::ValueType, String> {
+    use slate_tuple::ValueType as T;
+    let index = ordinal as usize;
+    let column_type = |c: Ordinal| {
+        table
+            .column(c)
+            .map(|d| d.value_type())
+            .ok_or_else(|| format!("{} has no column {}", table.name(), c.0))
+    };
+    if let Some(key) = keys.get(index) {
+        return column_type(*key);
+    }
+    let aggregate = aggregates.get(index - keys.len()).ok_or_else(|| {
+        format!(
+            "HAVING names position {index}, and the group has only {} columns",
+            keys.len() + aggregates.len()
+        )
+    })?;
+    Ok(match aggregate {
+        // A count is a cardinality: unsigned, whatever it counted.
+        Aggregate::Count | Aggregate::CountColumn(_) | Aggregate::CountDistinct(_) => T::U64,
+        Aggregate::Min(c) | Aggregate::Max(c) => column_type(*c)?,
+        // `Total::sum` returns `I64` for any integer column and `F64` for a
+        // real one, so a `U64` column's sum is compared as `I64` — same rank,
+        // so that is a distinction without a difference here.
+        Aggregate::Sum(c) => match column_type(*c)? {
+            T::F64 => T::F64,
+            _ => T::I64,
+        },
+        // Always a double, even over integers: `Total::average` divides.
+        Aggregate::Avg(_) => T::F64,
+    })
+}
+
+/// `HAVING`, as one `Expr` over the group.
+fn having(
+    specs: &[FilterSpec],
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    table: &TableDef,
+) -> Result<Expr, String> {
+    let mut out = Expr::True;
+    for spec in specs {
+        let kind = group_value_type(spec.column, keys, aggregates, table)?;
+        let column = Ordinal(spec.column as usize);
+        let expr = match spec.op.as_str() {
+            "like" => Expr::like(column, spec.value.clone()),
+            "ilike" => Expr::ilike(column, spec.value.clone()),
+            "matches" => {
+                let expr = Expr::matches(column, spec.value.clone());
+                if let Some(bad) = expr.regex_error() {
+                    return Err(format!("that regular expression is not valid: {bad}"));
+                }
+                expr
+            }
+            other => {
+                let op = match other {
+                    "eq" => CmpOp::Eq,
+                    "ne" => CmpOp::Ne,
+                    "lt" => CmpOp::Lt,
+                    "le" => CmpOp::Le,
+                    "gt" => CmpOp::Gt,
+                    "ge" => CmpOp::Ge,
+                    _ => return Err(format!("no such operator: {other}")),
+                };
+                Expr::compare(column, op, literal(&spec.value, kind)?)
+            }
+        };
+        out = match out {
+            Expr::True => expr,
+            existing => existing.and(expr),
+        };
     }
     Ok(out)
 }

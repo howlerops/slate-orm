@@ -212,6 +212,26 @@ await page.locator('[data-tab="log"]').click();
 out.sink.logged = await page.locator('[data-app="log"] .entry').count();
 await page.locator('[data-tab="results"]').click();
 
+// 9c2. HAVING filters the groups, and the refusals hold.
+//      In the browser rather than only in Rust because the clause reaches the
+//      kernel through the wasm boundary and a spec field that has to survive
+//      serde on the way — the tests either side of that boundary would both
+//      pass with the field dropped in the middle.
+out.grouped226 = await type("SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone");
+out.havingFiltered = await type(
+  "SELECT pickup_zone, count(*), avg(duration) FROM trips GROUP BY pickup_zone " +
+  "HAVING count(*) > 300 AND avg(duration) > 900",
+);
+out.havingRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+// An integer literal against `avg` over an integer column. If the literal were
+// typed from the column it would be an I64, and F64 > I64 is true by class
+// rank, so all 226 zones would come back rather than 110.
+out.havingTyped = await type(
+  "SELECT pickup_zone, avg(duration) FROM trips GROUP BY pickup_zone HAVING avg(duration) > 1500",
+);
+out.havingRefused = await type("SELECT * FROM trips HAVING count(*) > 1");
+out.havingRefusal = await page.locator('[data-app="grid"] .refusal').innerText();
+
 // 9d. The timing in the status bar is the kernel's, not the round trip.
 //     A grouped query returning 226 rows spends ~1% of its wall clock on
 //     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
@@ -587,6 +607,31 @@ def main() -> int:
         and float(batch.group(1)) > 0,
         f"{seen['batchStatus']!r}, "
         f"{seen['batchLogged'] - seen['badBefore']} of the 200 failed",
+    )
+
+    check(
+        "HAVING keeps only the groups that pass",
+        seen["grouped226"]["rows"] == 226 and seen["havingFiltered"]["rows"] == 12,
+        f"{seen['grouped226']['rows']} zones, {seen['havingFiltered']['rows']} after HAVING",
+    )
+    check(
+        "and the survivors really do pass both tests",
+        all(
+            int(cells[1]) > 300 and float(cells[2]) > 900
+            for cells in (row.split("\t") for row in seen["havingRows"])
+        ),
+        f"{seen['havingRows'][:3]}",
+    )
+    check(
+        "an integer literal against a double aggregate still filters",
+        seen["havingTyped"]["rows"] == 110,
+        f"{seen['havingTyped']['rows']} of 226 — the literal is typed from the column",
+    )
+    check(
+        "and HAVING without a GROUP BY is refused",
+        seen["havingRefused"]["refusal"] == 1
+        and "GROUP BY" in seen["havingRefusal"],
+        f"{seen['havingRefusal']!r}",
     )
 
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")

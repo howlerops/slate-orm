@@ -164,10 +164,11 @@ costs them.
 ## What this does not do
 
 **The grammar is small, and its edges are refusals rather than features.** No
-`OR`, no `HAVING`, no sub-queries, no `ORDER BY` on a join, no column list on
+`OR`, no sub-queries, no `ORDER BY` on a join, no column list on
 `INSERT`, no predicate `DELETE` (primary key only — deleting more rows than the
 reader expected is the worst thing this editor could do). Each one is rejected
-with a reason; none is silently approximated.
+with a reason; none is silently approximated. (`HAVING` was on this list and
+was added on 2026-09-15.)
 
 **The join is the fixture's only join.** `authors JOIN books ON authors.id =
 books.author_id`, checked at parse time, because the fixture has one foreign

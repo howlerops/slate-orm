@@ -26,8 +26,9 @@
 //! SELECT  <* | expr-list> FROM <table>
 //!         [ JOIN <table> ON <col> = <col> ]
 //!         [ WHERE <cond> (AND <cond>)* ]
-//!         [ GROUP BY <col> ]
-//!         [ ORDER BY <col> [ASC|DESC] (, ...)* ]
+//!         [ GROUP BY <col> (, ...)* ]
+//!         [ HAVING <group-cond> (AND <group-cond>)* ]
+//!         [ ORDER BY <col | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
@@ -37,6 +38,14 @@
 //! `<cond>` is `col <op> literal`, with `op` one of `= != <> < <= > >=`,
 //! `LIKE`, `ILIKE` or `~` (a regular expression). Statements may be separated
 //! by `;`.
+//!
+//! `<group-cond>` is the same, except the left side names a *group* — a group
+//! key or one of the aggregates the select list computes — so
+//! `HAVING count(*) > 100` is a condition on a number that does not exist
+//! until every row has been read. That is the whole difference between it and
+//! `WHERE`: a `WHERE` can become a scan bound and skip rows before they are
+//! fetched, and a `HAVING` never can. `HAVING` without a `GROUP BY` is
+//! refused rather than treated as a `WHERE`.
 //!
 //! Everything outside that grammar is refused with the position and what was
 //! expected. There is no silent subset: `SELECT ... WHERE a = 1 OR b = 2`
@@ -646,6 +655,35 @@ impl Parser<'_> {
             // `SELECT zone FROM trips GROUP BY zone` — the distinct keys. The
             // binding adds `count(*)` so the answer is not a bare column.
         }
+        if self.eat("having") {
+            if !grouping {
+                return Err(SqlError {
+                    message: "HAVING needs a GROUP BY — it filters groups, and without one \
+                              there are no groups to filter. Did you mean WHERE?"
+                        .to_owned(),
+                    at: self.at(),
+                });
+            }
+            // Parsed here, after the select list has been resolved, because
+            // `HAVING count(*) > 100` names an aggregate by what the query
+            // *computes* — the same rule ORDER BY follows — and `spec.aggregates`
+            // is not populated until the loop above has run.
+            loop {
+                spec.having.push(self.having_condition(&spec, &table)?);
+                if self.eat("and") {
+                    continue;
+                }
+                if self.peek_word().as_deref() == Some("or") {
+                    return Err(SqlError {
+                        message: "OR is not supported in HAVING, for the reason it is not \
+                                  supported in WHERE"
+                            .to_owned(),
+                        at: self.at(),
+                    });
+                }
+                break;
+            }
+        }
         if self.eat("order") {
             self.expect("by")?;
             loop {
@@ -662,7 +700,7 @@ impl Parser<'_> {
                 let at = self.at();
                 let item = self.select_item()?;
                 let column = if grouping {
-                    self.group_ordinal(&item, &spec, &table, at)?
+                    self.group_ordinal(&item, &spec, &table, at, "ORDER BY")?
                 } else {
                     match &item {
                         SelectItem::Column { raw, at } => self.resolve(raw, &table, *at)?,
@@ -695,18 +733,24 @@ impl Parser<'_> {
         Ok(Statement::Select(spec))
     }
 
-    /// Where an ORDER BY item sits in a group, which is `[keys, aggregates]`.
+    /// Where a group-space item sits in `[keys..., aggregates...]`.
     ///
     /// Resolved against what the query already said rather than against the
-    /// table: `ORDER BY count(*)` means "the aggregate I asked for", and
-    /// ordering by an aggregate the select list does not compute would be
-    /// ordering by a number that is not in the answer.
+    /// table: `count(*)` means "the aggregate I asked for", and naming one the
+    /// select list does not compute would be naming a number that is not in
+    /// the answer.
+    ///
+    /// `clause` is only for the error text. It is a parameter because both
+    /// ORDER BY and HAVING resolve through here, and the messages said
+    /// "ORDER BY" for a HAVING that had never mentioned it — an error naming a
+    /// clause the reader did not write sends them looking in the wrong place.
     fn group_ordinal(
         &self,
         item: &SelectItem,
         spec: &QuerySpec,
         table: &TableDef,
         at: usize,
+        clause: &str,
     ) -> Result<u32, SqlError> {
         match item {
             SelectItem::Column { raw, at } => {
@@ -716,9 +760,7 @@ impl Parser<'_> {
                     .position(|k| *k == ordinal)
                     .map(|i| u32::try_from(i).unwrap_or(0))
                     .ok_or_else(|| SqlError {
-                        message: format!(
-                            "`{raw}` is not a group key, so the groups cannot be ordered by it"
-                        ),
+                        message: format!("`{raw}` is not a group key, so {clause} cannot use it"),
                         at: *at,
                     })
             }
@@ -729,8 +771,10 @@ impl Parser<'_> {
                     .iter()
                     .position(|a| a.kind == wanted.kind && a.column == wanted.column)
                     .ok_or_else(|| SqlError {
-                        message: "ORDER BY names an aggregate this query does not compute"
-                            .to_owned(),
+                        message: format!(
+                            "{clause} names an aggregate this query does not compute — \
+                             add it to the select list"
+                        ),
                         at,
                     })?;
                 Ok(u32::try_from(spec.group_by.len() + position).unwrap_or(0))
@@ -838,6 +882,16 @@ impl Parser<'_> {
 
     fn condition(&mut self, table: &TableDef) -> Result<FilterSpec, SqlError> {
         let column = self.column(table)?;
+        let (op, value) = self.comparison_tail()?;
+        Ok(FilterSpec { column, op, value })
+    }
+
+    /// The operator and the literal after it, shared by `WHERE` and `HAVING`.
+    ///
+    /// One function rather than two, so the two clauses cannot come to accept
+    /// different operators — a reader who writes `>=` in a WHERE and finds it
+    /// rejected in a HAVING has found a bug in the parser, not in their query.
+    fn comparison_tail(&mut self) -> Result<(String, String), SqlError> {
         let at = self.at();
         let op = if self.eat_symbol("=") {
             "eq"
@@ -864,11 +918,31 @@ impl Parser<'_> {
             });
         };
         let value = self.literal()?;
-        Ok(FilterSpec {
-            column,
-            op: op.to_owned(),
-            value,
-        })
+        Ok((op.to_owned(), value))
+    }
+
+    /// One `HAVING` comparison: `count(*) > 100`, `avg(total) >= 25.0`.
+    ///
+    /// The left side is a select item rather than a column, and it resolves
+    /// into *group* space through the same `group_ordinal` ORDER BY uses — so
+    /// `HAVING count(*) > 100` and `ORDER BY count(*)` agree on which number
+    /// they mean, and both refuse an aggregate the query does not compute
+    /// rather than silently computing a second one.
+    ///
+    /// The operator half is `condition`'s, deliberately: a reader who can
+    /// write `WHERE total >= 25` should not discover that HAVING spells it
+    /// differently. `LIKE` and `~` come along for free and are meaningful on a
+    /// string group key.
+    fn having_condition(
+        &mut self,
+        spec: &QuerySpec,
+        table: &TableDef,
+    ) -> Result<FilterSpec, SqlError> {
+        let at = self.at();
+        let item = self.select_item()?;
+        let column = self.group_ordinal(&item, spec, table, at, "HAVING")?;
+        let (op, value) = self.comparison_tail()?;
+        Ok(FilterSpec { column, op, value })
     }
 
     // --- the join ---------------------------------------------------------

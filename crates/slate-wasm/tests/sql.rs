@@ -217,6 +217,9 @@ prop_compose! {
             // as the parser stops being an independent check of it.
             group_by: Vec::new(),
             aggregates: Vec::new(),
+            // HAVING is meaningless without a grouping and the parser refuses
+            // it, so it is empty here for the same reason `group_by` is.
+            having: Vec::new(),
         }
     }
 }

@@ -76,6 +76,9 @@ missing side.
 No `HAVING` and no group ordering, both of which the kernel supports and the
 wire protocol carries.
 
+> **Both closed since.** Group ordering by `the-home-page-is-a-workbench`, and
+> `HAVING` on 2026-09-15 by `a-having-and-the-type-underneath-it`.
+
 **A `books` ordinal is shifted into the joined row's space by hand**
 (`authors.columns().len() + n`) when building an aggregate. That arithmetic is
 exactly what `ColumnRef` exists to remove in the three SDKs, and doing it
