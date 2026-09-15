@@ -66,6 +66,14 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
 fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join {
     let mut wanted = grouping.columns();
     wanted.extend(join.having.columns());
+    // What the join's own computed values read. A grouping that names a
+    // computed slot resolves to no side — the slot is past every table — so
+    // gathering only the grouping's ordinals would narrow both projections to
+    // nothing and compute the value from nulls. This is the one place the
+    // computed columns have to be unfolded into the columns underneath them.
+    for scalar in &join.compute {
+        wanted.extend(scalar.columns());
+    }
     let mut left: BTreeSet<Ordinal> = BTreeSet::new();
     let mut right: BTreeSet<Ordinal> = BTreeSet::new();
     for ordinal in wanted {
@@ -107,6 +115,71 @@ fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join 
     narrowed.limit = None;
     narrowed.offset = 0;
     narrowed
+}
+
+/// Refuse a *grouped* read whose inputs compute values of their own.
+///
+/// An input's computed values are appended to that input's row, and grouping
+/// flattens the inputs into one row by their declared table widths — so those
+/// values are truncated away, and the ordinal one of them would have occupied
+/// is the next table's first column. Grouping by it returns a table of numbers
+/// keyed on a column nobody named, with no error anywhere: on a two-column
+/// `authors` joined to `books`, `Ordinal(2)` came back as 24 groups of
+/// `books.id`, where the computed value had six distinct values.
+///
+/// Only the grouped path. The ungrouped one keeps each input's row separate
+/// and hands back its computed values beside its columns — `Row.computed`,
+/// which the wire splits per input — so there they are a supported feature and
+/// nothing is dropped. This refusal spent an afternoon in `Join::validate`,
+/// where it covered both paths and broke that feature;
+/// `a_join_inputs_computed_values_come_back_beside_its_columns` caught it,
+/// which is the entire argument for having a test at that level.
+///
+/// [`Join::compute`] is the grouped answer: over the joined row, after every
+/// table, and able to read any input. The message names it, because an error
+/// that does not say what to do instead is half an error.
+fn no_side_computes(inputs: &[&Query], at: &str) -> Result<()> {
+    for (position, query) in inputs.iter().enumerate() {
+        if !query.compute.is_empty() {
+            return Err(KernelError::JoinNotSupported {
+                reason: format!(
+                    "input {position} of {at} computes {} value(s), and grouping flattens \
+                     the inputs by declared table width — such a value has no slot in the \
+                     flattened row, and the ordinal it would take belongs to the next \
+                     table. Put it in `Join::compute`, which is evaluated over the joined \
+                     row and can read any input",
+                    query.compute.len()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a grouping whose ordinals fall outside the joined space.
+///
+/// `Join::validate` has always refused a `having` ordinal past the joined
+/// width — "names no column at all, and would silently read as null, that is,
+/// as a condition nobody wrote". Nothing said the same for a `Grouping`, and
+/// the two arrive through the same call, so `GROUP BY` an ordinal nobody has
+/// returned one group keyed null and a table of numbers with a single row in
+/// it. Same failure, same argument, and the only reason it went unrefused is
+/// that it was found second.
+///
+/// The joined space now includes the join's computed slots, so this accepts
+/// exactly what a caller can meaningfully name and nothing else.
+fn validate_grouping(schema: &JoinSchema, grouping: &Grouping, at: &str) -> Result<()> {
+    for column in grouping.columns() {
+        if column.0 >= schema.width() {
+            return Err(KernelError::JoinNotSupported {
+                reason: format!(
+                    "the grouping names {column:?}, which is outside the {} ordinals of                      {at} — a group key or an aggregate past the end reads as null on                      every row, which returns one group rather than an error",
+                    schema.width()
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The chain to run for a grouped read: every step reading only the columns
@@ -398,7 +471,10 @@ impl<'a> SecuredReads<'a> {
         join: &Join,
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
-        let schema = JoinSchema::of(left_table, right_table);
+        let schema = JoinSchema::of(left_table, right_table).computing(join.compute.len());
+        let at = format!("`{}` joined to `{}`", left_table.name(), right_table.name());
+        no_side_computes(&[&join.left, &join.right], &at)?;
+        validate_grouping(&schema, grouping, &at)?;
         let (narrowed, plan) =
             self.plan_grouped_join(context, left_table, right_table, join, grouping)?;
         let mut cursor =
@@ -411,7 +487,7 @@ impl<'a> SecuredReads<'a> {
             // threaded through them would be a second place for the null rules
             // to drift. `JoinedRow::flatten` reports a missing side as nulls,
             // which is what the view reports too.
-            grouper.push(&joined.flatten(&schema))?;
+            grouper.push(&joined.flatten_computing(&schema, &join.compute))?;
         }
         Ok(grouper.finish())
     }
@@ -435,6 +511,13 @@ impl<'a> SecuredReads<'a> {
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
         let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
+        // The same truncation, for the same reason: a chain flattens its steps
+        // by declared table width too. A chain has no `compute` of its own yet,
+        // so this refuses rather than redirecting — but a silent wrong answer
+        // is worse than a refusal that names a missing feature.
+        let mut inputs: Vec<&Query> = vec![&chain.first];
+        inputs.extend(chain.steps.iter().map(|step| &step.query));
+        no_side_computes(&inputs, "a grouped chain")?;
         let (narrowed, plan) =
             self.plan_grouped_chain(context, tables, chain, grouping, &schema)?;
         let mut cursor =

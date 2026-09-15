@@ -199,8 +199,16 @@ actions = ["everything"]</code></pre>
         <p>
           <code>hour()</code>, <code>day_of_week()</code>, <code>year()</code>
           and the rest are evaluated per row and group, sort and filter like
-          any column. There is no date type: a timestamp is seconds since the
-          epoch in an integer column, and every one of these is UTC.
+          any column, on a single table or on a join. There is no date type: a
+          timestamp is seconds since the epoch in an integer column.
+        </p>
+        <p>
+          They read <strong>UTC</strong> unless given a fixed offset —
+          <code>hour(pickup_time, '-05:00')</code>. Offsets only: naming a
+          region would need a timezone database to know about daylight saving,
+          so it is refused rather than guessed at. The taxi sample in the
+          workbench is New York wall clock already, which is why its quietest
+          hour is 04:00 and not 09:00.
         </p>
       </div>
       <div class="card">

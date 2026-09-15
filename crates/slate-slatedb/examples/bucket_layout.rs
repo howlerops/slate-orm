@@ -72,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_ctx = SecurityContext::superuser();
 
     let rows = slate_wasm::taxi::decode(&trip_bytes()?)?;
+    let rows_loaded = rows.len();
     if !json {
         eprintln!("seeding {} trips and {} zones…", rows.len(), 265);
     }
@@ -160,9 +161,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // would be the wrong trade.
         let rows: Vec<String> = entries
             .iter()
-            .map(|e| format!("  {{ \"path\": \"{}\", \"bytes\": {} }}", e.path, e.bytes))
+            .map(|e| format!("    {{ \"path\": \"{}\", \"bytes\": {} }}", e.path, e.bytes))
             .collect();
-        println!("[\n{}\n]", rows.join(",\n"));
+        // The provenance block is what makes the committed copy checkable.
+        //
+        // A regenerated listing can never be compared object for object: the
+        // SST names are ULIDs minted at write time and the byte counts move
+        // with SlateDB's block packing. So the listing is not what gets
+        // checked — *what it is a listing of* is. `bucket_provenance.rs`
+        // recomputes these four numbers from the schema and the committed
+        // sample in milliseconds, with no SlateDB and no object store, and
+        // fails when they no longer match. That is precisely the drift the
+        // caveat named: "change the schema or the row count and it silently
+        // describes the old thing".
+        println!("{{");
+        println!("  \"provenance\": {{");
+        println!("    \"trips\": {rows_loaded},");
+        println!("    \"zones\": {},", slate_wasm::taxi::zone_rows().len());
+        println!(
+            "    \"schema\": \"{}\",",
+            slate_wasm::taxi::schema_fingerprint()
+        );
+        println!(
+            "    \"command\": \"cargo run --release -p slate-slatedb \
+             --example bucket_layout -- --json\""
+        );
+        println!("  }},");
+        println!("  \"objects\": [");
+        println!("{}", rows.join(",\n"));
+        println!("  ]");
+        println!("}}");
     } else {
         let total: u64 = entries.iter().map(|e| e.bytes).sum();
         for entry in &entries {

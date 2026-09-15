@@ -141,6 +141,16 @@ hour of day" for New York is therefore off by five, and the page does not say
 so on screen — this entry and the module docs do. Fixing it properly is the
 date type this deliberately did not build.
 
+> **Wrong, and withdrawn on 2026-09-15** by
+> [`the-hours-were-already-local`](2026-09-15-the-hours-were-already-local.md).
+> The sample stores New York wall clock as if it were UTC —
+> `make-trips.py` counts from local midnight and `taxi.rs` adds back the epoch
+> second of UTC midnight, so the two conversions cancel. A UTC extraction reads
+> the local hour straight out and is **not** off by five. The diurnal curve says
+> so: the trough is at 04:00 and the peak at 18:00, where genuine UTC instants
+> would put them at 09:00 and 23:00. A fixed-offset argument now exists for
+> columns that really are UTC, and the page says which it is.
+
 **No `date_trunc` to a month or a year.** `DateTrunc` takes a `TimeUnit`, which
 is fixed-length by construction, so `date()` stops at the day. Truncating to a
 month needs the calendar path and a `days_from_civil` to go with
@@ -151,6 +161,10 @@ computed columns — no `compute` field and no ordinal space to put one in — s
 the parser refuses with that reason rather than ignoring the call. Widening the
 join spec is a larger change than this one.
 
+> **Closed for joins on 2026-09-15** by
+> [`the-hours-were-already-local`](2026-09-15-the-hours-were-already-local.md),
+> which added `Join::compute` over the joined row. Chains still have none.
+
 **`year()` is constant on this sample**, because the sample is one month. The
 grouping is real and would spread over a longer one; a test asserts the
 constant so that swapping the sample fails loudly instead of quietly answering
@@ -160,6 +174,13 @@ a different question.
 `Round` in both directions and the round-trip property covers them, but no
 Python, Go or TypeScript client exposes a builder for either. A client that
 wants one today writes the proto by hand.
+
+> **Closed for Python on 2026-09-15** by
+> [`the-hours-were-already-local`](2026-09-15-the-hours-were-already-local.md).
+> Go and TypeScript turn out to have no `Scalar` surface *at all* — they refuse
+> a row carrying computed values — so this was never the two-variant gap it is
+> described as here for those two. That is a larger piece of work and is still
+> open.
 
 **`round()` is the only non-time function in a list called `TIME_FUNCTIONS`,**
 which is now a name that lies slightly. It is really "names that are computed

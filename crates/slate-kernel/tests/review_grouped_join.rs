@@ -237,19 +237,21 @@ async fn grouping_by_a_computed_value_agrees_down_every_access_path() {
 /// wrote." Nothing does the same for a `Grouping`'s ordinals, and the two
 /// arrive through the same call.
 ///
-/// Two shapes follow, and both are recorded here as the current behaviour
-/// rather than asserted to be wrong — the fix is a refusal, which is a
-/// decision rather than an arithmetic error.
+/// Two shapes followed, and both were recorded here as the current behaviour
+/// rather than asserted to be wrong, on the grounds that "the fix is a
+/// refusal, which is a decision rather than an arithmetic error". Both
+/// decisions are now made and both shapes are refused; these tests assert the
+/// refusals.
 ///
-/// **Past the joined width**: every row groups under null, so a table of
-/// numbers comes back with one row in it.
+/// **Past the joined width**: refused, where it used to group everything under
+/// null and return a table of numbers with a single row in it.
 #[tokio::test]
-async fn a_grouping_ordinal_past_the_joined_width_groups_everything_under_null() {
+async fn a_grouping_ordinal_past_the_joined_width_is_refused() {
     let store = store().await;
     let past = Ordinal(authors().columns().len() + books().columns().len() + 3);
     let join = Join::equating(author_col("id"), book_col("author_id"));
     let txn = store.begin().await.unwrap();
-    let groups = txn
+    let refused = txn
         .group_by_join(
             &root(),
             &authors(),
@@ -258,71 +260,244 @@ async fn a_grouping_ordinal_past_the_joined_width_groups_everything_under_null()
             &Grouping::by([past], &[Aggregate::Count]),
         )
         .await
-        .unwrap();
-    assert_eq!(groups.len(), 1, "{groups:?}");
-    assert_eq!(groups[0].key, vec![Value::Null]);
+        .expect_err("an ordinal past the joined width names nothing");
+    assert!(refused.to_string().contains("outside"), "{refused}");
 }
 
-/// **A left-side computed value's ordinal** is worse, because it is *in* range.
+/// An aggregate's ordinal is checked the same way, which is the half a
+/// group-key-only check would miss: `sum()` of a column nobody has is a column
+/// of nulls, and a sum of nulls is a plausible zero.
+#[tokio::test]
+async fn an_aggregate_ordinal_past_the_joined_width_is_refused() {
+    let store = store().await;
+    let past = Ordinal(authors().columns().len() + books().columns().len() + 1);
+    let join = Join::equating(author_col("id"), book_col("author_id"));
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([author_col("region")], &[Aggregate::Sum(past)]),
+        )
+        .await
+        .expect_err("an aggregate past the joined width names nothing");
+    assert!(refused.to_string().contains("outside"), "{refused}");
+}
+
+/// **A left-side computed value's ordinal** was worse, because it is *in*
+/// range — and this is now refused.
 ///
 /// `JoinSchema` packs by declared table width, so the ordinal a left-side
 /// query gives its first computed value — `left_width + 0` — is the right
 /// table's column 0 in the joined space. `JoinedRow::flatten` truncates the
-/// left row to the table's width, so the value never reaches the grouper; the
-/// group key is the right table's first column instead, with no error
-/// anywhere. `records.proto` refuses exactly this reference on `having`
-/// ("a computed value has no slot in it; the reference is refused rather than
+/// left row to the table's width, so the value never reached the grouper; the
+/// group key was the right table's first column instead, with no error
+/// anywhere. `records.proto` refuses exactly this reference on `having` ("a
+/// computed value has no slot in it; the reference is refused rather than
 /// landing on whatever column happens to sit at that offset"); the kernel's
-/// `Grouping` accepts it.
+/// `Grouping` accepted it.
+///
+/// This test used to pin that as behaviour, on the grounds that "the fix is a
+/// refusal, which is a decision rather than an arithmetic error". The decision
+/// is made: a side may not compute at all, and `Join::compute` — evaluated
+/// over the joined row, so it can read either side — is where such a value
+/// goes. The refusal names that field, because an error that does not say what
+/// to do instead is half an error.
 #[tokio::test]
-async fn a_left_side_computed_ordinal_lands_on_the_right_tables_first_column() {
+async fn a_left_side_computed_column_is_refused_and_says_where_to_put_it() {
     let store = store().await;
-    let left_width = authors().columns().len();
     let join =
         Join::equating(author_col("id"), book_col("author_id")).left(Query::all().computing([
             Scalar::Upper(Box::new(Scalar::Column(author_col("region")))),
         ]));
     let txn = store.begin().await.unwrap();
-    let by_computed = txn
+    let refused = txn
         .group_by_join(
             &root(),
             &authors(),
             &books(),
             &join,
-            &Grouping::by([Ordinal(left_width)], &[Aggregate::Count]),
+            &Grouping::by([Ordinal(authors().columns().len())], &[Aggregate::Count]),
         )
         .await
-        .unwrap();
-
-    // Which is exactly grouping by `books.id`, the right table's column 0.
-    let txn = store.begin().await.unwrap();
-    let by_book_id = txn
-        .group_by_join(
-            &root(),
-            &authors(),
-            &books(),
-            &join,
-            &Grouping::by(
-                [Ordinal(left_width + book_col("id").0)],
-                &[Aggregate::Count],
-            ),
-        )
-        .await
-        .unwrap();
-
-    // Pinned as it stands today, not asserted to be right: the two are the
-    // same answer, so the caller's ordinal named a column it did not write.
-    assert_eq!(
-        by_computed, by_book_id,
-        "if this ever stops holding, the kernel has learned to say something \
-         about a left-side computed ordinal — check it is a refusal and not a \
-         second silent meaning"
-    );
-    // And it is emphatically not the upper-cased region it names: that has
-    // three values, this has one group per book.
+        .expect_err("a left-side computed column has nowhere to land");
+    let message = refused.to_string();
     assert!(
-        by_computed.len() > 3,
-        "grouping by `upper(region)` would give three groups; this gave {}",
-        by_computed.len()
+        message.contains("Join::compute"),
+        "the refusal should say where the value goes instead: {message}"
     );
+}
+
+/// The plain join path *keeps* them, which is why the refusal is not there.
+///
+/// This test was briefly the opposite. The refusal above was first put in
+/// `Join::validate`, on the reasoning that "the value is dropped on every path
+/// — the truncation is in `flatten` and in the cursor alike". The first half is
+/// true and the second is not: the ungrouped path never flattens. It hands back
+/// each side's row as it stands, computed values included, and the wire splits
+/// them into `Row.computed` per input — a feature with its own test in
+/// `slate-server`, `a_join_inputs_computed_values_come_back_beside_its_columns`,
+/// which is what caught the over-reach.
+///
+/// So the rule is about flattening, not about joins, and it lives where the
+/// flattening happens. This test pins the half that must keep working.
+#[tokio::test]
+async fn the_ungrouped_join_path_keeps_a_sides_computed_values() {
+    let store = store().await;
+    let join = Join::equating(author_col("id"), book_col("author_id"))
+        .left(
+            Query::all().computing([Scalar::Upper(Box::new(Scalar::Column(author_col(
+                "region",
+            ))))]),
+        )
+        .right(Query::all().computing([Scalar::Mul(
+            Box::new(Scalar::Column(book_col("pages"))),
+            Box::new(Scalar::Literal(Value::I64(2))),
+        )]));
+    let (left_table, right_table) = (authors(), books());
+    let txn = store.begin().await.unwrap();
+    let mut cursor = txn
+        .join(&root(), &left_table, &right_table, &join)
+        .await
+        .expect("an ungrouped join may compute on either side");
+
+    let mut seen = 0;
+    while let Some(row) = cursor.next().await.unwrap() {
+        let left = row.left.as_ref().expect("an inner join pairs both");
+        let right = row.right.as_ref().expect("an inner join pairs both");
+        // Each side is its table's width plus its own computed values, in its
+        // own space — which is exactly what the joined space cannot express
+        // and why grouping refuses it.
+        assert_eq!(left.values().len(), authors().columns().len() + 1);
+        assert_eq!(right.values().len(), books().columns().len() + 1);
+        let region = left.values()[author_col("region").0].clone();
+        let Value::Str(region) = region else {
+            panic!("region is {region:?}")
+        };
+        assert_eq!(
+            left.values()[authors().columns().len()],
+            Value::Str(region.to_uppercase())
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, BOOK_ROWS as usize);
+}
+
+/// A grouped *chain* refuses a step's computed column for the same reason.
+///
+/// Chains flatten by declared table width too, so the value would vanish and
+/// the ordinal would land on the next table. A chain has no `compute` of its
+/// own, so there is nowhere to redirect to — the refusal names the missing
+/// feature rather than pretending the query worked.
+#[tokio::test]
+async fn a_grouped_chain_refuses_a_steps_computed_column() {
+    use slate_kernel::{Chain, JoinStep};
+    let store = store().await;
+    let mut chain = Chain::from(Query::all());
+    chain.steps = vec![
+        JoinStep::equating(author_col("id"), book_col("author_id")).query(Query::all().computing(
+            [Scalar::Mul(
+                Box::new(Scalar::Column(book_col("pages"))),
+                Box::new(Scalar::Literal(Value::I64(2))),
+            )],
+        )),
+    ];
+    let tables = [authors(), books()];
+    let refs: Vec<&_> = tables.iter().collect();
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_chain(
+            &root(),
+            &refs,
+            &chain,
+            &Grouping::by([author_col("region")], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("a step's computed column is truncated by the flatten");
+    assert!(refused.to_string().contains("no slot"), "{refused}");
+}
+
+// --- computing over the joined row ----------------------------------------
+
+/// The join's own computed value, grouped, against a fold.
+///
+/// `authors.id * 100` is a left-side expression, so this is the case the
+/// refusal above sends here. Six authors, each with four books, so every group
+/// counts four.
+#[tokio::test]
+async fn grouping_a_join_by_a_computed_value_agrees_with_a_fold() {
+    let store = store().await;
+    let schema = slate_kernel::JoinSchema::of(&authors(), &books()).computing(1);
+    let join = Join::equating(author_col("id"), book_col("author_id")).computing([Scalar::Mul(
+        Box::new(Scalar::Column(author_col("id"))),
+        Box::new(Scalar::Literal(Value::U64(100))),
+    )]);
+    let grouping = Grouping::by([schema.computed(0)], &[Aggregate::Count]);
+
+    let mut counts: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+    for id in 0..BOOK_ROWS {
+        *counts.entry((id % AUTHOR_ROWS) * 100).or_default() += 1;
+    }
+    let want: Vec<Group> = counts
+        .into_iter()
+        .map(|(key, count)| Group {
+            key: vec![Value::U64(key)],
+            values: vec![Value::U64(count)],
+        })
+        .collect();
+
+    let txn = store.begin().await.unwrap();
+    let got = txn
+        .group_by_join(&root(), &authors(), &books(), &join, &grouping)
+        .await
+        .unwrap();
+    assert_eq!(got, want);
+}
+
+/// And it agrees whichever algorithm serves it, which is the property the
+/// narrowed projection can break: a computed value's inputs are gathered from
+/// the expressions rather than from the grouping, and a side that stopped
+/// reading them would compute from nulls on that side only.
+#[tokio::test]
+async fn a_computed_join_key_does_not_depend_on_the_algorithm() {
+    let store = store().await;
+    let schema = slate_kernel::JoinSchema::of(&authors(), &books()).computing(1);
+    // Reads *both* sides, which a per-side computed column could not express
+    // at all and is the reason this lives on the join.
+    let spanning = Scalar::Sub(
+        Box::new(Scalar::Column(schema.right(book_col("pages")))),
+        Box::new(Scalar::Column(schema.left(author_col("id")))),
+    );
+    let grouping = Grouping::by([schema.computed(0)], &[Aggregate::Count]);
+
+    let mut answers: Vec<(JoinAlgorithm, Vec<Group>)> = Vec::new();
+    for algorithm in [
+        JoinAlgorithm::Hash { build: Side::Left },
+        JoinAlgorithm::Hash { build: Side::Right },
+        JoinAlgorithm::NestedLoop,
+    ] {
+        let mut join =
+            Join::equating(author_col("id"), book_col("author_id")).computing([spanning.clone()]);
+        join.force = Some(algorithm);
+        let txn = store.begin().await.unwrap();
+        let groups = txn
+            .group_by_join(&root(), &authors(), &books(), &join, &grouping)
+            .await
+            .unwrap();
+        answers.push((algorithm, groups));
+    }
+    let (first_algorithm, first) = &answers[0];
+    assert!(
+        first.len() > 1,
+        "a single group would make this agree trivially: {first:?}"
+    );
+    for (algorithm, groups) in &answers[1..] {
+        assert_eq!(
+            groups, first,
+            "{algorithm:?} grouped a computed join into {groups:?}, where \
+             {first_algorithm:?} produced {first:?}"
+        );
+    }
 }

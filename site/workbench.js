@@ -76,6 +76,36 @@ const EXAMPLES = [
       "  LIMIT 20",
   ],
   [
+    "…in another timezone",
+    "-- Every time function reads UTC unless told otherwise. This sample is\n" +
+      "-- already New York wall clock -- the trough at 04:00 and the peak at\n" +
+      "-- 18:00 are the evidence -- so the shift here is what you would write\n" +
+      "-- for a column that really did hold UTC instants.\n" +
+      "--\n" +
+      "-- Fixed offsets only. 'America/New_York' needs a timezone database to\n" +
+      "-- know about daylight saving, and guessing would be wrong for a third\n" +
+      "-- of the year, so it is refused rather than approximated. Try it.\n" +
+      "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips\n" +
+      "  GROUP BY hour(pickup_time, '-05:00')\n" +
+      "  ORDER BY hour(pickup_time, '-05:00')",
+  ],
+  [
+    "Manhattan's day, hour by hour",
+    "-- A computed column on a join, which used to be refused outright. It is\n" +
+      "-- evaluated over the joined row and lands after *both* tables'\n" +
+      "-- columns -- which is why one declared on a single side is refused\n" +
+      "-- instead: it would sit exactly where the other table's first column\n" +
+      "-- belongs, and be read as that column with no error anywhere.\n" +
+      "--\n" +
+      "-- The group key comes from the left table and the aggregates from the\n" +
+      "-- right, so `borough` narrows the zones scan and the hour keys the\n" +
+      "-- trips. count(*) needs no column and works either way.\n" +
+      "SELECT hour(pickup_time), count(*)\n" +
+      "  FROM trips JOIN zones ON trips.pickup_zone = zones.id\n" +
+      "  WHERE borough = 'Manhattan'\n" +
+      "  GROUP BY hour(pickup_time)",
+  ],
+  [
     "Busy zones only (HAVING)",
     "-- WHERE filters rows before grouping; HAVING filters the groups after.\n" +
       "-- Swap this for `WHERE count(*) > 3000` and the parser will tell you\n" +
@@ -462,31 +492,57 @@ function showKeys(box, group, offset = 0) {
 /// browser — the store here is a `BTreeMap` — so the alternative to shipping a
 /// real listing is describing one in prose, and a described bucket is the kind
 /// of thing that quietly stops being true.
+///
+/// It is no longer *unchecked* static, which is the part that used to be a
+/// caveat. The file carries a provenance block naming the schema and the row
+/// counts it was taken against, and `bucket_provenance.rs` fails when either
+/// stops matching what the site ships. That does not prove the byte counts are
+/// current — nothing cheap can — but it catches the drift that made the
+/// listing misleading rather than merely old.
+/// What each kind of object in the bucket is for, longest-lived first.
+///
+/// Ordered rather than a map because `find` takes the first match and the
+/// fragments must not overlap ambiguously; kept in one place because
+/// `bucket_provenance.rs` asserts the same set covers every object in the
+/// committed listing.
+const KINDS = [
+  ["/compacted/", "the rows and the index entries, compacted"],
+  ["/wal/", "write-ahead log"],
+  ["/manifest/", "which SSTs are live"],
+  ["/compactions/", "compaction bookkeeping"],
+  ["/gc/", "how far the collector has reclaimed"],
+];
+
 async function renderBucket() {
   const box = $("bucket");
   if (box.dataset.loaded) return;
   try {
-    const entries = await (await fetch("data/bucket.json")).json();
+    const listing = await (await fetch("data/bucket.json")).json();
+    const entries = listing.objects;
+    const source = listing.provenance;
     const total = entries.reduce((a, e) => a + e.bytes, 0);
     const rows = entries
       .map((e) => {
         // The SST holds the data; everything else is bookkeeping. Marking it
         // is the difference between a file list and an explanation.
-        const kind = e.path.includes("/compacted/")
-          ? "the rows and the index entries, compacted"
-          : e.path.includes("/wal/")
-            ? "write-ahead log"
-            : e.path.includes("/manifest/")
-              ? "which SSTs are live"
-              : "compaction bookkeeping";
+        //
+        // Every fragment here is also in `bucket_provenance.rs`, which fails
+        // if the listing grows an object none of them match. That test is why
+        // `/gc/` is on this list: it used to fall through to the final label
+        // and be shown as "compaction bookkeeping", which it is not — it is
+        // the collector's own boundary marker, and the collector is the thing
+        // that decides whether the WAL copy of every row is still there.
+        const kind = KINDS.find(([fragment]) => e.path.includes(fragment));
         return (
           `<div class="bk-row"><code>${escape(e.path)}</code>` +
-          `<span class="bk-kind">${escape(kind)}</span>` +
+          `<span class="bk-kind">${escape(kind ? kind[1] : "unrecognised")}</span>` +
           `<span class="bk-bytes">${bytes(e.bytes)}</span></div>`
         );
       })
       .join("");
-    $("buckettotal").textContent = `${entries.length} objects · ${bytes(total)}`;
+    $("buckettotal").textContent =
+      `${entries.length} objects · ${bytes(total)} · ` +
+      `${source.trips.toLocaleString()} trips and ${source.zones} zones`;
     box.innerHTML = rows;
     box.dataset.loaded = "1";
   } catch (error) {

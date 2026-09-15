@@ -122,6 +122,15 @@ silently describes the old thing. Regenerating it is a manual step in
 `site/README.md`; a check that it matches would mean running SlateDB in CI for
 a picture, which is not worth it yet.
 
+> **Closed on 2026-09-15** by
+> [`the-hours-were-already-local`](2026-09-15-the-hours-were-already-local.md).
+> Running SlateDB in CI is still not worth it and still is not done. The
+> listing instead carries a provenance block naming the schema and the row
+> counts it was taken against, and `bucket_provenance.rs` recomputes both from
+> the shipped sample in a millisecond. That catches exactly the drift named
+> here; it does not prove the byte counts are current, and nothing cheap
+> could.
+
 **The WAL in that listing still holds 10.7 MB.** The example closes the
 database, which flushes, but does not wait for the WAL to be reclaimed after
 compaction — so the 21.7 MB total roughly double-counts the data. The listing

@@ -471,13 +471,22 @@ fn it_refuses_what_it_cannot_answer() {
     );
     assert!(message.contains("does not compute"), "{message}");
 
-    // The join path has one group key and no computed columns, and says so
-    // rather than ignoring the call.
+    // A computed column on a join has to be the group key: a join returns
+    // whole rows or one row per group, and there is no third shape.
     let message = refused(
         &playground,
         "SELECT hour(pickup_time) FROM trips JOIN zones ON trips.pickup_zone = zones.id",
     );
-    assert!(message.contains("not available on a join"), "{message}");
+    assert!(message.contains("has to be the group key"), "{message}");
+
+    // And it reads the *left* side. `zones` has no timestamp at all, so this
+    // would otherwise resolve to nothing and group by null.
+    let message = refused(
+        &playground,
+        "SELECT hour(borough), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(borough)",
+    );
+    assert!(message.contains("is not one"), "{message}");
 
     // `round` takes a number, and the message says which one it got instead.
     let message = refused(
@@ -509,4 +518,247 @@ fn a_computed_column_can_be_grouped_ordered_and_filtered_at_once() {
         assert!(count <= previous, "not ordered: {count} after {previous}");
         previous = count;
     }
+}
+
+// --- the zone the numbers are actually in ---------------------------------
+
+/// The sample's `pickup_time` is New York wall clock, stored as if it were UTC.
+///
+/// This matters more than it sounds, and the entry that added these functions
+/// got it wrong: it recorded that "trips per hour of day for New York is
+/// therefore off by five", reasoning that the column is epoch seconds and the
+/// extraction is UTC. Both halves are true and the conclusion is not.
+/// `site/data/make-trips.py` stores each pickup as an offset from
+/// `2024-01-01 00:00:00` *local*, and `taxi.rs` adds back the epoch second of
+/// `2024-01-01 00:00:00` **UTC** — so the two conversions cancel and a UTC
+/// extraction reads the local wall clock straight out.
+///
+/// The diurnal curve is the evidence, and it is not a subtle signal: taxi
+/// pickups in New York trough in the small hours and peak in the evening rush.
+/// If these were true UTC instants the curve would be shifted five hours and the
+/// trough would land mid-morning.
+#[test]
+fn the_hours_are_new_york_local_which_is_what_the_curve_says() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips GROUP BY hour(pickup_time)",
+    );
+    let by_hour = counts(&answer);
+
+    let quietest = by_hour.iter().min_by_key(|(_, n)| **n).unwrap().0;
+    let busiest = by_hour.iter().max_by_key(|(_, n)| **n).unwrap().0;
+    assert_eq!(
+        (*quietest, *busiest),
+        (4, 18),
+        "the quietest and busiest hours are 04:00 and 18:00 local; a five-hour \
+         shift would put them at 09:00 and 23:00, which is what these numbers \
+         would say if the column really were UTC instants: {by_hour:?}"
+    );
+    // And the shape between them, so that a fixture whose two extremes
+    // happened to land right could not pass: the morning rush outruns the
+    // pre-dawn lull several times over.
+    assert!(
+        by_hour[&8] > by_hour[&4] * 5,
+        "08:00 should dwarf 04:00: {by_hour:?}"
+    );
+}
+
+/// A fixed offset shifts the hours, and shifts them by exactly what it says.
+///
+/// The composition this rests on is that a zone conversion *is* an addition:
+/// `hour(t, '-05:00')` compiles to `Extract(Hour, Add(t, -18000))`, which is
+/// why it needed no kernel change and no new wire variant. The test that this
+/// is really what happens is that the counts permute rather than change — the
+/// same trips, relabelled — which a fresh calculation could get wrong in a way
+/// a spot check on one hour would not catch.
+#[test]
+fn a_fixed_offset_rotates_the_hours_and_keeps_every_trip() {
+    let playground = loaded();
+    let utc = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips GROUP BY hour(pickup_time)",
+    ));
+    let shifted = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, '-05:00')",
+    ));
+
+    let rotated: BTreeMap<i64, i64> = utc
+        .iter()
+        .map(|(hour, n)| ((hour - 5).rem_euclid(24), *n))
+        .collect();
+    assert_eq!(
+        shifted, rotated,
+        "-05:00 should rotate the histogram by five"
+    );
+    let total: i64 = shifted.values().sum();
+    assert_eq!(total, 100_000, "no trip may be lost in the shift");
+}
+
+/// Half-hour zones work, which is the case an hours-only offset would fail
+/// silently: India is +05:30 and Newfoundland is -03:30, and rounding either
+/// to the hour gives a plausible histogram that is wrong for half the rows.
+#[test]
+fn a_half_hour_offset_is_not_rounded_to_the_hour() {
+    let playground = loaded();
+    let half = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time, '+05:30'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, '+05:30')",
+    ));
+    let whole = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time, '+05:00'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, '+05:00')",
+    ));
+    assert_ne!(
+        half, whole,
+        "+05:30 and +05:00 must not produce the same histogram"
+    );
+    assert_eq!(half.values().sum::<i64>(), 100_000);
+}
+
+/// The same call with and without a zone is two computed columns, because they
+/// are two questions. If the offset were left out of `ComputeSpec`'s identity,
+/// find-or-add would fold them together and the second would silently answer
+/// as the first.
+#[test]
+fn a_zone_makes_it_a_different_computed_column() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, '-05:00')",
+    );
+    let spec = &answer["spec"]["compute"];
+    assert_eq!(spec.as_array().unwrap().len(), 1, "{spec}");
+    assert_eq!(spec[0]["offset"], json!(-18_000), "{spec}");
+
+    // And the plain call, in the same playground, still has no offset.
+    let plain = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips GROUP BY hour(pickup_time)",
+    );
+    assert_eq!(plain["spec"]["compute"][0]["offset"], json!(0));
+}
+
+#[test]
+fn a_malformed_or_unresolvable_zone_is_refused_with_the_reason() {
+    let playground = loaded();
+    for (text, wanted) in [
+        ("'America/New_York'", "timezone database"),
+        ("'-5'", "not a UTC offset"),
+        ("'lunchtime'", "not a UTC offset"),
+        ("'+99:00'", "not a real offset"),
+        ("'-05:99'", "not a real offset"),
+    ] {
+        let message = refused(
+            &playground,
+            &format!(
+                "SELECT hour(pickup_time, {text}), count(*) FROM trips \
+                 GROUP BY hour(pickup_time, {text})"
+            ),
+        );
+        assert!(
+            message.contains(wanted),
+            "{text} should be refused for {wanted}: {message}"
+        );
+    }
+    // An aggregate is not a time function and does not take a second argument.
+    let message = refused(&playground, "SELECT max(fare, '-05:00') FROM trips");
+    assert!(message.contains("takes one column"), "{message}");
+    // Neither does `round`, which is in `TIME_FUNCTIONS` but is not one.
+    let message = refused(
+        &playground,
+        "SELECT round(distance, '-05:00'), count(*) FROM trips \
+         GROUP BY round(distance, '-05:00')",
+    );
+    assert!(message.contains("takes no timezone"), "{message}");
+}
+
+// --- time functions on a join ---------------------------------------------
+
+/// Trips per hour, with the zone's borough — one query, which is the thing
+/// that used to need two.
+///
+/// The oracle is a fold over the decoded file joined to the zone table by
+/// hand, so nothing in it goes through the kernel's join, its grouper or the
+/// computed-column plumbing.
+#[test]
+fn an_hour_key_on_a_join_agrees_with_a_hand_rolled_join() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time)",
+    );
+
+    // Every trip whose pickup_zone matches a zone row, folded by local hour.
+    let zone_ids: std::collections::BTreeSet<u64> = taxi::zone_rows()
+        .iter()
+        .map(|row| match row.values()[0] {
+            slate_tuple::Value::U64(id) => id,
+            ref other => panic!("zone id is {other:?}"),
+        })
+        .collect();
+    let mut expected: BTreeMap<i64, i64> = BTreeMap::new();
+    for row in taxi::decode(&trip_bytes()).unwrap() {
+        let (zone, seconds) = match (&row.values()[1], &row.values()[3]) {
+            (slate_tuple::Value::U64(z), slate_tuple::Value::I64(s)) => (*z, *s),
+            other => panic!("unexpected {other:?}"),
+        };
+        if zone_ids.contains(&zone) {
+            *expected
+                .entry(seconds.div_euclid(3600).rem_euclid(24))
+                .or_default() += 1;
+        }
+    }
+    assert_eq!(counts(&answer), expected);
+    assert_eq!(answer["columns"][0], json!("hour(pickup_time)"));
+}
+
+/// The join's computed column is on the join, not on a side — which is what
+/// the spec has to say, because a side's own computed column is refused by the
+/// kernel now that it is known to be dropped.
+#[test]
+fn the_join_spec_puts_the_computed_column_past_both_tables() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time)",
+    );
+    let spec = &answer["spec"];
+    assert_eq!(spec["compute"][0]["function"], json!("hour"));
+    // `trips` has 11 columns and `zones` 3, so the first computed column is 14.
+    let width = taxi::trips().columns().len() + taxi::zones().columns().len();
+    assert_eq!(
+        spec["groupBy"],
+        json!(width),
+        "the group key must sit past both tables: {spec}"
+    );
+}
+
+/// And a zone offset works there too, which is the composition of the two
+/// features in this change and the one place they could have failed to meet.
+#[test]
+fn a_join_takes_a_timezone_as_well() {
+    let playground = loaded();
+    let plain = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time)",
+    ));
+    let shifted = counts(&ok(
+        &playground,
+        "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time, '-05:00')",
+    ));
+    let rotated: BTreeMap<i64, i64> = plain
+        .iter()
+        .map(|(hour, n)| ((hour - 5).rem_euclid(24), *n))
+        .collect();
+    assert_eq!(shifted, rotated);
 }

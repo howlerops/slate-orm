@@ -255,6 +255,35 @@ out.clickhouseHeaders = await page.locator('[data-app="grid"] th').allInnerTexts
 out.notATimestamp = await type("SELECT hour(payment), count(*) FROM trips GROUP BY hour(payment)");
 out.notATimestampWhy = await page.locator('[data-app="grid"] .refusal').innerText();
 
+// 9c4. A fixed timezone offset, which is `Add` underneath and so travels the
+//      same serde path as any other computed column — with one extra field
+//      that a spec round trip could drop while every Rust test still passed.
+out.zoned = await type(
+  "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips " +
+  "GROUP BY hour(pickup_time, '-05:00') ORDER BY hour(pickup_time, '-05:00')",
+);
+out.zonedRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+await page.locator('[data-tab="spec"]').click();
+out.zonedSpec = await page.locator('[data-app="spec"]').innerText();
+await page.locator('[data-tab="results"]').click();
+// A region name needs a timezone database, and saying so beats guessing.
+out.region = await type(
+  "SELECT hour(pickup_time, 'America/New_York'), count(*) FROM trips " +
+  "GROUP BY hour(pickup_time, 'America/New_York')",
+);
+out.regionWhy = await page.locator('[data-app="grid"] .refusal').innerText();
+
+// 9c5. A computed column on a *join*, which was refused outright until the
+//      kernel grew somewhere to put it. Clicked from the sidebar, because the
+//      example is the thing a reader will actually run.
+await page.locator('.examples button:has-text("Manhattan")').click();
+await page.waitForTimeout(600);
+out.joinHour = {
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+
 // 9d. The timing in the status bar is the kernel's, not the round trip.
 //     A grouped query returning 226 rows spends ~1% of its wall clock on
 //     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
@@ -709,6 +738,57 @@ def main() -> int:
         seen["notATimestamp"]["refusal"] == 1
         and "timestamp" in seen["notATimestampWhy"],
         f"{seen['notATimestampWhy']!r}",
+    )
+
+    # The offset is a rotation, so the two histograms hold the same counts in a
+    # different order. Comparing the multisets is what makes this a check on
+    # the shift rather than on one hour: a dropped offset gives an identical
+    # list, and a wrong one gives a differently-ordered same multiset — so the
+    # ordering is asserted too.
+    plain = [int(r.split("\t")[1]) for r in seen["byHourRows"]]
+    zoned = [int(r.split("\t")[1]) for r in seen["zonedRows"]]
+    check(
+        "a fixed offset rotates the hours and keeps every trip",
+        sorted(zoned) == sorted(plain) and zoned != plain and sum(zoned) == 100_000,
+        f"{zoned[:4]} against {plain[:4]}, total {sum(zoned)}",
+    )
+    check(
+        "and it is exactly five hours, not some other rotation",
+        zoned == plain[5:] + plain[:5],
+        f"{zoned[:6]} against {(plain[5:] + plain[:5])[:6]}",
+    )
+    check(
+        "the offset reaches the spec rather than being applied and forgotten",
+        '"offset": -18000' in seen["zonedSpec"].replace("\n", " ")
+        or '"offset":-18000' in seen["zonedSpec"].replace("\n", " "),
+        f"{seen['zonedSpec'][:200]!r}",
+    )
+    check(
+        "a region name is refused, and says why rather than guessing",
+        seen["region"]["refusal"] == 1
+        and "timezone database" in seen["regionWhy"],
+        f"{seen['regionWhy']!r}",
+    )
+
+    # A computed group key on a join lands after *both* tables. If it landed
+    # after the left one it would be `zones.id` — which is a real column, so
+    # this comes back as a plausible table of numbers rather than an error.
+    # The 24 hours are what says it did not.
+    join_hours = [int(r.split("\t")[0]) for r in seen["joinHour"]["rows"]]
+    check(
+        "a computed column works on a join, keyed past both tables",
+        seen["joinHour"]["refusal"] == 0
+        and sorted(join_hours) == list(range(24))
+        # Lowercased before comparing, as the ClickHouse check above does:
+        # the grid uppercases headers in CSS and `innerText` reports what is
+        # rendered, not what the binding produced.
+        and seen["joinHour"]["headers"][0].lower() == "hour(pickup_time)",
+        f"{seen['joinHour']['headers']}, {len(join_hours)} keys: {join_hours[:6]}",
+    )
+    check(
+        "and the join narrowed it to Manhattan rather than the whole sample",
+        0 < sum(int(r.split("\t")[1]) for r in seen["joinHour"]["rows"]) < 100_000,
+        f"{sum(int(r.split(chr(9))[1]) for r in seen['joinHour']['rows'])} trips",
     )
 
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")

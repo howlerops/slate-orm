@@ -1612,10 +1612,18 @@ class JoinInput(_message.Message):
         is absent reads as null there, so the condition is unknown and the pair is
         not admitted — but the preserved row itself still comes back, unmatched.
 
-        It cannot name a computed value of another input. The kernel's joined
-        ordinal space is packed by declared table width, so a computed value has
-        no slot in it; the reference is refused rather than landing on whatever
-        column happens to sit at that offset.
+        It cannot name a computed value of another input. An input's computed
+        values are appended to that input's own row, and the joined ordinal space
+        is packed by declared table width, so such a value has no slot in it; the
+        reference is refused rather than landing on whatever column happens to sit
+        at that offset.
+
+        The kernel has since grown `Join::compute` — values computed over the
+        *joined* row and appended after every table's columns, which can read any
+        input — and this protocol does not carry it yet. A join's computed column
+        is reachable from the browser binding and not over gRPC. That is a gap,
+        not a decision; adding it means giving `ColumnRef` a way to name a slot
+        that belongs to the join rather than to an input.
         """
 
     @_builtins.property

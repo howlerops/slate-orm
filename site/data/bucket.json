@@ -1,14 +1,22 @@
-[
-  { "path": "records/compacted/01M2HASY09NFHWEVP83RQ7H2YJ.sst", "bytes": 11538479 },
-  { "path": "records/compacted/01M2HASYA4PJFYCYKFGZDT0W4D.sst", "bytes": 376 },
-  { "path": "records/compactions/00000000000000000001.compactions", "bytes": 26 },
-  { "path": "records/compactions/00000000000000000002.compactions", "bytes": 42 },
-  { "path": "records/compactions/00000000000000000003.compactions", "bytes": 42 },
-  { "path": "records/compactions/00000000000000000004.compactions", "bytes": 42 },
-  { "path": "records/compactions/00000000000000000005.compactions", "bytes": 42 },
-  { "path": "records/gc/manifest.boundary", "bytes": 1 },
-  { "path": "records/manifest/00000000000000000009.manifest", "bytes": 682 },
-  { "path": "records/wal/00000000000000000001.sst", "bytes": 0 },
-  { "path": "records/wal/00000000000000000003.sst", "bytes": 0 },
-  { "path": "records/wal/00000000000000000004.sst", "bytes": 268 }
-]
+{
+  "provenance": {
+    "trips": 100000,
+    "zones": 265,
+    "schema": "trips(id:U64,pickup_zone:U64,dropoff_zone:U64,pickup_time:I64,duration:I64,passengers:I64?,distance:F64,fare:F64,tip:F64,total:F64,payment:Str)[by_pickup_zone] zones(id:U64,borough:Str,zone:Str,service_zone:Str)[]",
+    "command": "cargo run --release -p slate-slatedb --example bucket_layout -- --json"
+  },
+  "objects": [
+    { "path": "records/compacted/01M2HNC8VPPX5D3MR6ACZWAQRC.sst", "bytes": 11538479 },
+    { "path": "records/compacted/01M2HNC97QTQ45525JJP03Y9YJ.sst", "bytes": 376 },
+    { "path": "records/compactions/00000000000000000001.compactions", "bytes": 26 },
+    { "path": "records/compactions/00000000000000000002.compactions", "bytes": 42 },
+    { "path": "records/compactions/00000000000000000003.compactions", "bytes": 42 },
+    { "path": "records/compactions/00000000000000000004.compactions", "bytes": 42 },
+    { "path": "records/compactions/00000000000000000005.compactions", "bytes": 42 },
+    { "path": "records/gc/manifest.boundary", "bytes": 1 },
+    { "path": "records/manifest/00000000000000000009.manifest", "bytes": 682 },
+    { "path": "records/wal/00000000000000000001.sst", "bytes": 0 },
+    { "path": "records/wal/00000000000000000003.sst", "bytes": 0 },
+    { "path": "records/wal/00000000000000000004.sst", "bytes": 268 }
+  ]
+}

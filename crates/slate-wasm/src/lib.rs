@@ -173,6 +173,22 @@ pub struct ComputeSpec {
     pub function: String,
     /// The column it reads, an ordinal within the table.
     pub column: u32,
+    /// Seconds to add before reading the calendar out, so a timestamp stored
+    /// in UTC can be asked about in some other zone. Zero is UTC.
+    ///
+    /// A fixed offset, never a region: there is no timezone database here, so
+    /// `America/New_York` would have to guess at daylight saving and would
+    /// guess wrong for a third of the year. The parser refuses a region name
+    /// with that reason rather than accepting one and picking a season.
+    ///
+    /// This needs no kernel and no wire support, because it is already
+    /// expressible: shifting a timestamp is adding to it, and `Scalar::Add`
+    /// has been there since scalars arrived. `compute_scalar` wraps the column
+    /// rather than passing an offset down, so every path that already handles
+    /// `Add` — the planner, the wire, the covering scan — handles this one
+    /// with no change at all.
+    #[serde(default)]
+    pub offset: i64,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -246,8 +262,16 @@ pub struct JoinSpec {
     pub left_where: Vec<FilterSpec>,
     /// Conditions on the right table, ANDed.
     pub right_where: Vec<FilterSpec>,
-    /// Group by this column of the *left* table. Absent means return joined
-    /// rows rather than groups.
+    /// Computed per joined row, over the *left* table's columns, and appended
+    /// after both tables'. See `Join::compute`.
+    ///
+    /// Over the left table because that is the side `group_by` names and the
+    /// side the SQL front end resolves a bare column against; the kernel's
+    /// field is wider than this and will take an expression reading either.
+    pub compute: Vec<ComputeSpec>,
+    /// Group by this column of the *left* table, or a computed column at
+    /// `left.columns() + right.columns() + i`. Absent means return joined rows
+    /// rather than groups.
     pub group_by: Option<u32>,
     /// Computed per group, over the *right* table's columns.
     pub aggregates: Vec<AggregateSpec>,
@@ -836,6 +860,11 @@ impl Playground {
         )]);
         join.left = conditions(&spec.left_where, &authors)?;
         join.right = conditions(&spec.right_where, &books)?;
+        // Over the joined row, so they are appended after *both* tables and
+        // read the left table's columns at their own ordinals — the left side
+        // keeps its ordinals in the joined space, which is why the specs need
+        // no shift here where the aggregates below do.
+        join.compute = computes(&spec.compute, &authors)?;
         if let Some(limit) = spec.limit {
             join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
         }
@@ -1089,6 +1118,25 @@ impl Playground {
                     .unwrap_or_else(|_| fixture::authors());
                 let right_table = self.table(&spec.right).unwrap_or_else(|_| fixture::books());
                 let labels = labels(&spec.aggregates, &right_table);
+                // A computed group key sits past both tables, so its header
+                // comes from the spec rather than from a column that does not
+                // exist. Named as it was written — `hour(pickup_time)` — which
+                // is what the reader typed and what they will look for.
+                let computed_headers: Vec<(u32, String)> = spec
+                    .compute
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let width = left_table.columns().len() + right_table.columns().len();
+                        let name = left_table
+                            .column(Ordinal(c.column as usize))
+                            .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
+                        (
+                            u32::try_from(width + i).unwrap_or(0),
+                            format!("{}({name})", c.function),
+                        )
+                    })
+                    .collect();
                 match self.joined_spec(spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
@@ -1099,9 +1147,16 @@ impl Playground {
                         out.columns = match grouped {
                             Some(key) => {
                                 let mut headers = vec![
-                                    left_table
-                                        .column(Ordinal(key as usize))
-                                        .map_or_else(|| key.to_string(), |c| c.name().to_owned()),
+                                    computed_headers
+                                        .iter()
+                                        .find(|(at, _)| *at == key)
+                                        .map(|(_, name)| name.clone())
+                                        .or_else(|| {
+                                            left_table
+                                                .column(Ordinal(key as usize))
+                                                .map(|c| c.name().to_owned())
+                                        })
+                                        .unwrap_or_else(|| key.to_string()),
                                 ];
                                 // `count` is always there, added by the
                                 // binding when the reader named no aggregate.
@@ -1834,7 +1889,26 @@ fn compute_scalar(spec: &ComputeSpec, table: &TableDef) -> Result<Scalar, String
         .column(column)
         .ok_or_else(|| format!("{} has no column {}", table.name(), spec.column))?;
     let kind = def.value_type();
-    let value = Scalar::Column(column);
+    let mut value = Scalar::Column(column);
+
+    // The zone shift, if there is one. Adding seconds to a timestamp and then
+    // reading the calendar out of the result *is* what a fixed-offset
+    // conversion is, so this needs no new `Scalar` variant and no new wire
+    // field — see `ComputeSpec::offset`.
+    //
+    // `arithmetic` promotes two integers to `I64` and saturates rather than
+    // wrapping, so a `U64` column shifted below the epoch becomes a negative
+    // `I64` and `CalendarPart`'s floor division handles it, rather than
+    // wrapping to the year 584942417355.
+    if spec.offset != 0 {
+        if spec.function == "round" {
+            return Err("round() takes no timezone: it is not a time function".to_owned());
+        }
+        value = Scalar::Add(
+            Box::new(value),
+            Box::new(Scalar::Literal(slate_tuple::Value::I64(spec.offset))),
+        );
+    }
 
     // Checked per function rather than once, because they do not agree on what
     // they take: a timestamp is an integer of seconds — there is no date type

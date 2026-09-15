@@ -232,6 +232,15 @@ compaction records and two spent WAL fences. `LocalFileSystem` rather than
 MinIO because SlateDB writes objects through `object_store` either way — the
 paths are what an S3 bucket holds, with a different scheme in front.
 
+The file also carries a `provenance` block — the schema fingerprint and the row
+counts it was taken against — and `crates/slate-wasm/tests/bucket_provenance.rs`
+fails when either stops matching what the site ships. That is what makes the
+regeneration above a step somebody is *told* to take rather than one they have
+to remember: change a column type or the sample, and the Rust suite says the
+listing now describes something else. It does not check the byte counts are
+current, because nothing cheap can — the SST names are ULIDs and the sizes move
+with SlateDB's block packing.
+
 ### Why the listing is taken one write after the load
 
 It used to read **21.7 MB**, and that number was wrong in a way worth writing

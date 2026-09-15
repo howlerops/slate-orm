@@ -240,3 +240,50 @@ pub fn trip_literal(text: &str, kind: ValueType, nullable: bool) -> Result<Value
     }
     literal(text, kind)
 }
+
+/// A stable summary of the two tables, for the committed bucket listing.
+///
+/// `site/data/bucket.json` is a real listing of a real load, and it can never
+/// be compared object for object against a fresh one: the SST names are ULIDs
+/// minted at write time and the byte counts move with SlateDB's block packing.
+/// So the objects are not what gets checked — *what they are a listing of* is.
+/// This is that, and `bucket_provenance.rs` compares it against the committed
+/// copy in milliseconds without going near SlateDB or an object store.
+///
+/// Every column's name, type and nullability, and every index, in declaration
+/// order. Deliberately not a hash: a fingerprint that says *what* changed is
+/// worth more than one that says only that something did, and both are one
+/// line in a JSON file. A reader who breaks this test sees `duration:I64` next
+/// to `duration:F64` rather than two hex strings.
+#[must_use]
+pub fn schema_fingerprint() -> String {
+    [trips(), zones()]
+        .iter()
+        .map(|table| {
+            let columns: Vec<String> = table
+                .columns()
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{}:{:?}{}",
+                        c.name(),
+                        c.value_type(),
+                        if c.is_nullable() { "?" } else { "" }
+                    )
+                })
+                .collect();
+            let indexes: Vec<String> = table
+                .indexes()
+                .iter()
+                .map(|i| i.name().to_owned())
+                .collect();
+            format!(
+                "{}({})[{}]",
+                table.name(),
+                columns.join(","),
+                indexes.join(",")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}

@@ -51,6 +51,20 @@
 //! as `EXTRACT(DAY FROM t)` is in SQL, and `date` returns midnight of the day
 //! as epoch seconds so that grouping by it orders chronologically.
 //!
+//! Every time function reads the timestamp in **UTC** unless it is given a
+//! fixed offset as a second argument: `hour(pickup_time, '-05:00')`. Offsets
+//! only, never region names — there is no timezone database here, so
+//! `America/New_York` could only be honoured by guessing at daylight saving,
+//! and it is refused with that reason. `hour(t)` and `hour(t, '-05:00')` are
+//! two computed columns, because they are two questions.
+//!
+//! A call works on a join as well, where it must be the group key and reads a
+//! column of the left side: `SELECT hour(pickup_time), count(*) FROM trips
+//! JOIN zones ON ... GROUP BY hour(pickup_time)`. On a join the computed
+//! column lands after *both* tables' columns — the right table already owns
+//! the ordinals directly after the left — which is why the kernel refuses a
+//! computed column declared on a side.
+//!
 //! `<group-cond>` is the same, except the left side names a *group* — a group
 //! key or one of the aggregates the select list computes — so
 //! `HAVING count(*) > 100` is a condition on a number that does not exist
@@ -812,12 +826,16 @@ impl Parser<'_> {
                 at,
             }),
             SelectItem::Call {
-                function, argument, ..
+                function,
+                argument,
+                offset,
+                ..
             } => {
                 let column = self.resolve(argument, table, at)?;
                 let wanted = ComputeSpec {
                     function: function.clone(),
                     column,
+                    offset: *offset,
                 };
                 let position = spec
                     .compute
@@ -833,6 +851,77 @@ impl Parser<'_> {
                 // parser has to know the layout, and it is written down.
                 Ok(u32::try_from(table.columns().len() + position).unwrap_or(0))
             }
+        }
+    }
+
+    /// The joined-space ordinal a join's group key denotes, registering a
+    /// computed column if it is one.
+    ///
+    /// The single-table twin is [`Self::value_ordinal`]; this one differs in
+    /// where a computed column lands. On one table they sit after that table's
+    /// columns; on a join they sit after *both*, because the right table
+    /// already occupies the ordinals immediately after the left. Getting this
+    /// wrong is not an error but a wrong answer — the group key would be the
+    /// right table's first column — which is why the kernel now refuses a
+    /// side's own computed column outright rather than letting it land there.
+    ///
+    /// Find-or-add, for the reason the single-table one is: the same call
+    /// written in the select list and in `GROUP BY` is one computed column,
+    /// and registering it twice would return one group per pair.
+    fn join_value_ordinal(
+        &self,
+        item: &SelectItem,
+        spec: &mut JoinSpec,
+        left: &TableDef,
+        right: &TableDef,
+        at: usize,
+    ) -> Result<u32, SqlError> {
+        match item {
+            SelectItem::Column { raw, at } => self.resolve(raw, left, *at).map_err(|_| SqlError {
+                message: format!(
+                    "GROUP BY takes a column of `{}` (the join's left side); `{raw}` is \
+                         not one",
+                    left.name()
+                ),
+                at: *at,
+            }),
+            SelectItem::Call {
+                function,
+                argument,
+                offset,
+                ..
+            } => {
+                let column = self.resolve(argument, left, at).map_err(|_| SqlError {
+                    message: format!(
+                        "`{function}()` on a join reads a column of `{}` (the left side); \
+                         `{argument}` is not one",
+                        left.name()
+                    ),
+                    at,
+                })?;
+                let wanted = ComputeSpec {
+                    function: function.clone(),
+                    column,
+                    offset: *offset,
+                };
+                let position = spec
+                    .compute
+                    .iter()
+                    .position(|c| *c == wanted)
+                    .unwrap_or_else(|| {
+                        spec.compute.push(wanted);
+                        spec.compute.len() - 1
+                    });
+                let width = left.columns().len() + right.columns().len();
+                u32::try_from(width + position).map_err(|_| SqlError {
+                    message: "too many columns".to_owned(),
+                    at,
+                })
+            }
+            SelectItem::Aggregate { .. } => Err(SqlError {
+                message: "an aggregate cannot be a group key".to_owned(),
+                at,
+            }),
         }
     }
 
@@ -868,7 +957,10 @@ impl Parser<'_> {
                     })
             }
             SelectItem::Call {
-                function, argument, ..
+                function,
+                argument,
+                offset,
+                ..
             } => {
                 // The call must already be a group key — resolved against
                 // what the query said, exactly as a bare column is. Looking it
@@ -879,6 +971,7 @@ impl Parser<'_> {
                 let wanted = ComputeSpec {
                     function: function.clone(),
                     column,
+                    offset: *offset,
                 };
                 let ordinal = spec
                     .compute
@@ -984,8 +1077,28 @@ impl Parser<'_> {
                     at,
                 });
             }
+            // An optional second argument, only ever a timezone:
+            // `hour(pickup_time, '-05:00')`. Read before the `)` and refused
+            // for a name that is not a time function, so `max(a, b)` says the
+            // aggregate takes one column rather than complaining about a zone.
+            let name_lower = name.to_ascii_lowercase();
+            let mut zone = 0;
+            if self.eat_symbol(",") {
+                let zone_at = self.at();
+                let text = self.literal()?;
+                if !TIME_FUNCTIONS.contains(&name_lower.as_str()) {
+                    return Err(SqlError {
+                        message: format!("{name_lower}() takes one column"),
+                        at: zone_at,
+                    });
+                }
+                zone = zone_offset(&text).map_err(|message| SqlError {
+                    message,
+                    at: zone_at,
+                })?;
+            }
             self.expect_symbol(")")?;
-            let name = name.to_ascii_lowercase();
+            let name = name_lower;
             // Told apart by name, because they are told apart by nothing else:
             // both are `word(column)`. The alternative — deciding later, from
             // whether the name resolves as an aggregate — would put the
@@ -1000,6 +1113,7 @@ impl Parser<'_> {
                 return Ok(SelectItem::Call {
                     function: name,
                     argument,
+                    offset: zone,
                     at,
                 });
             }
@@ -1205,14 +1319,12 @@ impl Parser<'_> {
         if self.eat("group") {
             self.expect("by")?;
             let at = self.at();
-            let raw = self.name()?;
-            let key = self.resolve(&raw, left, at).map_err(|_| SqlError {
-                message: format!(
-                    "GROUP BY takes a column of `{}` (the join's left side); `{raw}` is not one",
-                    left.name()
-                ),
-                at,
-            })?;
+            // A select item rather than a bare column, so `GROUP BY
+            // hour(pickup_time)` reaches the same find-or-add the single-table
+            // path uses. `Join::compute` appends after *both* tables, which is
+            // where `join_value_ordinal` puts it.
+            let item = self.select_item()?;
+            let key = self.join_value_ordinal(&item, &mut spec, left, &right, at)?;
             spec.group_by = Some(key);
         }
 
@@ -1222,19 +1334,22 @@ impl Parser<'_> {
                     let parsed = self.aggregate(kind, argument.as_deref(), &right, *at)?;
                     spec.aggregates.push(parsed);
                 }
-                SelectItem::Call { function, at, .. } => {
-                    // The join spec has one group key and no computed
-                    // columns — `JoinSpec` carries neither a `compute` field
-                    // nor an ordinal space to put one in. Refused with the
-                    // reason rather than silently ignored, which is the rule
-                    // the rest of this grammar's edges follow.
-                    return Err(SqlError {
-                        message: format!(
-                            "`{function}()` is not available on a join — compute it in a \
-                             single-table query instead"
-                        ),
-                        at: *at,
-                    });
+                SelectItem::Call { at, .. } => {
+                    // Registered by find-or-add, so `SELECT hour(t), count(*)
+                    // ... GROUP BY hour(t)` names one computed column rather
+                    // than two. It must already be the group key: a computed
+                    // column beside a grouping that did not group by it is the
+                    // same error a bare column gets below, for the same reason.
+                    let ordinal = self.join_value_ordinal(item, &mut spec, left, &right, *at)?;
+                    if spec.group_by != Some(ordinal) {
+                        return Err(SqlError {
+                            message: "a computed column on a join has to be the group key — \
+                                      a join returns whole rows or one row per group, and \
+                                      there is no third shape"
+                                .to_owned(),
+                            at: *at,
+                        });
+                    }
                 }
                 SelectItem::Column { raw, at } => {
                     // Selecting a bare column beside a GROUP BY would be the
@@ -1400,6 +1515,61 @@ impl Parser<'_> {
 /// match by `every_time_function_the_parser_accepts_is_one_the_binding_lowers`
 /// — two lists that must agree, with a test rather than a comment holding them
 /// together.
+/// A fixed UTC offset in seconds, from `'-05:00'`, `'+05:30'`, `'UTC'` or
+/// `'Z'`.
+///
+/// Fixed offsets only, and a region name is refused rather than resolved.
+/// There is no timezone database here — pulling one in for a browser
+/// playground would cost more than the whole kernel — and the failure mode of
+/// guessing is not an error but a wrong hour for a third of the year, which is
+/// precisely the sort of thing this front end refuses to do silently.
+///
+/// `+05:30` and `-09:30` are real zones, so minutes are parsed rather than
+/// assumed to be zero; India and Newfoundland are not edge cases anyone should
+/// have to work around.
+fn zone_offset(text: &str) -> Result<i64, String> {
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("utc") || trimmed.eq_ignore_ascii_case("z") {
+        return Ok(0);
+    }
+    let malformed = || {
+        format!(
+            "`{trimmed}` is not a UTC offset — write one like '-05:00' or '+05:30'{}",
+            if trimmed.contains('/') {
+                ". Region names need a timezone database, which this does not \
+                 have, so it would have to guess at daylight saving"
+            } else {
+                ""
+            }
+        )
+    };
+    let (sign, rest) = match trimmed.split_at_checked(1) {
+        Some(("+", rest)) => (1, rest),
+        Some(("-", rest)) => (-1, rest),
+        _ => return Err(malformed()),
+    };
+    let (hours, minutes) = match rest.split_once(':') {
+        Some((h, m)) => (h, m),
+        // `-05` is unambiguous and common enough to accept.
+        None => (rest, "00"),
+    };
+    // Digit counts checked explicitly: `parse` accepts `+5` and `5 `, and an
+    // offset that reads loosely is one that reads a typo as a time.
+    let two_digits = |s: &str| s.len() == 2 && s.chars().all(|c| c.is_ascii_digit());
+    if !two_digits(hours) || !two_digits(minutes) {
+        return Err(malformed());
+    }
+    let (Ok(hours), Ok(minutes)) = (hours.parse::<i64>(), minutes.parse::<i64>()) else {
+        return Err(malformed());
+    };
+    if hours > 14 || minutes > 59 {
+        return Err(format!(
+            "`{trimmed}` is not a real offset: they run from -12:00 to +14:00"
+        ));
+    }
+    Ok(sign * (hours * 3_600 + minutes * 60))
+}
+
 /// The aggregate names, for telling an unknown function from a misplaced
 /// aggregate. `aggregate()` remains the authority on what is accepted; this is
 /// only for the error text, and a test keeps the two in step.
@@ -1432,9 +1602,15 @@ enum SelectItem {
         at: usize,
     },
     /// `hour(pickup_time)`: a function of one column, computed per row.
+    ///
+    /// `offset` is the fixed timezone shift in seconds from an optional second
+    /// argument — `hour(pickup_time, '-05:00')`. Part of the item's identity,
+    /// so `hour(t)` and `hour(t, '-05:00')` are two computed columns and a
+    /// query may select both; they are different questions.
     Call {
         function: String,
         argument: String,
+        offset: i64,
         at: usize,
     },
 }

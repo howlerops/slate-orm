@@ -81,6 +81,7 @@ use crate::error::{KernelError, Result};
 use crate::expr::{CmpOp, Columns, Expr};
 use crate::plan::Plan;
 use crate::query::Query;
+use crate::scalar::Scalar;
 use crate::stats::{POINT_READ_COST, SCAN_ROW_COST, TableStats};
 use slate_schema::{ColumnDef, Ordinal, Row, TableDef};
 use slate_tuple::{Direction, Value, encode_value_into};
@@ -199,6 +200,29 @@ pub struct Join {
     /// Force an algorithm instead of costing one. For tests and for a caller
     /// who knows something the statistics do not.
     pub force: Option<JoinAlgorithm>,
+    /// Extra values computed per joined row, appended after *every* table's
+    /// columns.
+    ///
+    /// The same arrangement [`Query::compute`] uses on a single table, lifted
+    /// one level: the `i`th appears at `JoinSchema::computed(i)`, so a group
+    /// key or an aggregate addresses it the ordinary way. What is new is that
+    /// the expression is evaluated over the *joined* row, so it may read both
+    /// sides at once — `hour(trips.pickup_time)` and `left.a - right.b` are
+    /// the same kind of thing here.
+    ///
+    /// It is on the join rather than on each side's [`Query`] because a side's
+    /// own computed column has nowhere to go *once the row is flattened*: the
+    /// sides are concatenated by declared table width, so a value appended to
+    /// the left row lands where the right table's first column belongs. That
+    /// is not hypothetical — grouping such a join silently returned the right
+    /// table's first column as the group key. `read::no_side_computes` refuses
+    /// it on the grouped path for that reason.
+    ///
+    /// Only the grouped path, because only it flattens. An ungrouped join
+    /// hands back each side's row as it stands, computed values included, and
+    /// the wire splits them per input — so there a side's `Query::compute` is
+    /// a supported feature and stays one.
+    pub compute: Vec<Scalar>,
 }
 
 impl Join {
@@ -215,6 +239,7 @@ impl Join {
             build_limit: DEFAULT_BUILD_LIMIT,
             having: Expr::True,
             force: None,
+            compute: Vec::new(),
         }
     }
 
@@ -228,6 +253,13 @@ impl Join {
     #[must_use]
     pub fn left(mut self, query: Query) -> Self {
         self.left = query;
+        self
+    }
+
+    /// Compute these values per joined row. See [`Join::compute`].
+    #[must_use]
+    pub fn computing<I: IntoIterator<Item = Scalar>>(mut self, scalars: I) -> Self {
+        self.compute = scalars.into_iter().collect();
         self
     }
 
@@ -328,6 +360,11 @@ impl Join {
         }
         // A `having` ordinal past the joined width names no column at all, and
         // would silently read as null — that is, as a condition nobody wrote.
+        //
+        // Computed slots are deliberately not in this space: `having` decides
+        // whether a pair is admitted, and the computed values are produced
+        // from the admitted pair, so a `having` reading one would be reading a
+        // value that does not exist yet.
         let schema = JoinSchema::of(left, right);
         for column in self.having.columns() {
             if schema.resolve(column).is_none() {
@@ -602,6 +639,9 @@ pub struct JoinSchema {
     widths: Vec<usize>,
     /// Where each table's columns start in the joined space.
     offsets: Vec<usize>,
+    /// Values the join computes, which sit after every table's columns. See
+    /// [`Join::compute`].
+    computed: usize,
 }
 
 impl JoinSchema {
@@ -615,7 +655,34 @@ impl JoinSchema {
             offsets.push(at);
             at += width;
         }
-        Self { widths, offsets }
+        Self {
+            widths,
+            offsets,
+            computed: 0,
+        }
+    }
+
+    /// The same space with room for `n` computed values after every table.
+    #[must_use]
+    pub fn computing(mut self, n: usize) -> Self {
+        self.computed = n;
+        self
+    }
+
+    /// Where the `i`th computed value sits. See [`Join::compute`].
+    ///
+    /// Past every table's columns, which is the one place an ordinal can go
+    /// without shifting a column that already has one — the same reason
+    /// [`Query::computed`] appends rather than inserts.
+    #[must_use]
+    pub fn computed(&self, index: usize) -> Ordinal {
+        Ordinal(self.columns() + index)
+    }
+
+    /// Columns the tables contribute, not counting computed values.
+    #[must_use]
+    pub fn columns(&self) -> usize {
+        self.widths.iter().sum()
     }
 
     /// The space for a join of two tables.
@@ -683,10 +750,11 @@ impl JoinSchema {
         }
     }
 
-    /// Total columns in the joined space.
+    /// Total ordinals in the joined space: every table's columns, then the
+    /// values the join computes.
     #[must_use]
     pub fn width(&self) -> usize {
-        self.widths.iter().sum()
+        self.columns() + self.computed
     }
 
     /// How many tables this space spans.
@@ -847,6 +915,36 @@ impl JoinedRow {
                 }
                 None => values.resize(values.len() + width, Value::Null),
             }
+        }
+        Row::new(values)
+    }
+
+    /// Flattened, then the join's computed values appended in order.
+    ///
+    /// Each is evaluated against the row as it stands, so a later expression
+    /// can read an earlier one — the same rule [`Query::compute`] follows on a
+    /// single table, and the reason a chain of them needs no nesting.
+    ///
+    /// A missing side reads as null throughout, so a computed value over an
+    /// outer join's unmatched row is computed from nulls rather than skipped.
+    /// That is what the rest of the join already does with an absent side and
+    /// what SQL says it contains; the alternative — a null computed slot
+    /// regardless of the expression — would make `coalesce(right.x, 0)`
+    /// answer differently here than anywhere else.
+    #[must_use]
+    pub fn flatten_computing(&self, schema: &JoinSchema, compute: &[Scalar]) -> Row {
+        let flat = self.flatten(schema);
+        if compute.is_empty() {
+            return flat;
+        }
+        let mut values = flat.into_values();
+        values.reserve(compute.len());
+        for scalar in compute {
+            // Against the values as a slice rather than a rebuilt `Row`, for
+            // the reason `exec::extend` gives: rebuilding clones every value
+            // once per computed column, which is quadratic in their number.
+            let so_far: &[Value] = &values;
+            values.push(scalar.evaluate(so_far));
         }
         Row::new(values)
     }
