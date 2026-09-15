@@ -1048,6 +1048,7 @@ class Scalar(_message.Message):
     CALENDAR_PART_FIELD_NUMBER: _builtins.int
     ROUND_FIELD_NUMBER: _builtins.int
     CALENDAR_TRUNC_FIELD_NUMBER: _builtins.int
+    ZONE_SHIFT_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def column(self) -> Global___ColumnRef: ...
     @_builtins.property
@@ -1091,6 +1092,28 @@ class Scalar(_message.Message):
         date, drops the fields below the boundary and encodes it again.
         """
 
+    @_builtins.property
+    def zone_shift(self) -> Global___ZoneShift:
+        """A UTC timestamp read as local time in a named IANA zone: the zone's
+        offset *at that instant* is added, so every calendar node above reads
+        the local wall clock with no change of its own.
+
+        One node rather than a zone field on each of `extract`, `date_trunc`,
+        `calendar_part` and `calendar_trunc`, because the shift composes: the
+        planner, the covering scan and the round-trip property already handle a
+        nested scalar and would each need a case for a zone field.
+
+        The server knows a curated list of zones, not the whole IANA database,
+        and refuses a name outside it — the refusal names every zone that
+        exists, so a caller who guessed wrong learns what to send instead.
+
+        The list is deliberately *not* discoverable: this protocol publishes
+        nothing a client was not already told about, which is why `SchemaCheck`
+        is an assertion rather than a query. A client carrying its own copy of
+        the list would be a copy that goes stale silently, so the clients send
+        the name through as a string and let the refusal be the answer.
+        """
+
     def __init__(
         self,
         *,
@@ -1113,12 +1136,13 @@ class Scalar(_message.Message):
         calendar_part: Global___CalendarField | None = ...,
         round: Global___Scalar | None = ...,
         calendar_trunc: Global___CalendarTrunc | None = ...,
+        zone_shift: Global___ZoneShift | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "calendar_trunc", b"calendar_trunc", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "calendar_trunc", b"calendar_trunc", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper", "zone_shift", b"zone_shift"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "calendar_trunc", b"calendar_trunc", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "calendar_trunc", b"calendar_trunc", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper", "zone_shift", b"zone_shift"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["column", "literal", "add", "sub", "mul", "div", "length", "concat", "lower", "upper", "extract", "date_trunc", "case", "coalesce", "distance", "regexp_replace", "calendar_part", "round", "calendar_trunc"]  # noqa: Y015
+    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["column", "literal", "add", "sub", "mul", "div", "length", "concat", "lower", "upper", "extract", "date_trunc", "case", "coalesce", "distance", "regexp_replace", "calendar_part", "round", "calendar_trunc", "zone_shift"]  # noqa: Y015
     _WhichOneofArgType_node: _TypeAlias = _typing.Literal["node", b"node"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_node) -> _WhichOneofReturnType_node | None: ...
 
@@ -1236,6 +1260,35 @@ class CalendarTrunc(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___CalendarTrunc: _TypeAlias = CalendarTrunc  # noqa: Y015
+
+@_typing.final
+class ZoneShift(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    ZONE_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    zone: _builtins.str
+    """The IANA name, case-sensitive, exactly as the server spells it:
+    `America/New_York`, not `america/new_york`. Refused when empty, and
+    refused when the server does not have it.
+    """
+    @_builtins.property
+    def value(self) -> Global___Scalar:
+        """The timestamp, in seconds since the epoch, UTC."""
+
+    def __init__(
+        self,
+        *,
+        zone: _builtins.str = ...,
+        value: Global___Scalar | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["value", b"value", "zone", b"zone"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___ZoneShift: _TypeAlias = ZoneShift  # noqa: Y015
 
 @_typing.final
 class Case(_message.Message):

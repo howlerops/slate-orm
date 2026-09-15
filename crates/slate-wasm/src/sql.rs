@@ -52,11 +52,16 @@
 //! as epoch seconds so that grouping by it orders chronologically.
 //!
 //! Every time function reads the timestamp in **UTC** unless it is given a
-//! fixed offset as a second argument: `hour(pickup_time, '-05:00')`. Offsets
-//! only, never region names — there is no timezone database here, so
-//! `America/New_York` could only be honoured by guessing at daylight saving,
-//! and it is refused with that reason. `hour(t)` and `hour(t, '-05:00')` are
-//! two computed columns, because they are two questions.
+//! second argument: either a fixed offset, `hour(pickup_time, '-05:00')`, or
+//! an IANA zone name, `hour(pickup_time, 'America/New_York')`. A name is
+//! resolved through the kernel's transition table — a few kilobytes of sorted
+//! integers, not the whole IANA database — so daylight saving is looked up at
+//! each row's instant rather than guessed at. A name outside the table is
+//! refused, and the refusal lists the ones that are in it.
+//!
+//! `hour(t)`, `hour(t, '-05:00')` and `hour(t, 'America/New_York')` are three
+//! computed columns, because they are three questions: in New York the second
+//! and third differ for a third of the year.
 //!
 //! A call works on a join as well, where it must be the group key and reads a
 //! column of the left side: `SELECT hour(pickup_time), count(*) FROM trips
@@ -874,6 +879,7 @@ impl Parser<'_> {
                 function,
                 argument,
                 offset,
+                zone,
                 ..
             } => {
                 let column = self.resolve(argument, table, at)?;
@@ -884,6 +890,7 @@ impl Parser<'_> {
                     input: 0,
                     column,
                     offset: *offset,
+                    zone: zone.clone(),
                 };
                 let position = spec
                     .compute
@@ -937,6 +944,7 @@ impl Parser<'_> {
                 function,
                 argument,
                 offset,
+                zone,
                 ..
             } => {
                 let (input, column) = self.resolve_side(argument, left, right, at)?;
@@ -945,6 +953,7 @@ impl Parser<'_> {
                     input,
                     column,
                     offset: *offset,
+                    zone: zone.clone(),
                 };
                 let position = spec
                     .compute
@@ -1002,6 +1011,7 @@ impl Parser<'_> {
                 function,
                 argument,
                 offset,
+                zone,
                 ..
             } => {
                 // The call must already be a group key — resolved against
@@ -1015,6 +1025,7 @@ impl Parser<'_> {
                     input: 0,
                     column,
                     offset: *offset,
+                    zone: zone.clone(),
                 };
                 let ordinal = spec
                     .compute
@@ -1130,7 +1141,8 @@ impl Parser<'_> {
             // for a name that is not a time function, so `max(a, b)` says the
             // aggregate takes one column rather than complaining about a zone.
             let name_lower = name.to_ascii_lowercase();
-            let mut zone = 0;
+            let mut offset = 0;
+            let mut zone = String::new();
             if self.eat_symbol(",") {
                 let zone_at = self.at();
                 let text = self.literal()?;
@@ -1140,7 +1152,7 @@ impl Parser<'_> {
                         at: zone_at,
                     });
                 }
-                zone = zone_offset(&text).map_err(|message| SqlError {
+                (offset, zone) = parse_zone(&text).map_err(|message| SqlError {
                     message,
                     at: zone_at,
                 })?;
@@ -1161,7 +1173,8 @@ impl Parser<'_> {
                 return Ok(SelectItem::Call {
                     function: name,
                     argument,
-                    offset: zone,
+                    offset,
+                    zone,
                     at,
                 });
             }
@@ -1602,33 +1615,46 @@ impl Parser<'_> {
 /// match by `every_time_function_the_parser_accepts_is_one_the_binding_lowers`
 /// — two lists that must agree, with a test rather than a comment holding them
 /// together.
-/// A fixed UTC offset in seconds, from `'-05:00'`, `'+05:30'`, `'UTC'` or
-/// `'Z'`.
+/// A second argument to a time function: a fixed offset, or a named zone.
 ///
-/// Fixed offsets only, and a region name is refused rather than resolved.
-/// There is no timezone database here — pulling one in for a browser
-/// playground would cost more than the whole kernel — and the failure mode of
-/// guessing is not an error but a wrong hour for a third of the year, which is
-/// precisely the sort of thing this front end refuses to do silently.
+/// Returns `(seconds, name)` with exactly one side filled in — a fixed offset
+/// in seconds and an empty name, or zero and an IANA name. Two returns rather
+/// than an enum because both are already fields on `ComputeSpec`, and a
+/// two-variant enum wrapping two integers to be unwrapped at the only call
+/// site is ceremony.
 ///
-/// `+05:30` and `-09:30` are real zones, so minutes are parsed rather than
-/// assumed to be zero; India and Newfoundland are not edge cases anyone should
-/// have to work around.
-fn zone_offset(text: &str) -> Result<i64, String> {
+/// `'-05:00'`, `'+05:30'`, `'UTC'` and `'Z'` are fixed. `+05:30` and `-09:30`
+/// are real zones, so minutes are parsed rather than assumed to be zero; India
+/// and Newfoundland are not edge cases anyone should have to work around.
+///
+/// `'America/New_York'` is a name, and the kernel's table resolves it to the
+/// offset in force at each row's instant. That was refused for two rounds with
+/// a reason that was true of a timezone *database* — megabytes, a parser, a
+/// release cadence — and not of a timezone *table*, which for a curated list
+/// of zones is a few kilobytes of sorted integers. A name outside the list is
+/// still refused, and the refusal now says which names are there rather than
+/// saying the feature does not exist.
+fn parse_zone(text: &str) -> Result<(i64, String), String> {
     let trimmed = text.trim();
     if trimmed.eq_ignore_ascii_case("utc") || trimmed.eq_ignore_ascii_case("z") {
-        return Ok(0);
+        return Ok((0, String::new()));
+    }
+    if slate_kernel::zones::has(trimmed) {
+        return Ok((0, trimmed.to_owned()));
     }
     let malformed = || {
-        format!(
-            "`{trimmed}` is not a UTC offset — write one like '-05:00' or '+05:30'{}",
-            if trimmed.contains('/') {
-                ". Region names need a timezone database, which this does not \
-                 have, so it would have to guess at daylight saving"
-            } else {
-                ""
-            }
-        )
+        // A name-shaped argument gets the zone list and an offset-shaped one
+        // gets the offset syntax: `America/new_york` is a spelling mistake and
+        // `-5:00` is a syntax one, and one message for both helps neither.
+        if trimmed.contains('/') || trimmed.chars().next().is_some_and(char::is_alphabetic) {
+            format!(
+                "no such timezone: `{trimmed}`. IANA names are case-sensitive, \
+                 and this has {}",
+                slate_kernel::zones::listing()
+            )
+        } else {
+            format!("`{trimmed}` is not a UTC offset — write one like '-05:00' or '+05:30'")
+        }
     };
     let (sign, rest) = match trimmed.split_at_checked(1) {
         Some(("+", rest)) => (1, rest),
@@ -1654,7 +1680,7 @@ fn zone_offset(text: &str) -> Result<i64, String> {
             "`{trimmed}` is not a real offset: they run from -12:00 to +14:00"
         ));
     }
-    Ok(sign * (hours * 3_600 + minutes * 60))
+    Ok((sign * (hours * 3_600 + minutes * 60), String::new()))
 }
 
 /// The aggregate names, for telling an unknown function from a misplaced
@@ -1692,14 +1718,20 @@ enum SelectItem {
     },
     /// `hour(pickup_time)`: a function of one column, computed per row.
     ///
-    /// `offset` is the fixed timezone shift in seconds from an optional second
-    /// argument — `hour(pickup_time, '-05:00')`. Part of the item's identity,
-    /// so `hour(t)` and `hour(t, '-05:00')` are two computed columns and a
-    /// query may select both; they are different questions.
+    /// The optional second argument — `hour(pickup_time, '-05:00')` or
+    /// `hour(pickup_time, 'America/New_York')` — is a fixed offset in
+    /// `offset`, in seconds, or an IANA name in `zone`. Never both: a literal
+    /// is one or the other, and `parse_zone` decides which.
+    ///
+    /// Part of the item's identity, so `hour(t)`, `hour(t, '-05:00')` and
+    /// `hour(t, 'America/New_York')` are three computed columns and a query
+    /// may select all three; they are three different questions, and in New
+    /// York the second and third differ for a third of the year.
     Call {
         function: String,
         argument: String,
         offset: i64,
+        zone: String,
         at: usize,
     },
 }

@@ -30,6 +30,8 @@ pub mod security;
 pub mod stats;
 pub mod store;
 pub mod token;
+/// Generated timezone transition tables. See `scripts/generate_zones.py`.
+pub mod zones;
 
 pub use aggregate::{Aggregate, Group, Grouper, Grouping};
 pub use chain::{Chain, ChainCursor, ChainPlan, ChainRow, JoinStep, JoinStepPlan};

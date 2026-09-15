@@ -82,11 +82,18 @@ const EXAMPLES = [
       "-- 18:00 are the evidence -- so the shift here is what you would write\n" +
       "-- for a column that really did hold UTC instants.\n" +
       "--\n" +
-      "-- Fixed offsets only. 'America/New_York' needs a timezone database to\n" +
-      "-- know about daylight saving, and guessing would be wrong for a third\n" +
-      "-- of the year, so it is refused rather than approximated. Try it.\n" +
-      "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips\n" +
-      "  GROUP BY hour(pickup_time, '-05:00')\n" +
+      "-- A fixed offset or an IANA name, and the name is not an alias for\n" +
+      "-- the offset: it is looked up in a transition table at each row's\n" +
+      "-- instant, so daylight saving is honoured rather than guessed at.\n" +
+      "-- These two agree because January is standard time -- ask the same\n" +
+      "-- question about July and they would not. Swap in\n" +
+      "-- 'Australia/Sydney' to see it shift eleven hours the other way, or\n" +
+      "-- misspell a name to see which zones are here.\n" +
+      "SELECT hour(pickup_time, '-05:00'),\n" +
+      "       hour(pickup_time, 'America/New_York'),\n" +
+      "       count(*) FROM trips\n" +
+      "  GROUP BY hour(pickup_time, '-05:00'),\n" +
+      "           hour(pickup_time, 'America/New_York')\n" +
       "  ORDER BY hour(pickup_time, '-05:00')",
   ],
   [

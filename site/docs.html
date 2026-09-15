@@ -211,12 +211,16 @@ actions = ["everything"]</code></pre>
           aggregate on the other used to be the only shape available.
         </p>
         <p>
-          They read <strong>UTC</strong> unless given a fixed offset &mdash;
-          <code>hour(pickup_time, '-05:00')</code>. Offsets only: naming a
-          region would need a timezone database to know about daylight saving,
-          so it is refused rather than guessed at. The taxi sample in the
-          workbench is New York wall clock already, which is why its quietest
-          hour is 04:00 and not 09:00.
+          They read <strong>UTC</strong> unless given a second argument: a
+          fixed offset, <code>hour(pickup_time, '-05:00')</code>, or a named
+          zone, <code>hour(pickup_time, 'America/New_York')</code>. A name is
+          resolved against a transition table built from IANA's
+          <code>tzdata</code> &mdash; a few kilobytes of sorted integers for a
+          curated list of zones, not the whole database &mdash; so daylight
+          saving is looked up at each row's instant rather than guessed at. A
+          zone outside the list is refused, and the refusal names the ones that
+          are in it. The taxi sample in the workbench is New York wall clock
+          already, which is why its quietest hour is 04:00 and not 09:00.
         </p>
       </div>
       <div class="card">

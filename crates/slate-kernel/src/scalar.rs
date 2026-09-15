@@ -178,6 +178,32 @@ const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// The offset a named zone is from UTC at an instant, in seconds east.
+///
+/// A binary search over that zone's transition table. The table is generated —
+/// see [`crate::zones`] — and its first entry is the window's start, so a
+/// lookup before any real transition still finds an offset rather than falling
+/// off the front.
+///
+/// `None` for a name the table does not have, which is what makes an unknown
+/// zone a refusal rather than a guess.
+fn zone_offset(name: &str, instant: i64) -> Option<i32> {
+    let zone = crate::zones::ZONES
+        .binary_search_by(|zone| zone.name.cmp(name))
+        .ok()
+        .and_then(|at| crate::zones::ZONES.get(at))?;
+    // The last transition at or before the instant. `partition_point` gives the
+    // count of entries strictly before the first one *after* it, so subtracting
+    // one lands on the entry in force — and the table is never empty, so the
+    // saturating subtraction only matters for an instant before the window,
+    // where entry zero is the right answer anyway.
+    let at = zone
+        .transitions
+        .partition_point(|(when, _)| *when <= instant)
+        .saturating_sub(1);
+    zone.transitions.get(at).map(|(_, offset)| *offset)
+}
+
 /// A calendar boundary [`Scalar::CalendarTrunc`] can floor a timestamp to.
 ///
 /// Separate from [`TimeUnit`] for the reason [`CalendarPart`] is separate from
@@ -297,6 +323,29 @@ pub enum Scalar {
         /// Which boundary.
         unit: CalendarUnit,
         /// The timestamp, in seconds since the epoch.
+        value: Box<Scalar>,
+    },
+    /// A UTC timestamp read as local time in a named zone.
+    ///
+    /// Adds the zone's offset *at that instant*, so the result is "local
+    /// seconds": feed it to [`Scalar::Extract`], [`Scalar::CalendarPart`] or
+    /// either truncation and every one of them reads the local wall clock with
+    /// no change of its own. That is the same arrangement a fixed offset uses —
+    /// `Scalar::Add` of a constant — generalised from a constant to a table
+    /// lookup, which is the whole difference between an offset and a zone.
+    ///
+    /// One variant rather than a zone field on each of the four calendar
+    /// scalars, for the reason the fixed offset needed none: the shift composes,
+    /// so the planner, the wire, the covering scan and the round-trip property
+    /// handle it already.
+    ///
+    /// A zone the table does not have evaluates to null. The refusal a caller
+    /// should see belongs at the edge — the SQL front end and the clients name
+    /// the zones that exist — because a `Scalar` has nowhere to put an error.
+    ZoneShift {
+        /// The IANA name, as [`crate::zones`] spells it.
+        zone: String,
+        /// The timestamp, in seconds since the epoch, UTC.
         value: Box<Scalar>,
     },
     /// A timestamp rounded down to a whole unit.
@@ -502,6 +551,16 @@ impl Scalar {
         }
     }
 
+    /// Read this UTC timestamp as local time in `zone`. See
+    /// [`Scalar::ZoneShift`].
+    #[must_use]
+    pub fn in_zone(self, zone: impl Into<String>) -> Self {
+        Self::ZoneShift {
+            zone: zone.into(),
+            value: Box::new(self),
+        }
+    }
+
     /// How far `self` is from `other`, by `metric`.
     #[must_use]
     pub fn distance(self, other: impl Into<Self>, metric: Metric) -> Self {
@@ -641,6 +700,16 @@ impl Scalar {
                 }
                 _ => Value::Null,
             },
+            Self::ZoneShift { zone, value } => match number(&value.evaluate(row)) {
+                Some(Number::Int(seconds)) => match zone_offset(zone, seconds) {
+                    // Saturating, like the rest of the arithmetic here: a zone
+                    // shift at the very end of `i64` should not wrap into the
+                    // distant past.
+                    Some(offset) => Value::I64(seconds.saturating_add(i64::from(offset))),
+                    None => Value::Null,
+                },
+                _ => Value::Null,
+            },
             Self::CalendarTrunc { unit, value } => match number(&value.evaluate(row)) {
                 Some(Number::Int(seconds)) => {
                     // Floored, as everywhere else here, so an instant before
@@ -734,6 +803,7 @@ impl Scalar {
             Self::Extract { value, .. }
             | Self::DateTrunc { value, .. }
             | Self::CalendarTrunc { value, .. }
+            | Self::ZoneShift { value, .. }
             | Self::CalendarPart { value, .. } => {
                 value.collect_columns(out);
             }

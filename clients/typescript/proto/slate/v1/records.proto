@@ -489,6 +489,25 @@ message Scalar {
     // takes a `TimeUnit` and is therefore a division; this one decodes the
     // date, drops the fields below the boundary and encodes it again.
     CalendarTrunc calendar_trunc = 19;
+    // A UTC timestamp read as local time in a named IANA zone: the zone's
+    // offset *at that instant* is added, so every calendar node above reads
+    // the local wall clock with no change of its own.
+    //
+    // One node rather than a zone field on each of `extract`, `date_trunc`,
+    // `calendar_part` and `calendar_trunc`, because the shift composes: the
+    // planner, the covering scan and the round-trip property already handle a
+    // nested scalar and would each need a case for a zone field.
+    //
+    // The server knows a curated list of zones, not the whole IANA database,
+    // and refuses a name outside it — the refusal names every zone that
+    // exists, so a caller who guessed wrong learns what to send instead.
+    //
+    // The list is deliberately *not* discoverable: this protocol publishes
+    // nothing a client was not already told about, which is why `SchemaCheck`
+    // is an assertion rather than a query. A client carrying its own copy of
+    // the list would be a copy that goes stale silently, so the clients send
+    // the name through as a string and let the refusal be the answer.
+    ZoneShift zone_shift = 20;
   }
 }
 
@@ -513,6 +532,15 @@ message CalendarField {
 
 message CalendarTrunc {
   CalendarUnit unit = 1;
+  Scalar value = 2;
+}
+
+message ZoneShift {
+  // The IANA name, case-sensitive, exactly as the server spells it:
+  // `America/New_York`, not `america/new_york`. Refused when empty, and
+  // refused when the server does not have it.
+  string zone = 1;
+  // The timestamp, in seconds since the epoch, UTC.
   Scalar value = 2;
 }
 

@@ -691,9 +691,17 @@ fn a_zone_makes_it_a_different_computed_column() {
 fn a_malformed_or_unresolvable_zone_is_refused_with_the_reason() {
     let playground = loaded();
     for (text, wanted) in [
-        ("'America/New_York'", "timezone database"),
+        // A name-shaped argument is a zone that does not exist, and the
+        // refusal has to name the ones that do — `America/New_York` *is* one
+        // now, so the message a misspelling gets is a list and not a
+        // statement that the feature is missing.
+        ("'america/new_york'", "no such timezone"),
+        ("'America/Nowhere'", "America/New_York"),
+        ("'lunchtime'", "no such timezone"),
+        // Offset-shaped arguments keep the offset syntax message: `-5` is a
+        // typo for `-05:00` and telling its author about IANA names helps
+        // nobody.
         ("'-5'", "not a UTC offset"),
-        ("'lunchtime'", "not a UTC offset"),
         ("'+99:00'", "not a real offset"),
         ("'-05:99'", "not a real offset"),
     ] {
@@ -1133,4 +1141,124 @@ fn a_month_boundary_and_a_year_boundary_disagree_where_they_should() {
         .map(|r| r[1].as_str().unwrap().parse().unwrap())
         .collect();
     assert_eq!(counts, vec![3, 1]);
+}
+
+// --- named zones ----------------------------------------------------------
+
+/// A named zone and the fixed offset it was in agree, over a month it did not
+/// move.
+///
+/// The differential that matters: `'-05:00'` is arithmetic on a constant and
+/// `'America/New_York'` is a binary search through a transition table, two
+/// entirely separate paths through the binding and the kernel. January 2024 is
+/// wholly Eastern Standard Time — the United States springs forward on the
+/// second Sunday in March — so over this sample the two must produce the same
+/// 24 groups with the same counts. They are compared against the independent
+/// fold as well, so a bug common to both still fails.
+#[test]
+fn a_named_zone_agrees_with_the_fixed_offset_it_was_in() {
+    let playground = loaded();
+    let mut expected: BTreeMap<i64, i64> = BTreeMap::new();
+    for seconds in pickup_times() {
+        *expected
+            .entry((seconds - 5 * 3600).div_euclid(3600).rem_euclid(24))
+            .or_default() += 1;
+    }
+
+    let named = ok(
+        &playground,
+        "SELECT hour(pickup_time, 'America/New_York'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, 'America/New_York')",
+    );
+    let fixed = ok(
+        &playground,
+        "SELECT hour(pickup_time, '-05:00'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, '-05:00')",
+    );
+    assert_eq!(counts(&named), expected, "New York in January is UTC-5");
+    assert_eq!(counts(&fixed), expected, "the fixed offset agrees");
+
+    // And the spec says which mechanism each used, so a future change that
+    // quietly lowered the name to a constant would fail here rather than pass
+    // the comparison above by cheating.
+    assert_eq!(
+        named["spec"]["compute"][0]["zone"],
+        json!("America/New_York")
+    );
+    assert_eq!(named["spec"]["compute"][0]["offset"], json!(0));
+    assert_eq!(fixed["spec"]["compute"][0]["offset"], json!(-18_000));
+    assert!(
+        fixed["spec"]["compute"][0]["zone"].is_null(),
+        "a fixed offset carries no zone name: {}",
+        fixed["spec"]
+    );
+}
+
+/// A zone that *was* in daylight saving shifts by a different amount.
+///
+/// The sample is one January, so the sample alone cannot tell a table lookup
+/// from a constant −5. Sydney can: it is UTC+11 in January, eleven hours the
+/// other way, and a lookup that returned New York's answer or a fixed zero
+/// fails. Compared against a fold rather than against another query, so this
+/// stands on its own.
+#[test]
+fn a_southern_zone_shifts_the_other_way_and_by_its_own_amount() {
+    let playground = loaded();
+    let mut expected: BTreeMap<i64, i64> = BTreeMap::new();
+    for seconds in pickup_times() {
+        *expected
+            .entry((seconds + 11 * 3600).div_euclid(3600).rem_euclid(24))
+            .or_default() += 1;
+    }
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time, 'Australia/Sydney'), count(*) FROM trips \
+         GROUP BY hour(pickup_time, 'Australia/Sydney')",
+    );
+    assert_eq!(
+        counts(&answer),
+        expected,
+        "Sydney is on daylight time in January, at UTC+11"
+    );
+}
+
+/// Three spellings of the same call are three computed columns, and the header
+/// says which is which.
+///
+/// Without the second argument in the header they all print `hour(pickup_time)`
+/// and the reader has three identical columns with three different answers.
+#[test]
+fn the_zone_is_part_of_the_column_and_of_its_header() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), hour(pickup_time, '-05:00'), \
+         hour(pickup_time, 'America/New_York') FROM trips LIMIT 1",
+    );
+    // The header lists every column of the table and then the computed ones,
+    // and a projection nulls the cells it did not ask for rather than dropping
+    // them — so the three calls are the last three of each.
+    let columns = answer["columns"].as_array().unwrap();
+    assert_eq!(
+        &columns[columns.len() - 3..],
+        [
+            json!("hour(pickup_time)"),
+            json!("hour(pickup_time, '-05:00')"),
+            json!("hour(pickup_time, 'America/New_York')")
+        ],
+        "{answer}"
+    );
+    assert_eq!(
+        answer["spec"]["compute"].as_array().unwrap().len(),
+        3,
+        "three calls, three computed columns: {}",
+        answer["spec"]
+    );
+    // The first differs from the other two by five hours; the second and third
+    // agree, because January is standard time.
+    let row = &answer["rows"].as_array().unwrap()[0];
+    let first = columns.len() - 3;
+    let hour = |at: usize| row[first + at].as_str().unwrap().parse::<i64>().unwrap();
+    assert_eq!(hour(1), hour(2), "{row}");
+    assert_eq!((hour(0) - 5).rem_euclid(24), hour(1), "{row}");
 }

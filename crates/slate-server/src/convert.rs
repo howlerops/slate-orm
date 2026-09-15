@@ -894,6 +894,35 @@ const fn calendar_unit_to_proto(unit: CalendarUnit) -> pb::CalendarUnit {
     }
 }
 
+/// A zone name the kernel's table has, or a refusal that names the ones it does.
+///
+/// Refused at the boundary rather than evaluated, because `Scalar::ZoneShift`
+/// answers null for a zone it does not know and null is the wrong answer to
+/// give a caller who typed `america/new_york`: it looks like the column was
+/// empty. The kernel has nowhere to put an error — the edge does.
+///
+/// The list comes from `zones::listing()` rather than being written out here,
+/// so this message and the SQL front end's cannot drift apart. They did once:
+/// two of three edges went on saying "there is no timezone database here" after
+/// one of them had grown an offset.
+fn zone_from_proto(zone: &str, what: &str) -> Result<String, Status> {
+    if zone.is_empty() {
+        return Err(bad(format!(
+            "{what} has a zone shift with no zone name; the zones this knows \
+             are {}",
+            slate_kernel::zones::listing()
+        )));
+    }
+    if !slate_kernel::zones::has(zone) {
+        return Err(bad(format!(
+            "{what} names the timezone {zone:?}, which this does not have. \
+             IANA names are case-sensitive, and the zones this knows are {}",
+            slate_kernel::zones::listing()
+        )));
+    }
+    Ok(zone.to_owned())
+}
+
 fn calendar_unit_from_proto(unit: i32) -> Result<CalendarUnit, Status> {
     match pb::CalendarUnit::try_from(unit) {
         Ok(pb::CalendarUnit::Month) => Ok(CalendarUnit::Month),
@@ -972,6 +1001,10 @@ pub fn scalar_to_proto(space: &Space<'_>, scalar: &Scalar) -> pb::Scalar {
         })),
         Scalar::CalendarTrunc { unit, value } => Node::CalendarTrunc(Box::new(pb::CalendarTrunc {
             unit: calendar_unit_to_proto(*unit) as i32,
+            value: Some(Box::new(scalar_to_proto(space, value))),
+        })),
+        Scalar::ZoneShift { zone, value } => Node::ZoneShift(Box::new(pb::ZoneShift {
+            zone: zone.clone(),
             value: Some(Box::new(scalar_to_proto(space, value))),
         })),
         Scalar::Round(inner) => Node::Round(Box::new(scalar_to_proto(space, inner))),
@@ -1079,6 +1112,10 @@ pub(crate) fn scalar_named(
         Node::CalendarTrunc(trunc) => Scalar::CalendarTrunc {
             unit: calendar_unit_from_proto(trunc.unit)?,
             value: one(&trunc.value)?,
+        },
+        Node::ZoneShift(shift) => Scalar::ZoneShift {
+            zone: zone_from_proto(&shift.zone, what)?,
+            value: one(&shift.value)?,
         },
         Node::Round(inner) => Scalar::Round(Box::new(scalar_named(space, inner, what)?)),
         Node::Case(case) => {

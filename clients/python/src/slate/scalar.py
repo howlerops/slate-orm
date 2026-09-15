@@ -54,6 +54,7 @@ __all__ = [
     "day_of_week",
     "distance",
     "extract",
+    "in_zone",
     "length",
     "lit",
     "lower",
@@ -278,6 +279,17 @@ class _CalendarTrunc(Scalar):
 
 
 @dataclasses.dataclass(frozen=True)
+class _ZoneShift(Scalar):
+    zone: str
+    value: Scalar
+
+    def to_proto(self) -> pb.Scalar:
+        return pb.Scalar(
+            zone_shift=pb.ZoneShift(zone=self.zone, value=self.value.to_proto())
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class _CalendarField(Scalar):
     part: CalendarPart
     value: Scalar
@@ -374,6 +386,25 @@ def date_trunc(unit: TimeUnit, value: Operand) -> Scalar:
     return _TimePart("date_trunc", unit, as_scalar(value))
 
 
+def in_zone(value: Operand, zone: str) -> Scalar:
+    """Read a UTC timestamp as local time in a named IANA zone.
+
+    Adds the zone's offset *at that instant*, so anything wrapped around the
+    result reads the local wall clock::
+
+        extract(TimeUnit.HOUR, in_zone(column(2), "America/New_York"))
+
+    which is the local hour, daylight saving included, rather than the UTC one.
+
+    The name is case-sensitive, as IANA names are: `america/new_york` is not a
+    zone. This is not checked here — the server holds the list and refuses a
+    name it does not have, naming the ones it does. A copy of the list in this
+    client would be a copy that goes stale silently, which is worse than a
+    round trip to be told.
+    """
+    return _ZoneShift(zone, as_scalar(value))
+
+
 def calendar_trunc(unit: CalendarUnit, value: Operand) -> Scalar:
     """The first instant of the month or the year containing `value`, in UTC.
 
@@ -397,9 +428,10 @@ def calendar_part(part: CalendarPart, value: Operand) -> Scalar:
     """A calendar field of a timestamp: the year, the day of the week.
 
     Timestamps are seconds since the epoch in an integer column, read in UTC.
-    There is no timezone here and no date type to carry one; shifting to
-    another fixed offset is `calendar_part(part, column + 3600 * hours)`, which
-    is what such a conversion is.
+    There is no date type to carry a zone, so reading one in local time is done
+    by shifting the timestamp first: `calendar_part(part, in_zone(column,
+    name))` for a named zone, or `calendar_part(part, column + 3600 * hours)`
+    for a fixed offset, which is what such a conversion is.
     """
     return _CalendarField(part, as_scalar(value))
 

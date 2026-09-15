@@ -184,12 +184,7 @@ pub struct ComputeSpec {
     /// The column it reads, an ordinal within the table `input` names.
     pub column: u32,
     /// Seconds to add before reading the calendar out, so a timestamp stored
-    /// in UTC can be asked about in some other zone. Zero is UTC.
-    ///
-    /// A fixed offset, never a region: there is no timezone database here, so
-    /// `America/New_York` would have to guess at daylight saving and would
-    /// guess wrong for a third of the year. The parser refuses a region name
-    /// with that reason rather than accepting one and picking a season.
+    /// in UTC can be asked about at a fixed offset. Zero is UTC.
     ///
     /// This needs no kernel and no wire support, because it is already
     /// expressible: shifting a timestamp is adding to it, and `Scalar::Add`
@@ -197,8 +192,28 @@ pub struct ComputeSpec {
     /// rather than passing an offset down, so every path that already handles
     /// `Add` — the planner, the wire, the covering scan — handles this one
     /// with no change at all.
+    ///
+    /// Mutually exclusive with [`ComputeSpec::zone`]: a fixed offset and a
+    /// named zone are two answers to one question, and the parser produces at
+    /// most one of them. `compute_scalar` refuses both rather than picking.
     #[serde(default)]
     pub offset: i64,
+    /// An IANA zone name — `America/New_York` — whose offset *at each row's
+    /// instant* is added before the calendar is read out. Empty is "no zone".
+    ///
+    /// This used to be refused, with a reason that was true of a timezone
+    /// *database* and not of a timezone *table*: the kernel now ships the
+    /// transitions for a curated list of zones, a few kilobytes of sorted
+    /// integers, so daylight saving is looked up rather than guessed at. A
+    /// name outside the list is still refused, and the refusal names the ones
+    /// that are there.
+    ///
+    /// Unlike `offset`, this does need a kernel variant: the shift is not a
+    /// constant, so `Scalar::Add` cannot express it. `Scalar::ZoneShift`
+    /// composes the same way, so the same argument applies one level down —
+    /// the planner and the wire handle a nested scalar already.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub zone: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -1161,7 +1176,7 @@ impl Playground {
                             .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
                         (
                             u32::try_from(width + i).unwrap_or(0),
-                            format!("{}({name})", c.function),
+                            format!("{}({name}{})", c.function, zone_suffix(c)),
                         )
                     })
                     .collect();
@@ -1881,6 +1896,26 @@ fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate
     Ok(out)
 }
 
+/// The second argument a computed column was written with, if any.
+///
+/// Part of the header because it is part of the identity: `hour(t)`,
+/// `hour(t, '-05:00')` and `hour(t, 'America/New_York')` are three different
+/// computed columns and a query may select all three, which without this are
+/// three columns headed `hour(t)`. The offset is printed back in the `+HH:MM`
+/// form it was written in rather than as a number of seconds, so the header
+/// reads as the query does.
+fn zone_suffix(spec: &ComputeSpec) -> String {
+    if !spec.zone.is_empty() {
+        return format!(", '{}'", spec.zone);
+    }
+    if spec.offset == 0 {
+        return String::new();
+    }
+    let sign = if spec.offset < 0 { '-' } else { '+' };
+    let seconds = spec.offset.abs();
+    format!(", '{sign}{:02}:{:02}'", seconds / 3_600, seconds % 3_600 / 60)
+}
+
 /// What to print above a column, whether the table owns it or the query
 /// computed it.
 ///
@@ -1898,7 +1933,7 @@ fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
             let argument = table
                 .column(Ordinal(c.column as usize))
                 .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
-            format!("{}({argument})", c.function)
+            format!("{}({argument}{})", c.function, zone_suffix(c))
         },
     )
 }
@@ -1931,14 +1966,41 @@ fn compute_scalar(spec: &ComputeSpec, table: &TableDef, base: usize) -> Result<S
     // wrapping, so a `U64` column shifted below the epoch becomes a negative
     // `I64` and `CalendarPart`'s floor division handles it, rather than
     // wrapping to the year 584942417355.
-    if spec.offset != 0 {
+    if spec.offset != 0 || !spec.zone.is_empty() {
         if spec.function == "round" {
             return Err("round() takes no timezone: it is not a time function".to_owned());
         }
-        value = Scalar::Add(
-            Box::new(value),
-            Box::new(Scalar::Literal(slate_tuple::Value::I64(spec.offset))),
-        );
+        if spec.offset != 0 && !spec.zone.is_empty() {
+            // Not reachable from the parser, which produces one or the other.
+            // Refused rather than given a precedence, because a spec built by
+            // hand with both set means the caller believes something untrue
+            // about which one wins, and answering either way confirms it.
+            return Err(format!(
+                "{}() was given both a fixed offset and the zone {:?}; they are two \
+                 answers to one question",
+                spec.function, spec.zone
+            ));
+        }
+        value = if spec.zone.is_empty() {
+            Scalar::Add(
+                Box::new(value),
+                Box::new(Scalar::Literal(slate_tuple::Value::I64(spec.offset))),
+            )
+        } else {
+            // Checked here as well as in the parser, because a spec can arrive
+            // from JavaScript without passing through the parser at all, and
+            // `ZoneShift` answers null for a zone it does not know — which on
+            // screen is indistinguishable from an empty column.
+            if !slate_kernel::zones::has(&spec.zone) {
+                return Err(format!(
+                    "no such timezone: {:?}. IANA names are case-sensitive, and \
+                     this has {}",
+                    spec.zone,
+                    slate_kernel::zones::listing()
+                ));
+            }
+            value.in_zone(spec.zone.clone())
+        };
     }
 
     // Checked per function rather than once, because they do not agree on what

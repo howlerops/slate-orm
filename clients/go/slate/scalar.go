@@ -203,11 +203,10 @@ func DateTrunc(unit TimeUnit, s Scalar) Scalar {
 // PartOf is a calendar field of a timestamp: the year, the day of the week.
 //
 // Timestamps are seconds since the epoch in an integer column, read in UTC.
-// There is no timezone here and no date type to carry one; shifting to another
-// fixed offset is `PartOf(part, Add(column, Lit(I64(3600*hours))))`, which is
-// what such a conversion is. A region name is not offered, because doing it
-// correctly needs the IANA database and approximating it is wrong for a third
-// of the year.
+// There is no date type to carry a zone, so reading one in local time is done
+// by shifting the timestamp first: `PartOf(part, InZone(name, column))` for a
+// named zone, or `PartOf(part, Add(column, Lit(I64(3600*hours))))` for a fixed
+// offset, which is what such a conversion is.
 func PartOf(part CalendarPart, s Scalar) Scalar {
 	return Scalar{&pb.Scalar{Node: &pb.Scalar_CalendarPart{
 		CalendarPart: &pb.CalendarField{Part: part.wire(), Value: s.wire},
@@ -348,4 +347,24 @@ func scalarsToProto(scalars []Scalar) []*pb.Scalar {
 		out = append(out, s.wire)
 	}
 	return out
+}
+
+// InZone reads a UTC timestamp as local time in a named IANA zone.
+//
+// Adds the zone's offset *at that instant*, so anything wrapped around the
+// result reads the local wall clock:
+//
+//	slate.Extract(slate.Hour, slate.InZone("America/New_York", pickup))
+//
+// which is the local hour, daylight saving included, rather than the UTC one.
+//
+// The name is case-sensitive, as IANA names are: "america/new_york" is not a
+// zone. This does not check it — the server holds the list, refuses a name it
+// does not have, and names the ones it does. A copy of the list here would be
+// a copy that goes stale silently, which is worse than a round trip to be
+// told.
+func InZone(zone string, s Scalar) Scalar {
+	return Scalar{&pb.Scalar{Node: &pb.Scalar_ZoneShift{
+		ZoneShift: &pb.ZoneShift{Zone: zone, Value: s.wire},
+	}}}
 }

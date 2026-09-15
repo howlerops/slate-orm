@@ -555,6 +555,14 @@ fn any_scalar() -> impl Strategy<Value = Scalar> {
                     value: Box::new(value),
                 }
             }),
+            // Drawn from the table rather than from an arbitrary string,
+            // because the conversion *refuses* an unknown zone and a refusal
+            // is not a round trip. The refusal has its own test below; this
+            // one is about a zone shift surviving the wire.
+            (inner.clone(), any_zone()).prop_map(|(value, zone)| Scalar::ZoneShift {
+                zone,
+                value: Box::new(value),
+            }),
             inner.prop_map(|value| Scalar::Round(Box::new(value))),
         ]
     })
@@ -571,6 +579,17 @@ fn any_calendar_part() -> impl Strategy<Value = CalendarPart> {
 
 fn any_calendar_unit() -> impl Strategy<Value = CalendarUnit> {
     prop_oneof![Just(CalendarUnit::Month), Just(CalendarUnit::Year)]
+}
+
+/// One of the zones the kernel's table has, by index.
+///
+/// Every one of them, rather than a handful: the conversion carries the name
+/// through untouched, so a zone it mangles would be one this could not name in
+/// advance. Sampling the list means the strategy grows with the table.
+fn any_zone() -> impl Strategy<Value = String> {
+    let names: Vec<String> = slate_kernel::zones::names().map(str::to_owned).collect();
+    assert!(!names.is_empty(), "the zone table is empty");
+    (0..names.len()).prop_map(move |at| names[at].clone())
 }
 
 fn any_aggregate() -> impl Strategy<Value = Aggregate> {
@@ -639,6 +658,7 @@ fn the_scalar_generator_reaches_every_variant() {
         "regexp_replace",
         "calendar_part",
         "calendar_trunc",
+        "zone_shift",
         "round",
     ]
     .into_iter()
@@ -733,6 +753,10 @@ fn collect_scalars(scalar: &Scalar, into: &mut BTreeSet<&'static str>) {
         }
         Scalar::CalendarTrunc { value, .. } => {
             into.insert("calendar_trunc");
+            collect_scalars(value, into);
+        }
+        Scalar::ZoneShift { value, .. } => {
+            into.insert("zone_shift");
             collect_scalars(value, into);
         }
         Scalar::Round(value) => {
@@ -890,4 +914,50 @@ fn a_query_with_computed_values_survives_the_round_trip() {
     let (back, warnings) = query_from_proto(&wire, &table).expect("readable");
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(back, query);
+}
+
+#[test]
+fn a_zone_the_server_does_not_have_is_refused_by_name() {
+    // The kernel answers null for an unknown zone, because a `Scalar` has
+    // nowhere to put an error. Null is the wrong answer to hand a caller who
+    // typed `america/new_york`: it is indistinguishable from an empty column,
+    // and the mistake is a capital letter. So the boundary refuses, and the
+    // refusal has to name what *is* available — a bare "unknown zone" leaves
+    // the caller guessing which spelling the server wants.
+    let table = docs();
+    let space = Space::table(&table);
+    for zone in ["america/new_york", "Mars/Olympus_Mons", "EST5EDT", ""] {
+        let wire = pb::Scalar {
+            node: Some(pb::scalar::Node::ZoneShift(Box::new(pb::ZoneShift {
+                zone: zone.to_owned(),
+                value: Some(Box::new(scalar_to_proto(
+                    &space,
+                    &Scalar::Literal(Value::I64(0)),
+                ))),
+            }))),
+        };
+        let error = match scalar_from_proto(&space, &wire) {
+            Err(error) => error,
+            Ok(accepted) => panic!("{zone:?} must be refused, and gave {accepted:?}"),
+        };
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(
+            error.message().contains("America/New_York"),
+            "the refusal for {zone:?} should list the zones that exist: {}",
+            error.message()
+        );
+    }
+
+    // And the spelling the table has goes through, so the refusal is about the
+    // name and not about zone shifts in general.
+    let wire = pb::Scalar {
+        node: Some(pb::scalar::Node::ZoneShift(Box::new(pb::ZoneShift {
+            zone: "America/New_York".to_owned(),
+            value: Some(Box::new(scalar_to_proto(
+                &space,
+                &Scalar::Literal(Value::I64(0)),
+            ))),
+        }))),
+    };
+    scalar_from_proto(&space, &wire).expect("a zone the table has must be accepted");
 }

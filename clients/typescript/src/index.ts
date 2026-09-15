@@ -43,6 +43,7 @@ export {
   calendarTrunc,
   monthStart,
   yearStart,
+  inZone,
   year,
   month,
   dayOfMonth,
