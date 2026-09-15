@@ -320,6 +320,19 @@ pub struct JoinSpec {
     pub group_by: Vec<u32>,
     /// Computed per group. Each names its side with `AggregateSpec::input`.
     pub aggregates: Vec<AggregateSpec>,
+    /// Conditions over the **groups**, ANDed, applied after grouping.
+    ///
+    /// `column` is a group-space ordinal — `[keys..., aggregates...]` — not a
+    /// joined-row one, because that is what a HAVING term names: `HAVING
+    /// count(*) > 300` is about the count this query computes, and a group
+    /// carries nothing else. The parser resolves it, which is the only place
+    /// that knows which aggregate the reader meant.
+    ///
+    /// Only meaningful with `group_by`, for the reason `sort` is: without
+    /// groups there is nothing to filter, and the parser says so rather than
+    /// accepting it into a field nothing reads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub having: Vec<FilterSpec>,
     /// How to order the **groups** of a grouped join. Empty leaves them in the
     /// order the encoded key sorts them.
     ///
@@ -378,7 +391,20 @@ pub struct ChainSpec {
     /// Computed per group. Each names its input with `AggregateSpec::input`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aggregates: Vec<AggregateSpec>,
-    /// How to order the groups. `[key, aggregates...]`, as on [`JoinSpec`].
+    /// Conditions over the **groups**, ANDed, applied after grouping.
+    ///
+    /// `column` is a group-space ordinal — `[keys..., aggregates...]` — not a
+    /// joined-row one, because that is what a HAVING term names: `HAVING
+    /// count(*) > 300` is about the count this query computes, and a group
+    /// carries nothing else. The parser resolves it, which is the only place
+    /// that knows which aggregate the reader meant.
+    ///
+    /// Only meaningful with `group_by`, for the reason `sort` is: without
+    /// groups there is nothing to filter, and the parser says so rather than
+    /// accepting it into a field nothing reads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub having: Vec<FilterSpec>,
+    /// How to order the groups. `[keys..., aggregates...]`, as on [`JoinSpec`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1116,7 +1142,19 @@ impl Playground {
                     aggregates.push(Aggregate::Count);
                 }
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
-                let mut grouping = Grouping::by(keys, &aggregates);
+                let mut grouping = Grouping::by(keys.clone(), &aggregates);
+                if !spec.having.is_empty() {
+                    // Over the group, and its stored keys resolved through the
+                    // *joined* ordinal -- which is what `group_value_type` now
+                    // walks, and the reason the joined path had no HAVING
+                    // before: everything downstream of it took one `TableDef`.
+                    grouping = grouping.having(having(
+                        &spec.having,
+                        &keys,
+                        &aggregates,
+                        &[&authors, &books],
+                    )?);
+                }
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
                 }
@@ -1350,7 +1388,10 @@ impl Playground {
                     aggregates.push(Aggregate::Count);
                 }
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
-                let mut grouping = Grouping::by(keys, &aggregates);
+                let mut grouping = Grouping::by(keys.clone(), &aggregates);
+                if !spec.having.is_empty() {
+                    grouping = grouping.having(having(&spec.having, &keys, &aggregates, &refs)?);
+                }
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
                 }
@@ -1804,7 +1845,7 @@ impl Playground {
         // applies them in that order regardless; setting them in the same
         // order here is so that reading this says what happens.
         if !spec.having.is_empty() {
-            grouping = grouping.having(having(&spec.having, &keys, &aggregates, table)?);
+            grouping = grouping.having(having(&spec.having, &keys, &aggregates, &[table])?);
         }
 
         // ORDER BY, LIMIT and OFFSET belong to the *groups* when there is a
@@ -2770,16 +2811,31 @@ fn group_value_type(
     ordinal: u32,
     keys: &[Ordinal],
     aggregates: &[Aggregate],
-    table: &TableDef,
+    inputs: &[&TableDef],
 ) -> Result<slate_tuple::ValueType, String> {
     use slate_tuple::ValueType as T;
     let index = ordinal as usize;
+    // A slice of tables rather than one, so a *joined* key resolves: a group
+    // key on a join is an ordinal of the joined row, and which table it lands
+    // in is the sum of the widths before it. A single table is the one-input
+    // case of the same walk, which is why both paths share this rather than
+    // growing a second copy — the reason the joined path had no HAVING at all
+    // was that everything downstream of here took one `TableDef`.
     let column_type = |c: Ordinal| {
-        table
-            .column(c)
-            .map(|d| d.value_type())
-            .ok_or_else(|| format!("{} has no column {}", table.name(), c.0))
+        let mut at = c.0;
+        for table in inputs {
+            let width = table.columns().len();
+            if at < width {
+                return table
+                    .column(Ordinal(at))
+                    .map(|d| d.value_type())
+                    .ok_or_else(|| format!("{} has no column {}", table.name(), at));
+            }
+            at -= width;
+        }
+        Err(format!("no input holds joined column {}", c.0))
     };
+    let width: usize = inputs.iter().map(|t| t.columns().len()).sum();
     if let Some(key) = keys.get(index) {
         // A group key past the table's own columns is a computed one, and
         // every function `compute_scalar` offers returns an integer.
@@ -2793,7 +2849,7 @@ fn group_value_type(
         // disagreement is silent (see `having`, which explains the rank
         // hazard). Written down rather than deleted, and written down rather
         // than covered by a test that does not exist.
-        if key.0 >= table.columns().len() {
+        if key.0 >= width {
             return Ok(T::I64);
         }
         return column_type(*key);
@@ -2825,11 +2881,11 @@ fn having(
     specs: &[FilterSpec],
     keys: &[Ordinal],
     aggregates: &[Aggregate],
-    table: &TableDef,
+    inputs: &[&TableDef],
 ) -> Result<Expr, String> {
     let mut out = Expr::True;
     for spec in specs {
-        let kind = group_value_type(spec.column, keys, aggregates, table)?;
+        let kind = group_value_type(spec.column, keys, aggregates, inputs)?;
         let column = Ordinal(spec.column as usize);
         let expr = match spec.op.as_str() {
             "like" => Expr::like(column, spec.value.clone()),

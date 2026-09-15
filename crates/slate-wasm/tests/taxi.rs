@@ -713,3 +713,172 @@ fn a_second_key_is_checked_like_the_first() {
         .contains("`nosuch` is not a column of"),
     );
 }
+
+// --- HAVING on a join and a chain -----------------------------------------
+//
+// The single-table path has had HAVING since task #39; the joined path never
+// did, because everything downstream of `group_value_type` took one
+// `TableDef` and a joined group key is an ordinal of the joined row. The
+// kernel needed nothing: `Join::having` and `Chain::having` are `Expr` fields
+// it already evaluates over the group.
+
+#[test]
+fn having_keeps_exactly_the_groups_that_pass() {
+    let playground = loaded();
+    let all = sql(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough",
+    );
+    // The oracle is the unfiltered query, filtered here. Not a written-down
+    // list of boroughs: a different sample moves both sides together.
+    let expected: Vec<&Json> = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row[1].as_str().unwrap().parse::<u64>().unwrap() > 5000)
+        .collect();
+    assert!(
+        expected.len() < all["rows"].as_array().unwrap().len(),
+        "the threshold filtered nothing, so this compares nothing"
+    );
+    assert!(!expected.is_empty(), "the threshold filtered everything");
+
+    let filtered = sql(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough HAVING count(*) > 5000",
+    );
+    let got: Vec<&Json> = filtered["rows"].as_array().unwrap().iter().collect();
+    assert_eq!(got, expected, "{filtered}");
+}
+
+#[test]
+fn having_ands_its_terms_over_different_aggregates() {
+    let playground = loaded();
+    let all = sql(
+        &playground,
+        "SELECT borough, count(*), avg(total) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id GROUP BY borough",
+    );
+    // Thresholds chosen so each term excludes a group the other keeps: EWR has
+    // ten trips at a high average, Manhattan has ninety thousand at a low one.
+    // The guard below is what forced the choice -- the first pair made the
+    // count term do all the work, so the AND was not being tested at all.
+    let passes = |row: &Json| {
+        row[1].as_str().unwrap().parse::<u64>().unwrap() > 100
+            && row[2].as_str().unwrap().parse::<f64>().unwrap() > 30.0
+    };
+    let expected: Vec<&Json> = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| passes(r))
+        .collect();
+    // Both terms have to bite, or an AND that dropped one would pass too.
+    let by_count: usize = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r[1].as_str().unwrap().parse::<u64>().unwrap() > 100)
+        .count();
+    let by_avg: usize = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r[2].as_str().unwrap().parse::<f64>().unwrap() > 30.0)
+        .count();
+    assert!(
+        expected.len() < by_count && expected.len() < by_avg,
+        "one term does all the work: {} of {by_count} by count, {by_avg} by avg",
+        expected.len()
+    );
+
+    let filtered = sql(
+        &playground,
+        "SELECT borough, count(*), avg(total) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id GROUP BY borough \
+         HAVING count(*) > 100 AND avg(total) > 30",
+    );
+    let got: Vec<&Json> = filtered["rows"].as_array().unwrap().iter().collect();
+    assert_eq!(got, expected, "{filtered}");
+}
+
+#[test]
+fn having_works_on_a_chain_and_on_a_group_key() {
+    let playground = loaded();
+    // Three tables, and the HAVING names the key rather than an aggregate --
+    // a group is `[keys..., aggregates...]` and both halves are addressable.
+    let filtered = sql(
+        &playground,
+        "SELECT pickup.borough, count(*) FROM trips \
+         JOIN zones AS pickup ON trips.pickup_zone = pickup.id \
+         JOIN zones AS dropoff ON trips.dropoff_zone = dropoff.id \
+         GROUP BY pickup.borough HAVING count(*) > 1000",
+    );
+    let boroughs: Vec<&str> = filtered["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap())
+        .collect();
+    assert!(!boroughs.is_empty(), "{filtered}");
+    assert!(
+        filtered["rows"].as_array().unwrap().iter().all(|row| row[1]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 1000),
+        "a group under the threshold survived: {filtered}"
+    );
+    // And it really dropped some: the same chain without the HAVING has more.
+    let all = sql(
+        &playground,
+        "SELECT pickup.borough, count(*) FROM trips \
+         JOIN zones AS pickup ON trips.pickup_zone = pickup.id \
+         JOIN zones AS dropoff ON trips.dropoff_zone = dropoff.id \
+         GROUP BY pickup.borough",
+    );
+    assert!(
+        boroughs.len() < all["rows"].as_array().unwrap().len(),
+        "the HAVING dropped nothing: {boroughs:?}"
+    );
+}
+
+#[test]
+fn having_is_refused_where_it_cannot_mean_anything() {
+    let playground = loaded();
+    let refused = |text: &str| -> String {
+        let all: Vec<Json> = serde_json::from_str(&playground.sql(text)).expect("JSON");
+        let last = all.last().expect("a result").clone();
+        assert!(!last["error"].is_null(), "{text} was accepted: {last}");
+        last["error"]["message"].as_str().unwrap().to_owned()
+    };
+    // No groups to filter, and the message names the shape the reader is in.
+    assert!(
+        refused(
+            "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id HAVING count(*) > 5"
+        )
+        .contains("HAVING needs a GROUP BY"),
+    );
+    // An aggregate the query does not compute. The message says HAVING, not
+    // ORDER BY: `join_group_ordinal` serves both clauses and hardcoded the
+    // wrong one until it took the clause as a parameter, exactly as the
+    // single-table `group_ordinal` already did -- an error naming a clause the
+    // reader never wrote sends them to the wrong line.
+    let message = refused(
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough HAVING max(fare) > 5",
+    );
+    assert!(message.contains("HAVING names `max(fare)`"), "{message}");
+    assert!(!message.contains("ORDER BY"), "{message}");
+    // OR, refused for the reason it is refused in WHERE.
+    assert!(
+        refused(
+            "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+             GROUP BY borough HAVING count(*) > 5 OR count(*) < 2"
+        )
+        .contains("OR is not supported in HAVING"),
+    );
+}

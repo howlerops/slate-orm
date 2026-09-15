@@ -165,6 +165,21 @@ impl std::fmt::Display for SqlError {
 /// about names: a column is resolved to an ordinal *here*, against the real
 /// [`TableDef`], so `SELECT nosuch FROM books` fails at parse time with the
 /// column named, not later with an ordinal nobody typed.
+/// What a grouped join or chain has decided so far, as the group space sees it.
+///
+/// A group is `[keys..., aggregates...]` and a key may be a computed value, so
+/// resolving any name in that space needs all three of these — they travel
+/// together at every call. They were three parameters until clippy counted
+/// eight, and bundling them is better than the `allow` would have been: the
+/// grouping is one thing, and a signature that says so cannot be handed two of
+/// the three from one query and the third from another.
+#[derive(Debug, Clone, Copy)]
+struct GroupSpace<'a> {
+    keys: &'a [u32],
+    aggregates: &'a [AggregateSpec],
+    compute: &'a [ComputeSpec],
+}
+
 /// One input of a join or a chain: a table, and the name this query calls it by.
 ///
 /// The name is the alias where there is one and the table's own name otherwise,
@@ -1321,12 +1336,16 @@ impl Parser<'_> {
     fn join_group_ordinal(
         &mut self,
         item: &SelectItem,
-        group_by: &[u32],
-        aggregates: &[AggregateSpec],
-        compute: &[ComputeSpec],
+        group: GroupSpace<'_>,
         inputs: &[Input],
         at: usize,
+        clause: &str,
     ) -> Result<u32, SqlError> {
+        let GroupSpace {
+            keys: group_by,
+            aggregates,
+            compute,
+        } = group;
         match item {
             SelectItem::Aggregate { kind, argument, at } => {
                 // Matched by what the select list already computes, on any
@@ -1345,7 +1364,7 @@ impl Parser<'_> {
                     .and_then(|i| u32::try_from(group_by.len() + i).ok())
                     .ok_or_else(|| SqlError {
                         message: format!(
-                            "ORDER BY names `{kind}({})`, which this query does not \
+                            "{clause} names `{kind}({})`, which this query does not \
                              compute — add it to the select list",
                             argument.as_deref().unwrap_or("*")
                         ),
@@ -1375,7 +1394,7 @@ impl Parser<'_> {
                 }
                 Err(SqlError {
                     message: format!(
-                        "ORDER BY on a grouped {} names one of its group keys or one of \
+                        "{clause} on a grouped {} names one of its group keys or one of \
                          its aggregates; a group carries nothing else",
                         shape(inputs)
                     ),
@@ -1778,6 +1797,7 @@ impl Parser<'_> {
         let mut compute: Vec<ComputeSpec> = Vec::new();
         let mut aggregates: Vec<AggregateSpec> = Vec::new();
         let mut sort: Vec<SortSpec> = Vec::new();
+        let mut having: Vec<FilterSpec> = Vec::new();
         let mut group_by: Vec<u32> = Vec::new();
         let mut limit: Option<u64> = None;
         let mut offset = 0;
@@ -1948,6 +1968,53 @@ impl Parser<'_> {
             });
         }
 
+        if self.eat("having") {
+            if group_by.is_empty() {
+                return Err(SqlError {
+                    message: format!(
+                        "HAVING needs a GROUP BY — it filters groups, and an ungrouped {} \
+                         has none to filter. Did you mean WHERE?",
+                        shape(&inputs)
+                    ),
+                    at: self.at(),
+                });
+            }
+            // Parsed here, after the select list has been resolved, because
+            // `HAVING count(*) > 100` names an aggregate by what the query
+            // *computes* — the rule ORDER BY follows — and `aggregates` is not
+            // populated until the loop above has run. The single-table clause
+            // sits in the same place for the same reason.
+            loop {
+                let at = self.at();
+                let item = self.select_item()?;
+                let column = self.join_group_ordinal(
+                    &item,
+                    GroupSpace {
+                        keys: &group_by,
+                        aggregates: &aggregates,
+                        compute: &compute,
+                    },
+                    &inputs,
+                    at,
+                    "HAVING",
+                )?;
+                let (op, value) = self.comparison_tail()?;
+                having.push(FilterSpec { column, op, value });
+                if self.eat("and") {
+                    continue;
+                }
+                if self.peek_word().as_deref() == Some("or") {
+                    return Err(SqlError {
+                        message: "OR is not supported in HAVING, for the reason it is not \
+                                  supported in WHERE"
+                            .to_owned(),
+                        at: self.at(),
+                    });
+                }
+                break;
+            }
+        }
+
         if self.eat("order") {
             self.expect("by")?;
             // Only over groups. Neither `Join` nor `Chain` has a sort field —
@@ -1969,8 +2036,17 @@ impl Parser<'_> {
             loop {
                 let at = self.at();
                 let item = self.select_item()?;
-                let column =
-                    self.join_group_ordinal(&item, &group_by, &aggregates, &compute, &inputs, at)?;
+                let column = self.join_group_ordinal(
+                    &item,
+                    GroupSpace {
+                        keys: &group_by,
+                        aggregates: &aggregates,
+                        compute: &compute,
+                    },
+                    &inputs,
+                    at,
+                    "ORDER BY",
+                )?;
                 let descending = if self.eat("desc") {
                     true
                 } else {
@@ -2011,6 +2087,7 @@ impl Parser<'_> {
                 right_key: *right_key,
                 left_where: left_where.clone(),
                 right_where: right_where.clone(),
+                having,
                 compute,
                 group_by,
                 aggregates,
@@ -2045,6 +2122,7 @@ impl Parser<'_> {
         Ok(Statement::Chain(ChainSpec {
             inputs: spec_inputs,
             compute,
+            having,
             group_by,
             aggregates,
             sort,
