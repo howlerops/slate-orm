@@ -36,11 +36,13 @@ pub mod error;
 pub mod ext;
 pub mod field;
 pub mod record;
+pub mod relation;
 
 pub use error::{OrmError, Result};
 pub use ext::Records;
 pub use field::{Field, FieldError};
 pub use record::{Record, RecordError};
+pub use relation::{Related, load_one_related, load_related, related_filter};
 
 /// Derive [`Record`] for a struct. See the crate docs for the attributes.
 ///
