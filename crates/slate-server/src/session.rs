@@ -94,14 +94,31 @@ impl Default for Limits {
     }
 }
 
-/// One row of a multi-table read: one entry per input, in request order.
+/// One row of a multi-table read: one entry per input, in request order, and
+/// whatever the read itself computed.
 ///
-/// `None` where an outer join preserved something that matched nothing. The
-/// two kernel cursors spell that differently — a `JoinedRow` has a left and a
-/// right, a `ChainRow` has however many tables it has reached — so both are
-/// flattened to this shape once, here, rather than at each of the two call
-/// sites that would otherwise have to agree.
-pub type MultiRow = Vec<Option<Row>>;
+/// `inputs` is `None` where an outer join preserved something that matched
+/// nothing. The two kernel cursors spell that differently — a `JoinedRow` has a
+/// left and a right, a `ChainRow` has however many tables it has reached — so
+/// both are flattened to this shape once, here, rather than at each of the two
+/// call sites that would otherwise have to agree.
+///
+/// `computed` is `JoinQuery.compute`: values over the *joined* row, which
+/// belong to no single input and so cannot live inside one. An input's own
+/// computed values are still inside that input's `Row`, where they have always
+/// been, and are split off it by declared table width on the way out.
+///
+/// This was a bare `Vec<Option<Row>>` until the join grew computed values of
+/// its own. Widening the type rather than passing a second vector alongside it
+/// is what stops the two getting out of step at the two call sites — the exact
+/// thing the paragraph above says this type exists to prevent.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MultiRow {
+    /// One entry per input, `None` where nothing matched.
+    pub inputs: Vec<Option<Row>>,
+    /// What the join's or chain's own `compute` produced, in order.
+    pub computed: Vec<Value>,
+}
 
 /// How a multi-table read will be run.
 ///
@@ -155,11 +172,14 @@ impl MultiCursor<'_> {
     /// The next row, flattened.
     pub async fn next(&mut self) -> Result<Option<MultiRow>, KernelError> {
         match self {
-            Self::Join(cursor) => Ok(cursor.next().await?.map(|row| vec![row.left, row.right])),
-            Self::Chain(cursor, inputs) => Ok(cursor
-                .next()
-                .await?
-                .map(|row| chain_row_values(&row, *inputs))),
+            Self::Join(cursor) => Ok(cursor.next().await?.map(|row| MultiRow {
+                inputs: vec![row.left, row.right],
+                computed: row.computed,
+            })),
+            Self::Chain(cursor, inputs) => Ok(cursor.next().await?.map(|row| MultiRow {
+                inputs: chain_row_values(&row, *inputs),
+                computed: row.computed().to_vec(),
+            })),
         }
     }
 

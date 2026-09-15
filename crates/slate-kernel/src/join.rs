@@ -397,6 +397,11 @@ impl Join {
                 right: b,
             });
         }
+        validate_compute(
+            &schema,
+            &self.compute,
+            &format!("`{}` joined to `{}`", left.name(), right.name()),
+        )?;
         Ok(())
     }
 
@@ -410,6 +415,87 @@ impl Join {
             })
             .collect()
     }
+}
+
+/// A join's or chain's computed values, over an already-flattened row.
+///
+/// The one place either produces them. Each is evaluated against the row as it
+/// stands with the earlier values already appended, so a later expression can
+/// read an earlier one — the rule [`Query::compute`] follows on a single table,
+/// and the reason a chain of them needs no nesting.
+///
+/// A missing side reads as null throughout, so a computed value over an outer
+/// join's unmatched row is computed from nulls rather than skipped. That is
+/// what the rest of the join already does with an absent side and what SQL says
+/// it contains; the alternative — a null slot regardless of the expression —
+/// would make `coalesce(right.x, 0)` answer differently here than anywhere
+/// else.
+pub(crate) fn computed_values(flat: &Row, compute: &[Scalar]) -> Vec<Value> {
+    if compute.is_empty() {
+        return Vec::new();
+    }
+    // Grown onto a copy of the flat row's values rather than onto a rebuilt
+    // `Row` per expression, for the reason `exec::extend` gives: rebuilding
+    // clones every value once per computed column, which is quadratic in their
+    // number. Only the tail is returned.
+    let mut values = flat.values().to_vec();
+    let width = values.len();
+    values.reserve(compute.len());
+    for scalar in compute {
+        let so_far: &[Value] = &values;
+        values.push(scalar.evaluate(so_far));
+    }
+    values.split_off(width)
+}
+
+/// Refuse a computed value that names an ordinal it cannot read.
+///
+/// A join's or a chain's `compute` is evaluated against the flattened row with
+/// the values before it already appended, so the `i`th may read every table's
+/// column and the `i` computed values ahead of it — and nothing else. Naming
+/// anything else reads as `Value::Null`, because `Scalar::Column` falls back to
+/// null for an ordinal the row does not have, and a group key that is null on
+/// every row is one group rather than an error.
+///
+/// That is exactly the failure `validate_grouping` was written for, one level
+/// down, and it went unnoticed for the same reason: an out-of-range ordinal is
+/// indistinguishable from a column that happens to be null. `Join::compute`
+/// shipped with no validation at all, and a grouping over
+/// `Scalar::Column(Ordinal(15))` on a six-column joined space returned
+/// `[Group { key: [Null], values: [U64(24)] }]` — a plausible-looking answer to
+/// a question nobody asked.
+///
+/// Two ordinals are refused here and they are worth telling apart in the
+/// message, because the fixes are different: one past everything is a typo, and
+/// one naming a *later* computed value is an ordering mistake the caller can
+/// fix by reordering the list.
+pub(crate) fn validate_compute(schema: &JoinSchema, compute: &[Scalar], at: &str) -> Result<()> {
+    let columns = schema.columns();
+    for (index, scalar) in compute.iter().enumerate() {
+        let available = columns + index;
+        for ordinal in scalar.columns() {
+            if ordinal.0 < available {
+                continue;
+            }
+            let reason = if ordinal.0 < columns + compute.len() {
+                format!(
+                    "computed value {index} of {at} names {ordinal:?}, which is computed \
+                     value {} — itself or one produced after it. A computed value may read \
+                     the ones before it, so move it later in the list",
+                    ordinal.0 - columns
+                )
+            } else {
+                format!(
+                    "computed value {index} of {at} names {ordinal:?}, which is outside the \
+                     {columns} columns of that joined row and its {index} earlier computed \
+                     value(s) — it would read as null on every row, which is one group \
+                     rather than an error"
+                )
+            };
+            return Err(KernelError::JoinNotSupported { reason });
+        }
+    }
+    Ok(())
 }
 
 /// How the executor will combine the two sides.
@@ -832,12 +918,27 @@ impl Columns for JoinedView<'_> {
 ///
 /// The two sides are kept apart rather than concatenated into one wide row, so
 /// each decodes into its own type and neither has to know the other's width.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct JoinedRow {
     /// The left row, if there was one.
     pub left: Option<Row>,
     /// The right row, if there was one.
     pub right: Option<Row>,
+    /// What [`Join::compute`] produced for this row, in order. Empty when the
+    /// join computes nothing.
+    ///
+    /// These belong to the *join*, not to either side, which is why they are a
+    /// third field rather than appended to one of the rows: a value spanning
+    /// both sides is not the left row's and not the right row's, and putting it
+    /// on either would make its ordinal depend on which one.
+    ///
+    /// They are filled by [`JoinCursor::next`], the single funnel every joined
+    /// row leaves through, so the grouped and ungrouped paths cannot drift.
+    /// Before that they were produced only where the grouped path flattened —
+    /// so an ungrouped join with `Join::compute` set returned each side at its
+    /// declared width and no computed value at all, silently. There is a test
+    /// for that now.
+    pub computed: Vec<Value>,
 }
 
 impl JoinedRow {
@@ -847,6 +948,7 @@ impl JoinedRow {
         Self {
             left: Some(left),
             right: Some(right),
+            computed: Vec::new(),
         }
     }
 
@@ -856,6 +958,7 @@ impl JoinedRow {
         Self {
             left: Some(left),
             right: None,
+            computed: Vec::new(),
         }
     }
 
@@ -865,6 +968,7 @@ impl JoinedRow {
         Self {
             left: None,
             right: Some(right),
+            computed: Vec::new(),
         }
     }
 
@@ -919,33 +1023,24 @@ impl JoinedRow {
         Row::new(values)
     }
 
-    /// Flattened, then the join's computed values appended in order.
+    /// Flattened, with [`Self::computed`] appended in order.
     ///
-    /// Each is evaluated against the row as it stands, so a later expression
-    /// can read an earlier one — the same rule [`Query::compute`] follows on a
-    /// single table, and the reason a chain of them needs no nesting.
+    /// The shape the grouper consumes: one row in the [`JoinSchema`] space,
+    /// the join's computed values in the slots
+    /// [`JoinSchema::computed`](JoinSchema::computed) names.
     ///
-    /// A missing side reads as null throughout, so a computed value over an
-    /// outer join's unmatched row is computed from nulls rather than skipped.
-    /// That is what the rest of the join already does with an absent side and
-    /// what SQL says it contains; the alternative — a null computed slot
-    /// regardless of the expression — would make `coalesce(right.x, 0)`
-    /// answer differently here than anywhere else.
+    /// It appends rather than evaluates, because the values were produced once
+    /// already by [`JoinCursor::next`]. Evaluating here too would be a second
+    /// place for the null rules to live, and the two would drift the first time
+    /// one of them learned something.
     #[must_use]
-    pub fn flatten_computing(&self, schema: &JoinSchema, compute: &[Scalar]) -> Row {
+    pub fn flatten_appending(&self, schema: &JoinSchema) -> Row {
         let flat = self.flatten(schema);
-        if compute.is_empty() {
+        if self.computed.is_empty() {
             return flat;
         }
         let mut values = flat.into_values();
-        values.reserve(compute.len());
-        for scalar in compute {
-            // Against the values as a slice rather than a rebuilt `Row`, for
-            // the reason `exec::extend` gives: rebuilding clones every value
-            // once per computed column, which is quadratic in their number.
-            let so_far: &[Value] = &values;
-            values.push(scalar.evaluate(so_far));
-        }
+        values.extend(self.computed.iter().cloned());
         Row::new(values)
     }
 
@@ -1207,6 +1302,10 @@ pub struct JoinCursor<'a> {
     /// The condition over the joined row, and the space it is written in.
     having: Arc<Expr>,
     schema: Arc<JoinSchema>,
+    /// [`Join::compute`], evaluated per row this cursor yields. Shared rather
+    /// than cloned because `next` runs per row and the expressions do not
+    /// change.
+    compute: Arc<[Scalar]>,
     limit: Option<usize>,
     offset: usize,
     skipped: usize,
@@ -1297,6 +1396,7 @@ impl<'a> JoinCursor<'a> {
             join_type: join.join_type,
             having: Arc::new(join.having.clone()),
             schema: Arc::new(JoinSchema::of(left_table, right_table)),
+            compute: join.compute.clone().into(),
             limit: join.limit,
             offset: join.offset,
             skipped: 0,
@@ -1309,10 +1409,16 @@ impl<'a> JoinCursor<'a> {
         if self.limit.is_some_and(|l| self.yielded >= l) {
             return Ok(None);
         }
-        while let Some(row) = self.next_joined().await? {
+        while let Some(mut row) = self.next_joined().await? {
             if self.skipped < self.offset {
                 self.skipped += 1;
                 continue;
+            }
+            // After the window, not before: a computed value for a row the
+            // offset discards is work nobody asked for, and `compute` may hold
+            // a regex replace.
+            if !self.compute.is_empty() {
+                row.computed = computed_values(&row.flatten(&self.schema), &self.compute);
             }
             self.yielded += 1;
             return Ok(Some(row));

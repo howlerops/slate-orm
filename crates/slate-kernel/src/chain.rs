@@ -41,11 +41,12 @@ use crate::error::{KernelError, Result};
 use crate::expr::{Columns, Expr};
 use crate::join::{
     DEFAULT_BUILD_LIMIT, JoinAlgorithm, JoinKey, JoinSchema, JoinType, PROBE_CONCURRENCY,
-    join_values, probe_filter,
+    join_values, probe_filter, validate_compute,
 };
 use crate::plan::Plan;
 use crate::query::Query;
 use crate::read::SecuredReads;
+use crate::scalar::Scalar;
 use crate::security::SecurityContext;
 use crate::stats::POINT_READ_COST;
 use futures::stream::{FuturesOrdered, StreamExt as _};
@@ -64,6 +65,14 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChainRow {
     rows: Vec<Option<Row>>,
+    /// What [`Chain::compute`] produced for this row, in order. Empty when the
+    /// chain computes nothing.
+    ///
+    /// A third field rather than an entry in `rows` for the reason
+    /// [`JoinedRow::computed`](crate::JoinedRow::computed) gives: a value that
+    /// may read every table belongs to none of them, and giving it a table's
+    /// slot would make its ordinal depend on which.
+    computed: Vec<Value>,
 }
 
 impl ChainRow {
@@ -72,6 +81,7 @@ impl ChainRow {
     pub fn start(row: Row) -> Self {
         Self {
             rows: vec![Some(row)],
+            computed: Vec::new(),
         }
     }
 
@@ -80,7 +90,10 @@ impl ChainRow {
     pub fn extended(&self, next: Option<Row>) -> Self {
         let mut rows = self.rows.clone();
         rows.push(next);
-        Self { rows }
+        Self {
+            rows,
+            computed: Vec::new(),
+        }
     }
 
     /// The row from the table at `position`, if there was one.
@@ -143,6 +156,29 @@ impl ChainRow {
         Row::new(values)
     }
 
+    /// What [`Chain::compute`] produced for this row, in order.
+    #[must_use]
+    pub fn computed(&self) -> &[Value] {
+        &self.computed
+    }
+
+    /// Flattened, with [`Self::computed`] appended in order.
+    ///
+    /// The n-table twin of
+    /// [`JoinedRow::flatten_appending`](crate::JoinedRow::flatten_appending),
+    /// and the same arrangement: the values were produced once by
+    /// [`run`] and are appended here rather than evaluated a second time.
+    #[must_use]
+    pub fn flatten_appending(&self, schema: &JoinSchema) -> Row {
+        let flat = self.flatten(schema);
+        if self.computed.is_empty() {
+            return flat;
+        }
+        let mut values = flat.into_values();
+        values.extend(self.computed.iter().cloned());
+        Row::new(values)
+    }
+
     /// Pad to `len` tables with absent rows.
     ///
     /// Used when an outer step preserves a row of the new table: everything
@@ -151,7 +187,10 @@ impl ChainRow {
     fn absent_before(next: Row, position: usize) -> Self {
         let mut rows = vec![None; position];
         rows.push(Some(next));
-        Self { rows }
+        Self {
+            rows,
+            computed: Vec::new(),
+        }
     }
 }
 
@@ -275,6 +314,26 @@ pub struct Chain {
     pub offset: usize,
     /// Rows an accumulated result may hold at any step.
     pub build_limit: usize,
+    /// Extra values computed per chain row, appended after *every* table's
+    /// columns.
+    ///
+    /// The same field [`Join::compute`](crate::Join::compute) puts on a
+    /// two-table join, and it exists for the same reason: a step's own
+    /// [`Query::compute`] is appended to *that step's* row, and
+    /// [`ChainRow::flatten`] packs the tables by declared width, so such a
+    /// value is truncated away and the ordinal it would have taken belongs to
+    /// the next table. Grouping by it answered a different question with no
+    /// error anywhere, which is why `read::no_side_computes` refuses it.
+    ///
+    /// Until this field existed that refusal had nowhere to redirect to and had
+    /// to name a missing feature. Now it names this, which is the whole point:
+    /// past every table is the one place an ordinal can be added without
+    /// moving one that already exists, and a value computed there can read any
+    /// table in the chain rather than only its own.
+    ///
+    /// The `i`th sits at [`JoinSchema::computed(i)`](JoinSchema::computed), and
+    /// may read every table's columns and the `i` values before it.
+    pub compute: Vec<Scalar>,
 }
 
 impl Chain {
@@ -287,6 +346,7 @@ impl Chain {
             limit: None,
             offset: 0,
             build_limit: DEFAULT_BUILD_LIMIT,
+            compute: Vec::new(),
         }
     }
 
@@ -321,6 +381,13 @@ impl Chain {
     #[must_use]
     pub const fn build_limit(mut self, rows: usize) -> Self {
         self.build_limit = rows;
+        self
+    }
+
+    /// Compute these values per chain row. See [`Chain::compute`].
+    #[must_use]
+    pub fn computing<I: IntoIterator<Item = Scalar>>(mut self, scalars: I) -> Self {
+        self.compute = scalars.into_iter().collect();
         self
     }
 
@@ -413,6 +480,12 @@ impl Chain {
                 });
             }
         }
+        let names: Vec<&str> = tables.iter().map(|t| t.name()).collect();
+        validate_compute(
+            schema,
+            &self.compute,
+            &format!("the chain `{}`", names.join("` ⋈ `")),
+        )?;
         Ok(())
     }
 }
@@ -630,6 +703,16 @@ pub(crate) async fn run<'a>(
     }
     if let Some(limit) = chain.limit {
         rows.truncate(limit);
+    }
+    // After the window, as the two-table cursor does it: a computed value for a
+    // row the offset threw away is work nobody asked for, and `compute` may
+    // hold a regex replace. Chains materialise, so this is one pass rather than
+    // per-`next` bookkeeping — which is also why `next`, `collect` and `count`
+    // cannot disagree about whether the values are there.
+    if !chain.compute.is_empty() {
+        for row in &mut rows {
+            row.computed = crate::join::computed_values(&row.flatten(&schema), &chain.compute);
+        }
     }
     Ok(ChainCursor {
         rows: rows.into_iter(),

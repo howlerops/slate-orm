@@ -298,6 +298,21 @@ message ColumnRef {
     uint32 group_key = 4;
     // The nth aggregate. Only inside a grouped result's `having`.
     uint32 aggregate = 5;
+    // The nth value the **join itself** computes — `JoinQuery.compute`, not any
+    // one input's. It sits past every input's columns, which is the one place
+    // an ordinal can be added without moving one that already exists, and it
+    // can read any input.
+    //
+    // This is the kind `computed` cannot be. A computed value of an *input* has
+    // no slot in the joined space at all: that space is packed by declared
+    // table width, so the ordinal such a value would take is the next table's
+    // first column. A value belonging to the join has a slot, because the join
+    // is what defines where the columns end.
+    //
+    // `input` is ignored here and must be zero: the value belongs to the
+    // request rather than to one of its tables, for the same reason `group_key`
+    // and `aggregate` set it to zero.
+    uint32 joined_computed = 6;
   }
 }
 
@@ -713,14 +728,10 @@ message JoinInput {
   // values are appended to that input's own row, and the joined ordinal space
   // is packed by declared table width, so such a value has no slot in it; the
   // reference is refused rather than landing on whatever column happens to sit
-  // at that offset.
-  //
-  // The kernel has since grown `Join::compute` — values computed over the
-  // *joined* row and appended after every table's columns, which can read any
-  // input — and this protocol does not carry it yet. A join's computed column
-  // is reachable from the browser binding and not over gRPC. That is a gap,
-  // not a decision; adding it means giving `ColumnRef` a way to name a slot
-  // that belongs to the join rather than to an input.
+  // at that offset. `JoinQuery.compute` is the addressable kind — but not here:
+  // `having` decides whether a pair is admitted and the computed values are
+  // produced *from* the admitted pair, so one read here would not exist yet.
+  // `AggregateQuery.having` is where a condition on a computed value goes.
   Expr having = 4;
   // Run this algorithm for this input's join instead of costing one. For
   // measuring what the alternative would have cost, and for a caller who knows
@@ -764,6 +775,28 @@ message JoinQuery {
   // a client can raise is not a limit. Raising it is clamped and reported in
   // `warnings`, not refused.
   optional uint64 build_limit = 4;
+  // Values computed per joined row, appended after **every** input's columns.
+  //
+  // The arrangement `Query.compute` uses on one table, lifted one level: the
+  // nth is named by `ColumnRef.joined_computed = n`, so a group key or an
+  // aggregate addresses it the ordinary way. What is new is that the expression
+  // is evaluated over the *joined* row, so it may read both sides at once —
+  // `hour(trips.pickup_time)` and `input 0's a - input 1's b` are the same kind
+  // of thing here.
+  //
+  // It is on the join rather than on an input's `Query` because an input's own
+  // computed value has nowhere to go once the row is flattened for grouping:
+  // the inputs are concatenated by declared table width, so a value appended to
+  // input 0's row lands where input 1's first column belongs. Grouping such a
+  // join used to return input 1's first column as the group key, with no error.
+  //
+  // Each may read every input's columns and the computed values **before** it,
+  // so `compute[1]` may read `compute[0]` and not the other way round. Naming
+  // itself or a later one is refused rather than read as null.
+  //
+  // An ungrouped `Join` returns these on `JoinedRow.computed`; a grouped one
+  // exposes them to `group_by`, `aggregates` and, through the group, `having`.
+  repeated Scalar compute = 5;
 }
 
 // One row of a join or chain: one entry per input, in the order declared.
@@ -773,6 +806,15 @@ message JoinQuery {
 // a client reads the result the same way it wrote the request.
 message JoinedRow {
   repeated JoinedInput inputs = 1;
+  // What `JoinQuery.compute` produced for this row, in order. Empty when the
+  // join computes nothing.
+  //
+  // Beside the inputs rather than inside one of them, because a value that may
+  // read every input belongs to none of them — putting it on an input would
+  // make its position depend on which input, which is the arithmetic
+  // `ColumnRef` exists to remove. An input's *own* computed values still come
+  // back inside that input's `Row.computed`, where they have always been.
+  repeated Value computed = 2;
 }
 
 message JoinedInput {

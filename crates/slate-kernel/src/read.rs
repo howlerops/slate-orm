@@ -146,8 +146,8 @@ fn no_side_computes(inputs: &[&Query], at: &str) -> Result<()> {
                     "input {position} of {at} computes {} value(s), and grouping flattens \
                      the inputs by declared table width — such a value has no slot in the \
                      flattened row, and the ordinal it would take belongs to the next \
-                     table. Put it in `Join::compute`, which is evaluated over the joined \
-                     row and can read any input",
+                     table. Put it in `Join::compute` — `Chain::compute` for a chain \
+                     — which is evaluated over the joined row and can read any input",
                     query.compute.len()
                 ),
             });
@@ -225,6 +225,17 @@ fn narrowed_chain(chain: &Chain, schema: &JoinSchema, grouping: &Grouping) -> Ch
 
     for ordinal in grouping.columns() {
         want(ordinal, &mut wanted);
+    }
+    // What the chain's own computed values read, for the reason
+    // `narrowed_join` gives: a grouping that names a computed slot resolves to
+    // no table — the slot is past every one — so gathering only the grouping's
+    // ordinals would narrow every projection to nothing and compute the value
+    // from nulls. This is the one place the computed columns are unfolded into
+    // the columns underneath them.
+    for scalar in &chain.compute {
+        for ordinal in scalar.columns() {
+            want(ordinal, &mut wanted);
+        }
     }
     for (index, step) in chain.steps.iter().enumerate() {
         // Step `index` adds the table at position `index + 1`; the first table
@@ -487,7 +498,7 @@ impl<'a> SecuredReads<'a> {
             // threaded through them would be a second place for the null rules
             // to drift. `JoinedRow::flatten` reports a missing side as nulls,
             // which is what the view reports too.
-            grouper.push(&joined.flatten_computing(&schema, &join.compute))?;
+            grouper.push(&joined.flatten_appending(&schema))?;
         }
         Ok(grouper.finish())
     }
@@ -510,14 +521,18 @@ impl<'a> SecuredReads<'a> {
         chain: &Chain,
         grouping: &Grouping,
     ) -> Result<Vec<Group>> {
-        let schema = Arc::new(JoinSchema::over(tables.iter().copied()));
+        let schema =
+            Arc::new(JoinSchema::over(tables.iter().copied()).computing(chain.compute.len()));
         // The same truncation, for the same reason: a chain flattens its steps
-        // by declared table width too. A chain has no `compute` of its own yet,
-        // so this refuses rather than redirecting — but a silent wrong answer
-        // is worse than a refusal that names a missing feature.
+        // by declared table width too, so a step's own computed value is cut
+        // off and the ordinal it would have taken belongs to the next table.
+        // `Chain::compute` is where such a value goes, and the refusal names
+        // it — it used to name a missing feature instead, because there was
+        // nothing to redirect to.
         let mut inputs: Vec<&Query> = vec![&chain.first];
         inputs.extend(chain.steps.iter().map(|step| &step.query));
         no_side_computes(&inputs, "a grouped chain")?;
+        validate_grouping(&schema, grouping, "a grouped chain")?;
         let (narrowed, plan) =
             self.plan_grouped_chain(context, tables, chain, grouping, &schema)?;
         let mut cursor =
@@ -528,7 +543,7 @@ impl<'a> SecuredReads<'a> {
             // Flattened for the same reason the two-table version flattens: the
             // accumulators take a `Row`, and a second row-like type threaded
             // through them would be a second place for the null rules to drift.
-            grouper.push(&row.flatten(&schema))?;
+            grouper.push(&row.flatten_appending(&schema))?;
         }
         Ok(grouper.finish())
     }

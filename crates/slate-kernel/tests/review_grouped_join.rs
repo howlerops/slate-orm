@@ -501,3 +501,224 @@ async fn a_computed_join_key_does_not_depend_on_the_algorithm() {
         );
     }
 }
+
+// --- what a computed value may name, and where it comes out ---------------
+
+/// `Join::compute` shipped with **no validation of its own references at all**.
+///
+/// Every other ordinal in a joined read is checked — `having` against the
+/// joined width, and `Grouping` since `validate_grouping` — but the scalars in
+/// `compute` were converted straight through. `Scalar::Column` falls back to
+/// `Value::Null` for an ordinal the row does not have, so grouping by a
+/// computed value that read column 15 of a six-column joined row returned
+/// `[Group { key: [Null], values: [U64(24)] }]`: one group, every row in it, no
+/// error. That is the same failure `validate_grouping` was written to stop, one
+/// level further down, and it was invisible for the same reason — an
+/// out-of-range ordinal and a genuinely null column are indistinguishable once
+/// the answer is a table of numbers.
+#[tokio::test]
+async fn a_computed_value_naming_a_column_nobody_has_is_refused() {
+    let store = store().await;
+    let width = authors().columns().len() + books().columns().len();
+    let join = Join::equating(author_col("id"), book_col("author_id"))
+        .computing([Scalar::Column(Ordinal(width + 9))]);
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(width)], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("a computed value cannot read a column nobody has");
+    let message = refused.to_string();
+    assert!(message.contains("outside"), "{message}");
+}
+
+/// Naming a *later* computed value is the other half, and gets its own message.
+///
+/// The `i`th is evaluated with the `i` before it appended, so naming itself or
+/// one produced after it reads as null — and the fix is not the same as for an
+/// ordinal past the end, which is why the refusal distinguishes them: this one
+/// is repaired by reordering the list.
+#[tokio::test]
+async fn a_computed_value_naming_a_later_one_is_refused_and_says_to_reorder() {
+    let store = store().await;
+    let width = authors().columns().len() + books().columns().len();
+    // compute[0] reads compute[1], which does not exist yet when it runs.
+    let join = Join::equating(author_col("id"), book_col("author_id")).computing([
+        Scalar::Column(Ordinal(width + 1)),
+        Scalar::Column(book_col("pages")),
+    ]);
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(width)], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("a computed value cannot read one produced after it");
+    let message = refused.to_string();
+    assert!(message.contains("move it later"), "{message}");
+}
+
+/// Reading **its own** slot is the boundary case, and the one a mutation found.
+///
+/// `a_computed_value_naming_a_later_one_is_refused` does not cover it: an
+/// off-by-one in the bound (`columns + index + 1`) still refuses a reference to
+/// a *later* value while quietly admitting a self-reference, which evaluates
+/// against a row that does not contain it yet and is therefore always null.
+#[tokio::test]
+async fn a_computed_value_naming_its_own_slot_is_refused() {
+    let store = store().await;
+    let width = authors().columns().len() + books().columns().len();
+    let join = Join::equating(author_col("id"), book_col("author_id"))
+        .computing([Scalar::Column(Ordinal(width))]);
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(width)], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("a computed value cannot read itself");
+    assert!(refused.to_string().contains("move it later"), "{refused}");
+}
+
+/// Reading the value **before** it is the supported case, and still works.
+#[tokio::test]
+async fn a_computed_value_may_read_an_earlier_one() {
+    let store = store().await;
+    let width = authors().columns().len() + books().columns().len();
+    let at = slate_kernel::JoinSchema::of(&authors(), &books());
+    let join = Join::equating(author_col("id"), book_col("author_id")).computing([
+        Scalar::Div(
+            // The joined space, not `books`' own — a computed value is
+            // evaluated over the flattened row, so `book_col("pages")` raw
+            // would read `authors.width + 0`, which is `books.id`. That is
+            // exactly the shift `JoinSchema::right` exists to remove, and
+            // getting it wrong here produced three plausible groups instead of
+            // seven.
+            Box::new(Scalar::Column(at.right(book_col("pages")))),
+            Box::new(Scalar::Literal(Value::I64(10))),
+        ),
+        Scalar::Mul(
+            Box::new(Scalar::Column(Ordinal(width))),
+            Box::new(Scalar::Literal(Value::I64(2))),
+        ),
+    ]);
+    let txn = store.begin().await.unwrap();
+    let groups = txn
+        .group_by_join(
+            &root(),
+            &authors(),
+            &books(),
+            &join,
+            &Grouping::by([Ordinal(width + 1)], &[Aggregate::Count]),
+        )
+        .await
+        .expect("reading an earlier computed value is the whole point of the ordering");
+    // `pages` is `(id % 7) * 10`, so `pages/10*2` is `(id % 7) * 2`: seven
+    // groups at 0, 2, 4, 6, 8, 10, 12.
+    let keys: Vec<Value> = groups.iter().map(|g| g.key[0].clone()).collect();
+    assert_eq!(
+        keys,
+        (0..7).map(|n| Value::I64(n * 2)).collect::<Vec<_>>(),
+        "the second computed value should be twice the first"
+    );
+}
+
+/// An **ungrouped** join used to accept `Join::compute` and produce nothing.
+///
+/// The field was added for the grouped path and the values were produced where
+/// that path flattens, so an ungrouped join with a computed column returned
+/// each side at its declared width, no computed value anywhere, and no error:
+/// `left=2 right=4` on a fixture whose join computed one value. Silently
+/// dropping something the caller asked for is the same class of defect as
+/// silently answering a different question.
+///
+/// They now come out on `JoinedRow::computed`, filled by `JoinCursor::next` —
+/// the single funnel every joined row leaves through, which is what stops the
+/// two paths drifting. It is a third field rather than a tail on one side's row
+/// because a value spanning both sides belongs to neither.
+#[tokio::test]
+async fn an_ungrouped_join_returns_the_joins_computed_values() {
+    let store = store().await;
+    let at = slate_kernel::JoinSchema::of(&authors(), &books());
+    let join = Join::equating(author_col("id"), book_col("author_id")).computing([Scalar::Mul(
+        // Joined-space, as above.
+        Box::new(Scalar::Column(at.right(book_col("pages")))),
+        Box::new(Scalar::Literal(Value::I64(2))),
+    )]);
+    let (left_table, right_table) = (authors(), books());
+    let txn = store.begin().await.unwrap();
+    let mut cursor = txn
+        .join(&root(), &left_table, &right_table, &join)
+        .await
+        .unwrap();
+
+    let mut seen = 0;
+    while let Some(row) = cursor.next().await.unwrap() {
+        let right = row.right.as_ref().expect("an inner join pairs both");
+        let Value::I64(pages) = right.values()[book_col("pages").0] else {
+            panic!("pages is not an integer")
+        };
+        assert_eq!(
+            row.computed,
+            vec![Value::I64(pages * 2)],
+            "the join's computed value should come back on every row"
+        );
+        // And the sides are still exactly their tables' widths, which is what
+        // makes a third field necessary rather than a tail on one of them.
+        assert_eq!(row.left.as_ref().unwrap().values().len(), 2);
+        assert_eq!(right.values().len(), 4);
+        seen += 1;
+    }
+    assert_eq!(seen, BOOK_ROWS as usize);
+}
+
+/// A computed value spanning **both** sides, which is the thing no side's own
+/// `Query::compute` can express and therefore the reason this field exists.
+#[tokio::test]
+async fn a_computed_value_may_read_both_sides_at_once() {
+    let store = store().await;
+    let at = slate_kernel::JoinSchema::of(&authors(), &books());
+    let join =
+        Join::equating(author_col("id"), book_col("author_id")).computing([Scalar::Concat(vec![
+            Scalar::Column(at.left(author_col("region"))),
+            Scalar::Literal(Value::Str("/".into())),
+            Scalar::Column(at.right(book_col("shelf"))),
+        ])]);
+    let (left_table, right_table) = (authors(), books());
+    let txn = store.begin().await.unwrap();
+    let mut cursor = txn
+        .join(&root(), &left_table, &right_table, &join)
+        .await
+        .unwrap();
+    let mut seen = 0;
+    while let Some(row) = cursor.next().await.unwrap() {
+        let Value::Str(region) =
+            row.left.as_ref().unwrap().values()[author_col("region").0].clone()
+        else {
+            panic!("region is not a string")
+        };
+        let Value::Str(shelf) = row.right.as_ref().unwrap().values()[book_col("shelf").0].clone()
+        else {
+            panic!("shelf is not a string")
+        };
+        assert_eq!(
+            row.computed,
+            vec![Value::Str(format!("{region}/{shelf}"))]
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, BOOK_ROWS as usize);
+}

@@ -1230,6 +1230,7 @@ async fn a_build_limit_the_client_lowers_is_honoured() {
 /// Build a two-input join request by hand, so a test can damage one field.
 fn handmade_join(left: &str, right: &str, on: Vec<pb::JoinOn>) -> pb::JoinQuery {
     pb::JoinQuery {
+        compute: Vec::new(),
         inputs: vec![
             pb::JoinInput {
                 query: Some(common::plain_query(left)),
@@ -1430,6 +1431,7 @@ async fn a_join_of_one_table_is_refused() {
     let (serving, _backing) = seeded().await;
     let mut client = serving.client().await;
     let wire = pb::JoinQuery {
+        compute: Vec::new(),
         inputs: vec![pb::JoinInput {
             query: Some(common::plain_query("authors")),
             on: Vec::new(),
@@ -2510,4 +2512,348 @@ async fn a_reader_may_aggregate_but_may_not_explain_the_aggregate() {
         .await;
     let status = refused.expect_err("a reader got a plan for an aggregate");
     assert_eq!(status.code(), tonic::Code::PermissionDenied, "{status:?}");
+}
+
+// --- the join's own computed values, over the wire -------------------------
+
+/// An ungrouped join's computed values reach the client, and are the kernel's.
+///
+/// `JoinQuery.compute` is new. Before it, `Join::compute` was reachable from
+/// the browser binding and from nothing else — the proto said so in a comment
+/// on `JoinInput.having` — because `ColumnRef` had no way to name a slot
+/// belonging to the join rather than to an input. `joined_computed` is that
+/// way, and this is the oracle for it: the same `Join`, run over a socket and
+/// in process, compared value for value.
+///
+/// The expression deliberately reads **both** sides. That is the case no
+/// input's own `Query::compute` can express — an input's computed value is
+/// evaluated over that input's row alone — so it is the case that proves the
+/// values are computed in the joined space rather than smuggled through one
+/// side.
+#[tokio::test]
+async fn a_joins_computed_values_come_back_over_the_wire() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id")).computing([
+        // `books.year - authors.born`: the author's age at publication, which
+        // needs both tables at once.
+        Scalar::Column(space.at(1, at(&b, "year"))) - Scalar::Column(space.at(0, at(&a, "born"))),
+        // And one reading the first, which pins the ordering rule on the wire.
+        Scalar::Column(space.computing(2).computed(0)) * 2i64,
+    ]);
+
+    let wire = join_to_proto(&a, &b, &join);
+    assert_eq!(wire.compute.len(), 2, "the conversion must carry them");
+
+    let stream = client
+        .join(app_request(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(wire),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let (rows, _) = drain_joined(stream).await;
+    assert!(!rows.is_empty(), "the join returned nothing to check");
+
+    // Every row carries both values, and they are arithmetic on the two sides.
+    for row in &rows {
+        assert_eq!(row.computed.len(), 2, "both computed values must arrive");
+        let left = row.inputs[0].row.as_ref().unwrap();
+        let right = row.inputs[1].row.as_ref().unwrap();
+        let born = value_from_proto(&left.values[at(&a, "born").0]).unwrap();
+        let year = value_from_proto(&right.values[at(&b, "year").0]).unwrap();
+        let (Value::I64(born), Value::I64(year)) = (born, year) else {
+            panic!("the fixture's born and year are integers")
+        };
+        assert_eq!(
+            value_from_proto(&row.computed[0]).unwrap(),
+            Value::I64(year - born)
+        );
+        assert_eq!(
+            value_from_proto(&row.computed[1]).unwrap(),
+            Value::I64((year - born) * 2)
+        );
+        // The inputs are still exactly their tables' widths, which is why the
+        // values need a place of their own.
+        assert_eq!(left.values.len(), a.columns().len());
+        assert_eq!(right.values.len(), b.columns().len());
+    }
+
+    // And the kernel agrees, row for row, on the same `Join` value.
+    let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(&backing));
+    let txn = store.begin().await.unwrap();
+    let mut cursor = txn.join(&ctx(), &a, &b, &join).await.unwrap();
+    let mut expected: Vec<String> = Vec::new();
+    while let Some(row) = cursor.next().await.unwrap() {
+        expected.push(format!("{:?}", row.computed));
+    }
+    let mut got: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let values: Vec<Value> = row
+                .computed
+                .iter()
+                .map(|v| value_from_proto(v).unwrap())
+                .collect();
+            format!("{values:?}")
+        })
+        .collect();
+    got.sort();
+    expected.sort();
+    assert_eq!(got, expected);
+}
+
+/// Grouping **by** one of them, which is what the field is for.
+///
+/// "Group by a value computed from both tables and count" is the query the last
+/// round's note recorded as not expressible: the workbench could ask it and
+/// gRPC could not. `group_by: [joined_computed 0]` is the whole of the fix on
+/// the request side.
+#[tokio::test]
+async fn a_grouped_join_can_group_by_the_joins_computed_value() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id")).computing([Scalar::Column(
+        space.at(1, at(&b, "year")),
+    ) - Scalar::Column(
+        space.at(0, at(&a, "born")),
+    )]);
+    let year = space.at(1, at(&b, "year"));
+    let grouping = Grouping::by(
+        [space.computing(1).computed(0)],
+        &[Aggregate::Count, Aggregate::Min(year)],
+    );
+
+    let expected = grouped_join_in_process(&backing, &join, &grouping)
+        .await
+        .expect("the kernel groups by a computed value");
+
+    let query = pb::AggregateQuery {
+        input: None,
+        join: Some(join_to_proto(&a, &b, &join)),
+        group_by: vec![slate_server::convert::joined_computed_ref(0)],
+        aggregates: vec![
+            pb::Aggregate {
+                function: pb::AggregateFunction::Count as i32,
+                column: None,
+            },
+            pb::Aggregate {
+                function: pb::AggregateFunction::Min as i32,
+                column: Some(column_ref(1, at(&b, "year").0)),
+            },
+        ],
+        having: None,
+        sort: Vec::new(),
+        limit: None,
+        offset: 0,
+    };
+
+    let mut actual = grouped_join_over_the_wire(&mut client, query)
+        .await
+        .expect("the wire groups by the join's computed value");
+    let mut expected = expected;
+    actual.sort();
+    expected.sort();
+    assert!(!expected.is_empty(), "the fixture should produce groups");
+    assert_eq!(actual, expected);
+}
+
+/// A **chain** carries them too, on the same field.
+///
+/// One wire shape serves both, so a chain that forgot to read `compute` would
+/// be a silent difference between two and three inputs — exactly the kind of
+/// gap the single `JoinQuery` message exists to prevent.
+#[tokio::test]
+async fn a_chains_computed_values_come_back_over_the_wire() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b, s) = (authors(), books(), sales());
+    let space = JoinSchema::over([&a, &b, &s]);
+
+    let chain = Chain::from(Query::all())
+        .join(JoinStep::equating(
+            space.at(0, at(&a, "id")),
+            at(&b, "author_id"),
+        ))
+        .join(JoinStep::equating(
+            space.at(1, at(&b, "id")),
+            at(&s, "book_id"),
+        ))
+        // Reads the first and the last table of the chain at once.
+        .computing([
+            Scalar::Column(space.at(2, at(&s, "units")))
+                * Scalar::Column(space.at(1, at(&b, "year"))),
+        ]);
+
+    let owned = [a.clone(), b.clone(), s.clone()];
+    let refs: Vec<&TableDef> = owned.iter().collect();
+    let wire = chain_to_proto(&refs, &chain);
+    assert_eq!(wire.compute.len(), 1);
+
+    let stream = client
+        .join(app_request(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(wire),
+            freshness: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let (rows, _) = drain_joined(stream).await;
+    assert!(!rows.is_empty(), "the chain returned nothing to check");
+
+    let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(&backing));
+    let txn = store.begin().await.unwrap();
+    let kernel = txn
+        .chain(&ctx(), &refs, &chain)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    let mut expected: Vec<String> = kernel
+        .iter()
+        .map(|row| format!("{:?}", row.computed()))
+        .collect();
+    let mut got: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let values: Vec<Value> = row
+                .computed
+                .iter()
+                .map(|v| value_from_proto(v).unwrap())
+                .collect();
+            format!("{values:?}")
+        })
+        .collect();
+    got.sort();
+    expected.sort();
+    assert_eq!(got, expected);
+    assert!(rows.iter().all(|r| r.computed.len() == 1));
+}
+
+/// A join carrying computed values survives a round trip through the wire form.
+///
+/// `unresolve` fell through to `column_ref(0, n)` for any ordinal past every
+/// input's columns, which is where the join's own computed slots live — so
+/// converting such a join out and back turned `joined_computed 0` into input
+/// 0's column *n*: a different column, or a refusal, depending on the widths.
+#[tokio::test]
+async fn a_join_with_computed_values_round_trips_through_the_wire_form() {
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+    let catalog = common::catalog();
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id")).computing([
+        Scalar::Column(space.at(1, at(&b, "year"))) - Scalar::Column(space.at(0, at(&a, "born"))),
+        Scalar::Column(space.computing(2).computed(0)) * 2i64,
+    ]);
+
+    let wire = join_to_proto(&a, &b, &join);
+    let (_, read, _) = slate_server::convert::join_from_proto(&wire, &catalog).unwrap();
+    let slate_server::convert::MultiRead::Join(back) = read else {
+        panic!("two inputs must convert to a Join")
+    };
+    assert_eq!(back.compute, join.compute);
+}
+
+/// A join key may not name the join's computed value.
+///
+/// A join equality is compared through an index against stored values, and the
+/// join's computed value does not exist until the pair is formed. Refused by
+/// *kind* rather than by range, which is why it reads as a sentence rather than
+/// as an out-of-bounds.
+#[tokio::test]
+async fn a_join_key_naming_the_joins_computed_value_is_refused() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"))
+        .computing([Scalar::Column(space.at(0, at(&a, "born")))]);
+    let mut wire = join_to_proto(&a, &b, &join);
+    wire.inputs[1].on[0].earlier = Some(slate_server::convert::joined_computed_ref(0));
+
+    let status = over_the_wire(&mut client, wire)
+        .await
+        .expect_err("a join key cannot be a computed value of the join");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().contains("does not exist until"),
+        "{}",
+        status.message()
+    );
+}
+
+/// Nor may a computed value name itself or a later one.
+///
+/// The kernel refuses this too, on its own ordinals. It is refused *here* as
+/// well so the message names the kind the client wrote rather than an ordinal
+/// it never saw — the entire reason `ColumnRef` is not a flat integer.
+#[tokio::test]
+async fn a_computed_value_naming_a_later_one_is_refused_on_the_wire() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"))
+        .computing([Scalar::Column(space.at(0, at(&a, "born")))]);
+    let mut wire = join_to_proto(&a, &b, &join);
+    // compute[0] reads joined_computed 0, which is itself.
+    wire.compute[0] = pb::Scalar {
+        node: Some(pb::scalar::Node::Column(
+            slate_server::convert::joined_computed_ref(0),
+        )),
+    };
+
+    let status = over_the_wire(&mut client, wire)
+        .await
+        .expect_err("a computed value cannot read itself");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().contains("not itself or a later one"),
+        "{}",
+        status.message()
+    );
+}
+
+/// And `JoinInput.having` may not, which is a rule about *when* rather than
+/// about addressability: the pair has not been formed yet.
+#[tokio::test]
+async fn a_join_condition_naming_the_joins_computed_value_is_refused() {
+    let (serving, _backing) = seeded().await;
+    let mut client = serving.client().await;
+    let (a, b) = (authors(), books());
+    let space = JoinSchema::over([&a, &b]);
+
+    let join = Join::equating(at(&a, "id"), at(&b, "author_id"))
+        .computing([Scalar::Column(space.at(0, at(&a, "born")))]);
+    let mut wire = join_to_proto(&a, &b, &join);
+    wire.inputs[1].having = Some(pb::Expr {
+        node: Some(pb::expr::Node::Compare(pb::Compare {
+            column: Some(slate_server::convert::joined_computed_ref(0)),
+            op: pb::CmpOp::Gt as i32,
+            value: Some(slate_server::convert::value_to_proto(&Value::I64(0))),
+        })),
+    });
+
+    let status = over_the_wire(&mut client, wire)
+        .await
+        .expect_err("a join condition cannot read a value produced from the pair");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().contains("available at that point"),
+        "{}",
+        status.message()
+    );
 }

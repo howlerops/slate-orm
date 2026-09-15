@@ -29,7 +29,7 @@ use slate_kernel::latency::{IoCounters, LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
     Access, Action, Aggregate, Chain, ChainRow, Expr, Grant, Group, Grouping, Join, JoinSchema,
-    JoinStep, JoinType, Policy, Principal, RecordStore, SecurityCatalog, SecurityContext,
+    JoinStep, JoinType, Policy, Principal, RecordStore, Scalar, SecurityCatalog, SecurityContext,
 };
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Value, ValueType};
@@ -253,9 +253,21 @@ async fn chain_rows(store: &RecordStore<MemoryStore>, chain: &Chain) -> Vec<Vec<
         .collect()
         .await
         .unwrap();
+    // `flatten`, then *this file's* own computed values — not
+    // `flatten_appending`, which is the code under test. Going through it made
+    // the oracle agree with the kernel by construction: a mutation that
+    // appended only the first computed value truncated both sides identically
+    // and the property still passed. An oracle that calls the implementation is
+    // not an oracle.
     let at = schema();
     rows.iter()
-        .map(|row| row.flatten(&at).values().to_vec())
+        .map(|row| {
+            let mut values = row.flatten(&at).values().to_vec();
+            if !chain.compute.is_empty() {
+                values.extend(fold_compute(&values));
+            }
+            values
+        })
         .collect()
 }
 
@@ -875,4 +887,184 @@ async fn a_reader_may_group_but_may_not_explain_the_grouping() {
         refused.is_err(),
         "a reader without Explain got a plan for a grouped join"
     );
+}
+
+// --- a computed value over the whole chain --------------------------------
+
+/// The chain's own computed values, for the property below.
+///
+/// Deliberately two, and deliberately spanning two tables: `books.year / 10`
+/// and then *that* times ten. The first is what no step's own `Query::compute`
+/// can be trusted to produce — it would be truncated away by the flatten — and
+/// the second reads the first, which is the ordering rule `validate_compute`
+/// enforces.
+fn chain_compute() -> Vec<Scalar> {
+    let at = schema();
+    vec![
+        Scalar::Div(
+            Box::new(Scalar::Column(at.at(1, b("year")))),
+            Box::new(Scalar::Literal(Value::I64(10))),
+        ),
+        Scalar::Mul(
+            Box::new(Scalar::Column(at.computing(2).computed(0))),
+            Box::new(Scalar::Literal(Value::I64(10))),
+        ),
+    ]
+}
+
+/// The same two values, computed here instead — the oracle.
+///
+/// Independent of `Scalar` down to the null rule: a row whose book is absent
+/// (which every outer step produces) has `year` null, and `Value::Null / 10`
+/// is null rather than zero. Reimplementing that is the point; agreeing with
+/// the kernel by calling the kernel would prove nothing.
+fn fold_compute(flat: &[Value]) -> Vec<Value> {
+    let at = schema();
+    let decade = match flat.get(at.at(1, b("year")).0) {
+        Some(Value::I64(year)) => Value::I64(year / 10),
+        _ => Value::Null,
+    };
+    let scaled = match &decade {
+        Value::I64(d) => Value::I64(d * 10),
+        _ => Value::Null,
+    };
+    vec![decade, scaled]
+}
+
+/// A grouped chain **with a computed column** agrees with folding the chain's
+/// rows and computing the same values by hand.
+///
+/// `Chain::compute` is new; before it, a chain's only computed values were a
+/// step's own, and grouping such a chain was refused because the flatten
+/// truncated them. This is the same oracle as
+/// `a_grouped_chain_agrees_with_folding_the_chain`, over the same sixteen
+/// combinations of step join types, with the group key drawn from the computed
+/// slots rather than from a table — which is the case where a wrong ordinal
+/// produces a plausible table of numbers rather than an error.
+#[test]
+fn a_grouped_chain_with_a_computed_column_agrees_with_folding_it() {
+    let rt = runtime();
+    let store = rt.block_on(seeded());
+    let at = schema().computing(2);
+
+    proptest!(|(
+        first in join_type(),
+        second in join_type(),
+        which in prop::sample::subsequence(vec![at.computed(0), at.computed(1)], 1..=2),
+        aggregates in aggregates(),
+    )| {
+        let chain = walk(first, second).computing(chain_compute());
+        let rows = rt.block_on(chain_rows(&store, &chain));
+        let expected = fold(&rows, &which, &aggregates);
+
+        let grouping = Grouping::by(which.iter().copied(), &aggregates);
+        let got = sorted(rt.block_on(grouped_chain(&store, &chain, &grouping)));
+
+        prop_assert_eq!(
+            &got, &expected,
+            "grouping {:?} by the computed {:?} over a {:?}/{:?} chain disagreed with the fold",
+            aggregates, which, first, second
+        );
+    });
+}
+
+/// And the rows a chain hands back carry the values, ungrouped.
+///
+/// The two-table cursor had this defect and so did this one: `compute` was
+/// applied only where the grouped path flattened, so an ungrouped read returned
+/// nothing for it and said nothing about that.
+#[tokio::test]
+async fn an_ungrouped_chain_returns_its_computed_values() {
+    let store = seeded().await;
+    let at = schema();
+    let chain = walk(JoinType::Inner, JoinType::Inner).computing(chain_compute());
+    let owned = tables();
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    let txn = store.begin().await.unwrap();
+    let rows: Vec<ChainRow> = txn
+        .chain(&reader(), &refs, &chain)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert!(!rows.is_empty(), "the fixture should produce inner rows");
+    for row in &rows {
+        let flat = row.flatten(&at);
+        assert_eq!(
+            row.computed(),
+            fold_compute(flat.values()),
+            "a chain row should carry what `Chain::compute` produced"
+        );
+    }
+}
+
+/// A chain's computed value may not read a column nobody has, for the same
+/// reason a join's may not: it reads as null, and a null group key is one
+/// group rather than an error.
+#[tokio::test]
+async fn a_chain_computed_value_naming_a_column_nobody_has_is_refused() {
+    let store = seeded().await;
+    let at = schema();
+    let chain = walk(JoinType::Inner, JoinType::Inner)
+        .computing([Scalar::Column(Ordinal(at.width() + 40))]);
+    let owned = tables();
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_chain(
+            &reader(),
+            &refs,
+            &chain,
+            &Grouping::by([at.computing(1).computed(0)], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("a chain's computed value cannot read a column nobody has");
+    assert!(refused.to_string().contains("outside"), "{refused}");
+}
+
+/// A grouping ordinal past the **chain's** width is refused.
+///
+/// `validate_grouping` was written for the two-table join and the chain path
+/// did not call it, so `GROUP BY` an ordinal nobody has returned one group
+/// keyed null over every row — a table of numbers with a single line in it and
+/// no error. Same failure, same argument as the two-table case; the only reason
+/// it survived longer is that a chain has no `compute` to make anyone look.
+#[tokio::test]
+async fn a_grouping_ordinal_past_the_chains_width_is_refused() {
+    let store = seeded().await;
+    let at = schema();
+    let chain = walk(JoinType::Inner, JoinType::Inner);
+    let owned = tables();
+    let refs: Vec<&TableDef> = owned.iter().collect();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .group_by_chain(
+            &reader(),
+            &refs,
+            &chain,
+            &Grouping::by([Ordinal(at.width() + 5)], &[Aggregate::Count]),
+        )
+        .await
+        .expect_err("an ordinal past the chain names no column");
+    assert!(refused.to_string().contains("outside"), "{refused}");
+
+    // And an *aggregate* past the end, which is the same mistake in the other
+    // half of the grouping and goes through the same check.
+    let refused = txn
+        .group_by_chain(
+            &reader(),
+            &refs,
+            &chain,
+            &Grouping::by(
+                [at.at(0, a("id"))],
+                &[Aggregate::Min(Ordinal(at.width() + 5))],
+            ),
+        )
+        .await
+        .expect_err("an aggregate past the chain names no column");
+    assert!(refused.to_string().contains("outside"), "{refused}");
 }

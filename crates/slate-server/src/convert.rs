@@ -36,7 +36,7 @@
 
 use crate::fingerprint;
 use crate::proto as pb;
-use crate::session::GroupedExplanation;
+use crate::session::{GroupedExplanation, MultiRow};
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
     Aggregate, CalendarPart, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group,
@@ -322,6 +322,15 @@ enum Shape<'t> {
     Joined {
         inputs: Vec<Input<'t>>,
         visible: usize,
+        /// How many values the **join itself** computes, and how many of them
+        /// this expression may name.
+        ///
+        /// Two numbers rather than one because a computed value may read the
+        /// ones before it and not itself: converting `compute[i]` happens in a
+        /// space where `computed` is `i`, so naming itself or a later one lands
+        /// on the same refusal as naming one that does not exist. Everything
+        /// converted after the join is complete sees all of them.
+        computed: usize,
     },
     /// A grouped result: the keys, then the aggregates.
     Groups { keys: usize, aggregates: usize },
@@ -351,7 +360,24 @@ impl<'t> Space<'t> {
     #[must_use]
     pub const fn joined(inputs: Vec<Input<'t>>, visible: usize) -> Self {
         Self {
-            shape: Shape::Joined { inputs, visible },
+            shape: Shape::Joined {
+                inputs,
+                visible,
+                computed: 0,
+            },
+        }
+    }
+
+    /// The same, where the join itself computes `computed` values that this
+    /// expression may name. See [`Shape::Joined`].
+    #[must_use]
+    pub const fn joined_computing(inputs: Vec<Input<'t>>, visible: usize, computed: usize) -> Self {
+        Self {
+            shape: Shape::Joined {
+                inputs,
+                visible,
+                computed,
+            },
         }
     }
 
@@ -430,8 +456,16 @@ impl<'t> Space<'t> {
                     "{what} names a group key or an aggregate, but it is evaluated \
                      over rows rather than over groups"
                 ))),
+                Of::JoinedComputed(at) => Err(bad(format!(
+                    "{what} names the join's computed value {at}, and this reads one \
+                     table rather than a joined row"
+                ))),
             },
-            Shape::Joined { inputs, visible } => match of {
+            Shape::Joined {
+                inputs,
+                visible,
+                computed,
+            } => match of {
                 Of::Column(column) => {
                     if asked >= *visible {
                         return Err(bad(format!(
@@ -465,8 +499,25 @@ impl<'t> Space<'t> {
                     "{what} names computed value {at} of input {asked}; a computed value \
                      is not addressable across inputs, because the joined ordinal space \
                      is packed by declared table width and has no slot for one. Put the \
-                     condition in that input's own filter."
+                     expression in the join's own `compute`, which is evaluated over the \
+                     joined row and can read any input, and name it with `joined_computed`."
                 ))),
+                // A value belonging to the *join* does have a slot: past every
+                // input's columns, which is where the join defines the row to
+                // end. That is the whole difference between this kind and
+                // `computed` above, and the reason both exist.
+                Of::JoinedComputed(at) => {
+                    Self::check_input(asked, 0, what)?;
+                    let at = *at as usize;
+                    if at >= *computed {
+                        return Err(bad(format!(
+                            "{what} names the join's computed value {at}, and {computed} \
+                             are available at that point; a computed value may read the \
+                             ones before it but not itself or a later one"
+                        )));
+                    }
+                    Ok(Ordinal(Self::offset(inputs, inputs.len()) + at))
+                }
                 Of::GroupKey(_) | Of::Aggregate(_) => Err(bad(format!(
                     "{what} names a group key or an aggregate, but it is evaluated \
                      over joined rows rather than over groups"
@@ -496,9 +547,10 @@ impl<'t> Space<'t> {
                 // SQL's "column must appear in the GROUP BY clause", and the
                 // reason `ColumnRef` distinguishes kinds at all: a flat
                 // ordinal here would have been a legitimate group key.
-                Of::Column(_) | Of::Computed(_) => Err(bad(format!(
+                Of::Column(_) | Of::Computed(_) | Of::JoinedComputed(_) => Err(bad(format!(
                     "{what} names a column that is not grouped; a condition over groups \
-                     may only name a group key or an aggregate"
+                     may only name a group key or an aggregate — a computed value of the \
+                     join included, which becomes a group key by appearing in `group_by`"
                 ))),
             },
         }
@@ -515,10 +567,25 @@ impl<'t> Space<'t> {
         reference: Option<&pb::ColumnRef>,
         what: &str,
     ) -> Result<Ordinal, Status> {
-        if let Some(pb::column_ref::Of::Computed(at)) = reference.and_then(|r| r.of.as_ref()) {
-            return Err(bad(format!(
-                "{what} names computed value {at}; only a stored column can appear there"
-            )));
+        match reference.and_then(|r| r.of.as_ref()) {
+            Some(pb::column_ref::Of::Computed(at)) => {
+                return Err(bad(format!(
+                    "{what} names computed value {at}; only a stored column can appear there"
+                )));
+            }
+            // A join's computed value is not stored either, and it is *more*
+            // obviously not: it does not exist until the pair is formed, so a
+            // join key compared against it through an index would be comparing
+            // against nothing. Refused by kind rather than by range, for the
+            // reason `ColumnRef` has kinds at all.
+            Some(pb::column_ref::Of::JoinedComputed(at)) => {
+                return Err(bad(format!(
+                    "{what} names the join's computed value {at}; only a stored column can \
+                     appear there, and a join's computed value does not exist until the \
+                     pair it is computed from has been formed"
+                )));
+            }
+            _ => {}
         }
         self.resolve(reference, what)
     }
@@ -548,13 +615,23 @@ impl<'t> Space<'t> {
                 }
                 column_ref(*index, ordinal.0)
             }
-            Shape::Joined { inputs, .. } => {
+            Shape::Joined {
+                inputs, computed, ..
+            } => {
                 let mut at = 0;
                 for (index, input) in inputs.iter().enumerate() {
                     if ordinal.0 >= at && ordinal.0 < at + input.width() {
                         return column_ref(index, ordinal.0 - at);
                     }
                     at += input.width();
+                }
+                // Past every input's columns is the join's own computed space.
+                // Without this the ordinal fell through to `column_ref(0, n)` —
+                // input 0's column *n*, which on the way back in is a different
+                // column or an out-of-range refusal, so a join carrying a
+                // computed value could not survive a round trip.
+                if ordinal.0 < at + *computed {
+                    return joined_computed_ref(ordinal.0 - at);
                 }
                 column_ref(0, ordinal.0)
             }
@@ -591,6 +668,15 @@ pub fn computed_ref(input: usize, at: usize) -> pb::ColumnRef {
         input: input as u32,
         of: Some(pb::column_ref::Of::Computed(at as u32)),
     }
+}
+
+/// A reference to the `at`th value the **join itself** computes.
+///
+/// No input, deliberately: the value belongs to the request rather than to one
+/// of its tables. See `ColumnRef.joined_computed` in `records.proto`.
+#[must_use]
+pub fn joined_computed_ref(at: usize) -> pb::ColumnRef {
+    reference(pb::column_ref::Of::JoinedComputed(at as u32))
 }
 
 // --- predicates -----------------------------------------------------------
@@ -908,7 +994,11 @@ pub fn scalar_from_proto(space: &Space<'_>, scalar: &pb::Scalar) -> Result<Scala
     scalar_named(space, scalar, "a computed value")
 }
 
-fn scalar_named(space: &Space<'_>, scalar: &pb::Scalar, what: &str) -> Result<Scalar, Status> {
+pub(crate) fn scalar_named(
+    space: &Space<'_>,
+    scalar: &pb::Scalar,
+    what: &str,
+) -> Result<Scalar, Status> {
     use pb::scalar::Node;
     let Some(node) = &scalar.node else {
         return Err(bad(format!("{what} arrived with no node set")));
@@ -1423,6 +1513,22 @@ pub fn join_from_proto(
         });
     }
 
+    // The join's own computed values, over the whole joined row. Each is
+    // converted in a space that knows about the ones *before* it and not about
+    // itself, which is what turns "compute[0] reads compute[1]" into a refusal
+    // rather than a value that is null on every row. The kernel checks the same
+    // rule again on its own ordinals; this one exists so the message names the
+    // wire's kinds rather than an ordinal the client never wrote.
+    let mut compute = Vec::with_capacity(wire.compute.len());
+    for (index, scalar) in wire.compute.iter().enumerate() {
+        let space = Space::joined_computing(shapes.clone(), shapes.len(), index);
+        compute.push(scalar_named(
+            &space,
+            scalar,
+            &format!("computed value {index} of the join"),
+        )?);
+    }
+
     let limit = wire.limit.map(|limit| limit as usize);
     let offset = wire.offset as usize;
     let build_limit = build_limit_from_proto(wire.build_limit, &mut warnings);
@@ -1438,12 +1544,14 @@ pub fn join_from_proto(
         join.limit = limit;
         join.offset = offset;
         join.force = step.force;
+        join.compute = compute;
         MultiRead::Join(Box::new(join))
     } else {
         let mut chain = Chain::from(queries.remove(0))
             .offset(offset)
             .build_limit(build_limit);
         chain.limit = limit;
+        chain.compute = compute;
         for step in steps {
             let mut next = JoinStep::on(step.on).query(step.query).having(step.having);
             next.join_type = step.join_type;
@@ -1584,7 +1692,19 @@ pub fn join_to_proto(left: &TableDef, right: &TableDef, join: &Join) -> pb::Join
     // `unresolve` serves both this and the chain case below.
     let earlier = Space::joined(shapes.clone(), 1);
     let own = Space::input(right, 0, 1);
+    // The join's own computed values, each unresolved in a space that knows
+    // about the ones before it — the mirror of the conversion inwards, so a
+    // round trip through both is the identity.
+    let compute = join
+        .compute
+        .iter()
+        .enumerate()
+        .map(|(index, scalar)| {
+            scalar_to_proto(&Space::joined_computing(shapes.clone(), 2, index), scalar)
+        })
+        .collect();
     pb::JoinQuery {
+        compute,
         inputs: vec![
             pb::JoinInput {
                 query: Some(query_to_proto_at(left, &join.left, 0)),
@@ -1662,11 +1782,23 @@ pub fn chain_to_proto(tables: &[&TableDef], chain: &Chain) -> pb::JoinQuery {
         });
     }
 
+    let computing = shapes.len();
     pb::JoinQuery {
         inputs,
         limit: chain.limit.map(|limit| limit as u64),
         offset: chain.offset as u64,
         build_limit: Some(chain.build_limit as u64),
+        compute: chain
+            .compute
+            .iter()
+            .enumerate()
+            .map(|(index, scalar)| {
+                scalar_to_proto(
+                    &Space::joined_computing(shapes.clone(), computing, index),
+                    scalar,
+                )
+            })
+            .collect(),
     }
 }
 
@@ -1699,9 +1831,11 @@ pub fn chain_row_values(row: &ChainRow, inputs: usize) -> Vec<Option<Row>> {
 /// to hand. An input with no width — which cannot happen, since the widths come
 /// from the same request the row does — is sent whole rather than panicking.
 #[must_use]
-pub fn multi_row_to_proto(row: &[Option<Row>], stored: &[usize]) -> pb::JoinedRow {
+pub fn multi_row_to_proto(row: &MultiRow, stored: &[usize]) -> pb::JoinedRow {
     pb::JoinedRow {
+        computed: row.computed.iter().map(value_to_proto).collect(),
         inputs: row
+            .inputs
             .iter()
             .enumerate()
             .map(|(input, row)| pb::JoinedInput {
@@ -1912,7 +2046,12 @@ pub fn aggregate_from_proto_query(
                 shapes.push(Input::new(table, computed));
             }
             let visible = shapes.len();
-            let space = Space::joined(shapes, visible);
+            // Plus the join's own computed values, which is what lets
+            // `group_by` and the aggregates name one. Grouping is the whole
+            // reason `JoinQuery.compute` exists — a computed value that no
+            // group key can name would be a column nobody can ask about — so
+            // the count comes from the same request the shapes do.
+            let space = Space::joined_computing(shapes, visible, join_wire.compute.len());
 
             let source = match read {
                 MultiRead::Join(join) => {
