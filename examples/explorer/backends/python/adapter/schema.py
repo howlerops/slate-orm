@@ -16,6 +16,7 @@ U64 = ValueType.U64
 I64 = ValueType.I64
 STR = ValueType.STR
 F64 = ValueType.F64
+VECTOR = ValueType.VECTOR
 
 AUTHORS = Table(
     "authors",
@@ -36,6 +37,10 @@ BOOKS = Table(
         Column("title", STR),
         Column("year", I64),
         Column("rating", F64),
+        # Seconds since the epoch. Appended, so every ordinal above it — and
+        # the row policy on `year` — stays where it was.
+        Column("released", I64),
+        Column("embedding", VECTOR),
     ],
     primary_key=["id"],
 )

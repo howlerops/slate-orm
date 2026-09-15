@@ -42,6 +42,20 @@ func encode(v slate.Value) tagged {
 		return tagged{"bytes": fmt.Sprintf("%x", []byte(value))}
 	case slate.UUID:
 		return tagged{"uuid": value.String()}
+	case slate.Vector:
+		// Elements as formatted strings, for the reason a float is: the three
+		// languages print `0.9` differently and the runner compares text.
+		//
+		// This arm was missing until `books` grew an embedding, and the
+		// conformance runner found it on the first run — Go and Python sent
+		// `{"unknown": "slate.Vector"}` and `{"unknown": "Vector"}` while Node
+		// sent the real thing. A tag nobody had ever produced is a tag nobody
+		// had ever checked.
+		out := make([]string, 0, len(value))
+		for _, element := range value {
+			out = append(out, formatFloat(float64(element)))
+		}
+		return tagged{"vector": out}
 	default:
 		return tagged{"unknown": fmt.Sprintf("%T", v)}
 	}

@@ -28,11 +28,25 @@ from slate import (
     JoinType,
     Query,
     SlateError,
+    Metric,
+    TimeUnit,
+    Vector,
     as_scalar,
     asc,
+    case,
+    concat,
     desc,
+    distance,
+    extract,
     i64,
+    in_zone,
+    lit,
+    lower,
+    month_start,
+    regexp_replace,
     u64,
+    upper,
+    year,
 )
 
 from .schema import AUTHORS, BOOKS, BY_NAME
@@ -135,6 +149,35 @@ class Adapter:
         rows = [encode_row(list(row)) for row in session.query(build_query(body))]
         return {"rows": rows}
 
+    #: The embedding every `/api/nearest` request measures against.
+    #:
+    #: Fixed rather than taken from the request body, because the point is that
+    #: three SDKs build the same `Distance` scalar and agree on the order it
+    #: produces. A vector from the body would let a caller ask a question the
+    #: other two adapters were not asked.
+    QUERY_VECTOR = (0.1, 0.2, 0.3, 0.4)
+
+    def nearest(self, session, body):
+        """Books ranked by cosine distance from `QUERY_VECTOR`.
+
+        The last scalar family the three SDKs were never compared on. It is
+        also the only one whose *result* cannot be compared: a distance is an
+        f64 and the three clients format floats differently, which is why
+        `/api/explain` excludes `estimatedCost` for the same reason. So this
+        returns the titles in order and not the distances -- the order is the
+        claim, and it is total because the sort breaks ties on the id.
+        """
+        query = Query(BOOKS)
+        query.compute(
+            distance(query.c.embedding, lit(Vector(self.QUERY_VECTOR)), Metric.COSINE)
+        )
+        query.select(query.c.id, query.c.title)
+        query.sort(asc(query.computed(0)), asc(query.c.id))
+        if body.get("limit") is not None:
+            query.limit(int(body["limit"]))
+        titles = [encode(row.get("title")) for row in session.query(query)]
+        return {"titles": titles}
+
     def join(self, session, body):
         kinds = {
             "inner": JoinType.INNER,
@@ -198,6 +241,67 @@ class Adapter:
             # division truncates toward zero, which is what a decade means for
             # these years.
             join.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+            key = join.computed(0)
+        # Everything below is a different *kind* of scalar rather than a
+        # different column. Arithmetic was the only expression the three SDKs
+        # were ever compared on, and division is the one operation every
+        # language spells identically -- so agreement on it proved much less
+        # than it looked.
+        elif by == "shout":
+            # A string function, on the *left* input. The author's *name*
+            # rather than the country, because every country here is already
+            # upper case -- so an adapter that dropped the `upper` would have
+            # passed.
+            join.compute(upper(authors.c.name))
+            key = join.computed(0)
+        elif by == "era":
+            # A conditional whose branches are strings and whose test is on an
+            # integer column, so the types differ across the expression.
+            join.compute(
+                # 1970 rather than 2000, because every book here predates
+                # 2000 -- so the `otherwise` branch was never taken and the
+                # conditional was a constant. Five fall either side of 1970.
+                case(
+                    [(books.c.year.lt(i64(1970)), lit("before 1970"))],
+                    otherwise=lit("from 1970"),
+                )
+            )
+            key = join.computed(0)
+        elif by == "tidy":
+            # A regular expression over a lower-cased title: the pattern
+            # dialect and the case folding both have to agree.
+            join.compute(regexp_replace(lower(books.c.title), "[^a-z]+", "-"))
+            key = join.computed(0)
+        elif by == "releasedYear":
+            # A calendar field over seconds since the epoch. Seven of the
+            # eleven books are before 1970, so this runs on negative instants.
+            join.compute(year(books.c.released))
+            key = join.computed(0)
+        elif by == "releasedMonth":
+            # A calendar *truncation*, which is not a division: a month has no
+            # fixed number of seconds.
+            join.compute(month_start(books.c.released))
+            key = join.computed(0)
+        elif by == "releasedHourNY":
+            # A named timezone, resolved through the server's transition
+            # table. Some of these dates are in daylight saving and some are
+            # not, so this is not a constant shift.
+            join.compute(
+                extract(TimeUnit.HOUR, in_zone(books.c.released, "America/New_York"))
+            )
+            key = join.computed(0)
+        elif by == "label":
+            # Concatenation across *both* inputs, which no input's own compute
+            # could express.
+            # The year at the end is an i64 spliced into a string, which is
+            # where `Concat` was rendering Rust's `Debug` form: `1968` came
+            # out as `I64(1968)`.
+            join.compute(
+                concat(
+                    authors.c.country, lit("/"), books.c.title, lit("/"),
+                    books.c.year,
+                )
+            )
             key = join.computed(0)
         else:
             raise ValueError(f"no such grouping: {by}")
@@ -276,7 +380,17 @@ class Adapter:
             pass
 
         with session.transaction() as tx:
-            tx.insert(BOOKS, [[u64(probe), u64(1), "A Book In Flight", 2026, 5.0]])
+            # Every column, in ordinal order, including the two `books` grew
+            # for the conformance corpus. A row on the wire is one value per
+            # column, so a five-value row here is a refusal -- which is how
+            # adding them was caught.
+            tx.insert(
+                BOOKS,
+                [[
+                    u64(probe), u64(1), "A Book In Flight", i64(2026), 5.0,
+                    i64(1767225600), Vector((0.4, 0.3, 0.2, 0.1)),
+                ]],
+            )
             inside = tx.get(BOOKS, [u64(probe)]) is not None
             if not body.get("commit"):
                 tx.rollback()
@@ -296,6 +410,7 @@ ROUTES = {
     "/api/aggregate": "aggregate",
     "/api/explain": "explain",
     "/api/explain-aggregate": "explain_aggregate",
+    "/api/nearest": "nearest",
     "/api/transaction": "transaction",
 }
 

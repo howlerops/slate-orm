@@ -173,6 +173,71 @@ func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, erro
 			slate.Lit(slate.Int(10)),
 		)}
 		key = slate.JoinComputed(0)
+	// Everything below is a different *kind* of scalar, not a different
+	// column. Arithmetic was the only expression the three SDKs were ever
+	// compared on, and division is the one operation every language spells
+	// identically — so agreement on it proved much less than it looked.
+	case "shout":
+		// A string function, on the *left* input. The author's *name* rather
+		// than the country, because every country here is already upper case
+		// — so an adapter that dropped the `Upper` would have passed.
+		compute = []slate.Scalar{slate.Upper(slate.Ref(slate.At(authors, 1)))}
+		key = slate.JoinComputed(0)
+	case "era":
+		// A conditional, whose branches are string literals of a different
+		// type from the column they test.
+		compute = []slate.Scalar{slate.Case(
+			[]slate.CaseBranch{{
+				// `Compare` rather than `Lt`, because the condition is over
+				// the *joined* row: `Lt` takes a bare ordinal, which on a join
+				// would mean the left table's.
+				// 1970 rather than 2000, because every book here predates
+				// 2000 — so the `otherwise` branch was never taken and the
+				// conditional was a constant. Five fall either side of 1970.
+				When: slate.Compare(slate.At(books, 3), slate.OpLt, slate.Int(1970)),
+				Then: slate.Lit(slate.String("before 1970")),
+			}},
+			slate.Lit(slate.String("from 1970")),
+		)}
+		key = slate.JoinComputed(0)
+	case "tidy":
+		// A regular expression over a lower-cased title, so the pattern
+		// dialect and the case folding both have to agree.
+		compute = []slate.Scalar{slate.RegexpReplace(
+			slate.Lower(slate.Ref(slate.At(books, 2))), "[^a-z]+", "-",
+		)}
+		key = slate.JoinComputed(0)
+	case "releasedYear":
+		// A calendar field, over seconds since the epoch. Seven of the eleven
+		// books are before 1970, so this runs on negative instants.
+		compute = []slate.Scalar{slate.YearOf(slate.Ref(slate.At(books, 5)))}
+		key = slate.JoinComputed(0)
+	case "releasedMonth":
+		// A calendar *truncation*, which is not a division: a month has no
+		// fixed number of seconds.
+		compute = []slate.Scalar{slate.MonthStartOf(slate.Ref(slate.At(books, 5)))}
+		key = slate.JoinComputed(0)
+	case "releasedHourNY":
+		// A named timezone, resolved through the server's transition table.
+		// Some of these dates are in daylight saving and some are not, so this
+		// is not a constant shift.
+		compute = []slate.Scalar{slate.Extract(
+			slate.Hour, slate.InZone("America/New_York", slate.Ref(slate.At(books, 5))),
+		)}
+		key = slate.JoinComputed(0)
+	case "label":
+		// Concatenation across *both* inputs, which no input's own compute
+		// could express.
+		compute = []slate.Scalar{slate.Concat(
+			slate.Ref(slate.At(authors, 2)),
+			slate.Lit(slate.String("/")),
+			slate.Ref(slate.At(books, 2)),
+			slate.Lit(slate.String("/")),
+			// An i64 spliced into a string, which is where `Concat` was
+			// rendering Rust's `Debug` form: `1968` came out as `I64(1968)`.
+			slate.Ref(slate.At(books, 3)),
+		)}
+		key = slate.JoinComputed(0)
 	default:
 		return none, slate.Grouping{}, fmt.Errorf("no such grouping: %s", spec.GroupBy)
 	}
@@ -325,9 +390,13 @@ func (s *server) transaction(ctx context.Context, session *slate.Session, body j
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Every column, in ordinal order, including the two `books` grew for the
+	// conformance corpus. A row on the wire is one value per column, so a
+	// five-value row here is a refusal — which is how adding them was caught.
 	row := []slate.Value{
 		slate.Uint(probe), slate.Uint(1),
 		slate.String("A Book In Flight"), slate.Int(2026), slate.Float(5.0),
+		slate.Int(1767225600), slate.Vector([]float32{0.4, 0.3, 0.2, 0.1}),
 	}
 	if _, err := tx.Insert(ctx, "books", row); err != nil {
 		return nil, err
@@ -362,3 +431,67 @@ func (s *server) transaction(ctx context.Context, session *slate.Session, body j
 func isNotFound(err error, into **slate.Error) bool {
 	return slate.IsKind(err, slate.KindNotFound)
 }
+
+// QUERY_VECTOR is the embedding every `/api/nearest` request measures against.
+//
+// Fixed rather than taken from the request body, because the point is that
+// three SDKs build the same `Distance` scalar and agree on the order it
+// produces. A vector from the body would let a caller ask a question the other
+// two adapters were not asked, which is the one thing the conformance runner
+// cannot tolerate.
+var queryVector = []float32{0.1, 0.2, 0.3, 0.4}
+
+// nearest ranks books by cosine distance from `queryVector`.
+//
+// The last scalar family the three SDKs were never compared on. It is also the
+// only one whose *result* cannot be compared: a distance is an f64 and the
+// three clients format floats differently, which is why `/api/explain`
+// excludes `estimatedCost` for the same reason. So this returns the titles in
+// order and not the distances — the order is the claim, and it is a total one
+// because the sort breaks ties on the id.
+func (s *server) nearest(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Limit *uint64 `json:"limit"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the search: %w", err)
+	}
+	query := slate.Query{
+		Table: "books",
+		// The distance, computed per row and then sorted on. A vector index
+		// would change the plan and not the answer; there is none here, so
+		// this is an exhaustive scan and says so under `/api/explain`.
+		Compute: []slate.Scalar{slate.Distance(
+			slate.Col(6), slate.Lit(slate.Vector(queryVector)), slate.Cosine,
+		)},
+		Columns: []slate.Ordinal{0, 2},
+		Sort: []slate.SortKey{
+			{Ref: ref(slate.Computed0(0))},
+			// A tie-break on the primary key, so two books at the same
+			// distance do not come back in whatever order the scan produced.
+			// A bare ordinal here, because on a single table that is all a
+			// sort key needs — `Ref` exists for the computed slot above.
+			{Column: 0},
+		},
+	}
+	if spec.Limit != nil {
+		query.Limit = spec.Limit
+	}
+	stream, err := session.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	titles := make([]tagged, 0, len(rows))
+	for _, row := range rows {
+		titles = append(titles, encode(row[2]))
+	}
+	return map[string]any{"titles": titles}, nil
+}
+
+// ref is `&c` for a Column literal, which Go will not take the address of
+// inline.
+func ref(c slate.Column) *slate.Column { return &c }

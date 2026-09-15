@@ -146,6 +146,46 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("explaining a grouped join over a computed decade", "/api/explain-aggregate",
      {"groupBy": "decade", "sort": "key", "direction": "asc"}, "app"),
 
+    # A computed key of every *kind*, not just every column. `decade` above is
+    # integer division, which is the one operation every language spells
+    # identically — so three clients agreeing about it said much less than it
+    # looked. Each of these exercises a different `Scalar` family, and each is
+    # built independently by all three SDKs.
+    *[(f"a grouped join by a computed {name}", "/api/aggregate",
+       {"groupBy": key, "sort": "key", "direction": "asc"}, "app")
+      for name, key in (
+          ("upper-cased author", "shout"),
+          ("CASE over the year", "era"),
+          ("regular expression over the title", "tidy"),
+          ("calendar year", "releasedYear"),
+          ("calendar month boundary", "releasedMonth"),
+          ("local hour in New York", "releasedHourNY"),
+          ("concatenation across both tables", "label"),
+      )],
+
+    # Ordered by count rather than by key for two of them, because the
+    # tie-break is what a client can silently drop — and a computed string key
+    # ties far more often than a decade does.
+    ("a computed era, ordered by count", "/api/aggregate",
+     {"groupBy": "era", "sort": "count", "direction": "desc"}, "app"),
+    ("a computed local hour, ordered by count", "/api/aggregate",
+     {"groupBy": "releasedHourNY", "sort": "count", "direction": "desc"}, "app"),
+
+    # And the plan of one, which narrows each input's projection to the
+    # columns the expression reads — a different set from a bare column's.
+    ("explaining a grouped join over a calendar month", "/api/explain-aggregate",
+     {"groupBy": "releasedMonth", "sort": "key", "direction": "asc"}, "app"),
+
+    # Nearest-neighbour search: the last `Scalar` family the three SDKs were
+    # never compared on. The *order* is the answer — the distances are f64 and
+    # the three clients format floats differently.
+    ("nearest by cosine distance", "/api/nearest", {"limit": 5}, "app"),
+    # Every book, so the comparison is the whole ranking rather than its head.
+    ("the whole ranking by cosine distance", "/api/nearest", {}, "app"),
+    # And what a reader sees, since the row policy hides a book: the ranking
+    # has to be of the rows this identity may see, not of all of them.
+    ("a reader's nearest", "/api/nearest", {"limit": 5}, "reader"),
+
     ("a grouped join by author", "/api/aggregate",
      {"groupBy": "author", "sort": "count", "direction": "desc"}, "app"),
 

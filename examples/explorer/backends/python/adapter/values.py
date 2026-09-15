@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from slate import i64, u64
+from slate import Vector, i64, u64
 
 
 def format_float(value: float) -> str:
@@ -53,6 +53,16 @@ def encode(value: Any) -> dict[str, Any]:
         return {"str": value}
     if isinstance(value, (bytes, bytearray)):
         return {"bytes": bytes(value).hex()}
+    if isinstance(value, Vector):
+        # Elements as formatted strings, for the reason a float is: the three
+        # languages print `0.9` differently and the runner compares text.
+        #
+        # This branch was missing until `books` grew an embedding, and the
+        # conformance runner found it on the first run -- Python sent
+        # `{"unknown": "Vector"}` and Go `{"unknown": "slate.Vector"}` while
+        # Node sent the real thing. A tag nobody had ever produced is a tag
+        # nobody had ever checked.
+        return {"vector": [format_float(float(element)) for element in value]}
     return {"unknown": type(value).__name__}
 
 

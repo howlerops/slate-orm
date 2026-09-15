@@ -329,6 +329,51 @@ try {
     }
   });
 
+  await check("a computed group key is a grouping a reader can pick", async () => {
+    // The point of the dropdown's lower half: most of those keys are not
+    // columns. An `upper()`, a `CASE`, a regular expression, a calendar field,
+    // an hour in New York — each an expression the SDK sends and the kernel
+    // evaluates, and none of them something the browser could bucket for
+    // itself without fetching every row.
+    //
+    // Checked in the browser rather than only by the conformance runner
+    // because "surfaced in the demo" means a reader can choose it and see an
+    // answer, and a dropdown option that throws is worse than no option.
+    await at(page, { panel: "groups" });
+    const select = page.locator('.panel:has(h2:text-is("Grouped join")) select').first();
+    const byAuthor = await page.locator(".chart .row .label").allInnerTexts();
+
+    for (const [key, expected] of [
+      // `shout` upper-cases the author's *name*, so the labels change and the
+      // partition does not — same groups, different text.
+      ["shout", (labels) => labels.length === byAuthor.length
+        && labels.every((l) => l === l.toUpperCase())],
+      // `era` splits on 1970, so exactly two groups.
+      ["era", (labels) => labels.length === 2 && labels.every((l) => /19\d\d/.test(l))],
+      // A calendar field: every label is a four-digit year.
+      ["releasedYear", (labels) => labels.every((l) => /^\d{4}$/.test(l))],
+      // And an hour of the local day, so every label is 0-23.
+      ["releasedHourNY", (labels) => labels.every((l) => Number(l) >= 0 && Number(l) <= 23)],
+    ]) {
+      await select.selectOption(key);
+      await settled(page);
+      const labels = await page.locator(".chart .row .label").allInnerTexts();
+      if (!labels.length) throw new Error(`grouping by ${key} drew nothing`);
+      if (!expected(labels)) {
+        throw new Error(`grouping by ${key} drew ${labels.join(", ")}`);
+      }
+      // The panel shows the spec it sent, and a computed key is visible there
+      // as a computed key rather than as a column — which is what says the
+      // database did the work.
+      const refused = await page
+        .locator('.panel:has(h2:text-is("Grouped join")) .error')
+        .count();
+      if (refused) throw new Error(`grouping by ${key} was refused`);
+    }
+    await select.selectOption("author");
+    await settled(page);
+  });
+
   await check("HAVING removes groups, and removes the smallest ones", async () => {
     await at(page, { panel: "groups" });
     const before = await page.locator(".chart .row .value").allInnerTexts();

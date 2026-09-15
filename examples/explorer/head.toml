@@ -33,6 +33,21 @@ columns = [
   { name = "title",     type = "str" },
   { name = "year",      type = "i64" },
   { name = "rating",    type = "f64" },
+  # Seconds since the epoch, which is what a timestamp is here — there is no
+  # date type. Appended rather than inserted, so every ordinal above it stays
+  # where the three adapters and the row policy already say it is.
+  #
+  # Added so the conformance corpus can compare the three SDKs on a *calendar*
+  # expression. It could compare them on arithmetic and on nothing else, and
+  # "the three clients agree about `year / 10 * 10`" is a much weaker claim
+  # than it looks: division is the one scalar every language spells the same.
+  { name = "released",  type = "i64" },
+  # A four-dimensional embedding, so nearest-neighbour search is comparable
+  # across the three SDKs as well. Four rather than a realistic 768 because
+  # the point is that three clients build the same `Distance` scalar and agree
+  # on the *order* it produces, and a seed file nobody can read by eye makes
+  # that harder to check rather than more convincing.
+  { name = "embedding", type = "vector" },
 ]
 primary_key = ["id"]
 

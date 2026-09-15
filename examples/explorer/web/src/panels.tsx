@@ -304,7 +304,10 @@ export function Groups(props: Context): JSX.Element {
       <p class="why">
         Books per author, counted by the database rather than by the browser:
         the join and the grouping are one request, and the ordering and the
-        <code> HAVING</code> are over <em>groups</em>, not over rows.
+        <code> HAVING</code> are over <em>groups</em>, not over rows. Most of
+        the keys below are not columns at all — a decade, a
+        <code> CASE</code>, a regular expression, a calendar field, an hour in
+        New York — each an expression the SDK sends and the kernel evaluates.
       </p>
       <div class="controls">
         <label class="field">
@@ -313,6 +316,17 @@ export function Groups(props: Context): JSX.Element {
             <option value="author">author</option>
             <option value="country">country</option>
             <option value="decade">decade</option>
+            {/* Everything below is a *computed* group key of a different
+                kind — the point being that a grouping does not have to be a
+                column, and that these are the database's expressions rather
+                than the browser bucketing rows it fetched. */}
+            <option value="shout">author, upper-cased</option>
+            <option value="era">era (CASE)</option>
+            <option value="tidy">title, tidied (regex)</option>
+            <option value="releasedYear">release year (calendar)</option>
+            <option value="releasedMonth">release month (calendar)</option>
+            <option value="releasedHourNY">release hour, New York</option>
+            <option value="label">country/title/year (both tables)</option>
           </select>
         </label>
         <label class="field">

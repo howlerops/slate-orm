@@ -80,22 +80,61 @@ nulls.
 ### `POST /api/aggregate`
 
 ```json
-{"groupBy": "author"|"country"|"decade", "having": null | {"minCount": 2},
+{"groupBy": "<name>", "having": null | {"minCount": 2},
  "sort": "count"|"key", "direction": "asc"|"desc", "limit": 20}
 ```
 
 A grouped join, which is what the chart draws.
 
-`decade` is not a column. It is `books.year / 10 * 10`, declared on the join as
-a computed value and named as the join's rather than as an input's — the
-distinction is the point, since an input's computed value has no slot in a
-joined row at all. All three adapters used to refuse it with "needs a computed
-column, which this demo does not declare", which was true of the clients and
-never of the database; it is the case that now makes the conformance runner
-compare the three SDKs on a computed value, without the contract growing a
-general expression language to keep three implementations of.
+Two of the groupings are columns (`author`, `country`). The rest are not
+columns at all: each is an expression declared on the *join* and named as the
+join's computed value rather than as an input's — the distinction is the point,
+since an input's computed value has no slot in a joined row at all.
+
+| `groupBy` | the expression | what it compares |
+| --- | --- | --- |
+| `author` | `authors.name` | a column |
+| `country` | `authors.country` | a column |
+| `decade` | `books.year / 10 * 10` | arithmetic |
+| `shout` | `upper(authors.name)` | a string function |
+| `era` | `CASE WHEN books.year < 1970 …` | a conditional |
+| `tidy` | `regexp_replace(lower(books.title), '[^a-z]+', '-')` | a regular expression |
+| `releasedYear` | `year(books.released)` | a calendar field |
+| `releasedMonth` | `month_start(books.released)` | a calendar truncation |
+| `releasedHourNY` | `hour(books.released` in `America/New_York)` | a named timezone |
+| `label` | `authors.country ‖ '/' ‖ books.title ‖ '/' ‖ books.year` | concatenation, across both inputs and over an integer |
+
+Only `decade` existed for a while, and that was weaker evidence than it looked:
+integer division is the one operation every language spells identically, so
+three clients agreeing about it says little about the ones where they do not.
+Seven of the eleven books were released before 1970, so the calendar keys run
+on *negative* epoch seconds; some are in daylight saving and some are not, so
+`releasedHourNY` is not a constant shift.
+
+An unknown name is refused, which is a case of its own below.
 
 → `{"groups": [{"key": [tagged...], "count": {"u64":"3"}}, ...]}`
+
+### `POST /api/nearest`
+
+```json
+{"limit": 5}
+```
+
+Books ranked by cosine distance from a **fixed** query vector,
+`[0.1, 0.2, 0.3, 0.4]`, against `books.embedding`.
+
+Fixed rather than taken from the body, because the claim is that three SDKs
+build the same `Distance` scalar and agree on the order it produces; a vector
+from the body would let a caller ask a question the other two adapters were not
+asked.
+
+→ `{"titles": [{"str": "Solaris"}, ...]}`
+
+The titles **in order**, and not the distances: a distance is an f64 and the
+three clients format floats differently, which is why `/api/explain` excludes
+`estimatedCost` for the same reason. The order is total — the sort breaks ties
+on the primary key — so comparing it is comparing the whole answer.
 
 ### `POST /api/explain`
 

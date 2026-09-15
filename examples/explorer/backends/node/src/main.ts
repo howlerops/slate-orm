@@ -17,9 +17,16 @@ import { parseArgs } from "node:util";
 import {
   agg,
   at,
+  caseWhen,
+  col,
+  computed0,
+  compare,
+  concat,
   count,
   Client,
+  distance,
   div,
+  extract,
   eq,
   ge,
   groupGe,
@@ -30,16 +37,24 @@ import {
   isNotNull,
   isNull,
   int,
+  inZone,
   joinComputed,
   le,
   lit,
   like,
+  lower,
   lt,
+  monthStart,
   mul,
   ne,
   newJoin,
   not,
   ref,
+  regexpReplace,
+  str,
+  upper,
+  vector,
+  year,
   and as andOf,
   or as orOf,
   SlateError,
@@ -182,6 +197,45 @@ class Adapter {
     return { rows: rows.map(encodeRow) };
   }
 
+  /**
+   * The embedding every `/api/nearest` request measures against.
+   *
+   * Fixed rather than taken from the request body, because the point is that
+   * three SDKs build the same `Distance` scalar and agree on the order it
+   * produces. A vector from the body would let a caller ask a question the
+   * other two adapters were not asked.
+   */
+  static readonly QUERY_VECTOR = [0.1, 0.2, 0.3, 0.4];
+
+  /**
+   * Books ranked by cosine distance from `QUERY_VECTOR`.
+   *
+   * The last scalar family the three SDKs were never compared on. It is also
+   * the only one whose *result* cannot be compared: a distance is an f64 and
+   * the three clients format floats differently, which is why `/api/explain`
+   * excludes `estimatedCost` for the same reason. So this returns the titles
+   * in order and not the distances — the order is the claim, and it is total
+   * because the sort breaks ties on the id.
+   */
+  async nearest(session: Session, body: { limit?: number }): Promise<unknown> {
+    const rows = await session
+      .query({
+        table: "books",
+        compute: [distance(col(6), lit(vector(Adapter.QUERY_VECTOR)), "cosine")],
+        columns: [0, 2],
+        sort: [
+          // `column` is required by the interface and overridden by `ref`, so
+          // it is written as the computed slot's own index rather than as a
+          // placeholder — a zero there would read as "sort by the id".
+          { column: 0, ref: computed0(0), direction: "asc" },
+          { column: 0, direction: "asc" },
+        ],
+        ...(body.limit !== undefined ? { limit: body.limit } : {}),
+      })
+      .collect();
+    return { titles: rows.map((row) => encode(row[2]!)) };
+  }
+
   async join(session: Session, body: { type?: string; limit?: number }): Promise<unknown> {
     const kinds: Record<string, JoinType> = {
       inner: "inner", left: "left", right: "right", full: "full",
@@ -242,6 +296,73 @@ class Adapter {
         break;
       case "decade":
         compute = [mul(div(ref(at(books, 3)), lit(int(10))), lit(int(10)))];
+        key = joinComputed(0);
+        break;
+      // Everything below is a different *kind* of scalar rather than a
+      // different column. Arithmetic was the only expression the three SDKs
+      // were ever compared on, and division is the one operation every
+      // language spells identically — so agreement on it proved much less
+      // than it looked.
+      case "shout":
+        // A string function, on the *left* input. The author's *name* rather
+        // than the country, because every country here is already upper case
+        // — so an adapter that dropped the `upper` would have passed.
+        compute = [upper(ref(at(authors, 1)))];
+        key = joinComputed(0);
+        break;
+      case "era":
+        // A conditional whose branches are strings and whose test is on an
+        // integer column, so the types differ across the expression.
+        compute = [
+          caseWhen(
+            // 1970 rather than 2000, because every book here predates 2000
+            // — so the `otherwise` branch was never taken and the conditional
+            // was a constant. Five fall either side of 1970.
+            [{ when: compare(at(books, 3), "lt", int(1970)), then: lit(str("before 1970")) }],
+            lit(str("from 1970")),
+          ),
+        ];
+        key = joinComputed(0);
+        break;
+      case "tidy":
+        // A regular expression over a lower-cased title: the pattern dialect
+        // and the case folding both have to agree.
+        compute = [regexpReplace(lower(ref(at(books, 2))), "[^a-z]+", "-")];
+        key = joinComputed(0);
+        break;
+      case "releasedYear":
+        // A calendar field over seconds since the epoch. Seven of the eleven
+        // books are before 1970, so this runs on negative instants.
+        compute = [year(ref(at(books, 5)))];
+        key = joinComputed(0);
+        break;
+      case "releasedMonth":
+        // A calendar *truncation*, which is not a division: a month has no
+        // fixed number of seconds.
+        compute = [monthStart(ref(at(books, 5)))];
+        key = joinComputed(0);
+        break;
+      case "releasedHourNY":
+        // A named timezone, resolved through the server's transition table.
+        // Some of these dates are in daylight saving and some are not, so
+        // this is not a constant shift.
+        compute = [extract("hour", inZone("America/New_York", ref(at(books, 5))))];
+        key = joinComputed(0);
+        break;
+      case "label":
+        // Concatenation across *both* inputs, which no input's own compute
+        // could express.
+        compute = [
+          concat(
+            ref(at(authors, 2)),
+            lit(str("/")),
+            ref(at(books, 2)),
+            lit(str("/")),
+            // An i64 spliced into a string, which is where `concat` was
+            // rendering Rust's `Debug` form: `1968` came out as `I64(1968)`.
+            ref(at(books, 3)),
+          ),
+        ];
         key = joinComputed(0);
         break;
       default:
@@ -329,12 +450,18 @@ class Adapter {
     const tx = await session.begin();
     let inside = false;
     try {
+      // Every column, in ordinal order, including the two `books` grew for
+      // the conformance corpus. A row on the wire is one value per column, so
+      // a five-value row here is a refusal — which is how adding them was
+      // caught.
       await tx.insert("books", [
         uint(probe),
         uint(1n),
         { kind: "string", value: "A Book In Flight" },
         { kind: "int", value: 2026n },
         { kind: "float", value: 5 },
+        { kind: "int", value: 1767225600n },
+        vector([0.4, 0.3, 0.2, 0.1]),
       ]);
       inside = (await tx.get("books", [uint(probe)])) !== undefined;
       if (body.commit) await tx.commit();
@@ -391,6 +518,7 @@ async function main(): Promise<void> {
     "/api/aggregate": (s, b) => adapter.aggregate(s, b),
     "/api/explain": (s, b) => adapter.explain(s, b),
     "/api/explain-aggregate": (s, b) => adapter.explainAggregate(s, b),
+    "/api/nearest": (s, b) => adapter.nearest(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 
