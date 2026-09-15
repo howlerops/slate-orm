@@ -107,7 +107,10 @@
 //! recursive-descent parser over this grammar refuses at the token that is
 //! wrong, and the whole thing is smaller than the dependency's changelog.
 
-use crate::{AggregateSpec, ComputeSpec, FilterSpec, JoinSpec, QuerySpec, SortSpec};
+use crate::{
+    AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
+    QuerySpec, SortSpec,
+};
 use slate_schema::TableDef;
 
 /// A parsed statement, already lowered onto the spec types.
@@ -115,8 +118,19 @@ use slate_schema::TableDef;
 pub enum Statement {
     /// A single-table read.
     Select(QuerySpec),
-    /// The fixture's one join, grouped or not.
+    /// Two tables, grouped or not.
     Join(JoinSpec),
+    /// Three or more, grouped or not.
+    ///
+    /// A separate variant rather than a `Join` with a longer list, because the
+    /// kernel has two entry points and they are not interchangeable: `Join`
+    /// narrows each side's projection for a grouped read and `Chain` cannot, so
+    /// the two produce different plans. `slate-server` splits them the same way
+    /// and for the same reason. The parser decides which by counting tables,
+    /// which is the only place the count is known, and never emits a two-input
+    /// `Chain` — that would be a second path to a query the first already
+    /// answers, which is exactly the drift this front end exists to avoid.
+    Chain(ChainSpec),
     /// One row, one value per column, as strings for [`crate::literal`].
     Insert { table: String, values: Vec<String> },
     /// A read-modify-write: the columns named, by primary key.
@@ -580,17 +594,42 @@ impl Parser<'_> {
         self.resolve(&raw, table, at)
     }
 
-    /// The side and ordinal a name refers to, over a two-table join.
+    /// `JOIN` or `INNER JOIN`, consumed if it is next.
     ///
-    /// Qualified wins: `zones.borough` names the right table even if `borough`
-    /// would also resolve on the left. Unqualified tries the left first, which
-    /// is what SQL does with an ambiguous name in every dialect that does not
-    /// refuse it outright — and refusing would break `SELECT hour(pickup_time)`
-    /// on a schema where both tables happen to have an `id`.
+    /// One function because `select` reads the first one and `join_tail` reads
+    /// every one after it, and the two-token `INNER JOIN` dance was written out
+    /// once when there was only ever one join to read. A second copy of it is
+    /// how `a JOIN b INNER JOIN c` would come to mean something different from
+    /// `a INNER JOIN b JOIN c`.
+    fn eat_join(&mut self) -> bool {
+        if !(self.eat("join") || self.eat("inner")) {
+            return false;
+        }
+        if self
+            .toks
+            .get(self.i)
+            .is_some_and(|s| matches!(&s.tok, Tok::Word(w) if w.eq_ignore_ascii_case("join")))
+        {
+            self.i += 1;
+        }
+        // A bare `INNER` with no `JOIN` is taken as a join, which is lax and is
+        // what this did before it was factored out. Tightening it is a separate
+        // change from making it happen in one place instead of two.
+        true
+    }
+
+    /// The input and ordinal a name refers to, over the joined tables.
     ///
-    /// It is no longer *silent* about that, though: a bare name that resolves
-    /// on both sides adds a warning naming the side it chose and how to spell
-    /// the other. The rule was documented here and nowhere the reader could
+    /// Qualified wins: `zones.borough` names that table even if `borough`
+    /// would also resolve on an earlier one. Unqualified takes the first input
+    /// that has it, which is what SQL does with an ambiguous name in every
+    /// dialect that does not refuse it outright — and refusing would break
+    /// `SELECT hour(pickup_time)` on a schema where two tables happen to share
+    /// an `id`.
+    ///
+    /// It is not *silent* about that, though: a bare name that resolves on more
+    /// than one input adds a warning naming the one it chose and how to spell
+    /// the others. The rule was documented here and nowhere the reader could
     /// see it, so `SELECT id FROM trips JOIN zones ON ...` answered about
     /// `trips.id` with nothing on screen to say so. `&mut self` rather than
     /// `&self` for exactly that reason.
@@ -603,48 +642,76 @@ impl Parser<'_> {
     /// `trips` — the workbench example filtered on the right side and counted
     /// instead, and the note recording that called it a `JoinSpec` limitation.
     /// It was.
+    ///
+    /// Taking a slice rather than a left and a right is what lets a chain
+    /// reuse all of it. The two-table version had `left`/`right` in its
+    /// signature and in five error messages, which is five places a third
+    /// table would have been missing from.
     fn resolve_side(
         &mut self,
         raw: &str,
-        left: &TableDef,
-        right: &TableDef,
+        tables: &[TableDef],
         at: usize,
     ) -> Result<(u32, u32), SqlError> {
         if let Some((qualifier, _)) = raw.split_once('.') {
-            if qualifier.eq_ignore_ascii_case(right.name()) {
-                return Ok((1, self.resolve(raw, right, at)?));
-            }
-            return Ok((0, self.resolve(raw, left, at)?));
+            // A qualifier names one of these tables or none of them. Reported
+            // as its own error rather than tried against each in turn: for two
+            // tables `resolve` against the left happened to produce a sensible
+            // message, and for three `nosuch.id` would have been reported as
+            // not being a column of the first table, which is true and useless.
+            let named = tables
+                .iter()
+                .enumerate()
+                .find(|(_, t)| t.name().eq_ignore_ascii_case(qualifier));
+            let Some((input, table)) = named else {
+                return Err(SqlError {
+                    message: format!(
+                        "`{raw}` is qualified with `{qualifier}`, which this query does not \
+                         read — it reads {}",
+                        name_list(tables, "and")
+                    ),
+                    at,
+                });
+            };
+            return Ok((
+                u32::try_from(input).unwrap_or(0),
+                self.resolve(raw, table, at)?,
+            ));
         }
-        if let Ok(column) = self.resolve(raw, left, at) {
-            // Both sides have it, and the left one won. Said once per name
-            // rather than once per mention: `SELECT id ... GROUP BY id` names
-            // the same column twice and a reader does not need telling twice.
-            if self.resolve(raw, right, at).is_ok() {
-                let warning = format!(
-                    "`{raw}` is a column of both `{}` and `{}`; this read \
-                     `{}.{raw}`. Qualify it to choose.",
-                    left.name(),
-                    right.name(),
-                    left.name()
-                );
-                if !self.warnings.contains(&warning) {
-                    self.warnings.push(warning);
-                }
-            }
-            return Ok((0, column));
-        }
-        match self.resolve(raw, right, at) {
-            Ok(column) => Ok((1, column)),
-            Err(_) => Err(SqlError {
-                message: format!(
-                    "`{raw}` is not a column of `{}` or `{}`",
-                    left.name(),
-                    right.name()
-                ),
+        let hits: Vec<(usize, &TableDef)> = tables
+            .iter()
+            .enumerate()
+            .filter(|(_, table)| self.resolve(raw, table, at).is_ok())
+            .collect();
+        let Some((&(chosen, table), rest)) = hits.split_first() else {
+            return Err(SqlError {
+                message: format!("`{raw}` is not a column of {}", name_list(tables, "or")),
                 at,
-            }),
+            });
+        };
+        if !rest.is_empty() {
+            // Said once per name rather than once per mention: `SELECT id ...
+            // GROUP BY id` names the same column twice and a reader does not
+            // need telling twice.
+            let all: Vec<&TableDef> = hits.iter().map(|(_, table)| *table).collect();
+            let warning = format!(
+                "`{raw}` is a column of {}{}; this read `{}.{raw}`. Qualify it to choose.",
+                // "both" only when there are two of them. It read "a column of
+                // both `a` and `b`" when there could only ever be two, and a
+                // third table would have made that sentence wrong rather than
+                // merely long.
+                if rest.len() == 1 { "both " } else { "" },
+                name_list_refs(&all, "and"),
+                table.name()
+            );
+            if !self.warnings.contains(&warning) {
+                self.warnings.push(warning);
+            }
         }
+        Ok((
+            u32::try_from(chosen).unwrap_or(0),
+            self.resolve(raw, table, at)?,
+        ))
     }
 
     fn resolve(&self, raw: &str, table: &TableDef, at: usize) -> Result<u32, SqlError> {
@@ -714,15 +781,7 @@ impl Parser<'_> {
         self.expect("from")?;
         let table = self.table()?;
 
-        if self.eat("join") || self.eat("inner") {
-            // `INNER JOIN` — the `INNER` is optional and consumed above.
-            if self
-                .toks
-                .get(self.i)
-                .is_some_and(|s| matches!(&s.tok, Tok::Word(w) if w.eq_ignore_ascii_case("join")))
-            {
-                self.i += 1;
-            }
+        if self.eat_join() {
             return self.join_tail(&table, &list, star);
         }
 
@@ -977,25 +1036,134 @@ impl Parser<'_> {
         }
     }
 
-    /// The joined-space ordinal a join's group key denotes, registering a
-    /// computed column if it is one.
+    /// The joined-space ordinal a join or chain's group key denotes,
+    /// registering a computed column if it is one.
     ///
     /// The single-table twin is [`Self::value_ordinal`]; this one differs in
     /// where a computed column lands. On one table they sit after that table's
-    /// columns; on a join they sit after *both*, because the right table
-    /// already occupies the ordinals immediately after the left. Getting this
-    /// wrong is not an error but a wrong answer — the group key would be the
-    /// right table's first column — which is why the kernel now refuses a
-    /// side's own computed column outright rather than letting it land there.
+    /// columns; here they sit after *every* table's, because each later table
+    /// already occupies the ordinals after the one before it. Getting this
+    /// wrong is not an error but a wrong answer — the group key would be some
+    /// later table's column — which is why the kernel now refuses a side's own
+    /// computed column outright rather than letting it land there.
     ///
     /// Find-or-add, for the reason the single-table one is: the same call
     /// written in the select list and in `GROUP BY` is one computed column,
     /// and registering it twice would return one group per pair.
-    /// Which slot of a *group* a name denotes, over a grouped join.
+    ///
+    /// Takes the `compute` list rather than a whole spec, because there are two
+    /// specs now — [`JoinSpec`] and [`ChainSpec`] — and the list is the only
+    /// part of either this needs. Taking `&mut JoinSpec` is what made the
+    /// two-table version unusable for a chain.
+    fn join_value_ordinal(
+        &mut self,
+        item: &SelectItem,
+        compute: &mut Vec<ComputeSpec>,
+        tables: &[TableDef],
+        at: usize,
+    ) -> Result<u32, SqlError> {
+        match item {
+            SelectItem::Column { raw, at } => {
+                let (input, column) = self.resolve_side(raw, tables, *at)?;
+                joined_at(tables, input, column, *at)
+            }
+            SelectItem::Call {
+                function,
+                argument,
+                offset,
+                zone,
+                ..
+            } => {
+                let (input, column) = self.resolve_side(argument, tables, at)?;
+                let wanted = ComputeSpec {
+                    function: function.clone(),
+                    input,
+                    column,
+                    offset: *offset,
+                    zone: zone.clone(),
+                };
+                let position = compute
+                    .iter()
+                    .position(|c| *c == wanted)
+                    .unwrap_or_else(|| {
+                        compute.push(wanted);
+                        compute.len() - 1
+                    });
+                let width: usize = tables.iter().map(|t| t.columns().len()).sum();
+                u32::try_from(width + position).map_err(|_| SqlError {
+                    message: "too many columns".to_owned(),
+                    at,
+                })
+            }
+            SelectItem::Aggregate { .. } => Err(SqlError {
+                message: "an aggregate cannot be a group key".to_owned(),
+                at,
+            }),
+        }
+    }
+
+    /// An aggregate over whichever of the joined tables has its column.
+    ///
+    /// Tried against each in turn, because which table a column is on is not
+    /// something the reader spells: `avg(fare)` means an aggregate over the
+    /// input that has `fare`. This used to resolve against the right table
+    /// only, which is why an aggregate over the left — the common case, since
+    /// the left is usually the fact table — was "not a column of zones".
+    ///
+    /// The refusal is the *specific* one wherever there is one to give. Before,
+    /// every failure became "reads a column of `a` or `b`; `x` is neither",
+    /// including `SELECT nosuchagg(fare) FROM trips JOIN zones` — which said
+    /// `fare` was not a column of either table. It is one of both. So a
+    /// failure whose argument does resolve somewhere is re-run against that
+    /// table and its own error returned, and only a column that is genuinely
+    /// nowhere gets the list.
+    fn join_aggregate(
+        &self,
+        kind: &str,
+        argument: Option<&str>,
+        tables: &[TableDef],
+        at: usize,
+    ) -> Result<AggregateSpec, SqlError> {
+        for (input, table) in tables.iter().enumerate() {
+            if let Ok(mut spec) = self.aggregate(kind, argument, table, at) {
+                spec.input = u32::try_from(input).unwrap_or(0);
+                return Ok(spec);
+            }
+        }
+        let Some(first) = tables.first() else {
+            return Err(SqlError {
+                message: "a join reads at least one table".to_owned(),
+                at,
+            });
+        };
+        let Some(name) = argument else {
+            // No argument at all: `count(*)` cannot get here, so this is
+            // `avg(*)` or an unknown name, and the first table's refusal says
+            // which.
+            return self.aggregate(kind, argument, first, at);
+        };
+        match tables.iter().find(|t| self.resolve(name, t, at).is_ok()) {
+            Some(table) => self.aggregate(kind, argument, table, at),
+            None => Err(SqlError {
+                message: format!(
+                    "`{kind}()` reads a column of {}; `{name}` is {}",
+                    name_list(tables, "or"),
+                    if tables.len() == 2 {
+                        "neither"
+                    } else {
+                        "none of them"
+                    }
+                ),
+                at,
+            }),
+        }
+    }
+
+    /// Which slot of a *group* a name denotes, over a grouped join or chain.
     ///
     /// A group is `[key, aggregates...]`, so this returns 0 for the group key
     /// and `1 + n` for the `n`th aggregate the select list computes. That is a
-    /// space of its own: it has nothing to do with either table's ordinals,
+    /// space of its own: it has nothing to do with any table's ordinals,
     /// and lowering an ORDER BY onto the joined row instead would sort the
     /// rows going *into* the grouping — which the groups then discard, so the
     /// reader's ordering disappears and the sort is wasted work. The
@@ -1007,39 +1175,19 @@ impl Parser<'_> {
     fn join_group_ordinal(
         &mut self,
         item: &SelectItem,
-        spec: &JoinSpec,
-        left: &TableDef,
-        right: &TableDef,
+        group_by: Option<u32>,
+        aggregates: &[AggregateSpec],
+        compute: &[ComputeSpec],
+        tables: &[TableDef],
         at: usize,
     ) -> Result<u32, SqlError> {
         match item {
             SelectItem::Aggregate { kind, argument, at } => {
-                // Matched by what the select list already computes, on either
-                // side, so `count(*)` and `max(fare)` both resolve and
+                // Matched by what the select list already computes, on any
+                // input, so `count(*)` and `max(fare)` both resolve and
                 // `max(year)` over a grouping that averages it does not.
-                let wanted = self
-                    .aggregate(kind, argument.as_deref(), left, *at)
-                    .map(|mut a| {
-                        a.input = 0;
-                        a
-                    })
-                    .or_else(|_| {
-                        self.aggregate(kind, argument.as_deref(), right, *at)
-                            .map(|mut a| {
-                                a.input = 1;
-                                a
-                            })
-                    })
-                    .map_err(|_| SqlError {
-                        message: format!(
-                            "`{kind}()` reads a column of `{}` or `{}`; `{}` is neither",
-                            left.name(),
-                            right.name(),
-                            argument.as_deref().unwrap_or("*")
-                        ),
-                        at: *at,
-                    })?;
-                spec.aggregates
+                let wanted = self.join_aggregate(kind, argument.as_deref(), tables, *at)?;
+                aggregates
                     .iter()
                     .position(|a| *a == wanted)
                     .and_then(|i| u32::try_from(i + 1).ok())
@@ -1053,78 +1201,29 @@ impl Parser<'_> {
                     })
             }
             // A column or a call: it has to *be* the group key, since a
-            // grouped join has exactly one and the groups carry nothing else.
+            // grouped join or chain has exactly one and the groups carry
+            // nothing else.
             other => {
                 // Resolved against the joined row so it can be compared with
-                // `group_by`, which is in that space. Registering a new
-                // computed column here would be wrong — but `group_by` is
-                // already set by the time ORDER BY is parsed, so a call the
-                // grouping did not name simply fails the comparison below.
-                let mut copy = spec.clone();
-                let ordinal = self.join_value_ordinal(other, &mut copy, left, right, at)?;
-                if spec.group_by == Some(ordinal) {
+                // the group key, which is in that space. Registering a new
+                // computed column here would be wrong, so this gets a copy of
+                // the list -- the group key is already chosen by the time
+                // ORDER BY is parsed, so a call the grouping did not name
+                // simply fails the comparison below.
+                let mut copy = compute.to_vec();
+                let ordinal = self.join_value_ordinal(other, &mut copy, tables, at)?;
+                if group_by == Some(ordinal) {
                     return Ok(0);
                 }
                 Err(SqlError {
-                    message: "ORDER BY on a grouped join names the group key or one of \
-                              its aggregates; a group carries nothing else"
-                        .to_owned(),
+                    message: format!(
+                        "ORDER BY on a grouped {} names the group key or one of its \
+                         aggregates; a group carries nothing else",
+                        shape(tables)
+                    ),
                     at,
                 })
             }
-        }
-    }
-
-    fn join_value_ordinal(
-        &mut self,
-        item: &SelectItem,
-        spec: &mut JoinSpec,
-        left: &TableDef,
-        right: &TableDef,
-        at: usize,
-    ) -> Result<u32, SqlError> {
-        match item {
-            SelectItem::Column { raw, at } => {
-                let (input, column) = self.resolve_side(raw, left, right, *at)?;
-                let base = if input == 0 { 0 } else { left.columns().len() };
-                u32::try_from(base + column as usize).map_err(|_| SqlError {
-                    message: "too many columns".to_owned(),
-                    at: *at,
-                })
-            }
-            SelectItem::Call {
-                function,
-                argument,
-                offset,
-                zone,
-                ..
-            } => {
-                let (input, column) = self.resolve_side(argument, left, right, at)?;
-                let wanted = ComputeSpec {
-                    function: function.clone(),
-                    input,
-                    column,
-                    offset: *offset,
-                    zone: zone.clone(),
-                };
-                let position = spec
-                    .compute
-                    .iter()
-                    .position(|c| *c == wanted)
-                    .unwrap_or_else(|| {
-                        spec.compute.push(wanted);
-                        spec.compute.len() - 1
-                    });
-                let width = left.columns().len() + right.columns().len();
-                u32::try_from(width + position).map_err(|_| SqlError {
-                    message: "too many columns".to_owned(),
-                    at,
-                })
-            }
-            SelectItem::Aggregate { .. } => Err(SqlError {
-                message: "an aggregate cannot be a group key".to_owned(),
-                at,
-            }),
         }
     }
 
@@ -1433,96 +1532,102 @@ impl Parser<'_> {
 
     // --- the join ---------------------------------------------------------
 
-    /// `... FROM trips JOIN zones ON trips.pickup_zone = zones.id ...`
+    /// `... FROM trips JOIN zones ON trips.pickup_zone = zones.id ...`, and
+    /// as many further `JOIN <table> ON <col> = <col>` clauses as are written.
     ///
-    /// Any pair of tables and any pair of columns, checked against the schema.
-    /// The previous version hard-coded `authors JOIN books`, which was fine
-    /// while that was the only join in the database and became a wall the
-    /// moment the taxi zones arrived — a lookup table you cannot join is a
-    /// list of names nobody can reach.
+    /// Any tables and any columns, checked against the schema. Two versions
+    /// ago this hard-coded `authors JOIN books`; one version ago it took any
+    /// *pair*, which was a wall the moment a question needed three tables —
+    /// and the kernel, the wire and all three SDKs had done chains for months.
+    ///
+    /// The whole body is written over `tables: Vec<TableDef>` rather than a
+    /// left and a right, and only the last dozen lines care how many there
+    /// are: **two lower onto [`JoinSpec`] and three or more onto
+    /// [`ChainSpec`]**, because the kernel has `Join` and `Chain` as separate
+    /// entry points with different plans. Deciding that here, once, at the end,
+    /// is what keeps `WHERE`, `GROUP BY`, the select list and `ORDER BY` from
+    /// each having a two-table and an n-table version to drift apart.
     ///
     /// What is still checked, because getting it wrong returns an empty result
-    /// with no explanation: both sides of the `ON` must name a real column,
-    /// and each must belong to a *different* one of the two tables.
+    /// with no explanation: each `ON` must name one column of the table being
+    /// joined and one of a table already read, and no table may appear twice.
     fn join_tail(
         &mut self,
-        left: &TableDef,
+        first: &TableDef,
         list: &[SelectItem],
         star: bool,
     ) -> Result<Statement, SqlError> {
-        let right = self.table()?;
-        if right.name().eq_ignore_ascii_case(left.name()) {
-            return Err(SqlError {
-                message: format!("`{}` cannot be joined to itself here", left.name()),
-                at: self.at(),
-            });
+        // `(earlier input, its column, this table's column)` per table after
+        // the first — `JoinKey` in the joined space, and what both specs want.
+        let mut tables = vec![first.clone()];
+        let mut keys: Vec<(u32, u32, u32)> = Vec::new();
+        loop {
+            let at = self.at();
+            let next = self.table()?;
+            if let Some(seen) = tables
+                .iter()
+                .find(|t| t.name().eq_ignore_ascii_case(next.name()))
+            {
+                // A table twice in one query needs an alias to mean anything:
+                // every name here resolves against a table by name, so two
+                // inputs sharing one make every column reference — qualified
+                // as much as bare — ambiguous. There are no aliases in this
+                // subset, so this is a refusal rather than a silent choice.
+                return Err(SqlError {
+                    message: format!("`{}` cannot be joined to itself here", seen.name()),
+                    at,
+                });
+            }
+            tables.push(next);
+            let key = self.join_key(&tables)?;
+            keys.push(key);
+            if !self.eat_join() {
+                break;
+            }
         }
 
-        self.expect("on")?;
-        let first_at = self.at();
-        let first = self.name()?;
-        self.expect_symbol("=")?;
-        let second_at = self.at();
-        let second = self.name()?;
-
-        // Either order: `trips.pickup_zone = zones.id` and
-        // `zones.id = trips.pickup_zone` are the same join.
-        let (left_key, right_key) = match (
-            self.resolve(&first, left, first_at),
-            self.resolve(&second, &right, second_at),
-        ) {
-            (Ok(l), Ok(r)) => (l, r),
-            _ => match (
-                self.resolve(&second, left, second_at),
-                self.resolve(&first, &right, first_at),
-            ) {
-                (Ok(l), Ok(r)) => (l, r),
-                _ => {
-                    return Err(SqlError {
-                        message: format!(
-                            "`{first} = {second}` does not name one column of `{}` and one of \
-                             `{}`",
-                            left.name(),
-                            right.name()
-                        ),
-                        at: first_at,
-                    });
-                }
-            },
-        };
-
-        let mut spec = JoinSpec {
-            left: left.name().to_owned(),
-            right: right.name().to_owned(),
-            left_key,
-            right_key,
-            ..JoinSpec::default()
-        };
+        let mut filters: Vec<Vec<FilterSpec>> = vec![Vec::new(); tables.len()];
+        let mut compute: Vec<ComputeSpec> = Vec::new();
+        let mut aggregates: Vec<AggregateSpec> = Vec::new();
+        let mut sort: Vec<SortSpec> = Vec::new();
+        let mut group_by: Option<u32> = None;
+        let mut limit: Option<u64> = None;
+        let mut offset = 0;
 
         // WHERE is split by which table each column belongs to — the kernel
-        // pushes each side's conditions into that side's own scan, which is
+        // pushes each table's conditions into that table's own scan, which is
         // the difference between filtering 100,000 trips and filtering the
-        // handful that survive. Sending them all to one side would still be
+        // handful that survive. Sending them all to one input would still be
         // correct and would plan much worse.
         if self.eat("where") {
             loop {
                 let at = self.at();
                 let raw = self.name()?;
-                let qualified_right = raw
-                    .to_ascii_lowercase()
-                    .starts_with(&format!("{}.", right.name().to_ascii_lowercase()));
-                let on_left = !qualified_right && self.resolve(&raw, left, at).is_ok();
-                let table = if on_left { left } else { &right };
-                let column = self.resolve(&raw, table, at)?;
+                // Through `resolve_side`, so a bare name that two tables share
+                // warns here as it does in a select list. The two-table version
+                // had its own copy of the qualified-or-not rule and no warning,
+                // so `WHERE id = 1` over a join picked a side in silence.
+                let (input, column) = self.resolve_side(&raw, &tables, at)?;
+                // `resolve_side` returns an input it found in this very slice,
+                // so neither lookup can miss. They are lookups rather than
+                // indexing anyway: the workspace forbids indexing here, and the
+                // reason it does is that every byte reaching this parser is
+                // something a visitor typed. A panic would be reachable from a
+                // text box, so "cannot happen" is written as a refusal.
+                let (Some(table), Some(mine)) =
+                    (tables.get(input as usize), filters.get_mut(input as usize))
+                else {
+                    return Err(SqlError {
+                        message: format!("`{raw}` resolved to an input that is not there"),
+                        at,
+                    });
+                };
+                let table = table.clone();
                 // Rewind one token so `condition` reads the operator.
                 self.i -= 1;
-                let mut parsed = self.condition(table)?;
+                let mut parsed = self.condition(&table)?;
                 parsed.column = column;
-                if on_left {
-                    spec.left_where.push(parsed);
-                } else {
-                    spec.right_where.push(parsed);
-                }
+                mine.push(parsed);
                 if !self.eat("and") {
                     break;
                 }
@@ -1534,40 +1639,21 @@ impl Parser<'_> {
             let at = self.at();
             // A select item rather than a bare column, so `GROUP BY
             // hour(pickup_time)` reaches the same find-or-add the single-table
-            // path uses. `Join::compute` appends after *both* tables, which is
-            // where `join_value_ordinal` puts it.
+            // path uses. A computed value is appended after *every* table,
+            // which is where `join_value_ordinal` puts it.
             let item = self.select_item()?;
-            let key = self.join_value_ordinal(&item, &mut spec, left, &right, at)?;
-            spec.group_by = Some(key);
+            group_by = Some(self.join_value_ordinal(&item, &mut compute, &tables, at)?);
         }
 
         for item in list {
             match item {
                 SelectItem::Aggregate { kind, argument, at } => {
-                    // Either side. This used to resolve against `right` only,
-                    // which is why an aggregate over the left table -- the
-                    // common case, since the left is the fact table -- was
-                    // "not a column of zones".
-                    let mut parsed = self.aggregate(kind, argument.as_deref(), left, *at);
-                    let mut input = 0;
-                    if parsed.is_err() && argument.is_some() {
-                        let on_right = self.aggregate(kind, argument.as_deref(), &right, *at);
-                        if on_right.is_ok() {
-                            parsed = on_right;
-                            input = 1;
-                        }
-                    }
-                    let mut parsed = parsed.map_err(|_| SqlError {
-                        message: format!(
-                            "`{kind}()` reads a column of `{}` or `{}`; `{}` is neither",
-                            left.name(),
-                            right.name(),
-                            argument.as_deref().unwrap_or("*")
-                        ),
-                        at: *at,
-                    })?;
-                    parsed.input = input;
-                    spec.aggregates.push(parsed);
+                    aggregates.push(self.join_aggregate(
+                        kind,
+                        argument.as_deref(),
+                        &tables,
+                        *at,
+                    )?);
                 }
                 SelectItem::Call { at, .. } => {
                     // Registered by find-or-add, so `SELECT hour(t), count(*)
@@ -1575,13 +1661,16 @@ impl Parser<'_> {
                     // than two. It must already be the group key: a computed
                     // column beside a grouping that did not group by it is the
                     // same error a bare column gets below, for the same reason.
-                    let ordinal = self.join_value_ordinal(item, &mut spec, left, &right, *at)?;
-                    if spec.group_by != Some(ordinal) {
+                    let ordinal = self.join_value_ordinal(item, &mut compute, &tables, *at)?;
+                    if group_by != Some(ordinal) {
                         return Err(SqlError {
-                            message: "a computed column on a join has to be the group key — \
-                                      a join returns whole rows or one row per group, and \
-                                      there is no third shape"
-                                .to_owned(),
+                            message: format!(
+                                "a computed column on a {} has to be the group key — a {} \
+                                 returns whole rows or one row per group, and there is no \
+                                 third shape",
+                                shape(&tables),
+                                shape(&tables)
+                            ),
                             at: *at,
                         });
                     }
@@ -1595,17 +1684,14 @@ impl Parser<'_> {
                     // came back as "`borough` is not the group key", which was
                     // both wrong and confusing, because it was.
                     //
-                    // The check was `spec.group_by.is_some()` and never
-                    // compared the two ordinals. It went unnoticed because
-                    // every test of a grouped join keyed on a *computed*
-                    // column, which takes the branch above.
-                    if let Some(key) = spec.group_by {
+                    // The check was `group_by.is_some()` and never compared the
+                    // two ordinals. It went unnoticed because every test of a
+                    // grouped join keyed on a *computed* column, which takes
+                    // the branch above.
+                    if let Some(key) = group_by {
                         let named = self
-                            .resolve_side(raw, left, &right, *at)
-                            .map(|(input, column)| {
-                                let base = if input == 0 { 0 } else { left.columns().len() };
-                                base as u32 + column
-                            })
+                            .resolve_side(raw, &tables, *at)
+                            .and_then(|(input, column)| joined_at(&tables, input, column, *at))
                             .ok();
                         if named != Some(key) {
                             return Err(SqlError {
@@ -1620,58 +1706,188 @@ impl Parser<'_> {
                 }
             }
         }
-        if spec.group_by.is_none() && !spec.aggregates.is_empty() {
+        if group_by.is_none() && !aggregates.is_empty() {
             return Err(SqlError {
                 message: "an aggregate needs a GROUP BY".to_owned(),
                 at: self.at(),
             });
         }
-        if !star && list.is_empty() {
+        if group_by.is_none() && !star {
+            // An ungrouped join or chain returns whole rows, so a named select
+            // list has nowhere to go — and this used to *silently* be true.
+            // The guard here was `!star && list.is_empty()`, which `select`
+            // cannot produce: it sets `star` from a leading `*` and otherwise
+            // parses at least one item, so the two conditions are never both
+            // met and the check never fired once.
+            //
+            // What that let through is `SELECT title FROM authors JOIN books
+            // ON ...`, which came back with all eight columns of both tables
+            // and a header saying so. Not an error, not the projection asked
+            // for: the single worst kind of wrong answer, because the header
+            // is right about the rows and the rows are right about the
+            // database and only the query has been ignored.
+            //
+            // Found by a chain test asserting the refusal, which is the
+            // argument for writing the refusal tests for a shape you are
+            // generalising rather than only the answers.
             return Err(SqlError {
-                message: "a join returns whole rows; write `SELECT *`".to_owned(),
+                message: format!("a {} returns whole rows; write `SELECT *`", shape(&tables)),
                 at: self.at(),
             });
         }
 
         if self.eat("order") {
             self.expect("by")?;
-            // Only over groups. `Join` has no sort field — the kernel orders
-            // *groups* and not joined rows — so an ungrouped join's ORDER BY
-            // has nowhere to be lowered, and the refusal now says which of the
-            // two shapes the reader is in rather than "not supported yet",
-            // which was true of both and explained neither.
-            if spec.group_by.is_none() {
+            // Only over groups. Neither `Join` nor `Chain` has a sort field —
+            // the kernel orders *groups* and not joined rows — so an ungrouped
+            // one's ORDER BY has nowhere to be lowered, and the refusal now
+            // says which of the two shapes the reader is in rather than "not
+            // supported yet", which was true of both and explained neither.
+            if group_by.is_none() {
                 return Err(SqlError {
-                    message: "ORDER BY on a join needs a GROUP BY: the kernel orders groups, not \
-                              joined rows, so there is nothing to lower an ordering of \
-                              whole rows onto"
-                        .to_owned(),
+                    message: format!(
+                        "ORDER BY on a {} needs a GROUP BY: the kernel orders groups, not \
+                         joined rows, so there is nothing to lower an ordering of whole rows \
+                         onto",
+                        shape(&tables)
+                    ),
                     at: self.at(),
                 });
             }
             loop {
                 let at = self.at();
                 let item = self.select_item()?;
-                let column = self.join_group_ordinal(&item, &spec, left, &right, at)?;
+                let column =
+                    self.join_group_ordinal(&item, group_by, &aggregates, &compute, &tables, at)?;
                 let descending = if self.eat("desc") {
                     true
                 } else {
                     self.eat("asc");
                     false
                 };
-                spec.sort.push(SortSpec { column, descending });
+                sort.push(SortSpec { column, descending });
                 if !self.eat_symbol(",") {
                     break;
                 }
             }
         }
         if self.eat("limit") {
-            spec.limit = Some(self.count("LIMIT")?);
+            limit = Some(self.count("LIMIT")?);
         }
         if self.eat("offset") {
-            spec.offset = self.count("OFFSET")?;
+            offset = self.count("OFFSET")?;
         }
-        Ok(Statement::Join(spec))
+
+        // Two tables are a `Join`; three or more are a `Chain`. See
+        // [`Statement::Chain`] for why that is a fork and not a length.
+        // One slice pattern over all three, rather than three indexed
+        // lookups: the two `left_where`/`right_where` fields are not
+        // interchangeable, and `right_where` holding the left table's
+        // conditions would push each predicate into the wrong scan and answer a
+        // different question without erring anywhere. A pattern that names them
+        // in order cannot make that mistake, where `filters[0]` and
+        // `filters[1]` two lines apart can.
+        if let ([left, right], [(_, left_key, right_key)], [left_where, right_where]) =
+            (&tables[..], &keys[..], &filters[..])
+        {
+            return Ok(Statement::Join(JoinSpec {
+                left: left.name().to_owned(),
+                right: right.name().to_owned(),
+                left_key: *left_key,
+                right_key: *right_key,
+                left_where: left_where.clone(),
+                right_where: right_where.clone(),
+                compute,
+                group_by,
+                aggregates,
+                sort,
+                limit,
+                offset,
+            }));
+        }
+
+        let inputs = tables
+            .iter()
+            .enumerate()
+            .zip(filters)
+            .map(|((at, table), filters)| ChainInputSpec {
+                table: table.name().to_owned(),
+                // The first table joins to nothing; `keys[at - 1]` is the step
+                // that *produced* table `at`, which is why the index is
+                // shifted. Off by one here is a chain whose last table has no
+                // key and whose second has two, which the binding refuses.
+                on: at
+                    .checked_sub(1)
+                    .and_then(|step| keys.get(step))
+                    .map(|&(input, column, own)| ChainOnSpec { input, column, own }),
+                filters,
+            })
+            .collect();
+        Ok(Statement::Chain(ChainSpec {
+            inputs,
+            compute,
+            group_by,
+            aggregates,
+            sort,
+            limit,
+            offset,
+        }))
+    }
+
+    /// `ON <name> = <name>` for the table that was just added to `tables`.
+    ///
+    /// Returns `(earlier input, its column, this table's column)`.
+    ///
+    /// Either order: `trips.pickup_zone = zones.id` and `zones.id =
+    /// trips.pickup_zone` are the same join. The own side is resolved first and
+    /// commits the orientation, which matters because the *earlier* side goes
+    /// through `resolve_side` and may push an ambiguity warning — trying the
+    /// earlier side first would warn about a name in an orientation the parser
+    /// then abandoned.
+    ///
+    /// Any earlier table, not only the previous one, because `JoinKey` is in
+    /// the joined space and always has been: `a JOIN b JOIN c ON a.x = c.y` is
+    /// a chain the kernel plans, not a shape to refuse.
+    fn join_key(&mut self, tables: &[TableDef]) -> Result<(u32, u32, u32), SqlError> {
+        let (own_table, earlier) = tables
+            .split_last()
+            .expect("join_key is called with the new table already pushed");
+        self.expect("on")?;
+        let first_at = self.at();
+        let first = self.name()?;
+        self.expect_symbol("=")?;
+        let second_at = self.at();
+        let second = self.name()?;
+
+        for (own_raw, own_at, other_raw, other_at) in [
+            (&second, second_at, &first, first_at),
+            (&first, first_at, &second, second_at),
+        ] {
+            let Ok(own) = self.resolve(own_raw, own_table, own_at) else {
+                continue;
+            };
+            if let Ok((input, column)) = self.resolve_side(other_raw, earlier, other_at) {
+                return Ok((input, column, own));
+            }
+        }
+
+        Err(SqlError {
+            message: if let [only] = earlier {
+                format!(
+                    "`{first} = {second}` does not name one column of `{}` and one of `{}`",
+                    only.name(),
+                    own_table.name()
+                )
+            } else {
+                format!(
+                    "`{first} = {second}` does not name one column of `{}` and one of a table \
+                     read before it ({})",
+                    own_table.name(),
+                    name_list(earlier, "or")
+                )
+            },
+            at: first_at,
+        })
     }
 
     // --- writes -----------------------------------------------------------
@@ -1867,6 +2083,63 @@ fn parse_zone(text: &str) -> Result<(i64, String), String> {
 /// The aggregate names, for telling an unknown function from a misplaced
 /// aggregate. `aggregate()` remains the authority on what is accepted; this is
 /// only for the error text, and a test keeps the two in step.
+/// `` `a` ``, `` `a` or `b` ``, `` `a`, `b` or `c` `` — table names for an
+/// error message, with `last` as the final conjunction.
+///
+/// A function because six messages and one warning all want it, and the
+/// two-table versions each wrote out their own `"`{} or `{}`"`. That is six
+/// places a third table would simply have been missing from, with no error
+/// anywhere — the reader would be told a column is not on either of two tables
+/// while looking at a query that names three.
+fn name_list(tables: &[TableDef], last: &str) -> String {
+    let refs: Vec<&TableDef> = tables.iter().collect();
+    name_list_refs(&refs, last)
+}
+
+/// [`name_list`] over borrowed tables, for a caller that has a subset.
+fn name_list_refs(tables: &[&TableDef], last: &str) -> String {
+    match tables {
+        [] => String::new(),
+        [one] => format!("`{}`", one.name()),
+        [head @ .., tail] => {
+            let front = head
+                .iter()
+                .map(|t| format!("`{}`", t.name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{front} {last} `{}`", tail.name())
+        }
+    }
+}
+
+/// Where input `input`'s column `column` sits in the joined row: the widths of
+/// every earlier table, summed, plus the column.
+///
+/// The only place the parser knows the joined layout, and it is written down.
+/// The two-table version was `if input == 0 { 0 } else { left.columns().len() }`
+/// inline in three places, which is both the same arithmetic three times and
+/// the arithmetic that cannot be generalised by adding a table.
+fn joined_at(tables: &[TableDef], input: u32, column: u32, at: usize) -> Result<u32, SqlError> {
+    let base: usize = tables
+        .iter()
+        .take(input as usize)
+        .map(|t| t.columns().len())
+        .sum();
+    u32::try_from(base + column as usize).map_err(|_| SqlError {
+        message: "too many columns".to_owned(),
+        at,
+    })
+}
+
+/// "join" or "chain", for a refusal that would otherwise name the wrong one.
+///
+/// Every message in `join_tail` said "join", which is what it was. Telling a
+/// reader who wrote three tables that "a join returns whole rows" names a
+/// construct they did not write.
+fn shape(tables: &[TableDef]) -> &'static str {
+    if tables.len() > 2 { "chain" } else { "join" }
+}
+
 const AGGREGATES: &[&str] = &["count", "min", "max", "sum", "avg"];
 
 const TIME_FUNCTIONS: &[&str] = &[

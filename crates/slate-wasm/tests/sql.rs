@@ -31,7 +31,7 @@ use proptest::prelude::*;
 use serde_json::{Value as Json, json};
 use slate_schema::TableDef;
 use slate_wasm::sql::{Schema, Statement, parse, split};
-use slate_wasm::{FilterSpec, Playground, QuerySpec, SortSpec, fixture};
+use slate_wasm::{FilterSpec, Playground, QuerySpec, SortSpec, fixture, taxi};
 
 fn tables() -> Vec<TableDef> {
     vec![fixture::authors(), fixture::books()]
@@ -474,6 +474,386 @@ fn a_grouped_join_takes_min_and_max() {
     assert!(rows.iter().all(|row| row.as_array().unwrap().len() == 3));
 }
 
+// --- the chain ------------------------------------------------------------
+//
+// Three or more tables, which the front end refused until the parser was
+// rewritten over a list of inputs instead of a left and a right. The kernel,
+// the wire and all three SDKs had done chains for months; this was the only
+// place that could not say one.
+//
+// The chains here are `authors JOIN books JOIN zones`, joined on `books.id =
+// zones.id`. That is a meaningless *question* — a book id is not a taxi zone
+// id — and a perfectly well-formed chain, which is the distinction the parser
+// is responsible for. It is also the only three-table chain this schema can
+// express without aliases: `trips` reaches `zones` twice, through
+// `pickup_zone` and `dropoff_zone`, and naming the same table twice needs an
+// alias the subset does not have. That gap is recorded rather than papered
+// over with a fourth fixture table nothing else would use.
+
+/// Every table the binding's SQL path knows.
+///
+/// `tables()` above is `authors` and `books`, which by construction cannot
+/// hold a chain — a parse test for three tables needs a schema with three.
+fn every_table() -> Vec<TableDef> {
+    vec![
+        fixture::authors(),
+        fixture::books(),
+        taxi::trips(),
+        taxi::zones(),
+    ]
+}
+
+fn parsed_over_every_table(text: &str) -> Result<Statement, String> {
+    let tables = every_table();
+    parse(text, &Schema(&tables))
+        .map(|p| p.statement)
+        .map_err(|e| format!("{} (at {})", e.message, e.at))
+}
+
+/// `authors JOIN books JOIN zones`, as SQL and as the spec it should become.
+const CHAIN: &str = "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+                     JOIN zones ON books.id = zones.id";
+
+#[test]
+fn two_tables_are_a_join_and_three_are_a_chain() {
+    // The fork, asserted at the parser rather than through the answer. Both
+    // shapes return rows and a plan, so a chain lowered onto `Join` — or a
+    // two-table query lowered onto `Chain` — would come back looking right.
+    // What distinguishes them is which kernel entry point runs, and only the
+    // statement says that.
+    let two =
+        parsed_over_every_table("SELECT * FROM authors JOIN books ON authors.id = books.author_id")
+            .unwrap();
+    let Statement::Join(join) = two else {
+        panic!("two tables should be a join: {two:?}");
+    };
+    assert_eq!(
+        (join.left.as_str(), join.right.as_str()),
+        ("authors", "books")
+    );
+    assert_eq!((join.left_key, join.right_key), (0, 1));
+
+    let three = parsed_over_every_table(CHAIN).unwrap();
+    let Statement::Chain(chain) = three else {
+        panic!("three tables should be a chain: {three:?}");
+    };
+    let names: Vec<&str> = chain.inputs.iter().map(|i| i.table.as_str()).collect();
+    assert_eq!(names, ["authors", "books", "zones"]);
+    // The first table joins to nothing, and each later one names an earlier
+    // input and both columns. Off by one here is a chain whose last table has
+    // no key and whose second has two.
+    assert!(chain.inputs[0].on.is_none(), "{:?}", chain.inputs[0]);
+    let first = chain.inputs[1].on.as_ref().unwrap();
+    assert_eq!((first.input, first.column, first.own), (0, 0, 1));
+    let second = chain.inputs[2].on.as_ref().unwrap();
+    assert_eq!((second.input, second.column, second.own), (1, 0, 0));
+}
+
+#[test]
+fn a_chain_step_may_join_back_past_the_previous_table() {
+    // `JoinKey` is in the joined space and always has been, so a step may key
+    // on any table already read. A parser that only allowed the previous one
+    // would refuse a star schema — every dimension hanging off one fact table
+    // — which is the commonest chain there is.
+    let parsed = parsed_over_every_table(
+        "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+         JOIN zones ON authors.id = zones.id",
+    )
+    .unwrap();
+    let Statement::Chain(chain) = parsed else {
+        panic!("expected a chain");
+    };
+    let second = chain.inputs[2].on.as_ref().unwrap();
+    assert_eq!((second.input, second.column, second.own), (0, 0, 0));
+}
+
+#[test]
+fn a_chain_through_sql_matches_the_chain_spec() {
+    let playground = Playground::new();
+    let through_sql = one(&playground, CHAIN);
+    let through_spec: Json = serde_json::from_str(
+        &playground.chain(
+            &json!({
+                "inputs": [
+                    { "table": "authors" },
+                    { "table": "books", "on": { "input": 0, "column": 0, "own": 1 } },
+                    { "table": "zones", "on": { "input": 1, "column": 0, "own": 0 } },
+                ],
+            })
+            .to_string(),
+        ),
+    )
+    .unwrap();
+    assert!(
+        through_spec["error"].is_null(),
+        "the spec was refused: {through_spec}"
+    );
+    assert_eq!(through_sql["rows"], through_spec["rows"], "{through_sql}");
+    // The plan text too, not just the rows. Rows alone would pass for a front
+    // end that quietly dropped a step and got lucky, which over three tables
+    // joined on an id is exactly the kind of luck available.
+    assert_eq!(through_sql["message"], through_spec["display"]);
+}
+
+#[test]
+fn a_chains_header_names_every_table_and_a_chain_row_is_that_wide() {
+    let playground = Playground::new();
+    let answer = one(&playground, CHAIN);
+    let columns: Vec<&str> = answer["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    // Qualified, because three unqualified `id`s side by side name nothing.
+    assert_eq!(
+        columns,
+        [
+            "authors.id",
+            "authors.name",
+            "authors.country",
+            "authors.born",
+            "books.id",
+            "books.author_id",
+            "books.title",
+            "books.year",
+            "zones.id",
+            "zones.borough",
+            "zones.zone",
+            "zones.service_zone",
+        ]
+    );
+    let rows = answer["rows"].as_array().unwrap();
+    assert!(!rows.is_empty(), "no rows: {answer}");
+    assert!(
+        rows.iter()
+            .all(|row| row.as_array().unwrap().len() == columns.len()),
+        "a row is not as wide as the header: {answer}"
+    );
+}
+
+#[test]
+fn a_grouped_chain_agrees_with_the_join_the_chain_narrows() {
+    let playground = Playground::new();
+    // The zone ids are 1..=n with no holes, which this checks rather than
+    // assumes -- the differential below depends on it, and a source file that
+    // grew a gap would otherwise make this test quietly compare two different
+    // questions.
+    let zones = one(&playground, "SELECT * FROM zones");
+    let count = zones["returned"].as_u64().unwrap();
+    let highest: u64 = zones["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap().parse::<u64>().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(count, highest, "the zone ids have a hole in them");
+
+    // So `books.id = zones.id` keeps exactly the books whose id is at most
+    // `highest`, and the chain's counts per country must equal the two-table
+    // join's counts with that as a filter. An independent query as the oracle,
+    // not a hand-written table of numbers: a fixture change moves both.
+    let chained = one(
+        &playground,
+        "SELECT count(*) FROM authors JOIN books ON authors.id = books.author_id \
+         JOIN zones ON books.id = zones.id GROUP BY country",
+    );
+    let joined = one(
+        &playground,
+        &format!(
+            "SELECT count(*) FROM authors JOIN books ON authors.id = books.author_id \
+             WHERE books.id <= {highest} GROUP BY country"
+        ),
+    );
+    assert_eq!(chained["kind"], "group");
+    assert_eq!(chained["columns"], json!(["country", "count(*)"]));
+    assert_eq!(chained["rows"], joined["rows"], "{chained} vs {joined}");
+    assert!(
+        !chained["rows"].as_array().unwrap().is_empty(),
+        "no groups, so this compared nothing: {chained}"
+    );
+}
+
+#[test]
+fn a_chains_computed_value_sits_past_every_table() {
+    // The arithmetic that is easiest to get wrong and hardest to see: a
+    // computed value on a join sits after *both* tables, and on a chain after
+    // *every* one. Landing it after the first would make the group key some
+    // later table's column -- not an error, a different answer.
+    let parsed = parsed_over_every_table(
+        "SELECT year(books.author_id), count(*) FROM authors \
+         JOIN books ON authors.id = books.author_id \
+         JOIN zones ON books.id = zones.id GROUP BY year(books.author_id)",
+    )
+    .unwrap();
+    let Statement::Chain(chain) = parsed else {
+        panic!("expected a chain");
+    };
+    assert_eq!(chain.compute.len(), 1, "{:?}", chain.compute);
+    assert_eq!(chain.compute[0].function, "year");
+    // Named on the table it reads, which is `books` -- input 1.
+    assert_eq!((chain.compute[0].input, chain.compute[0].column), (1, 1));
+    // 4 + 4 + 4 columns, so the first computed value is ordinal 12. Written
+    // out rather than derived, because deriving it here from the same widths
+    // the parser used would be the parser checking its own arithmetic.
+    assert_eq!(chain.group_by, Some(12));
+    // And the same call written twice is one computed column, not two: the
+    // select list and the GROUP BY find-or-add into the same list.
+    assert_eq!(chain.compute.len(), 1);
+}
+
+#[test]
+fn a_computed_value_is_named_from_the_table_it_reads() {
+    // This was wrong, and only in the header. The join arm resolved every
+    // computed column's name against the *left* table whatever its `input`
+    // said, so `year(books.author_id)` -- ordinal 1 of `books` -- came back
+    // labelled `year(name)`, which is ordinal 1 of `authors`. The values
+    // underneath were right, which is why no test asserting on cells caught it.
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT year(books.author_id), count(*) FROM authors \
+         JOIN books ON authors.id = books.author_id GROUP BY year(books.author_id)",
+    );
+    assert_eq!(answer["columns"][0], json!("year(author_id)"), "{answer}");
+}
+
+#[test]
+fn an_aggregate_is_labelled_with_the_column_it_reads() {
+    // The same defect, in the aggregate labels: they were resolved against the
+    // right table, from when an aggregate could only read the right table.
+    // `max(born)` -- ordinal 3 of `authors` -- was labelled `max(year)`, which
+    // is ordinal 3 of `books`.
+    //
+    // The value is checked against the single-table query as an oracle, so
+    // this test fails either way round: a right label over a wrong column, or
+    // a wrong label over a right one.
+    let playground = Playground::new();
+    let joined = one(
+        &playground,
+        "SELECT count(*), max(born) FROM authors JOIN books ON authors.id = books.author_id \
+         GROUP BY country",
+    );
+    assert_eq!(
+        joined["columns"],
+        json!(["country", "count(*)", "max(born)"]),
+        "{joined}"
+    );
+    let alone = one(
+        &playground,
+        "SELECT max(born) FROM authors GROUP BY country",
+    );
+    let born_by_country = |answer: &Json, which: usize| -> Vec<(String, String)> {
+        answer["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row[0].as_str().unwrap().to_owned(),
+                    row[which].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    // Every author has at least one book in this fixture, so grouping the join
+    // by country cannot lose a country, and the latest birth year per country
+    // is the same either way.
+    assert_eq!(
+        born_by_country(&joined, 2),
+        born_by_country(&alone, 1),
+        "{joined} vs {alone}"
+    );
+}
+
+#[test]
+fn a_chain_refuses_what_it_cannot_answer() {
+    let playground = Playground::new();
+    let cases: Vec<(&str, &str)> = vec![
+        // A table twice needs an alias to mean anything, and there are none.
+        (
+            "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN authors ON books.id = authors.id",
+            "cannot be joined to itself",
+        ),
+        // A step whose ON reaches no earlier table. The two-table message
+        // names both tables; past two it names the new one and lists the
+        // others, because "one column of `authors` and one of `zones`" would
+        // be leaving out the table in the middle.
+        (
+            "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN zones ON nosuch = zones.id",
+            "does not name one column of `zones` and one of a table read before it",
+        ),
+        // The same shape as the two-table case above, on a step: both sides
+        // of the ON on the table being joined. A step has to reach a table
+        // already read, and the one it is adding is not one.
+        (
+            "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN zones ON zones.id = zones.borough",
+            "does not name one column of `zones` and one of a table read before it",
+        ),
+        // Whole rows or one row per group, and the refusal says "chain"
+        // rather than "join" -- naming a construct the reader did not write
+        // sends them looking at the wrong line.
+        (
+            "SELECT title FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN zones ON books.id = zones.id",
+            "a chain returns whole rows",
+        ),
+        (
+            "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN zones ON books.id = zones.id ORDER BY books.id",
+            "ORDER BY on a chain needs a GROUP BY",
+        ),
+        // An aggregate over a column no input has. The list is all three
+        // tables, which is the message a two-table `left`/`right` signature
+        // could not produce.
+        (
+            "SELECT count(*), max(nosuch) FROM authors JOIN books ON authors.id = books.author_id \
+             JOIN zones ON books.id = zones.id GROUP BY country",
+            "`max()` reads a column of `authors`, `books` or `zones`; `nosuch` is none of them",
+        ),
+        // Not about the column at all, and it used to be reported as if it
+        // were: this said "`year` is neither" about a column both tables have.
+        (
+            "SELECT count(*), nosuchagg(year) FROM authors \
+             JOIN books ON authors.id = books.author_id GROUP BY country",
+            "no such aggregate",
+        ),
+    ];
+    for (text, wanted) in cases {
+        let message = refusal(&playground, text);
+        assert!(
+            message.contains(wanted),
+            "{text:?}\n  wanted a message containing {wanted:?}\n  got {message:?}"
+        );
+    }
+}
+
+#[test]
+fn a_bare_name_three_tables_share_says_which_one_it_read() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
+         JOIN zones ON books.id = zones.id WHERE id = 1",
+    );
+    let warnings = answer["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{answer}");
+    let warning = warnings[0].as_str().unwrap();
+    // All three of them listed, not "both" of two. The two-table version said
+    // "a column of both `a` and `b`", which a third table makes wrong rather
+    // than merely long.
+    assert!(
+        warning.contains("`authors`, `books` and `zones`"),
+        "{warning}"
+    );
+    assert!(warning.contains("this read `authors.id`"), "{warning}");
+    assert!(!warning.contains("both"), "still says `both`: {warning}");
+}
+
 // --- writes ---------------------------------------------------------------
 
 #[test]
@@ -653,6 +1033,17 @@ fn refusals_name_what_was_wrong() {
         (
             "SELECT * FROM trips JOIN zones ON trips.nosuch = zones.id",
             "does not name one column of `trips` and one of `zones`",
+        ),
+        // Both sides of the ON naming the *same* table. This one is here
+        // because a mutation survived without it, and what the mutation
+        // caused was not a refusal but a wrong answer: resolving the far side
+        // against every table rather than the earlier ones accepts
+        // `books.id = books.author_id`, and then `left_key` is an ordinal of
+        // `books` used as an ordinal of `authors` -- joining `authors.name`
+        // to `books.id`, with nothing erring anywhere.
+        (
+            "SELECT * FROM authors JOIN books ON books.id = books.author_id",
+            "does not name one column of `authors` and one of `books`",
         ),
         (
             "SELECT * FROM trips JOIN trips ON trips.id = trips.id",

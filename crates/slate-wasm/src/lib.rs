@@ -46,8 +46,8 @@ pub mod taxi;
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use slate_kernel::{
-    Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey,
-    Query, RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
+    Aggregate, CalendarPart, CalendarUnit, Chain, CmpOp, Explanation, Expr, Grouping, Join,
+    JoinAlgorithm, JoinKey, JoinStep, Query, RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
@@ -325,6 +325,79 @@ pub struct JoinSpec {
     /// difference in the engine.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub offset: u64,
+}
+
+/// Three or more tables, chained.
+///
+/// Separate from [`JoinSpec`] rather than replacing it, and the split is the
+/// kernel's own: `Join` and `Chain` are two types with two entry points, and
+/// `group_by_join` narrows each side's projection in a way `group_by_chain`
+/// cannot. `slate-server`'s `MultiRead` and `GroupedSource` make the same
+/// split, with a comment saying that folding them would mean choosing at the
+/// call site anyway, one level further from the reason.
+///
+/// So: exactly two tables is a [`JoinSpec`] and runs through `Join`; three or
+/// more is this and runs through `Chain`. The parser decides, and never
+/// produces a two-input `ChainSpec` — that would be a second spec for a query
+/// the first already expresses, which is the drift this front end exists to
+/// avoid.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSpec {
+    /// The tables, in the order the chain reads them. At least three.
+    pub inputs: Vec<ChainInputSpec>,
+    /// Computed per chain row, appended after *every* table's columns. See
+    /// `Chain::compute`, and `ComputeSpec::input` for how each names its
+    /// table.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compute: Vec<ComputeSpec>,
+    /// Group by this ordinal of the **chain row**: input `n`'s column `c` is
+    /// at the sum of the widths before `n`, plus `c`; a computed value is
+    /// past every table. Absent means return rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<u32>,
+    /// Computed per group. Each names its input with `AggregateSpec::input`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregates: Vec<AggregateSpec>,
+    /// How to order the groups. `[key, aggregates...]`, as on [`JoinSpec`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sort: Vec<SortSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: u64,
+}
+
+/// One table of a chain.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainInputSpec {
+    /// The table's name, as the catalog spells it.
+    pub table: String,
+    /// What this joins to. Absent on input 0, which joins to nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<ChainOnSpec>,
+    /// Conditions on this table alone, ANDed, so the planner can push each
+    /// into this table's own scan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<FilterSpec>,
+}
+
+/// Which earlier table a step joins to.
+///
+/// `input` and `column` name a column of an *earlier* input — any earlier one,
+/// not just the previous — and `own` is this table's own ordinal. That is
+/// exactly `JoinKey` in the joined space, which is what lets `a JOIN b JOIN c
+/// ON a.x = c.y` work rather than only a straight line.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainOnSpec {
+    /// Which earlier input.
+    pub input: u32,
+    /// Its column, in that table's own ordinals.
+    pub column: u32,
+    /// This table's column.
+    pub own: u32,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -707,6 +780,28 @@ impl Playground {
         }
     }
 
+    /// Chain three or more tables, and optionally group the result.
+    ///
+    /// The n-table sibling of [`Playground::join`]. Separate because the
+    /// kernel's two entry points are separate and produce different plans —
+    /// see [`crate::ChainSpec`] — and because a caller has to decide which it
+    /// means anyway: the number of tables is not a knob, it is the query.
+    ///
+    /// Exposed even though the panel has no n-table form, so that the spec the
+    /// editor shows for `FROM a JOIN b JOIN c` is a spec something can be
+    /// handed back. A spec pane displaying JSON no entry point accepts is a
+    /// pane that documents a shape that does not exist.
+    #[must_use]
+    pub fn chain(&self, spec: &str) -> String {
+        match serde_json::from_str::<ChainSpec>(spec)
+            .map_err(|e| format!("that is not a chain spec: {e}"))
+            .and_then(|spec| self.chained_spec(spec))
+        {
+            Ok(answer) => serde_json::to_string(&answer).expect("the answer serialises"),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
+
     /// Run a buffer of SQL, one statement at a time.
     ///
     /// Returns an array with one entry per statement, so the editor can show
@@ -980,16 +1075,7 @@ impl Playground {
                     // It used to shift unconditionally, which is why an
                     // aggregate could only read the right table.
                     let shifted = joined_ordinal(wanted.input, wanted.column, &authors, &books)?;
-                    aggregates.push(match wanted.kind.as_str() {
-                        "count" => Aggregate::Count,
-                        "count_column" => Aggregate::CountColumn(shifted),
-                        "count_distinct" => Aggregate::CountDistinct(shifted),
-                        "min" => Aggregate::Min(shifted),
-                        "max" => Aggregate::Max(shifted),
-                        "sum" => Aggregate::Sum(shifted),
-                        "avg" => Aggregate::Avg(shifted),
-                        other => return Err(format!("no such aggregate: {other}")),
-                    });
+                    aggregates.push(aggregate_of(&wanted.kind, shifted)?);
                 }
                 if aggregates.is_empty() {
                     aggregates.push(Aggregate::Count);
@@ -1103,30 +1189,8 @@ impl Playground {
             JoinAlgorithm::NestedLoop => "nested loop".to_owned(),
         };
         let inputs = vec![
-            InputPlan {
-                table: explanation.left.table.clone(),
-                access: explanation.left.access.to_string(),
-                index_only: explanation.left.is_index_only(),
-                decodes: explanation
-                    .left
-                    .decodes
-                    .iter()
-                    .map(|o| o.0 as u32)
-                    .collect(),
-                algorithm: String::new(),
-            },
-            InputPlan {
-                table: explanation.right.table.clone(),
-                access: explanation.right.access.to_string(),
-                index_only: explanation.right.is_index_only(),
-                decodes: explanation
-                    .right
-                    .decodes
-                    .iter()
-                    .map(|o| o.0 as u32)
-                    .collect(),
-                algorithm,
-            },
+            input_plan(&explanation.left, String::new()),
+            input_plan(&explanation.right, algorithm),
         ];
 
         Ok(JoinAnswer {
@@ -1141,6 +1205,277 @@ impl Playground {
             inputs,
             display: explanation.to_string(),
         })
+    }
+
+    /// Run a chain of three or more tables, grouped or not.
+    ///
+    /// The n-table sibling of [`Playground::joined_spec`], and deliberately
+    /// its own function rather than a generalisation of it: the kernel has two
+    /// entry points and `group_by_chain` cannot narrow a step's projection the
+    /// way `group_by_join` narrows a side's. Merging them here would mean
+    /// choosing between `Join` and `Chain` at the call site anyway, one level
+    /// further from the reason — which is the argument `slate-server`'s
+    /// `MultiRead` already makes.
+    fn chained_spec(&self, spec: ChainSpec) -> Result<JoinAnswer, String> {
+        if spec.inputs.len() < 3 {
+            // Not reachable from the parser, which builds a `JoinSpec` for two.
+            // Refused rather than run, because a two-input `ChainSpec` would
+            // answer the same question through a different kernel path, and two
+            // paths for one query is the drift this front end exists to avoid.
+            return Err(format!(
+                "a chain is three or more tables; this has {}. Two tables are a \
+                 join, and take the join path",
+                spec.inputs.len()
+            ));
+        }
+        let tables: Vec<TableDef> = spec
+            .inputs
+            .iter()
+            .map(|input| self.table(&input.table))
+            .collect::<Result<_, _>>()?;
+        let refs: Vec<&TableDef> = tables.iter().collect();
+
+        let mut first = spec
+            .inputs
+            .first()
+            .ok_or("a chain needs a first table")
+            .and_then(|input| {
+                if input.on.is_some() {
+                    // The first table joins to nothing, and a key naming an
+                    // earlier input than itself is a caller that has miscounted.
+                    Err("the chain's first table joins to nothing, so it takes no ON")
+                } else {
+                    Ok(input)
+                }
+            })
+            .map_err(str::to_owned)
+            .and_then(|input| {
+                // `tables` was built from `spec.inputs`, so a first input
+                // implies a first table. A lookup rather than `[0]` because
+                // the workspace forbids indexing in this crate, and the reason
+                // it does is that everything reaching here came from a text box.
+                let Some(table) = tables.first() else {
+                    return Err("a chain needs a first table".to_owned());
+                };
+                conditions(&input.filters, table)
+            })?;
+        // The first table's own window goes where a join's does — on the chain
+        // — so nothing here sets one.
+        first.limit = None;
+
+        let mut chain = Chain::from(first);
+        // Zipped with `tables` rather than indexed by `at`: the two are
+        // the same length by construction, and pairing them says so where
+        // `tables[at]` three lines apart only assumes it.
+        for (at, (input, table)) in spec.inputs.iter().zip(&tables).enumerate().skip(1) {
+            let on = input.on.as_ref().ok_or_else(|| {
+                format!(
+                    "input {at} (`{}`) joins to nothing; every table after the \
+                     first needs an ON",
+                    input.table
+                )
+            })?;
+            if on.input as usize >= at {
+                // A step may join back to *any* earlier table and to no later
+                // one: a key naming a later input reads a column that does not
+                // exist yet, which the kernel would resolve to null on every
+                // row and return no matches rather than an error.
+                return Err(format!(
+                    "input {at} (`{}`) joins to input {}, which is itself or \
+                     later; a step joins to a table already read",
+                    input.table, on.input
+                ));
+            }
+            let earlier = chained_ordinal(on.input, on.column, &refs)?;
+            let own = table
+                .column(Ordinal(on.own as usize))
+                .map(|_| Ordinal(on.own as usize))
+                .ok_or_else(|| format!("{} has no column {}", table.name(), on.own))?;
+            let mut step = JoinStep::on([JoinKey::new(earlier, own)]);
+            step.query = conditions(&input.filters, table)?;
+            chain.steps.push(step);
+        }
+
+        chain.compute = chained_computes(&spec.compute, &refs)?;
+        if let Some(limit) = spec.limit {
+            chain.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
+        chain.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
+
+        let grouping = match spec.group_by {
+            None => None,
+            Some(key) => {
+                let mut aggregates = Vec::with_capacity(spec.aggregates.len());
+                for wanted in &spec.aggregates {
+                    let shifted = chained_ordinal(wanted.input, wanted.column, &refs)?;
+                    aggregates.push(aggregate_of(&wanted.kind, shifted)?);
+                }
+                if aggregates.is_empty() {
+                    aggregates.push(Aggregate::Count);
+                }
+                let mut grouping = Grouping::by([Ordinal(key as usize)], &aggregates);
+                if let Some(limit) = spec.limit {
+                    grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+                }
+                grouping.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
+                grouping.sort = spec
+                    .sort
+                    .iter()
+                    .map(|key| {
+                        let ordinal = Ordinal(key.column as usize);
+                        if key.descending {
+                            SortKey::desc(ordinal)
+                        } else {
+                            SortKey::asc(ordinal)
+                        }
+                    })
+                    .collect();
+                Some(grouping)
+            }
+        };
+
+        let started = now_ms();
+        let (plan, rows, groups) = block_on(async {
+            let snapshot = self.store.snapshot().await?;
+            match &grouping {
+                Some(grouping) => {
+                    // `explain_grouped_chain` returns the *narrowed* chain
+                    // beside the plan, and the plan is of that chain — which is
+                    // the whole reason it returns both. The narrowed chain is
+                    // dropped here because nothing displays it; the plan is
+                    // what the panel shows, and it describes what ran.
+                    let (_narrowed, plan) =
+                        snapshot.explain_grouped_chain(&self.context, &refs, &chain, grouping)?;
+                    let groups = snapshot
+                        .group_by_chain(&self.context, &refs, &chain, grouping)
+                        .await?;
+                    Ok::<_, slate_kernel::KernelError>((plan, Vec::new(), groups))
+                }
+                None => {
+                    let plan = snapshot.explain_chain(&self.context, &refs, &chain)?;
+                    let mut cursor = snapshot.chain(&self.context, &refs, &chain).await?;
+                    let mut out = Vec::new();
+                    while let Some(row) = cursor.next().await? {
+                        out.push(row);
+                    }
+                    Ok((plan, out, Vec::new()))
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+        let elapsed = now_ms() - started;
+
+        let rendered: Vec<Vec<String>> =
+            rows.iter()
+                .map(|row| {
+                    let mut line = Vec::new();
+                    // Each table padded to its own width, so a step that preserved
+                    // an unmatched row keeps the grid aligned with the header. A
+                    // `ChainRow` is also *shorter* than the chain when a right
+                    // outer step drops earlier tables, which `at` reports as
+                    // `None` — the same case, from the other direction.
+                    for (at, table) in refs.iter().enumerate() {
+                        match row.at(at) {
+                            Some(values) => line.extend(render(values)),
+                            None => line
+                                .extend(std::iter::repeat_n("—".to_owned(), table.columns().len())),
+                        }
+                    }
+                    line.extend(row.computed().iter().map(text));
+                    line
+                })
+                .collect();
+
+        let rendered_groups: Vec<Vec<String>> = groups
+            .iter()
+            .map(|group| {
+                let mut line: Vec<String> = group.key.iter().map(text).collect();
+                line.extend(group.values.iter().map(text));
+                line
+            })
+            .collect();
+
+        // One `InputPlan` per table, with each step's algorithm on the table
+        // that step reads — the first table has none, because nothing is
+        // joined to produce it.
+        //
+        // `ChainPlan` holds raw `Plan`s and no `Display`, so each one is turned
+        // into an `Explanation` here — the same thing `slate-server`'s
+        // `chain_plan_to_proto` does, for the same reason, and the display line
+        // is built the same way so an operator reading either sees one shape.
+        let Some(first_table) = tables.first() else {
+            return Err("a chain needs a first table".to_owned());
+        };
+        let first = Explanation::of(first_table, &plan.first, &chain.first);
+        let mut display = format!("Chain\n  -> {first}");
+        let mut inputs = vec![input_plan(&first, String::new())];
+        for (at, step) in plan.steps.iter().enumerate() {
+            let Some(table) = tables.get(at + 1) else {
+                break;
+            };
+            let Some(request) = chain.steps.get(at) else {
+                break;
+            };
+            let explanation = Explanation::of(table, &step.plan, &request.query);
+            let algorithm = match step.algorithm {
+                JoinAlgorithm::Hash { .. } => "hash",
+                JoinAlgorithm::NestedLoop => "nested loop",
+            };
+            display.push_str(&format!(
+                "\n  -> {} step {}: {explanation}",
+                match step.algorithm {
+                    JoinAlgorithm::Hash { .. } => "Hash",
+                    JoinAlgorithm::NestedLoop => "Nested Loop",
+                },
+                at + 1
+            ));
+            inputs.push(input_plan(&explanation, algorithm.to_owned()));
+        }
+
+        Ok(JoinAnswer {
+            kernel_ms: elapsed,
+            returned: if rendered_groups.is_empty() {
+                rendered.len()
+            } else {
+                rendered_groups.len()
+            },
+            rows: rendered,
+            groups: rendered_groups,
+            inputs,
+            display,
+        })
+    }
+
+    /// A join's or a chain's answer, as a [`SqlResult`].
+    ///
+    /// The two arms differ only in how they name their columns; everything
+    /// after the read is identical, and was written out twice in the first
+    /// draft. It took about ten minutes for the two copies to disagree about
+    /// whether a grouped read reports `answer.returned` or the row count.
+    fn answered(
+        text: &str,
+        grouped: bool,
+        columns: Vec<String>,
+        answer: JoinAnswer,
+        spec: serde_json::Value,
+    ) -> SqlResult {
+        let mut out = SqlResult::blank(text, if grouped { "group" } else { "join" });
+        out.columns = columns;
+        out.returned = answer.returned;
+        // A grouped read puts its rows in `groups`, and `rows` is empty — the
+        // two are the same shape to the reader, and a binding that returned one
+        // of two field names depending on the query is how a UI ends up with
+        // two rendering paths that drift.
+        out.rows = if answer.groups.is_empty() {
+            answer.rows
+        } else {
+            answer.groups
+        };
+        out.inputs = answer.inputs;
+        out.kernel_ms = answer.kernel_ms;
+        out.message = answer.display;
+        out.spec = spec;
+        out
     }
 
     /// The body of [`Playground::sql`], with real types.
@@ -1256,79 +1591,50 @@ impl Playground {
                     .table(&spec.left)
                     .unwrap_or_else(|_| fixture::authors());
                 let right_table = self.table(&spec.right).unwrap_or_else(|_| fixture::books());
-                let labels = labels(&spec.aggregates, &right_table);
-                // A computed group key sits past both tables, so its header
-                // comes from the spec rather than from a column that does not
-                // exist. Named as it was written — `hour(pickup_time)` — which
-                // is what the reader typed and what they will look for.
-                let computed_headers: Vec<(u32, String)> = spec
-                    .compute
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        let width = left_table.columns().len() + right_table.columns().len();
-                        let name = left_table
-                            .column(Ordinal(c.column as usize))
-                            .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
-                        (
-                            u32::try_from(width + i).unwrap_or(0),
-                            format!("{}({name}{})", c.function, zone_suffix(c)),
-                        )
-                    })
-                    .collect();
+                let tables = [&left_table, &right_table];
+                let columns = match grouped {
+                    Some(key) => grouped_headers(&tables, &spec.compute, key, &spec.aggregates),
+                    None => joined_headers(&tables, &spec.compute),
+                };
                 match self.joined_spec(spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
-                        let mut out = SqlResult::blank(
-                            text,
-                            if grouped.is_some() { "group" } else { "join" },
-                        );
-                        out.columns = match grouped {
+                        Self::answered(text, grouped.is_some(), columns, answer, spec_json)
+                    }
+                }
+            }
+            sql::Statement::Chain(spec) => {
+                let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
+                let grouped = spec.group_by;
+                // Resolved before the read, because the headers need the
+                // widths and a chain has no fixed number of them. A table the
+                // catalog does not have is left to `chained_spec` to refuse by
+                // name rather than substituted with a fixture the way the join
+                // arm does — that fallback exists there because the panel can
+                // send a `JoinSpec` for the books fixture before the taxi data
+                // has loaded, and nothing sends a `ChainSpec` but the parser,
+                // which resolved every table already.
+                let resolved: Result<Vec<TableDef>, String> = spec
+                    .inputs
+                    .iter()
+                    .map(|input| self.table(&input.table))
+                    .collect();
+                let columns = match &resolved {
+                    Err(_) => Vec::new(),
+                    Ok(tables) => {
+                        let refs: Vec<&TableDef> = tables.iter().collect();
+                        match grouped {
                             Some(key) => {
-                                let mut headers = vec![
-                                    computed_headers
-                                        .iter()
-                                        .find(|(at, _)| *at == key)
-                                        .map(|(_, name)| name.clone())
-                                        .or_else(|| {
-                                            left_table
-                                                .column(Ordinal(key as usize))
-                                                .map(|c| c.name().to_owned())
-                                        })
-                                        .unwrap_or_else(|| key.to_string()),
-                                ];
-                                // `count` is always there, added by the
-                                // binding when the reader named no aggregate.
-                                if labels.is_empty() {
-                                    headers.push("count(*)".to_owned());
-                                } else {
-                                    headers.extend(labels);
-                                }
-                                headers
+                                grouped_headers(&refs, &spec.compute, key, &spec.aggregates)
                             }
-                            None => left_table
-                                .columns()
-                                .iter()
-                                .map(|c| format!("{}.{}", left_table.name(), c.name()))
-                                .chain(
-                                    right_table
-                                        .columns()
-                                        .iter()
-                                        .map(|c| format!("{}.{}", right_table.name(), c.name())),
-                                )
-                                .collect(),
-                        };
-                        out.returned = answer.returned;
-                        out.rows = if answer.groups.is_empty() {
-                            answer.rows
-                        } else {
-                            answer.groups
-                        };
-                        out.inputs = answer.inputs;
-                        out.kernel_ms = answer.kernel_ms;
-                        out.message = answer.display;
-                        out.spec = spec_json;
-                        out
+                            None => joined_headers(&refs, &spec.compute),
+                        }
+                    }
+                };
+                match resolved.and_then(|_| self.chained_spec(spec)) {
+                    Err(message) => SqlResult::failed(text, 0, &message),
+                    Ok(answer) => {
+                        Self::answered(text, grouped.is_some(), columns, answer, spec_json)
                     }
                 }
             }
@@ -1940,6 +2246,109 @@ fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
 /// Shared by the single-table and the join paths, because two copies of this
 /// is how a grouped join comes to label its columns differently from a grouped
 /// scan of the same data.
+/// What each position of a joined row is called: every table's own columns,
+/// then every computed value named as it was written.
+///
+/// `qualified` prefixes a stored column with its table's name. The two callers
+/// want different answers and both are right: an **ungrouped** header is a grid
+/// of every table's columns side by side, where three unqualified `id`s are
+/// unreadable; a **grouped** key is one column the reader named themselves, and
+/// echoing their own spelling is what the single-table path does. Computed
+/// values are never qualified either way — `hour(pickup_time)` is the whole
+/// name and it is already the reader's.
+///
+/// One function for the join and the chain arms, and it is also a fix. The
+/// join arm built its headers inline and resolved *every* name against the
+/// left table: a computed value's column name came from `left.column(c.column)`
+/// whatever `c.input` said, and a group key's from `left.column(key)` — where
+/// `key` is a *joined* ordinal, so a right-table key was labelled with
+/// whichever left-table column happened to sit at that position. The values
+/// underneath were right; only the names were wrong, which is the kind of
+/// defect a test asserting on cells never sees.
+fn joined_names(tables: &[&TableDef], compute: &[ComputeSpec], qualified: bool) -> Vec<String> {
+    let mut out: Vec<String> = tables
+        .iter()
+        .flat_map(|table| {
+            table.columns().iter().map(move |c| {
+                if qualified {
+                    format!("{}.{}", table.name(), c.name())
+                } else {
+                    c.name().to_owned()
+                }
+            })
+        })
+        .collect();
+    out.extend(compute.iter().map(|c| {
+        // Named against the table `input` names, which is the whole of the
+        // fix: `hour(zones.updated_at)` was coming back as `hour(id)`.
+        let name = tables
+            .get(c.input as usize)
+            .and_then(|t| t.column(Ordinal(c.column as usize)))
+            .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
+        format!("{}({name}{})", c.function, zone_suffix(c))
+    }));
+    out
+}
+
+/// The header an ungrouped join or chain gets: [`joined_names`], qualified.
+fn joined_headers(tables: &[&TableDef], compute: &[ComputeSpec]) -> Vec<String> {
+    joined_names(tables, compute, true)
+}
+
+/// The header a *grouped* join or chain gets: the key, then the aggregates.
+///
+/// The key's name is looked up in [`joined_names`] by its own ordinal, which
+/// needs no special case for a computed key and no arithmetic: the names of
+/// those positions are what this list is. The inline version had a `find` over
+/// the computed headers and an `or_else` onto the left table, which is the same
+/// lookup done twice and wrongly the second time.
+fn grouped_headers(
+    tables: &[&TableDef],
+    compute: &[ComputeSpec],
+    key: u32,
+    aggregates: &[AggregateSpec],
+) -> Vec<String> {
+    let all = joined_names(tables, compute, false);
+    let mut out = vec![
+        all.get(key as usize)
+            .cloned()
+            .unwrap_or_else(|| key.to_string()),
+    ];
+    out.extend(joined_labels(aggregates, tables));
+    out
+}
+
+/// [`labels`], but each aggregate's column resolved against the table its own
+/// `input` names.
+///
+/// The join arm called `labels(&spec.aggregates, &right_table)` — from when an
+/// aggregate could only read the right table. Since it can read either,
+/// `avg(fare)` over `trips JOIN zones` was labelled with whatever `zones`
+/// column sits at `fare`'s ordinal, or with the bare ordinal when `zones` is
+/// narrower. Again: right numbers, wrong heading.
+fn joined_labels(specs: &[AggregateSpec], tables: &[&TableDef]) -> Vec<String> {
+    if specs.is_empty() {
+        // `count` is always there, added by the binding when the reader named
+        // no aggregate.
+        return vec!["count(*)".to_owned()];
+    }
+    specs
+        .iter()
+        .map(|a| {
+            let column = tables
+                .get(a.input as usize)
+                .and_then(|t| t.column(Ordinal(a.column as usize)))
+                .map_or_else(|| a.column.to_string(), |c| c.name().to_owned());
+            match a.kind.as_str() {
+                "count" => "count(*)".to_owned(),
+                "count_column" => format!("count({column})"),
+                "count_distinct" => format!("count(distinct {column})"),
+                other => format!("{other}({column})"),
+            }
+        })
+        .collect()
+}
+
 fn labels(specs: &[AggregateSpec], table: &TableDef) -> Vec<String> {
     if specs.is_empty() {
         return vec!["count(*)".to_owned()];
@@ -2177,19 +2586,38 @@ fn joined_ordinal(
     left: &TableDef,
     right: &TableDef,
 ) -> Result<Ordinal, String> {
-    let (table, base) = match input {
-        0 => (left, 0),
-        1 => (right, left.columns().len()),
-        other => {
-            return Err(format!(
-                "a join has two sides, 0 and 1; input {other} is neither"
-            ));
-        }
-    };
+    chained_ordinal(input, column, &[left, right])
+}
+
+/// The same, over any number of inputs.
+///
+/// A chain's joined space is every table's columns concatenated in order, so
+/// an input's base is the sum of the widths before it. Two tables is the
+/// degenerate case rather than a separate scheme, which is why
+/// [`joined_ordinal`] is one line.
+fn chained_ordinal(input: u32, column: u32, tables: &[&TableDef]) -> Result<Ordinal, String> {
+    let at = input as usize;
+    let table = tables.get(at).ok_or_else(|| {
+        format!(
+            "this read has {} input{}, 0 to {}; input {input} is outside that",
+            tables.len(),
+            if tables.len() == 1 { "" } else { "s" },
+            tables.len().saturating_sub(1)
+        )
+    })?;
     if table.column(Ordinal(column as usize)).is_none() {
         return Err(format!("{} has no column {column}", table.name()));
     }
-    Ok(Ordinal(base + column as usize))
+    Ok(Ordinal(base_of(at, tables) + column as usize))
+}
+
+/// Where input `at`'s columns begin in the joined space.
+fn base_of(at: usize, tables: &[&TableDef]) -> usize {
+    tables
+        .iter()
+        .take(at)
+        .map(|table| table.columns().len())
+        .sum()
 }
 
 /// The join's computed values, each reading whichever side it names.
@@ -2198,14 +2626,23 @@ fn joined_computes(
     left: &TableDef,
     right: &TableDef,
 ) -> Result<Vec<Scalar>, String> {
+    chained_computes(specs, &[left, right])
+}
+
+/// The same, over any number of inputs.
+fn chained_computes(specs: &[ComputeSpec], tables: &[&TableDef]) -> Result<Vec<Scalar>, String> {
     specs
         .iter()
-        .map(|c| match c.input {
-            0 => compute_scalar(c, left, 0),
-            1 => compute_scalar(c, right, left.columns().len()),
-            other => Err(format!(
-                "a join has two sides, 0 and 1; input {other} is neither"
-            )),
+        .map(|c| {
+            let at = c.input as usize;
+            let table = tables.get(at).ok_or_else(|| {
+                format!(
+                    "a computed value names input {}, and this read has {}",
+                    c.input,
+                    tables.len()
+                )
+            })?;
+            compute_scalar(c, table, base_of(at, tables))
         })
         .collect()
 }
@@ -2320,6 +2757,40 @@ fn having(
 }
 
 /// One side of a join: its conditions, ANDed, as a `Query`.
+/// One input's plan, for the panel.
+///
+/// Extracted because the join path builds two of these and the chain path
+/// builds one per table, and the five fields were written out three times.
+fn input_plan(explanation: &Explanation, algorithm: String) -> InputPlan {
+    InputPlan {
+        table: explanation.table.clone(),
+        access: explanation.access.to_string(),
+        index_only: explanation.is_index_only(),
+        decodes: explanation.decodes.iter().map(|o| o.0 as u32).collect(),
+        algorithm,
+    }
+}
+
+/// One aggregate, by the name the spec uses, over an ordinal already resolved
+/// into the joined space.
+///
+/// Shared by the join and the chain paths. It was written out in the join path
+/// and copying it was the alternative, which is how two lists of aggregate
+/// names come to disagree about whether `count_column` is spelled with an
+/// underscore.
+fn aggregate_of(kind: &str, column: Ordinal) -> Result<Aggregate, String> {
+    Ok(match kind {
+        "count" => Aggregate::Count,
+        "count_column" => Aggregate::CountColumn(column),
+        "count_distinct" => Aggregate::CountDistinct(column),
+        "min" => Aggregate::Min(column),
+        "max" => Aggregate::Max(column),
+        "sum" => Aggregate::Sum(column),
+        "avg" => Aggregate::Avg(column),
+        other => return Err(format!("no such aggregate: {other}")),
+    })
+}
+
 fn conditions(specs: &[FilterSpec], table: &TableDef) -> Result<Query, String> {
     if specs.is_empty() {
         return Ok(Query::all());
