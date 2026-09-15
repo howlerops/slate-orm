@@ -438,3 +438,46 @@ func TestASortKeyMayNameAComputedValue(t *testing.T) {
 		t.Fatal("the fixture's ids are already in year order; this test proves nothing")
 	}
 }
+
+// Truncating to a month and a year, which `DateTrunc` cannot do.
+//
+// `TimeUnit` promises a fixed number of seconds and a month has none, so this
+// decodes the date, drops the fields below the boundary and encodes it again.
+// Go's own `time` is the oracle: `time.Date(y, m, 1, ...)` in UTC.
+func TestCalendarTruncationAgreesWithGoTime(t *testing.T) {
+	session := eventsSession(t)
+	got := collectComputed(t, session, slate.Query{
+		Table: "events",
+		Compute: []slate.Scalar{
+			slate.MonthStartOf(slate.Col(eventAt)),
+			slate.YearStartOf(slate.Col(eventAt)),
+		},
+	})
+	for i, at := range instants {
+		values := got[uint64(i)]
+		if len(values) != 2 {
+			t.Fatalf("%s: got %d computed values, want 2", at, len(values))
+		}
+		wantMonth := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC).Unix()
+		wantYear := time.Date(at.Year(), time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+		gotMonth, ok := values[0].(slate.Int)
+		if !ok {
+			t.Fatalf("%s: month_start is %v", at, values[0])
+		}
+		gotYear, ok := values[1].(slate.Int)
+		if !ok {
+			t.Fatalf("%s: year_start is %v", at, values[1])
+		}
+		if int64(gotMonth) != wantMonth {
+			t.Errorf("%s: month start is %d, want %d", at, gotMonth, wantMonth)
+		}
+		if int64(gotYear) != wantYear {
+			t.Errorf("%s: year start is %d, want %d", at, gotYear, wantYear)
+		}
+		// And it floors rather than rounding: the 1969 instant must go
+		// backwards to 1969-07-01, not forwards into 1970.
+		if int64(gotMonth) > at.Unix() {
+			t.Errorf("%s: truncation moved forwards to %d", at, gotMonth)
+		}
+	}
+}

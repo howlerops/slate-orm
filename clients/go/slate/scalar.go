@@ -226,6 +226,50 @@ func DayOfMonthOf(s Scalar) Scalar { return PartOf(DayOfMonth, s) }
 // DayOfWeekOf is the day of the week, 0 for Sunday.
 func DayOfWeekOf(s Scalar) Scalar { return PartOf(DayOfWeek, s) }
 
+// CalendarUnit is a calendar boundary [CalendarTruncOf] can floor a timestamp
+// to.
+//
+// Separate from [TimeUnit] for the reason [CalendarPart] is: those are all a
+// fixed number of seconds and a month is not, so `DateTrunc` is a division
+// while this decodes the date, drops the fields below the boundary and encodes
+// it again.
+//
+// A day is absent on purpose — it *is* a fixed number of seconds, so
+// `DateTrunc(Day, t)` already means it.
+type CalendarUnit int
+
+// The calendar boundaries.
+const (
+	// MonthStart is the first instant of the month, in UTC.
+	MonthStart CalendarUnit = iota
+	// YearStart is the first instant of the year, in UTC.
+	YearStart
+)
+
+func (u CalendarUnit) wire() pb.CalendarUnit {
+	if u == YearStart {
+		return pb.CalendarUnit_CALENDAR_UNIT_YEAR
+	}
+	return pb.CalendarUnit_CALENDAR_UNIT_MONTH
+}
+
+// CalendarTruncOf is the first instant of the month or year containing a
+// timestamp, in UTC.
+//
+// Floors, including below the epoch: an instant in December 1969 truncates to
+// 1969-12-01 rather than forward to 1970-01-01.
+func CalendarTruncOf(unit CalendarUnit, s Scalar) Scalar {
+	return Scalar{&pb.Scalar{Node: &pb.Scalar_CalendarTrunc{
+		CalendarTrunc: &pb.CalendarTrunc{Unit: unit.wire(), Value: s.wire},
+	}}}
+}
+
+// MonthStartOf is the first instant of the month, in UTC.
+func MonthStartOf(s Scalar) Scalar { return CalendarTruncOf(MonthStart, s) }
+
+// YearStartOf is the first instant of the year, in UTC.
+func YearStartOf(s Scalar) Scalar { return CalendarTruncOf(YearStart, s) }
+
 // CaseBranch is one `WHEN ... THEN ...` of a [Case].
 type CaseBranch struct {
 	When Expr

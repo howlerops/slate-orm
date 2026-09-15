@@ -1033,6 +1033,18 @@ impl JoinedRow {
     /// already by [`JoinCursor::next`]. Evaluating here too would be a second
     /// place for the null rules to live, and the two would drift the first time
     /// one of them learned something.
+    ///
+    /// The cursor flattened this row once already, to evaluate the values
+    /// against, so a grouped join with a computed column flattens each row
+    /// twice. That was written up as "a real regression" and it is not one:
+    /// keeping the cursor's row on [`JoinedRow`] and reusing it here measured
+    /// *no* difference — a grouped join with one computed column over 60,000
+    /// paired rows ran at a median 320.9 and 342.2 ms rebuilding the row
+    /// across two runs, and 325.3 and 310.3 ms reusing it, against a
+    /// within-variant spread of 290 to 363 ms. Both paths clone every value
+    /// once; only the bookkeeping differs, and the bookkeeping is not where the
+    /// time goes. The hypothesis is withdrawn and the field it would have
+    /// needed is not here.
     #[must_use]
     pub fn flatten_appending(&self, schema: &JoinSchema) -> Row {
         let flat = self.flatten(schema);

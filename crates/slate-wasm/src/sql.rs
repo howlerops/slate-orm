@@ -1671,6 +1671,8 @@ const TIME_FUNCTIONS: &[&str] = &[
     "day",
     "day_of_week",
     "date",
+    "month_start",
+    "year_start",
     // Not a time function, and here anyway: this list is really "the names
     // that are computed columns rather than aggregates", and one arithmetic
     // function does not earn a second list to be the only member of.

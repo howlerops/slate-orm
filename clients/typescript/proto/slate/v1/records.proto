@@ -430,6 +430,20 @@ enum CalendarPart {
   CALENDAR_PART_DAY_OF_WEEK = 4;
 }
 
+// A calendar boundary a timestamp can be floored to, which `TimeUnit` cannot
+// express for the same reason `CalendarPart` exists: those are all a fixed
+// number of seconds and neither a month nor a year is one.
+//
+// `DAY` is deliberately absent — a day *is* a fixed number of seconds, so
+// `date_trunc` with `TIME_UNIT_DAY` already means it, and offering it twice
+// would be two spellings of one operation with no way to tell which a client
+// meant. Refused when unspecified, like every other unit here.
+enum CalendarUnit {
+  CALENDAR_UNIT_UNSPECIFIED = 0;
+  CALENDAR_UNIT_MONTH = 1;
+  CALENDAR_UNIT_YEAR = 2;
+}
+
 // How to measure the distance between two vectors. Refused when unspecified:
 // cosine and L2 rank differently, so a default would silently answer a
 // different nearest-neighbour question.
@@ -471,6 +485,10 @@ message Scalar {
     RegexpReplace regexp_replace = 16;
     CalendarField calendar_part = 17;
     Scalar round = 18;
+    // `date_trunc` to a month or a year. Separate from `date_trunc`, which
+    // takes a `TimeUnit` and is therefore a division; this one decodes the
+    // date, drops the fields below the boundary and encodes it again.
+    CalendarTrunc calendar_trunc = 19;
   }
 }
 
@@ -490,6 +508,11 @@ message TimePart {
 
 message CalendarField {
   CalendarPart part = 1;
+  Scalar value = 2;
+}
+
+message CalendarTrunc {
+  CalendarUnit unit = 1;
   Scalar value = 2;
 }
 

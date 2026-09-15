@@ -154,6 +154,49 @@ const fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+/// The inverse of [`civil_from_days`]: a proleptic-Gregorian date as days since
+/// 1970-01-01.
+///
+/// Hinnant's `days_from_civil`, transcribed, and exact over the same range for
+/// the same reason — it is the same era arithmetic run backwards. The shift by
+/// 719_468 is the same shift, and the `(153 * m + 2) / 5` is the same repeating
+/// month-length pattern read the other way.
+///
+/// This exists so `date_trunc` can reach a month and a year. Truncating to a
+/// fixed number of seconds needs no calendar: `seconds / 86_400 * 86_400` is
+/// midnight. A month has no fixed length, so truncating to one means decoding
+/// the date, dropping the day, and encoding it again — which needs this.
+const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    // March-based, so a leap day lands at the end of the year and never in the
+    // middle of the pattern.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400; // [0, 399]
+    let march_month = if month > 2 { month - 3 } else { month + 9 }; // [0, 11]
+    let day_of_year = (153 * march_month + 2) / 5 + day - 1; // [0, 365]
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year; // [0, 146_096]
+    era * 146_097 + day_of_era - 719_468
+}
+
+/// A calendar boundary [`Scalar::CalendarTrunc`] can floor a timestamp to.
+///
+/// Separate from [`TimeUnit`] for the reason [`CalendarPart`] is separate from
+/// it: `TimeUnit` promises a fixed number of seconds, which is how
+/// [`Scalar::DateTrunc`] is defined, and neither a month nor a year has one. A
+/// `Month` member there would give it a length that is a lie, and the lie would
+/// be silent — 30 days is wrong for seven months of the year.
+///
+/// `Day` is deliberately absent: it *is* a fixed number of seconds, so it
+/// belongs to `TimeUnit`, and offering it in both places would be two spellings
+/// of one operation with no way to tell which a caller meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarUnit {
+    /// The first instant of the month, in UTC.
+    Month,
+    /// The first instant of the year, in UTC.
+    Year,
+}
+
 /// A part of a timestamp, for [`Scalar::Extract`] and [`Scalar::DateTrunc`].
 ///
 /// Timestamps here are seconds since the epoch held in an integer column,
@@ -240,6 +283,19 @@ pub enum Scalar {
     CalendarPart {
         /// Which field.
         part: CalendarPart,
+        /// The timestamp, in seconds since the epoch.
+        value: Box<Scalar>,
+    },
+    /// `date_trunc('month' | 'year', value)`: the timestamp floored to a
+    /// calendar boundary.
+    ///
+    /// Separate from [`Scalar::DateTrunc`] because a month is not a fixed
+    /// number of seconds — see [`CalendarUnit`]. Floors rather than rounds, and
+    /// floors *below* the epoch too, so December 1969 truncates to
+    /// 1969-12-01 rather than to 1970-01-01.
+    CalendarTrunc {
+        /// Which boundary.
+        unit: CalendarUnit,
         /// The timestamp, in seconds since the epoch.
         value: Box<Scalar>,
     },
@@ -437,6 +493,15 @@ impl Scalar {
         }
     }
 
+    /// `date_trunc` to a calendar boundary. See [`Scalar::CalendarTrunc`].
+    #[must_use]
+    pub fn calendar_trunc(self, unit: CalendarUnit) -> Self {
+        Self::CalendarTrunc {
+            unit,
+            value: Box::new(self),
+        }
+    }
+
     /// How far `self` is from `other`, by `metric`.
     #[must_use]
     pub fn distance(self, other: impl Into<Self>, metric: Metric) -> Self {
@@ -576,6 +641,19 @@ impl Scalar {
                 }
                 _ => Value::Null,
             },
+            Self::CalendarTrunc { unit, value } => match number(&value.evaluate(row)) {
+                Some(Number::Int(seconds)) => {
+                    // Floored, as everywhere else here, so an instant before
+                    // the epoch truncates backwards rather than forwards.
+                    let (year, month, _) = civil_from_days(seconds.div_euclid(86_400));
+                    let month = match unit {
+                        CalendarUnit::Month => month,
+                        CalendarUnit::Year => 1,
+                    };
+                    Value::I64(days_from_civil(year, month, 1) * 86_400)
+                }
+                _ => Value::Null,
+            },
             Self::Case {
                 branches,
                 otherwise,
@@ -655,6 +733,7 @@ impl Scalar {
             Self::Round(value) => value.collect_columns(out),
             Self::Extract { value, .. }
             | Self::DateTrunc { value, .. }
+            | Self::CalendarTrunc { value, .. }
             | Self::CalendarPart { value, .. } => {
                 value.collect_columns(out);
             }

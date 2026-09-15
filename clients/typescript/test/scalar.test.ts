@@ -18,6 +18,7 @@ import {
   joinComputed,
   lit,
   month,
+  monthStart,
   mul,
   newJoin,
   ref,
@@ -28,6 +29,7 @@ import {
   uint,
   upper,
   year,
+  yearStart,
   computedAt,
   type Session,
   type Value,
@@ -392,4 +394,28 @@ test("a sort key may name a computed value", async () => {
   // instead would be a different answer.
   const byID = INSTANTS.map((s) => BigInt(new Date(s * 1000).getUTCFullYear()));
   assert.notDeepEqual(years, byID, "the fixture must not already be in year order");
+});
+
+// Truncating to a month and a year, which `dateTrunc` cannot do: `TimeUnit`
+// promises a fixed number of seconds and a month has none. `Date.UTC` is the
+// oracle.
+test("calendar truncation agrees with JavaScript's own Date", async () => {
+  const session = await events();
+  const got = await computedByID(session, {
+    table: "events",
+    compute: [monthStart(col(EVENT_AT)), yearStart(col(EVENT_AT))],
+  });
+  for (const [id, seconds] of INSTANTS.entries()) {
+    const values = got.get(BigInt(id));
+    assert.ok(values);
+    const when = new Date(seconds * 1000);
+    const wantMonth = BigInt(
+      Math.floor(Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), 1) / 1000),
+    );
+    const wantYear = BigInt(Math.floor(Date.UTC(when.getUTCFullYear(), 0, 1) / 1000));
+    assert.equal(asInt(values[0], "month start"), wantMonth, when.toISOString());
+    assert.equal(asInt(values[1], "year start"), wantYear, when.toISOString());
+    // Floors rather than rounds, which the 1969 instant is here to check.
+    assert.ok(asInt(values[0], "month start") <= BigInt(seconds));
+  }
 });

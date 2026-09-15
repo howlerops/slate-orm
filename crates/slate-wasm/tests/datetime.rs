@@ -401,6 +401,8 @@ fn every_function_the_parser_accepts_is_one_the_binding_lowers() {
         "day",
         "day_of_week",
         "date",
+        "month_start",
+        "year_start",
     ] {
         let sql = format!(
             "SELECT {function}(pickup_time), count(*) FROM trips \
@@ -1022,4 +1024,113 @@ fn a_qualified_name_picks_its_own_side() {
         left["rows"].as_array().unwrap().len() > right["rows"].as_array().unwrap().len(),
         "trips.id has far more distinct values than zones.id"
     );
+}
+
+// --- truncating to a month, which `month()` cannot order by ---------------
+
+/// `month_start()` groups by the calendar month and orders as the months do.
+///
+/// `month()` returns 1 to 12, so ordering by it puts every January of every
+/// year together — which is the right answer to a different question and the
+/// reason `date_trunc` needed a calendar boundary rather than another
+/// `TimeUnit`. The sample is one month, so this checks the *shape*: one group,
+/// at the first instant of January 2024, holding every trip.
+#[test]
+fn a_month_boundary_is_one_group_at_the_first_instant_of_the_month() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT month_start(pickup_time), count(*) FROM trips \
+         GROUP BY month_start(pickup_time)",
+    );
+    let rows = answer["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "the sample is one calendar month: {rows:?}");
+    let key: i64 = rows[0][0].as_str().unwrap().parse().unwrap();
+    // 2024-01-01T00:00:00Z. `date -u -d @1704067200` says so.
+    assert_eq!(key, 1_704_067_200);
+    let count: i64 = rows[0][1].as_str().unwrap().parse().unwrap();
+    assert_eq!(count, 100_000, "every trip is in January");
+
+    // And the year boundary is the same instant here, since January is the
+    // first month — which is a coincidence of this sample, not a property, so
+    // the next test uses dates that distinguish them.
+    let by_year = ok(
+        &playground,
+        "SELECT year_start(pickup_time), count(*) FROM trips \
+         GROUP BY year_start(pickup_time)",
+    );
+    let year_rows = by_year["rows"].as_array().unwrap();
+    assert_eq!(year_rows.len(), 1);
+    assert_eq!(
+        year_rows[0][0].as_str().unwrap().parse::<i64>().unwrap(),
+        1_704_067_200
+    );
+}
+
+/// The two boundaries differ, on rows written for the purpose.
+///
+/// The taxi sample is a single month, so it cannot tell `month_start` from
+/// `year_start` — both give one group at the same instant. These rows span
+/// three months of two years, where the two disagree about how many groups
+/// there are and about where each one starts.
+#[test]
+fn a_month_boundary_and_a_year_boundary_disagree_where_they_should() {
+    let playground = loaded();
+    // 2023-02-14, 2023-02-20, 2023-11-05, 2024-03-09 — four instants in three
+    // months of two years. Each verified with `date -u -d @<seconds>`.
+    //
+    // Ids at 900_001 and up, so `WHERE id >= 900001` selects exactly these:
+    // the sample's ids run 1 to 100,000. The SQL subset has no `OR`, so a
+    // range over `pickup_time` could not have picked out instants on both
+    // sides of January 2024 in one query.
+    for (id, at) in [
+        (900_001, 1_676_332_800_i64),
+        (900_002, 1_676_851_200),
+        (900_003, 1_699_142_400),
+        (900_004, 1_709_942_400),
+    ] {
+        let sql = format!(
+            "INSERT INTO trips VALUES ({id}, 1, 1, {at}, 600, 1, 1.0, 5.0, 0.0, 5.0, 'cash')"
+        );
+        ok(&playground, &sql);
+    }
+
+    let months = ok(
+        &playground,
+        "SELECT month_start(pickup_time), count(*) FROM trips \
+         WHERE id >= 900001 GROUP BY month_start(pickup_time)",
+    );
+    let month_keys: Vec<i64> = months["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r[0].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(
+        month_keys,
+        vec![1_675_209_600, 1_698_796_800, 1_709_251_200],
+        "2023-02-01, 2023-11-01, 2024-03-01"
+    );
+
+    let years = ok(
+        &playground,
+        "SELECT year_start(pickup_time), count(*) FROM trips \
+         WHERE id >= 900001 GROUP BY year_start(pickup_time)",
+    );
+    let year_rows = years["rows"].as_array().unwrap();
+    let year_keys: Vec<i64> = year_rows
+        .iter()
+        .map(|r| r[0].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(
+        year_keys,
+        vec![1_672_531_200, 1_704_067_200],
+        "2023-01-01 and 2024-01-01: three months collapse to two years"
+    );
+    // The February rows land in 2023 together, which is the collapse.
+    let counts: Vec<i64> = year_rows
+        .iter()
+        .map(|r| r[1].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(counts, vec![3, 1]);
 }

@@ -46,8 +46,8 @@ pub mod taxi;
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use slate_kernel::{
-    Aggregate, CalendarPart, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey, Query,
-    RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
+    Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey,
+    Query, RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
@@ -1976,6 +1976,14 @@ fn compute_scalar(spec: &ComputeSpec, table: &TableDef, base: usize) -> Result<S
         // Midnight of the day, as epoch seconds — so grouping by it gives one
         // group per calendar day, ordered as the days are.
         "date" => timestamp(value.date_trunc(TimeUnit::Day)),
+        // The first instant of the month or the year. `date()` is a division
+        // by 86,400; these are not, because neither a month nor a year has a
+        // fixed length — see `CalendarUnit`. Grouping by one gives a group per
+        // calendar month, ordered as the months are, which is what `year()`
+        // and `month()` cannot do on their own: those return 2024 and 2,
+        // so ordering by `month()` puts every January of every year together.
+        "month_start" => timestamp(value.calendar_trunc(CalendarUnit::Month)),
+        "year_start" => timestamp(value.calendar_trunc(CalendarUnit::Year)),
         "round" => {
             if matches!(kind, T::F64 | T::I64 | T::U64) {
                 Ok(value.round())

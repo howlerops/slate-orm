@@ -39,11 +39,13 @@ from .values import PyValue, to_value
 
 __all__ = [
     "CalendarPart",
+    "CalendarUnit",
     "as_scalar",
     "Metric",
     "Scalar",
     "TimeUnit",
     "calendar_part",
+    "calendar_trunc",
     "case",
     "coalesce",
     "concat",
@@ -56,10 +58,12 @@ __all__ = [
     "lit",
     "lower",
     "month",
+    "month_start",
     "regexp_replace",
     "round_",
     "upper",
     "year",
+    "year_start",
 ]
 
 
@@ -92,6 +96,23 @@ class CalendarPart(enum.Enum):
     DAY_OF_MONTH = pb.CALENDAR_PART_DAY_OF_MONTH
     #: Zero for Sunday, matching ClickHouse, MySQL and SQLite rather than ISO.
     DAY_OF_WEEK = pb.CALENDAR_PART_DAY_OF_WEEK
+
+
+class CalendarUnit(enum.Enum):
+    """A calendar boundary `date_trunc` can floor a timestamp to.
+
+    Separate from `TimeUnit` for the reason `CalendarPart` is: those are all a
+    fixed number of seconds and a month is not, so `date_trunc(TimeUnit.…)` is
+    a division while this one decodes the date, drops the fields below the
+    boundary and encodes it again.
+
+    `DAY` is deliberately absent — a day *is* a fixed number of seconds, so
+    `date_trunc(TimeUnit.DAY, t)` already means it, and two spellings of one
+    operation would leave no way to tell which was meant.
+    """
+
+    MONTH = pb.CALENDAR_UNIT_MONTH
+    YEAR = pb.CALENDAR_UNIT_YEAR
 
 
 class Metric(enum.Enum):
@@ -244,6 +265,19 @@ class _TimePart(Scalar):
 
 
 @dataclasses.dataclass(frozen=True)
+class _CalendarTrunc(Scalar):
+    unit: CalendarUnit
+    value: Scalar
+
+    def to_proto(self) -> pb.Scalar:
+        return pb.Scalar(
+            calendar_trunc=pb.CalendarTrunc(
+                unit=self.unit.value, value=self.value.to_proto()
+            )
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class _CalendarField(Scalar):
     part: CalendarPart
     value: Scalar
@@ -338,6 +372,25 @@ def extract(unit: TimeUnit, value: Operand) -> Scalar:
 def date_trunc(unit: TimeUnit, value: Operand) -> Scalar:
     """A timestamp truncated to `unit`."""
     return _TimePart("date_trunc", unit, as_scalar(value))
+
+
+def calendar_trunc(unit: CalendarUnit, value: Operand) -> Scalar:
+    """The first instant of the month or the year containing `value`, in UTC.
+
+    Floors, including below the epoch: an instant in December 1969 truncates to
+    1969-12-01 rather than forward to 1970-01-01.
+    """
+    return _CalendarTrunc(unit, as_scalar(value))
+
+
+def month_start(value: Operand) -> Scalar:
+    """The first instant of the month, in UTC."""
+    return calendar_trunc(CalendarUnit.MONTH, value)
+
+
+def year_start(value: Operand) -> Scalar:
+    """The first instant of the year, in UTC."""
+    return calendar_trunc(CalendarUnit.YEAR, value)
 
 
 def calendar_part(part: CalendarPart, value: Operand) -> Scalar:

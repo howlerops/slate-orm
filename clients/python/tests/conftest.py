@@ -83,6 +83,7 @@ def _build() -> pathlib.Path:
         path = pathlib.Path(named)
         if not path.exists():
             raise RuntimeError(f"SLATE_TESTSERVER={named} does not exist")
+        _refuse_if_stale(path, "SLATE_TESTSERVER")
         return path
     if shutil.which("cargo") is None:
         pytest.skip("cargo is not on PATH, so the head node cannot be built")
@@ -101,6 +102,63 @@ def _build() -> pathlib.Path:
     if not BINARY.exists():
         raise RuntimeError(f"cargo reported success but {BINARY} is not there")
     return BINARY
+
+
+#: Directories whose contents decide what the server does.
+#:
+#: The `.proto` is in there because the protocol is the thing this client and
+#: that binary have to agree about, and a stale binary speaking an older one is
+#: exactly the failure this check exists for.
+SERVER_SOURCES = (
+    REPO_ROOT / "crates",
+    REPO_ROOT / "clients" / "python" / "testserver",
+)
+
+
+def _newest_source() -> tuple[float, pathlib.Path] | None:
+    """The most recently modified file the server is built from."""
+    newest: tuple[float, pathlib.Path] | None = None
+    for root in SERVER_SOURCES:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            # `target/` is build output, not source, and walking it is slow
+            # enough to notice: it is the biggest directory in the tree.
+            if "target" in path.parts or not path.is_file():
+                continue
+            if path.suffix not in {".rs", ".toml", ".proto"}:
+                continue
+            stamp = path.stat().st_mtime
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, path)
+    return newest
+
+
+def _refuse_if_stale(binary: pathlib.Path, variable: str) -> None:
+    """Refuse a prebuilt binary older than the source it was built from.
+
+    This is here because it happened. A full run of this suite reported 153
+    passing tests against a `slate-testserver` built before that session's
+    server changes — so every test of the new behaviour was checking the *old*
+    server, and passing, because the client asked for something the old binary
+    politely ignored. It was found by three new tests failing once the binary
+    was rebuilt, which is luck rather than a process.
+
+    Compared by modification time, which is crude and catches the whole of the
+    real failure: a binary handed over by CI is minutes old, and one a
+    contributor built last week is not.
+    """
+    newest = _newest_source()
+    if newest is None:
+        return
+    stamp, source = newest
+    if binary.stat().st_mtime >= stamp:
+        return
+    raise RuntimeError(
+        f"{variable}={binary} was built before {source.relative_to(REPO_ROOT)} "
+        f"was last changed, so the suite would test a server this tree did not "
+        f"produce. Rebuild it, or unset {variable} to build from source."
+    )
 
 
 class Serving:

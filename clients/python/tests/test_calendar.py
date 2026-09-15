@@ -18,12 +18,14 @@ from slate import Agg, AggregateQuery, Client, Query, asc
 from slate.scalar import (
     CalendarPart,
     calendar_part,
+    month_start,
     day_of_month,
     day_of_week,
     lit,
     month,
     round_,
     year,
+    year_start,
 )
 from slate.values import i64
 
@@ -159,3 +161,66 @@ def test_the_literal_guard_still_applies_inside_a_calendar_part(client: Client) 
 
     with pytest.raises(ValueTypeError):
         year(lit(1_700_000_000))
+
+
+def test_calendar_truncation_agrees_with_pythons_own_calendar(client: Client) -> None:
+    """`month_start` and `year_start`, against `datetime.replace`.
+
+    `date_trunc` to a fixed unit is a division. A month has no fixed length —
+    that is why `CalendarUnit` is separate from `TimeUnit` — so truncating to
+    one decodes the date, drops the day and encodes it again. The encoding half
+    is `days_from_civil`, transcribed arithmetic, and the round trip through
+    `civil_from_days` would agree with itself if both were wrong by the same
+    day. Python's `datetime` knows the Gregorian calendar independently.
+
+    The fixture spans 1977 to 2072 and crosses 2000, the century that *is* a
+    leap year under the divisible-by-400 rule and is not under the
+    divisible-by-100 one.
+    """
+    q = AggregateQuery(DOCS)
+    q.compute(month_start(q.c.size * i64(SPREAD)), year_start(q.c.size * i64(SPREAD)))
+    q.group_by(q.computed(0), q.computed(1))
+    q.aggregate(Agg.count())
+
+    got = {(int(g.key[0]), int(g.key[1])) for g in client.aggregate(q)}
+    want = set()
+    for seconds in _instants():
+        when = _utc(seconds)
+        want.add(
+            (
+                int(
+                    when.replace(
+                        day=1, hour=0, minute=0, second=0, microsecond=0
+                    ).timestamp()
+                ),
+                int(
+                    when.replace(
+                        month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+                    ).timestamp()
+                ),
+            )
+        )
+    assert got == want
+
+
+def test_truncation_floors_rather_than_rounding(client: Client) -> None:
+    """A month boundary is at or before the instant, never after it.
+
+    The property that distinguishes a floor from a truncation toward zero, and
+    the one that matters below the epoch: rounding toward zero would move a
+    December 1969 instant *forward* into 1970 and put it in the wrong year.
+
+    The fixture is all positive, so this checks the property rather than the
+    epoch case — `crates/slate-kernel/tests/calendar.rs` has the negative
+    instants, where it can use a literal rather than a column.
+    """
+    q = AggregateQuery(DOCS)
+    q.compute(q.c.size * i64(SPREAD), month_start(q.c.size * i64(SPREAD)))
+    q.group_by(q.computed(0), q.computed(1))
+    q.aggregate(Agg.count())
+    for group in client.aggregate(q):
+        instant, boundary = int(group.key[0]), int(group.key[1])
+        assert boundary <= instant, f"{boundary} is after {instant}"
+        # And within 31 days of it, which says it is *this* month's boundary
+        # rather than some earlier one.
+        assert instant - boundary < 31 * 86_400

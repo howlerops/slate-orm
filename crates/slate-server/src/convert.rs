@@ -39,9 +39,9 @@ use crate::proto as pb;
 use crate::session::{GroupedExplanation, MultiRow};
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
-    Aggregate, CalendarPart, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group,
-    Grouping, Join, JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric,
-    Projection, ReadToken, ScanOrder, Side, TimeUnit,
+    Aggregate, CalendarPart, CalendarUnit, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr,
+    Freshness, Group, Grouping, Join, JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType,
+    Metric, Projection, ReadToken, ScanOrder, Side, TimeUnit,
 };
 use slate_kernel::{Chain, ChainPlan, ChainRow, JoinSchema, Scalar};
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
@@ -887,6 +887,26 @@ fn part_from_proto(part: i32) -> Result<CalendarPart, Status> {
     }
 }
 
+const fn calendar_unit_to_proto(unit: CalendarUnit) -> pb::CalendarUnit {
+    match unit {
+        CalendarUnit::Month => pb::CalendarUnit::Month,
+        CalendarUnit::Year => pb::CalendarUnit::Year,
+    }
+}
+
+fn calendar_unit_from_proto(unit: i32) -> Result<CalendarUnit, Status> {
+    match pb::CalendarUnit::try_from(unit) {
+        Ok(pb::CalendarUnit::Month) => Ok(CalendarUnit::Month),
+        Ok(pb::CalendarUnit::Year) => Ok(CalendarUnit::Year),
+        // Neither is a safe guess: truncating to a year where a month was
+        // meant returns a timestamp, in the right column, twelve times too
+        // coarse.
+        Ok(pb::CalendarUnit::Unspecified) | Err(_) => Err(bad(format!(
+            "calendar unit {unit} is not one this server knows"
+        ))),
+    }
+}
+
 const fn metric_to_proto(metric: Metric) -> pb::Metric {
     match metric {
         Metric::L2 => pb::Metric::L2,
@@ -948,6 +968,10 @@ pub fn scalar_to_proto(space: &Space<'_>, scalar: &Scalar) -> pb::Scalar {
         })),
         Scalar::CalendarPart { part, value } => Node::CalendarPart(Box::new(pb::CalendarField {
             part: part_to_proto(*part) as i32,
+            value: Some(Box::new(scalar_to_proto(space, value))),
+        })),
+        Scalar::CalendarTrunc { unit, value } => Node::CalendarTrunc(Box::new(pb::CalendarTrunc {
+            unit: calendar_unit_to_proto(*unit) as i32,
             value: Some(Box::new(scalar_to_proto(space, value))),
         })),
         Scalar::Round(inner) => Node::Round(Box::new(scalar_to_proto(space, inner))),
@@ -1051,6 +1075,10 @@ pub(crate) fn scalar_named(
         Node::CalendarPart(field) => Scalar::CalendarPart {
             part: part_from_proto(field.part)?,
             value: one(&field.value)?,
+        },
+        Node::CalendarTrunc(trunc) => Scalar::CalendarTrunc {
+            unit: calendar_unit_from_proto(trunc.unit)?,
+            value: one(&trunc.value)?,
         },
         Node::Round(inner) => Scalar::Round(Box::new(scalar_named(space, inner, what)?)),
         Node::Case(case) => {

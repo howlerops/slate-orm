@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,8 +77,13 @@ func binary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		if named := os.Getenv("SLATE_SERVERD"); named != "" {
-			if _, err := os.Stat(named); err != nil {
+			info, err := os.Stat(named)
+			if err != nil {
 				buildErr = fmt.Errorf("SLATE_SERVERD=%s: %w", named, err)
+				return
+			}
+			if err := refuseIfStale(named, info); err != nil {
+				buildErr = err
 				return
 			}
 			binaryPath = named
@@ -100,6 +106,73 @@ func binary(t *testing.T) string {
 		t.Fatal(buildErr)
 	}
 	return binaryPath
+}
+
+// refuseIfStale rejects a prebuilt binary older than the source it was built
+// from.
+//
+// This is here because it happened, in the Python suite: a full run reported
+// 153 passing tests against a `slate-testserver` built before that session's
+// server changes, so every test of the new behaviour was checking the old
+// server and passing, because the client asked for something the old binary
+// politely ignored. Three new tests failing after a rebuild is what found it,
+// which is luck rather than a process.
+//
+// Modification times are crude and catch the whole of the real failure: a
+// binary CI just handed over is minutes old, and one built last week is not.
+func refuseIfStale(path string, info os.FileInfo) error {
+	root, err := repoRoot()
+	if err != nil {
+		// Not in a checkout, so there is no source to compare against. That
+		// is a legitimate way to run this — a released binary and the client
+		// from a module cache — so it is not an error.
+		return nil
+	}
+	var newest time.Time
+	var newestPath string
+	for _, dir := range []string{"crates", "clients/python/testserver"} {
+		walkErr := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			// `target/` is build output, and the biggest directory in the tree.
+			if d.IsDir() && d.Name() == "target" {
+				return filepath.SkipDir
+			}
+			if d.IsDir() {
+				return nil
+			}
+			switch filepath.Ext(p) {
+			case ".rs", ".toml", ".proto":
+			default:
+				return nil
+			}
+			stat, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			if stat.ModTime().After(newest) {
+				newest, newestPath = stat.ModTime(), p
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return nil
+		}
+	}
+	if newestPath == "" || !info.ModTime().Before(newest) {
+		return nil
+	}
+	relative, err := filepath.Rel(root, newestPath)
+	if err != nil {
+		relative = newestPath
+	}
+	return fmt.Errorf(
+		"SLATE_SERVERD=%s was built before %s was last changed, so the suite "+
+			"would test a server this tree did not produce. Rebuild it, or unset "+
+			"SLATE_SERVERD to build from source",
+		path, relative,
+	)
 }
 
 func repoRoot() (string, error) {

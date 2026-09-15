@@ -154,6 +154,39 @@ export const dayOfMonth = (value: Scalar): Scalar => calendarPart("day-of-month"
 /** The day of the week, 0 for Sunday through 6 for Saturday. */
 export const dayOfWeek = (value: Scalar): Scalar => calendarPart("day-of-week", value);
 
+/**
+ * A calendar boundary {@link calendarTrunc} can floor a timestamp to.
+ *
+ * Separate from {@link TimeUnit} for the reason {@link CalendarPart} is: those
+ * are all a fixed number of seconds and a month is not, so `dateTrunc` is a
+ * division while this decodes the date, drops the fields below the boundary and
+ * encodes it again.
+ *
+ * A day is absent on purpose — it *is* a fixed number of seconds, so
+ * `dateTrunc("day", t)` already means it.
+ */
+export type CalendarUnit = "month" | "year";
+
+const CALENDAR_UNITS: Record<CalendarUnit, string> = {
+  month: "CALENDAR_UNIT_MONTH",
+  year: "CALENDAR_UNIT_YEAR",
+};
+
+/**
+ * The first instant of the month or year containing `value`, in UTC.
+ *
+ * Floors, including below the epoch: an instant in December 1969 truncates to
+ * 1969-12-01 rather than forward to 1970-01-01.
+ */
+export const calendarTrunc = (unit: CalendarUnit, value: Scalar): Scalar => ({
+  wire: { calendarTrunc: { unit: CALENDAR_UNITS[unit], value: value.wire } },
+});
+
+/** The first instant of the month, in UTC. */
+export const monthStart = (value: Scalar): Scalar => calendarTrunc("month", value);
+/** The first instant of the year, in UTC. */
+export const yearStart = (value: Scalar): Scalar => calendarTrunc("year", value);
+
 /** One `WHEN ... THEN ...` of a {@link caseWhen}. */
 export interface CaseBranch {
   readonly when: Expr;

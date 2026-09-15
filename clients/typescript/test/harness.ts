@@ -12,7 +12,7 @@
  * closes the race where a connection arrives between bind and accept.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +88,7 @@ function binary(): string {
   const named = process.env["SLATE_SERVERD"];
   if (named) {
     if (!existsSync(named)) throw new Error(`SLATE_SERVERD=${named} does not exist`);
+    refuseIfStale(named);
     return named;
   }
   if (!built) {
@@ -102,6 +103,57 @@ function binary(): string {
     built = true;
   }
   return path.join(ROOT, "target", "debug", "slate-serverd");
+}
+
+/**
+ * Refuse a prebuilt binary older than the source it was built from.
+ *
+ * This is here because it happened, in the Python suite: a full run reported
+ * 153 passing tests against a server built before that session's changes, so
+ * every test of the new behaviour was checking the old server and passing,
+ * because the client asked for something the old binary politely ignored.
+ * Three new tests failing after a rebuild is what found it, which is luck
+ * rather than a process.
+ *
+ * Modification times are crude and catch the whole of the real failure: a
+ * binary CI just handed over is minutes old, and one built last week is not.
+ */
+function refuseIfStale(binaryPath: string): void {
+  const built = statSync(binaryPath).mtimeMs;
+  let newest = 0;
+  let newestPath = "";
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // `target/` is build output, and the biggest directory in the tree.
+        if (entry.name !== "target") walk(full);
+        continue;
+      }
+      if (!/\.(rs|toml|proto)$/.test(entry.name)) continue;
+      const stamp = statSync(full).mtimeMs;
+      if (stamp > newest) {
+        newest = stamp;
+        newestPath = full;
+      }
+    }
+  };
+  for (const dir of ["crates", path.join("clients", "python", "testserver")]) {
+    walk(path.join(ROOT, dir));
+  }
+  if (!newestPath || built >= newest) return;
+  throw new Error(
+    `SLATE_SERVERD=${binaryPath} was built before ` +
+      `${path.relative(ROOT, newestPath)} was last changed, so the suite would ` +
+      `test a server this tree did not produce. Rebuild it, or unset ` +
+      `SLATE_SERVERD to build from source.`,
+  );
 }
 
 export interface Serving {

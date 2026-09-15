@@ -32,8 +32,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree as _;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
-    Aggregate, CalendarPart, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar, ScanOrder,
-    TimeUnit,
+    Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar,
+    ScanOrder, TimeUnit,
 };
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
@@ -549,6 +549,12 @@ fn any_scalar() -> impl Strategy<Value = Scalar> {
                     value: Box::new(value),
                 }
             }),
+            (inner.clone(), any_calendar_unit()).prop_map(|(value, unit)| {
+                Scalar::CalendarTrunc {
+                    unit,
+                    value: Box::new(value),
+                }
+            }),
             inner.prop_map(|value| Scalar::Round(Box::new(value))),
         ]
     })
@@ -561,6 +567,10 @@ fn any_calendar_part() -> impl Strategy<Value = CalendarPart> {
         Just(CalendarPart::DayOfMonth),
         Just(CalendarPart::DayOfWeek),
     ]
+}
+
+fn any_calendar_unit() -> impl Strategy<Value = CalendarUnit> {
+    prop_oneof![Just(CalendarUnit::Month), Just(CalendarUnit::Year)]
 }
 
 fn any_aggregate() -> impl Strategy<Value = Aggregate> {
@@ -628,6 +638,7 @@ fn the_scalar_generator_reaches_every_variant() {
         "distance",
         "regexp_replace",
         "calendar_part",
+        "calendar_trunc",
         "round",
     ]
     .into_iter()
@@ -718,6 +729,10 @@ fn collect_scalars(scalar: &Scalar, into: &mut BTreeSet<&'static str>) {
         }
         Scalar::CalendarPart { value, .. } => {
             into.insert("calendar_part");
+            collect_scalars(value, into);
+        }
+        Scalar::CalendarTrunc { value, .. } => {
+            into.insert("calendar_trunc");
             collect_scalars(value, into);
         }
         Scalar::Round(value) => {

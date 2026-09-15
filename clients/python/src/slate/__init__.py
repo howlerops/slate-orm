@@ -82,11 +82,13 @@ from .query import (
 )
 from .rows import Group, JoinedRow, Row
 from .scalar import (
+    CalendarUnit,
     Metric,
     Scalar,
     TimeUnit,
     as_scalar,
     calendar_part,
+    calendar_trunc,
     case,
     coalesce,
     concat,
@@ -99,10 +101,12 @@ from .scalar import (
     lit,
     lower,
     month,
+    month_start,
     regexp_replace,
     round_,
     upper,
     year,
+    year_start,
 )
 from .schema import Column, Table
 from .types import ValueType
@@ -180,6 +184,7 @@ __all__ = [
     "desc",
     "as_scalar",
     "calendar_part",
+    "calendar_trunc",
     "day_of_month",
     "day_of_week",
     "distance",
@@ -189,10 +194,12 @@ __all__ = [
     "lit",
     "lower",
     "month",
+    "month_start",
     "not_",
     "regexp_replace",
     "round_",
     "u64",
     "year",
+    "year_start",
     "upper",
 ]
