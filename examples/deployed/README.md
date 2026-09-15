@@ -6,9 +6,11 @@ SlateDB, on an S3 bucket — loads the workbench's own 100,000 trips through the
 socket, and checks the answers against a fold done independently in Python.
 
 ```sh
-./run.sh                 # start, load, check, tear down
+./run.sh                 # start, load, check, restart, check, tear down
 ./run.sh --keep          # leave it running and print the address
 ./run.sh --trips 20000   # a quick pass over a prefix
+./run.sh --python        # only the Python check, for a quick pass
+./run.sh --no-restart    # skip the restart phase
 ```
 
 Nothing needs installing. Every port is picked by the kernel, so this runs twice
@@ -17,8 +19,9 @@ at once, and it does not need Docker.
 ## What is actually running
 
 ```
-  check.py ──gRPC──▶ slate-serverd ──▶ SlateDB ──S3──▶ s3_server ──▶ a temp dir
-  (Python SDK)        (the kernel)       (LSM)          (s3s)
+  check.py    ─┐
+  go/check.go ─┼─gRPC─▶ slate-serverd ──▶ SlateDB ──S3──▶ s3_server ──▶ temp dir
+  node/check  ─┘        writer + 2 replicas   (LSM)         (s3s)
 ```
 
 Four processes' worth of real: a real socket, a real protobuf, a real WAL, real
@@ -27,6 +30,26 @@ S3 *implementation* — `s3s-fs` is a filesystem pretending to be a bucket, and 
 does not have MinIO's or R2's conditional-write semantics, multipart thresholds
 or error shapes. CI's `minio` job covers that layer against the real thing; this
 covers everything above it.
+
+**All three SDKs, over the same socket.** `check.py` folds the sample in Python
+and writes what it computed; `go/check.go` and `node/src/check.ts` ask the same
+questions through their own client and assert the same answers. The fold stays
+in one language on purpose — three decoders of one packed file would be three
+places to be wrong, and a common-mode error in them would agree with itself.
+
+**Two read replicas.** Every read goes to the pool, which round-robins over
+them and falls back to the writer. The check does eight reads and requires at
+least one to come back named `reader-`: a pool that declared two replicas and
+used neither would be invisible from the answers alone. A read asking for
+`Freshness.latest()` is checked separately, because that one has nowhere to go
+but the writer.
+
+**A restart.** The head node is killed with `SIGKILL`, the replacement waits
+out the dead node's writer lease — three seconds, set in `head.toml`, and the
+run fails loudly if the new node comes up read-only instead — and every check
+runs again against SSTs this process did not write. A single acknowledged write
+straddles the kill, so what is proved is that it was in the bucket and not in
+the dead process's memory.
 
 ## Why it exists
 
@@ -50,11 +73,20 @@ Shifting its epoch by an hour was tried: only the absolute assertion — the
 sample's quietest hour is 04:00 and its busiest 18:00 — noticed. That check is
 the reason there is an absolute one at all.
 
-**The Go and TypeScript clients.** Python only. The three-SDK comparison lives in
-`examples/explorer`, over an in-memory head node.
+**Failover under load.** The restart here is a kill and a cold start: nothing
+is reading while the lease changes hands, and no second node is campaigning.
+Overlapping writers across a lease change are `slate-server`'s own suite.
 
-**Replicas, leases and failover.** One writer, no readers, no handover. Those are
-`slate-slatedb`'s and `slate-server`'s own suites.
+**Which durability setting is which.** The probe narrows the window between an
+acknowledgement and the kill as far as a shell can, and it does not separate
+`durable` from `visible`: setting `visible` and killing immediately was tried
+three times and the row survived every time. The claim is not made — see
+`probe.py`. That distinction needs a fault injector, not a stopwatch.
+
+**A replica actually lagging.** The replicas poll fast enough on a local
+filesystem bucket that nothing here observes stale data, so the catch-up path
+is exercised in the sense that a read asking for a sequence is served, and not
+in the sense that it had to wait.
 
 **Anything about how fast it is.** The loader prints a rate because watching
 100,000 rows go by in silence is unpleasant, not because the number means

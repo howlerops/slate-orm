@@ -1,0 +1,17 @@
+{
+  "name": "@slate-orm/deployed-check",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && node dist/check.js"
+  },
+  "dependencies": {
+    "@slate-orm/client": "file:../../../clients/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

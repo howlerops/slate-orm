@@ -269,9 +269,20 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install grpcio protobuf
-      # The whole stack: a real S3 server, SlateDB on it, a head node on that,
-      # and the Python SDK over gRPC — checked against a fold done in Python
-      # from the same packed file the browser reads.
+      # Go and Node as well: the run asks the same questions through all three
+      # SDKs over the same socket, so a job with only Python would silently
+      # skip two thirds of it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # The whole stack: a real S3 server, SlateDB on it, a head node with two
+      # read replicas on that, and all three SDKs over gRPC — checked against a
+      # fold done in Python from the same packed file the browser reads. Then
+      # the head node is killed and a new one takes over on the same bucket,
+      # and every check runs again.
       #
       # A prefix rather than all 100,000 trips: the load is ~9,000 rows/s
       # through the full path, and the differential checks say the same thing

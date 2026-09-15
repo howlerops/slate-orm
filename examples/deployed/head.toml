@@ -65,6 +65,43 @@ columns = [
 ]
 primary_key = ["id"]
 
+# Two read replicas beside the writer, so a read can be served by something
+# that is not the process that wrote it.
+#
+# `following` means each one re-reads the manifest on a poll and serves the
+# snapshot it has reached. That is where the interesting failure lives: a read
+# carrying a sequence can only be served by a replica that has *polled* past
+# it, so `[routing] catch_up` is both the budget the pool waits and the thing
+# that derives the poll interval — a poll longer than the budget means no such
+# read can ever be served by a replica. `slate-serverd` refuses a
+# `poll_interval` at or above `catch_up` for that reason.
+[[replicas]]
+name = "reader-a"
+
+[[replicas]]
+name = "reader-b"
+
+[routing]
+# Two seconds, which is long for a local filesystem bucket and short enough
+# that a check waiting on it does not look hung. The replicas' poll interval
+# derives from this.
+catch_up = "2s"
+
+[lease]
+# Three seconds instead of the default fifteen, which is the whole reason this
+# section exists: `run.sh` kills the head node and starts another, and the new
+# one cannot open the writer until the dead one's lease has expired. Nothing
+# renews a lease on behalf of a process that is gone, so the wait is exactly
+# this term.
+#
+# That is the trade a deployment makes here, and it is not free either way. A
+# short term means a fast replacement and more writes to the lease object; it
+# also means less slack for a leader that is alive but paused — a stop-the-world
+# GC, a stalled disk, a throttled bucket — and a leader that misses its renewal
+# is fenced whether or not it was actually dead. Three seconds is right for an
+# example that has to finish; it would be reckless in production.
+term = "3s"
+
 [[security.grants]]
 role = "app"
 tables = ["trips", "zones"]

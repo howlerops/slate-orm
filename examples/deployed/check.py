@@ -15,6 +15,7 @@ browser and not through a socket is a computed column that does not work.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import pathlib
 import sys
@@ -28,6 +29,7 @@ from slate import (  # noqa: E402
     Agg,
     AggregateQuery,
     Client,
+    Freshness,
     GroupedJoinQuery,
     Identity,
     JoinQuery,
@@ -58,6 +60,13 @@ def close(got: float, want: float, tolerance: float = 1e-6) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", required=True)
+    parser.add_argument(
+        "--expect",
+        type=pathlib.Path,
+        help="write the answers here, for the Go and TypeScript checks to "
+        "assert against. The fold is in Python; this is how the other two "
+        "SDKs are held to it without a second decoder in each language.",
+    )
     parser.add_argument(
         "--trips",
         type=int,
@@ -237,6 +246,82 @@ def main() -> int:
         got_shift == dict(want_shift) and sum(got_shift.values()) == len(trips),
         f"{sum(got_shift.values())} trips",
     )
+
+    # --- a read replica served something ----------------------------------
+    #
+    # Two `[[replicas]]` are declared, so a read may be served by the writer or
+    # by either of them, and the answer must be the same whichever. What is
+    # asserted is that the *name* comes back and is one this config declares —
+    # a pool that silently fell back to the writer for every read would look
+    # identical from the answers alone.
+    replica_names = {"writer", "reader-a", "reader-b"}
+    # Several reads, not one: the pool is round-robin over the replicas, so a
+    # single read proves only that *something* served it. Asserting that at
+    # least one `reader-` name appears is what distinguishes two configured
+    # replicas from two declared and never used — which is what a pool that
+    # quietly fell back to the writer on every read would look like, and is
+    # indistinguishable from the answers alone.
+    seen: set[str] = set()
+    counts: set[int] = set()
+    for _ in range(8):
+        stream = client.aggregate(AggregateQuery(TRIPS).aggregate(Agg.count()))
+        counts.update(int(group.aggregates[0]) for group in stream)
+        if stream.served_by is not None:
+            seen.add(stream.served_by.replica)
+    check(
+        "every read names the view that served it, and they are this config's",
+        seen and seen <= replica_names,
+        f"{sorted(seen)}",
+    )
+    check(
+        "and a read replica served at least one of them",
+        any(name.startswith("reader-") for name in seen),
+        f"{sorted(seen)}",
+    )
+    check(
+        "whichever view answered, the count is the one the writer has",
+        counts == {len(trips)},
+        f"{sorted(counts)} against [{len(trips)}]",
+    )
+
+    # A read that *names* a sequence can only be served by a view that has
+    # reached it, which for a following replica means it has polled past it.
+    # This is the check that would fail if `catch_up` were shorter than the
+    # poll interval — the routing note in `head.toml` is about exactly that.
+    fresh = client.aggregate(
+        AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=Freshness.latest()
+    )
+    latest = [int(group.aggregates[0]) for group in fresh]
+    check(
+        "a read demanding the latest snapshot is served, and is right",
+        latest == [len(trips)],
+        f"{latest} against [{len(trips)}], served by {fresh.served_by!r}",
+    )
+
+    if args.expect is not None:
+        # The questions the Go and TypeScript checks re-ask, with the answers
+        # this fold produced. Written rather than recomputed in each language
+        # because the *fold* is the oracle and there should be one of it: three
+        # decoders of the same packed file would be three places to be wrong,
+        # and a common-mode error in them would agree with itself.
+        args.expect.write_text(
+            json.dumps(
+                {
+                    "trips": len(trips),
+                    "byHour": {str(h): n for h, n in sorted(want.items())},
+                    "byBorough": dict(sorted(want_borough.items())),
+                    "joinedHours": {
+                        str(h): [len(f), sum(f) / len(f)]
+                        for h, f in sorted(want_joined.items())
+                    },
+                    "zone132": in_zone,
+                    "replicas": sorted(replica_names),
+                },
+                indent=1,
+            )
+            + "\n"
+        )
+        print(f"wrote  the expected answers to {args.expect}")
 
     client.close()
 

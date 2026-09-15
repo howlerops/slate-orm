@@ -26,6 +26,16 @@ clients/python/src/*.egg-info/
 # a nested build directory escapes a root-anchored rule, so name each one.
 examples/explorer/backends/node/node_modules/
 examples/explorer/backends/node/dist/
+
+# The deployed example's Go and TypeScript checks, same reasons: npm's tree and
+# tsc's output are not source, and `go build -o` writes into a temp dir rather
+# than here so there is nothing to ignore on the Go side.
+examples/deployed/node/node_modules/
+examples/deployed/node/dist/
+# And `go build` with no -o writes here, the same stray as the explorer's.
+# `run.sh` passes -o into a temp dir; this is for a person who typed the plain
+# command while reading the file.
+examples/deployed/go/go
 examples/explorer/backends/go/go
 examples/explorer/web/node_modules/
 examples/explorer/web/dist/
