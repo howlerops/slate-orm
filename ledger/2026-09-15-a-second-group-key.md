@@ -89,6 +89,36 @@ shipped. It is written down because the shape is worth recognising: widening a
 `0` behind it silently wrong, and both of those would have produced a correctly
 shaped answer in a different order, with nothing to report it.
 
+### Mutation testing
+
+Six mutations, each applied alone, against `--test sql --test taxi --test
+datetime`:
+
+| mutation | verdict |
+| --- | --- |
+| an aggregate's group slot is `n + 1` again (the off-by-one above) | caught |
+| a key's group slot is always 0 (the other one) | caught |
+| `GROUP BY` takes only the first key | caught, 2 tests |
+| duplicate keys are kept | **survived** — see below |
+| only the first key may be selected | caught, 2 tests |
+| the header shows only the first key | caught |
+
+The two off-by-ones being caught is the point of having predicted them: each
+mutation restores exactly the bug the test was written for, and each dies.
+
+**The survivor was the deduplication**, which is justified in a comment two
+lines above the code and tested nowhere. Removing the `contains` check changed
+no count, no group and no refusal — `GROUP BY borough, borough` simply returned
+the same groups with the column repeated in the header and in every row.
+Documentation is not a test, which is the third time in three entries that a
+mutation pass has made that point about a different line.
+
+`a_group_key_written_twice_is_one_key` closes it, and covers the computed twin
+as well: `GROUP BY hour(t), hour(t)` must register one computed column, because
+`join_value_ordinal` already deduplicates that case by find-or-add and the two
+spellings of one mistake should not behave differently. Re-applying the mutation
+fails that test by name.
+
 ### Test sites updated
 
 Nine assertions across `datetime.rs` and `playground.rs`: six sending or
@@ -103,10 +133,8 @@ it; the joined path never did, and this change does not add it — `Grouping` ha
 against the group space, which is now correct for several keys and would be the
 place to start.
 
-**No mutation testing in this entry yet.** The two previous entries' passes each
-found a real missing test, and the ordering tests above were written *because*
-the off-by-one was predicted from the shape of the change rather than found by a
-mutation. A pass over this code is the obvious next step and has not been run.
+**Nothing here says the parser's own `HAVING` is reachable on a join** — see
+above; that is the gap this change leaves open, not one it introduces.
 
 **The panel has no second-key control**, because the panel no longer exists —
 the workbench replaced it, and a second key is written in SQL like the first.

@@ -820,6 +820,45 @@ fn a_query_with_no_alias_carries_no_alias_in_its_spec() {
 }
 
 #[test]
+fn a_group_key_written_twice_is_one_key() {
+    // `GROUP BY borough, borough` is one key written twice. Keeping both
+    // returns the same groups with the column repeated in every row and the
+    // header -- the same answer, wider, and no error anywhere, which is why
+    // this needs a test rather than an eye.
+    //
+    // It exists because a mutation survived: removing the `contains` check
+    // changed no count, no group and no refusal. The rule it enforces is
+    // already documented beside it, and documentation is not a test.
+    //
+    // The rule is also not arbitrary. `join_value_ordinal` deduplicates a
+    // *computed* key by find-or-add -- `hour(t)` in the select list and in the
+    // GROUP BY is one computed column -- so a stored key behaving differently
+    // would make two spellings of one mistake behave two ways.
+    let Statement::Join(join) = parsed_over_every_table(
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough, borough",
+    )
+    .unwrap() else {
+        panic!("expected a join");
+    };
+    assert_eq!(join.group_by.len(), 1, "{:?}", join.group_by);
+
+    // And the computed twin, which takes the other branch: the same call in
+    // the select list and in the GROUP BY registers one computed column, so
+    // naming it twice in the GROUP BY must not register a second.
+    let Statement::Join(computed) = parsed_over_every_table(
+        "SELECT hour(pickup_time), count(*) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY hour(pickup_time), hour(pickup_time)",
+    )
+    .unwrap() else {
+        panic!("expected a join");
+    };
+    assert_eq!(computed.group_by.len(), 1, "{:?}", computed.group_by);
+    assert_eq!(computed.compute.len(), 1, "{:?}", computed.compute);
+}
+
+#[test]
 fn a_chain_refuses_what_it_cannot_answer() {
     let playground = Playground::new();
     let cases: Vec<(&str, &str)> = vec![
