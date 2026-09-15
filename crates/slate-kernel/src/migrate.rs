@@ -382,15 +382,19 @@ fn decode_state(table: &TableDef, bytes: &[u8]) -> core::result::Result<TableSta
             format: *format,
         });
     }
-    let built = ids
-        .chunks_exact(4)
-        .map(|chunk| {
-            let mut four = [0u8; 4];
-            four.copy_from_slice(chunk);
-            IndexId(u32::from_be_bytes(four))
-        })
-        .collect();
-    if ids.len() % 4 != 0 {
+    // `split_first_chunk` rather than `chunks_exact`: it hands back a `[u8; 4]`
+    // by value, so there is no copy into a scratch array and no slice index,
+    // and what is left over at the end *is* the remainder — which turns the
+    // trailing-bytes check into `is_empty` instead of arithmetic that has to
+    // agree with the loop. (`chunks_exact` here is also the lint CI's clippy
+    // has and this container's does not; see the note in CLAUDE.md.)
+    let mut built = Vec::with_capacity(ids.len() / 4);
+    let mut rest: &[u8] = ids;
+    while let Some((four, tail)) = rest.split_first_chunk::<4>() {
+        built.push(IndexId(u32::from_be_bytes(*four)));
+        rest = tail;
+    }
+    if !rest.is_empty() {
         return Err(bad("the built-index list is not a whole number of ids"));
     }
     Ok(TableState {
