@@ -356,3 +356,55 @@ async fn a_computed_value_decodes_its_inputs() {
         "the computed value came back null, so its input was not decoded"
     );
 }
+
+/// `Concat` renders a non-string value as its text, not as its `Debug` form.
+///
+/// This was `format!("{other:?}")`, so `concat(name, "/", id)` on a `u64` id
+/// produced `ada/U64(10)`. Nothing here concatenated a non-string, so nothing
+/// caught it; a Python client test asserting `ada/a-one/10` did, and got
+/// `ada/a-one/U64(10)`.
+///
+/// It is the quiet kind of wrong: a label, built per row, with a Rust type tag
+/// in the middle of it. No error, no null, and the query looks like it worked.
+///
+/// Every case is a literal rather than a column, because the rendering is a
+/// property of the value and not of where it came from — and a literal lets
+/// the ones a column cannot hold (a vector) be written down too.
+#[test]
+fn concat_renders_a_value_as_its_text_rather_than_its_debug_form() {
+    let row = Row::new(vec![]);
+    let text = |value: Value| {
+        Scalar::Concat(vec![
+            Scalar::Literal(Value::Str("<".to_owned())),
+            Scalar::Literal(value),
+            Scalar::Literal(Value::Str(">".to_owned())),
+        ])
+        .evaluate(&row)
+    };
+
+    assert_eq!(text(Value::U64(10)), Value::Str("<10>".to_owned()));
+    assert_eq!(text(Value::I64(-7)), Value::Str("<-7>".to_owned()));
+    assert_eq!(text(Value::F64(1.5)), Value::Str("<1.5>".to_owned()));
+    assert_eq!(text(Value::Bool(true)), Value::Str("<true>".to_owned()));
+    assert_eq!(
+        text(Value::Str("x".to_owned())),
+        Value::Str("<x>".to_owned())
+    );
+    let id = uuid::Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef);
+    assert_eq!(
+        text(Value::Uuid(id)),
+        Value::Str(format!("<{id}>")),
+        "a UUID's text is its hyphenated form"
+    );
+
+    // And the two with no text anyone means are null, which is what a type
+    // error is everywhere else here. Hex and base64 are both defensible for
+    // bytes and neither is what a caller silently wants in a label.
+    assert_eq!(
+        text(Value::Bytes(bytes::Bytes::from_static(b"ab"))),
+        Value::Null
+    );
+    assert_eq!(text(Value::Vector(vec![1.0, 2.0])), Value::Null);
+    // A null anywhere still makes the whole thing null, as SQL's `||` does.
+    assert_eq!(text(Value::Null), Value::Null);
+}

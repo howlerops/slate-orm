@@ -5,14 +5,20 @@ import { start, type Serving } from "./harness.js";
 import {
   agg,
   at,
+  concat,
   count,
   groupGt,
   groupKey,
   int,
+  div,
   isKind,
+  joinComputed,
   key0,
+  lit,
   maxOf,
+  mul,
   newJoin,
+  ref,
   SlateError,
   str,
   uint,
@@ -276,6 +282,93 @@ test("grouping a chain", async () => {
     .collect();
 
   assert.equal(groups.length, 2, "authors 1 and 2 have books");
+});
+
+// A chain's own computed value, read back on the row path and grouped by.
+//
+// `Chain::compute` and `Join::compute` are one field on the wire and two code
+// paths in the kernel: a join's is filled in by the cursor as it pairs rows, a
+// chain's by a pass over the accumulated rows after the last step. No client
+// suite had asked the second one for anything.
+//
+// The expression reads all three inputs, which is what makes it a chain's
+// value rather than a join's: evaluated against a prefix of the accumulated
+// row it is null, and against the last step alone it is missing the name.
+test("a chain's computed value reads every input", async () => {
+  const session = await library();
+  const b = newJoin();
+  const authors = b.add({ table: "authors" });
+  const books = b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
+  const again = b.add({ table: "books", on: [{ earlier: at(books, 0), own: 0 }] });
+  const chain = {
+    ...b.query(),
+    compute: [
+      concat(
+        ref(at(authors, 1)),
+        lit(str("/")),
+        ref(at(books, 2)),
+        lit(str("/")),
+        ref(at(again, 0)),
+      ),
+    ],
+  };
+
+  let seen = 0;
+  for await (const row of session.join(chain).withComputed()) {
+    assert.equal(row.inputs.length, 3, "a chained row has one array per input");
+    const [first, second, third] = row.inputs;
+    assert.ok(first && second && third, "every step matched");
+    const name = first[1];
+    const title = second[2];
+    const id = third[0];
+    assert.ok(name?.kind === "string" && title?.kind === "string");
+    assert.ok(id?.kind === "uint");
+    const computed = row.computed[0];
+    assert.ok(computed?.kind === "string");
+    // `concat` renders a non-string as its text, so the id is its digits — it
+    // used to render Rust's Debug form, `U64(10)`, which is the bug a Python
+    // client test caught and this would have inherited.
+    assert.equal(computed.value, `${name.value}/${title.value}/${id.value}`);
+    seen += 1;
+  }
+  assert.equal(seen, 4);
+});
+
+// And grouping a chain *by* the value it computes, which resolves in the
+// chain's joined space after the grouped path has narrowed each step.
+test("grouping a chain by its computed value", async () => {
+  const session = await library();
+  const b = newJoin();
+  const authors = b.add({ table: "authors" });
+  const books = b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
+  b.add({ table: "books", on: [{ earlier: at(books, 0), own: 0 }] });
+  const chain = {
+    ...b.query(),
+    // The decade a book came out in, which no table stores.
+    compute: [mul(div(ref(at(books, 3)), lit(int(10))), lit(int(10)))],
+  };
+
+  const groups = await session
+    .aggregateJoin(chain, { groupBy: [joinComputed(0)], aggregates: [count()] })
+    .collect();
+
+  // The four matched books are from 2001, 1990, 2003 and 2010 — three decades
+  // with the 2000s holding two. Written out from the fixture rather than
+  // folded from another query, so a grouping that landed on some table's
+  // column fails here rather than agreeing with an equally wrong fold.
+  const want = new Map<bigint, bigint>([
+    [1990n, 1n],
+    [2000n, 2n],
+    [2010n, 1n],
+  ]);
+  assert.equal(groups.length, want.size);
+  for (const group of groups) {
+    const decade = group.key[0];
+    const n = group.values[0];
+    assert.ok(decade?.kind === "int", `the key is ${decade?.kind}`);
+    assert.ok(n?.kind === "uint", "a count is a u64");
+    assert.equal(n.value, want.get(decade.value), `decade ${decade.value}`);
+  }
 });
 
 test("explain join describes every input", async () => {

@@ -1,6 +1,7 @@
 package slate_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -593,5 +594,150 @@ func TestExplainingAGroupedTableAnswersInTheInputField(t *testing.T) {
 	}
 	if plan.Input.Table != "books" {
 		t.Errorf("the plan names %q", plan.Input.Table)
+	}
+}
+
+// A chain's own computed value, read back on the row path and grouped by.
+//
+// `Chain::compute` and `Join::compute` are one field on the wire and two code
+// paths in the kernel: a join's is filled in by the cursor as it pairs rows, a
+// chain's by a pass over the accumulated rows after the last step. Nothing in
+// any client suite had asked the second one for anything, so this does — with
+// an expression reading all three inputs, which is what makes it a chain's
+// value rather than a join's.
+//
+// The third input is `books` joined back to itself on its own id, which keeps
+// one row per book and so leaves the counts unchanged. That matters: a chain
+// whose last step multiplied rows would make the assertions below true for the
+// wrong reason.
+func TestAChainsComputedValueReadsEveryInput(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+	})
+	again := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(books, 0), Own: 0}},
+	})
+	chain := b.Query()
+	chain = slate.JoinQuery{
+		Inputs: chain.Inputs,
+		Compute: []slate.Scalar{
+			// Reads inputs 0, 1 and 2. Evaluated against a prefix of the
+			// accumulated row it would be null; against the last step alone it
+			// would be missing the name.
+			slate.Concat(
+				slate.Ref(slate.At(authors, 1)),
+				slate.Lit(slate.String("/")),
+				slate.Ref(slate.At(books, 2)),
+				slate.Lit(slate.String("/")),
+				slate.Ref(slate.At(again, 0)),
+			),
+		},
+	}
+
+	stream, err := session.Join(testContext(t), chain)
+	if err != nil {
+		t.Fatalf("chaining: %v", err)
+	}
+	defer stream.Close()
+
+	seen := 0
+	for stream.Next() {
+		computed := stream.Computed()
+		row := stream.Row()
+		if len(row) != 3 {
+			t.Fatalf("a chained row has one slice per input, got %d", len(row))
+		}
+		if len(computed) != 1 {
+			t.Fatalf("got %d computed values, want 1", len(computed))
+		}
+		name, okName := row[0][1].(slate.String)
+		title, okTitle := row[1][2].(slate.String)
+		id, okID := row[2][0].(slate.Uint)
+		if !okName || !okTitle || !okID {
+			t.Fatalf("the row is %v", row)
+		}
+		// `Concat` renders a non-string as its text, so the id is its digits.
+		// It used to render the Debug form — `Uint(10)` — which is the bug a
+		// Python client test caught and this would have inherited.
+		want := slate.String(fmt.Sprintf("%s/%s/%d", name, title, uint64(id)))
+		if computed[0] != want {
+			t.Errorf("computed %v, want %v", computed[0], want)
+		}
+		seen++
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+	if seen != 4 {
+		t.Fatalf("got %d chained rows, want 4", seen)
+	}
+}
+
+// And grouping a chain *by* the value it computes, which resolves in the
+// chain's joined space after the grouped path has narrowed each step.
+func TestGroupingAChainByItsComputedValue(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+	})
+	b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(books, 0), Own: 0}},
+	})
+	chain := b.Query()
+	chain = slate.JoinQuery{
+		Inputs: chain.Inputs,
+		// The decade a book came out in, which no table stores.
+		Compute: []slate.Scalar{
+			slate.Mul(
+				slate.Div(slate.Ref(slate.At(books, 3)), slate.Lit(slate.Int(10))),
+				slate.Lit(slate.Int(10)),
+			),
+		},
+	}
+
+	stream, err := session.AggregateJoin(testContext(t), chain, slate.Grouping{
+		GroupBy:    []slate.Column{slate.JoinComputed(0)},
+		Aggregates: []slate.Aggregate{slate.Count()},
+	})
+	if err != nil {
+		t.Fatalf("grouping a chain by its computed value: %v", err)
+	}
+	groups, err := stream.Collect()
+	if err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+
+	// The four matched books are from 2001, 1990, 2003 and 2010, so three
+	// decades with the 2000s holding two. Written out rather than folded from
+	// another query: the numbers come from the fixture above, so a grouping
+	// that landed on some table's column instead fails here rather than
+	// agreeing with an equally wrong fold.
+	want := map[int64]uint64{1990: 1, 2000: 2, 2010: 1}
+	if len(groups) != len(want) {
+		t.Fatalf("got %d groups, want %d: %+v", len(groups), len(want), groups)
+	}
+	for _, group := range groups {
+		decade, ok := group.Key[0].(slate.Int)
+		if !ok {
+			t.Fatalf("the key is %v, not an i64 decade", group.Key[0])
+		}
+		count, ok := group.Values[0].(slate.Uint)
+		if !ok {
+			t.Fatalf("a count is a u64, got %v", group.Values[0])
+		}
+		if uint64(count) != want[int64(decade)] {
+			t.Errorf("decade %d counted %d, want %d", decade, count, want[int64(decade)])
+		}
 	}
 }

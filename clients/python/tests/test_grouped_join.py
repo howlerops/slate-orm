@@ -283,3 +283,82 @@ def test_both_kinds_of_computed_value_come_back_on_a_join(client: Client) -> Non
     with pytest.raises(IndexError) as missing:
         rows[0].computed(1)
     assert "input's own computed value" in str(missing.value), missing.value
+
+
+# --- a computed value belonging to the chain ------------------------------
+
+
+def test_a_chains_computed_value_reads_every_input(client: Client) -> None:
+    """`Chain::compute` over three tables, which is the case `Join::compute`
+    cannot reach.
+
+    A chain is a `JoinQuery` with more than two inputs and the same `compute`
+    field, so nothing new is declared here — which is exactly why it was worth
+    writing down. The two paths through the server are genuinely different:
+    `Join::compute` is filled in by `JoinCursor::next` and `Chain::compute` by
+    a pass over the accumulated rows in `chain::run`, and no client suite had
+    ever asked the second one for anything.
+
+    The expression reads all three tables, so an implementation that evaluated
+    it against a prefix of the accumulated row — or against the last step
+    alone — comes back null rather than wrong, which the assertions catch.
+    """
+    join = JoinQuery()
+    authors = join.add(AUTHORS)
+    books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
+    sales = join.add(SALES, on=[(books.c.id, "book_id")])
+    join.compute(
+        concat(authors.c.name, lit("/"), books.c.title, lit("/"), sales.c.book_id)
+    )
+
+    rows = list(client.join(join))
+    assert rows, "the chain fixture should produce rows"
+    for row in rows:
+        left, middle, right = row[0], row[1], row[2]
+        assert left is not None and middle is not None and right is not None
+        assert len(row.computed_values) == 1, row
+        assert row.computed(0) == (
+            f"{left.get('name')}/{middle.get('title')}/{right.get('book_id')}"
+        )
+
+
+def test_grouping_a_chain_by_a_value_the_chain_computes(client: Client) -> None:
+    """And grouping by one, which resolves in the chain's joined space.
+
+    The grouped path narrows each step's projection, so the computed value's
+    ordinal has to be built from the *narrowed* widths and the group key has to
+    survive that narrowing. A key naming the value by a raw ordinal would land
+    on some table's column instead and come back as a plausible grouping of the
+    wrong thing — which is why the key is compared against the ungrouped rows
+    rather than merely being non-empty.
+    """
+    join = JoinQuery()
+    authors = join.add(AUTHORS)
+    books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
+    join.add(SALES, on=[(books.c.id, "book_id")])
+    # The decade a book came out in, which no table stores.
+    join.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+
+    grouped = GroupedJoinQuery(join)
+    grouped.group_by(join.computed(0))
+    grouped.aggregate(Agg.count())
+
+    groups = [tag_group(g) for g in client.aggregate(grouped)]
+    assert groups, "the chain should produce groups"
+
+    # The oracle: the same partition folded from the ungrouped chain, whose own
+    # computed value this test does not use — it reads `books.year` directly,
+    # so the two halves cannot be wrong together.
+    rows_join = JoinQuery()
+    rows_authors = rows_join.add(AUTHORS)
+    rows_books = rows_join.add(BOOKS, on=[(rows_authors.c.id, "author_id")])
+    rows_join.add(SALES, on=[(rows_books.c.id, "book_id")])
+    wanted: dict[int, int] = {}
+    for row in client.join(rows_join):
+        books_row = row[1]
+        assert books_row is not None
+        decade = int(books_row.get("year")) // 10 * 10
+        wanted[decade] = wanted.get(decade, 0) + 1
+
+    got = {int(g["key"][0][1]): int(g["values"][0][1]) for g in groups}
+    assert got == wanted, f"{got} against {wanted}"

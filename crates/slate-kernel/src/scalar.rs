@@ -178,6 +178,43 @@ const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// A non-string value as the text [`Scalar::Concat`] should splice in.
+///
+/// `None` for a value with no textual form anyone means, which makes the whole
+/// concatenation null — the same answer a type error gets everywhere else here.
+///
+/// This existed as `format!("{other:?}")`, which is the *Debug* form: a
+/// `u64` book id concatenated into a label came out as `U64(10)` rather than
+/// `10`, and a double as `F64(1.5)`. It was found by a client test asserting
+/// `ada/a-one/10` and getting `ada/a-one/U64(10)` — nothing in the Rust suites
+/// concatenated a non-string, so the bug had never been looked at. SQL's `||`
+/// renders a number as its digits, and a label with a type tag in it is wrong
+/// in a way nobody would think to check for.
+///
+/// Bytes and vectors are null rather than rendered. A byte string has no
+/// canonical text — hex and base64 are both defensible and neither is what a
+/// caller silently wants spliced into a label — and a vector's textual form
+/// would be a hundred floats. SQL refuses both outright; null is this layer's
+/// way of saying the same thing, since a `Scalar` has nowhere to put an error.
+fn concat_text(value: &Value) -> Option<String> {
+    Some(match value {
+        Value::Str(s) => s.clone(),
+        Value::I64(n) => n.to_string(),
+        Value::U64(n) => n.to_string(),
+        // Rust's `Display` for `f64` gives `1.5` and `1` rather than SQL's
+        // `1.0`. Left as Rust spells it: the alternative is a float formatter
+        // in here, and this is a label rather than a serialisation format.
+        Value::F64(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Uuid(id) => id.to_string(),
+        Value::Null | Value::Bytes(_) | Value::Vector(_) => return None,
+        // `Value` is `#[non_exhaustive]`, so a new variant lands here rather
+        // than failing to compile. Null is the right default for one: a value
+        // this does not know how to render is a value it must not guess at.
+        _ => return None,
+    })
+}
+
 /// The offset a named zone is from UTC at an instant, in seconds east.
 ///
 /// A binary search over that zone's transition table. The table is generated —
@@ -633,7 +670,10 @@ impl Scalar {
                         // A null anywhere makes the whole thing null, as SQL's
                         // `||` does.
                         Value::Null => return Value::Null,
-                        other => out.push_str(&format!("{other:?}")),
+                        other => match concat_text(&other) {
+                            Some(text) => out.push_str(&text),
+                            None => return Value::Null,
+                        },
                     }
                 }
                 Value::Str(out)
