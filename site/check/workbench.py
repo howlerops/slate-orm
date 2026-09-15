@@ -266,12 +266,28 @@ out.zonedRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts()
 await page.locator('[data-tab="spec"]').click();
 out.zonedSpec = await page.locator('[data-app="spec"]').innerText();
 await page.locator('[data-tab="results"]').click();
-// A region name needs a timezone database, and saying so beats guessing.
-out.region = await type(
+// 9c4b. A *named* zone, resolved through the kernel's transition table rather
+//       than refused. January 2024 is wholly Eastern Standard Time, so this
+//       must give the same 24 groups as the fixed -05:00 above — a differential
+//       between a binary search and arithmetic on a constant, run in the
+//       browser where the table has to have survived the wasm build.
+out.named = await type(
   "SELECT hour(pickup_time, 'America/New_York'), count(*) FROM trips " +
-  "GROUP BY hour(pickup_time, 'America/New_York')",
+  "GROUP BY hour(pickup_time, 'America/New_York') " +
+  "ORDER BY hour(pickup_time, 'America/New_York')",
 );
-out.regionWhy = await page.locator('[data-app="grid"] .refusal').innerText();
+out.namedRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+await page.locator('[data-tab="spec"]').click();
+out.namedSpec = await page.locator('[data-app="spec"]').innerText();
+await page.locator('[data-tab="results"]').click();
+
+// And a zone the table does not have is refused by name, with the list. The
+// misspelling is the realistic mistake: IANA names are case-sensitive.
+out.badZone = await type(
+  "SELECT hour(pickup_time, 'america/new_york'), count(*) FROM trips " +
+  "GROUP BY hour(pickup_time, 'america/new_york')",
+);
+out.badZoneWhy = await page.locator('[data-app="grid"] .refusal').innerText();
 
 // 9c5. A computed column on a *join*, which was refused outright until the
 //      kernel grew somewhere to put it. Clicked from the sidebar, because the
@@ -787,11 +803,29 @@ def main() -> int:
         or '"offset":-18000' in seen["zonedSpec"].replace("\n", " "),
         f"{seen['zonedSpec'][:200]!r}",
     )
+    named = [int(row.split("\t")[1]) for row in seen["namedRows"]]
     check(
-        "a region name is refused, and says why rather than guessing",
-        seen["region"]["refusal"] == 1
-        and "timezone database" in seen["regionWhy"],
-        f"{seen['regionWhy']!r}",
+        "a named zone is answered, in the browser, from the transition table",
+        seen["named"]["refusal"] == 0 and len(named) == 24,
+        f"{seen['named']['status']!r} {named[:6]}",
+    )
+    check(
+        "and agrees with the fixed offset it was in: January is standard time",
+        named == zoned,
+        f"{named[:6]} against {zoned[:6]}",
+    )
+    check(
+        "the zone reaches the spec as a name, not as a constant offset",
+        '"zone": "America/New_York"' in seen["namedSpec"].replace("\n", " ")
+        or '"zone":"America/New_York"' in seen["namedSpec"].replace("\n", " "),
+        f"{seen['namedSpec'][:200]!r}",
+    )
+    check(
+        "a zone the table does not have is refused, and the refusal lists them",
+        seen["badZone"]["refusal"] == 1
+        and "no such timezone" in seen["badZoneWhy"]
+        and "America/New_York" in seen["badZoneWhy"],
+        f"{seen['badZoneWhy']!r}",
     )
 
     # A computed group key on a join lands after *both* tables. If it landed

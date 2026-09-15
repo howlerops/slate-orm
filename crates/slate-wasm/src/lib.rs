@@ -1913,7 +1913,11 @@ fn zone_suffix(spec: &ComputeSpec) -> String {
     }
     let sign = if spec.offset < 0 { '-' } else { '+' };
     let seconds = spec.offset.abs();
-    format!(", '{sign}{:02}:{:02}'", seconds / 3_600, seconds % 3_600 / 60)
+    format!(
+        ", '{sign}{:02}:{:02}'",
+        seconds / 3_600,
+        seconds % 3_600 / 60
+    )
 }
 
 /// What to print above a column, whether the table owns it or the query
