@@ -40,6 +40,18 @@ const EXAMPLES = [
     "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id\n  WHERE trips.pickup_zone = 132 LIMIT 20",
   ],
   [
+    "The whole table, in one row",
+    "-- No GROUP BY. One group over every row, which was a front-end refusal\n" +
+      "-- and nothing else: the kernel has always answered a grouping with no\n" +
+      "-- keys, and the guard that refused it mistook the usual shape for the\n" +
+      "-- only one. The Spec tab shows aggregates and no groupBy at all --\n" +
+      "-- not a groupBy that happens to be empty.\n" +
+      "--\n" +
+      "-- Put a bare column beside these and it is refused again, because one\n" +
+      "-- row over the whole table has no single value for a column to take.\n" +
+      "SELECT count(*), min(fare), max(total), avg(distance) FROM trips",
+  ],
+  [
     "How people pay",
     "SELECT payment, count(*), avg(total), max(tip) FROM trips\n  GROUP BY payment ORDER BY count(*) DESC",
   ],

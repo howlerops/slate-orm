@@ -408,6 +408,12 @@ async fn loading_relations_costs_one_read_however_many_parents() {
             .unwrap();
     }
     let looped = scans.load(Atomics::SeqCst) - before;
+    // Printed as well as asserted, because the docs quote the pair and a number
+    // in a doc that no run emits is a number somebody typed from memory.
+    println!(
+        "{} parents: batched {cost} scan(s), per-parent loop {looped}",
+        authors.len()
+    );
     assert!(
         looped > cost,
         "the per-parent loop cost {looped} scans and the batched load cost {cost}; \

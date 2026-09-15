@@ -709,6 +709,15 @@ fn a_whole_table_aggregate_needs_no_group_by() {
     // And the header says what the column is, rather than naming the table's
     // first column over an aggregate.
     assert_eq!(first["columns"], json!(["count(*)"]), "{first}");
+    // The spec carries no `groupBy` at all — not an empty one. The workbench
+    // example for this says so in its comment, and a claim on the page that
+    // nothing checks is how the last one went stale.
+    assert!(first["spec"]["groupBy"].is_null(), "{first}");
+    assert_eq!(
+        first["spec"]["aggregates"].as_array().expect("aggregates").len(),
+        1,
+        "{first}"
+    );
 }
 
 /// Several aggregates at once, still with no GROUP BY.

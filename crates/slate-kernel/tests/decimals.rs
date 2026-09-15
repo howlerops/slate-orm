@@ -102,6 +102,11 @@ async fn a_hundred_dimes_are_exactly_ten_dollars() {
         "floating point summed to exactly ten, which would make this whole column pointless"
     );
     assert!((drifted - 10.0).abs() < 1e-9, "but it is close: {drifted}");
+    // Printed as well, because the docs quote this pair. The exact digits
+    // depend on summation order, so they are shown rather than asserted: the
+    // claim is "not ten", and pinning the digits would make a reordering of the
+    // fold read as a correctness failure.
+    println!("SUM decimal {:?} vs SUM f64 {drifted}", sums[0]);
 }
 
 #[tokio::test]

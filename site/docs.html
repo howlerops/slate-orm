@@ -193,6 +193,13 @@ actions = ["everything"]</code></pre>
           of three or more tables, grouped joins and grouped chains, ordered
           and limited over groups, and <code>HAVING</code> to filter them.
         </p>
+        <p>
+          A grouping with no keys is one group over every row, which is what
+          <code>SELECT count(*) FROM trips</code> means. The kernel had always
+          answered it; only the browser's SQL front end refused, and that
+          refusal is gone. Try it from &ldquo;The whole table, in one
+          row&rdquo;.
+        </p>
       </div>
       <div class="card">
         <h3>Computed columns</h3>
@@ -230,6 +237,79 @@ actions = ["everything"]</code></pre>
           zone outside the list is refused, and the refusal names the ones that
           are in it. The taxi sample in the workbench is New York wall clock
           already, which is why its quietest hour is 04:00 and not 09:00.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Relationships, loaded not lazy</h3>
+        <p>
+          <code>#[record(has_many(Book, foreign = author_id))]</code> declares
+          one, and <code>load_related</code> fetches every parent's children in
+          <strong>one</strong> read &mdash; measured at 1 scan where the
+          per-parent loop it replaces takes 3. There is deliberately no lazy
+          accessor: the feature an ORM is judged on and the N+1 it is blamed
+          for are the same feature, because an accessor cannot tell whether it
+          is being called once or ten thousand times.
+        </p>
+        <p>
+          Columns are named by <em>field ident</em>, not by string, so a typo is
+          a compile error on both sides rather than a panic on first use.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Pages that do not shift</h3>
+        <p>
+          <code>OFFSET</code> reads and discards every row it skips, and counts
+          rows &mdash; so a row deleted between two pages makes the reader
+          silently miss one. A cursor is the last row's primary key and narrows
+          the scan range instead: <strong>page 99 of 100 read 5 key-value pairs
+          against the offset version's 495</strong>, and the deleted-row case
+          is asserted both ways round.
+        </p>
+        <p>
+          <code>page_records</code> returns the rows and the cursor for the
+          next page, so a caller never names a key column. A sorted query or a
+          grouped read is refused rather than paged wrongly.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Exact decimals</h3>
+        <p>
+          A hundred rows of ten cents sum to exactly <code>$10.00</code>; the
+          same rows as <code>f64</code> give <code>9.99999999999998</code>.
+          Both are asserted, because a test that only showed the right answer
+          would not establish there was anything to fix.
+        </p>
+        <p>
+          The scale lives on the <em>column</em>, so a decimal is an integer
+          count of the smallest unit: it encodes as an integer, the ordering is
+          the integer ordering, and <code>SUM</code> is exact. The cost is that
+          a value cannot print itself &mdash; rendering needs the column.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Migrations, before the socket opens</h3>
+        <p>
+          Adding an index to a populated table used to make queries through it
+          return <em>nothing</em> &mdash; no error, rows still on disk, and
+          intermittently, depending on whether the index covered the query.
+          Schema state now lives in its own keyspace, and the daemon
+          reconciles before it binds its listener: a node that binds first
+          accepts a connection and answers it wrongly.
+        </p>
+        <p>
+          <code>[schema] migrate_on_start = false</code> makes it verify and
+          refuse to start instead, which is not the same as skipping.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Conditional writes</h3>
+        <p>
+          The store detects two writers overlapping in time. The common failure
+          is the other one: read a row, decide, write it in a later transaction
+          while somebody else wrote it in between. Nothing overlaps, so nothing
+          is detected, and an edit is silently lost.
+          <code>replace_record(&amp;previous, &amp;next)</code> writes only if
+          the stored row still equals what was read.
         </p>
       </div>
       <div class="card">

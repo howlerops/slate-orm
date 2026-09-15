@@ -1149,11 +1149,97 @@ boundaries are closed; and a literal's type comes from the column on the other
 side of *this* comparison at both call sites of `operand`, so there is no nesting
 in the predicate grammar for it to take the wrong column's type from.
 
+## An index that returns nothing, and two the property suite found
+
+Three defects from one round of work, kept together because the way each was
+found is the point rather than the defect.
+
+### Adding an index made queries return no rows
+
+Not slower — *empty*. Index entries are written in the same transaction as the
+row, so an index created after the rows exist has no entries for them. The
+planner then costs it as cheap, scans a key range no write ever wrote into, and
+answers with no error while the rows sit on disk where they always were.
+
+It is intermittent, which is worse than if it always happened: whether a query
+goes wrong depends on whether the planner picks the index, which depends on the
+statistics and on whether the index covers the projection. A test that reads a
+column the index does not hold passes.
+
+`crates/slate-kernel/tests/migrations.rs` asserts the bad answer first — a
+freshly declared index over a populated table, queried, returning nothing — and
+then that the migration fixes it. The fix is a third keyspace (`0x03 <table
+id>`) holding, per table, the schema version, a fingerprint of the layout, and
+which indexes are actually built; `migrate::{plan, apply, verify}` back-fill an
+index with no entries, reclaim a dropped one's, and refuse a layout change that
+would reinterpret stored rows.
+
+The fingerprint covers what decides how bytes are read — column count, types,
+nullability, drops, the primary key, the tenant column, a decimal's scale — and
+deliberately not names. A rename moves no bytes and must not read as a
+migration.
+
+`slate-serverd` reconciles **before** it binds its listener, because a node that
+binds and then migrates accepts a connection and answers it wrongly. Turning it
+off (`[schema] migrate_on_start = false`) makes it verify and refuse to start,
+which is not the same as skipping.
+
+### Every decimal compared equal to every other
+
+`Value::Decimal` was added to the existing tuple *property* suite rather than
+given one of its own, and it failed on the first run: `Decimal(i64::MAX)`
+against `Decimal(i64::MIN)`. The new variant had a class rank in the ordering
+but no match arm, so every decimal-against-decimal comparison fell through to a
+branch whose comment read "unreachable: equal class ranks are exhausted above".
+The comment had been true when it was written.
+
+Hand-written cases would very likely have compared two decimals of different
+magnitudes and different signs and never noticed, because the class-rank
+comparison gets those right. The pair that exposes it is two decimals that
+differ only in their value.
+
+The second run found the other half: `skipping_and_decoding_can_be_mixed`
+failed with "unknown type code 0x1e". Encode and decode knew the new code;
+`skip` did not, so any tuple with a decimal before the element being read
+decoded the wrong bytes.
+
+Neither was found by a test written for decimals. Both were found by existing
+tests that a new value type was dropped into — which is the argument for
+putting a new variant into the oracle rather than beside it.
+
+### A lost update the store cannot see
+
+The store detects two writers overlapping in time. The read-modify-write across
+two transactions does not overlap: read a row, decide something, write it
+later, while somebody else wrote it in between. Nothing conflicts, and the
+second write lands with a value computed before the first existed.
+
+`update_if_unchanged` compares the whole stored row against what the caller
+read. A version column was rejected for a reason worth keeping: a version only
+detects changes made by writers who remembered to bump it, and the writer who
+forgets is exactly the writer whose edit is silently lost. Comparing the row
+needs no convention and no extra round trip — `update` already reads the row to
+enforce the row policy.
+
 ## What is still not proven
 
 Stated plainly, because a document like this is otherwise an advertisement.
-Everything that was on this list a round ago has moved above it; what remains is
-what genuinely has not been done.
+
+That sentiment is not self-enforcing, and this list proved it: five entries sat
+here after the work was done or the claim withdrawn — partial indexes in the
+derive macro, grouped joins on the wire, grouping over a chain, a grouped join's
+cost, and the head node's performance. A list of open problems that quietly
+keeps closed ones is read as current and is worse than no list, which is the
+same failure mode this document warns about everywhere else. They have been
+removed; what follows is what genuinely has not been done.
+
+One of the five was not *done* but withdrawn, and that distinction is worth
+keeping: "a grouped join is not costed" was based on a plausible reading of the
+code that the arithmetic does not support — the per-joined-row term is added to
+both candidates, and a term common to both sides of a comparison cannot decide
+it. `the_per_row_term_is_symmetric_so_grouping_cannot_flip_the_algorithm`
+asserts the symmetry the withdrawal rests on, so the day someone makes that term
+asymmetric the item comes back by failing test rather than by memory.
 
 - **A real fuzzer.** The untrusted-input suites are property tests with hostile
   generators, which is most of the value for a few seconds per run. They are not
@@ -1166,20 +1252,6 @@ what genuinely has not been done.
   against a real S3 server at 200,000 rows, which is what corrected it; the
   million-row runs are still in memory. Nothing has been measured at a size
   where compaction, tiering and a cold cache all matter at once.
-- **Partial indexes in the derive macro.** `#[derive(Record)]` cannot declare
-  one; the schema builder can. A struct attribute for it is a small piece of
-  work that has not been done.
-- **Grouped joins on the wire.** The kernel can group over a join and order
-  over groups; `slate-server` cannot yet ask for either, so the wire has no
-  differential against the kernel for them the way it has for every other
-  shape. Until it does, the head node's grouping remains single-table.
-- **Grouping over a chain.** Three tables and up join through `Chain`, which
-  materialises each step; grouping over one would be the same `Grouper` over
-  the same kind of row stream, and has not been done. A caller can chain and
-  group only by doing the second half itself.
-- **A grouped join's cost.** Grouping is not costed: the join is planned as if
-  its rows were being returned, so a plan that is cheaper to group than to
-  stream is not preferred. Nothing measures how far out that is.
 - **Expression statistics at scale, or on storage.** The improvement is measured
   on an in-memory fixture of two thousand rows. Nothing says how a reservoir
   sample of a computed value behaves on a table where `analyze` is itself a long
@@ -1191,6 +1263,27 @@ what genuinely has not been done.
   the subset would count the predicate twice. That matches how a partial index's
   column statistics already work; neither has been measured against a partial
   index selective enough for the independence assumption to hurt.
-- **Anything about the head node's performance.** Its correctness is tested;
-  nothing in it has been benchmarked. The query stream's batch size and the
-  lease's fifteen-second term are chosen by argument, not measurement.
+- **A read-only node that starts before the leader has migrated.** It verifies,
+  finds the schema state behind, warns and serves. During that window a query
+  through an unbuilt index returns no rows — the defect above, on a follower.
+  Closing it means the follower waiting, which needs a way to tell "the leader
+  has not migrated yet" from "there is no leader", and that distinction does
+  not exist yet.
+- **Decimals anywhere but the kernel.** `Value::Decimal` has no case in the
+  gRPC `Value`, so one reaching a client becomes a visible
+  `<unrepresentable decimal>` marker. That is pinned by a test whose own doc
+  comment says it is a pin and not an endorsement — but nothing establishes
+  that the marker is the *right* answer rather than the one that was cheap.
+- **Decimal arithmetic.** `price * quantity` is not expressible: the product of
+  two scale-2 values is scale-4 and nothing in the expression layer tracks
+  scale. `AVG` over a decimal returns a float for the same reason, since the
+  mean of exact decimals is generally not representable at their scale.
+- **A decimal literal in the SQL front end.** `WHERE total > 19.99` parses as a
+  float and will not match a decimal column. It does not refuse, which is the
+  part that is wrong.
+- **An interrupted back-fill.** Every migration test runs against
+  `MemoryStore`, and `a_backfill_larger_than_one_batch_writes_every_row`
+  establishes that batching works — but nothing kills a migration partway and
+  restarts it. Resumability is an argument about where the state record is
+  written, not a measured property, and it has never been tried against a real
+  object store where a batch can fail on its own.

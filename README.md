@@ -412,6 +412,147 @@ every team -> actors -> events   2500 rows   3 scans, 3010 rows read   80 ms   [
 one team   -> actors -> events    250 rows   2 scans, 3000 rows read   75 ms   [1, 50, 250]
 ```
 
+### Relationships are loaded, not lazily fetched
+
+The feature an ORM is judged on is `author.books()`. The feature an ORM is
+*blamed* for is that `author.books()` ran a query, once per author, inside a
+loop nobody noticed writing. Those are the same feature: a lazy accessor cannot
+know whether it is being called once or ten thousand times, so it issues one
+query either way and the cost lands somewhere the code does not mention.
+
+So there is no lazy accessor. A relationship is *declared* on the type and
+*loaded* by a call that takes the whole set of parents at once:
+
+```rust
+#[derive(Record)]
+#[record(table = "authors", id = 1)]
+#[record(has_many(Book, foreign = author_id))]
+struct Author { #[record(pk)] id: u64, name: String }
+
+#[derive(Record)]
+#[record(table = "books", id = 2)]
+#[record(belongs_to(Author, local = author_id))]
+struct Book { #[record(pk)] id: u64, title: String, author_id: u64 }
+
+let authors: Vec<Author> = txn.find_records(&ctx, Expr::True, ScanOrder::Ascending).await?;
+let books = load_related::<_, Author, Book>(&txn, &ctx, &authors).await?;
+// books[i] belongs to authors[i]; an author with none gets an empty vector.
+```
+
+One read for any number of authors, because it lowers to `Expr::In` over the
+child table — which the planner already turns into point gets or index ranges.
+Measured with a store that counts scans: **1 read batched, 3 for the per-parent
+loop it replaces**. Not a join, deliberately: a join returns the parent's
+columns once per child, so an author with forty books arrives forty times and
+is decoded forty times.
+
+Columns are named by **field ident**, not by string, so both sides are checked
+by the compiler — the local one in the macro with a span on the attribute, the
+foreign one by emitting `Other::COLUMNS.field`. A string would make a typo a
+panic on first use, or a relationship over the wrong column that returns
+plausible rows for ever.
+
+### Pages are keys, not offsets
+
+`OFFSET n` reads and discards `n` rows — the executor says so in a comment — so
+page five hundred costs five hundred pages of reading. Worse, it *counts* rows,
+so it is only correct while nothing changes: delete one row ahead of the cursor
+between two pages and the reader silently skips one.
+
+```rust
+let page: Page<Book> = txn.page_records(&ctx, &Query::all().limit(20)).await?;
+let next: Page<Book> = txn
+    .page_records(&ctx, &Query::all().limit(20).after(page.next.unwrap()))
+    .await?;
+```
+
+The cursor is the primary key of the last row, and it narrows the scan range.
+Measured over 500 rows in pages of five: **page 99 read 495 key-value pairs by
+offset and 5 by cursor**. There is a test that deletes a row between two pages
+and asserts the offset reader never seeing row 4, beside the cursor reader
+getting it right — because showing only the right answer would not establish
+there was a problem.
+
+A cursor pins the access path to the table's own key range rather than letting
+the cost model choose: an index yields rows in an order a primary key cannot
+describe, so a query that paged correctly on a small table would start returning
+wrong pages once it grew. A sorted query, a grouped read and an explicit index
+hint are each refused rather than paged wrongly.
+
+### Conditional writes, because the store cannot see a lost update
+
+The store detects two writers overlapping in time. The common failure is the
+other one: read a row in one transaction, decide something, write it in
+another. Nothing overlaps, so nothing is detected, and the second write discards
+the first's edit with a value computed before it existed.
+
+```rust
+let post: Post = txn.get_record(&ctx, &[Value::U64(1)]).await?.unwrap();
+let mut edited = post.clone();
+edited.title = "new".into();
+txn.replace_record(&ctx, &post, &edited).await?;   // refuses if it moved
+```
+
+The whole row is compared rather than a version column, because a version only
+detects changes made by writers who *remembered to bump it* — a convention every
+call site has to keep, where the one who forgets is the one whose edit is lost.
+The check costs no extra round trip: `update` already reads the row to enforce
+the row policy.
+
+### Money is an integer count, and the column says of what
+
+```rust
+#[derive(Record)]
+#[record(table = "invoices", id = 1)]
+struct Invoice {
+    #[record(pk)] id: u64,
+    #[record(scale = 2)] total: Units,   // Units(1999) is 19.99
+}
+```
+
+`Value::Decimal` holds units; the **scale lives on the column**. That one
+decision is what makes the type cheap and exact at once: it encodes as an
+integer, so the ordering is the integer ordering — already proven and fuzzed —
+equal values have exactly one encoding as index keys require, and `SUM` is
+integer addition with no rescaling.
+
+Measured through the aggregate path, a hundred rows of ten cents:
+
+```
+SUM over a decimal column:  Decimal(1000)      exactly $10.00
+SUM over the same as f64:   9.99999999999998
+```
+
+The cost is that a value cannot print itself — rendering needs the column, and
+`Units::to_string_with_scale` takes the scale rather than guessing.
+
+### The schema on disk, and the index that returns nothing
+
+Adding an index to a table that already holds rows does not make queries
+slower. It makes them **return nothing**: the planner costs the index as cheap,
+scans a key range no write ever wrote into, and answers with no error while the
+rows are still there. It is also intermittent — whether it happens depends on
+whether the index covers the query — which is worse than if it always did.
+
+A third keyspace (`0x03 <table id>`) records per table what the last migration
+left behind: the schema version, a fingerprint of the column layout, and which
+indexes are actually built.
+
+```sh
+# slate-serverd reconciles before it binds its listener.
+[schema]
+migrate_on_start = true    # the default
+```
+
+Before the socket, not after: a node that binds and then migrates accepts a
+connection and answers it wrongly. Turning it off is not permission to serve
+without one — the node then *verifies* and refuses to start.
+
+The fingerprint covers what decides how bytes are read — column count, types,
+nullability, drops, the primary key, the tenant column, a decimal's scale — and
+deliberately **not** names, because a rename moves no bytes and must not look
+like a migration.
+
 ### Schemas are code, and so are policies
 
 No dynamic DDL. A table is defined once through a builder that validates
@@ -780,8 +921,84 @@ Built and tested:
       between them found a covering scan and a point get ignoring the
       projection, a panic on contradictory bounds, a vector that encoded but
       would not decode, and a cost model wrong by three orders of magnitude
+- [x] Relationships: `#[record(has_many(...))]` / `belongs_to(...)` emitting a
+      `Related` impl, and `load_related` fetching every parent's children in
+      **one** read rather than one per parent (measured: 1 scan against 3).
+      No lazy accessor, deliberately — the N+1 an ORM is blamed for and the
+      feature it is judged on are the same feature. Columns are named by field
+      ident, so a typo is a compile error on both sides rather than a panic on
+      first use or a relationship over the wrong column
+- [x] **A migration runner, for a defect that was returning wrong answers.**
+      Adding an index to a populated table made queries through it return *no
+      rows* — no error, rows still on disk — and intermittently, depending on
+      whether the index covered the query. Schema state now lives in a third
+      keyspace, and `migrate::{plan, apply, verify}` back-fill an index with no
+      entries (batched and resumable), reclaim a dropped index's entries, and
+      refuse a layout change that would reinterpret stored rows. `slate-serverd`
+      reconciles **before it binds its listener**, because a node that binds
+      first answers a connection wrongly; `[schema] migrate_on_start = false`
+      makes it verify and refuse instead, which is not the same as skipping
+- [x] Keyset pagination: `Query::after(key)` and `Records::page_records`
+      returning a `Page<R>` with the cursor for the next one, so a caller never
+      names a key column. Page 99 of 100 read **5 key-value pairs against the
+      offset version's 495**, and a row deleted between two pages no longer
+      makes the reader skip one — both asserted, the wrong answer beside the
+      right one. A sorted query, a grouped read and an explicit index hint are
+      refused rather than paged wrongly
+- [x] Per-row optimistic concurrency: `update_if_unchanged` and
+      `replace_record` write only if the stored row still equals what the
+      caller read. The store's conflict detection sees two writers overlapping
+      in *time*; this is the read-modify-write across two transactions, where
+      nothing overlaps and the second write silently discards the first's edit.
+      The whole row is compared rather than a version column, since a version
+      only catches writers who remembered to bump it
+- [x] An exact decimal. `Value::Decimal` holds a count of the column's smallest
+      unit and the **scale lives on the column**, so it encodes as an integer —
+      the ordering is the integer ordering, equal values have one encoding, and
+      `SUM` is exact. A hundred rows of ten cents sum to exactly `$10.00` where
+      the same rows as `f64` give `9.99999999999998`; both are asserted.
+      Decimals went into the existing tuple *property* suite rather than one of
+      their own, which caught two defects on the first two runs — a missing
+      comparison arm that made every decimal compare equal, and a `skip` path
+      that did not know the new type code
+- [x] `SELECT count(*) FROM books` — a grouping with no keys, which the kernel
+      had always answered and only the SQL front end refused. Lifting it
+      surfaced a second bug the reasoning had missed: the header code tested
+      for a grouping differently from the dispatch, so the right values came
+      back under the wrong column names
 
 Not built:
+
+- [ ] **None of the four features above cross the wire.** Three of them want
+      the same protocol change: the gRPC `Query` carries no cursor field, the
+      write path no expected-row field, and `Value` no decimal case, so
+      pagination, the conditional update and the decimal type are reachable
+      from the Rust ORM and not from Python, Go or TypeScript. Relationships
+      want nothing from the protocol — `load_related` lowers to an `IN` the
+      wire already carries — and are missing from the clients only because
+      nobody has written the three helpers. A decimal that reaches a client
+      today becomes a visible `<unrepresentable decimal>` marker rather than a
+      silent null — pinned by a test whose own doc comment says it is a pin and
+      not an endorsement. Three features wanting one protocol change is an
+      argument for making it once rather than three times
+- [ ] A read-only node that starts while the leader has not yet migrated warns
+      and serves. During that window a query through an unbuilt index returns
+      no rows. Closing it means the follower waiting for the leader, which
+      needs a way to tell "has not migrated yet" from "there is no leader"
+- [ ] `AVG` over a decimal returns a float, as it does over an integer. The
+      mean of exact decimals is generally not representable at the same scale,
+      so something has to give, and consistency was chosen over refusing. It is
+      the one place in that feature where exactness stops
+- [ ] Arithmetic on decimals in `Scalar` — `price * quantity` is not
+      expressible, because the product of two scale-2 values is scale-4 and
+      nothing in the expression layer tracks that
+- [ ] A decimal literal in the SQL front end: `WHERE total > 19.99` parses as a
+      float and will not match a decimal column
+- [ ] `SELECT DISTINCT` as a keyword, though `GROUP BY` over the same columns
+      already returns the distinct keys
+- [ ] Subqueries, `EXISTS` and `UNION`
+- [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
+      same class of mistake as overwriting it, and the same argument applies
 
 - [ ] In-place promotion of a read-only node. A writer store is an opened
       database and may only be opened once the lease is won, so promotion is a

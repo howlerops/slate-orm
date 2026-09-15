@@ -2033,3 +2033,62 @@ again:
   means regenerating `slate-server`'s protobuf types and that crate was not
   this sweep's to edit. The fixture here is keyed by `u64` and would show
   nothing.
+
+## Paging by key, and loading relations in one read
+
+Two measurements from the record layer rather than the storage engine. Both are
+about work that is *skipped*, so both are counted rather than timed: a counting
+wrapper around the key-value store, and an assertion on the count. Timing them
+would have measured an in-memory fixture and reported noise.
+
+```sh
+cargo test -p slate-kernel --test pagination a_page_costs_the_same -- --nocapture
+cargo test -p slate-orm --test relations loading_relations_costs_one_read -- --nocapture
+```
+
+### `OFFSET` reads what it discards
+
+500 rows, pages of five, the last page fetched two ways:
+
+```
+PAGE 99 OF 100: offset read 495 pairs, cursor read 5
+```
+
+The rows returned are identical — `[491, 492, 493, 494, 495]` both ways — which
+is exactly why no assertion about the rows could have caught this. `OFFSET n`
+walks and throws away `n` rows; a cursor narrows the scan's key range so they
+are never read.
+
+The test's assertion is deliberately `cursor_pairs * 10 < offset_pairs` rather
+than the ratio. A ratio would pin the prefetch depth and the row encoding, and
+this test is about neither. The honest lower bound is asserted too: a page of
+five rows cannot cost fewer than five pairs.
+
+The second-order cost is worse than the first and is not a performance
+property at all — `OFFSET` counts rows, so deleting one ahead of the cursor
+between two pages makes the reader skip a row it has never seen. That is
+`a_row_deleted_ahead_of_the_cursor_does_not_skip_one`, and it asserts the wrong
+answer beside the right one: showing only that the cursor works would not
+establish there was anything to fix.
+
+### One read for every parent's children
+
+```
+3 parents: batched 1 scan(s), per-parent loop 3
+```
+
+`load_related` collects the parents' keys, deduplicates them and issues one
+`Expr::In` — which the planner already turns into point gets or an index range.
+The loop it replaces is measured in the same test, on the same fixture, rather
+than described.
+
+Three parents is a small number and the point is the shape: the batched arm
+does not grow with the parent count and the loop does. The assertion is
+`cost <= 1` rather than `== 1`, so that a planner which later chooses a point
+get over a scan — a *better* plan, and one that opens no cursor — does not fail
+a test about costing less.
+
+What is not measured: anything at a size where the `IN` list itself is the
+expensive part. A thousand parents means a thousand values in one predicate,
+and where that stops being cheaper than a thousand point gets has not been
+found.
