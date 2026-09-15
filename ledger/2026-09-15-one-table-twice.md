@@ -149,12 +149,39 @@ hard error naming the files.
 
 After rebuilding, all three alias checks pass in the browser.
 
-## What this does not do
+### Mutation testing
 
-**No mutation testing yet.** The previous entry's pass found a real missing test
-and this change has had none. The tests above were written against the
-behaviour and the two failures were found by running them, which is evidence but
-not the same evidence. This is the gap I would close first.
+Eight mutations, each applied alone, against `--test sql --test taxi`:
+
+| mutation | verdict |
+| --- | --- |
+| a bare alias may swallow a keyword (`FOLLOWS_A_TABLE` ignored) | caught, 17 tests |
+| a bare first alias needs no `JOIN` after it | caught, 2 tests |
+| a qualifier is matched against the table, not the alias | caught |
+| two inputs collide on their table, not their name | caught, 2 tests |
+| a spec always carries an alias, never empty | **survived** — see below |
+| headers ignore the alias and use the table's name | caught |
+| an ambiguous grouped key is never qualified | caught |
+| the single-table alias refusal never fires | caught |
+
+**The survivor was the backward-compatibility claim**, which is written into
+`ChainInputSpec::alias`'s own doc comment two paragraphs above and was tested
+nowhere: a query that names no alias serialises exactly as it did before aliases
+existed. Making `alias_of` always return the name changed no answer, no header
+and no refusal — every spec simply grew a field. Invisible to every other test
+here, and visible in the workbench's Spec tab, in the JSON a reader is being
+told is what the SDKs send.
+
+`a_query_with_no_alias_carries_no_alias_in_its_spec` closes it, in both
+directions: a plain join and a plain chain carry no `alias`, and an aliased one
+carries the name the reader gave it — so the test cannot pass by never writing
+the field at all. Re-applying the mutation now fails that test by name.
+
+That is twice in a row a mutation pass has found a missing test rather than
+confirming the ones that exist, which is the argument for running it even when
+the tests already look thorough.
+
+## What this does not do
 
 **The panel still has no alias control.** It is a two-dropdown join form; an
 alias can only be written in SQL. The spec pane shows the `alias` field, and

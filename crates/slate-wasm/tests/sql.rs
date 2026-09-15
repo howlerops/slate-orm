@@ -768,6 +768,58 @@ fn an_aggregate_is_labelled_with_the_column_it_reads() {
 }
 
 #[test]
+fn a_query_with_no_alias_carries_no_alias_in_its_spec() {
+    // The backward-compatibility claim, which is written in `ChainInputSpec`'s
+    // own doc comment: a query that names no alias serialises exactly as it did
+    // before aliases existed. Both fields are
+    // `skip_serializing_if = "String::is_empty"`, and `alias_of` returns an
+    // empty string when the name is the table's own -- so the claim rests on
+    // two things agreeing, and nothing checked either.
+    //
+    // This test exists because a mutation survived. Making `alias_of` always
+    // return the name changed no answer, no header and no refusal: every spec
+    // simply grew a field. That is invisible to every other test here and
+    // visible in the Spec tab of the workbench, in the JSON a reader is being
+    // told is what the SDKs send.
+    let spec_of = |text: &str| -> Json {
+        match parsed_over_every_table(text).unwrap() {
+            Statement::Join(join) => serde_json::to_value(join).unwrap(),
+            Statement::Chain(chain) => serde_json::to_value(chain).unwrap(),
+            other => panic!("not a join or a chain: {other:?}"),
+        }
+    };
+
+    let plain_join = spec_of("SELECT * FROM authors JOIN books ON authors.id = books.author_id");
+    assert!(
+        plain_join.get("leftAlias").is_none() && plain_join.get("rightAlias").is_none(),
+        "a join with no alias carries one: {plain_join}"
+    );
+    let plain_chain = spec_of(CHAIN);
+    for input in plain_chain["inputs"].as_array().unwrap() {
+        assert!(
+            input.get("alias").is_none(),
+            "a chain input with no alias carries one: {input}"
+        );
+    }
+
+    // And the other direction, so this cannot pass by never writing the field
+    // at all: an alias that *was* written reaches the spec, under the name the
+    // reader gave it.
+    let aliased_join = spec_of("SELECT * FROM authors JOIN books AS b ON authors.id = b.author_id");
+    assert_eq!(aliased_join["rightAlias"], json!("b"), "{aliased_join}");
+    assert!(aliased_join.get("leftAlias").is_none(), "{aliased_join}");
+
+    let aliased_chain = spec_of(
+        "SELECT * FROM trips JOIN zones AS pickup ON trips.pickup_zone = pickup.id \
+         JOIN zones AS dropoff ON trips.dropoff_zone = dropoff.id",
+    );
+    let inputs = aliased_chain["inputs"].as_array().unwrap();
+    assert!(inputs[0].get("alias").is_none(), "{aliased_chain}");
+    assert_eq!(inputs[1]["alias"], json!("pickup"), "{aliased_chain}");
+    assert_eq!(inputs[2]["alias"], json!("dropoff"), "{aliased_chain}");
+}
+
+#[test]
 fn a_chain_refuses_what_it_cannot_answer() {
     let playground = Playground::new();
     let cases: Vec<(&str, &str)> = vec![
