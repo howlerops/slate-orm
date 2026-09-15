@@ -220,6 +220,10 @@ prop_compose! {
             // HAVING is meaningless without a grouping and the parser refuses
             // it, so it is empty here for the same reason `group_by` is.
             having: Vec::new(),
+            // Rendering a computed column back to SQL would mean teaching the
+            // renderer the call syntax and the find-or-add rule; the time
+            // functions have their own suite in `datetime.rs`.
+            compute: Vec::new(),
         }
     }
 }

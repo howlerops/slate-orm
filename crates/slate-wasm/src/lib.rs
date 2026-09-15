@@ -46,8 +46,8 @@ pub mod taxi;
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use slate_kernel::{
-    Aggregate, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey, Query, RecordStore, ScanOrder,
-    SortKey,
+    Aggregate, CalendarPart, CmpOp, Expr, Grouping, Join, JoinAlgorithm, JoinKey, Query,
+    RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
@@ -123,6 +123,15 @@ pub struct QuerySpec {
     /// What to compute per group. `count(*)` when grouping with none named.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub aggregates: Vec<AggregateSpec>,
+    /// Values computed per row and appended after the table's own columns, so
+    /// the `i`th sits at ordinal `columns().len() + i`. Everything downstream
+    /// — a group key, a sort key, a HAVING — addresses one the ordinary way.
+    ///
+    /// This is how `hour(pickup_time)` becomes something the spec can hold:
+    /// the query spec has no expression language and is not getting one, and a
+    /// computed column is the kernel's own answer to that.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compute: Vec<ComputeSpec>,
     /// Which groups survive, ANDed. Ordinals are in *group* space —
     /// `[keys..., aggregates...]` — the same space `sort` uses when there is a
     /// grouping, and not the table's. `HAVING count(*) > 100` names ordinal
@@ -148,6 +157,22 @@ pub struct FilterSpec {
     pub column: u32,
     pub op: String,
     pub value: String,
+}
+
+/// One computed column: a function of one of the table's own columns.
+///
+/// A named function rather than a nested expression tree. The kernel's
+/// `Scalar` is a tree and could carry `hour(x) + 1`, but the SQL front end has
+/// no expression grammar to produce one — `WHERE` takes `col <op> literal` and
+/// nothing else — so a spec that could express more than the parser can parse
+/// would be a shape nobody produces and nobody tests.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputeSpec {
+    /// `hour`, `year`, `day_of_week`, and the rest of `compute_scalar`.
+    pub function: String,
+    /// The column it reads, an ordinal within the table.
+    pub column: u32,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -1018,15 +1043,26 @@ impl Playground {
                             let mut headers: Vec<String> = spec
                                 .group_by
                                 .iter()
-                                .map(|o| {
-                                    t.column(Ordinal(*o as usize))
-                                        .map_or_else(|| o.to_string(), |c| c.name().to_owned())
-                                })
+                                .map(|o| column_header(*o, &t, &spec))
                                 .collect();
                             headers.extend(labels(&spec.aggregates, &t));
                             headers
                         } else {
-                            t.columns().iter().map(|c| c.name().to_owned()).collect()
+                            // The table's own columns, then any computed ones,
+                            // in the order the row carries them. A projection
+                            // does not narrow this — an unread column comes
+                            // back null and the grid shows it as such — so the
+                            // header has to cover the whole row either way.
+                            let mut headers: Vec<String> =
+                                t.columns().iter().map(|c| c.name().to_owned()).collect();
+                            headers.extend((0..spec.compute.len()).map(|i| {
+                                column_header(
+                                    u32::try_from(t.columns().len() + i).unwrap_or(0),
+                                    &t,
+                                    &spec,
+                                )
+                            }));
+                            headers
                         }
                     })
                     .unwrap_or_default();
@@ -1196,8 +1232,13 @@ impl Playground {
         query: &Query,
     ) -> Result<Answer, String> {
         let keys: Vec<Ordinal> = spec.group_by.iter().map(|c| Ordinal(*c as usize)).collect();
+        // A key may be one of the table's columns or one of the query's
+        // computed ones, which sit immediately after them. Checking only
+        // `table.column` refused `GROUP BY hour(pickup_time)` with "no such
+        // column 11", which is true and unhelpful.
+        let width = table.columns().len() + spec.compute.len();
         for key in &keys {
-            if table.column(*key).is_none() {
+            if key.0 >= width {
                 return Err(format!("{} has no column {}", table.name(), key.0));
             }
         }
@@ -1458,6 +1499,13 @@ impl Playground {
 /// Turn the UI's description into a kernel `Query`.
 fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
     let mut query = Query::all();
+
+    // First, because everything below may name a computed ordinal and the
+    // kernel only knows what those mean once the query carries the
+    // expressions that produce them.
+    if !spec.compute.is_empty() {
+        query = query.computing(computes(&spec.compute, table)?);
+    }
 
     // `filter` and `filters` are both accepted and both ANDed in. The single
     // form is not deprecated shorthand — it is what a one-condition panel
@@ -1750,6 +1798,98 @@ fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate
     Ok(out)
 }
 
+/// What to print above a column, whether the table owns it or the query
+/// computed it.
+///
+/// A computed column has no name in the schema — it does not exist there — so
+/// the header is rebuilt from the call that produced it. Falling back to the
+/// bare ordinal, which is what this replaced, put `11` above a column of hours.
+fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
+    if let Some(column) = table.column(Ordinal(ordinal as usize)) {
+        return column.name().to_owned();
+    }
+    let computed = (ordinal as usize).checked_sub(table.columns().len());
+    computed.and_then(|i| spec.compute.get(i)).map_or_else(
+        || ordinal.to_string(),
+        |c| {
+            let argument = table
+                .column(Ordinal(c.column as usize))
+                .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
+            format!("{}({argument})", c.function)
+        },
+    )
+}
+
+/// One `ComputeSpec` as the kernel's `Scalar`.
+///
+/// The names are SQL's where SQL has one — `EXTRACT(HOUR FROM t)` and
+/// `EXTRACT(DAY FROM t)` mean hour-of-day and day-of-*month*, so `day` here is
+/// the day of the month and not the day of the epoch, which is what
+/// `TimeUnit::Day` would give. Getting that backwards would be silent: both
+/// return an integer and both look plausible in a column.
+fn compute_scalar(spec: &ComputeSpec, table: &TableDef) -> Result<Scalar, String> {
+    use slate_tuple::ValueType as T;
+    let column = Ordinal(spec.column as usize);
+    let def = table
+        .column(column)
+        .ok_or_else(|| format!("{} has no column {}", table.name(), spec.column))?;
+    let kind = def.value_type();
+    let value = Scalar::Column(column);
+
+    // Checked per function rather than once, because they do not agree on what
+    // they take: a timestamp is an integer of seconds — there is no date type
+    // — and `round` is for the columns that are not. Refused here rather than
+    // left to the kernel, which would return null per row: right for a value
+    // of the wrong shape, wrong for a query that could never have worked, and
+    // indistinguishable on screen from a column that is genuinely empty.
+    let timestamp = |scalar: Scalar| {
+        if matches!(kind, T::I64 | T::U64) {
+            Ok(scalar)
+        } else {
+            Err(format!(
+                "{}() needs a timestamp, and {} is {:?} — timestamps here are \
+                 seconds since the epoch in an integer column",
+                spec.function,
+                def.name(),
+                kind
+            ))
+        }
+    };
+
+    match spec.function.as_str() {
+        "hour" => timestamp(value.extract(TimeUnit::Hour)),
+        "minute" => timestamp(value.extract(TimeUnit::Minute)),
+        "second" => timestamp(value.extract(TimeUnit::Second)),
+        "year" => timestamp(value.calendar_part(CalendarPart::Year)),
+        "month" => timestamp(value.calendar_part(CalendarPart::Month)),
+        // `day` is the day of the *month*, as `EXTRACT(DAY FROM t)` is in SQL
+        // — not `TimeUnit::Day`, which counts days since the epoch. Both
+        // return an integer and both look plausible in a column, so getting
+        // this backwards would be silent.
+        "day" => timestamp(value.calendar_part(CalendarPart::DayOfMonth)),
+        "day_of_week" => timestamp(value.calendar_part(CalendarPart::DayOfWeek)),
+        // Midnight of the day, as epoch seconds — so grouping by it gives one
+        // group per calendar day, ordered as the days are.
+        "date" => timestamp(value.date_trunc(TimeUnit::Day)),
+        "round" => {
+            if matches!(kind, T::F64 | T::I64 | T::U64) {
+                Ok(value.round())
+            } else {
+                Err(format!(
+                    "round() needs a number, and {} is {kind:?}",
+                    def.name()
+                ))
+            }
+        }
+        other => Err(format!("no such function: {other}")),
+    }
+}
+
+/// Every computed column a spec asks for, in order.
+fn computes(specs: &[ComputeSpec], table: &TableDef) -> Result<Vec<Scalar>, String> {
+    specs.iter().map(|c| compute_scalar(c, table)).collect()
+}
+
 /// The type a group-space ordinal holds, for `HAVING`.
 ///
 /// This exists because of one hazard, and it is a silent one. `Value` orders
@@ -1778,6 +1918,21 @@ fn group_value_type(
             .ok_or_else(|| format!("{} has no column {}", table.name(), c.0))
     };
     if let Some(key) = keys.get(index) {
+        // A group key past the table's own columns is a computed one, and
+        // every function `compute_scalar` offers returns an integer.
+        //
+        // No query can currently tell this branch from reading the *source*
+        // column's type, and a mutation replacing it with `if false` passes
+        // the whole suite — because `compute_scalar` refuses a non-integer
+        // source, so both readings land on `I64` or `U64`, which share a class
+        // rank and compare through `i128`. It is here for the first function
+        // that returns a double, where the two stop agreeing and the
+        // disagreement is silent (see `having`, which explains the rank
+        // hazard). Written down rather than deleted, and written down rather
+        // than covered by a test that does not exist.
+        if key.0 >= table.columns().len() {
+            return Ok(T::I64);
+        }
         return column_type(*key);
     }
     let aggregate = aggregates.get(index - keys.len()).ok_or_else(|| {

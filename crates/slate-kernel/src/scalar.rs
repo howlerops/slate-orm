@@ -93,6 +93,67 @@ impl Metric {
     }
 }
 
+/// A calendar field of a timestamp, for [`Scalar::CalendarPart`].
+///
+/// Separate from [`TimeUnit`] rather than more variants on it, because
+/// `TimeUnit` promises a fixed number of seconds — `TimeUnit::seconds` is how
+/// both `Extract` and `DateTrunc` are implemented — and a month does not have
+/// one. Adding `Month` there would give it a `seconds()` that is a lie, and the
+/// lie would be silent: `date_trunc(month, t)` would compile and return
+/// nonsense.
+///
+/// These need the Gregorian calendar, so they are computed rather than divided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarPart {
+    /// The year, negative before 1 CE. Proleptic Gregorian, so it disagrees
+    /// with history before 1582 and agrees with every other database.
+    Year,
+    /// The month, 1 to 12.
+    Month,
+    /// The day of the month, 1 to 31.
+    DayOfMonth,
+    /// The day of the week, 0 for Sunday through 6 for Saturday.
+    ///
+    /// Sunday-first because that is what ClickHouse, MySQL and SQLite's
+    /// `%w` produce, and matching three of them beats matching ISO's
+    /// Monday-first and none of them. The choice is arbitrary and the only
+    /// wrong move is not writing it down.
+    DayOfWeek,
+}
+
+/// Days since 1970-01-01 as a proleptic-Gregorian year, month and day.
+///
+/// Howard Hinnant's `civil_from_days`, transcribed. It is branch-free apart
+/// from the era floor and the March-based month fixup, exact over the whole
+/// range this can be handed, and short enough to read — which is why it is
+/// here rather than behind a date-time dependency that would bring a parser, a
+/// formatter and a timezone database along for four integer fields.
+///
+/// The shift by 719_468 moves the epoch to 0000-03-01, so that leap day lands
+/// at the *end* of the year and the month lengths become a repeating pattern
+/// `(5 * doy + 2) / 153` can index. That is the whole trick.
+const fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - 146_096
+    } / 146_097;
+    let day_of_era = shifted - era * 146_097; // [0, 146_096]
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100); // [0, 365]
+    let march_month = (5 * day_of_year + 2) / 153; // [0, 11], 0 is March
+    let day = day_of_year - (153 * march_month + 2) / 5 + 1; // [1, 31]
+    let month = if march_month < 10 {
+        march_month + 3
+    } else {
+        march_month - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
 /// A part of a timestamp, for [`Scalar::Extract`] and [`Scalar::DateTrunc`].
 ///
 /// Timestamps here are seconds since the epoch held in an integer column,
@@ -162,6 +223,23 @@ pub enum Scalar {
     Extract {
         /// Which part.
         unit: TimeUnit,
+        /// The timestamp, in seconds since the epoch.
+        value: Box<Scalar>,
+    },
+    /// A number rounded to the nearest integer, halves away from zero.
+    ///
+    /// Returns an integer, so it can be a group key without the grouping
+    /// depending on float equality: `2.5` and `2.4999999` round to the same
+    /// `i64` and land in the same group, which is the whole reason to bucket
+    /// by a rounded value rather than by the value itself.
+    Round(Box<Scalar>),
+    /// A calendar field of a timestamp: the year, the day of the week.
+    ///
+    /// Distinct from [`Scalar::Extract`] because these are not divisions. See
+    /// [`CalendarPart`].
+    CalendarPart {
+        /// Which field.
+        part: CalendarPart,
         /// The timestamp, in seconds since the epoch.
         value: Box<Scalar>,
     },
@@ -335,6 +413,21 @@ impl Scalar {
         }
     }
 
+    /// This value rounded to the nearest integer.
+    #[must_use]
+    pub fn round(self) -> Self {
+        Self::Round(Box::new(self))
+    }
+
+    /// One calendar field of a timestamp.
+    #[must_use]
+    pub fn calendar_part(self, part: CalendarPart) -> Self {
+        Self::CalendarPart {
+            part,
+            value: Box::new(self),
+        }
+    }
+
     /// A timestamp rounded down.
     #[must_use]
     pub fn date_trunc(self, unit: TimeUnit) -> Self {
@@ -435,6 +528,48 @@ impl Scalar {
                 }
                 _ => Value::Null,
             },
+            Self::Round(value) => match number(&value.evaluate(row)) {
+                // An integer is already rounded. Going through `f64` would
+                // lose precision above 2^53, silently, for a no-op.
+                Some(Number::Int(n)) => Value::I64(n),
+                Some(Number::Real(x)) => {
+                    // `f64::round` is halves-away-from-zero, which is what SQL
+                    // and ClickHouse's `round` do at the default precision.
+                    // A value past `i64` saturates rather than wrapping; NaN
+                    // has no integer to be, so it is null.
+                    if x.is_nan() {
+                        Value::Null
+                    } else {
+                        Value::I64(x.round() as i64)
+                    }
+                }
+                None => Value::Null,
+            },
+            Self::CalendarPart { part, value } => match number(&value.evaluate(row)) {
+                Some(Number::Int(seconds)) => {
+                    // Floor division, not truncation: an instant in 1969 is a
+                    // negative number of seconds, and `-1 / 86_400` is 0 while
+                    // the day it belongs to is -1. Truncating puts the last
+                    // day before the epoch into the first day after it.
+                    let days = seconds.div_euclid(86_400);
+                    Value::I64(match part {
+                        // 1970-01-01 was a Thursday, so day 0 is weekday 4
+                        // counting Sunday as 0. `rem_euclid` for the same
+                        // reason the division is floored.
+                        CalendarPart::DayOfWeek => (days + 4).rem_euclid(7),
+                        _ => {
+                            let (year, month, day) = civil_from_days(days);
+                            match part {
+                                CalendarPart::Year => year,
+                                CalendarPart::Month => month,
+                                CalendarPart::DayOfMonth => day,
+                                CalendarPart::DayOfWeek => unreachable!(),
+                            }
+                        }
+                    })
+                }
+                _ => Value::Null,
+            },
             Self::DateTrunc { unit, value } => match number(&value.evaluate(row)) {
                 Some(Number::Int(seconds)) => {
                     Value::I64(seconds.div_euclid(unit.seconds()) * unit.seconds())
@@ -517,7 +652,10 @@ impl Scalar {
             Self::Length(inner) | Self::Lower(inner) | Self::Upper(inner) => {
                 inner.collect_columns(out);
             }
-            Self::Extract { value, .. } | Self::DateTrunc { value, .. } => {
+            Self::Round(value) => value.collect_columns(out),
+            Self::Extract { value, .. }
+            | Self::DateTrunc { value, .. }
+            | Self::CalendarPart { value, .. } => {
                 value.collect_columns(out);
             }
             Self::Concat(parts) | Self::Coalesce(parts) => {

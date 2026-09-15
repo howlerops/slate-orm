@@ -48,6 +48,34 @@ const EXAMPLES = [
     "-- 4.7% of real trips have no passenger count.\nSELECT payment, count(*), count(passengers) FROM trips\n  GROUP BY payment",
   ],
   [
+    "Trips by hour of day",
+    "-- pickup_time is an integer of seconds; hour() is a computed column,\n" +
+      "-- evaluated per row and grouped like any other. Look at the Spec tab.\n" +
+      "SELECT hour(pickup_time), count(*), avg(distance) FROM trips\n" +
+      "  GROUP BY hour(pickup_time)\n" +
+      "  ORDER BY hour(pickup_time)",
+  ],
+  [
+    "…and by day of week",
+    "-- 0 is Sunday. January 2024 opened on a Monday, so there are five of\n" +
+      "-- those in the sample and four Sundays.\n" +
+      "SELECT day_of_week(pickup_time), count(*), avg(total) FROM trips\n" +
+      "  GROUP BY day_of_week(pickup_time)\n" +
+      "  ORDER BY count(*) DESC",
+  ],
+  [
+    "ClickHouse's taxi Q4, as written",
+    "-- ClickHouse's New York taxi tutorial ends with this. It used to be\n" +
+      "-- unwritable here -- it keys on toYear(pickup_datetime), and there was\n" +
+      "-- no year to key on -- so the site substituted a column and said so.\n" +
+      "-- This is the query, not an adaptation of it.\n" +
+      "SELECT passengers, year(pickup_time), round(distance), count(*)\n" +
+      "  FROM trips\n" +
+      "  GROUP BY passengers, year(pickup_time), round(distance)\n" +
+      "  ORDER BY year(pickup_time), count(*) DESC\n" +
+      "  LIMIT 20",
+  ],
+  [
     "Busy zones only (HAVING)",
     "-- WHERE filters rows before grouping; HAVING filters the groups after.\n" +
       "-- Swap this for `WHERE count(*) > 3000` and the parser will tell you\n" +

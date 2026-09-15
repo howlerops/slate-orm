@@ -59,13 +59,23 @@ from anything, and rebuilding it in CI would mean a 50 MB download, a pyarrow
 dependency and a sampling step that has to be deterministic to the byte.
 
 **Why 100,000 and not the month.** The whole month is 2,964,619 trips and loads
-into this same store in 17.8 s — that is measured, in
-`docs/performance.md` §7b. The limit is the tab, not the record layer: the
-in-memory store costs about 1.3 KB a row, so the month wants ~3.8 GB, and a
-`wasm32` tab has 4 GB of address space in theory and around 2 GB in practice.
-100,000 rows is ~130 MB and first paint — wasm fetched and compiled, 1.26 MB of
-data fetched, decoded, seeded, analysed, first query answered — measured
-**1.4 s** in headless Chromium.
+into this same store in 17.8 s — that is measured, in `docs/performance.md`
+§7b. The limit is the tab, not the record layer.
+
+The store costs **403 bytes a row**, counted with an allocator in §7c. (This
+used to say 1.3 KB, from RSS divided by rows; most of the difference was the
+*source* rows the loader was still holding, which are not the store.) So the
+month is about **1.2 GB at rest** — except that the loader holds those source
+rows too while it runs, another 474 bytes a row, and it is the **peak** near
+2.6 GB that decides whether a tab survives. A `wasm32` tab has 4 GB of address
+space in theory and around 2 GB in practice.
+
+At 100,000 rows the store is ~40 MB. What the whole tab holds on top of that —
+the wasm module, the retained trip bytes, the DOM — has not been measured, and
+the old ~130 MB figure came from the same RSS table as the 1.3 KB, so it is not
+quoted here. First paint is measured: wasm fetched and compiled, 1.26 MB of data
+fetched, decoded, seeded, analysed and the first query answered, **1.4 s** in
+headless Chromium.
 
 The books and authors fixture is still there, as the small-table contrast: at
 4,824 rows the planner makes different choices than at 100,000, and having both
@@ -248,6 +258,38 @@ in brackets, so the 21.7 MB is reported rather than quietly disappeared.
 The listing is **static and dated**: it is a snapshot of one load, and if the
 schema or the sample changes it has to be regenerated. Nothing checks that it
 is current.
+
+## Time is an integer, and every function over it is UTC
+
+`pickup_time` is seconds since the epoch in an `i64`; there is no date type.
+`hour()`, `minute()`, `second()`, `year()`, `month()`, `day()`,
+`day_of_week()`, `date()` and `round()` are **computed columns** — a value
+evaluated per row and appended after the table's own, so it groups, sorts and
+filters exactly as a column does. Writing the same call in the select list and
+in `GROUP BY` names one computed column, not two.
+
+Two things worth knowing before reading a number off the page:
+
+- **Everything is UTC.** Nothing records an offset, so "trips per hour of day"
+  is five hours off New York's clock. Fixing that means a real date type, which
+  this is not.
+- **`day()` is the day of the month**, as `EXTRACT(DAY FROM t)` is in SQL — not
+  the day of the epoch. `date()` is midnight of the day as epoch seconds, so
+  grouping by it orders chronologically across a month boundary where `day()`
+  would not.
+
+This is what lets ClickHouse's taxi Q3 and Q4 be *replicated* rather than
+adapted. Both key on `toYear(pickup_datetime)`; the site used to substitute a
+column that varied and say so. Q4, as ClickHouse writes it:
+
+```sql
+SELECT passengers, year(pickup_time), round(distance), count(*) FROM trips
+  GROUP BY passengers, year(pickup_time), round(distance)
+  ORDER BY year(pickup_time), count(*) DESC
+```
+
+The year is constant, because the sample is one month. That is a property of
+the sample and no longer of the grammar.
 
 ## The quickstarts are checked by running them
 

@@ -23,7 +23,7 @@
 //! # The grammar, in full
 //!
 //! ```text
-//! SELECT  <* | expr-list> FROM <table>
+//! SELECT  <* | item-list> FROM <table>
 //!         [ JOIN <table> ON <col> = <col> ]
 //!         [ WHERE <cond> (AND <cond>)* ]
 //!         [ GROUP BY <col> (, ...)* ]
@@ -38,6 +38,18 @@
 //! `<cond>` is `col <op> literal`, with `op` one of `= != <> < <= > >=`,
 //! `LIKE`, `ILIKE` or `~` (a regular expression). Statements may be separated
 //! by `;`.
+//!
+//! An `<item>` is a column, an aggregate, or a **call**: `hour(pickup_time)`,
+//! `round(distance)`. A call is a value computed per row and appended after
+//! the table's own columns, so it can be a group key, a sort key or a HAVING
+//! subject exactly as a column can. Writing the same call twice — once in the
+//! select list, once in `GROUP BY` — names one computed column, not two.
+//!
+//! The calls are `hour`, `minute`, `second`, `year`, `month`, `day`,
+//! `day_of_week`, `date` and `round`. There is no date *type*: a timestamp is
+//! seconds since the epoch in an integer column, `day` is the day of the month
+//! as `EXTRACT(DAY FROM t)` is in SQL, and `date` returns midnight of the day
+//! as epoch seconds so that grouping by it orders chronologically.
 //!
 //! `<group-cond>` is the same, except the left side names a *group* — a group
 //! key or one of the aggregates the select list computes — so
@@ -61,7 +73,7 @@
 //! recursive-descent parser over this grammar refuses at the token that is
 //! wrong, and the whole thing is smaller than the dependency's changelog.
 
-use crate::{AggregateSpec, FilterSpec, JoinSpec, QuerySpec, SortSpec};
+use crate::{AggregateSpec, ComputeSpec, FilterSpec, JoinSpec, QuerySpec, SortSpec};
 use slate_schema::TableDef;
 
 /// A parsed statement, already lowered onto the spec types.
@@ -605,7 +617,17 @@ impl Parser<'_> {
         if self.eat("group") {
             self.expect("by")?;
             loop {
-                spec.group_by.push(self.column(&table)?);
+                // A select item rather than a column, so `GROUP BY
+                // hour(pickup_time)` is expressible. The same call in the
+                // select list has to land on the same ordinal, which is what
+                // `value_ordinal`'s find-or-add is for — registering it twice
+                // would group by two identical columns and return one group
+                // per pair, which is the same answer with a duplicated column
+                // and no error anywhere.
+                let at = self.at();
+                let item = self.select_item()?;
+                let ordinal = self.value_ordinal(&item, &mut spec, &table, at, "GROUP BY")?;
+                spec.group_by.push(ordinal);
                 if !self.eat_symbol(",") {
                     break;
                 }
@@ -630,6 +652,24 @@ impl Parser<'_> {
                                      to GROUP BY or wrap it in one"
                                 ),
                                 at: *at,
+                            });
+                        }
+                    } else {
+                        spec.columns.push(ordinal);
+                    }
+                }
+                SelectItem::Call { at, .. } => {
+                    let at = *at;
+                    let ordinal = self.value_ordinal(item, &mut spec, &table, at, "SELECT")?;
+                    if grouping {
+                        // Same rule a bare column follows: with a grouping,
+                        // every non-aggregate in the list must be a key.
+                        if !spec.group_by.contains(&ordinal) {
+                            return Err(SqlError {
+                                message: "that is neither a group key nor an aggregate; add it \
+                                          to GROUP BY or wrap it in one"
+                                    .to_owned(),
+                                at,
                             });
                         }
                     } else {
@@ -703,13 +743,17 @@ impl Parser<'_> {
                     self.group_ordinal(&item, &spec, &table, at, "ORDER BY")?
                 } else {
                     match &item {
-                        SelectItem::Column { raw, at } => self.resolve(raw, &table, *at)?,
                         SelectItem::Aggregate { at, .. } => {
                             return Err(SqlError {
                                 message: "an aggregate in ORDER BY needs a GROUP BY".to_owned(),
                                 at: *at,
                             });
                         }
+                        // A column or a call. `ORDER BY hour(pickup_time)`
+                        // without a grouping sorts the rows by that value,
+                        // which is what it says, and registers the
+                        // computation if the select list did not.
+                        other => self.value_ordinal(other, &mut spec, &table, at, "ORDER BY")?,
                     }
                 };
                 let descending = if self.eat("desc") {
@@ -731,6 +775,65 @@ impl Parser<'_> {
             spec.offset = self.count("OFFSET")?;
         }
         Ok(Statement::Select(spec))
+    }
+
+    /// The ordinal a column or a computed call denotes, registering the
+    /// computation if it is new.
+    ///
+    /// Find-or-add on `(function, column)`, so the same call written twice —
+    /// once in the select list, once in `GROUP BY` — is one computed column
+    /// and one ordinal. Two entries would be two identical group keys: the
+    /// same answer with a column repeated, no error, and nothing to notice.
+    ///
+    fn value_ordinal(
+        &self,
+        item: &SelectItem,
+        spec: &mut QuerySpec,
+        table: &TableDef,
+        at: usize,
+        clause: &str,
+    ) -> Result<u32, SqlError> {
+        match item {
+            SelectItem::Column { raw, at } => self.resolve(raw, table, *at),
+            SelectItem::Aggregate { kind, .. } => Err(SqlError {
+                // An unknown name parses as an aggregate, because that is what
+                // anything `word(...)` that is not a time function is. Saying
+                // "an aggregate cannot be a group key" about `nosuch(x)` names
+                // a category the reader never used, so check first.
+                message: if AGGREGATES.contains(&kind.as_str()) {
+                    format!("an aggregate cannot be used as a value in {clause}")
+                } else {
+                    format!(
+                        "no such function: `{kind}` — this has {} and the aggregates {}",
+                        TIME_FUNCTIONS.join(", "),
+                        AGGREGATES.join(", ")
+                    )
+                },
+                at,
+            }),
+            SelectItem::Call {
+                function, argument, ..
+            } => {
+                let column = self.resolve(argument, table, at)?;
+                let wanted = ComputeSpec {
+                    function: function.clone(),
+                    column,
+                };
+                let position = spec
+                    .compute
+                    .iter()
+                    .position(|c| *c == wanted)
+                    .unwrap_or_else(|| {
+                        spec.compute.push(wanted);
+                        spec.compute.len() - 1
+                    });
+                // Computed columns sit immediately after the table's own, the
+                // same arithmetic `Query::computed` does. The binding checks
+                // this against the schema; here it is the one place the
+                // parser has to know the layout, and it is written down.
+                Ok(u32::try_from(table.columns().len() + position).unwrap_or(0))
+            }
+        }
     }
 
     /// Where a group-space item sits in `[keys..., aggregates...]`.
@@ -762,6 +865,44 @@ impl Parser<'_> {
                     .ok_or_else(|| SqlError {
                         message: format!("`{raw}` is not a group key, so {clause} cannot use it"),
                         at: *at,
+                    })
+            }
+            SelectItem::Call {
+                function, argument, ..
+            } => {
+                // The call must already be a group key — resolved against
+                // what the query said, exactly as a bare column is. Looking it
+                // up rather than registering it is the point: `ORDER BY
+                // hour(x)` over a grouping that did not group by `hour(x)`
+                // orders by a value the groups do not have.
+                let column = self.resolve(argument, table, at)?;
+                let wanted = ComputeSpec {
+                    function: function.clone(),
+                    column,
+                };
+                let ordinal = spec
+                    .compute
+                    .iter()
+                    .position(|c| *c == wanted)
+                    .map(|i| table.columns().len() + i)
+                    .and_then(|o| u32::try_from(o).ok())
+                    .ok_or_else(|| SqlError {
+                        message: format!(
+                            "{clause} calls `{function}()` on a value this query \
+                                          does not compute"
+                        ),
+                        at,
+                    })?;
+                spec.group_by
+                    .iter()
+                    .position(|k| *k == ordinal)
+                    .map(|i| u32::try_from(i).unwrap_or(0))
+                    .ok_or_else(|| SqlError {
+                        message: format!(
+                            "`{function}({argument})` is not a group key, so {clause} cannot \
+                             use it"
+                        ),
+                        at,
                     })
             }
             SelectItem::Aggregate { kind, argument, .. } => {
@@ -844,8 +985,26 @@ impl Parser<'_> {
                 });
             }
             self.expect_symbol(")")?;
+            let name = name.to_ascii_lowercase();
+            // Told apart by name, because they are told apart by nothing else:
+            // both are `word(column)`. The alternative — deciding later, from
+            // whether the name resolves as an aggregate — would put the
+            // "no such aggregate: hour" error on a query that never meant one.
+            if TIME_FUNCTIONS.contains(&name.as_str()) {
+                let Some(argument) = argument else {
+                    return Err(SqlError {
+                        message: format!("{name}() needs a column, not `*`"),
+                        at,
+                    });
+                };
+                return Ok(SelectItem::Call {
+                    function: name,
+                    argument,
+                    at,
+                });
+            }
             return Ok(SelectItem::Aggregate {
-                kind: name.to_ascii_lowercase(),
+                kind: name,
                 argument,
                 at,
             });
@@ -1063,6 +1222,20 @@ impl Parser<'_> {
                     let parsed = self.aggregate(kind, argument.as_deref(), &right, *at)?;
                     spec.aggregates.push(parsed);
                 }
+                SelectItem::Call { function, at, .. } => {
+                    // The join spec has one group key and no computed
+                    // columns — `JoinSpec` carries neither a `compute` field
+                    // nor an ordinal space to put one in. Refused with the
+                    // reason rather than silently ignored, which is the rule
+                    // the rest of this grammar's edges follow.
+                    return Err(SqlError {
+                        message: format!(
+                            "`{function}()` is not available on a join — compute it in a \
+                             single-table query instead"
+                        ),
+                        at: *at,
+                    });
+                }
                 SelectItem::Column { raw, at } => {
                     // Selecting a bare column beside a GROUP BY would be the
                     // "not in the group key" error every SQL engine has. The
@@ -1222,6 +1395,31 @@ impl Parser<'_> {
     }
 }
 
+/// The functions `select_item` treats as computed columns rather than
+/// aggregates. Kept beside the parser and checked against `compute_scalar`'s
+/// match by `every_time_function_the_parser_accepts_is_one_the_binding_lowers`
+/// — two lists that must agree, with a test rather than a comment holding them
+/// together.
+/// The aggregate names, for telling an unknown function from a misplaced
+/// aggregate. `aggregate()` remains the authority on what is accepted; this is
+/// only for the error text, and a test keeps the two in step.
+const AGGREGATES: &[&str] = &["count", "min", "max", "sum", "avg"];
+
+const TIME_FUNCTIONS: &[&str] = &[
+    "hour",
+    "minute",
+    "second",
+    "year",
+    "month",
+    "day",
+    "day_of_week",
+    "date",
+    // Not a time function, and here anyway: this list is really "the names
+    // that are computed columns rather than aggregates", and one arithmetic
+    // function does not earn a second list to be the only member of.
+    "round",
+];
+
 #[derive(Debug, Clone)]
 enum SelectItem {
     Column {
@@ -1231,6 +1429,12 @@ enum SelectItem {
     Aggregate {
         kind: String,
         argument: Option<String>,
+        at: usize,
+    },
+    /// `hour(pickup_time)`: a function of one column, computed per row.
+    Call {
+        function: String,
+        argument: String,
         at: usize,
     },
 }

@@ -402,6 +402,19 @@ enum TimeUnit {
   TIME_UNIT_DAY = 4;
 }
 
+// A calendar field of a timestamp, which `TimeUnit` cannot name: those are all
+// a fixed number of seconds and a month is not. Refused when unspecified, for
+// the reason `Metric` is — a default would answer a different question with no
+// sign that it had.
+enum CalendarPart {
+  CALENDAR_PART_UNSPECIFIED = 0;
+  CALENDAR_PART_YEAR = 1;
+  CALENDAR_PART_MONTH = 2;
+  CALENDAR_PART_DAY_OF_MONTH = 3;
+  // Zero for Sunday, matching ClickHouse, MySQL and SQLite rather than ISO.
+  CALENDAR_PART_DAY_OF_WEEK = 4;
+}
+
 // How to measure the distance between two vectors. Refused when unspecified:
 // cosine and L2 rank differently, so a default would silently answer a
 // different nearest-neighbour question.
@@ -441,6 +454,8 @@ message Scalar {
     ScalarList coalesce = 14;
     Distance distance = 15;
     RegexpReplace regexp_replace = 16;
+    CalendarField calendar_part = 17;
+    Scalar round = 18;
   }
 }
 
@@ -455,6 +470,11 @@ message ScalarList {
 
 message TimePart {
   TimeUnit unit = 1;
+  Scalar value = 2;
+}
+
+message CalendarField {
+  CalendarPart part = 1;
   Scalar value = 2;
 }
 

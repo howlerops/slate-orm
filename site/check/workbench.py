@@ -232,6 +232,29 @@ out.havingTyped = await type(
 out.havingRefused = await type("SELECT * FROM trips HAVING count(*) > 1");
 out.havingRefusal = await page.locator('[data-app="grid"] .refusal').innerText();
 
+// 9c3. Time functions: a computed column, grouped, through the wasm boundary.
+//      The Rust suite covers the arithmetic; what this covers is that a
+//      `compute` field survives serde in both directions and that the header
+//      says what the column is rather than printing its ordinal.
+out.byHour = await type(
+  "SELECT hour(pickup_time), count(*) FROM trips GROUP BY hour(pickup_time) " +
+  "ORDER BY hour(pickup_time)",
+);
+out.byHourRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+await page.locator('[data-tab="spec"]').click();
+out.byHourSpec = await page.locator('[data-app="spec"]').innerText();
+await page.locator('[data-tab="results"]').click();
+// ClickHouse's Q4, which could not be written here at all until year() existed.
+out.clickhouse = await type(
+  "SELECT passengers, year(pickup_time), round(distance), count(*) FROM trips " +
+  "GROUP BY passengers, year(pickup_time), round(distance) " +
+  "ORDER BY year(pickup_time), count(*) DESC LIMIT 20",
+);
+out.clickhouseHeaders = await page.locator('[data-app="grid"] th').allInnerTexts();
+// A timestamp is an integer of seconds, so this cannot mean anything.
+out.notATimestamp = await type("SELECT hour(payment), count(*) FROM trips GROUP BY hour(payment)");
+out.notATimestampWhy = await page.locator('[data-app="grid"] .refusal').innerText();
+
 // 9d. The timing in the status bar is the kernel's, not the round trip.
 //     A grouped query returning 226 rows spends ~1% of its wall clock on
 //     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
@@ -652,6 +675,40 @@ def main() -> int:
         seen["havingRefused"]["refusal"] == 1
         and "GROUP BY" in seen["havingRefusal"],
         f"{seen['havingRefusal']!r}",
+    )
+
+    # `innerText` returns *rendered* text and the stylesheet uppercases `th`,
+    # so the comparison is case-insensitive. Asserting the exact string here
+    # would be asserting the stylesheet.
+    lower = [h.lower() for h in seen["byHour"]["headers"]]
+    check(
+        "a time function groups by a computed column",
+        seen["byHour"]["rows"] == 24 and lower[:1] == ["hour(pickup_time)"],
+        f"{seen['byHour']['rows']} rows, headers {seen['byHour']['headers']}",
+    )
+    check(
+        "and the hours come back in order, summing to the sample",
+        [int(r.split("\t")[0]) for r in seen["byHourRows"]] == list(range(24))
+        and sum(int(r.split("\t")[1]) for r in seen["byHourRows"]) == 100_000,
+        f"{seen['byHourRows'][:2]}",
+    )
+    check(
+        "the spec carries the computation, not a column name",
+        '"compute"' in seen["byHourSpec"] and '"hour"' in seen["byHourSpec"],
+        f"{seen['byHourSpec'][:160]!r}",
+    )
+    check(
+        "ClickHouse's taxi Q4 runs as written",
+        seen["clickhouse"]["rows"] == 20
+        and [h.lower() for h in seen["clickhouseHeaders"]]
+        == ["passengers", "year(pickup_time)", "round(distance)", "count(*)"],
+        f"{seen['clickhouse']['rows']} rows, {seen['clickhouseHeaders']}",
+    )
+    check(
+        "and a time function on text is refused with the reason",
+        seen["notATimestamp"]["refusal"] == 1
+        and "timestamp" in seen["notATimestampWhy"],
+        f"{seen['notATimestampWhy']!r}",
     )
 
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")

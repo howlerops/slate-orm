@@ -164,6 +164,34 @@ TIME_UNIT_HOUR: TimeUnit.ValueType  # 3
 TIME_UNIT_DAY: TimeUnit.ValueType  # 4
 Global___TimeUnit: _TypeAlias = TimeUnit  # noqa: Y015
 
+class _CalendarPart:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _CalendarPartEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_CalendarPart.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    CALENDAR_PART_UNSPECIFIED: _CalendarPart.ValueType  # 0
+    CALENDAR_PART_YEAR: _CalendarPart.ValueType  # 1
+    CALENDAR_PART_MONTH: _CalendarPart.ValueType  # 2
+    CALENDAR_PART_DAY_OF_MONTH: _CalendarPart.ValueType  # 3
+    CALENDAR_PART_DAY_OF_WEEK: _CalendarPart.ValueType  # 4
+    """Zero for Sunday, matching ClickHouse, MySQL and SQLite rather than ISO."""
+
+class CalendarPart(_CalendarPart, metaclass=_CalendarPartEnumTypeWrapper):
+    """A calendar field of a timestamp, which `TimeUnit` cannot name: those are all
+    a fixed number of seconds and a month is not. Refused when unspecified, for
+    the reason `Metric` is — a default would answer a different question with no
+    sign that it had.
+    """
+
+CALENDAR_PART_UNSPECIFIED: CalendarPart.ValueType  # 0
+CALENDAR_PART_YEAR: CalendarPart.ValueType  # 1
+CALENDAR_PART_MONTH: CalendarPart.ValueType  # 2
+CALENDAR_PART_DAY_OF_MONTH: CalendarPart.ValueType  # 3
+CALENDAR_PART_DAY_OF_WEEK: CalendarPart.ValueType  # 4
+"""Zero for Sunday, matching ClickHouse, MySQL and SQLite rather than ISO."""
+Global___CalendarPart: _TypeAlias = CalendarPart  # noqa: Y015
+
 class _Metric:
     ValueType = _typing.NewType("ValueType", _builtins.int)
     V: _TypeAlias = ValueType  # noqa: Y015
@@ -973,6 +1001,8 @@ class Scalar(_message.Message):
     COALESCE_FIELD_NUMBER: _builtins.int
     DISTANCE_FIELD_NUMBER: _builtins.int
     REGEXP_REPLACE_FIELD_NUMBER: _builtins.int
+    CALENDAR_PART_FIELD_NUMBER: _builtins.int
+    ROUND_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def column(self) -> Global___ColumnRef: ...
     @_builtins.property
@@ -1005,6 +1035,10 @@ class Scalar(_message.Message):
     def distance(self) -> Global___Distance: ...
     @_builtins.property
     def regexp_replace(self) -> Global___RegexpReplace: ...
+    @_builtins.property
+    def calendar_part(self) -> Global___CalendarField: ...
+    @_builtins.property
+    def round(self) -> Global___Scalar: ...
     def __init__(
         self,
         *,
@@ -1024,12 +1058,14 @@ class Scalar(_message.Message):
         coalesce: Global___ScalarList | None = ...,
         distance: Global___Distance | None = ...,
         regexp_replace: Global___RegexpReplace | None = ...,
+        calendar_part: Global___CalendarField | None = ...,
+        round: Global___Scalar | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["add", b"add", "calendar_part", b"calendar_part", "case", b"case", "coalesce", b"coalesce", "column", b"column", "concat", b"concat", "date_trunc", b"date_trunc", "distance", b"distance", "div", b"div", "extract", b"extract", "length", b"length", "literal", b"literal", "lower", b"lower", "mul", b"mul", "node", b"node", "regexp_replace", b"regexp_replace", "round", b"round", "sub", b"sub", "upper", b"upper"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["column", "literal", "add", "sub", "mul", "div", "length", "concat", "lower", "upper", "extract", "date_trunc", "case", "coalesce", "distance", "regexp_replace"]  # noqa: Y015
+    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["column", "literal", "add", "sub", "mul", "div", "length", "concat", "lower", "upper", "extract", "date_trunc", "case", "coalesce", "distance", "regexp_replace", "calendar_part", "round"]  # noqa: Y015
     _WhichOneofArgType_node: _TypeAlias = _typing.Literal["node", b"node"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_node) -> _WhichOneofReturnType_node | None: ...
 
@@ -1101,6 +1137,29 @@ class TimePart(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___TimePart: _TypeAlias = TimePart  # noqa: Y015
+
+@_typing.final
+class CalendarField(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    PART_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    part: Global___CalendarPart.ValueType
+    @_builtins.property
+    def value(self) -> Global___Scalar: ...
+    def __init__(
+        self,
+        *,
+        part: Global___CalendarPart.ValueType = ...,
+        value: Global___Scalar | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["part", b"part", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___CalendarField: _TypeAlias = CalendarField  # noqa: Y015
 
 @_typing.final
 class Case(_message.Message):

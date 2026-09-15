@@ -176,6 +176,12 @@ worse than an honest substitution.
 "Trips per hour of day" is not expressible, which is the most obvious question
 a reader will have about this dataset and the largest gap the page now has.
 
+> **Both closed on 2026-09-15** by `the-year-there-was-no-year-to-key-on`.
+> `hour()`, `day_of_week()`, `year()` and the rest are computed columns in the
+> SQL front end now, and Q3 and Q4 are written as ClickHouse writes them. The
+> year is still constant, because the sample is still one month — but that is a
+> property of the sample and no longer of the grammar.
+
 **The full month is not reachable from the browser**, and the workbench does
 not say so on screen — only `site/README.md` and the docs do.
 

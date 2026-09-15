@@ -56,7 +56,7 @@ pub use record::{
     index_expression, index_predicate,
 };
 pub use retry::{RetryPolicy, with_retries};
-pub use scalar::{Metric, Scalar, TimeUnit};
+pub use scalar::{CalendarPart, Metric, Scalar, TimeUnit};
 pub use security::{
     Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
 };

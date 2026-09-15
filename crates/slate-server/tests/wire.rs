@@ -32,7 +32,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree as _;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
-    Aggregate, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar, ScanOrder, TimeUnit,
+    Aggregate, CalendarPart, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar, ScanOrder,
+    TimeUnit,
 };
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
@@ -535,15 +536,31 @@ fn any_scalar() -> impl Strategy<Value = Scalar> {
                     metric,
                 }
             }),
-            (inner, ".{0,6}", ".{0,6}").prop_map(|(value, pattern, replacement)| {
+            (inner.clone(), ".{0,6}", ".{0,6}").prop_map(|(value, pattern, replacement)| {
                 Scalar::RegexpReplace {
                     value: Box::new(value),
                     pattern,
                     replacement,
                 }
             }),
+            (inner.clone(), any_calendar_part()).prop_map(|(value, part)| {
+                Scalar::CalendarPart {
+                    part,
+                    value: Box::new(value),
+                }
+            }),
+            inner.prop_map(|value| Scalar::Round(Box::new(value))),
         ]
     })
+}
+
+fn any_calendar_part() -> impl Strategy<Value = CalendarPart> {
+    prop_oneof![
+        Just(CalendarPart::Year),
+        Just(CalendarPart::Month),
+        Just(CalendarPart::DayOfMonth),
+        Just(CalendarPart::DayOfWeek),
+    ]
 }
 
 fn any_aggregate() -> impl Strategy<Value = Aggregate> {
@@ -610,6 +627,8 @@ fn the_scalar_generator_reaches_every_variant() {
         "coalesce",
         "distance",
         "regexp_replace",
+        "calendar_part",
+        "round",
     ]
     .into_iter()
     .collect();
@@ -695,6 +714,14 @@ fn collect_scalars(scalar: &Scalar, into: &mut BTreeSet<&'static str>) {
         }
         Scalar::RegexpReplace { value, .. } => {
             into.insert("regexp_replace");
+            collect_scalars(value, into);
+        }
+        Scalar::CalendarPart { value, .. } => {
+            into.insert("calendar_part");
+            collect_scalars(value, into);
+        }
+        Scalar::Round(value) => {
+            into.insert("round");
             collect_scalars(value, into);
         }
     }

@@ -39,9 +39,9 @@ use crate::proto as pb;
 use crate::session::GroupedExplanation;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
-    Aggregate, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group, Grouping, Join,
-    JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric, Projection, ReadToken,
-    ScanOrder, Side, TimeUnit,
+    Aggregate, CalendarPart, CmpOp, DEFAULT_BUILD_LIMIT, Explanation, Expr, Freshness, Group,
+    Grouping, Join, JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType, Metric,
+    Projection, ReadToken, ScanOrder, Side, TimeUnit,
 };
 use slate_kernel::{Chain, ChainPlan, ChainRow, JoinSchema, Scalar};
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
@@ -778,6 +778,29 @@ fn unit_from_proto(unit: i32) -> Result<TimeUnit, Status> {
     }
 }
 
+const fn part_to_proto(part: CalendarPart) -> pb::CalendarPart {
+    match part {
+        CalendarPart::Year => pb::CalendarPart::Year,
+        CalendarPart::Month => pb::CalendarPart::Month,
+        CalendarPart::DayOfMonth => pb::CalendarPart::DayOfMonth,
+        CalendarPart::DayOfWeek => pb::CalendarPart::DayOfWeek,
+    }
+}
+
+fn part_from_proto(part: i32) -> Result<CalendarPart, Status> {
+    match pb::CalendarPart::try_from(part) {
+        Ok(pb::CalendarPart::Year) => Ok(CalendarPart::Year),
+        Ok(pb::CalendarPart::Month) => Ok(CalendarPart::Month),
+        Ok(pb::CalendarPart::DayOfMonth) => Ok(CalendarPart::DayOfMonth),
+        Ok(pb::CalendarPart::DayOfWeek) => Ok(CalendarPart::DayOfWeek),
+        // No field is a safe guess, for the reason no time unit is: every one
+        // of them returns a plausible small integer for a different question.
+        Ok(pb::CalendarPart::Unspecified) | Err(_) => Err(bad(format!(
+            "calendar part {part} is not one this server knows"
+        ))),
+    }
+}
+
 const fn metric_to_proto(metric: Metric) -> pb::Metric {
     match metric {
         Metric::L2 => pb::Metric::L2,
@@ -837,6 +860,11 @@ pub fn scalar_to_proto(space: &Space<'_>, scalar: &Scalar) -> pb::Scalar {
             unit: unit_to_proto(*unit) as i32,
             value: Some(Box::new(scalar_to_proto(space, value))),
         })),
+        Scalar::CalendarPart { part, value } => Node::CalendarPart(Box::new(pb::CalendarField {
+            part: part_to_proto(*part) as i32,
+            value: Some(Box::new(scalar_to_proto(space, value))),
+        })),
+        Scalar::Round(inner) => Node::Round(Box::new(scalar_to_proto(space, inner))),
         Scalar::Case {
             branches,
             otherwise,
@@ -930,6 +958,11 @@ fn scalar_named(space: &Space<'_>, scalar: &pb::Scalar, what: &str) -> Result<Sc
             unit: unit_from_proto(part.unit)?,
             value: one(&part.value)?,
         },
+        Node::CalendarPart(field) => Scalar::CalendarPart {
+            part: part_from_proto(field.part)?,
+            value: one(&field.value)?,
+        },
+        Node::Round(inner) => Scalar::Round(Box::new(scalar_named(space, inner, what)?)),
         Node::Case(case) => {
             let mut branches = Vec::with_capacity(case.branches.len());
             for branch in &case.branches {

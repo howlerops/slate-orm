@@ -195,6 +195,15 @@ actions = ["everything"]</code></pre>
         </p>
       </div>
       <div class="card">
+        <h3>Computed columns</h3>
+        <p>
+          <code>hour()</code>, <code>day_of_week()</code>, <code>year()</code>
+          and the rest are evaluated per row and group, sort and filter like
+          any column. There is no date type: a timestamp is seconds since the
+          epoch in an integer column, and every one of these is UTC.
+        </p>
+      </div>
+      <div class="card">
         <h3>Security in the kernel</h3>
         <p>
           RBAC and row policies are compiled into the predicate the executor
