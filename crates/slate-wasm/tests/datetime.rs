@@ -479,14 +479,55 @@ fn it_refuses_what_it_cannot_answer() {
     );
     assert!(message.contains("has to be the group key"), "{message}");
 
-    // And it reads the *left* side. `zones` has no timestamp at all, so this
-    // would otherwise resolve to nothing and group by null.
+    // A computed column on a join reads *either* side now, so `borough` — a
+    // `zones` column — resolves rather than failing to. It is still refused,
+    // and the refusal is better: it names the real problem, which is that a
+    // string is not a timestamp.
+    //
+    // This assertion used to be `is not one`, from "reads a column of `trips`
+    // (the left side); `borough` is not one". That was a scope error standing
+    // in for a type error, and the scope was a limitation of the spec rather
+    // than of the kernel — `Join::compute` has always been evaluated over the
+    // joined row.
     let message = refused(
         &playground,
         "SELECT hour(borough), count(*) FROM trips JOIN zones \
          ON trips.pickup_zone = zones.id GROUP BY hour(borough)",
     );
-    assert!(message.contains("is not one"), "{message}");
+    assert!(message.contains("needs a timestamp"), "{message}");
+    assert!(message.contains("Str"), "{message}");
+
+    // A name on neither side is still a scope error, and says both tables
+    // rather than one — which is what made the old message misleading.
+    let message = refused(
+        &playground,
+        "SELECT hour(nonesuch), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(nonesuch)",
+    );
+    assert!(message.contains("trips"), "{message}");
+    assert!(message.contains("zones"), "{message}");
+
+    // Selecting a bare column beside a GROUP BY that is not it: SQL's "column
+    // must appear in the GROUP BY clause". The check now compares the two
+    // ordinals rather than refusing every bare column, so this is the half that
+    // must still be refused — and a mutation that stopped checking survived
+    // until this case existed, because every other test selected either the key
+    // itself or only aggregates.
+    let message = refused(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY zone",
+    );
+    assert!(message.contains("is not the group key"), "{message}");
+
+    // And a name on neither table, which is a scope error rather than a
+    // grouping one and must not be reported as the latter.
+    let message = refused(
+        &playground,
+        "SELECT nonesuch, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY borough",
+    );
+    assert!(message.contains("is not the group key"), "{message}");
 
     // `round` takes a number, and the message says which one it got instead.
     let message = refused(
@@ -761,4 +802,224 @@ fn a_join_takes_a_timezone_as_well() {
         .map(|(hour, n)| ((hour - 5).rem_euclid(24), *n))
         .collect();
     assert_eq!(shifted, rotated);
+}
+
+/// **Group by the hour and average the fare, over `trips JOIN zones`.**
+///
+/// The previous entry recorded this as not expressible, and named the reason:
+/// "a join's computed column reads the left table and its aggregates read the
+/// right". Both halves were true of `JoinSpec` and neither was true of the
+/// kernel — `Join::compute` is evaluated over the joined row, and a grouping's
+/// aggregates are ordinals in the joined space like any other. The spec
+/// resolved a computed column's name against the left table only and shifted
+/// every aggregate past every left column unconditionally, so a query whose key
+/// *and* aggregate both live on `trips` had nowhere to land. The workbench
+/// example filtered on the right side and counted instead.
+///
+/// The oracle is a fold over the decoded file joined to the zone table by hand,
+/// which never goes near the kernel's join, its grouper or its scalars.
+#[test]
+fn the_hour_and_the_average_fare_can_come_from_the_same_table() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), avg(fare) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time)",
+    );
+
+    // Both positions name `trips`, which is the case that was refused.
+    let spec = &answer["spec"];
+    assert_eq!(spec["compute"][0]["input"], json!(0), "{spec}");
+    assert_eq!(spec["aggregates"][0]["input"], json!(0), "{spec}");
+    assert_eq!(spec["aggregates"][0]["kind"], json!("avg"), "{spec}");
+
+    let zone_ids: std::collections::BTreeSet<u64> = taxi::zone_rows()
+        .iter()
+        .map(|row| match row.values()[0] {
+            slate_tuple::Value::U64(id) => id,
+            ref other => panic!("zone id is {other:?}"),
+        })
+        .collect();
+    let mut sums: BTreeMap<i64, (f64, i64)> = BTreeMap::new();
+    for row in taxi::decode(&trip_bytes()).unwrap() {
+        let (zone, seconds, fare) = match (&row.values()[1], &row.values()[3], &row.values()[7]) {
+            (
+                slate_tuple::Value::U64(z),
+                slate_tuple::Value::I64(s),
+                slate_tuple::Value::F64(f),
+            ) => (*z, *s, *f),
+            other => panic!("unexpected {other:?}"),
+        };
+        if zone_ids.contains(&zone) {
+            let entry = sums
+                .entry(seconds.div_euclid(3600).rem_euclid(24))
+                .or_insert((0.0, 0));
+            entry.0 += fare;
+            entry.1 += 1;
+        }
+    }
+    assert_eq!(sums.len(), 24, "every hour of the day should appear");
+
+    let rows = answer["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 24);
+    for row in rows {
+        let hour: i64 = row[0].as_str().unwrap().parse().unwrap();
+        let got: f64 = row[1].as_str().unwrap().parse().unwrap();
+        let (sum, n) = sums[&hour];
+        let want = sum / n as f64;
+        // Floating point, summed in a different order by each side, so this
+        // compares within a tolerance rather than exactly — and the tolerance
+        // is tight enough that a wrong column would not fit inside it: the
+        // fares in this sample run from about 3 to 250.
+        assert!(
+            (got - want).abs() < 1e-6,
+            "hour {hour}: the kernel says {got}, the fold says {want}"
+        );
+    }
+}
+
+/// An aggregate over the **right** table still works, which is what the spec
+/// could do before and must not have lost.
+#[test]
+fn an_aggregate_may_still_read_the_right_table() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(distinct borough) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY hour(pickup_time)",
+    );
+    let spec = &answer["spec"];
+    assert_eq!(spec["aggregates"][0]["input"], json!(1), "{spec}");
+    // Every hour of the sample touches every borough that has trips in it, so
+    // the count is the same across the hours and is not the zone count.
+    let rows = answer["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 24);
+    for row in rows {
+        let boroughs: i64 = row[1].as_str().unwrap().parse().unwrap();
+        assert!(
+            (1..=8).contains(&boroughs),
+            "New York has a handful of boroughs, not {boroughs}"
+        );
+    }
+}
+
+/// And a computed column reading the **right** table, which is the other half.
+///
+/// `zones.id` is an integer, so `round()` applies to it — a contrived query,
+/// and the only right-side numeric column the fixture has. What it proves is
+/// that the ordinal is shifted past every `trips` column rather than read at
+/// its own: `zones.id` is column 0 of `zones` and column 11 of the joined row,
+/// and reading it unshifted would give `trips.id` — 100,000 distinct values
+/// rather than a few hundred.
+#[test]
+fn a_computed_column_may_read_the_right_table() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT round(zones.id), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY round(zones.id)",
+    );
+    let spec = &answer["spec"];
+    assert_eq!(spec["compute"][0]["input"], json!(1), "{spec}");
+    assert_eq!(spec["compute"][0]["column"], json!(0), "{spec}");
+
+    let rows = answer["rows"].as_array().unwrap();
+    // One group per zone that any trip picks up in. Far fewer than the 100,000
+    // groups `trips.id` would have produced, which is the failure this pins.
+    assert!(
+        (2..1000).contains(&rows.len()),
+        "got {} groups; trips.id would give 100,000",
+        rows.len()
+    );
+    let total: i64 = rows
+        .iter()
+        .map(|row| row[1].as_str().unwrap().parse::<i64>().unwrap())
+        .sum();
+    assert!(
+        total > 90_000,
+        "the groups should cover nearly every trip, not {total}"
+    );
+}
+
+/// Grouping by a bare column of the **right** table.
+///
+/// The plainest joined-space case and the one a mutation found missing: every
+/// other test here groups by a computed column, whose ordinal is past both
+/// tables and so is shifted by construction. A bare right column is shifted by
+/// the left table's *width*, and getting that wrong is a wrong answer rather
+/// than an error — `borough` is column 1 of `zones`, so an unshifted ordinal 1
+/// reads `trips.pickup_zone`: 260-odd numeric groups where the query asked for
+/// a handful of named boroughs.
+#[test]
+fn a_group_key_may_be_a_bare_column_of_the_right_table() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY borough",
+    );
+    // `trips` has 11 columns, so `zones.borough` is joined ordinal 11 + 1.
+    let expected = taxi::trips().columns().len() + 1;
+    assert_eq!(
+        answer["spec"]["groupBy"],
+        json!(expected),
+        "{}",
+        answer["spec"]
+    );
+
+    let rows = answer["rows"].as_array().unwrap();
+    assert!(
+        (2..=8).contains(&rows.len()),
+        "New York has a handful of boroughs, not {} groups",
+        rows.len()
+    );
+    // The keys are borough *names*, not zone ids — which is what an unshifted
+    // ordinal would have produced.
+    for row in rows {
+        let key = row[0].as_str().unwrap();
+        assert!(
+            key.parse::<i64>().is_err(),
+            "the group key should be a borough name, got {key}"
+        );
+    }
+    let total: i64 = rows
+        .iter()
+        .map(|row| row[1].as_str().unwrap().parse::<i64>().unwrap())
+        .sum();
+    assert!(
+        total > 90_000,
+        "the boroughs should cover nearly every trip"
+    );
+}
+
+/// And a qualified name on either side, which is how a caller disambiguates.
+#[test]
+fn a_qualified_name_picks_its_own_side() {
+    let playground = loaded();
+    let left = ok(
+        &playground,
+        "SELECT trips.id, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY trips.id",
+    );
+    assert_eq!(left["spec"]["groupBy"], json!(0), "{}", left["spec"]);
+
+    let right = ok(
+        &playground,
+        "SELECT zones.id, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY zones.id",
+    );
+    let expected = taxi::trips().columns().len();
+    assert_eq!(
+        right["spec"]["groupBy"],
+        json!(expected),
+        "{}",
+        right["spec"]
+    );
+    // Both tables have an `id`, so this is the case where an unqualified name
+    // would have to guess — and where guessing wrong is 100,000 groups instead
+    // of a few hundred.
+    assert!(
+        left["rows"].as_array().unwrap().len() > right["rows"].as_array().unwrap().len(),
+        "trips.id has far more distinct values than zones.id"
+    );
 }

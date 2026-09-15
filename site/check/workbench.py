@@ -284,6 +284,30 @@ out.joinHour = {
   refusal: await page.locator('[data-app="grid"] .refusal').count(),
 };
 
+// 9c6. The key and the aggregate from the *same* table, which the spec could
+//      not express until every joined position was resolved in the joined
+//      row: a computed column resolved against the left table and an
+//      aggregate against the right, so this query had nowhere to land.
+await page.locator('.examples button:has-text("the fare")').click();
+await page.waitForTimeout(600);
+out.joinSameSide = {
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+
+// 9c7. A group key that is a bare column of the *right* table, which is
+//      shifted by the left table's width rather than by nothing. Getting it
+//      wrong reads `trips.pickup_zone` and returns 260 numeric groups where
+//      this asks for a handful of borough names.
+await page.locator('.examples button:has-text("Boroughs")').click();
+await page.waitForTimeout(600);
+out.joinRightKey = {
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+
 // 9d. The timing in the status bar is the kernel's, not the round trip.
 //     A grouped query returning 226 rows spends ~1% of its wall clock on
 //     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
@@ -789,6 +813,35 @@ def main() -> int:
         "and the join narrowed it to Manhattan rather than the whole sample",
         0 < sum(int(r.split("\t")[1]) for r in seen["joinHour"]["rows"]) < 100_000,
         f"{sum(int(r.split(chr(9))[1]) for r in seen['joinHour']['rows'])} trips",
+    )
+
+    # The key and the aggregate both read `trips`. Before every joined
+    # position resolved in the joined row this was not expressible at all, so
+    # the assertion that matters most is simply that it ran.
+    same_side = seen["joinSameSide"]
+    fares = [float(r.split("\t")[1]) for r in same_side["rows"]]
+    check(
+        "the hour and the average fare can come from the same table",
+        same_side["refusal"] == 0
+        and len(fares) == 24
+        # New York fares: a few dollars to a few tens. A wrong column here —
+        # `duration` in seconds, or `pickup_zone` — lands outside this by an
+        # order of magnitude, which is the point of checking the range rather
+        # than only the shape.
+        and all(3.0 < f < 120.0 for f in fares),
+        f"{same_side['headers']}, {len(fares)} hours: {fares[:4]}",
+    )
+
+    # A bare right-table column as the group key.
+    boroughs = [r.split("\t")[0] for r in seen["joinRightKey"]["rows"]]
+    check(
+        "a group key may be a bare column of the right table",
+        seen["joinRightKey"]["refusal"] == 0
+        and 2 <= len(boroughs) <= 8
+        # Names, not zone ids: an unshifted ordinal would have grouped
+        # `trips.pickup_zone` and given 260 numbers.
+        and all(not b.strip().isdigit() for b in boroughs),
+        f"{len(boroughs)} groups: {boroughs[:6]}",
     )
 
     check("no page or console errors", not seen["problems"], f"{seen['problems']}")

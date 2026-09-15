@@ -97,13 +97,38 @@ const EXAMPLES = [
       "-- instead: it would sit exactly where the other table's first column\n" +
       "-- belongs, and be read as that column with no error anywhere.\n" +
       "--\n" +
-      "-- The group key comes from the left table and the aggregates from the\n" +
-      "-- right, so `borough` narrows the zones scan and the hour keys the\n" +
-      "-- trips. count(*) needs no column and works either way.\n" +
+      "-- Every position here is resolved in the joined row, so the key and\n" +
+      "-- the aggregate may come from either table -- see the next example.\n" +
       "SELECT hour(pickup_time), count(*)\n" +
       "  FROM trips JOIN zones ON trips.pickup_zone = zones.id\n" +
       "  WHERE borough = 'Manhattan'\n" +
       "  GROUP BY hour(pickup_time)",
+  ],
+  [
+    "The hour and the fare, from one table",
+    "-- The key and the aggregate both read `trips`, which is the case this\n" +
+      "-- could not express until recently: a computed column was resolved\n" +
+      "-- against the left table and an aggregate against the right, so a\n" +
+      "-- query wanting both from the same side had nowhere to land.\n" +
+      "--\n" +
+      "-- Nothing in the kernel ever required that. `Join::compute` has always\n" +
+      "-- been evaluated over the joined row, and a grouping's aggregates are\n" +
+      "-- ordinals in the joined space like any other -- the restriction was\n" +
+      "-- in the browser's own query spec.\n" +
+      "SELECT hour(pickup_time), avg(fare), count(*)\n" +
+      "  FROM trips JOIN zones ON trips.pickup_zone = zones.id\n" +
+      "  GROUP BY hour(pickup_time)",
+  ],
+  [
+    "Boroughs, by the joined key",
+    "-- The group key is a bare column of the *right* table, which is a\n" +
+      "-- different fix from the one above: `borough` is column 1 of `zones`\n" +
+      "-- and column 12 of the joined row, so an unshifted ordinal would have\n" +
+      "-- read `trips.pickup_zone` and grouped 260 numbers instead of five\n" +
+      "-- borough names. Look at the Spec tab for the ordinal it resolved to.\n" +
+      "SELECT borough, count(*), avg(total)\n" +
+      "  FROM trips JOIN zones ON trips.pickup_zone = zones.id\n" +
+      "  GROUP BY borough",
   ],
   [
     "Busy zones only (HAVING)",

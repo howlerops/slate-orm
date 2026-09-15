@@ -171,7 +171,17 @@ pub struct FilterSpec {
 pub struct ComputeSpec {
     /// `hour`, `year`, `day_of_week`, and the rest of `compute_scalar`.
     pub function: String,
-    /// The column it reads, an ordinal within the table.
+    /// Which side of the join the column is on: 0 for the left table, 1 for
+    /// the right. Zero on a single-table query, where there is only one.
+    ///
+    /// This used to be implicit and left-only. `Join::compute` is evaluated
+    /// over the *joined* row and has always been able to read either side; the
+    /// restriction was in this spec, which resolved every computed column's
+    /// name against the left table. So `hour(pickup_time)` worked on `trips`
+    /// and `hour(zones.updated_at)` was "not a column of trips".
+    #[serde(default)]
+    pub input: u32,
+    /// The column it reads, an ordinal within the table `input` names.
     pub column: u32,
     /// Seconds to add before reading the calendar out, so a timestamp stored
     /// in UTC can be asked about in some other zone. Zero is UTC.
@@ -262,18 +272,19 @@ pub struct JoinSpec {
     pub left_where: Vec<FilterSpec>,
     /// Conditions on the right table, ANDed.
     pub right_where: Vec<FilterSpec>,
-    /// Computed per joined row, over the *left* table's columns, and appended
-    /// after both tables'. See `Join::compute`.
+    /// Computed per joined row, appended after *both* tables' columns. See
+    /// `Join::compute`.
     ///
-    /// Over the left table because that is the side `group_by` names and the
-    /// side the SQL front end resolves a bare column against; the kernel's
-    /// field is wider than this and will take an expression reading either.
+    /// Each names its side with `ComputeSpec::input`, so an expression may read
+    /// either table. It used to be able to read only the left, which was a
+    /// limitation of this spec rather than of the kernel.
     pub compute: Vec<ComputeSpec>,
-    /// Group by this column of the *left* table, or a computed column at
-    /// `left.columns() + right.columns() + i`. Absent means return joined rows
-    /// rather than groups.
+    /// Group by this ordinal of the **joined row**: a left column keeps its own
+    /// ordinal, a right column sits at `left.columns() + n`, and a computed
+    /// column at `left.columns() + right.columns() + i`. Absent means return
+    /// joined rows rather than groups.
     pub group_by: Option<u32>,
-    /// Computed per group, over the *right* table's columns.
+    /// Computed per group. Each names its side with `AggregateSpec::input`.
     pub aggregates: Vec<AggregateSpec>,
     pub limit: Option<u64>,
 }
@@ -282,7 +293,19 @@ pub struct JoinSpec {
 #[serde(rename_all = "camelCase")]
 pub struct AggregateSpec {
     pub kind: String,
-    /// Ordinal within `books`, ignored by `count`.
+    /// Which side of the join the column is on: 0 for the left table, 1 for
+    /// the right. Zero on a single-table query.
+    ///
+    /// Like `ComputeSpec::input`, this used to be implicit -- and implicitly
+    /// the *opposite* side: an aggregate's ordinal was shifted past every left
+    /// column unconditionally, so it could only name the right table. Between
+    /// the two defaults, "group by the hour and average the fare" over `trips
+    /// JOIN zones` was not expressible: the group key had to come from the left
+    /// and the aggregate from the right, and both of those columns are on
+    /// `trips`.
+    #[serde(default)]
+    pub input: u32,
+    /// Ordinal within the table `input` names, ignored by `count`.
     #[serde(default)]
     pub column: u32,
 }
@@ -860,11 +883,12 @@ impl Playground {
         )]);
         join.left = conditions(&spec.left_where, &authors)?;
         join.right = conditions(&spec.right_where, &books)?;
-        // Over the joined row, so they are appended after *both* tables and
-        // read the left table's columns at their own ordinals — the left side
-        // keeps its ordinals in the joined space, which is why the specs need
-        // no shift here where the aggregates below do.
-        join.compute = computes(&spec.compute, &authors)?;
+        // Over the joined row, so they are appended after *both* tables and may
+        // read either. The left side keeps its ordinals in the joined space and
+        // the right is shifted past every left column -- the arithmetic
+        // `ColumnRef` removes in the clients, done by hand here because this
+        // spec is JSON from a browser rather than a typed builder.
+        join.compute = joined_computes(&spec.compute, &authors, &books)?;
         if let Some(limit) = spec.limit {
             join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
         }
@@ -874,13 +898,17 @@ impl Playground {
             Some(key) => {
                 let mut aggregates = Vec::with_capacity(spec.aggregates.len());
                 for wanted in &spec.aggregates {
-                    // A `books` ordinal has to be shifted into the joined
-                    // row's space, which begins after every `authors` column.
-                    // This is exactly the arithmetic `ColumnRef` exists to
-                    // remove in the clients, and doing it by hand here is the
-                    // reason the tests below check a `max(year)` against a
-                    // value computed independently.
-                    let shifted = Ordinal(authors.columns().len() + wanted.column as usize);
+                    // A right-side ordinal has to be shifted into the joined
+                    // row's space, which begins after every left column; a
+                    // left-side one is already in it. This is exactly the
+                    // arithmetic `ColumnRef` exists to remove in the clients,
+                    // and doing it by hand here is the reason the tests below
+                    // check a `max(year)` against a value computed
+                    // independently.
+                    //
+                    // It used to shift unconditionally, which is why an
+                    // aggregate could only read the right table.
+                    let shifted = joined_ordinal(wanted.input, wanted.column, &authors, &books)?;
                     aggregates.push(match wanted.kind.as_str() {
                         "count" => Aggregate::Count,
                         "count_column" => Aggregate::CountColumn(shifted),
@@ -1882,14 +1910,17 @@ fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
 /// the day of the month and not the day of the epoch, which is what
 /// `TimeUnit::Day` would give. Getting that backwards would be silent: both
 /// return an integer and both look plausible in a column.
-fn compute_scalar(spec: &ComputeSpec, table: &TableDef) -> Result<Scalar, String> {
+fn compute_scalar(spec: &ComputeSpec, table: &TableDef, base: usize) -> Result<Scalar, String> {
     use slate_tuple::ValueType as T;
     let column = Ordinal(spec.column as usize);
     let def = table
         .column(column)
         .ok_or_else(|| format!("{} has no column {}", table.name(), spec.column))?;
     let kind = def.value_type();
-    let mut value = Scalar::Column(column);
+    // The column is named in its own table's ordinals and read in the space the
+    // expression is evaluated in -- the same ordinals on one table or on a
+    // join's left side, shifted past every left column on its right side.
+    let mut value = Scalar::Column(Ordinal(base + column.0));
 
     // The zone shift, if there is one. Adding seconds to a timestamp and then
     // reading the calendar out of the result *is* what a fixed-offset
@@ -1961,7 +1992,52 @@ fn compute_scalar(spec: &ComputeSpec, table: &TableDef) -> Result<Scalar, String
 
 /// Every computed column a spec asks for, in order.
 fn computes(specs: &[ComputeSpec], table: &TableDef) -> Result<Vec<Scalar>, String> {
-    specs.iter().map(|c| compute_scalar(c, table)).collect()
+    specs.iter().map(|c| compute_scalar(c, table, 0)).collect()
+}
+
+/// The joined-space ordinal an `input`/`column` pair names.
+///
+/// Zero is the left table, whose ordinals are already the joined row's; one is
+/// the right, shifted past every left column. Any other input is refused rather
+/// than treated as one of the two -- a join here has exactly two sides, and
+/// guessing would turn a typo into a query about a different column.
+fn joined_ordinal(
+    input: u32,
+    column: u32,
+    left: &TableDef,
+    right: &TableDef,
+) -> Result<Ordinal, String> {
+    let (table, base) = match input {
+        0 => (left, 0),
+        1 => (right, left.columns().len()),
+        other => {
+            return Err(format!(
+                "a join has two sides, 0 and 1; input {other} is neither"
+            ));
+        }
+    };
+    if table.column(Ordinal(column as usize)).is_none() {
+        return Err(format!("{} has no column {column}", table.name()));
+    }
+    Ok(Ordinal(base + column as usize))
+}
+
+/// The join's computed values, each reading whichever side it names.
+fn joined_computes(
+    specs: &[ComputeSpec],
+    left: &TableDef,
+    right: &TableDef,
+) -> Result<Vec<Scalar>, String> {
+    specs
+        .iter()
+        .map(|c| match c.input {
+            0 => compute_scalar(c, left, 0),
+            1 => compute_scalar(c, right, left.columns().len()),
+            other => Err(format!(
+                "a join has two sides, 0 and 1; input {other} is neither"
+            )),
+        })
+        .collect()
 }
 
 /// The type a group-space ordinal holds, for `HAVING`.

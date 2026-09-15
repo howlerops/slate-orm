@@ -203,7 +203,15 @@ actions = ["everything"]</code></pre>
           timestamp is seconds since the epoch in an integer column.
         </p>
         <p>
-          They read <strong>UTC</strong> unless given a fixed offset —
+          On a join, every position is resolved in the <em>joined</em> row: the
+          group key, the computed column and the aggregates may each read
+          either table, and a qualified name like <code>zones.id</code> picks
+          its side. So <code>SELECT hour(pickup_time), avg(fare) &hellip; FROM
+          trips JOIN zones</code> works, where a key on one side and an
+          aggregate on the other used to be the only shape available.
+        </p>
+        <p>
+          They read <strong>UTC</strong> unless given a fixed offset &mdash;
           <code>hour(pickup_time, '-05:00')</code>. Offsets only: naming a
           region would need a timezone database to know about daylight saving,
           so it is refused rather than guessed at. The taxi sample in the

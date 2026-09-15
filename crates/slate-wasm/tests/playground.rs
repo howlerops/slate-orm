@@ -619,10 +619,17 @@ fn a_grouped_join_can_compute_min_and_max_over_the_book_side() {
         json!({
             "leftWhere": [{ "column": 0, "op": "eq", "value": "1" }],
             "groupBy": 1,
+            // `input: 1` is the right table, `books`. It used to be implicit
+            // and unavoidable: every aggregate's ordinal was shifted past
+            // every left column, so an aggregate could only ever read the
+            // right side. Now it says which, and the default is the left --
+            // which is what caught this test when the default changed, since
+            // `authors` column 3 is the birth year and Le Guin was born in
+            // 1929 rather than publishing Earthsea then.
             "aggregates": [
                 { "kind": "count" },
-                { "kind": "min", "column": 3 },
-                { "kind": "max", "column": 3 },
+                { "kind": "min", "input": 1, "column": 3 },
+                { "kind": "max", "input": 1, "column": 3 },
             ],
         }),
     );

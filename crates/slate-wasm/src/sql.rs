@@ -529,6 +529,51 @@ impl Parser<'_> {
         self.resolve(&raw, table, at)
     }
 
+    /// The side and ordinal a name refers to, over a two-table join.
+    ///
+    /// Qualified wins: `zones.borough` names the right table even if `borough`
+    /// would also resolve on the left. Unqualified tries the left first, which
+    /// is what SQL does with an ambiguous name in every dialect that does not
+    /// refuse it outright — and refusing would break `SELECT hour(pickup_time)`
+    /// on a schema where both tables happen to have an `id`.
+    ///
+    /// This is the whole of the joined-space fix at the parser. Every joined
+    /// position used to be resolved against one *fixed* side: a computed
+    /// column and the group key against the left, an aggregate against the
+    /// right. That made "group by the hour and average the fare" over `trips
+    /// JOIN zones` inexpressible, because both of those columns live on
+    /// `trips` — the workbench example filtered on the right side and counted
+    /// instead, and the note recording that called it a `JoinSpec` limitation.
+    /// It was.
+    fn resolve_side(
+        &self,
+        raw: &str,
+        left: &TableDef,
+        right: &TableDef,
+        at: usize,
+    ) -> Result<(u32, u32), SqlError> {
+        if let Some((qualifier, _)) = raw.split_once('.') {
+            if qualifier.eq_ignore_ascii_case(right.name()) {
+                return Ok((1, self.resolve(raw, right, at)?));
+            }
+            return Ok((0, self.resolve(raw, left, at)?));
+        }
+        if let Ok(column) = self.resolve(raw, left, at) {
+            return Ok((0, column));
+        }
+        match self.resolve(raw, right, at) {
+            Ok(column) => Ok((1, column)),
+            Err(_) => Err(SqlError {
+                message: format!(
+                    "`{raw}` is not a column of `{}` or `{}`",
+                    left.name(),
+                    right.name()
+                ),
+                at,
+            }),
+        }
+    }
+
     fn resolve(&self, raw: &str, table: &TableDef, at: usize) -> Result<u32, SqlError> {
         let bare = match raw.split_once('.') {
             Some((qualifier, rest)) => {
@@ -834,6 +879,9 @@ impl Parser<'_> {
                 let column = self.resolve(argument, table, at)?;
                 let wanted = ComputeSpec {
                     function: function.clone(),
+                    // One table, so one side. `input` distinguishes the two
+                    // sides of a join and means nothing here.
+                    input: 0,
                     column,
                     offset: *offset,
                 };
@@ -877,30 +925,24 @@ impl Parser<'_> {
         at: usize,
     ) -> Result<u32, SqlError> {
         match item {
-            SelectItem::Column { raw, at } => self.resolve(raw, left, *at).map_err(|_| SqlError {
-                message: format!(
-                    "GROUP BY takes a column of `{}` (the join's left side); `{raw}` is \
-                         not one",
-                    left.name()
-                ),
-                at: *at,
-            }),
+            SelectItem::Column { raw, at } => {
+                let (input, column) = self.resolve_side(raw, left, right, *at)?;
+                let base = if input == 0 { 0 } else { left.columns().len() };
+                u32::try_from(base + column as usize).map_err(|_| SqlError {
+                    message: "too many columns".to_owned(),
+                    at: *at,
+                })
+            }
             SelectItem::Call {
                 function,
                 argument,
                 offset,
                 ..
             } => {
-                let column = self.resolve(argument, left, at).map_err(|_| SqlError {
-                    message: format!(
-                        "`{function}()` on a join reads a column of `{}` (the left side); \
-                         `{argument}` is not one",
-                        left.name()
-                    ),
-                    at,
-                })?;
+                let (input, column) = self.resolve_side(argument, left, right, at)?;
                 let wanted = ComputeSpec {
                     function: function.clone(),
+                    input,
                     column,
                     offset: *offset,
                 };
@@ -970,6 +1012,7 @@ impl Parser<'_> {
                 let column = self.resolve(argument, table, at)?;
                 let wanted = ComputeSpec {
                     function: function.clone(),
+                    input: 0,
                     column,
                     offset: *offset,
                 };
@@ -1038,6 +1081,7 @@ impl Parser<'_> {
             None => 0,
             Some(name) => self.resolve(name, table, at)?,
         };
+        let input = 0;
         if !matches!(
             kind.as_str(),
             "count" | "count_column" | "min" | "max" | "sum" | "avg" | "count_distinct"
@@ -1055,7 +1099,11 @@ impl Parser<'_> {
                 at,
             });
         }
-        Ok(AggregateSpec { kind, column })
+        Ok(AggregateSpec {
+            kind,
+            input,
+            column,
+        })
     }
 
     fn select_item(&mut self) -> Result<SelectItem, SqlError> {
@@ -1331,7 +1379,29 @@ impl Parser<'_> {
         for item in list {
             match item {
                 SelectItem::Aggregate { kind, argument, at } => {
-                    let parsed = self.aggregate(kind, argument.as_deref(), &right, *at)?;
+                    // Either side. This used to resolve against `right` only,
+                    // which is why an aggregate over the left table -- the
+                    // common case, since the left is the fact table -- was
+                    // "not a column of zones".
+                    let mut parsed = self.aggregate(kind, argument.as_deref(), left, *at);
+                    let mut input = 0;
+                    if parsed.is_err() && argument.is_some() {
+                        let on_right = self.aggregate(kind, argument.as_deref(), &right, *at);
+                        if on_right.is_ok() {
+                            parsed = on_right;
+                            input = 1;
+                        }
+                    }
+                    let mut parsed = parsed.map_err(|_| SqlError {
+                        message: format!(
+                            "`{kind}()` reads a column of `{}` or `{}`; `{}` is neither",
+                            left.name(),
+                            right.name(),
+                            argument.as_deref().unwrap_or("*")
+                        ),
+                        at: *at,
+                    })?;
+                    parsed.input = input;
                     spec.aggregates.push(parsed);
                 }
                 SelectItem::Call { at, .. } => {
@@ -1352,18 +1422,35 @@ impl Parser<'_> {
                     }
                 }
                 SelectItem::Column { raw, at } => {
-                    // Selecting a bare column beside a GROUP BY would be the
-                    // "not in the group key" error every SQL engine has. The
-                    // spec cannot express it, so it is refused rather than
-                    // silently dropped from the output.
-                    if spec.group_by.is_some() {
-                        return Err(SqlError {
-                            message: format!(
-                                "`{raw}` is not the group key — a grouped query returns the \
-                                 key and the aggregates"
-                            ),
-                            at: *at,
-                        });
+                    // Selecting a bare column beside a GROUP BY is the "not in
+                    // the group key" error every SQL engine has — *unless* it
+                    // is the group key, which is the ordinary shape of a
+                    // grouped query and was refused here along with everything
+                    // else. `SELECT borough, count(*) ... GROUP BY borough`
+                    // came back as "`borough` is not the group key", which was
+                    // both wrong and confusing, because it was.
+                    //
+                    // The check was `spec.group_by.is_some()` and never
+                    // compared the two ordinals. It went unnoticed because
+                    // every test of a grouped join keyed on a *computed*
+                    // column, which takes the branch above.
+                    if let Some(key) = spec.group_by {
+                        let named = self
+                            .resolve_side(raw, left, &right, *at)
+                            .map(|(input, column)| {
+                                let base = if input == 0 { 0 } else { left.columns().len() };
+                                base as u32 + column
+                            })
+                            .ok();
+                        if named != Some(key) {
+                            return Err(SqlError {
+                                message: format!(
+                                    "`{raw}` is not the group key — a grouped query returns \
+                                     the key and the aggregates"
+                                ),
+                                at: *at,
+                            });
+                        }
                     }
                 }
             }
