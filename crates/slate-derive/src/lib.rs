@@ -22,6 +22,8 @@
 //! #[record(index(name = "by_a_b", id = 5, unique, columns("a", desc("b"))))]
 //! #[record(index(name = "live", id = 6, columns("a"),
 //!                only_where(Expr::is_null(deleted_at))))]
+//! #[record(has_many(Book, foreign = author_id))]       // one-to-many
+//! #[record(belongs_to(Author, local = author_id))]     // the other direction
 //! ```
 //!
 //! On a field:
@@ -60,6 +62,26 @@
 //! The expression is therefore pinned to `Expr` on the way in, making the
 //! mistake a mismatched-types error at the attribute rather than a plan that
 //! quietly never picks the index.
+//!
+//! # Relationships
+//!
+//! `has_many` and `belongs_to` emit a `Related` impl, which `load_related`
+//! turns into one read for a whole set of parents. They name columns by
+//! **field ident** for the same reason `only_where` does: a string would be
+//! resolved at runtime against a table this macro cannot see, so a typo becomes
+//! a panic on first use — or, if it happens to name a real column, a
+//! relationship over the wrong one. The local side is checked here, against
+//! this struct's fields, with a span on the attribute; the foreign side is
+//! emitted as `Other::COLUMNS.field`, which the compiler resolves.
+//!
+//! Only one of the two sides has a default, and only in one direction. A
+//! `belongs_to`'s foreign column defaults to the other side's primary key,
+//! because that is what a foreign key points at. Nothing else does: a child's
+//! primary key is not its foreign key, and a struct may belong to two things,
+//! so a default for either of those would compile and be wrong. The one
+//! default that cannot be resolved here — the other side's key, on a table this
+//! macro has not got — is looked up at first use and panics if that key is
+//! composite, rather than take the first column and relate on a key prefix.
 
 #![forbid(unsafe_code)]
 
@@ -134,6 +156,71 @@ struct IndexSpec {
     /// taught again every time the kernel gains a form.
     predicate: Option<syn::Expr>,
     span: Span,
+}
+
+/// A relationship as written in an attribute.
+#[derive(Clone)]
+struct RelationSpec {
+    /// The type on the other end, emitted verbatim. A `Type` rather than an
+    /// `Ident` so a relationship can name `crate::catalog::Book` without the
+    /// struct having to import it.
+    other: Type,
+    /// True for `has_many`, false for `belongs_to`. The two differ only in
+    /// which side may be defaulted, which is why one spec covers both.
+    has_many: bool,
+    local: Option<Ident>,
+    foreign: Option<Ident>,
+    span: Span,
+}
+
+/// Parse `has_many(Other, foreign = field)` or `belongs_to(Other, local = field)`.
+///
+/// The columns are named by **field ident**, not by a string, and that is the
+/// whole design. A string would be checked at runtime against a table built
+/// from the other type, which turns a typo into a panic on first use — or worse
+/// into a relationship over the wrong column if the typo happens to name one.
+/// An ident is checked by the compiler: the local side against this struct's
+/// fields here in the macro, with a span on the attribute, and the foreign side
+/// by emitting `Other::COLUMNS.field`, which does not compile unless `Other` is
+/// a `Record` with a field of that name. It is the same trade `only_where`
+/// makes, for the same reason.
+fn parse_relation(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    has_many: bool,
+) -> syn::Result<RelationSpec> {
+    let span = meta.path.span();
+    let content;
+    parenthesized!(content in meta.input);
+    let other: Type = content.parse()?;
+
+    let mut local = None;
+    let mut foreign = None;
+    while content.peek(Token![,]) {
+        content.parse::<Token![,]>()?;
+        if content.is_empty() {
+            break;
+        }
+        let key: Ident = content.parse()?;
+        content.parse::<Token![=]>()?;
+        let value: Ident = content.parse()?;
+        match key.to_string().as_str() {
+            "local" => local = Some(value),
+            "foreign" => foreign = Some(value),
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("unknown option `{other}`; expected `local` or `foreign`"),
+                ));
+            }
+        }
+    }
+    Ok(RelationSpec {
+        other,
+        has_many,
+        local,
+        foreign,
+        span,
+    })
 }
 
 /// Parse `index(...)`. `owner` is the field a bare field-level index applies to.
@@ -260,6 +347,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut version: u32 = 0;
     let mut tenant: Option<(String, Span)> = None;
     let mut indexes: Vec<IndexSpec> = Vec::new();
+    let mut relations: Vec<RelationSpec> = Vec::new();
 
     for attr in &input.attrs {
         if !attr.path().is_ident("record") {
@@ -277,9 +365,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 tenant = Some((literal.value(), literal.span()));
             } else if meta.path.is_ident("index") {
                 indexes.push(parse_index(&meta, None)?);
+            } else if meta.path.is_ident("has_many") {
+                relations.push(parse_relation(&meta, true)?);
+            } else if meta.path.is_ident("belongs_to") {
+                relations.push(parse_relation(&meta, false)?);
             } else {
                 return Err(meta.error(
-                    "unknown option; expected `table`, `id`, `version`, `tenant` or `index`",
+                    "unknown option; expected `table`, `id`, `version`, `tenant`, `index`, \
+                     `has_many` or `belongs_to`",
                 ));
             }
             Ok(())
@@ -363,6 +456,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     validate(input, &fields, &primary_key, tenant.as_ref(), &indexes)?;
+    validate_relations(&fields, &relations)?;
 
     // --- code generation
     let column_stmts = fields.iter().map(|f| {
@@ -448,6 +542,84 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     });
 
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    // One `Related` impl per declared relationship. Emitted outside the
+    // `Record` impl because they are separate trait impls on the same type, and
+    // because a relationship to a type that is not a `Record` should fail on
+    // the relationship rather than take the whole table definition with it.
+    let relation_impls: Vec<TokenStream2> = relations
+        .iter()
+        .map(|spec| {
+            let other = &spec.other;
+            let self_ident = &input.ident;
+
+            // The local side is a column of *this* struct, whose ordinals the
+            // macro already knows, so it is emitted as a constant and the
+            // checking happened in `validate_relations` with a span on the
+            // attribute.
+            let local = match &spec.local {
+                Some(name) => {
+                    let at = fields
+                        .iter()
+                        .position(|f| f.ident == *name)
+                        .unwrap_or_default();
+                    quote! { ::slate_orm::Ordinal(#at) }
+                }
+                None => {
+                    let at = fields
+                        .iter()
+                        .position(|f| f.primary_key)
+                        .unwrap_or_default();
+                    quote! { ::slate_orm::Ordinal(#at) }
+                }
+            };
+
+            // The foreign side belongs to a type this macro cannot see, so it
+            // is emitted as a reference the *compiler* resolves:
+            // `Other::COLUMNS.field` does not exist unless `Other` derives
+            // `Record` and has that field.
+            let foreign = match &spec.foreign {
+                Some(name) => quote! { <#other>::COLUMNS.#name },
+                None => quote! {
+                    // Only reachable for `belongs_to` with no `foreign`, which
+                    // means "the other side's primary key". That is a lookup on
+                    // a table this macro has not got, so it happens once at
+                    // first use. It panics rather than guessing, on the same
+                    // grounds as the schema build above: it is a mistake in
+                    // source code, it is the same every run, and a wrong answer
+                    // here is a relationship over the wrong column.
+                    match <#other as ::slate_orm::Record>::table().primary_key() {
+                        [only] => *only,
+                        key => ::core::panic!(
+                            "`{}` cannot default its foreign column: `{}` has a primary key of \
+                             {} columns, so there is no single one to match on. Name it: \
+                             `#[record(belongs_to({}, local = ..., foreign = <field>))]`",
+                            ::core::stringify!(#self_ident),
+                            ::core::stringify!(#other),
+                            key.len(),
+                            ::core::stringify!(#other),
+                        ),
+                    }
+                },
+            };
+
+            quote! {
+                #[allow(clippy::panic)]
+                impl #impl_generics ::slate_orm::Related<#other>
+                    for #self_ident #ty_generics #where_clause
+                {
+                    fn local() -> ::slate_orm::Ordinal {
+                        #local
+                    }
+                    fn foreign() -> ::slate_orm::Ordinal {
+                        #foreign
+                    }
+                }
+            }
+        })
+        .collect();
+
     let idents: Vec<&Ident> = fields.iter().map(|f| &f.ident).collect();
     let types: Vec<&Type> = fields.iter().map(|f| &f.ty).collect();
     let columns: Vec<&String> = fields.iter().map(|f| &f.column).collect();
@@ -455,7 +627,6 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let field_count = fields.len();
 
     let ident = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     // Ordinals are known here, so column references can be constants instead of
     // a fallible name lookup at every call site. Writing a filter is the most
@@ -479,6 +650,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let columns_doc = format!("Column ordinals of [`{ident}`], for building predicates.");
 
     Ok(quote! {
+        #(#relation_impls)*
+
         #[doc = #columns_doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         #visibility struct #columns_ident {
@@ -559,6 +732,66 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+/// Check the half of a relationship this macro can see.
+///
+/// The other half is checked by the compiler, because `Other::COLUMNS.field` is
+/// emitted verbatim: a foreign column that is not a field of a `Record` is a
+/// resolution error at the call site, which needs nothing from here.
+///
+/// What is here is the local side, and the two defaults that can fail to exist.
+fn validate_relations(fields: &[FieldSpec], relations: &[RelationSpec]) -> syn::Result<()> {
+    for spec in relations {
+        // A has-many's foreign column is the child's foreign key, and a child's
+        // foreign key has no relationship to its primary key — there is nothing
+        // sensible to default it to, so it is required rather than guessed.
+        if spec.has_many && spec.foreign.is_none() {
+            return Err(syn::Error::new(
+                spec.span,
+                "`has_many` needs `foreign = <field>`: the column of the other type that \
+                 holds this one's key. There is no default, because the child's own primary \
+                 key is not it",
+            ));
+        }
+        // A belongs-to's local column is this struct's foreign key, same
+        // argument. Its *foreign* column does default, to the other side's
+        // primary key, which is what a foreign key points at.
+        if !spec.has_many && spec.local.is_none() {
+            return Err(syn::Error::new(
+                spec.span,
+                "`belongs_to` needs `local = <field>`: the field of this struct holding the \
+                 other one's key. It is not defaulted, because a struct may belong to two \
+                 things and the primary key is neither",
+            ));
+        }
+
+        if let Some(name) = &spec.local {
+            if !fields.iter().any(|f| f.ident == *name) {
+                return Err(syn::Error::new(
+                    name.span(),
+                    format!("`{name}` is not a field of this struct"),
+                ));
+            }
+        } else {
+            // Only a has-many gets here, and its local column defaults to this
+            // struct's primary key. A composite one has no single ordinal to
+            // return, and picking the first would be a relationship over a key
+            // prefix that matches rows from every other tenant.
+            let keys = fields.iter().filter(|f| f.primary_key).count();
+            if keys != 1 {
+                return Err(syn::Error::new(
+                    spec.span,
+                    format!(
+                        "this struct has a primary key of {keys} columns, so `has_many` \
+                         cannot default its local column; name the one that matches with \
+                         `local = <field>`"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reject at compile time what can be known at compile time.

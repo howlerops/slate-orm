@@ -174,6 +174,155 @@ pub use relation::{Related, load_one_related, load_related, related_filter};
 /// // Maintained, and never planned for: the planner cannot read it.
 /// assert!(table.index(IndexId(11)).unwrap().predicate().unwrap().as_any().is_none());
 /// ```
+/// # Relationships
+///
+/// `has_many` and `belongs_to` emit a [`Related`] impl, which
+/// [`load_related`] and [`load_one_related`] use to fetch every parent's
+/// related rows in one read.
+///
+/// ```
+/// use slate_orm::{Ordinal, Record, Related};
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// #[record(has_many(Book, foreign = author_id))]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// #[record(belongs_to(Author, local = author_id))]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     title: String,
+///     author_id: u64,
+/// }
+///
+/// // The local side defaults to this struct's primary key; the foreign side
+/// // is the named field of the other one, wherever it happens to sit.
+/// assert_eq!(<Author as Related<Book>>::local(), Ordinal(0));
+/// assert_eq!(<Author as Related<Book>>::foreign(), Ordinal(2));
+/// // And the other way, with the foreign side defaulted to what a foreign key
+/// // points at: the other side's primary key.
+/// assert_eq!(<Book as Related<Author>>::local(), Ordinal(2));
+/// assert_eq!(<Book as Related<Author>>::foreign(), Ordinal(0));
+/// ```
+///
+/// Columns are named by **field ident**, not by a string, so the compiler
+/// checks them. A string would be resolved at runtime against a table built
+/// from the other type, which turns a typo into a panic on first use — or, if
+/// the typo happens to name a real column, into a relationship over the wrong
+/// one. The foreign side is emitted as `Other::COLUMNS.field`, so it does not
+/// compile:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// #[record(has_many(Book, foreign = auther_id))]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     author_id: u64,
+/// }
+/// ```
+///
+/// The local side is checked in the macro, which can see this struct's fields
+/// and so reports it on the attribute:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// #[record(belongs_to(Author, local = auther_id))]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     author_id: u64,
+/// }
+/// # #[derive(Record)]
+/// # #[record(table = "authors", id = 1)]
+/// # struct Author { #[record(pk)] id: u64 }
+/// ```
+///
+/// Neither side is guessed when guessing could be wrong. A `has_many` has no
+/// default for its foreign column, because the child's primary key is not its
+/// foreign key:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// #[record(has_many(Book))]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+/// # #[derive(Record)]
+/// # #[record(table = "books", id = 2)]
+/// # struct Book { #[record(pk)] id: u64, author_id: u64 }
+/// ```
+///
+/// and a `has_many` on a struct with a composite primary key has no single
+/// local column either. Answering with the first would be a match on a key
+/// prefix, which under `#[record(tenant = ...)]` means relating across every
+/// tenant:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1, tenant = "house")]
+/// #[record(has_many(Book, foreign = author_id))]
+/// struct Author {
+///     #[record(pk)]
+///     house: u64,
+///     #[record(pk)]
+///     id: u64,
+/// }
+/// # #[derive(Record)]
+/// # #[record(table = "books", id = 2)]
+/// # struct Book { #[record(pk)] id: u64, author_id: u64 }
+/// ```
+///
+/// A `belongs_to` has no default for its *local* column either, because a
+/// struct may belong to two things and its own primary key is neither of them.
+/// Defaulting it to the primary key would compile, and relate on the wrong
+/// column:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// #[record(belongs_to(Author))]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     author_id: u64,
+/// }
+/// # #[derive(Record)]
+/// # #[record(table = "authors", id = 1)]
+/// # struct Author { #[record(pk)] id: u64 }
+/// ```
+///
+/// A `belongs_to` *does* default its foreign column, to the other side's
+/// primary key, because that is what a foreign key points at. When that key is
+/// composite there is no single column and it panics on first use rather than
+/// pick one; name it with `foreign = <field>` instead.
 pub use slate_derive::Record;
 
 // The typed layer is not a wall around the kernel; re-export what a caller
