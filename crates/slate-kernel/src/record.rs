@@ -1134,6 +1134,80 @@ impl<'a> RecordTransaction<'a> {
         self.write_row(table, row, Some(existing)).await
     }
 
+    /// Update a row only if it still looks exactly as it did when it was read.
+    ///
+    /// Optimistic concurrency, per row. `expected` is the row as the caller
+    /// last saw it; if the stored row differs in any column the write is
+    /// refused with [`KernelError::RowChanged`] and nothing is written.
+    ///
+    /// # Why this is not already covered
+    ///
+    /// The store detects write-write conflicts, so two transactions writing the
+    /// same row at the same time is already handled. This is the *other* case,
+    /// and it is the common one: read a row in one transaction, decide
+    /// something, write it in another. Between those there is no overlap in
+    /// time for the store to notice, and the second writer silently overwrites
+    /// the first's edit with a value computed from data that was already stale.
+    /// That is a lost update, and nothing anywhere reports it.
+    ///
+    /// # Why the whole row, and not a version column
+    ///
+    /// A version column is the usual answer and it is cheaper to compare — one
+    /// integer against a whole row. It is rejected here because it only
+    /// detects changes made by writers who remembered to bump it, so it is a
+    /// convention enforced by every call site rather than a property of the
+    /// data. Comparing the row detects every change, needs no schema support,
+    /// and works on tables that already exist. The cost is a comparison of a
+    /// row that has *already been read* — `update` reads it either way to
+    /// enforce the row policy — so in round trips this is free.
+    ///
+    /// # Errors
+    /// [`KernelError::RowChanged`] if the stored row differs from `expected`,
+    /// [`KernelError::RowNotFound`] if it is gone, and everything
+    /// [`RecordTransaction::update`] can raise.
+    pub async fn update_if_unchanged(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        row: &Row,
+        expected: &Row,
+    ) -> Result<()> {
+        self.security.authorize(context, table, Action::Update)?;
+        row.validate(table)?;
+        expected.validate(table)?;
+
+        let primary_key = row.primary_key_values(table);
+        // Refused before the read, because a caller whose `expected` names a
+        // different row than `row` has made a mistake that no outcome of the
+        // read can make sensible — and the outcome it would otherwise have is
+        // "checked one row, wrote another".
+        if expected.primary_key_values(table) != primary_key {
+            return Err(KernelError::RowChanged {
+                table: table.name().to_owned(),
+            });
+        }
+
+        let Some(existing) = self
+            .visible_row(context, table, Action::Update, &primary_key)
+            .await?
+        else {
+            return Err(KernelError::RowNotFound {
+                table: table.name().to_owned(),
+            });
+        };
+        if &existing != expected {
+            return Err(KernelError::RowChanged {
+                table: table.name().to_owned(),
+            });
+        }
+
+        self.check_row(context, table, Action::Update, row)?;
+        check_constraints(table, row)?;
+        self.check_foreign_keys(context, table, row, Some(&existing), &HashSet::new())
+            .await?;
+        self.write_row(table, row, Some(existing)).await
+    }
+
     /// Insert the row, or replace it if its primary key is already present.
     pub async fn upsert(
         &self,

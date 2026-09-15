@@ -125,6 +125,20 @@ pub enum KernelError {
         table: String,
     },
 
+    /// A conditional write found the row already changed.
+    ///
+    /// Distinct from [`KernelError::TransactionConflict`], and the distinction
+    /// is the whole point: a transaction conflict is two writers overlapping in
+    /// *time*, and retrying is the right response. This is a writer whose
+    /// decision was made from a row that is no longer there — retrying the same
+    /// write would apply an edit computed from stale data, which is the lost
+    /// update it exists to prevent. Re-read, re-decide, then write.
+    #[error("row in `{table}` changed since it was read; re-read it before writing")]
+    RowChanged {
+        /// The table written to.
+        table: String,
+    },
+
     /// A pagination cursor cannot be applied to this query.
     ///
     /// Its own variant rather than a general-purpose "invalid", because the

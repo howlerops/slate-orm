@@ -71,6 +71,38 @@ pub trait Records {
         record: &R,
     ) -> Result<()>;
 
+    /// Write `next`, but only if the stored row still equals `previous`.
+    ///
+    /// Optimistic concurrency for the read-modify-write every application does:
+    /// read a record, change a field, write it back. Between the read and the
+    /// write somebody else may have written the same row, and a plain
+    /// [`Records::update_record`] overwrites their edit with a value computed
+    /// before it existed. That is a lost update, and nothing reports it — the
+    /// write succeeds and the data is wrong.
+    ///
+    /// ```text
+    /// let post: Post = txn.find_record(&ctx, &[Value::U64(1)]).await?;
+    /// let mut edited = post.clone();
+    /// edited.title = "new".into();
+    /// txn.replace_record(&ctx, &post, &edited).await?;   // refuses if it moved
+    /// ```
+    ///
+    /// The transaction's own conflict detection does **not** cover this. It
+    /// sees two writers overlapping in time, and here they do not overlap at
+    /// all. Nor does retrying help: the edit was decided from a row that is
+    /// gone, so the caller has to re-read and re-decide.
+    ///
+    /// # Errors
+    /// [`KernelError::RowChanged`](slate_kernel::KernelError::RowChanged) if
+    /// the stored row has moved, and everything [`Records::update_record`] can
+    /// raise.
+    async fn replace_record<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        previous: &R,
+        next: &R,
+    ) -> Result<()>;
+
     /// Insert or replace a record.
     async fn upsert_record<R: Record + Sync>(
         &self,
@@ -254,6 +286,17 @@ impl Records for RecordTransaction<'_> {
         record: &R,
     ) -> Result<()> {
         self.update(context, R::table(), &record.to_row())
+            .await
+            .map_err(OrmError::from)
+    }
+
+    async fn replace_record<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        previous: &R,
+        next: &R,
+    ) -> Result<()> {
+        self.update_if_unchanged(context, R::table(), &next.to_row(), &previous.to_row())
             .await
             .map_err(OrmError::from)
     }
