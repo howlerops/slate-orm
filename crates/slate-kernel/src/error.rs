@@ -125,6 +125,20 @@ pub enum KernelError {
         table: String,
     },
 
+    /// A pagination cursor cannot be applied to this query.
+    ///
+    /// Its own variant rather than a general-purpose "invalid", because the
+    /// caller's next move depends on which reason it is: a malformed cursor is
+    /// a bug in their code, and a cursor over a query that walks an index is a
+    /// query they have to change.
+    #[error("cannot resume `{table}` from this cursor: {reason}")]
+    InvalidCursor {
+        /// The table being paged.
+        table: String,
+        /// Why not.
+        reason: String,
+    },
+
     /// A migration will not run, and why.
     ///
     /// Its own variant rather than a general-purpose "invalid": every use is a

@@ -10,7 +10,7 @@ use crate::expr::Expr;
 use crate::plan::Projection;
 use crate::store::ScanOrder;
 use slate_schema::Ordinal;
-use slate_tuple::Direction;
+use slate_tuple::{Direction, Value};
 
 /// Where nulls go in a sort.
 ///
@@ -144,6 +144,8 @@ pub struct Query {
     /// addresses it the ordinary way and never has to learn what an expression
     /// is. [`Query::computed`] does that arithmetic.
     pub compute: Vec<crate::scalar::Scalar>,
+    /// Resume after this primary key. See [`Query::after`].
+    pub after: Option<Vec<Value>>,
 }
 
 impl Default for Query {
@@ -165,7 +167,48 @@ impl Query {
             offset: 0,
             hint: None,
             compute: Vec::new(),
+            after: None,
         }
+    }
+
+    /// Resume after the row with this primary key — keyset pagination.
+    ///
+    /// The next page starts at the first row *strictly* after `key` in the scan
+    /// order, so a caller pages by remembering the primary key of the last row
+    /// it saw rather than by counting how many it has had.
+    ///
+    /// # Why not `OFFSET`
+    ///
+    /// Two reasons, and the second is the one that matters.
+    ///
+    /// `OFFSET n` reads and discards `n` rows — the executor says exactly that
+    /// in a comment, and it is true when a count is all you have. Page five
+    /// hundred costs five hundred pages of reading. A key lets the *range*
+    /// start after the cursor, so every page costs what the first one costs.
+    ///
+    /// And `OFFSET` counts rows, so it is only correct while nothing changes.
+    /// Delete one row ahead of the cursor between two pages and the reader
+    /// silently skips a row; insert one and they see a row twice. Nothing
+    /// reports either. A key does not move when its neighbours change.
+    ///
+    /// # What it does to the plan
+    ///
+    /// A cursor pins the access path to the table's own key range — as
+    /// [`AccessHint::TableScan`] does, and for the same reason the hint exists.
+    /// Paging is not a request the cost model should get a vote on: an index
+    /// might be cheaper for one page and would yield rows in an order the
+    /// cursor cannot describe, so which plan runs must depend on the request
+    /// rather than on how big the table happens to be today. An explicit
+    /// `hint` is left alone, which is how a caller asks for something else and
+    /// gets told no rather than getting a wrong page.
+    ///
+    /// A query that must be *sorted* into an order the key does not give is
+    /// refused when it runs, for the same reason: the page boundary would not
+    /// be where the cursor says.
+    #[must_use]
+    pub fn after(mut self, key: impl Into<Vec<Value>>) -> Self {
+        self.after = Some(key.into());
+        self
     }
 
     /// Rows matching `filter`.

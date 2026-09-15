@@ -1426,6 +1426,12 @@ pub fn query_from_proto_at(
             offset: query.offset as usize,
             hint,
             compute,
+            // The wire carries no cursor yet, so a remote caller pages by
+            // offset. Hard-coded rather than plumbed through a field that does
+            // not exist: `None` here is the honest translation of a request
+            // that could not have asked for one, and the day the proto grows
+            // the field this line is where it lands.
+            after: None,
         },
         warnings,
     ))

@@ -172,6 +172,11 @@ fn any_query() -> impl Strategy<Value = Query> {
                 offset,
                 hint,
                 compute: Vec::new(),
+                // Not generated, because the wire has no cursor field: a
+                // round-trip property over a value the proto cannot carry would
+                // fail for a reason that is not a bug. When the field is added,
+                // this is the line that has to stop being `None`.
+                after: None,
             },
         )
 }

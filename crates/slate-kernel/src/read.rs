@@ -14,7 +14,7 @@ use crate::join::{self, Join, JoinAlgorithm, JoinCursor, JoinKey, JoinPlan, Join
 use crate::keys;
 use crate::limits::ExecutionLimits;
 use crate::plan::{Plan, Projection, plan_hinted};
-use crate::query::Query;
+use crate::query::{AccessHint, Query};
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
@@ -42,7 +42,33 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         offset: 0,
         hint: query.hint,
         compute: query.compute.clone(),
+        // Not carried, and not silently either: the grouped entry points refuse
+        // a cursor before they get here. A cursor names a *row*, and what a
+        // grouped read returns is groups — resuming after a row would drop
+        // every row before it from the aggregate and report the remainder as
+        // though it were the whole.
+        after: None,
     }
+}
+
+/// Refuse a cursor on a read that returns groups rather than rows.
+///
+/// `narrowed` drops the cursor, because the inner read has to see every row
+/// that belongs to a group. Dropping it silently would be the worst kind of
+/// wrong answer: the caller asked to resume from a row, got an aggregate over
+/// the whole table, and nothing said so. Refusing here is the difference
+/// between a missing feature and a lie.
+fn no_cursor_on_groups(table: &TableDef, query: &Query) -> Result<()> {
+    if query.after.is_none() {
+        return Ok(());
+    }
+    Err(KernelError::InvalidCursor {
+        table: table.name().to_owned(),
+        reason: "this read returns groups, not rows, and a cursor names a row. Resuming after \
+                 one would drop every row before it from the aggregate and report the remainder \
+                 as if it were the whole"
+            .to_owned(),
+    })
 }
 
 /// The join to run for a grouped read: the same join, with each side reading
@@ -414,17 +440,59 @@ impl<'a> SecuredReads<'a> {
             table,
             Action::Read,
         )?));
-        Ok(plan_hinted(
+        let Some(after) = &query.after else {
+            return Ok(plan_hinted(
+                table,
+                secured,
+                query.order,
+                &query.projection,
+                &self.statistics.table(table),
+                query.planning_limit(),
+                &query.sort,
+                query.hint,
+                &query.compute,
+            ));
+        };
+
+        // A cursor pins the access path to the table's own key range, unless
+        // the caller pinned it somewhere else themselves. Not a preference the
+        // cost model gets a vote on: an index might be cheaper for one page and
+        // yields rows in an order the cursor cannot describe, so a query that
+        // paged correctly on a small table would start returning wrong pages
+        // once it grew. Which plan runs has to follow from the request.
+        let hint = query.hint.or(Some(AccessHint::TableScan));
+        let plan = plan_hinted(
             table,
             secured,
             query.order,
             &query.projection,
             &self.statistics.table(table),
+            // The planning limit is the *page*, but the rows before the cursor
+            // are no longer read at all, so there is no window to widen for
+            // them. Passing `planning_limit` unchanged would cap the prefetch
+            // at limit + offset, which is right for an offset and too generous
+            // for a cursor — harmless, and left alone rather than tuned on a
+            // guess.
             query.planning_limit(),
             &query.sort,
-            query.hint,
+            hint,
             &query.compute,
-        ))
+        );
+
+        // A plan that has to sort cannot be resumed from a key: the rows it
+        // returns are not in key order, so "after this key" does not name a
+        // position in the output. Refused rather than applied to the input,
+        // which would drop rows the sort would have placed on this page.
+        if plan.sort.is_some() {
+            return Err(KernelError::InvalidCursor {
+                table: table.name().to_owned(),
+                reason: "this query is sorted into an order the primary key does not give, so \
+                         the rows are re-ordered after they are read and a key does not say \
+                         where the page ended. Order by the primary key, or page by offset"
+                    .to_owned(),
+            });
+        }
+        plan.resume_after(table, after)
     }
 
     /// Compute `aggregates` over the rows `query` selects.
@@ -435,6 +503,7 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
         aggregates: &[Aggregate],
     ) -> Result<Vec<Value>> {
+        no_cursor_on_groups(table, query)?;
         let mut cursor = self
             .execute(context, table, &narrowed(query, aggregates, &[]))
             .await?;
@@ -566,6 +635,7 @@ impl<'a> SecuredReads<'a> {
         grouping: &Grouping,
     ) -> Result<(Query, Plan)> {
         let columns: Vec<Ordinal> = grouping.group.clone();
+        no_cursor_on_groups(table, query)?;
         let narrowed = narrowed(query, &grouping.aggregates, &columns);
         let plan = self.plan(context, table, &narrowed)?;
         Ok((narrowed, plan))

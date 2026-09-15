@@ -68,6 +68,7 @@
 //!   whatever feeds it to be. The executor then takes that one value out of the
 //!   entry rather than evaluating it from columns the entry never carried.
 
+use crate::error::KernelError;
 use crate::exec::DEFAULT_PREFETCH;
 use crate::query::{AccessHint, SortKey};
 use crate::stats::{
@@ -268,6 +269,128 @@ pub struct Plan {
     pub estimated_rows: f64,
     /// Estimated cost, in object-storage round trips. See [`crate::stats`].
     pub estimated_cost: f64,
+}
+
+impl Plan {
+    /// Narrow this plan to the rows strictly after `key` in its own scan order.
+    ///
+    /// This is keyset pagination, and it is a *narrowing of a plan* rather than
+    /// an input to planning because that is what it is: the query is the same
+    /// query, asked again from further along. Expressing it here also keeps
+    /// [`plan_hinted`]'s signature — already nine arguments — from growing a
+    /// tenth for something that does not affect which access path is chosen.
+    ///
+    /// # Why this is not `OFFSET`
+    ///
+    /// `OFFSET n` reads and throws away `n` rows. The executor says so in a
+    /// comment — *"an offset still has to find the rows it discards; there is no
+    /// cheaper way to know which ones they are"* — and that is true when all you
+    /// have is a count. Given the *key* the last page ended on there is a
+    /// cheaper way, because the key range itself can start after it. Page five
+    /// hundred then costs what page one costs.
+    ///
+    /// The correctness difference matters more than the cost. `OFFSET` counts
+    /// rows, so a row inserted or deleted ahead of the cursor between two pages
+    /// shifts every later page by one: a row is silently skipped or served
+    /// twice, and nothing anywhere reports it. A key does not move when its
+    /// neighbours change.
+    ///
+    /// # Errors
+    /// If the access path does not walk the table's primary key — an index scan
+    /// yields rows in the index's order, where a primary key says nothing about
+    /// where the page ended. Filtering on it anyway would silently drop rows,
+    /// which is the failure this exists to remove rather than relocate. Callers
+    /// reaching this through [`Query::after`](crate::Query::after) do not see
+    /// it, because a cursor pins the access path to the primary key.
+    pub fn resume_after(mut self, table: &TableDef, key: &[Value]) -> crate::Result<Self> {
+        if key.len() != table.primary_key().len() {
+            return Err(KernelError::InvalidCursor {
+                table: table.name().to_owned(),
+                reason: format!(
+                    "a cursor is a whole primary key: `{}` has {} key column{}, and this one has {}",
+                    table.name(),
+                    table.primary_key().len(),
+                    if table.primary_key().len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                    key.len(),
+                ),
+            });
+        }
+        let boundary = keys::row_key(table, key);
+
+        self.access = match self.access {
+            Access::TableScan { range } => Access::TableScan {
+                // Excluded, so the row the last page *ended* on is not also the
+                // row the next page starts with. An inclusive bound would serve
+                // every boundary row twice, which is the bug people write when
+                // they reach for this by hand.
+                range: range.intersect(match self.order {
+                    ScanOrder::Ascending => {
+                        KeyRange::new(Bound::Excluded(boundary), Bound::Unbounded)
+                    }
+                    // Descending walks the range from its top, so "after" is
+                    // below: the cursor becomes the exclusive *end*.
+                    ScanOrder::Descending => {
+                        KeyRange::new(Bound::Unbounded, Bound::Excluded(boundary))
+                    }
+                }),
+            },
+            // One row, and the question is only whether it is on this side of
+            // the cursor. Cheaper to answer here than to open a range holding
+            // at most one key.
+            Access::PointGet { key: one } => {
+                let at = keys::row_key(table, &one);
+                let past = match self.order {
+                    ScanOrder::Ascending => at > boundary,
+                    ScanOrder::Descending => at < boundary,
+                };
+                if past {
+                    Access::PointGet { key: one }
+                } else {
+                    Access::Nothing
+                }
+            }
+            // Nothing is still nothing, and narrowing it is not an error: a
+            // caller paging through an empty result should reach the end, not a
+            // refusal.
+            Access::Nothing => Access::Nothing,
+            Access::IndexScan { index, .. } | Access::IndexScans { index, .. } => {
+                return Err(KernelError::InvalidCursor {
+                    table: table.name().to_owned(),
+                    reason: format!(
+                        "this plan walks index {} and yields rows in that index's order, where a \
+                         primary key does not say where the page ended. Drop the ORDER BY, or \
+                         page by offset",
+                        index.0
+                    ),
+                });
+            }
+            Access::PointGets { .. } => {
+                return Err(KernelError::InvalidCursor {
+                    table: table.name().to_owned(),
+                    reason: "this plan reads a set of keys named by an `IN`, which is already \
+                             bounded and is not a range to resume inside"
+                        .to_owned(),
+                });
+            }
+        };
+
+        // An empty range reads nothing, and its estimates have to say so — the
+        // same correction `plan_hinted` makes, for the same reason: a plan that
+        // reads no rows but is costed as if it read the table makes `EXPLAIN`
+        // lie about the page the caller is actually on.
+        if matches!(&self.access, Access::TableScan { range } if range.is_empty()) {
+            self.access = Access::Nothing;
+        }
+        if matches!(self.access, Access::Nothing) {
+            self.estimated_rows = 0.0;
+            self.estimated_cost = 0.0;
+        }
+        Ok(self)
+    }
 }
 
 /// What a predicate says about one column.

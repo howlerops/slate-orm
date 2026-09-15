@@ -16,6 +16,34 @@ use slate_kernel::{
 use slate_schema::Ordinal;
 use slate_tuple::Value;
 
+/// One page of rows, and where to resume.
+///
+/// # Why `next` is `Some` on the last full page
+///
+/// A page that comes back full might be the last one, and the only way to know
+/// is to ask again. This returns a cursor anyway rather than reading one row
+/// further to find out: that extra read is paid on *every* page to save one
+/// empty request at the end of a sequence most callers never finish. The cost
+/// of the choice is that a caller looping until `next` is `None` makes one
+/// final request that returns nothing, which is the ordinary shape of every
+/// cursor API and is documented rather than optimised away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<R> {
+    /// The rows, at most `query.limit` of them.
+    pub rows: Vec<R>,
+    /// The cursor for the next page, or `None` when this page was short and
+    /// there is provably nothing after it.
+    pub next: Option<Vec<Value>>,
+}
+
+impl<R> Page<R> {
+    /// Whether there is provably nothing after this page.
+    #[must_use]
+    pub const fn is_last(&self) -> bool {
+        self.next.is_none()
+    }
+}
+
 /// Typed reads and writes over a [`RecordTransaction`].
 ///
 /// Methods are suffixed rather than sharing names with the kernel's own
@@ -98,6 +126,26 @@ pub trait Records {
         context: &SecurityContext,
         query: &Query,
     ) -> Result<Vec<R>>;
+
+    /// One page of a keyset-paged read, with the cursor for the next one.
+    ///
+    /// The whole point is that the caller does not extract the key. Paging by
+    /// hand means knowing which columns are the primary key and in what order,
+    /// on every call site, for every type — and getting it subtly wrong is
+    /// invisible, because a cursor built from the wrong column still pages, just
+    /// through the wrong sequence.
+    ///
+    /// `query.limit` must be set: a page with no size is not a page. Pass the
+    /// returned [`Page::next`] to [`Query::after`] for the page after this one.
+    ///
+    /// # Errors
+    /// If the limit is unset, if the query cannot be resumed from a key (see
+    /// [`Query::after`]), or if the read fails.
+    async fn page_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Page<R>>;
 
     /// Count the rows a query matches, without decoding any.
     async fn count_records<R: Record>(
@@ -250,6 +298,30 @@ impl Records for RecordTransaction<'_> {
         self.delete(context, R::table(), primary_key)
             .await
             .map_err(OrmError::from)
+    }
+
+    async fn page_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+    ) -> Result<Page<R>> {
+        let Some(limit) = query.limit else {
+            return Err(OrmError::Kernel(slate_kernel::KernelError::InvalidCursor {
+                table: R::table().name().to_owned(),
+                reason: "a paged read needs `limit`: a page with no size is the whole table, and \
+                         the cursor it would return names its last row"
+                    .to_owned(),
+            }));
+        };
+        let rows: Vec<R> = self.query_records(context, query).await?;
+        // A short page proves there is nothing after it; a full one proves
+        // nothing either way. See `Page`.
+        let next = if rows.len() < limit {
+            None
+        } else {
+            rows.last().map(Record::primary_key)
+        };
+        Ok(Page { rows, next })
     }
 
     async fn find_records<R: Record>(
