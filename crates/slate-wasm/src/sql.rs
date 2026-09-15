@@ -1306,9 +1306,10 @@ impl Parser<'_> {
 
     /// Which slot of a *group* a name denotes, over a grouped join or chain.
     ///
-    /// A group is `[key, aggregates...]`, so this returns 0 for the group key
-    /// and `1 + n` for the `n`th aggregate the select list computes. That is a
-    /// space of its own: it has nothing to do with any table's ordinals,
+    /// A group is `[keys..., aggregates...]`, so this returns a key's position
+    /// among the keys, and `keys.len() + n` for the `n`th aggregate the select
+    /// list computes. That is a space of its own: it has nothing to do with any
+    /// table's ordinals,
     /// and lowering an ORDER BY onto the joined row instead would sort the
     /// rows going *into* the grouping — which the groups then discard, so the
     /// reader's ordering disappears and the sort is wasted work. The
@@ -1320,7 +1321,7 @@ impl Parser<'_> {
     fn join_group_ordinal(
         &mut self,
         item: &SelectItem,
-        group_by: Option<u32>,
+        group_by: &[u32],
         aggregates: &[AggregateSpec],
         compute: &[ComputeSpec],
         inputs: &[Input],
@@ -1335,7 +1336,13 @@ impl Parser<'_> {
                 aggregates
                     .iter()
                     .position(|a| *a == wanted)
-                    .and_then(|i| u32::try_from(i + 1).ok())
+                    // Past the keys, however many there are. This was `i + 1`,
+                    // correct while a grouped join had exactly one key and
+                    // silently off by one for every key after the first --
+                    // ordering by `count(*)` over two keys would have ordered
+                    // by the second key instead, which is a different answer
+                    // with nothing to report it.
+                    .and_then(|i| u32::try_from(group_by.len() + i).ok())
                     .ok_or_else(|| SqlError {
                         message: format!(
                             "ORDER BY names `{kind}({})`, which this query does not \
@@ -1357,13 +1364,19 @@ impl Parser<'_> {
                 // simply fails the comparison below.
                 let mut copy = compute.to_vec();
                 let ordinal = self.join_value_ordinal(other, &mut copy, inputs, at)?;
-                if group_by == Some(ordinal) {
-                    return Ok(0);
+                if let Some(at_key) = group_by.iter().position(|key| *key == ordinal) {
+                    // Its position among the keys, not 0: with two keys,
+                    // `ORDER BY the_second_one` sorts by the second column of
+                    // the group and returning 0 would sort by the first.
+                    return u32::try_from(at_key).map_err(|_| SqlError {
+                        message: "too many group keys".to_owned(),
+                        at,
+                    });
                 }
                 Err(SqlError {
                     message: format!(
-                        "ORDER BY on a grouped {} names the group key or one of its \
-                         aggregates; a group carries nothing else",
+                        "ORDER BY on a grouped {} names one of its group keys or one of \
+                         its aggregates; a group carries nothing else",
                         shape(inputs)
                     ),
                     at,
@@ -1765,7 +1778,7 @@ impl Parser<'_> {
         let mut compute: Vec<ComputeSpec> = Vec::new();
         let mut aggregates: Vec<AggregateSpec> = Vec::new();
         let mut sort: Vec<SortSpec> = Vec::new();
-        let mut group_by: Option<u32> = None;
+        let mut group_by: Vec<u32> = Vec::new();
         let mut limit: Option<u64> = None;
         let mut offset = 0;
 
@@ -1816,13 +1829,27 @@ impl Parser<'_> {
 
         if self.eat("group") {
             self.expect("by")?;
-            let at = self.at();
-            // A select item rather than a bare column, so `GROUP BY
-            // hour(pickup_time)` reaches the same find-or-add the single-table
-            // path uses. A computed value is appended after *every* table,
-            // which is where `join_value_ordinal` puts it.
-            let item = self.select_item()?;
-            group_by = Some(self.join_value_ordinal(&item, &mut compute, &inputs, at)?);
+            loop {
+                let at = self.at();
+                // A select item rather than a bare column, so `GROUP BY
+                // hour(pickup_time)` reaches the same find-or-add the
+                // single-table path uses. A computed value is appended after
+                // *every* table, which is where `join_value_ordinal` puts it.
+                let item = self.select_item()?;
+                let key = self.join_value_ordinal(&item, &mut compute, &inputs, at)?;
+                // Deduplicated: `GROUP BY borough, borough` is one key written
+                // twice, and keeping both would return one group per pair with
+                // the column repeated in every row -- the same answer, wider,
+                // and no error anywhere. `join_value_ordinal`'s find-or-add
+                // already does this for a *computed* key; this is the same
+                // rule for a stored one.
+                if !group_by.contains(&key) {
+                    group_by.push(key);
+                }
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
         }
 
         for item in list {
@@ -1842,12 +1869,12 @@ impl Parser<'_> {
                     // column beside a grouping that did not group by it is the
                     // same error a bare column gets below, for the same reason.
                     let ordinal = self.join_value_ordinal(item, &mut compute, &inputs, *at)?;
-                    if group_by != Some(ordinal) {
+                    if !group_by.contains(&ordinal) {
                         return Err(SqlError {
                             message: format!(
-                                "a computed column on a {} has to be the group key — a {} \
-                                 returns whole rows or one row per group, and there is no \
-                                 third shape",
+                                "a computed column on a {} has to be one of the group keys \
+                                 — a {} returns whole rows or one row per group, and there \
+                                 is no third shape",
                                 shape(&inputs),
                                 shape(&inputs)
                             ),
@@ -1868,16 +1895,21 @@ impl Parser<'_> {
                     // two ordinals. It went unnoticed because every test of a
                     // grouped join keyed on a *computed* column, which takes
                     // the branch above.
-                    if let Some(key) = group_by {
+                    if !group_by.is_empty() {
                         let named = self
                             .resolve_side(raw, &inputs, *at)
                             .and_then(|(input, column)| joined_at(&inputs, input, column, *at))
                             .ok();
-                        if named != Some(key) {
+                        if !named.is_some_and(|ordinal| group_by.contains(&ordinal)) {
                             return Err(SqlError {
                                 message: format!(
-                                    "`{raw}` is not the group key — a grouped query returns \
-                                     the key and the aggregates"
+                                    "`{raw}` is not {} — a grouped query returns the keys \
+                                     and the aggregates",
+                                    if group_by.len() == 1 {
+                                        "the group key"
+                                    } else {
+                                        "one of the group keys"
+                                    }
                                 ),
                                 at: *at,
                             });
@@ -1886,13 +1918,13 @@ impl Parser<'_> {
                 }
             }
         }
-        if group_by.is_none() && !aggregates.is_empty() {
+        if group_by.is_empty() && !aggregates.is_empty() {
             return Err(SqlError {
                 message: "an aggregate needs a GROUP BY".to_owned(),
                 at: self.at(),
             });
         }
-        if group_by.is_none() && !star {
+        if group_by.is_empty() && !star {
             // An ungrouped join or chain returns whole rows, so a named select
             // list has nowhere to go — and this used to *silently* be true.
             // The guard here was `!star && list.is_empty()`, which `select`
@@ -1923,7 +1955,7 @@ impl Parser<'_> {
             // one's ORDER BY has nowhere to be lowered, and the refusal now
             // says which of the two shapes the reader is in rather than "not
             // supported yet", which was true of both and explained neither.
-            if group_by.is_none() {
+            if group_by.is_empty() {
                 return Err(SqlError {
                     message: format!(
                         "ORDER BY on a {} needs a GROUP BY: the kernel orders groups, not \
@@ -1938,7 +1970,7 @@ impl Parser<'_> {
                 let at = self.at();
                 let item = self.select_item()?;
                 let column =
-                    self.join_group_ordinal(&item, group_by, &aggregates, &compute, &inputs, at)?;
+                    self.join_group_ordinal(&item, &group_by, &aggregates, &compute, &inputs, at)?;
                 let descending = if self.eat("desc") {
                     true
                 } else {

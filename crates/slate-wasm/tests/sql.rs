@@ -697,7 +697,7 @@ fn a_chains_computed_value_sits_past_every_table() {
     // 4 + 4 + 4 columns, so the first computed value is ordinal 12. Written
     // out rather than derived, because deriving it here from the same widths
     // the parser used would be the parser checking its own arithmetic.
-    assert_eq!(chain.group_by, Some(12));
+    assert_eq!(chain.group_by, vec![12]);
     // And the same call written twice is one computed column, not two: the
     // select list and the GROUP BY find-or-add into the same list.
     assert_eq!(chain.compute.len(), 1);

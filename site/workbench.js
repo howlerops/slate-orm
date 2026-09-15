@@ -196,9 +196,10 @@ const EXAMPLES = [
       "-- seven aggregates, a HAVING over two of them, ordered by an aggregate\n" +
       "-- and then by a key, paged.\n" +
       "--\n" +
-      "-- It is two statements rather than one because ORDER BY and a second\n" +
-      "-- group key are not available on the join path. The grammar says so\n" +
-      "-- rather than quietly ignoring them.\n" +
+      "-- Two statements rather than one because the second reads a single\n" +
+      "-- table: everything it does -- two group keys, ORDER BY over a grouped\n" +
+      "-- result, HAVING -- works on a join too now. It did not when this\n" +
+      "-- example was written, and the note here said so.\n" +
       "SELECT pickup_zone, passengers,\n" +
       "       count(*), count(passengers), count(distinct dropoff_zone),\n" +
       "       min(fare), max(tip), sum(total), avg(distance)\n" +

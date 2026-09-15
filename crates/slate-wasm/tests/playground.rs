@@ -575,7 +575,7 @@ fn a_grouped_join_agrees_with_counting_the_fixture_by_hand() {
         &playground,
         json!({
             "leftWhere": [{ "column": 2, "op": "eq", "value": "US" }],
-            "groupBy": 2,
+            "groupBy": [2],
             "aggregates": [{ "kind": "count" }],
         }),
     );
@@ -618,7 +618,7 @@ fn a_grouped_join_can_compute_min_and_max_over_the_book_side() {
         &playground,
         json!({
             "leftWhere": [{ "column": 0, "op": "eq", "value": "1" }],
-            "groupBy": 1,
+            "groupBy": [1],
             // `input: 1` is the right table, `books`. It used to be implicit
             // and unavoidable: every aggregate's ordinal was shifted past
             // every left column, so an aggregate could only ever read the
@@ -653,7 +653,7 @@ fn grouping_narrows_what_each_input_decodes() {
     let plain = joined(&playground, json!({ "authors": filter.clone() }));
     let grouped = joined(
         &playground,
-        json!({ "authors": filter, "groupBy": 0, "aggregates": [{ "kind": "count" }] }),
+        json!({ "authors": filter, "groupBy": [0], "aggregates": [{ "kind": "count" }] }),
     );
 
     let books_plain = plain["inputs"][1]["decodes"].as_array().expect("decodes");
@@ -670,7 +670,7 @@ fn an_unknown_aggregate_is_refused_by_name() {
     let text = playground.join(
         &json!({
             "left": "authors", "right": "books", "leftKey": 0, "rightKey": 1,
-            "groupBy": 0,
+            "groupBy": [0],
             "aggregates": [{ "kind": "median", "column": 3 }],
         })
         .to_string(),

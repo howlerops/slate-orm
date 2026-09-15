@@ -473,13 +473,17 @@ fn it_refuses_what_it_cannot_answer() {
     );
     assert!(message.contains("does not compute"), "{message}");
 
-    // A computed column on a join has to be the group key: a join returns
-    // whole rows or one row per group, and there is no third shape.
+    // A computed column on a join has to be one of the group keys: a join
+    // returns whole rows or one row per group, and there is no third shape.
+    // ("keys", plural, since a grouped join takes a list of them.)
     let message = refused(
         &playground,
         "SELECT hour(pickup_time) FROM trips JOIN zones ON trips.pickup_zone = zones.id",
     );
-    assert!(message.contains("has to be the group key"), "{message}");
+    assert!(
+        message.contains("has to be one of the group keys"),
+        "{message}"
+    );
 
     // A computed column on a join reads *either* side now, so `borough` — a
     // `zones` column — resolves rather than failing to. It is still refused,
@@ -787,7 +791,7 @@ fn the_join_spec_puts_the_computed_column_past_both_tables() {
     let width = taxi::trips().columns().len() + taxi::zones().columns().len();
     assert_eq!(
         spec["groupBy"],
-        json!(width),
+        json!([width]),
         "the group key must sit past both tables: {spec}"
     );
 }
@@ -972,7 +976,7 @@ fn a_group_key_may_be_a_bare_column_of_the_right_table() {
     let expected = taxi::trips().columns().len() + 1;
     assert_eq!(
         answer["spec"]["groupBy"],
-        json!(expected),
+        json!([expected]),
         "{}",
         answer["spec"]
     );
@@ -1011,7 +1015,7 @@ fn a_qualified_name_picks_its_own_side() {
         "SELECT trips.id, count(*) FROM trips JOIN zones \
          ON trips.pickup_zone = zones.id GROUP BY trips.id",
     );
-    assert_eq!(left["spec"]["groupBy"], json!(0), "{}", left["spec"]);
+    assert_eq!(left["spec"]["groupBy"], json!([0]), "{}", left["spec"]);
 
     let right = ok(
         &playground,
@@ -1021,7 +1025,7 @@ fn a_qualified_name_picks_its_own_side() {
     let expected = taxi::trips().columns().len();
     assert_eq!(
         right["spec"]["groupBy"],
-        json!(expected),
+        json!([expected]),
         "{}",
         right["spec"]
     );
@@ -1393,7 +1397,7 @@ fn ordering_a_grouped_join_names_the_key_or_an_aggregate() {
          GROUP BY borough ORDER BY zone",
     );
     assert!(
-        message.contains("names the group key or one of"),
+        message.contains("names one of its group keys or one of"),
         "{message}"
     );
 }

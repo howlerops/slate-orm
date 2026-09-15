@@ -304,11 +304,20 @@ pub struct JoinSpec {
     /// either table. It used to be able to read only the left, which was a
     /// limitation of this spec rather than of the kernel.
     pub compute: Vec<ComputeSpec>,
-    /// Group by this ordinal of the **joined row**: a left column keeps its own
-    /// ordinal, a right column sits at `left.columns() + n`, and a computed
-    /// column at `left.columns() + right.columns() + i`. Absent means return
+    /// Group by these ordinals of the **joined row**: a left column keeps its
+    /// own ordinal, a right column sits at `left.columns() + n`, and a computed
+    /// column at `left.columns() + right.columns() + i`. Empty means return
     /// joined rows rather than groups.
-    pub group_by: Option<u32>,
+    ///
+    /// A list rather than one key, matching [`QuerySpec::group_by`], which has
+    /// been a list since grouping arrived. The asymmetry was not a decision:
+    /// the single-table path grew a second key and the joined path was never
+    /// revisited, so `GROUP BY payment, passengers` worked on `trips` and was a
+    /// refusal the moment a join appeared — and the workbench's own "kitchen
+    /// sink" example said so in prose, splitting itself into two statements to
+    /// work around it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<u32>,
     /// Computed per group. Each names its side with `AggregateSpec::input`.
     pub aggregates: Vec<AggregateSpec>,
     /// How to order the **groups** of a grouped join. Empty leaves them in the
@@ -361,11 +370,11 @@ pub struct ChainSpec {
     /// table.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compute: Vec<ComputeSpec>,
-    /// Group by this ordinal of the **chain row**: input `n`'s column `c` is
+    /// Group by these ordinals of the **chain row**: input `n`'s column `c` is
     /// at the sum of the widths before `n`, plus `c`; a computed value is
-    /// past every table. Absent means return rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_by: Option<u32>,
+    /// past every table. Empty means return rows. See [`JoinSpec::group_by`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<u32>,
     /// Computed per group. Each names its input with `AggregateSpec::input`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aggregates: Vec<AggregateSpec>,
@@ -1078,16 +1087,16 @@ impl Playground {
         // spec's window is set where it applies rather than everywhere and
         // discarded downstream. The claim that it was a live bug is
         // withdrawn.
-        if spec.group_by.is_none() {
+        if spec.group_by.is_empty() {
             if let Some(limit) = spec.limit {
                 join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
             }
             join.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
         }
 
-        let grouping = match spec.group_by {
-            None => None,
-            Some(key) => {
+        let grouping = match spec.group_by.as_slice() {
+            [] => None,
+            wanted_keys => {
                 let mut aggregates = Vec::with_capacity(spec.aggregates.len());
                 for wanted in &spec.aggregates {
                     // A right-side ordinal has to be shifted into the joined
@@ -1106,7 +1115,8 @@ impl Playground {
                 if aggregates.is_empty() {
                     aggregates.push(Aggregate::Count);
                 }
-                let mut grouping = Grouping::by([Ordinal(key as usize)], &aggregates);
+                let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
+                let mut grouping = Grouping::by(keys, &aggregates);
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
                 }
@@ -1328,9 +1338,9 @@ impl Playground {
         }
         chain.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
 
-        let grouping = match spec.group_by {
-            None => None,
-            Some(key) => {
+        let grouping = match spec.group_by.as_slice() {
+            [] => None,
+            wanted_keys => {
                 let mut aggregates = Vec::with_capacity(spec.aggregates.len());
                 for wanted in &spec.aggregates {
                     let shifted = chained_ordinal(wanted.input, wanted.column, &refs)?;
@@ -1339,7 +1349,8 @@ impl Playground {
                 if aggregates.is_empty() {
                     aggregates.push(Aggregate::Count);
                 }
-                let mut grouping = Grouping::by([Ordinal(key as usize)], &aggregates);
+                let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
+                let mut grouping = Grouping::by(keys, &aggregates);
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
                 }
@@ -1612,7 +1623,9 @@ impl Playground {
             }
             sql::Statement::Join(spec) => {
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
-                let grouped = spec.group_by;
+                // Cloned rather than moved: the headers need the keys and
+                // `joined_spec` takes the spec by value.
+                let grouped = spec.group_by.clone();
                 let left_table = self
                     .table(&spec.left)
                     .unwrap_or_else(|_| fixture::authors());
@@ -1626,20 +1639,21 @@ impl Playground {
                     Named::new(&left_table, &spec.left_alias),
                     Named::new(&right_table, &spec.right_alias),
                 ];
-                let columns = match grouped {
-                    Some(key) => grouped_headers(&inputs, &spec.compute, key, &spec.aggregates),
-                    None => joined_headers(&inputs, &spec.compute),
+                let columns = if grouped.is_empty() {
+                    joined_headers(&inputs, &spec.compute)
+                } else {
+                    grouped_headers(&inputs, &spec.compute, &grouped, &spec.aggregates)
                 };
                 match self.joined_spec(spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
-                        Self::answered(text, grouped.is_some(), columns, answer, spec_json)
+                        Self::answered(text, !grouped.is_empty(), columns, answer, spec_json)
                     }
                 }
             }
             sql::Statement::Chain(spec) => {
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
-                let grouped = spec.group_by;
+                let grouped = spec.group_by.clone();
                 // Resolved before the read, because the headers need the
                 // widths and a chain has no fixed number of them. A table the
                 // catalog does not have is left to `chained_spec` to refuse by
@@ -1664,18 +1678,17 @@ impl Playground {
                             .zip(&spec.inputs)
                             .map(|(table, input)| Named::new(table, &input.alias))
                             .collect();
-                        match grouped {
-                            Some(key) => {
-                                grouped_headers(&named, &spec.compute, key, &spec.aggregates)
-                            }
-                            None => joined_headers(&named, &spec.compute),
+                        if grouped.is_empty() {
+                            joined_headers(&named, &spec.compute)
+                        } else {
+                            grouped_headers(&named, &spec.compute, &grouped, &spec.aggregates)
                         }
                     }
                 };
                 match resolved.and_then(|_| self.chained_spec(spec)) {
                     Err(message) => SqlResult::failed(text, 0, &message),
                     Ok(answer) => {
-                        Self::answered(text, grouped.is_some(), columns, answer, spec_json)
+                        Self::answered(text, !grouped.is_empty(), columns, answer, spec_json)
                     }
                 }
             }
@@ -2379,7 +2392,7 @@ fn joined_headers(inputs: &[Named<'_>], compute: &[ComputeSpec]) -> Vec<String> 
 fn grouped_headers(
     inputs: &[Named<'_>],
     compute: &[ComputeSpec],
-    key: u32,
+    keys: &[u32],
     aggregates: &[AggregateSpec],
 ) -> Vec<String> {
     // The key echoes the reader's own spelling, unqualified — *unless* that
@@ -2394,15 +2407,19 @@ fn grouped_headers(
     // column name appear on more than one input?
     let bare = joined_names(inputs, compute, false);
     let qualified = joined_names(inputs, compute, true);
-    let at = key as usize;
-    let key_name = match bare.get(at) {
-        None => key.to_string(),
-        Some(name) if bare.iter().filter(|other| *other == name).count() > 1 => {
-            qualified.get(at).cloned().unwrap_or_else(|| name.clone())
-        }
-        Some(name) => name.clone(),
-    };
-    let mut out = vec![key_name];
+    let mut out: Vec<String> = keys
+        .iter()
+        .map(|key| {
+            let at = *key as usize;
+            match bare.get(at) {
+                None => key.to_string(),
+                Some(name) if bare.iter().filter(|other| *other == name).count() > 1 => {
+                    qualified.get(at).cloned().unwrap_or_else(|| name.clone())
+                }
+                Some(name) => name.clone(),
+            }
+        })
+        .collect();
     out.extend(joined_labels(aggregates, inputs));
     out
 }

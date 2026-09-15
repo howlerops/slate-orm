@@ -542,3 +542,174 @@ fn an_alias_is_refused_where_it_cannot_mean_anything() {
     // is still reported as the unexpected word it is.
     assert!(refused("SELECT * FROM books WERE id = 1").contains("unexpected `WERE`"));
 }
+
+// --- more than one group key ----------------------------------------------
+
+#[test]
+fn a_join_groups_by_two_keys_and_they_fold_back() {
+    let playground = loaded();
+    // `borough` is column 1 of `zones` and so column 12 of the joined row;
+    // `payment` is column 10 of `trips`. Two keys from two different tables,
+    // which is the shape a single `Option<u32>` could not hold at all.
+    let pairs = sql(
+        &playground,
+        "SELECT borough, payment, count(*) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough, payment",
+    );
+    assert_eq!(
+        pairs["columns"],
+        json!(["borough", "payment", "count(*)"]),
+        "{pairs}"
+    );
+
+    // The oracle: folding the pairs down to boroughs must give the same counts
+    // as grouping by borough alone. An independent query, not a table of
+    // numbers -- and it fails if the second key were dropped, doubled, or
+    // resolved to the wrong ordinal.
+    let mut folded: std::collections::BTreeMap<String, u64> = Default::default();
+    for row in pairs["rows"].as_array().unwrap() {
+        let row = row.as_array().unwrap();
+        *folded
+            .entry(row[0].as_str().unwrap().to_owned())
+            .or_default() += row[2].as_str().unwrap().parse::<u64>().unwrap();
+    }
+    let alone = sql(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough",
+    );
+    let expected: std::collections::BTreeMap<String, u64> = alone["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let row = row.as_array().unwrap();
+            (
+                row[0].as_str().unwrap().to_owned(),
+                row[1].as_str().unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(folded, expected);
+    // And there really were more pairs than boroughs, so this compared
+    // something: one payment kind per borough would make the fold trivial.
+    assert!(
+        pairs["rows"].as_array().unwrap().len() > expected.len(),
+        "{} pairs for {} boroughs",
+        pairs["rows"].as_array().unwrap().len(),
+        expected.len()
+    );
+}
+
+#[test]
+fn ordering_by_an_aggregate_looks_past_every_key() {
+    // A group is `[keys..., aggregates...]`, so the first aggregate sits at
+    // `keys.len()`. The parser had `i + 1`, which is right for one key and
+    // silently off by one for every key after it: `ORDER BY count(*) DESC`
+    // over two keys would have ordered by the *second key* instead. Same
+    // number of rows, same values, different order, and nothing to report it.
+    let playground = loaded();
+    let answer = sql(
+        &playground,
+        "SELECT borough, payment, count(*) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough, payment ORDER BY count(*) DESC",
+    );
+    let counts: Vec<u64> = answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[2].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert!(counts.len() > 3, "too few groups to be ordered: {counts:?}");
+    assert!(
+        counts.windows(2).all(|w| w[0] >= w[1]),
+        "not ordered by the count: {counts:?}"
+    );
+    // The payments are *not* in order, which is what tells this apart from a
+    // sort that landed on the second key and happened to look sorted.
+    let payments: Vec<&str> = answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap())
+        .collect();
+    assert!(
+        payments.windows(2).any(|w| w[0] > w[1]),
+        "the payments are in order too, so this cannot tell the two apart: {payments:?}"
+    );
+}
+
+#[test]
+fn ordering_by_the_second_key_orders_by_the_second_key() {
+    // The other half of the group space: a *key* resolves to its position
+    // among the keys, so the second one is 1. Returning 0 -- which is what the
+    // one-key version did, because 0 was the only key -- would order by the
+    // first key instead. Both are plausible-looking orders over the same rows.
+    let playground = loaded();
+    let answer = sql(
+        &playground,
+        "SELECT borough, payment, count(*) FROM trips \
+         JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough, payment ORDER BY payment",
+    );
+    let payments: Vec<&str> = answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap())
+        .collect();
+    assert!(payments.len() > 3, "too few groups: {payments:?}");
+    assert!(
+        payments.windows(2).all(|w| w[0] <= w[1]),
+        "not ordered by payment: {payments:?}"
+    );
+    // And the boroughs are not in order, so an order that landed on the first
+    // key would not look like this.
+    let boroughs: Vec<&str> = answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap())
+        .collect();
+    assert!(
+        boroughs.windows(2).any(|w| w[0] > w[1]),
+        "the boroughs are in order too, so this cannot tell the two apart: {boroughs:?}"
+    );
+}
+
+#[test]
+fn a_second_key_is_checked_like_the_first() {
+    let playground = loaded();
+    let refused = |text: &str| -> String {
+        let all: Vec<Json> = serde_json::from_str(&playground.sql(text)).expect("JSON");
+        let last = all.last().expect("a result").clone();
+        assert!(!last["error"].is_null(), "{text} was accepted: {last}");
+        last["error"]["message"].as_str().unwrap().to_owned()
+    };
+    // A selected column that is neither key, with the message now plural.
+    assert!(
+        refused(
+            "SELECT borough, payment, zone, count(*) FROM trips \
+             JOIN zones ON trips.pickup_zone = zones.id GROUP BY borough, payment"
+        )
+        .contains("is not one of the group keys"),
+    );
+    // And one key still says "the group key", because there is only one.
+    assert!(
+        refused(
+            "SELECT borough, payment, count(*) FROM trips \
+             JOIN zones ON trips.pickup_zone = zones.id GROUP BY borough"
+        )
+        .contains("is not the group key"),
+    );
+    // A second key that is not a column at all.
+    assert!(
+        refused(
+            "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+             GROUP BY borough, nosuch"
+        )
+        .contains("`nosuch` is not a column of"),
+    );
+}
