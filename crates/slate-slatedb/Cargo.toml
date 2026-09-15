@@ -18,6 +18,11 @@ tokio = { workspace = true, features = ["time"] }
 uuid.workspace = true
 
 [features]
+# Install dhat's allocator in `examples/row_footprint.rs`. Off by default:
+# it makes the same load an order of magnitude slower, which is what you want
+# for attributing bytes and useless for timing anything. `dhat` stays a
+# dev-dependency either way, so this never reaches a consumer of the crate.
+dhat-heap = []
 default = ["aws", "cache"]
 # S3-compatible object storage: AWS S3, MinIO, Tigris, Cloudflare R2.
 aws = ["slatedb/aws"]
@@ -60,6 +65,7 @@ s3s-fs = "0.14"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 tempfile = "3"
+dhat = "0.3.3"
 
 [lints]
 workspace = true

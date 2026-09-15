@@ -98,6 +98,8 @@ which is the first evidence separating the write path from the storage half
 rather than reasoning about it. And **the store holds twelve times what the
 data weighs**: these rows serialise to ~110 bytes and cost ~1,290 in memory.
 That factor had never been measured and is what decides the browser's ceiling.
+*(The twelve is withdrawn — see the note at the end of this entry. It is 5.7×,
+now 4.7×.)*
 
 **In the browser**, headless Chromium at 1280×900, against the built bytes:
 first paint 1.4 s — wasm fetched and compiled, 1.26 MB fetched and decompressed,
@@ -184,3 +186,8 @@ time, distance or fare are table scans, correctly but unremarkably.
 made to find where it goes or to reduce it, and the obvious suspects — a
 `String` per row for the payment type, two `Vec<u8>` per row once the index
 entry is counted, `BTreeMap` node overhead — are hypotheses, not findings.
+
+> **Closed on 2026-09-15** by `where-the-bytes-a-row-went`, and the number was
+> wrong: 474 of the 1,290 was the source rows, which RSS counted and the store
+> never held. The store is 491 bytes a row, now 403 after a two-line fix, over
+> keys and values totalling 86.

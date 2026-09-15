@@ -288,12 +288,35 @@ impl KvSnapshot for MemoryTransaction {
 
 #[async_trait]
 impl KvTransaction for MemoryTransaction {
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+    fn put(&self, mut key: Vec<u8>, mut value: Vec<u8>) -> Result<()> {
+        // `Bytes::from(Vec)` adopts the vector's *capacity*, not its length,
+        // and holds it for as long as the entry lives. The encoders upstream
+        // size their buffers by a guess — `slate_tuple::encode` reserves nine
+        // bytes a value, `keys` a header plus the same — so without this a
+        // stored entry carries that guess's error forever.
+        //
+        // Measured on the 100,000-trip sample: the store holds 491 bytes a row
+        // without these two lines and 403 with them, for rows whose keys and
+        // values total 86. The load also got *faster*, 0.29 s to 0.27 s over
+        // six alternating runs with no overlap — smaller blocks, less memory
+        // touched — so this is not the usual space-for-time trade.
+        // `slate-slatedb`'s `tests/footprint.rs` guards it and
+        // `examples/row_footprint.rs` is the measurement — both live there
+        // because the guard needs an allocator this crate must not install.
+        //
+        // Here rather than in the encoders because this is the one place a
+        // buffer becomes *stored*. `encode` also runs for scan bounds and
+        // per-row predicate comparisons, which are dropped immediately; a
+        // shrink there would be a realloc on the read path buying nothing.
+        key.shrink_to_fit();
+        value.shrink_to_fit();
         self.with_pending(|p| p.insert(Bytes::from(key), Some(Bytes::from(value))));
         Ok(())
     }
 
-    fn delete(&self, key: Vec<u8>) -> Result<()> {
+    fn delete(&self, mut key: Vec<u8>) -> Result<()> {
+        // A tombstone's key is held exactly as a live one's is.
+        key.shrink_to_fit();
         self.with_pending(|p| p.insert(Bytes::from(key), None));
         Ok(())
     }

@@ -82,6 +82,36 @@ fn best(playground: &Playground, sql: &str, runs: usize) -> Run {
         .expect("at least one run")
 }
 
+/// The least-disturbed reading of each of two statements, sampled alternately.
+///
+/// Two separate batches of `best` is what this was, and it is flaky on a busy
+/// machine: whichever statement happens to be sampled during a bad patch loses,
+/// and under four spinning CPUs the pair inverted by 2.6× — far past any
+/// threshold that still catches the mutation. Alternating puts both through the
+/// same weather.
+///
+/// Minimum rather than median, and on the *kernel* reading rather than the
+/// outer one, because contention only ever adds: the smallest of many samples
+/// is the closest thing to the cost with nothing else running, which is the
+/// quantity the comparison is about.
+fn paired(playground: &Playground, left: &str, right: &str, runs: usize) -> (Run, Run) {
+    let mut best_left: Option<Run> = None;
+    let mut best_right: Option<Run> = None;
+    let keep = |slot: &mut Option<Run>, run: Run| {
+        if slot.as_ref().is_none_or(|best| run.kernel < best.kernel) {
+            *slot = Some(run);
+        }
+    };
+    for _ in 0..runs {
+        keep(&mut best_left, timed(playground, left));
+        keep(&mut best_right, timed(playground, right));
+    }
+    (
+        best_left.expect("at least one run"),
+        best_right.expect("at least one run"),
+    )
+}
+
 #[test]
 fn the_reported_time_never_exceeds_an_independent_clock() {
     let playground = loaded();
@@ -170,8 +200,7 @@ fn the_clock_stops_before_the_rows_are_rendered() {
             100_000,
         ),
     ] {
-        let select = best(&playground, plain, 7);
-        let group = best(&playground, grouped, 7);
+        let (select, group) = paired(&playground, plain, grouped, 9);
 
         // Both halves must have run the same plan, or the comparison is
         // between two different amounts of kernel work and proves nothing.
@@ -185,7 +214,10 @@ fn the_clock_stops_before_the_rows_are_rendered() {
 
         // Fifteen percent of slack for a shared machine. The mutation this
         // catches is worth 26% on the small pair and 31% on the large one,
-        // measured — see the ledger entry.
+        // measured — see the ledger entry. The slack is small because
+        // `paired` does the work of surviving contention; widening this
+        // instead would have had to pass 260% to survive four spinning CPUs,
+        // by which point it catches nothing.
         assert!(
             select.kernel < group.kernel * 1.15,
             "returning {rows} rows took {:.3} ms but folding the same read into \

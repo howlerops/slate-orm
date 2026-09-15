@@ -1550,17 +1550,90 @@ candidate and is still not ruled out.
 
 **The in-memory representation costs about 1,290 bytes a row**, dead flat
 across a factor of thirty. These rows serialise to roughly 110 bytes, so the
-store is holding **twelve times** what the data weighs. That is not a
-surprise in kind — a `BTreeMap` of `Vec<u8>` keys to `Vec<u8>` values, two
-entries per row once the index entry is counted, plus a `String` per row for
-the payment type — but the factor had never been measured, and it is the
-number that decides what a browser tab can hold. It has not been investigated
-and no attempt was made to reduce it.
+store is holding **twelve times** what the data weighs.
+
+> **Withdrawn on 2026-09-15.** Both halves of that sentence are wrong. The
+> RSS column above is the whole process, and the process is holding the source
+> `Vec<Row>` the store was built from — 474 bytes a row of `Value`s and their
+> `String`s, never released, and nothing to do with the store. Counted with an
+> allocator instead of RSS, the store holds **491 bytes a row**, over keys and
+> values that total **86**, which is 5.7× and not 12×. See §7c.
 
 **What this is not.** It is not a throughput benchmark: one run per size, no
 cold/warm separation, no comparison to anything. It is not the S3 path. It
 does not show the cost model is right at three million rows — only that the
 rows can be loaded and analysed there.
+
+### 7c. Where the bytes a row actually go
+
+§7b's 1,290 was RSS divided by rows, and it was never investigated. Both of
+those turned out to matter. `slate-slatedb`'s `row_footprint` example counts
+allocations instead — `dhat` reports the bytes each allocation *requested*, so
+the numbers are properties of the program rather than of the machine — and
+stages the run so each figure is a difference between two readings:
+
+| | total | per row |
+|---|---:|---:|
+| source rows, before the store exists | 45.2 MB | 474 |
+| + `insert_many` | 91.9 MB | 964 |
+| + `analyze` | 92.0 MB | 964 |
+| **− the source rows: the store itself** | **46.8 MB** | **491** |
+| − the commit's conflict history | 46.8 MB | 491 |
+
+100,000 trips, release build. **Nearly half of the old number was the source
+`Vec<Row>`**, which the harness held for the whole run and RSS duly counted:
+474 bytes a row of `Value` enums and the `String` in each. It is not what the
+store costs, and no amount of staring at `BTreeMap` would have found it.
+
+Against that, the floor:
+
+| | per row |
+|---|---:|
+| keys and values, logical | 86 |
+| the same pairs in a bare `BTreeMap<Bytes, Bytes>` | 219 |
+| — of which inline `Bytes` headers | 128 |
+| the same pairs, allocated the way the writer allocates them | 369 |
+| the store | 491 |
+
+So the store is **5.7× its data, not 12×**, and the largest single component is
+not overhead anyone chose: 128 bytes a row is four `Bytes` structs sitting
+inline in the map's nodes, at 32 bytes each, for two entries per row. That is
+the price of the representation and it does not move without changing it.
+
+**A hypothesis, tested and rejected.** `Shared::history` keeps a `BTreeSet` of
+every key a commit wrote, for conflict detection, and a bulk load of 100,000
+rows puts 200,000 keys in one. It looked like the obvious culprit. It is worth
+**two allocations a row and no measurable bytes** — the `Bytes` in the set
+share the map's buffers — and `trim_history` drops it on the next transaction
+drop anyway.
+
+**What was worth 88 bytes a row.** The gap between the exact map (219) and the
+writer-shaped one (369) is capacity slack. `slate_tuple::encode` reserves nine
+bytes a value and `keys` a header plus the same; `Bytes::from(Vec)` then adopts
+the vector's **capacity**, not its length, and holds it for the life of the
+entry. Shrinking at the one place a buffer becomes stored —
+`MemoryTransaction::put` — takes the store from **491 to 403 bytes a row**.
+
+It also made the load *faster*, which was not the expected direction:
+
+| | 100,000 rows |
+|---|---:|
+| without the shrink | 0.29 s, six runs, no spread |
+| with it | 0.26–0.28 s, six runs |
+
+Alternating runs of two prebuilt binaries, ranges non-overlapping — smaller
+blocks and less memory touched, presumably, though that is an explanation and
+not a measurement. So this is not the usual space-for-time trade; nothing was
+given up.
+
+**Not the SlateDB path.** `slatedb`'s `put` takes `AsRef<[u8]>` and copies into
+its own write batch, so it never adopts a caller's capacity. This is
+`MemoryStore`'s alone — which is the store the browser workbench runs on, and
+the one §7b measured.
+
+`slate-slatedb/tests/footprint.rs` holds it there: a ceiling of 450 bytes a row
+over the same sample, which the shrink passes at 403 and its absence fails at
+487.
 
 ### A cost-model limitation the workbench made visible
 
