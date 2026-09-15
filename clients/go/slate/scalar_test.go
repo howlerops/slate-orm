@@ -481,3 +481,108 @@ func TestCalendarTruncationAgreesWithGoTime(t *testing.T) {
 		}
 	}
 }
+
+// Both kinds of computed value on one join, read back separately.
+//
+// An input's own `Compute` reads only that input's table and travels in that
+// input's row; the join's reads the whole accumulated row and travels beside
+// the inputs. Both were being sent and only the second could be read back:
+// `rowFromProto` takes a row's `values` and drops its `computed`, which is
+// right for a stored column and meant an input-level computed value arrived
+// and vanished. So this asks for both at once and checks each against the
+// stored columns it was computed from.
+func TestBothKindsOfComputedValueComeBackOnAJoin(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{
+		Table: "authors",
+		// The author's name in upper case: reads `authors` and nothing else.
+		Compute: []slate.Scalar{slate.Upper(slate.Col(1))},
+	})
+	// An input's own compute still has to *name* that input: a bare `Col(3)`
+	// means input 0, and on input 1 the server refuses it — "computed value 0
+	// names input 0, and is evaluated over input 1" — rather than quietly
+	// reading `authors.owner`. The handle is not available inside the literal
+	// that needs it, so it is written down and then checked.
+	const booksAt = 1
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+		// The decade of the book's year: reads `books` and nothing else.
+		Compute: []slate.Scalar{
+			slate.Mul(
+				slate.Div(slate.Ref(slate.At(booksAt, 3)), slate.Lit(slate.Int(10))),
+				slate.Lit(slate.Int(10)),
+			),
+		},
+	})
+	if books != booksAt {
+		t.Fatalf("the second input is %d, and its compute names %d", books, booksAt)
+	}
+	join := b.Query()
+	join = slate.JoinQuery{
+		Inputs: join.Inputs,
+		Compute: []slate.Scalar{
+			slate.Concat(
+				slate.Ref(slate.At(authors, 1)),
+				slate.Lit(slate.String("/")),
+				slate.Ref(slate.At(books, 2)),
+			),
+		},
+	}
+
+	stream, err := session.Join(testContext(t), join)
+	if err != nil {
+		t.Fatalf("joining: %v", err)
+	}
+	defer stream.Close()
+
+	seen := 0
+	for stream.Next() {
+		// Every accessor before Row, which advances the cursor.
+		joined := stream.Computed()
+		ownAuthors := stream.InputComputed(authors)
+		ownBooks := stream.InputComputed(books)
+		row := stream.Row()
+
+		if len(joined) != 1 || len(ownAuthors) != 1 || len(ownBooks) != 1 {
+			t.Fatalf("got %d join, %d author and %d book computed values, want 1 each",
+				len(joined), len(ownAuthors), len(ownBooks))
+		}
+		name, ok := row[0][1].(slate.String)
+		if !ok {
+			t.Fatalf("the author's name is %v", row[0][1])
+		}
+		if want := slate.String(strings.ToUpper(string(name))); ownAuthors[0] != want {
+			t.Errorf("the author's computed value is %v, want %v", ownAuthors[0], want)
+		}
+		year, ok := row[1][3].(slate.Int)
+		if !ok {
+			t.Fatalf("the book's year is %v", row[1][3])
+		}
+		if want := slate.Int(int64(year) / 10 * 10); ownBooks[0] != want {
+			t.Errorf("the book's computed value is %v, want %v", ownBooks[0], want)
+		}
+		title, ok := row[1][2].(slate.String)
+		if !ok {
+			t.Fatalf("the book's title is %v", row[1][2])
+		}
+		if want := slate.String(string(name) + "/" + string(title)); joined[0] != want {
+			t.Errorf("the join's computed value is %v, want %v", joined[0], want)
+		}
+
+		// And an input this join does not have is nil rather than a panic or a
+		// neighbour's values.
+		if extra := stream.InputComputed(2); extra != nil {
+			t.Errorf("input 2 does not exist, and gave %v", extra)
+		}
+		seen++
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+	if seen != 4 {
+		t.Fatalf("got %d joined rows, want 4", seen)
+	}
+}

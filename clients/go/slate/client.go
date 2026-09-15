@@ -738,11 +738,17 @@ type JoinStream struct {
 	session  *Session
 	batch    [][][]Value
 	computed [][]Value
-	at       int
-	servedBy *ServedBy
-	warnings []string
-	done     bool
-	err      error
+	// One entry per row, then one per input: what that input's own
+	// `JoinInput.Compute` produced. Kept apart from `batch` rather than
+	// appended to each input's values, for the reason the wire keeps them
+	// apart — a caller indexing past an input's columns would otherwise get a
+	// computed value and read it as a column.
+	inputComputed [][][]Value
+	at            int
+	servedBy      *ServedBy
+	warnings      []string
+	done          bool
+	err           error
 }
 
 // Join reads joined rows.
@@ -797,14 +803,19 @@ func (j *JoinStream) Next() bool {
 		j.warnings = append(j.warnings, message.Warnings...)
 		j.batch = j.batch[:0]
 		j.computed = j.computed[:0]
+		j.inputComputed = j.inputComputed[:0]
 		j.at = 0
 		for _, joined := range message.Rows {
 			inputs := make([][]Value, 0, len(joined.Inputs))
+			perInput := make([][]Value, 0, len(joined.Inputs))
 			for _, input := range joined.Inputs {
 				// A nil `Row` is an unmatched side of an outer join, and stays
-				// nil here so a caller can tell it from a row of nulls.
+				// nil here so a caller can tell it from a row of nulls. Its
+				// computed values are nil for the same reason: the input
+				// produced no row, so it computed nothing for this one.
 				if input.Row == nil {
 					inputs = append(inputs, nil)
+					perInput = append(perInput, nil)
 					continue
 				}
 				row, err := rowFromProto(input.Row)
@@ -813,7 +824,14 @@ func (j *JoinStream) Next() bool {
 					j.done = true
 					return false
 				}
+				own, err := computedFromProto(input.Row)
+				if err != nil {
+					j.err = err
+					j.done = true
+					return false
+				}
 				inputs = append(inputs, row)
+				perInput = append(perInput, own)
 			}
 			extra, err := valuesFromProto(joined.Computed, "the join's computed value")
 			if err != nil {
@@ -823,6 +841,7 @@ func (j *JoinStream) Next() bool {
 			}
 			j.batch = append(j.batch, inputs)
 			j.computed = append(j.computed, extra)
+			j.inputComputed = append(j.inputComputed, perInput)
 		}
 	}
 	return true
@@ -834,9 +853,10 @@ func (j *JoinStream) Next() bool {
 //
 // Beside the inputs rather than inside one of them, because a value that may
 // read every input belongs to none of them. An input's *own* computed values
-// are not here: they are that input's, and this client does not return them
-// separately per input — see [ComputedAt], which explains why an input's
-// computed value cannot be named across a join either.
+// — what [JoinInput.Compute] declared — are not here; they are that input's,
+// and [JoinStream.InputComputed] returns them. See [ComputedAt], which
+// explains why an input's computed value cannot be *named* across a join
+// either.
 //
 // Read it *before* [JoinStream.Row], which advances the cursor.
 func (j *JoinStream) Computed() []Value {
@@ -844,6 +864,35 @@ func (j *JoinStream) Computed() []Value {
 		return nil
 	}
 	return j.computed[j.at]
+}
+
+// InputComputed is what input `input`'s own [JoinInput.Compute] produced for
+// the row [JoinStream.Row] is about to return, in declaration order.
+//
+// The index is the handle [JoinBuilder.Add] returned, which is what every
+// other join accessor takes, so a caller never converts one.
+//
+// Nil for an input that declared no computed values, for an input index this
+// join does not have, and for the unmatched side of an outer join — which
+// produced no row and so computed nothing. Nil rather than an error in all
+// three cases, matching [JoinStream.Row]'s treatment of an unmatched input:
+// this is a cursor, and it has nowhere to put one.
+//
+// This was missing while [JoinStream.Computed] existed, so a Go caller could
+// declare an input-level computed value, have the server evaluate it, and have
+// no way to read it back — the value arrived on the wire in that input's
+// `Row.computed` and was dropped here.
+//
+// Read it *before* [JoinStream.Row], which advances the cursor.
+func (j *JoinStream) InputComputed(input uint32) []Value {
+	if j.at >= len(j.inputComputed) {
+		return nil
+	}
+	row := j.inputComputed[j.at]
+	if input >= uint32(len(row)) {
+		return nil
+	}
+	return row[input]
 }
 
 // Row is the joined row [JoinStream.Next] advanced to: one slice per input,

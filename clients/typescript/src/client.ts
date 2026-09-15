@@ -174,8 +174,28 @@ export interface ComputedRow {
 export interface ComputedJoinedRow {
   /** One array per input, `undefined` where an outer join found no match. */
   readonly inputs: (Value[] | undefined)[];
-  /** What `JoinQuery.compute` produced, in declaration order. */
+  /**
+   * What `JoinQuery.compute` produced, in declaration order.
+   *
+   * Beside the inputs rather than inside one of them, because a value that may
+   * read every input belongs to none of them.
+   */
   readonly computed: Value[];
+  /**
+   * What each input's *own* `JoinInput.compute` produced, one array per input
+   * in the same order as `inputs`.
+   *
+   * A different kind of value from `computed`: an input's computed value reads
+   * only that input's table, so it travels in that input's row and is that
+   * input's. `undefined` where an outer join found no match — that input
+   * produced no row, so it computed nothing for this one.
+   *
+   * This was missing while `computed` existed, so a caller could declare an
+   * input-level computed value, have the server evaluate it, and have no way
+   * to read it back: it arrived in that input's `row.computed` and
+   * `rowFromWire` dropped it.
+   */
+  readonly inputComputed: (Value[] | undefined)[];
 }
 
 /** A connection to a head node. Safe to share; a [Session] is not. */
@@ -927,12 +947,17 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
         this.#note(message);
         const rows = (message["rows"] as { inputs?: unknown[]; computed?: unknown[] }[]) ?? [];
         for (const joined of rows) {
+          const inputs = joined.inputs ?? [];
           yield {
-            inputs: (joined.inputs ?? []).map((input) => {
+            inputs: inputs.map((input) => {
               const row = (input as { row?: unknown }).row;
               return row ? rowFromWire(row) : undefined;
             }),
             computed: (joined.computed ?? []).map(valueFromWire),
+            inputComputed: inputs.map((input) => {
+              const row = (input as { row?: unknown }).row;
+              return row ? computedFromWire(row) : undefined;
+            }),
           };
         }
       }

@@ -321,6 +321,70 @@ test("a grouped join groups by the join's computed value", async () => {
   }
 });
 
+test("both kinds of computed value come back on a join", async () => {
+  // Sending is not reading back. `withComputed` carried the *join's* computed
+  // values and threw each input's away: `rowFromWire` takes a row's `values`
+  // and drops its `computed`, which is right for a stored column and meant an
+  // input-level computed value arrived and vanished with no error anywhere.
+  //
+  // So this asks for both at once and checks each against the stored columns
+  // it was computed from — which is what distinguishes a value that survived
+  // from one that happened to be the right shape.
+  const session = await library();
+  const b = newJoin();
+  const authors = b.add({
+    table: "authors",
+    // Reads `authors` and nothing else.
+    compute: [upper(col(1))],
+  });
+  // An input's own compute still has to *name* that input: a bare `col(3)`
+  // means input 0, and on input 1 the server refuses it — "computed value 0
+  // names input 0, and is evaluated over input 1" — rather than quietly
+  // reading `authors.country`. The handle is not available inside the object
+  // that needs it, so it is written down and then checked.
+  const booksAt = 1;
+  const books = b.add({
+    table: "books",
+    on: [{ earlier: at(authors, 0), own: 1 }],
+    // Reads `books` and nothing else.
+    compute: [mul(div(ref(at(booksAt, 3)), lit(int(10))), lit(int(10)))],
+  });
+  assert.equal(books, booksAt, "the second input's compute names the wrong one");
+  const join = {
+    ...b.query(),
+    // Reads both, which is what no input's own compute can do.
+    compute: [concat(ref(at(authors, 1)), lit(str("/")), ref(at(books, 2)))],
+  };
+
+  let seen = 0;
+  for await (const row of session.join(join).withComputed()) {
+    const [left, right] = row.inputs;
+    const [leftOwn, rightOwn] = row.inputComputed;
+    assert.ok(left && right, "an inner join pairs both");
+    assert.ok(leftOwn && rightOwn, "and both inputs computed something");
+
+    const name = left[1];
+    const title = right[2];
+    const year = right[3];
+    assert.ok(name?.kind === "string" && title?.kind === "string");
+    assert.ok(year?.kind === "int");
+
+    const joined = row.computed[0];
+    assert.ok(joined?.kind === "string");
+    assert.equal(joined.value, `${name.value}/${title.value}`);
+
+    const upperName = leftOwn[0];
+    assert.ok(upperName?.kind === "string");
+    assert.equal(upperName.value, name.value.toUpperCase());
+
+    const decade = rightOwn[0];
+    assert.ok(decade?.kind === "int");
+    assert.equal(decade.value, (year.value / 10n) * 10n);
+    seen += 1;
+  }
+  assert.equal(seen, 4);
+});
+
 test("an input's own computed value is not nameable across a join", async () => {
   const session = await library();
   const b = newJoin();

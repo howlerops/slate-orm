@@ -1,26 +1,26 @@
 """What comes back: rows, joined rows and groups.
 
-# The one place this client does arithmetic, and it is the protocol's fault
+# Nothing here does width arithmetic, and that took a protocol change
 
 `ColumnRef` exists so that a *request* never carries an ordinal a client
-computed. The response side has no such thing. A `Row` is a flat repeated
-`Value`, and the `.proto` says a query's computed values arrive "after the
-table's own columns, in the order they were requested". So to read computed
-value `i`, a client adds the table's width to `i` — which is exactly the
-arithmetic `ColumnRef` was introduced to remove, performed on the way back
-instead of the way out, and with the same failure: add a column to the table
-and every computed value moves.
+computed. The response side originally had no such thing: a `Row` was a flat
+repeated `Value`, and a query's computed values arrived after the table's own
+columns, so reading computed value `i` meant adding the table's width to `i`.
+That is the arithmetic `ColumnRef` was introduced to remove, performed on the
+way back instead of the way out, with the same failure — add a column to the
+table and every computed value moves. It was reported as finding 4 and the
+wire now carries the two apart, in `Row.values` and `Row.computed`.
 
-`Row.computed(i)` does that addition, using the locally declared `Table`. It is
-the only width arithmetic in this package, it is here rather than spread across
-the call sites, and it is reported as a protocol gap rather than presented as a
-solution. A `Row` with no table attached refuses `computed()` instead of
-guessing, because guessing would return a stored column.
+So every shape here keeps its parts separate, and there are three of them:
 
-Joined rows and groups have no such problem, and the difference is instructive:
-`JoinedRow` keeps one `Row` per input and `Group` keeps its keys apart from its
-aggregates, so neither needs a width. Only the single-table-plus-computed shape
-was left flat.
+- a `Row` has its stored columns and its own computed values;
+- a `JoinedRow` has one `Row` per input — each with *its* computed values —
+  and the values the **join** computed, which belong to no input because they
+  may read every one of them;
+- a `Group` has its keys and its aggregates.
+
+None of these needs a width, and a value read out of one cannot silently be a
+value of another kind.
 """
 
 from __future__ import annotations
@@ -154,14 +154,24 @@ class JoinedRow(Sequence["Row | None"]):
 
     `None` where an outer join preserved a row that matched nothing on that
     input. The inputs are kept apart rather than concatenated, so nothing here
-    has to know another input's width — the response side of a join got the
-    treatment the response side of a computed value did not.
+    has to know another input's width.
+
+    Two kinds of computed value reach a joined row, and they are not the same
+    kind. An input's own — declared with `JoinInput.compute` — are on that
+    input's `Row`, because they read only that table. The **join's** — declared
+    with `JoinQuery.compute` — are here, on the joined row, because they are
+    evaluated over the whole accumulated row and may read every input. Putting
+    the second kind on an input would make its position depend on which input,
+    which is the arithmetic `ColumnRef` exists to remove.
     """
 
-    __slots__ = ("_inputs",)
+    __slots__ = ("_computed", "_inputs")
 
-    def __init__(self, inputs: Sequence[Row | None]) -> None:
+    def __init__(
+        self, inputs: Sequence[Row | None], computed: Sequence[PyValue] = ()
+    ) -> None:
         self._inputs = tuple(inputs)
+        self._computed = tuple(computed)
 
     @staticmethod
     def from_proto(wire: pb.JoinedRow, tables: Sequence[Table | None]) -> JoinedRow:
@@ -171,7 +181,26 @@ class JoinedRow(Sequence["Row | None"]):
             # Message presence in proto3 is reliable, which is why this needs
             # no companion flag where a scalar would have.
             rows.append(Row.from_proto(joined.row, table) if joined.HasField("row") else None)
-        return JoinedRow(rows)
+        return JoinedRow(rows, [from_value(v) for v in wire.computed])
+
+    @property
+    def computed_values(self) -> tuple[PyValue, ...]:
+        """What `JoinQuery.compute` produced for this row, in order.
+
+        Empty when the join computes nothing. An *input's* computed values are
+        not here — they are on that input's `Row`, in its `computed_values`.
+        """
+        return self._computed
+
+    def computed(self, index: int) -> PyValue:
+        """The `index`th value the join computed for this row."""
+        if index >= len(self._computed):
+            raise IndexError(
+                f"the join computed {len(self._computed)} values for this row, "
+                f"so there is no computed value {index}. If you meant an "
+                f"input's own computed value, it is on that input's row."
+            )
+        return self._computed[index]
 
     def __len__(self) -> int:
         return len(self._inputs)
@@ -183,7 +212,10 @@ class JoinedRow(Sequence["Row | None"]):
         return iter(self._inputs)
 
     def __repr__(self) -> str:
-        return f"JoinedRow({', '.join(repr(r) for r in self._inputs)})"
+        inputs = ", ".join(repr(r) for r in self._inputs)
+        if not self._computed:
+            return f"JoinedRow({inputs})"
+        return f"JoinedRow({inputs}, computed={self._computed!r})"
 
 
 class Group(Sequence[PyValue]):

@@ -237,3 +237,49 @@ def test_an_inputs_computed_value_is_not_nameable_across_a_join(
     with pytest.raises(InvalidRequest) as refused:
         list(client.aggregate(grouped))
     assert "joined_computed" in str(refused.value), refused.value
+
+
+def test_both_kinds_of_computed_value_come_back_on_a_join(client: Client) -> None:
+    """Sending is not reading back, and only one of the two could be read.
+
+    The three tests above all *group by* a computed value, so the value reaches
+    the client as a group key and the row path is never exercised. On the row
+    path `JoinedRow.from_proto` read `wire.inputs` and ignored `wire.computed`
+    — the join's computed values arrived and were dropped, with no error
+    anywhere, so a caller who declared one got a joined row that looked
+    complete and was not.
+
+    An input's own computed values were never dropped: they live on that
+    input's `Row`, which has carried `computed` since finding 4. So this asks
+    for both at once and checks each against the stored columns it came from,
+    which is what tells a value that survived from a value that happened to be
+    the right shape.
+    """
+    join = JoinQuery()
+    authors = join.add(AUTHORS)
+    books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
+    # One per input, reading only that input...
+    authors.compute(upper(authors.c.name))
+    books.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+    # ...and one on the join, reading both.
+    join.compute(concat(authors.c.name, lit("/"), books.c.title))
+
+    rows = list(client.join(join))
+    assert rows, "the fixture should produce joined rows"
+    for row in rows:
+        left, right = row[0], row[1]
+        assert left is not None and right is not None, "an inner join matched both"
+
+        # The join's, on the joined row, because they may read every input.
+        assert len(row.computed_values) == 1, row
+        assert row.computed(0) == f"{left.get('name')}/{right.get('title')}"
+
+        # Each input's own, on that input's row, because they read only it.
+        assert left.computed_values == (str(left.get("name")).upper(),), left
+        assert right.computed_values == (int(right.get("year")) // 10 * 10,), right
+
+    # And asking for one the join did not compute says so, rather than
+    # returning an input's value or an empty tuple's worth of nothing.
+    with pytest.raises(IndexError) as missing:
+        rows[0].computed(1)
+    assert "input's own computed value" in str(missing.value), missing.value
