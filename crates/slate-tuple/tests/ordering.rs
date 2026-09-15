@@ -37,6 +37,23 @@ fn any_value() -> impl Strategy<Value = Value> {
         .prop_map(|cs| Value::Str(cs.into_iter().collect())),
         any::<i64>().prop_map(Value::I64),
         any::<u64>().prop_map(Value::U64),
+        // A decimal rides the integer encoding behind one extra byte, so it
+        // belongs in this generator rather than in a suite of its own: every
+        // property in this file — round trip, byte order equals value order,
+        // prefix-freeness, descending — then covers it, and covers it against
+        // the other types rather than only against itself.
+        //
+        // The boundaries are named because the decode narrows through `i128`:
+        // `i64::MIN`'s magnitude does not fit in an `i64`, which is exactly
+        // the value a careless implementation loses.
+        prop_oneof![
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(0i64),
+            Just(-1i64),
+            any::<i64>()
+        ]
+        .prop_map(Value::Decimal),
         prop_oneof![
             Just(f64::NAN),
             Just(f64::INFINITY),

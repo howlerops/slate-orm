@@ -6,6 +6,22 @@ use slate_tuple::{TupleError, ValueType};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SchemaError {
+    /// A decimal column's scale leaves no room for an integral part.
+    #[error(
+        "column `{column}` of table `{table}` declares scale {scale}; an i64 holds about \
+         9.2 x 10^18 units, so a scale above {max} leaves no integral part at all"
+    )]
+    ScaleTooLarge {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+        /// What it asked for.
+        scale: u8,
+        /// The largest scale that leaves room.
+        max: u8,
+    },
+
     /// A column name referenced in a key or index does not exist on the table.
     #[error("table `{table}` has no column named `{column}`")]
     UnknownColumn {

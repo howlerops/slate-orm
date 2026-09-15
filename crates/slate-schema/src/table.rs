@@ -38,6 +38,11 @@ pub struct ColumnDef {
     dropped_in: Option<u32>,
     default: Option<Value>,
     previous_names: Vec<String>,
+    /// Digits after the decimal point, for a [`ValueType::Decimal`] column.
+    ///
+    /// Zero for every other type, and meaningless there. See
+    /// [`ColumnDef::scale`].
+    scale: u8,
 }
 
 impl ColumnDef {
@@ -51,6 +56,24 @@ impl ColumnDef {
     #[must_use]
     pub const fn value_type(&self) -> ValueType {
         self.ty
+    }
+
+    /// Digits after the decimal point, for a decimal column.
+    ///
+    /// A [`Value::Decimal`] stores a count of the column's smallest unit, and
+    /// this is what turns that count back into a number: units `1250` at scale
+    /// 2 is `12.50`. It lives here rather than in the value because every row
+    /// of a column shares it — which is what lets the encoding be the integer
+    /// encoding and `SUM` be exact.
+    ///
+    /// `None` for a column that is not a decimal, so a caller cannot read a
+    /// scale off a type that does not have one.
+    #[must_use]
+    pub const fn scale(&self) -> Option<u8> {
+        match self.ty {
+            ValueType::Decimal => Some(self.scale),
+            _ => None,
+        }
     }
 
     /// Whether the column accepts nulls.
@@ -815,7 +838,43 @@ impl TableBuilder {
             dropped_in: None,
             default: None,
             previous_names: Vec::new(),
+            scale: 0,
         });
+        self
+    }
+
+    /// Append a decimal column with `scale` digits after the point.
+    ///
+    /// The scale is fixed for the column and every value in it is a count of
+    /// the smallest unit: at scale 2, `1250` is `12.50`. That is what makes
+    /// comparison and `SUM` exact integer operations, and it is why the scale
+    /// is declared once here rather than carried by each value.
+    ///
+    /// A scale above 18 is refused at build time: `i64` holds about 9.2 × 10¹⁸
+    /// units, so beyond that the integral part has no room left and every
+    /// value in the column would be a fraction.
+    #[must_use]
+    pub fn decimal_column(self, name: impl Into<String>, scale: u8) -> Self {
+        self.push_decimal(name, scale, false, 0)
+    }
+
+    /// [`TableBuilder::decimal_column`], accepting nulls.
+    #[must_use]
+    pub fn nullable_decimal_column(self, name: impl Into<String>, scale: u8) -> Self {
+        self.push_decimal(name, scale, true, 0)
+    }
+
+    fn push_decimal(
+        mut self,
+        name: impl Into<String>,
+        scale: u8,
+        nullable: bool,
+        added_in: u32,
+    ) -> Self {
+        self = self.push_column(name, ValueType::Decimal, nullable, added_in);
+        if let Some(column) = self.columns.last_mut() {
+            column.scale = scale;
+        }
         self
     }
 
@@ -888,6 +947,22 @@ impl TableBuilder {
                 return Err(SchemaError::DuplicateColumn {
                     table: table.clone(),
                     column: col.name.clone(),
+                });
+            }
+        }
+
+        // A decimal's scale has to leave room for a number. `i64` holds about
+        // 9.2 x 10^18 units, so at scale 19 every value is a fraction and at
+        // scale 18 there is exactly one integral digit — which is the last
+        // scale that can represent anything above one.
+        const MAX_SCALE: u8 = 18;
+        for col in &self.columns {
+            if col.ty == ValueType::Decimal && col.scale > MAX_SCALE {
+                return Err(SchemaError::ScaleTooLarge {
+                    table: table.clone(),
+                    column: col.name.clone(),
+                    scale: col.scale,
+                    max: MAX_SCALE,
                 });
             }
         }

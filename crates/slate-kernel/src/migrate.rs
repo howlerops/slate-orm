@@ -277,6 +277,12 @@ pub fn fingerprint(table: &TableDef) -> u64 {
         number(type_code(column.value_type()), &mut hash);
         byte(u8::from(column.is_nullable()), &mut hash);
         byte(u8::from(column.is_dropped()), &mut hash);
+        // A decimal's scale decides what its stored units *mean*, so changing
+        // it reinterprets every row already written — units 1250 read as 12.50
+        // at scale 2 and as 1.250 at scale 3. That is the same kind of change
+        // as retyping a column, and belongs in the fingerprint for the same
+        // reason. `unwrap_or(0)` covers every other type, which has no scale.
+        byte(column.scale().unwrap_or(0), &mut hash);
     }
     number(table.primary_key().len() as u64, &mut hash);
     for ordinal in table.primary_key() {
@@ -319,6 +325,12 @@ const fn type_code(ty: ValueType) -> u64 {
         ValueType::F64 => 6,
         ValueType::Uuid => 7,
         ValueType::Vector => 8,
+        // Added when `Value::Decimal` was. The `_` arm below is why this line
+        // is here rather than forgotten: a new type silently taking code 0
+        // would make a decimal column fingerprint identically to a vector one
+        // — the arm keeps that from being a *wrong* answer, and this line
+        // keeps it from being the answer at all.
+        ValueType::Decimal => 9,
         // `ValueType` is `#[non_exhaustive]`, so a new variant compiles here
         // rather than failing. It must not silently take an existing code: a
         // column of the new type would then fingerprint identically to one of

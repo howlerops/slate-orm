@@ -134,6 +134,91 @@ exact_field! {
     Uuid => Uuid, ValueType::Uuid, |v: &Uuid| *v, |v: &Uuid| *v;
 }
 
+/// A count of a decimal column's smallest unit.
+///
+/// A newtype rather than a bare `i64`, and that is the whole point: `i64` maps
+/// to an ordinary integer column, so a field declared as one would be stored
+/// and compared as an integer no matter what the schema said. Giving units
+/// their own Rust type is what makes `#[derive(Record)]` emit a decimal column
+/// and what keeps a caller from passing a price where a count belongs.
+///
+/// **It does not know its own scale.** The column does — see
+/// [`ColumnDef::scale`](slate_schema::ColumnDef::scale) — so `Units(1250)` in a
+/// scale-2 column is `12.50`, and rendering it needs the table. That is stated
+/// here rather than hidden because it is the one thing a caller has to
+/// remember, and it is what buys exact arithmetic: every value in the column
+/// is a count of the same unit, so comparison and `SUM` are integer operations.
+///
+/// ```
+/// use slate_orm::{Record, Units};
+///
+/// #[derive(Record)]
+/// #[record(table = "invoices", id = 1)]
+/// struct Invoice {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(scale = 2)]
+///     total: Units,
+/// }
+///
+/// let table = Invoice::table();
+/// assert_eq!(table.column(table.ordinal_of("total").unwrap()).unwrap().scale(), Some(2));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Units(pub i64);
+
+impl Units {
+    /// The raw count of the column's smallest unit.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+
+    /// Render against a scale, as a decimal string.
+    ///
+    /// Takes the scale rather than reading one, because a value does not have
+    /// one: pass [`ColumnDef::scale`](slate_schema::ColumnDef::scale).
+    #[must_use]
+    pub fn to_string_with_scale(self, scale: u8) -> String {
+        if scale == 0 {
+            return self.0.to_string();
+        }
+        let divisor = 10i64.saturating_pow(u32::from(scale));
+        let negative = self.0 < 0;
+        // Through `i128` so `i64::MIN` has a magnitude that fits.
+        let magnitude = (i128::from(self.0)).unsigned_abs();
+        let whole = magnitude / divisor.unsigned_abs() as u128;
+        let part = magnitude % divisor.unsigned_abs() as u128;
+        format!(
+            "{}{whole}.{part:0width$}",
+            if negative { "-" } else { "" },
+            width = usize::from(scale)
+        )
+    }
+}
+
+impl Field for Units {
+    const VALUE_TYPE: ValueType = ValueType::Decimal;
+    const NULLABLE: bool = false;
+
+    fn to_value(&self) -> Value {
+        Value::Decimal(self.0)
+    }
+
+    fn from_value(value: &Value) -> Result<Self, FieldError> {
+        match value {
+            Value::Decimal(v) => Ok(Self(*v)),
+            Value::Null => Err(FieldError::UnexpectedNull {
+                expected: Self::VALUE_TYPE,
+            }),
+            other => Err(FieldError::TypeMismatch {
+                expected: Self::VALUE_TYPE,
+                found: other.type_name(),
+            }),
+        }
+    }
+}
+
 impl Field for Vec<u8> {
     const VALUE_TYPE: ValueType = ValueType::Bytes;
     const NULLABLE: bool = false;

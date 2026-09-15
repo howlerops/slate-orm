@@ -32,6 +32,33 @@ pub enum Value {
     /// IEEE-754 double. NaN is canonicalised on encode and sorts above all
     /// other doubles, including positive infinity.
     F64(f64),
+    /// An exact decimal, as a count of the column's smallest unit.
+    ///
+    /// **The scale lives in the schema, not in the value.** A `Decimal(1250)`
+    /// in a column declared `scale = 2` is `12.50`; the same value in a column
+    /// declared `scale = 0` is `1250`. That is the whole design, and it is what
+    /// makes the type cheap and exact at once:
+    ///
+    /// - it encodes as an integer, so the ordering is the integer ordering —
+    ///   already proven, already fuzzed, and impossible to get subtly wrong in
+    ///   a way that silently corrupts index order;
+    /// - every value in a column shares a scale, so comparison and `SUM` are
+    ///   exact integer operations with no rescaling and no rounding;
+    /// - `1.50` and `1.5` cannot both exist, so equal values have one encoding
+    ///   — which index keys require and a self-describing decimal would have to
+    ///   normalise for.
+    ///
+    /// The cost is that a value does not know how to print itself. Rendering
+    /// needs the column, which every layer that renders one already has. That
+    /// is stated plainly rather than hidden, because it is the one thing a
+    /// caller has to remember.
+    ///
+    /// This is also what a careful application does with money in a database
+    /// that has no decimal type — store minor units in an integer — with the
+    /// difference that the scale is written down in the schema instead of in a
+    /// comment, and nothing can read the column as an ordinary integer by
+    /// accident.
+    Decimal(i64),
     /// UUID, ordered by its 16 big-endian bytes.
     Uuid(Uuid),
     /// A dense vector of 32-bit floats, for embeddings.
@@ -65,6 +92,8 @@ pub enum ValueType {
     U64,
     /// See [`Value::F64`].
     F64,
+    /// See [`Value::Decimal`]. The scale is declared on the column.
+    Decimal,
     /// See [`Value::Uuid`].
     Uuid,
     /// See [`Value::Vector`].
@@ -82,6 +111,7 @@ impl ValueType {
             Self::I64 => "i64",
             Self::U64 => "u64",
             Self::F64 => "f64",
+            Self::Decimal => "decimal",
             Self::Uuid => "uuid",
             Self::Vector => "vector",
         }
@@ -109,6 +139,7 @@ impl Value {
             Self::I64(_) => Some(ValueType::I64),
             Self::U64(_) => Some(ValueType::U64),
             Self::F64(_) => Some(ValueType::F64),
+            Self::Decimal(_) => Some(ValueType::Decimal),
             Self::Uuid(_) => Some(ValueType::Uuid),
             Self::Vector(_) => Some(ValueType::Vector),
         }
@@ -132,8 +163,14 @@ impl Value {
     /// Rank of the value's *class* in the cross-type order.
     ///
     /// Mirrors the ordering of the type codes emitted by the codec:
-    /// null < bool < bytes < string < integer < double < uuid.
+    /// null < bool < bytes < string < integer < decimal < double < uuid.
     /// Signed and unsigned integers share a rank because they share an encoding.
+    ///
+    /// A decimal gets a rank of its own rather than sharing the integers'. It
+    /// encodes *as* an integer, so sharing would be tempting and would be
+    /// wrong: the integer `1250` and a scale-2 decimal `12.50` have the same
+    /// units and are not the same number, and a shared rank would make them
+    /// compare equal. They are different types and they sort apart.
     const fn class_rank(&self) -> u8 {
         match self {
             Self::Null => 0,
@@ -141,9 +178,10 @@ impl Value {
             Self::Bytes(_) => 2,
             Self::Str(_) => 3,
             Self::I64(_) | Self::U64(_) => 4,
-            Self::F64(_) => 5,
-            Self::Uuid(_) => 6,
-            Self::Vector(_) => 7,
+            Self::Decimal(_) => 5,
+            Self::F64(_) => 6,
+            Self::Uuid(_) => 7,
+            Self::Vector(_) => 8,
         }
     }
 
@@ -193,9 +231,22 @@ impl Ord for Value {
                 (false, true) => Ordering::Less,
                 (false, false) => a.total_cmp(b),
             },
+            // Units against units. Every value in a decimal column shares a
+            // scale, so this is the whole comparison — no rescaling, no
+            // rounding, and exactly the integer ordering the encoding gives.
+            (Self::Decimal(a), Self::Decimal(b)) => a.cmp(b),
             _ => match (self.as_i128(), other.as_i128()) {
                 (Some(a), Some(b)) => a.cmp(&b),
-                // Unreachable: equal class ranks are exhausted above.
+                // The integers are the only class sharing a rank across
+                // variants, so anything else reaching here is a variant added
+                // without an arm above.
+                //
+                // That is not hypothetical: `Value::Decimal` was added with a
+                // rank and no arm, fell through to here, and every decimal
+                // compared *equal* to every other. `byte_order_matches_value_order`
+                // failed on the first run with `i64::MAX` against `i64::MIN`,
+                // which is the property suite doing its job — and the reason
+                // this arm no longer claims to be unreachable.
                 _ => Ordering::Equal,
             },
         }

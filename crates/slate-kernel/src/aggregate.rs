@@ -83,14 +83,44 @@ struct Total {
     integer: i128,
     real: f64,
     is_real: bool,
+    /// Whether the values folded in are decimals.
+    ///
+    /// They accumulate in `integer`, because a decimal *is* an integer count
+    /// of the column's unit, and summing units is what makes the answer exact.
+    /// This flag is what makes the result come back as a decimal rather than
+    /// as the integer it was added as — and what lets a decimal mixed with an
+    /// ordinary integer be refused instead of silently added.
+    is_decimal: bool,
     count: u64,
 }
 
 impl Total {
     fn add(&mut self, value: &Value) -> Result<()> {
+        // A decimal must not be summed alongside anything else, in either
+        // order. Its units mean what the column's scale says they mean, and an
+        // ordinary integer's mean one each — adding them produces a number in
+        // no unit at all, which is the kind of answer that looks right.
+        //
+        // Checked before the fold rather than at the end, so the error names
+        // the value that broke it rather than the total.
+        let decimal = matches!(value, Value::Decimal(_));
+        if self.count > 0 && decimal != self.is_decimal {
+            return Err(KernelError::NotSummable {
+                found: if decimal {
+                    "decimal"
+                } else {
+                    value.type_name()
+                },
+            });
+        }
+
         match value {
             Value::I64(v) => self.add_integer(i128::from(*v)),
             Value::U64(v) => self.add_integer(i128::from(*v)),
+            Value::Decimal(v) => {
+                self.is_decimal = true;
+                self.add_integer(i128::from(*v));
+            }
             Value::F64(v) => self.add_real(*v),
             other => {
                 return Err(KernelError::NotSummable {
@@ -145,6 +175,15 @@ impl Total {
         }
         if self.is_real {
             return Value::F64(self.real);
+        }
+        // A decimal sum is exact, and stays a decimal at the column's scale:
+        // adding counts of a unit gives a count of the same unit. Overflowing
+        // an `i64` of units is the one case that cannot stay exact, and it
+        // refuses rather than falling back to a float the way an integer sum
+        // does — a float is an acceptable answer for a count and not for
+        // money.
+        if self.is_decimal {
+            return i64::try_from(self.integer).map_or(Value::Null, Value::Decimal);
         }
         i64::try_from(self.integer).map_or(Value::F64(self.integer as f64), Value::I64)
     }
@@ -548,5 +587,62 @@ impl<'g> Grouper<'g> {
             groups.truncate(limit);
         }
         groups
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// A decimal must not be summed alongside an ordinary number, **in either
+    /// order**.
+    ///
+    /// Tested here rather than through a query because no column can hold
+    /// both: the mixture is reachable only through a computed value, and what
+    /// is under test is the refusal rather than a route to it. An integration
+    /// test would have had to describe the refusal instead of running it.
+    ///
+    /// Both orders matter. An accumulator that recorded the kind of the first
+    /// value and never re-checked would accept every mixture that *starts*
+    /// with a decimal — which is the shape the order-dependence bug in
+    /// `add_integer` had, and the reason that function carries the longest
+    /// comment in this file.
+    #[test]
+    fn a_decimal_does_not_sum_with_an_ordinary_number() {
+        let mut decimal_first = Total::default();
+        decimal_first.add(&Value::Decimal(10)).expect("a decimal");
+        let refused = decimal_first
+            .add(&Value::I64(1))
+            .expect_err("an integer after a decimal");
+        assert!(
+            matches!(refused, KernelError::NotSummable { .. }),
+            "{refused}"
+        );
+
+        let mut integer_first = Total::default();
+        integer_first.add(&Value::I64(1)).expect("an integer");
+        let refused = integer_first
+            .add(&Value::Decimal(10))
+            .expect_err("a decimal after an integer");
+        assert!(
+            matches!(refused, KernelError::NotSummable { .. }),
+            "{refused}"
+        );
+
+        // And a float, which takes the other branch of the fold entirely.
+        let mut with_float = Total::default();
+        with_float.add(&Value::Decimal(10)).expect("a decimal");
+        assert!(with_float.add(&Value::F64(0.5)).is_err());
+    }
+
+    /// Decimals alone stay exact and come back as decimals.
+    #[test]
+    fn a_decimal_sum_is_exact_and_still_a_decimal() {
+        let mut total = Total::default();
+        for _ in 0..100 {
+            total.add(&Value::Decimal(10)).expect("a decimal");
+        }
+        assert_eq!(total.sum(), Value::Decimal(1000));
     }
 }

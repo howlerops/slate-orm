@@ -95,6 +95,16 @@ mod codes {
     pub(super) const INT_ZERO: u8 = 0x15;
     pub(super) const INT_MIN: u8 = INT_ZERO - 8;
     pub(super) const INT_MAX: u8 = INT_ZERO + 8;
+    /// Decimal: this code, then the *integer* encoding of the units.
+    ///
+    /// Between the integers and `F64` in the cross-type order, and layered on
+    /// the integer encoding rather than replacing it. Reusing it is the point:
+    /// the ordering of a decimal column is then the ordering of an integer
+    /// column, which is already proven, already fuzzed, and cannot be got
+    /// subtly wrong in a way that silently corrupts index order. The one new
+    /// byte is what keeps a decimal from comparing equal to an integer with
+    /// the same units.
+    pub(super) const DECIMAL: u8 = 0x1E;
     pub(super) const F64: u8 = 0x21;
     pub(super) const UUID: u8 = 0x22;
     pub(super) const VECTOR: u8 = 0x23;
@@ -272,6 +282,13 @@ pub fn encode_value_into(out: &mut Vec<u8>, value: &Value, direction: Direction)
         }
         Value::U64(v) => {
             sink.push_int(false, *v);
+        }
+        Value::Decimal(v) => {
+            sink.push(codes::DECIMAL);
+            // The integer encoding, unchanged, including its own type code.
+            // Prefix-freeness comes along with it: an integer element is
+            // prefix-free, so one behind a fixed byte still is.
+            sink.push_int(*v < 0, v.unsigned_abs());
         }
         Value::F64(v) => {
             sink.push(codes::F64);
@@ -500,6 +517,7 @@ impl<'a> TupleReader<'a> {
             codes::BYTES => "bytes",
             codes::STR => "string",
             codes::F64 => "f64",
+            codes::DECIMAL => "decimal",
             codes::UUID => "uuid",
             codes::VECTOR => "vector",
             _ => {
@@ -518,6 +536,7 @@ impl<'a> TupleReader<'a> {
                 | (codes::F64, ValueType::F64)
                 | (codes::UUID, ValueType::Uuid)
                 | (codes::VECTOR, ValueType::Vector)
+                | (codes::DECIMAL, ValueType::Decimal)
         );
         if !matches {
             return Err(TupleError::TypeMismatch {
@@ -566,6 +585,31 @@ impl<'a> TupleReader<'a> {
                 String::from_utf8(raw)
                     .map(Value::Str)
                     .map_err(|_| TupleError::InvalidUtf8 { offset: start })
+            }
+            codes::DECIMAL => {
+                let code = self.byte(mask)?;
+                if !(codes::INT_MIN..=codes::INT_MAX).contains(&code) {
+                    return Err(TupleError::UnknownTypeCode {
+                        offset: start,
+                        code,
+                    });
+                }
+                let (negative, magnitude) = self.read_int_body(code, mask, start)?;
+                // Through `i128` so that `i64::MIN` survives the round trip:
+                // its magnitude does not fit in an `i64`, so negating after
+                // narrowing would overflow. The `try_from` then refuses
+                // anything genuinely out of range rather than wrapping.
+                let widened: i128 = if negative {
+                    -(magnitude as i128)
+                } else {
+                    magnitude as i128
+                };
+                i64::try_from(widened).map(Value::Decimal).map_err(|_| {
+                    TupleError::UnknownTypeCode {
+                        offset: start,
+                        code,
+                    }
+                })
             }
             codes::F64 => {
                 let raw = self.take(8, mask)?;
@@ -627,6 +671,27 @@ impl<'a> TupleReader<'a> {
         match code {
             codes::BYTES | codes::STR => self.skip_escaped(mask),
             codes::F64 => self.advance(8),
+            // One byte, then a whole integer element — so skipping a decimal
+            // is reading its inner code and skipping that. Recursing rather
+            // than duplicating the length arithmetic above: the two would
+            // otherwise have to be kept in step by hand, and a skip that
+            // disagreed with the decoder by one byte would read the *next*
+            // column's bytes as this one's.
+            codes::DECIMAL => {
+                let inner = self.byte(mask)?;
+                if !(codes::INT_MIN..=codes::INT_MAX).contains(&inner) {
+                    return Err(TupleError::UnknownTypeCode {
+                        offset: start,
+                        code: inner,
+                    });
+                }
+                let len = if inner > codes::INT_ZERO {
+                    usize::from(inner - codes::INT_ZERO)
+                } else {
+                    usize::from(codes::INT_ZERO - inner)
+                };
+                self.advance(len)
+            }
             codes::UUID => self.advance(16),
             codes::VECTOR => {
                 let count = self.take_u32(mask)?;

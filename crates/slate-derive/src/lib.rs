@@ -325,6 +325,8 @@ struct FieldSpec {
     column: String,
     primary_key: bool,
     added_in: Option<u32>,
+    /// `#[record(scale = n)]`, for a decimal column.
+    scale: Option<u8>,
 }
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -405,6 +407,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         let mut is_pk = false;
         let mut added_in: Option<u32> = None;
         let mut renamed: Option<String> = None;
+        let mut scale: Option<u8> = None;
 
         // Names are resolved after the loop, so index specs on this field are
         // collected against the field's *final* column name.
@@ -421,11 +424,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     renamed = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else if meta.path.is_ident("added_in") {
                     added_in = Some(meta.value()?.parse::<LitInt>()?.base10_parse()?);
+                } else if meta.path.is_ident("scale") {
+                    scale = Some(meta.value()?.parse::<LitInt>()?.base10_parse()?);
                 } else if meta.path.is_ident("index") {
                     field_indexes.push(parse_index(&meta, Some("\0self"))?);
                 } else {
-                    return Err(meta
-                        .error("unknown option; expected `pk`, `rename`, `added_in` or `index`"));
+                    return Err(meta.error(
+                        "unknown option; expected `pk`, `rename`, `added_in`, `scale` or `index`",
+                    ));
                 }
                 Ok(())
             })?;
@@ -452,6 +458,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             column,
             primary_key: is_pk,
             added_in,
+            scale,
         });
     }
 
@@ -462,6 +469,19 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let column_stmts = fields.iter().map(|f| {
         let name = &f.column;
         let ty = &f.ty;
+        // A decimal's scale is not in the type, so it cannot come from `Field`
+        // the way the type and nullability do: it is a property of the column
+        // and has to be written on the column. The builder method is separate
+        // for the same reason — `column()` has nowhere to put it.
+        if let Some(scale) = f.scale {
+            return quote! {
+                builder = if <#ty as ::slate_orm::Field>::NULLABLE {
+                    builder.nullable_decimal_column(#name, #scale)
+                } else {
+                    builder.decimal_column(#name, #scale)
+                };
+            };
+        }
         match f.added_in {
             Some(v) => quote! {
                 builder = builder.added_column(

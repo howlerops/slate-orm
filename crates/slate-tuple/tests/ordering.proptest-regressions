@@ -6,3 +6,7 @@
 # everyone who runs the test benefits from these saved cases.
 cc bac2ab7880a2289682e54315afeebd95959cfa0d86a61753e9de16aebb7242f4 # shrinks to idx = [Bytes(b"")], suffix = [255]
 cc b17294ac2f81b4e8e0d122a89b5c3a8e53bc302e1d0a50af8bdd4adefc787821 # shrinks to a = Bytes(b"\xff"), b = Bytes(b"\xff\0")
+cc e75384d39d1af8fb20e217f9ada97cce18b30de7a722fe6700776cfec0063ab8 # shrinks to (a, dirs_a) = ([Decimal(9223372036854775807), Str("")], [Asc, Desc]), (b, _dirs_b) = ([Decimal(-9223372036854775808), Null], [Asc, Asc])
+cc 8935f1ce0a1e4c17e1c957b7656d248f25203a8fb7d4a133ab6030b3306ee0fa # shrinks to a = Decimal(0), b = Decimal(-1)
+cc 94b9e0ad7ae7a999a2b920806b7153ee29ff4b86dd7b9706e1ec243343a41b78 # shrinks to (a, dirs_a) = ([I64(0), Null], [Desc, Asc]), (b, _dirs_b) = ([Decimal(-9223372036854775808), Null], [Asc, Asc])
+cc d6b0f564d085e58b1310bac4cda093de25e94aa9d96469ab733bcb0922fa287a # shrinks to a = I64(0), b = Decimal(-9223372036854775808)

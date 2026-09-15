@@ -40,7 +40,7 @@ pub mod relation;
 
 pub use error::{OrmError, Result};
 pub use ext::{Page, Records};
-pub use field::{Field, FieldError};
+pub use field::{Field, FieldError, Units};
 pub use record::{Record, RecordError};
 pub use relation::{Related, load_one_related, load_related, related_filter};
 
