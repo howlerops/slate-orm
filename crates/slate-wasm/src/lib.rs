@@ -279,6 +279,16 @@ pub struct JoinSpec {
     pub left: String,
     /// The right table's name.
     pub right: String,
+    /// What this query calls the left table, when that is not its own name.
+    /// Empty means the table's name. See [`ChainInputSpec::alias`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub left_alias: String,
+    /// And the right. Two tables need aliases for the same reason n do:
+    /// `trips AS a JOIN trips AS b ON a.dropoff_zone = b.pickup_zone` is one
+    /// table twice, and the kernel joins it without complaint — this was
+    /// checked before the field was added rather than assumed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub right_alias: String,
     /// The join key's ordinal in the left table.
     pub left_key: u32,
     /// And in the right table.
@@ -374,6 +384,22 @@ pub struct ChainSpec {
 pub struct ChainInputSpec {
     /// The table's name, as the catalog spells it.
     pub table: String,
+    /// What this query calls the table, when that is not the table's own name.
+    ///
+    /// Empty means "the table's name", which is what makes a chain that uses no
+    /// alias serialise exactly as it did before aliases existed. The alias is
+    /// what a *qualifier* resolves against and what the header shows; the
+    /// binding still looks the table up by `table`, because an alias renames an
+    /// input and not a table.
+    ///
+    /// This is the field that lets one table appear twice. `trips` reaches
+    /// `zones` through both `pickup_zone` and `dropoff_zone`, and "the borough
+    /// it started in and the borough it ended in" is the three-table question
+    /// this dataset is for — inexpressible while every input was identified by
+    /// its table's name, because two `zones` made every column reference
+    /// ambiguous with no way to say which was meant.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub alias: String,
     /// What this joins to. Absent on input 0, which joins to nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<ChainOnSpec>,
@@ -1591,10 +1617,18 @@ impl Playground {
                     .table(&spec.left)
                     .unwrap_or_else(|_| fixture::authors());
                 let right_table = self.table(&spec.right).unwrap_or_else(|_| fixture::books());
-                let tables = [&left_table, &right_table];
+                // By alias where there is one. Two tables need this as much as
+                // n do: `trips AS a JOIN trips AS b` heads one half `a.` and
+                // the other `b.`, where the table's own name would head both
+                // identically and the grid would show two columns with one name
+                // holding different values.
+                let inputs = [
+                    Named::new(&left_table, &spec.left_alias),
+                    Named::new(&right_table, &spec.right_alias),
+                ];
                 let columns = match grouped {
-                    Some(key) => grouped_headers(&tables, &spec.compute, key, &spec.aggregates),
-                    None => joined_headers(&tables, &spec.compute),
+                    Some(key) => grouped_headers(&inputs, &spec.compute, key, &spec.aggregates),
+                    None => joined_headers(&inputs, &spec.compute),
                 };
                 match self.joined_spec(spec) {
                     Err(message) => SqlResult::failed(text, 0, &message),
@@ -1622,12 +1656,19 @@ impl Playground {
                 let columns = match &resolved {
                     Err(_) => Vec::new(),
                     Ok(tables) => {
-                        let refs: Vec<&TableDef> = tables.iter().collect();
+                        // Zipped with the spec's inputs rather than indexed, so
+                        // an input keeps its own alias: the two lists are the
+                        // same length because one was built from the other.
+                        let named: Vec<Named<'_>> = tables
+                            .iter()
+                            .zip(&spec.inputs)
+                            .map(|(table, input)| Named::new(table, &input.alias))
+                            .collect();
                         match grouped {
                             Some(key) => {
-                                grouped_headers(&refs, &spec.compute, key, &spec.aggregates)
+                                grouped_headers(&named, &spec.compute, key, &spec.aggregates)
                             }
-                            None => joined_headers(&refs, &spec.compute),
+                            None => joined_headers(&named, &spec.compute),
                         }
                     }
                 };
@@ -2265,13 +2306,18 @@ fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
 /// whichever left-table column happened to sit at that position. The values
 /// underneath were right; only the names were wrong, which is the kind of
 /// defect a test asserting on cells never sees.
-fn joined_names(tables: &[&TableDef], compute: &[ComputeSpec], qualified: bool) -> Vec<String> {
-    let mut out: Vec<String> = tables
+fn joined_names(inputs: &[Named<'_>], compute: &[ComputeSpec], qualified: bool) -> Vec<String> {
+    let mut out: Vec<String> = inputs
         .iter()
-        .flat_map(|table| {
-            table.columns().iter().map(move |c| {
+        .flat_map(|input| {
+            input.table.columns().iter().map(move |c| {
                 if qualified {
-                    format!("{}.{}", table.name(), c.name())
+                    // The *alias*, not the table. `zones AS pickup` heads its
+                    // columns `pickup.borough`, and with `zones` twice in one
+                    // query the table's own name would head both halves of the
+                    // row identically -- a grid where two columns called
+                    // `zones.borough` hold different boroughs.
+                    format!("{}.{}", input.name, c.name())
                 } else {
                     c.name().to_owned()
                 }
@@ -2279,20 +2325,48 @@ fn joined_names(tables: &[&TableDef], compute: &[ComputeSpec], qualified: bool) 
         })
         .collect();
     out.extend(compute.iter().map(|c| {
-        // Named against the table `input` names, which is the whole of the
+        // Named against the input `input` names, which is the whole of the
         // fix: `hour(zones.updated_at)` was coming back as `hour(id)`.
-        let name = tables
+        let name = inputs
             .get(c.input as usize)
-            .and_then(|t| t.column(Ordinal(c.column as usize)))
+            .and_then(|i| i.table.column(Ordinal(c.column as usize)))
             .map_or_else(|| c.column.to_string(), |d| d.name().to_owned());
         format!("{}({name}{})", c.function, zone_suffix(c))
     }));
     out
 }
 
+/// A table and the name a query calls it by, for the header helpers.
+///
+/// The parser has its own `Input` for the same idea; this is the borrowed
+/// version the binding needs, and the two are deliberately not shared: the
+/// parser owns a `TableDef` it cloned out of the schema, and the binding
+/// borrows one it just resolved. A shared type would have to own or borrow for
+/// both, and the alias is three lines of struct either way.
+#[derive(Debug, Clone, Copy)]
+struct Named<'a> {
+    table: &'a TableDef,
+    /// The alias where the spec carried one, else the table's own name.
+    name: &'a str,
+}
+
+impl<'a> Named<'a> {
+    /// Resolve a spec's `(table, alias)` pair into what the headers need.
+    fn new(table: &'a TableDef, alias: &'a str) -> Self {
+        Named {
+            table,
+            name: if alias.is_empty() {
+                table.name()
+            } else {
+                alias
+            },
+        }
+    }
+}
+
 /// The header an ungrouped join or chain gets: [`joined_names`], qualified.
-fn joined_headers(tables: &[&TableDef], compute: &[ComputeSpec]) -> Vec<String> {
-    joined_names(tables, compute, true)
+fn joined_headers(inputs: &[Named<'_>], compute: &[ComputeSpec]) -> Vec<String> {
+    joined_names(inputs, compute, true)
 }
 
 /// The header a *grouped* join or chain gets: the key, then the aggregates.
@@ -2303,18 +2377,33 @@ fn joined_headers(tables: &[&TableDef], compute: &[ComputeSpec]) -> Vec<String> 
 /// the computed headers and an `or_else` onto the left table, which is the same
 /// lookup done twice and wrongly the second time.
 fn grouped_headers(
-    tables: &[&TableDef],
+    inputs: &[Named<'_>],
     compute: &[ComputeSpec],
     key: u32,
     aggregates: &[AggregateSpec],
 ) -> Vec<String> {
-    let all = joined_names(tables, compute, false);
-    let mut out = vec![
-        all.get(key as usize)
-            .cloned()
-            .unwrap_or_else(|| key.to_string()),
-    ];
-    out.extend(joined_labels(aggregates, tables));
+    // The key echoes the reader's own spelling, unqualified — *unless* that
+    // spelling is ambiguous, in which case it is qualified, because then it was
+    // not their spelling either.
+    //
+    // `SELECT pickup.borough ... GROUP BY pickup.borough` over `zones AS pickup
+    // JOIN ... zones AS dropoff` came back headed `borough`, which names both
+    // inputs and neither. The rule that produced it — echo what was written —
+    // is right, and an alias is the case where the bare name is not what was
+    // written. So the test is the same one `resolve_side` warns on: does this
+    // column name appear on more than one input?
+    let bare = joined_names(inputs, compute, false);
+    let qualified = joined_names(inputs, compute, true);
+    let at = key as usize;
+    let key_name = match bare.get(at) {
+        None => key.to_string(),
+        Some(name) if bare.iter().filter(|other| *other == name).count() > 1 => {
+            qualified.get(at).cloned().unwrap_or_else(|| name.clone())
+        }
+        Some(name) => name.clone(),
+    };
+    let mut out = vec![key_name];
+    out.extend(joined_labels(aggregates, inputs));
     out
 }
 
@@ -2326,7 +2415,7 @@ fn grouped_headers(
 /// `avg(fare)` over `trips JOIN zones` was labelled with whatever `zones`
 /// column sits at `fare`'s ordinal, or with the bare ordinal when `zones` is
 /// narrower. Again: right numbers, wrong heading.
-fn joined_labels(specs: &[AggregateSpec], tables: &[&TableDef]) -> Vec<String> {
+fn joined_labels(specs: &[AggregateSpec], inputs: &[Named<'_>]) -> Vec<String> {
     if specs.is_empty() {
         // `count` is always there, added by the binding when the reader named
         // no aggregate.
@@ -2335,9 +2424,9 @@ fn joined_labels(specs: &[AggregateSpec], tables: &[&TableDef]) -> Vec<String> {
     specs
         .iter()
         .map(|a| {
-            let column = tables
+            let column = inputs
                 .get(a.input as usize)
-                .and_then(|t| t.column(Ordinal(a.column as usize)))
+                .and_then(|i| i.table.column(Ordinal(a.column as usize)))
                 .map_or_else(|| a.column.to_string(), |c| c.name().to_owned());
             match a.kind.as_str() {
                 "count" => "count(*)".to_owned(),

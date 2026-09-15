@@ -334,3 +334,211 @@ fn every_column_comes_from_the_field_the_format_says_it_does() {
         rows.len()
     );
 }
+
+// --- aliases --------------------------------------------------------------
+//
+// The reason aliases exist at all is in this file rather than in `sql.rs`:
+// `trips` reaches `zones` twice, through `pickup_zone` and `dropoff_zone`, and
+// "the borough it started in and the borough it ended in" is the three-table
+// question this dataset is for. Without an alias the second `zones` is a
+// refusal, because every column reference resolves against a name and two
+// inputs called `zones` make `borough` — and `zones.borough` — ambiguous with
+// no way to say which was meant.
+//
+// So these tests are over the real 100,000 trips, and the checks are
+// differentials against queries that ask the same thing another way.
+
+/// `trips` with both ends named: the query aliases exist for.
+const BOTH_ENDS: &str = "FROM trips \
+                         JOIN zones AS pickup ON trips.pickup_zone = pickup.id \
+                         JOIN zones AS dropoff ON trips.dropoff_zone = dropoff.id";
+
+#[test]
+fn one_table_twice_names_its_halves_apart() {
+    let playground = loaded();
+    let answer = sql(&playground, &format!("SELECT * {BOTH_ENDS} LIMIT 5"));
+    let columns: Vec<&str> = answer["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+
+    // Eleven trip columns, then each `zones` under its own alias. Headed by
+    // the table's name, both halves would read `zones.borough` — two columns
+    // with one name holding different boroughs, which is a grid that cannot be
+    // read.
+    assert_eq!(columns.len(), 11 + 4 + 4, "{columns:?}");
+    assert_eq!(
+        &columns[11..],
+        &[
+            "pickup.id",
+            "pickup.borough",
+            "pickup.zone",
+            "pickup.service_zone",
+            "dropoff.id",
+            "dropoff.borough",
+            "dropoff.zone",
+            "dropoff.service_zone",
+        ]
+    );
+
+    // And the two halves really are different rows of `zones`, not the same
+    // one twice: a chain that joined `pickup` to both steps would pass every
+    // check above.
+    let rows = answer["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    for row in rows {
+        let row = row.as_array().unwrap();
+        assert_eq!(row[11], row[1], "pickup.id is not trips.pickup_zone");
+        assert_eq!(row[15], row[2], "dropoff.id is not trips.dropoff_zone");
+    }
+}
+
+#[test]
+fn a_bare_alias_works_and_reads_the_same_rows() {
+    // `zones p` as well as `zones AS p`, because both are written. The bare
+    // form is the one that can swallow a keyword, so it is worth a test that
+    // it did not swallow `ON`.
+    let playground = loaded();
+    let with_as = sql(
+        &playground,
+        &format!("SELECT * {BOTH_ENDS} WHERE trips.id = 1072"),
+    );
+    let bare = sql(
+        &playground,
+        "SELECT * FROM trips \
+         JOIN zones p ON trips.pickup_zone = p.id \
+         JOIN zones d ON trips.dropoff_zone = d.id \
+         WHERE trips.id = 1072",
+    );
+    assert_eq!(with_as["rows"], bare["rows"]);
+    // Only the headers differ, and they differ by exactly the alias.
+    assert_eq!(bare["columns"][12], json!("p.borough"));
+    assert_eq!(bare["columns"][16], json!("d.borough"));
+}
+
+#[test]
+fn grouping_by_one_end_agrees_with_the_two_table_join() {
+    let playground = loaded();
+    // Every `dropoff_zone` in the data is a real zone id, so the second step
+    // drops no rows — checked here rather than assumed, because the whole
+    // differential below rests on it.
+    let chained = sql(&playground, &format!("SELECT * {BOTH_ENDS}"));
+    let all = sql(&playground, "SELECT * FROM trips");
+    assert_eq!(
+        chained["returned"], all["returned"],
+        "the second join dropped trips, so the comparison below is not like for like"
+    );
+
+    // With no rows lost, counting by the pickup borough over the chain must
+    // equal counting by borough over the plain two-table join. An independent
+    // query as the oracle, not a table of numbers.
+    let over_chain = sql(
+        &playground,
+        &format!("SELECT pickup.borough, count(*) {BOTH_ENDS} GROUP BY pickup.borough"),
+    );
+    let over_join = sql(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough",
+    );
+    assert_eq!(over_chain["rows"], over_join["rows"]);
+    assert!(
+        over_chain["rows"].as_array().unwrap().len() >= 5,
+        "{over_chain}"
+    );
+
+    // The header keeps the qualifier here and drops it there, and both are
+    // right: `borough` is what the reader wrote over two tables, and names
+    // nothing over three where both ends have one.
+    assert_eq!(over_chain["columns"][0], json!("pickup.borough"));
+    assert_eq!(over_join["columns"][0], json!("borough"));
+}
+
+#[test]
+fn the_two_ends_are_not_the_same_end() {
+    let playground = loaded();
+    // The test that would fail if both steps secretly joined the same alias:
+    // trips that *change* borough. Counted two ways — once by asking the chain
+    // for them, and once by folding the chain's own rows here.
+    let changed = sql(
+        &playground,
+        &format!(
+            "SELECT dropoff.borough, count(*) {BOTH_ENDS} \
+             WHERE pickup.borough = 'Manhattan' GROUP BY dropoff.borough"
+        ),
+    );
+    let boroughs: Vec<(String, u64)> = changed["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row[0].as_str().unwrap().to_owned(),
+                row[1].as_str().unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    assert!(
+        boroughs.len() > 1,
+        "every Manhattan pickup ended in one borough, which means the two \
+         aliases resolved to the same input: {boroughs:?}"
+    );
+    let manhattan: u64 = boroughs
+        .iter()
+        .filter(|(name, _)| name == "Manhattan")
+        .map(|(_, n)| *n)
+        .sum();
+    let total: u64 = boroughs.iter().map(|(_, n)| *n).sum();
+    assert!(
+        manhattan < total,
+        "no Manhattan pickup left Manhattan: {boroughs:?}"
+    );
+    // And the filter really filtered: fewer than all the trips.
+    let all = sql(&playground, "SELECT * FROM trips");
+    assert!(total < all["returned"].as_u64().unwrap(), "{total}");
+}
+
+#[test]
+fn an_alias_is_refused_where_it_cannot_mean_anything() {
+    let playground = Playground::new();
+    let refused = |text: &str| -> String {
+        let all: Vec<Json> = serde_json::from_str(&playground.sql(text)).expect("JSON");
+        let last = all.last().expect("a result").clone();
+        assert!(!last["error"].is_null(), "{text} was accepted: {last}");
+        last["error"]["message"].as_str().unwrap().to_owned()
+    };
+    // One name twice, which is what an alias is for and so is named as such.
+    assert!(
+        refused(
+            "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+             JOIN zones ON trips.dropoff_zone = zones.id"
+        )
+        .contains("is read twice under one name"),
+    );
+    // Two aliases that collide, which is the same problem spelled differently.
+    assert!(
+        refused(
+            "SELECT * FROM trips JOIN zones AS z ON trips.pickup_zone = z.id \
+             JOIN zones AS z ON trips.dropoff_zone = z.id"
+        )
+        .contains("is read twice under one name"),
+    );
+    // A qualifier naming a table the query reads but did not call by that
+    // name. `zones` is in the query twice and neither is called `zones`, so
+    // this is the error that would otherwise be "not a column of zones" about
+    // a column `zones` certainly has.
+    assert!(
+        refused(&format!(
+            "SELECT * {BOTH_ENDS} WHERE zones.borough = 'Queens'"
+        ))
+        .contains("is qualified with `zones`, which this query does not read"),
+    );
+    // An alias on a single table, where there is nothing to be told apart.
+    assert!(refused("SELECT * FROM books AS b").contains("aliases a single table"),);
+    // And the typo that made this rule necessary: a bare word after the first
+    // table is an alias only when a JOIN follows it, so a misspelled keyword
+    // is still reported as the unexpected word it is.
+    assert!(refused("SELECT * FROM books WERE id = 1").contains("unexpected `WERE`"));
+}

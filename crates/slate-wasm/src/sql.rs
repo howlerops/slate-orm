@@ -165,6 +165,37 @@ impl std::fmt::Display for SqlError {
 /// about names: a column is resolved to an ordinal *here*, against the real
 /// [`TableDef`], so `SELECT nosuch FROM books` fails at parse time with the
 /// column named, not later with an ordinal nobody typed.
+/// One input of a join or a chain: a table, and the name this query calls it by.
+///
+/// The name is the alias where there is one and the table's own name otherwise,
+/// and it is what a qualifier resolves against. Two inputs may hold the *same*
+/// `TableDef` — that is the entire point of an alias — so nothing downstream may
+/// identify an input by its table. Everything that used to take `&[TableDef]`
+/// takes `&[Input]` for exactly that reason: with two `zones` in the list, a
+/// lookup by table name has two answers and no way to choose.
+#[derive(Debug, Clone)]
+struct Input {
+    table: TableDef,
+    name: String,
+}
+
+impl Input {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// The words that may legally follow a table name here, and so cannot be a
+/// bare alias.
+///
+/// `FROM trips JOIN zones` would otherwise take `JOIN` as an alias for `trips`
+/// and then fail on `zones` with "expected ON" — an error about the wrong
+/// token, three words after the actual mistake, which is no mistake at all.
+/// `AS` needs no such list, which is why both forms are worth having.
+const FOLLOWS_A_TABLE: &[&str] = &[
+    "join", "inner", "on", "where", "group", "order", "limit", "offset", "having", "as",
+];
+
 #[derive(Debug)]
 pub struct Schema<'a>(pub &'a [TableDef]);
 
@@ -586,6 +617,77 @@ impl Parser<'_> {
         })
     }
 
+    /// A table and the name this query will call it by: `zones`,
+    /// `zones AS pickup` or `zones pickup`.
+    fn input(&mut self) -> Result<Input, SqlError> {
+        let table = self.table()?;
+        let name = self.alias()?.unwrap_or_else(|| table.name().to_owned());
+        Ok(Input { table, name })
+    }
+
+    /// [`Self::input`] for the table right after `FROM`, where a bare alias is
+    /// taken only when a `JOIN` follows it.
+    ///
+    /// The extra condition is there because of a typo. `FOLLOWS_A_TABLE` keeps
+    /// `JOIN` and `WHERE` from being read as aliases, but it cannot keep a
+    /// *misspelled* keyword from being one: `SELECT * FROM books WERE id = 1`
+    /// read `WERE` as an alias for `books` and reported "`WERE` aliases a
+    /// single table", burying the actual mistake under a rule the reader had
+    /// never heard of. The old message was "unexpected `WERE`", which is the
+    /// right one, and no list of keywords can get it back — a typo is by
+    /// definition not in the list.
+    ///
+    /// So a bare alias here has to be followed by the thing that makes an alias
+    /// worth having. `FROM books b` alone is not an alias, it is a syntax
+    /// error, and `FROM books AS b` still reaches the single-table refusal,
+    /// because `AS` says plainly what was meant.
+    fn first_input(&mut self) -> Result<Input, SqlError> {
+        let table = self.table()?;
+        if self.eat("as") {
+            let name = self.name()?;
+            return Ok(Input { table, name });
+        }
+        let bare = self
+            .peek_word()
+            .filter(|word| !FOLLOWS_A_TABLE.contains(&word.as_str()))
+            .filter(|_| {
+                matches!(
+                    self.toks.get(self.i + 1),
+                    Some(Spanned { tok: Tok::Word(w), .. })
+                        if w.eq_ignore_ascii_case("join") || w.eq_ignore_ascii_case("inner")
+                )
+            })
+            .is_some();
+        let name = if bare {
+            self.name()?
+        } else {
+            table.name().to_owned()
+        };
+        Ok(Input { table, name })
+    }
+
+    /// `AS x`, or a bare `x` that is not the next clause's keyword.
+    ///
+    /// Both forms, because both are written. The bare one needs the
+    /// [`FOLLOWS_A_TABLE`] guard and the `AS` one does not, which is the
+    /// argument for keeping `AS` rather than only accepting the bare form and
+    /// growing that list every time the grammar does.
+    ///
+    /// The table after `FROM` uses [`Self::first_input`] instead, which is
+    /// stricter about the bare form for a reason worth reading there.
+    fn alias(&mut self) -> Result<Option<String>, SqlError> {
+        if self.eat("as") {
+            // After an explicit `AS`, whatever follows is the alias — a
+            // keyword there is a refusal from `name`, not a missing alias,
+            // because `zones AS group` is a mistake worth naming.
+            return self.name().map(Some);
+        }
+        match self.peek_word() {
+            Some(word) if !FOLLOWS_A_TABLE.contains(&word.as_str()) => self.name().map(Some),
+            _ => Ok(None),
+        }
+    }
+
     /// Resolve a column against one table, accepting a `table.column`
     /// qualifier when it names that table.
     fn column(&mut self, table: &TableDef) -> Result<u32, SqlError> {
@@ -650,7 +752,7 @@ impl Parser<'_> {
     fn resolve_side(
         &mut self,
         raw: &str,
-        tables: &[TableDef],
+        inputs: &[Input],
         at: usize,
     ) -> Result<(u32, u32), SqlError> {
         if let Some((qualifier, _)) = raw.split_once('.') {
@@ -659,33 +761,33 @@ impl Parser<'_> {
             // tables `resolve` against the left happened to produce a sensible
             // message, and for three `nosuch.id` would have been reported as
             // not being a column of the first table, which is true and useless.
-            let named = tables
+            let named = inputs
                 .iter()
                 .enumerate()
-                .find(|(_, t)| t.name().eq_ignore_ascii_case(qualifier));
-            let Some((input, table)) = named else {
+                .find(|(_, i)| i.name().eq_ignore_ascii_case(qualifier));
+            let Some((at_input, input)) = named else {
                 return Err(SqlError {
                     message: format!(
                         "`{raw}` is qualified with `{qualifier}`, which this query does not \
                          read — it reads {}",
-                        name_list(tables, "and")
+                        name_list(inputs, "and")
                     ),
                     at,
                 });
             };
             return Ok((
-                u32::try_from(input).unwrap_or(0),
-                self.resolve(raw, table, at)?,
+                u32::try_from(at_input).unwrap_or(0),
+                self.resolve_named(raw, &input.table, input.name(), at)?,
             ));
         }
-        let hits: Vec<(usize, &TableDef)> = tables
+        let hits: Vec<(usize, &Input)> = inputs
             .iter()
             .enumerate()
-            .filter(|(_, table)| self.resolve(raw, table, at).is_ok())
+            .filter(|(_, i)| self.resolve_named(raw, &i.table, i.name(), at).is_ok())
             .collect();
-        let Some((&(chosen, table), rest)) = hits.split_first() else {
+        let Some((&(chosen, input), rest)) = hits.split_first() else {
             return Err(SqlError {
-                message: format!("`{raw}` is not a column of {}", name_list(tables, "or")),
+                message: format!("`{raw}` is not a column of {}", name_list(inputs, "or")),
                 at,
             });
         };
@@ -693,7 +795,7 @@ impl Parser<'_> {
             // Said once per name rather than once per mention: `SELECT id ...
             // GROUP BY id` names the same column twice and a reader does not
             // need telling twice.
-            let all: Vec<&TableDef> = hits.iter().map(|(_, table)| *table).collect();
+            let all: Vec<&Input> = hits.iter().map(|(_, input)| *input).collect();
             let warning = format!(
                 "`{raw}` is a column of {}{}; this read `{}.{raw}`. Qualify it to choose.",
                 // "both" only when there are two of them. It read "a column of
@@ -702,7 +804,7 @@ impl Parser<'_> {
                 // merely long.
                 if rest.len() == 1 { "both " } else { "" },
                 name_list_refs(&all, "and"),
-                table.name()
+                input.name()
             );
             if !self.warnings.contains(&warning) {
                 self.warnings.push(warning);
@@ -710,16 +812,34 @@ impl Parser<'_> {
         }
         Ok((
             u32::try_from(chosen).unwrap_or(0),
-            self.resolve(raw, table, at)?,
+            self.resolve_named(raw, &input.table, input.name(), at)?,
         ))
     }
 
     fn resolve(&self, raw: &str, table: &TableDef, at: usize) -> Result<u32, SqlError> {
+        self.resolve_named(raw, table, table.name(), at)
+    }
+
+    /// [`Self::resolve`], against a name that may be an alias.
+    ///
+    /// The qualifier is matched against `name` and the *column* is looked up in
+    /// `table`, which is the whole of what an alias is. Every error here names
+    /// `name` rather than the table, because that is what the reader wrote:
+    /// "`pickup` has no column `nosuch`" sends them to their own query, where
+    /// "`zones` has no column `nosuch`" sends them to a table they may have
+    /// named twice.
+    fn resolve_named(
+        &self,
+        raw: &str,
+        table: &TableDef,
+        name: &str,
+        at: usize,
+    ) -> Result<u32, SqlError> {
         let bare = match raw.split_once('.') {
             Some((qualifier, rest)) => {
-                if !qualifier.eq_ignore_ascii_case(table.name()) {
+                if !qualifier.eq_ignore_ascii_case(name) {
                     return Err(SqlError {
-                        message: format!("`{raw}` is not a column of `{}`", table.name()),
+                        message: format!("`{raw}` is not a column of `{name}`"),
                         at,
                     });
                 }
@@ -730,7 +850,7 @@ impl Parser<'_> {
         self.schema.ordinal(table, bare).ok_or_else(|| SqlError {
             message: format!(
                 "`{}` has no column `{bare}` — it has {}",
-                table.name(),
+                name,
                 table
                     .columns()
                     .iter()
@@ -779,11 +899,33 @@ impl Parser<'_> {
         }
 
         self.expect("from")?;
-        let table = self.table()?;
+        let first = self.first_input()?;
 
         if self.eat_join() {
-            return self.join_tail(&table, &list, star);
+            return self.join_tail(first, &list, star);
         }
+
+        // An alias on a *single* table is refused rather than ignored. There is
+        // nothing to disambiguate from, so it buys only a second spelling of
+        // one name — and supporting it would mean threading that name through
+        // every single-table helper (`conditions`, `condition`, `column`,
+        // `value_ordinal`, `group_ordinal`, `having_condition`, `aggregate`)
+        // so that `b.title` resolves. That is a wide change for no
+        // disambiguation, and silently ignoring the alias is worse than either:
+        // `SELECT b.title FROM books b` would then fail with "`b.title` is not
+        // a column of `books`", which is true and explains nothing.
+        if !first.name.eq_ignore_ascii_case(first.table.name()) {
+            return Err(SqlError {
+                message: format!(
+                    "`{}` aliases a single table, which has nothing to be told apart from. \
+                     An alias is for reading one table twice: \
+                     `trips JOIN zones AS pickup ... JOIN zones AS dropoff ...`",
+                    first.name
+                ),
+                at: self.at(),
+            });
+        }
+        let table = first.table;
 
         if star && list.is_empty() {
             // `SELECT *`: every column, which the spec spells as an empty
@@ -1059,13 +1201,13 @@ impl Parser<'_> {
         &mut self,
         item: &SelectItem,
         compute: &mut Vec<ComputeSpec>,
-        tables: &[TableDef],
+        inputs: &[Input],
         at: usize,
     ) -> Result<u32, SqlError> {
         match item {
             SelectItem::Column { raw, at } => {
-                let (input, column) = self.resolve_side(raw, tables, *at)?;
-                joined_at(tables, input, column, *at)
+                let (input, column) = self.resolve_side(raw, inputs, *at)?;
+                joined_at(inputs, input, column, *at)
             }
             SelectItem::Call {
                 function,
@@ -1074,7 +1216,7 @@ impl Parser<'_> {
                 zone,
                 ..
             } => {
-                let (input, column) = self.resolve_side(argument, tables, at)?;
+                let (input, column) = self.resolve_side(argument, inputs, at)?;
                 let wanted = ComputeSpec {
                     function: function.clone(),
                     input,
@@ -1089,7 +1231,7 @@ impl Parser<'_> {
                         compute.push(wanted);
                         compute.len() - 1
                     });
-                let width: usize = tables.iter().map(|t| t.columns().len()).sum();
+                let width: usize = inputs.iter().map(|i| i.table.columns().len()).sum();
                 u32::try_from(width + position).map_err(|_| SqlError {
                     message: "too many columns".to_owned(),
                     at,
@@ -1121,16 +1263,16 @@ impl Parser<'_> {
         &self,
         kind: &str,
         argument: Option<&str>,
-        tables: &[TableDef],
+        inputs: &[Input],
         at: usize,
     ) -> Result<AggregateSpec, SqlError> {
-        for (input, table) in tables.iter().enumerate() {
-            if let Ok(mut spec) = self.aggregate(kind, argument, table, at) {
-                spec.input = u32::try_from(input).unwrap_or(0);
+        for (at_input, input) in inputs.iter().enumerate() {
+            if let Ok(mut spec) = self.aggregate_named(kind, argument, input, at) {
+                spec.input = u32::try_from(at_input).unwrap_or(0);
                 return Ok(spec);
             }
         }
-        let Some(first) = tables.first() else {
+        let Some(first) = inputs.first() else {
             return Err(SqlError {
                 message: "a join reads at least one table".to_owned(),
                 at,
@@ -1138,17 +1280,20 @@ impl Parser<'_> {
         };
         let Some(name) = argument else {
             // No argument at all: `count(*)` cannot get here, so this is
-            // `avg(*)` or an unknown name, and the first table's refusal says
+            // `avg(*)` or an unknown name, and the first input's refusal says
             // which.
-            return self.aggregate(kind, argument, first, at);
+            return self.aggregate_named(kind, argument, first, at);
         };
-        match tables.iter().find(|t| self.resolve(name, t, at).is_ok()) {
-            Some(table) => self.aggregate(kind, argument, table, at),
+        match inputs
+            .iter()
+            .find(|i| self.resolve_named(name, &i.table, i.name(), at).is_ok())
+        {
+            Some(input) => self.aggregate_named(kind, argument, input, at),
             None => Err(SqlError {
                 message: format!(
                     "`{kind}()` reads a column of {}; `{name}` is {}",
-                    name_list(tables, "or"),
-                    if tables.len() == 2 {
+                    name_list(inputs, "or"),
+                    if inputs.len() == 2 {
                         "neither"
                     } else {
                         "none of them"
@@ -1178,7 +1323,7 @@ impl Parser<'_> {
         group_by: Option<u32>,
         aggregates: &[AggregateSpec],
         compute: &[ComputeSpec],
-        tables: &[TableDef],
+        inputs: &[Input],
         at: usize,
     ) -> Result<u32, SqlError> {
         match item {
@@ -1186,7 +1331,7 @@ impl Parser<'_> {
                 // Matched by what the select list already computes, on any
                 // input, so `count(*)` and `max(fare)` both resolve and
                 // `max(year)` over a grouping that averages it does not.
-                let wanted = self.join_aggregate(kind, argument.as_deref(), tables, *at)?;
+                let wanted = self.join_aggregate(kind, argument.as_deref(), inputs, *at)?;
                 aggregates
                     .iter()
                     .position(|a| *a == wanted)
@@ -1211,7 +1356,7 @@ impl Parser<'_> {
                 // ORDER BY is parsed, so a call the grouping did not name
                 // simply fails the comparison below.
                 let mut copy = compute.to_vec();
-                let ordinal = self.join_value_ordinal(other, &mut copy, tables, at)?;
+                let ordinal = self.join_value_ordinal(other, &mut copy, inputs, at)?;
                 if group_by == Some(ordinal) {
                     return Ok(0);
                 }
@@ -1219,7 +1364,7 @@ impl Parser<'_> {
                     message: format!(
                         "ORDER BY on a grouped {} names the group key or one of its \
                          aggregates; a group carries nothing else",
-                        shape(tables)
+                        shape(inputs)
                     ),
                     at,
                 })
@@ -1322,11 +1467,35 @@ impl Parser<'_> {
     }
 
     /// `count(*)`, `avg(total)`, `count(distinct zone)`.
+    /// [`Self::aggregate`], against one input, so an alias resolves its
+    /// argument: `avg(pickup.total)` reads `total` of whatever table `pickup`
+    /// names.
+    fn aggregate_named(
+        &self,
+        kind: &str,
+        argument: Option<&str>,
+        input: &Input,
+        at: usize,
+    ) -> Result<AggregateSpec, SqlError> {
+        self.aggregate_on(kind, argument, &input.table, input.name(), at)
+    }
+
     fn aggregate(
         &self,
         kind: &str,
         argument: Option<&str>,
         table: &TableDef,
+        at: usize,
+    ) -> Result<AggregateSpec, SqlError> {
+        self.aggregate_on(kind, argument, table, table.name(), at)
+    }
+
+    fn aggregate_on(
+        &self,
+        kind: &str,
+        argument: Option<&str>,
+        table: &TableDef,
+        name: &str,
         at: usize,
     ) -> Result<AggregateSpec, SqlError> {
         let (kind, argument) = match (kind, argument) {
@@ -1341,7 +1510,7 @@ impl Parser<'_> {
         };
         let column = match argument {
             None => 0,
-            Some(name) => self.resolve(name, table, at)?,
+            Some(raw) => self.resolve_named(raw, table, name, at)?,
         };
         let input = 0;
         if !matches!(
@@ -1553,40 +1722,46 @@ impl Parser<'_> {
     /// joined and one of a table already read, and no table may appear twice.
     fn join_tail(
         &mut self,
-        first: &TableDef,
+        first: Input,
         list: &[SelectItem],
         star: bool,
     ) -> Result<Statement, SqlError> {
         // `(earlier input, its column, this table's column)` per table after
         // the first — `JoinKey` in the joined space, and what both specs want.
-        let mut tables = vec![first.clone()];
+        let mut inputs = vec![first];
         let mut keys: Vec<(u32, u32, u32)> = Vec::new();
         loop {
             let at = self.at();
-            let next = self.table()?;
-            if let Some(seen) = tables
+            let next = self.input()?;
+            if let Some(seen) = inputs
                 .iter()
-                .find(|t| t.name().eq_ignore_ascii_case(next.name()))
+                .find(|i| i.name().eq_ignore_ascii_case(next.name()))
             {
-                // A table twice in one query needs an alias to mean anything:
-                // every name here resolves against a table by name, so two
-                // inputs sharing one make every column reference — qualified
-                // as much as bare — ambiguous. There are no aliases in this
-                // subset, so this is a refusal rather than a silent choice.
+                // Two inputs under one *name*, which is a refusal: every column
+                // reference resolves against a name, so two inputs sharing one
+                // make `id` and `zones.id` alike ambiguous with no way to say
+                // which was meant. The same table twice under *different* names
+                // is exactly what an alias is for and is fine — this compares
+                // names, not tables, which is the whole difference.
                 return Err(SqlError {
-                    message: format!("`{}` cannot be joined to itself here", seen.name()),
+                    message: format!(
+                        "`{}` is read twice under one name. Give one of them an alias: \
+                         `{} AS something`",
+                        seen.name(),
+                        next.table.name()
+                    ),
                     at,
                 });
             }
-            tables.push(next);
-            let key = self.join_key(&tables)?;
+            inputs.push(next);
+            let key = self.join_key(&inputs)?;
             keys.push(key);
             if !self.eat_join() {
                 break;
             }
         }
 
-        let mut filters: Vec<Vec<FilterSpec>> = vec![Vec::new(); tables.len()];
+        let mut filters: Vec<Vec<FilterSpec>> = vec![Vec::new(); inputs.len()];
         let mut compute: Vec<ComputeSpec> = Vec::new();
         let mut aggregates: Vec<AggregateSpec> = Vec::new();
         let mut sort: Vec<SortSpec> = Vec::new();
@@ -1607,27 +1782,32 @@ impl Parser<'_> {
                 // warns here as it does in a select list. The two-table version
                 // had its own copy of the qualified-or-not rule and no warning,
                 // so `WHERE id = 1` over a join picked a side in silence.
-                let (input, column) = self.resolve_side(&raw, &tables, at)?;
+                let (input, column) = self.resolve_side(&raw, &inputs, at)?;
                 // `resolve_side` returns an input it found in this very slice,
-                // so neither lookup can miss. They are lookups rather than
+                // so this lookup cannot miss. It is a lookup rather than
                 // indexing anyway: the workspace forbids indexing here, and the
                 // reason it does is that every byte reaching this parser is
                 // something a visitor typed. A panic would be reachable from a
                 // text box, so "cannot happen" is written as a refusal.
-                let (Some(table), Some(mine)) =
-                    (tables.get(input as usize), filters.get_mut(input as usize))
-                else {
+                let Some(mine) = filters.get_mut(input as usize) else {
                     return Err(SqlError {
                         message: format!("`{raw}` resolved to an input that is not there"),
                         at,
                     });
                 };
-                let table = table.clone();
-                // Rewind one token so `condition` reads the operator.
-                self.i -= 1;
-                let mut parsed = self.condition(&table)?;
-                parsed.column = column;
-                mine.push(parsed);
+                // Only the operator and the literal are left: the column was
+                // resolved above and `condition` would resolve it again.
+                //
+                // That second resolution used to happen — this rewound a token
+                // and called `condition`, which threw the ordinal away and
+                // replaced it. Harmless while every input was a bare table, and
+                // wrong the moment one had an alias: `condition` matches a
+                // qualifier against the *table's* name, so `WHERE
+                // pickup.borough = 'Manhattan'` came back as "`pickup.borough`
+                // is not a column of `zones`" — about a column `zones`
+                // certainly has, on a query that never named `zones`.
+                let (op, value) = self.comparison_tail()?;
+                mine.push(FilterSpec { column, op, value });
                 if !self.eat("and") {
                     break;
                 }
@@ -1642,7 +1822,7 @@ impl Parser<'_> {
             // path uses. A computed value is appended after *every* table,
             // which is where `join_value_ordinal` puts it.
             let item = self.select_item()?;
-            group_by = Some(self.join_value_ordinal(&item, &mut compute, &tables, at)?);
+            group_by = Some(self.join_value_ordinal(&item, &mut compute, &inputs, at)?);
         }
 
         for item in list {
@@ -1651,7 +1831,7 @@ impl Parser<'_> {
                     aggregates.push(self.join_aggregate(
                         kind,
                         argument.as_deref(),
-                        &tables,
+                        &inputs,
                         *at,
                     )?);
                 }
@@ -1661,15 +1841,15 @@ impl Parser<'_> {
                     // than two. It must already be the group key: a computed
                     // column beside a grouping that did not group by it is the
                     // same error a bare column gets below, for the same reason.
-                    let ordinal = self.join_value_ordinal(item, &mut compute, &tables, *at)?;
+                    let ordinal = self.join_value_ordinal(item, &mut compute, &inputs, *at)?;
                     if group_by != Some(ordinal) {
                         return Err(SqlError {
                             message: format!(
                                 "a computed column on a {} has to be the group key — a {} \
                                  returns whole rows or one row per group, and there is no \
                                  third shape",
-                                shape(&tables),
-                                shape(&tables)
+                                shape(&inputs),
+                                shape(&inputs)
                             ),
                             at: *at,
                         });
@@ -1690,8 +1870,8 @@ impl Parser<'_> {
                     // the branch above.
                     if let Some(key) = group_by {
                         let named = self
-                            .resolve_side(raw, &tables, *at)
-                            .and_then(|(input, column)| joined_at(&tables, input, column, *at))
+                            .resolve_side(raw, &inputs, *at)
+                            .and_then(|(input, column)| joined_at(&inputs, input, column, *at))
                             .ok();
                         if named != Some(key) {
                             return Err(SqlError {
@@ -1731,7 +1911,7 @@ impl Parser<'_> {
             // argument for writing the refusal tests for a shape you are
             // generalising rather than only the answers.
             return Err(SqlError {
-                message: format!("a {} returns whole rows; write `SELECT *`", shape(&tables)),
+                message: format!("a {} returns whole rows; write `SELECT *`", shape(&inputs)),
                 at: self.at(),
             });
         }
@@ -1749,7 +1929,7 @@ impl Parser<'_> {
                         "ORDER BY on a {} needs a GROUP BY: the kernel orders groups, not \
                          joined rows, so there is nothing to lower an ordering of whole rows \
                          onto",
-                        shape(&tables)
+                        shape(&inputs)
                     ),
                     at: self.at(),
                 });
@@ -1758,7 +1938,7 @@ impl Parser<'_> {
                 let at = self.at();
                 let item = self.select_item()?;
                 let column =
-                    self.join_group_ordinal(&item, group_by, &aggregates, &compute, &tables, at)?;
+                    self.join_group_ordinal(&item, group_by, &aggregates, &compute, &inputs, at)?;
                 let descending = if self.eat("desc") {
                     true
                 } else {
@@ -1788,11 +1968,13 @@ impl Parser<'_> {
         // in order cannot make that mistake, where `filters[0]` and
         // `filters[1]` two lines apart can.
         if let ([left, right], [(_, left_key, right_key)], [left_where, right_where]) =
-            (&tables[..], &keys[..], &filters[..])
+            (&inputs[..], &keys[..], &filters[..])
         {
             return Ok(Statement::Join(JoinSpec {
-                left: left.name().to_owned(),
-                right: right.name().to_owned(),
+                left: left.table.name().to_owned(),
+                right: right.table.name().to_owned(),
+                left_alias: alias_of(left),
+                right_alias: alias_of(right),
                 left_key: *left_key,
                 right_key: *right_key,
                 left_where: left_where.clone(),
@@ -1806,12 +1988,17 @@ impl Parser<'_> {
             }));
         }
 
-        let inputs = tables
+        let spec_inputs = inputs
             .iter()
             .enumerate()
             .zip(filters)
-            .map(|((at, table), filters)| ChainInputSpec {
-                table: table.name().to_owned(),
+            .map(|((at, input), filters)| ChainInputSpec {
+                table: input.table.name().to_owned(),
+                // Empty when the query called the table by its own name, so a
+                // spec without aliases is byte for byte what it was before this
+                // existed — and a reader of the Spec tab sees an `alias` only
+                // where there is one.
+                alias: alias_of(input),
                 // The first table joins to nothing; `keys[at - 1]` is the step
                 // that *produced* table `at`, which is why the index is
                 // shifted. Off by one here is a chain whose last table has no
@@ -1824,7 +2011,7 @@ impl Parser<'_> {
             })
             .collect();
         Ok(Statement::Chain(ChainSpec {
-            inputs,
+            inputs: spec_inputs,
             compute,
             group_by,
             aggregates,
@@ -1834,7 +2021,7 @@ impl Parser<'_> {
         }))
     }
 
-    /// `ON <name> = <name>` for the table that was just added to `tables`.
+    /// `ON <name> = <name>` for the input that was just added.
     ///
     /// Returns `(earlier input, its column, this table's column)`.
     ///
@@ -1848,10 +2035,10 @@ impl Parser<'_> {
     /// Any earlier table, not only the previous one, because `JoinKey` is in
     /// the joined space and always has been: `a JOIN b JOIN c ON a.x = c.y` is
     /// a chain the kernel plans, not a shape to refuse.
-    fn join_key(&mut self, tables: &[TableDef]) -> Result<(u32, u32, u32), SqlError> {
-        let (own_table, earlier) = tables
+    fn join_key(&mut self, inputs: &[Input]) -> Result<(u32, u32, u32), SqlError> {
+        let (own, earlier) = inputs
             .split_last()
-            .expect("join_key is called with the new table already pushed");
+            .expect("join_key is called with the new input already pushed");
         self.expect("on")?;
         let first_at = self.at();
         let first = self.name()?;
@@ -1863,11 +2050,11 @@ impl Parser<'_> {
             (&second, second_at, &first, first_at),
             (&first, first_at, &second, second_at),
         ] {
-            let Ok(own) = self.resolve(own_raw, own_table, own_at) else {
+            let Ok(mine) = self.resolve_named(own_raw, &own.table, own.name(), own_at) else {
                 continue;
             };
             if let Ok((input, column)) = self.resolve_side(other_raw, earlier, other_at) {
-                return Ok((input, column, own));
+                return Ok((input, column, mine));
             }
         }
 
@@ -1876,13 +2063,13 @@ impl Parser<'_> {
                 format!(
                     "`{first} = {second}` does not name one column of `{}` and one of `{}`",
                     only.name(),
-                    own_table.name()
+                    own.name()
                 )
             } else {
                 format!(
                     "`{first} = {second}` does not name one column of `{}` and one of a table \
                      read before it ({})",
-                    own_table.name(),
+                    own.name(),
                     name_list(earlier, "or")
                 )
             },
@@ -2091,20 +2278,20 @@ fn parse_zone(text: &str) -> Result<(i64, String), String> {
 /// places a third table would simply have been missing from, with no error
 /// anywhere — the reader would be told a column is not on either of two tables
 /// while looking at a query that names three.
-fn name_list(tables: &[TableDef], last: &str) -> String {
-    let refs: Vec<&TableDef> = tables.iter().collect();
+fn name_list(inputs: &[Input], last: &str) -> String {
+    let refs: Vec<&Input> = inputs.iter().collect();
     name_list_refs(&refs, last)
 }
 
 /// [`name_list`] over borrowed tables, for a caller that has a subset.
-fn name_list_refs(tables: &[&TableDef], last: &str) -> String {
-    match tables {
+fn name_list_refs(inputs: &[&Input], last: &str) -> String {
+    match inputs {
         [] => String::new(),
         [one] => format!("`{}`", one.name()),
         [head @ .., tail] => {
             let front = head
                 .iter()
-                .map(|t| format!("`{}`", t.name()))
+                .map(|i| format!("`{}`", i.name()))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{front} {last} `{}`", tail.name())
@@ -2119,11 +2306,11 @@ fn name_list_refs(tables: &[&TableDef], last: &str) -> String {
 /// The two-table version was `if input == 0 { 0 } else { left.columns().len() }`
 /// inline in three places, which is both the same arithmetic three times and
 /// the arithmetic that cannot be generalised by adding a table.
-fn joined_at(tables: &[TableDef], input: u32, column: u32, at: usize) -> Result<u32, SqlError> {
-    let base: usize = tables
+fn joined_at(inputs: &[Input], input: u32, column: u32, at: usize) -> Result<u32, SqlError> {
+    let base: usize = inputs
         .iter()
         .take(input as usize)
-        .map(|t| t.columns().len())
+        .map(|i| i.table.columns().len())
         .sum();
     u32::try_from(base + column as usize).map_err(|_| SqlError {
         message: "too many columns".to_owned(),
@@ -2136,8 +2323,23 @@ fn joined_at(tables: &[TableDef], input: u32, column: u32, at: usize) -> Result<
 /// Every message in `join_tail` said "join", which is what it was. Telling a
 /// reader who wrote three tables that "a join returns whole rows" names a
 /// construct they did not write.
-fn shape(tables: &[TableDef]) -> &'static str {
-    if tables.len() > 2 { "chain" } else { "join" }
+/// The alias a spec should carry for an input, or empty when there is none.
+///
+/// Empty rather than always the name, so a spec for a query that used no alias
+/// is byte for byte the spec it was before aliases existed: the field is
+/// `skip_serializing_if = "String::is_empty"`, the Spec tab shows an `alias`
+/// only where the reader wrote one, and every JSON written against the old
+/// shape still parses.
+fn alias_of(input: &Input) -> String {
+    if input.name().eq_ignore_ascii_case(input.table.name()) {
+        String::new()
+    } else {
+        input.name().to_owned()
+    }
+}
+
+fn shape(inputs: &[Input]) -> &'static str {
+    if inputs.len() > 2 { "chain" } else { "join" }
 }
 
 const AGGREGATES: &[&str] = &["count", "min", "max", "sum", "avg"];

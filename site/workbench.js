@@ -138,6 +138,28 @@ const EXAMPLES = [
       "  GROUP BY borough",
   ],
   [
+    "Where a Manhattan ride ends up",
+    "-- Three tables, and two of them are the same table. `trips` reaches\n" +
+      "-- `zones` twice -- once through `pickup_zone` and once through\n" +
+      "-- `dropoff_zone` -- so asking where a ride started *and* where it\n" +
+      "-- ended needs `zones` read twice under two names.\n" +
+      "--\n" +
+      "-- That is what an alias is, and until recently this query was a parse\n" +
+      "-- error: every column reference resolved against a table by name, so\n" +
+      "-- two inputs called `zones` made `borough` -- and `zones.borough` --\n" +
+      "-- ambiguous with no way to say which end was meant.\n" +
+      "--\n" +
+      "-- Three steps in the Plan tab, and each one's `decodes` is narrowed to\n" +
+      "-- the columns this grouping actually needs.\n" +
+      "SELECT dropoff.borough, count(*), avg(total)\n" +
+      "  FROM trips\n" +
+      "  JOIN zones AS pickup ON trips.pickup_zone = pickup.id\n" +
+      "  JOIN zones AS dropoff ON trips.dropoff_zone = dropoff.id\n" +
+      "  WHERE pickup.borough = 'Manhattan'\n" +
+      "  GROUP BY dropoff.borough\n" +
+      "  ORDER BY count(*) DESC",
+  ],
+  [
     "Busy zones only (HAVING)",
     "-- WHERE filters rows before grouping; HAVING filters the groups after.\n" +
       "-- Swap this for `WHERE count(*) > 3000` and the parser will tell you\n" +

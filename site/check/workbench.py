@@ -292,7 +292,14 @@ out.badZoneWhy = await page.locator('[data-app="grid"] .refusal').innerText();
 // 9c5. A computed column on a *join*, which was refused outright until the
 //      kernel grew somewhere to put it. Clicked from the sidebar, because the
 //      example is the thing a reader will actually run.
-await page.locator('.examples button:has-text("Manhattan")').click();
+//
+//      Matched on "hour by hour" rather than on "Manhattan": a substring
+//      selector over a list that grows is a collision waiting to happen, and
+//      this one happened — adding "Where a Manhattan ride ends up" below made
+//      `has-text("Manhattan")` resolve to two buttons and took the whole check
+//      down with a strict-mode violation. The distinctive half of a title is
+//      the half to match on.
+await page.locator('.examples button:has-text("hour by hour")').click();
 await page.waitForTimeout(600);
 out.joinHour = {
   headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
@@ -323,6 +330,37 @@ out.joinRightKey = {
   rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
   refusal: await page.locator('[data-app="grid"] .refusal').count(),
 };
+
+// 9c7b. One table read twice under two aliases, which is the query the taxi
+//       schema is actually for: `trips` reaches `zones` through both
+//       `pickup_zone` and `dropoff_zone`. Until aliases existed this was a
+//       refusal — two inputs called `zones` made every column reference
+//       ambiguous — so what is checked is that it answers at all, that the
+//       group key keeps its qualifier (`borough` alone would name both ends
+//       and neither), and that the boroughs are names rather than zone ids.
+await page.locator('.examples button:has-text("Manhattan ride ends up")').click();
+await page.waitForTimeout(900);
+out.aliasedChain = {
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+// The plan needs its own tab, and the grid tab has to come back afterwards so
+// the next check reads a grid rather than whatever was last shown.
+await page.locator('[data-tab="plan"]').click();
+out.aliasedChainPlan = await page.locator('[data-app="plan"]').innerText();
+await page.locator('[data-tab="results"]').click();
+
+// 9c7c. The same table twice under *one* name, which is still a refusal — and
+//       the refusal names the alias as the way out, because now there is one.
+await type(
+  "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id " +
+  "JOIN zones ON trips.dropoff_zone = zones.id",
+);
+// The refusal's *text*, not the counts `type` returns: what is being checked
+// is that the message names the way out, and `read()` only says how many
+// refusals there were.
+out.aliasCollisionWhy = await page.locator('[data-app="grid"] .refusal').innerText();
 
 // 9c8. Ordering a grouped join's groups, which `JoinSpec` had no field for at
 //      all — so the whole clause was refused on a join. `count(*) DESC` rather
@@ -416,6 +454,40 @@ await browser.close();
 """
 
 
+def stale_sources() -> list[Path]:
+    """Source files newer than the wasm bundle that was built from them.
+
+    The bundle is a build artifact, gitignored, and the browser loads whatever
+    is on disk — so a check run after editing `slate-wasm` and before
+    rebuilding drives a *previous* kernel. Nothing said so: the docstring asked
+    for `sh site/build-wasm.sh` and that was the whole enforcement.
+
+    It bit immediately. Three checks for table aliases failed against a bundle
+    built ninety minutes earlier, and the failure read as "aliases do not work"
+    rather than "you are running last hour's code". The dangerous direction is
+    the other one, though: a check that *passes* against a stale bundle is a
+    green run that exercised nothing it claims to, which is the failure this
+    repository keeps finding in new places.
+
+    So the same guard `slate-serverd` got in task #140, for the same reason and
+    by the same rule: a prebuilt artifact older than its sources is a hard
+    error, never a warning and never a silent pass.
+
+    Timestamps rather than hashes: the bundle is not reproducible byte for byte
+    across toolchains, so a content check would need a manifest the build script
+    does not write. `mtime` is coarse and enough — the failure being guarded
+    against is minutes or hours old, not milliseconds.
+    """
+    bundle = (SITE / "slate_wasm_bg.wasm").stat().st_mtime
+    watched: list[Path] = []
+    for crate in ("slate-wasm", "slate-kernel", "slate-schema", "slate-tuple"):
+        watched.extend((ROOT / "crates" / crate / "src").rglob("*.rs"))
+        watched.append(ROOT / "crates" / crate / "Cargo.toml")
+    # The page's own files are served directly and need no build, so they are
+    # deliberately not here: editing `workbench.js` does not stale the bundle.
+    return sorted(p for p in watched if p.exists() and p.stat().st_mtime > bundle)
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -427,6 +499,16 @@ def main() -> int:
         if not (SITE / needed).exists():
             print(f"FAIL  {needed} is not built; run `sh site/build-wasm.sh`")
             return 1
+
+    stale = stale_sources()
+    if stale:
+        print(
+            f"FAIL  site/slate_wasm_bg.wasm is older than {len(stale)} of its "
+            f"sources; run `sh site/build-wasm.sh`"
+        )
+        for path in stale[:5]:
+            print(f"        {path.relative_to(ROOT)}")
+        return 1
 
     port = free_port()
     handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(  # noqa: E731
@@ -911,6 +993,44 @@ def main() -> int:
         # than only the shape.
         and all(3.0 < f < 120.0 for f in fares),
         f"{same_side['headers']}, {len(fares)} hours: {fares[:4]}",
+    )
+
+    # One table twice, under two aliases.
+    aliased = seen["aliasedChain"]
+    ends = [r.split("\t")[0] for r in aliased["rows"]]
+    check(
+        "one table can be read twice under two aliases",
+        aliased["refusal"] == 0
+        and 2 <= len(ends) <= 8
+        # Names, not ids, and more than one of them: if both aliases had
+        # resolved to the same input, every Manhattan pickup would have ended
+        # in Manhattan and this would be a single group.
+        and all(not e.strip().isdigit() for e in ends)
+        and "Manhattan" in ends,
+        f"{len(ends)} groups: {ends[:6]}",
+    )
+    check(
+        "an aliased group key keeps the qualifier that tells the ends apart",
+        # `borough` alone names both ends and neither, which is the one case
+        # where echoing the reader's spelling means keeping the qualifier.
+        #
+        # Lowercased before comparing: the grid uppercases its headers in CSS
+        # and `allInnerTexts()` returns what is *rendered*, so this read
+        # `DROPOFF.BOROUGH` and failed against a correct header. Asserting on
+        # rendered text means asserting on the stylesheet too.
+        [h.lower() for h in aliased["headers"][:1]] == ["dropoff.borough"],
+        f"{aliased['headers']}",
+    )
+    check(
+        "the aliased chain plans as three steps",
+        seen["aliasedChainPlan"].count("step") == 2
+        and seen["aliasedChainPlan"].startswith("Chain"),
+        seen["aliasedChainPlan"].replace("\n", " | ")[:160],
+    )
+    check(
+        "the same table twice under one name is refused, and names the way out",
+        "is read twice under one name" in seen["aliasCollisionWhy"],
+        seen["aliasCollisionWhy"][:160],
     )
 
     # A bare right-table column as the group key.

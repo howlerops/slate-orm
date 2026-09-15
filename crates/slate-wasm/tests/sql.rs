@@ -771,11 +771,12 @@ fn an_aggregate_is_labelled_with_the_column_it_reads() {
 fn a_chain_refuses_what_it_cannot_answer() {
     let playground = Playground::new();
     let cases: Vec<(&str, &str)> = vec![
-        // A table twice needs an alias to mean anything, and there are none.
+        // A table twice under one name. With aliases this is no longer a dead
+        // end, so the refusal names the way out rather than only the problem.
         (
             "SELECT * FROM authors JOIN books ON authors.id = books.author_id \
              JOIN authors ON books.id = authors.id",
-            "cannot be joined to itself",
+            "is read twice under one name",
         ),
         // A step whose ON reaches no earlier table. The two-table message
         // names both tables; past two it names the new one and lists the
@@ -1045,9 +1046,12 @@ fn refusals_name_what_was_wrong() {
             "SELECT * FROM authors JOIN books ON books.id = books.author_id",
             "does not name one column of `authors` and one of `books`",
         ),
+        // One table twice under one name. It used to be "cannot be joined to
+        // itself", which was the whole truth while there were no aliases; now
+        // the fix exists, so the message names it.
         (
             "SELECT * FROM trips JOIN trips ON trips.id = trips.id",
-            "cannot be joined to itself",
+            "is read twice under one name",
         ),
         (
             "DROP TABLE books",
