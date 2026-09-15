@@ -295,3 +295,98 @@ impl<T: Field> Field for Option<T> {
         }
     }
 }
+
+/// An instant, as seconds since the Unix epoch.
+///
+/// A newtype over `i64` that maps to an ordinary integer column, so **nothing
+/// on disk changes** — the same bytes an `i64` field would write. That is
+/// deliberate, and it is the difference between this and [`Units`]: a decimal
+/// needed its own column type because its ordering and arithmetic differ from
+/// an integer's, and an instant's do not. Chronological order *is* integer
+/// order, already proven and fuzzed by the tuple property suite.
+///
+/// What the newtype buys is in Rust and in the reader's head:
+///
+/// - a count of seconds and an instant are different things, and the compiler
+///   now says so — `Timestamp` cannot be passed where a `u64` id belongs;
+/// - it names the unit. The kernel's calendar functions
+///   ([`Scalar::calendar_part`](slate_kernel::Scalar::calendar_part),
+///   [`Scalar::date_trunc`](slate_kernel::Scalar::date_trunc), the timezone
+///   lookups) all read **seconds**, and a column holding milliseconds would be
+///   answered by them with a year somewhere around 55000 and no error;
+/// - it gives the docs one place to say there is no date type and why.
+///
+/// There is no timezone in it. The stored instant is an absolute point in time;
+/// which calendar day it falls on is a question about a zone, and
+/// [`Scalar::in_zone`](slate_kernel::Scalar::in_zone) is where that is asked.
+/// Storing a zone beside the instant would let the two disagree.
+///
+/// ```
+/// use slate_orm::{CalendarPart, Query, Record, Scalar, Timestamp};
+///
+/// #[derive(Record)]
+/// #[record(table = "events", id = 1)]
+/// struct Event {
+///     #[record(pk)]
+///     id: u64,
+///     at: Timestamp,
+/// }
+///
+/// // The column is an ordinary integer: a timestamp is not a new value type.
+/// let table = Event::table();
+/// assert_eq!(
+///     table.column(Event::COLUMNS.at).unwrap().value_type(),
+///     slate_orm::ValueType::I64,
+/// );
+///
+/// // And the calendar questions are scalars over it, evaluated per row.
+/// let query = Query::all().computing([
+///     Scalar::column(Event::COLUMNS.at).calendar_part(CalendarPart::Year),
+///     Scalar::column(Event::COLUMNS.at)
+///         .in_zone("America/New_York")
+///         .calendar_part(CalendarPart::DayOfWeek),
+/// ]);
+/// assert_eq!(Query::computed(&table, 0), slate_orm::Ordinal(2));
+/// let _ = query;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Timestamp(pub i64);
+
+impl Timestamp {
+    /// Seconds since 1970-01-01T00:00:00Z. Negative is before it.
+    #[must_use]
+    pub const fn from_unix_seconds(seconds: i64) -> Self {
+        Self(seconds)
+    }
+
+    /// The instant, as seconds since the epoch.
+    #[must_use]
+    pub const fn seconds(self) -> i64 {
+        self.0
+    }
+
+    /// The epoch itself, which is what `Default` gives.
+    pub const EPOCH: Self = Self(0);
+}
+
+impl Field for Timestamp {
+    const VALUE_TYPE: ValueType = ValueType::I64;
+    const NULLABLE: bool = false;
+
+    fn to_value(&self) -> Value {
+        Value::I64(self.0)
+    }
+
+    fn from_value(value: &Value) -> Result<Self, FieldError> {
+        match value {
+            Value::I64(v) => Ok(Self(*v)),
+            Value::Null => Err(FieldError::UnexpectedNull {
+                expected: Self::VALUE_TYPE,
+            }),
+            other => Err(FieldError::TypeMismatch {
+                expected: Self::VALUE_TYPE,
+                found: other.type_name(),
+            }),
+        }
+    }
+}

@@ -906,3 +906,155 @@ fn validate(
 
     Ok(())
 }
+
+// --- #[derive(Enum)] ------------------------------------------------------
+
+/// Derive [`Field`](../slate_orm/trait.Field.html) for a fieldless enum,
+/// stored as its variant name in a `Str` column.
+///
+/// ```ignore
+/// #[derive(Enum)]
+/// enum Payment {
+///     Cash,
+///     #[record(rename = "credit card")]
+///     CreditCard,
+/// }
+/// ```
+///
+/// **Why the name and not an ordinal.** Both work and both have a failure mode,
+/// and they are not equally likely. With an integer, *reordering* the variants
+/// silently reinterprets every stored row — and reordering is something people
+/// do by accident, alphabetising a list or inserting a variant in the middle,
+/// with nothing in the diff to suggest it matters. With a name, *renaming* a
+/// variant does the same damage, but a rename is deliberate and the compiler
+/// forces you to visit every use site while you do it. So the name is the
+/// choice that fails on the rarer, louder action; `rename` exists so that
+/// changing the Rust spelling need not change the stored one.
+///
+/// The cost is stated rather than hidden: names are longer than ordinals in
+/// every row and every index entry, and an index over the column sorts
+/// alphabetically rather than by declaration order — so a `severity` column
+/// ranges over `"critical" < "info" < "warning"`, which is not the order anyone
+/// means. A column whose order matters should be an integer with its own
+/// `Field` impl, and this derive is the wrong tool for it.
+#[proc_macro_derive(Enum, attributes(record))]
+pub fn derive_enum(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    expand_enum(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn expand_enum(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            input,
+            "#[derive(Enum)] is for enums; a struct wants #[derive(Record)]",
+        ));
+    };
+    if data.variants.is_empty() {
+        // An uninhabited type cannot be read out of a column, so `from_value`
+        // would have no arm to take and every write would be unreachable. A
+        // compile error here beats a `match` with no arms later.
+        return Err(syn::Error::new_spanned(
+            input,
+            "#[derive(Enum)] needs at least one variant: an empty enum has no value to store",
+        ));
+    }
+
+    let mut idents = Vec::new();
+    let mut names = Vec::new();
+    for variant in &data.variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "#[derive(Enum)] stores a variant as its name, so a variant carrying data has \
+                 nowhere to put it. Store the payload in its own column, or write the `Field` \
+                 impl by hand",
+            ));
+        }
+        let mut name = variant.ident.to_string();
+        for attribute in &variant.attrs {
+            if !attribute.path().is_ident("record") {
+                continue;
+            }
+            let renamed: LitStr = attribute.parse_args_with(|input: ParseStream<'_>| {
+                let key: Ident = input.parse()?;
+                if key != "rename" {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "the only variant attribute is `rename = \"...\"`",
+                    ));
+                }
+                input.parse::<Token![=]>()?;
+                input.parse()
+            })?;
+            name = renamed.value();
+        }
+        idents.push(variant.ident.clone());
+        names.push(name);
+    }
+
+    // Two variants storing one name would make `from_value` pick whichever arm
+    // came first and lose the other for ever — silently, since writing works.
+    // Checked here rather than left to the `match`, whose unreachable-pattern
+    // warning does not fire on string literals.
+    let mut seen: Vec<&String> = names.iter().collect();
+    seen.sort();
+    for pair in seen.windows(2) {
+        if let [a, b] = pair
+            && a == b
+        {
+            return Err(syn::Error::new_spanned(
+                input,
+                format!("two variants both store `{a}`; a stored name has to identify one"),
+            ));
+        }
+    }
+
+    let self_ident = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let target = self_ident.to_string();
+
+    Ok(quote! {
+        impl #impl_generics ::slate_orm::Field for #self_ident #ty_generics #where_clause {
+            const VALUE_TYPE: ::slate_orm::ValueType = ::slate_orm::ValueType::Str;
+            const NULLABLE: bool = false;
+
+            fn to_value(&self) -> ::slate_orm::Value {
+                ::slate_orm::Value::Str(match self {
+                    #(Self::#idents => #names,)*
+                }.into())
+            }
+
+            fn from_value(
+                value: &::slate_orm::Value,
+            ) -> ::core::result::Result<Self, ::slate_orm::FieldError> {
+                match value {
+                    ::slate_orm::Value::Str(name) => match name.as_ref() {
+                        #(#names => ::core::result::Result::Ok(Self::#idents),)*
+                        // A name no variant claims is an error, never a
+                        // default. A stored row written by a newer build --
+                        // one variant ahead -- is exactly this case, and
+                        // silently becoming the first variant would be a wrong
+                        // answer that reads as a right one.
+                        _ => ::core::result::Result::Err(
+                            ::slate_orm::FieldError::OutOfRange { target: #target },
+                        ),
+                    },
+                    ::slate_orm::Value::Null => ::core::result::Result::Err(
+                        ::slate_orm::FieldError::UnexpectedNull {
+                            expected: <Self as ::slate_orm::Field>::VALUE_TYPE,
+                        },
+                    ),
+                    other => ::core::result::Result::Err(
+                        ::slate_orm::FieldError::TypeMismatch {
+                            expected: <Self as ::slate_orm::Field>::VALUE_TYPE,
+                            found: other.type_name(),
+                        },
+                    ),
+                }
+            }
+        }
+    })
+}

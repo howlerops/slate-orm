@@ -329,6 +329,33 @@ actions = ["everything"]</code></pre>
         </p>
       </div>
       <div class="card">
+        <h3>No date type, and an enum is its own name</h3>
+        <p>
+          The value model is closed &mdash; nine types, each one the tuple codec
+          can order &mdash; so a Rust type that needs storing gets a mapping
+          onto an existing one rather than a tenth. A <code>Timestamp</code> is
+          an <code>i64</code> of seconds: chronological order <em>is</em> integer
+          order, already proven, and every calendar function reads seconds.
+          <code>#[derive(Enum)]</code> stores the variant name in a
+          <code>Str</code>.
+        </p>
+        <p>
+          A name rather than an ordinal because the two fail differently.
+          Reordering variants silently reinterprets every stored row, and
+          reordering is an accident &mdash; alphabetising, inserting in the
+          middle. Renaming does the same damage but is deliberate, and the
+          compiler makes you visit every use site. <code>rename</code> lets the
+          Rust spelling and the stored one move apart.
+        </p>
+        <p>
+          <code>Json&lt;T&gt;</code> is a string that happens to hold JSON, and
+          every query against it is a query against that string. There is no
+          path expression: a document has no useful total order, so it could not
+          be a key, an index or a range. If a field inside needs querying, it is
+          a column.
+        </p>
+      </div>
+      <div class="card">
         <h3>Security in the kernel</h3>
         <p>
           RBAC and row policies are compiled into the predicate the executor

@@ -499,6 +499,60 @@ call site has to keep, where the one who forgets is the one whose edit is lost.
 The check costs no extra round trip: `update` already reads the row to enforce
 the row policy.
 
+### There is no date type, and an enum is its own name
+
+The value model is closed — nine types, each chosen because the tuple codec can
+order it — so "add a type" is not the answer to a Rust type that needs storing.
+The answer is a `Field` impl that maps it onto one that is already there, and
+three of those ship:
+
+```rust
+#[derive(Enum)]
+enum Payment { Cash, #[record(rename = "credit card")] CreditCard }
+
+#[derive(Record)]
+#[record(table = "rides", id = 1)]
+struct Ride {
+    #[record(pk)] id: u64,
+    started: Timestamp,          // an i64 of seconds. Nothing on disk changes
+    payment: Payment,            // the variant name, in a Str column
+    meta: Json<Settings>,        // serde_json, behind the `json` feature
+}
+```
+
+**`Timestamp` is an `i64` of seconds since the epoch**, and that is the whole
+of it: chronological order *is* integer order, already proven by the tuple
+property suite, so a new value type would have bought a second ordering to get
+right. What the newtype buys is in Rust — an instant is not an id, and the
+compiler now says so — and one place to state the unit, because every calendar
+function (`Scalar::calendar_part`, `date_trunc`, the timezone lookups) reads
+**seconds** and a column holding milliseconds would be answered with a year
+around 55000 and no error. There is no timezone in it: which day an instant
+falls on is a question about a zone, and `Scalar::in_zone` is where it is
+asked.
+
+**An enum stores its variant name, not an ordinal.** Both work; they fail
+differently. With an ordinal, *reordering* the variants silently reinterprets
+every stored row — and reordering is something people do by accident,
+alphabetising a list or inserting in the middle. With a name, *renaming* does
+the same damage, but a rename is deliberate and the compiler visits every use
+site while you do it. So the name is the choice that fails on the rarer, louder
+action, and `rename` exists so the Rust spelling and the stored one can move
+apart. The costs are stated rather than hidden: names are longer in every row
+and index entry, and an index sorts them alphabetically — `"critical" <
+"info" < "warning"`, which is not the order anyone means for a severity, so
+that column wants an integer and a hand-written `Field`.
+
+**`Json<T>` is a string that happens to hold JSON**, and every query against it
+is a query against that string. There is no path expression and there will not
+be one: a document has no useful total order, so it could not be a key, an
+index or a range predicate. If a field inside needs querying, it is a column.
+Two things are worth knowing and both have tests rather than warnings — it
+serializes at construction, not at write time, so the failure lands where a
+caller can still handle it; and a `HashMap` has no stable encoding, so two maps
+a caller considers equal store as two different strings. `BTreeMap` does not
+have that problem, and the test asserts both halves.
+
 ### Money is an integer count, and the column says of what
 
 ```rust
@@ -961,6 +1015,14 @@ Built and tested:
       their own, which caught two defects on the first two runs — a missing
       comparison arm that made every decimal compare equal, and a `skip` path
       that did not know the new type code
+- [x] Type mapping without widening the value model: `Timestamp` (an `i64` of
+      seconds, so nothing on disk changes), `#[derive(Enum)]` (the variant
+      name in a `Str`, with `rename`, because a reorder is the accident and a
+      rename is the deliberate act), and `Json<T>` behind a feature (a
+      serialized document in a `Str`, serialized at construction so the write
+      cannot fail). `Scalar`, `CalendarPart` and the rest are re-exported from
+      `slate-orm`, which they were not — a timestamp is only useful if the
+      calendar questions are reachable from the same crate
 - [x] `SELECT DISTINCT`, lowered to a grouping over the selected columns
       rather than added as an operator — the kernel's `Grouping` with keys and
       no aggregates already yields the distinct combinations. What stood in the
@@ -1006,6 +1068,14 @@ Not built:
       nothing in the expression layer tracks that
 - [ ] A decimal literal in the SQL front end: `WHERE total > 19.99` parses as a
       float and will not match a decimal column
+- [ ] Milliseconds. `Timestamp` is seconds because every calendar function
+      reads seconds; a millisecond column would need either a second type or a
+      scale on the column, the way a decimal has one, and neither is built
+- [ ] `chrono` or `time` interop. `Timestamp::from_unix_seconds` and
+      `.seconds()` are the whole surface, so converting is the caller's line of
+      code rather than a dependency in the record layer
+- [ ] Anything inside a `Json<T>`: no path expression, no index on a field, no
+      partial update. Deliberate, and the reason is in the type's own docs
 - [ ] Subqueries, `EXISTS` and `UNION`
 - [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
       same class of mistake as overwriting it, and the same argument applies

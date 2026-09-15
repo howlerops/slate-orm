@@ -93,7 +93,7 @@ pub trait Records {
     /// gone, so the caller has to re-read and re-decide.
     ///
     /// # Errors
-    /// [`KernelError::RowChanged`](slate_kernel::KernelError::RowChanged) if
+    /// [`KernelError::RowChanged`] if
     /// the stored row has moved, and everything [`Records::update_record`] can
     /// raise.
     async fn replace_record<R: Record + Sync>(

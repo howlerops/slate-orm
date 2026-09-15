@@ -49,6 +49,11 @@ uuid = { version = "1", features = ["v4"] }
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
+# Optional, for `slate-orm`'s `json` feature only. Declared here so the version
+# is stated once; `slate-wasm` pins the same major.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 # proc-macro
 proc-macro2 = "1"
 quote = "1"

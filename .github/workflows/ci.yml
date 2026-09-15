@@ -34,6 +34,14 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
+      # `cargo test --workspace` builds default features, so an optional one is
+      # a corner nothing compiles — the same shape as a workflow filter that
+      # never matches. `slate-orm`'s `json` feature is the only one there is;
+      # named explicitly rather than `--all-features`, which would also switch
+      # on `slate-slatedb`'s storage features and change what the other jobs
+      # are testing.
+      - run: cargo clippy -p slate-orm --features json --all-targets
+      - run: cargo test -p slate-orm --features json
       - name: Soak the tuple codec properties
         run: cargo test --release -p slate-tuple --test ordering
         env:

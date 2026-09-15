@@ -3818,6 +3818,8 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "bytes",
+ "serde",
+ "serde_json",
  "slate-derive",
  "slate-kernel",
  "slate-schema",

@@ -35,12 +35,16 @@
 pub mod error;
 pub mod ext;
 pub mod field;
+#[cfg(feature = "json")]
+pub mod json;
 pub mod record;
 pub mod relation;
 
 pub use error::{OrmError, Result};
 pub use ext::{Page, Records};
-pub use field::{Field, FieldError, Units};
+pub use field::{Field, FieldError, Timestamp, Units};
+#[cfg(feature = "json")]
+pub use json::{Json, JsonError};
 pub use record::{Record, RecordError};
 pub use relation::{Related, load_one_related, load_related, related_filter};
 
@@ -325,16 +329,89 @@ pub use relation::{Related, load_one_related, load_related, related_filter};
 /// pick one; name it with `foreign = <field>` instead.
 pub use slate_derive::Record;
 
+/// A fieldless enum stored as its variant name, in a `Str` column.
+///
+/// ```
+/// use slate_orm::{Enum, Field, Record, Value};
+///
+/// #[derive(Enum, PartialEq, Debug)]
+/// enum Payment {
+///     Cash,
+///     #[record(rename = "credit card")]
+///     CreditCard,
+/// }
+///
+/// assert_eq!(Payment::CreditCard.to_value(), Value::Str("credit card".into()));
+/// assert_eq!(Payment::from_value(&Value::Str("Cash".into())).unwrap(), Payment::Cash);
+/// // A name no variant claims is an error, not a default.
+/// assert!(Payment::from_value(&Value::Str("crypto".into())).is_err());
+/// ```
+///
+/// `rename` is the whole answer to the one hazard the design has: the stored
+/// name is load-bearing, so changing the Rust spelling must not change it.
+/// See [`slate_derive::Enum`] for why a name rather than an ordinal.
+///
+/// A variant carrying data has nowhere to put it — the column holds one string
+/// — so it is refused rather than dropped:
+///
+/// ```compile_fail
+/// use slate_orm::Enum;
+///
+/// #[derive(Enum)]
+/// enum Event {
+///     Opened,
+///     Closed(String),
+/// }
+/// ```
+///
+/// Two variants that store the same name would make the read pick whichever
+/// arm came first and lose the other for ever, silently, since writing both
+/// works:
+///
+/// ```compile_fail
+/// use slate_orm::Enum;
+///
+/// #[derive(Enum)]
+/// enum Payment {
+///     Cash,
+///     #[record(rename = "Cash")]
+///     Coins,
+/// }
+/// ```
+///
+/// An enum with no variants has no value to store, so `from_value` would have
+/// no arm to take:
+///
+/// ```compile_fail
+/// use slate_orm::Enum;
+///
+/// #[derive(Enum)]
+/// enum Nothing {}
+/// ```
+///
+/// And a struct wants [`Record`], which says so:
+///
+/// ```compile_fail
+/// use slate_orm::Enum;
+///
+/// #[derive(Enum)]
+/// struct Payment {
+///     kind: String,
+/// }
+/// ```
+pub use slate_derive::Enum;
+
 // The typed layer is not a wall around the kernel; re-export what a caller
 // needs so they are not forced to depend on four crates to write a query.
 pub use slate_kernel::{
-    Access, AccessSummary, Action, Aggregate, Chain, ChainCursor, ChainPlan, ChainRow, CmpOp,
-    ColumnStats, Explanation, Expr, Grant, Group, Join, JoinAlgorithm, JoinCursor, JoinExplanation,
-    JoinKey, JoinSchema, JoinStep, JoinStepPlan, JoinType, JoinedRow, KernelError, KeyRange,
-    MigrationPlan, MigrationReport, MigrationStep, NullsOrder, Plan, Policy, Principal, Projection,
-    Query, QueryCursor, RecordSnapshot, RecordStore, RecordTransaction, Refusal, ReplicaPool,
-    RetryPolicy, ScanOrder, SecurityCatalog, SecurityContext, Side, SortKey, Statistics,
-    TableState, TableStats, Truth, latency, memory, migrate,
+    Access, AccessSummary, Action, Aggregate, CalendarPart, CalendarUnit, Chain, ChainCursor,
+    ChainPlan, ChainRow, CmpOp, ColumnStats, Explanation, Expr, Grant, Group, Join, JoinAlgorithm,
+    JoinCursor, JoinExplanation, JoinKey, JoinSchema, JoinStep, JoinStepPlan, JoinType, JoinedRow,
+    KernelError, KeyRange, Metric, MigrationPlan, MigrationReport, MigrationStep, NullsOrder, Plan,
+    Policy, Principal, Projection, Query, QueryCursor, RecordSnapshot, RecordStore,
+    RecordTransaction, Refusal, ReplicaPool, RetryPolicy, ScanOrder, Scalar, SecurityCatalog,
+    SecurityContext, Side, SortKey, Statistics, TableState, TableStats, TimeUnit, Truth, latency,
+    memory, migrate,
 };
 pub use slate_schema::{
     Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Ordinal, Row, SchemaError, TableDef,

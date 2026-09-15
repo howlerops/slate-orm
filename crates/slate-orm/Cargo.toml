@@ -8,6 +8,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+# A `Json<T>` column: a serialized document in a `Str`. Off by default because
+# it is a convenience over `String` and brings two dependencies with it; CI runs
+# `cargo test -p slate-orm --features json` so it is not an untested corner.
+json = ["dep:serde", "dep:serde_json"]
+
 [dependencies]
 slate-derive.workspace = true
 slate-kernel.workspace = true
@@ -17,9 +24,13 @@ async-trait.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
