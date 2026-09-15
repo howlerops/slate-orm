@@ -902,6 +902,14 @@ impl Parser<'_> {
         // is the order SQL is written in. So it is captured raw and resolved
         // after FROM — which also gives a better error: an unknown column is
         // reported against the table the reader actually named.
+        // DISTINCT is not an operator here. It is `GROUP BY` over exactly the
+        // columns selected, which is what it means and what the kernel already
+        // does: a `Grouping` with those keys and no aggregates yields the
+        // distinct combinations, in key order. Adding a `Distinct` node to the
+        // query spec would have been a second way to say the same thing, with
+        // its own planning and its own bugs.
+        let distinct = self.eat("distinct");
+
         let mut list = Vec::new();
         let star = self.eat_symbol("*");
         if !star {
@@ -913,11 +921,27 @@ impl Parser<'_> {
             }
         }
 
+        if distinct && star {
+            // Every table here has a primary key, and a primary key already
+            // makes the rows distinct — so `SELECT DISTINCT *` is `SELECT *`
+            // with a grouping over every column bolted on, which reads every
+            // row, hashes all of it, and returns exactly what it was given.
+            // Answering it would be correct and would be the slowest possible
+            // way to do nothing.
+            return Err(SqlError {
+                message: "`SELECT DISTINCT *` returns every row: the primary key already \
+                          makes rows distinct, so this only costs a grouping. Name the \
+                          columns you want the distinct combinations of."
+                    .to_owned(),
+                at: self.at(),
+            });
+        }
+
         self.expect("from")?;
         let first = self.first_input()?;
 
         if self.eat_join() {
-            return self.join_tail(first, &list, star);
+            return self.join_tail(first, &list, star, distinct);
         }
 
         // An alias on a *single* table is refused rather than ignored. There is
@@ -961,6 +985,42 @@ impl Parser<'_> {
         // title.
         if self.eat("where") {
             spec.filters = self.conditions(&table)?;
+        }
+        if distinct {
+            if self.peek_word().as_deref() == Some("group") {
+                return Err(SqlError {
+                    message: "DISTINCT and GROUP BY are the same request written twice. \
+                              GROUP BY says which columns make a group; DISTINCT says the \
+                              selected ones do. Keep one."
+                        .to_owned(),
+                    at: self.at(),
+                });
+            }
+            // Before the select list is walked below, because that walk
+            // branches on whether there is a grouping — and this *is* the
+            // grouping. Resolved through the same `value_ordinal` GROUP BY
+            // uses, so `SELECT DISTINCT hour(pickup_time)` registers the
+            // computed column exactly once and groups on it.
+            for item in &list {
+                let at = item.at();
+                if matches!(item, SelectItem::Aggregate { .. }) {
+                    return Err(SqlError {
+                        message: "DISTINCT applies to the rows a query returns, and an \
+                                  aggregate returns one row per group — there is nothing \
+                                  left to deduplicate. Did you mean `count(distinct x)`?"
+                            .to_owned(),
+                        at,
+                    });
+                }
+                let ordinal = self.value_ordinal(item, &mut spec, &table, at, "DISTINCT")?;
+                // `SELECT DISTINCT a, a` is one key written twice. Keeping
+                // both would group on the pair — the same answer, with the
+                // column repeated in every row and no error anywhere. The
+                // same rule GROUP BY's join path already applies.
+                if !spec.group_by.contains(&ordinal) {
+                    spec.group_by.push(ordinal);
+                }
+            }
         }
         if self.eat("group") {
             self.expect("by")?;
@@ -1049,10 +1109,13 @@ impl Parser<'_> {
                 at: self.at(),
             });
         }
-        if grouping && spec.aggregates.is_empty() && !list.is_empty() {
-            // `SELECT zone FROM trips GROUP BY zone` — the distinct keys. The
-            // binding adds `count(*)` so the answer is not a bare column.
-        }
+        // `SELECT zone FROM trips GROUP BY zone` — a grouping with keys and no
+        // aggregates — is the distinct keys, and comes back as exactly that.
+        // There used to be an empty `if` here saying the binding appended a
+        // `count(*)` "so the answer is not a bare column". It did, and the
+        // answer was then two columns wide with one the query never mentioned.
+        // The default is gone; `SELECT DISTINCT` is the same lowering asked for
+        // by name.
         if self.eat("having") {
             if !grouping {
                 return Err(SqlError {
@@ -1767,6 +1830,7 @@ impl Parser<'_> {
         first: Input,
         list: &[SelectItem],
         star: bool,
+        distinct: bool,
     ) -> Result<Statement, SqlError> {
         // `(earlier input, its column, this table's column)` per table after
         // the first — `JoinKey` in the joined space, and what both specs want.
@@ -1857,6 +1921,38 @@ impl Parser<'_> {
             }
         }
 
+        if distinct {
+            if self.peek_word().as_deref() == Some("group") {
+                return Err(SqlError {
+                    message: "DISTINCT and GROUP BY are the same request written twice. \
+                              GROUP BY says which columns make a group; DISTINCT says the \
+                              selected ones do. Keep one."
+                        .to_owned(),
+                    at: self.at(),
+                });
+            }
+            // The same lowering the single-table path uses, over the joined
+            // space: the keys are the selected columns and there are no
+            // aggregates. `join_value_ordinal` refuses an aggregate item on
+            // its own, but with a message about group keys — so the DISTINCT
+            // case says what is actually wrong before reaching it.
+            for item in list {
+                let at = item.at();
+                if matches!(item, SelectItem::Aggregate { .. }) {
+                    return Err(SqlError {
+                        message: "DISTINCT applies to the rows a query returns, and an \
+                                  aggregate returns one row per group — there is nothing \
+                                  left to deduplicate. Did you mean `count(distinct x)`?"
+                            .to_owned(),
+                        at,
+                    });
+                }
+                let key = self.join_value_ordinal(item, &mut compute, &inputs, at)?;
+                if !group_by.contains(&key) {
+                    group_by.push(key);
+                }
+            }
+        }
         if self.eat("group") {
             self.expect("by")?;
             loop {
@@ -2510,4 +2606,16 @@ enum SelectItem {
         zone: String,
         at: usize,
     },
+}
+
+impl SelectItem {
+    /// Where in the source this item started.
+    ///
+    /// Every variant carries it already; this exists so that code walking a
+    /// list of items does not have to match three ways to report against one.
+    fn at(&self) -> usize {
+        match self {
+            Self::Column { at, .. } | Self::Aggregate { at, .. } | Self::Call { at, .. } => *at,
+        }
+    }
 }

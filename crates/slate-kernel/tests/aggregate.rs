@@ -484,3 +484,72 @@ async fn a_sort_with_a_limit_returns_the_true_top() {
         .collect();
     assert_eq!(ids, vec![ROWS - 1, ROWS - 2, ROWS - 3]);
 }
+
+/// A grouping with keys and *no* aggregates is `SELECT DISTINCT`.
+///
+/// Nothing was added to the kernel for this. A `Grouper` keyed on the columns
+/// and folding nothing already yields exactly the distinct combinations, in
+/// key order, and this test exists because that was an argument until it was
+/// run. The value of writing it down is that the front ends can lower
+/// `DISTINCT` to a grouping instead of growing an operator, and a later change
+/// that makes an empty aggregate list a refusal in the kernel now breaks a
+/// test that says why it must not.
+#[tokio::test]
+async fn a_grouping_with_no_aggregates_is_the_distinct_keys() {
+    let (store, _) = store().await;
+    let txn = store.begin().await.unwrap();
+
+    let groups = txn
+        .group_by(&root(), &sales(), &Query::all(), &[col("region")], &[])
+        .await
+        .unwrap();
+
+    // Three regions over 120 rows, each key once, in key order.
+    let keys: Vec<&Value> = groups.iter().map(|g| &g.key[0]).collect();
+    assert_eq!(
+        keys,
+        vec![
+            &Value::Str("r0".into()),
+            &Value::Str("r1".into()),
+            &Value::Str("r2".into())
+        ]
+    );
+    // And no values beside them. A group carrying a phantom count would make
+    // every front end that lowers DISTINCT this way render a stray column.
+    for group in &groups {
+        assert!(group.values.is_empty(), "{:?}", group.values);
+    }
+}
+
+/// Distinct over more than one column is the *combination*, not each column's
+/// own distinct values.
+///
+/// The fixture is built so the two answers differ: `region` cycles every 3 rows
+/// and `amount` every 10, so there are 3 regions, 10 amounts, and 30
+/// combinations — a lowering that grouped each column separately and zipped
+/// them would produce 10.
+#[tokio::test]
+async fn distinct_over_two_columns_is_the_combination() {
+    let (store, _) = store().await;
+    let txn = store.begin().await.unwrap();
+
+    let groups = txn
+        .group_by(
+            &root(),
+            &sales(),
+            &Query::all(),
+            &[col("region"), col("amount")],
+            &[],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(groups.len(), 30, "3 regions x 10 amounts");
+    // Every key really is distinct, which the count alone does not establish:
+    // thirty groups with a repeat among them would count the same.
+    let mut seen: Vec<&Vec<Value>> = groups.iter().map(|g| &g.key).collect();
+    seen.sort();
+    let before = seen.len();
+    seen.dedup();
+    assert_eq!(seen.len(), before, "a key came back twice");
+}

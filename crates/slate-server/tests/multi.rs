@@ -1565,14 +1565,59 @@ async fn having_an_aggregate_that_does_not_exist_is_refused() {
     );
 }
 
+/// No aggregates *and* no keys is still a refusal: it asks for one group with
+/// nothing in it.
+///
+/// This used to refuse on the aggregates alone, which also refused the keyed
+/// case below — `SELECT DISTINCT` over the wire — for a reason that only
+/// applies when there are no keys either.
 #[tokio::test]
-async fn an_aggregate_with_no_aggregates_is_refused() {
+async fn an_aggregate_with_neither_aggregates_nor_keys_is_refused() {
     let (serving, _backing) = seeded().await;
     let mut client = serving.client().await;
     let mut wire = count_over("books");
     wire.aggregates = Vec::new();
     let status = refused_aggregate(&mut client, wire).await;
     assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().contains("nothing in it"),
+        "the refusal should say what was asked for: {}",
+        status.message()
+    );
+}
+
+/// Keys and no aggregates is `SELECT DISTINCT`, and it crosses the wire.
+///
+/// The oracle is the kernel answering the same grouping directly, rather than
+/// a hand-written count: a number written here would agree with a server that
+/// returned the right *quantity* of wrong keys.
+#[tokio::test]
+async fn keys_with_no_aggregates_are_the_distinct_combinations() {
+    let (serving, backing) = seeded().await;
+    let mut client = serving.client().await;
+    let b = books();
+    let author_id = at(&b, "author_id");
+
+    let mut wire = count_over("books");
+    wire.aggregates = Vec::new();
+    wire.group_by = vec![column_ref(0, author_id.0)];
+    let actual = wire_groups(&mut client, wire).await.expect("distinct keys");
+
+    let store: RecordStore<Arc<MemoryStore>> = common::store(Arc::clone(&backing));
+    let txn = store.begin().await.unwrap();
+    let expected = txn
+        .group_by(&ctx(), &b, &Query::all(), &[author_id], &[])
+        .await
+        .unwrap();
+    txn.rollback();
+
+    assert!(!expected.is_empty(), "the fixture produced no groups");
+    assert_eq!(groups_from_wire(&actual), groups_from_kernel(&expected));
+    // And each group really is bare: a server that helpfully added a count
+    // would agree on the keys and disagree here.
+    for group in &actual {
+        assert!(group.values.is_empty(), "{:?}", group.values);
+    }
 }
 
 #[tokio::test]

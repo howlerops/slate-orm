@@ -382,7 +382,12 @@ class AggregateQuery(_QueryBase, _Grouping):
         return self
 
     def aggregate(self, *aggregates: Agg) -> AggregateQuery:
-        """At least one. A grouped query with no aggregates is a query."""
+        """What to compute per group.
+
+        Optional. Group keys with no aggregates are the distinct combinations
+        of those keys — `SELECT DISTINCT`. What the server refuses is neither:
+        no keys and no aggregates asks for one group with nothing in it.
+        """
         self._aggregates.extend(aggregates)
         return self
 
@@ -704,7 +709,12 @@ class GroupedJoinQuery(_Grouping):
         return self
 
     def aggregate(self, *aggregates: Agg) -> GroupedJoinQuery:
-        """At least one. A grouped query with no aggregates is a query."""
+        """What to compute per group.
+
+        Optional, as on `AggregateQuery`: keys with no aggregates are the
+        distinct combinations of those keys over the joined rows. Neither keys
+        nor aggregates is refused.
+        """
         self._aggregates.extend(aggregates)
         return self
 

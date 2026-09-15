@@ -120,7 +120,9 @@ pub struct QuerySpec {
     /// row. The plan says whether it managed to.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub group_by: Vec<u32>,
-    /// What to compute per group. `count(*)` when grouping with none named.
+    /// What to compute per group. Empty is not a shorthand for `count(*)`:
+    /// a grouping with keys and no aggregates is `SELECT DISTINCT` over those
+    /// keys, which is how the SQL front end lowers it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub aggregates: Vec<AggregateSpec>,
     /// Values computed per row and appended after the table's own columns, so
@@ -1138,9 +1140,13 @@ impl Playground {
                     let shifted = joined_ordinal(wanted.input, wanted.column, &authors, &books)?;
                     aggregates.push(aggregate_of(&wanted.kind, shifted)?);
                 }
-                if aggregates.is_empty() {
-                    aggregates.push(Aggregate::Count);
-                }
+                // No implicit `count(*)`. It was here because a grouping
+                // with nothing to compute had no meaning when this was a
+                // panel with a group-by picker and no aggregate picker — and
+                // it is exactly what `SELECT DISTINCT` needs, so a default
+                // that quietly appended a column the caller never asked for
+                // is now a wrong answer rather than a convenience. A caller
+                // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
                 if !spec.having.is_empty() {
@@ -1384,9 +1390,13 @@ impl Playground {
                     let shifted = chained_ordinal(wanted.input, wanted.column, &refs)?;
                     aggregates.push(aggregate_of(&wanted.kind, shifted)?);
                 }
-                if aggregates.is_empty() {
-                    aggregates.push(Aggregate::Count);
-                }
+                // No implicit `count(*)`. It was here because a grouping
+                // with nothing to compute had no meaning when this was a
+                // panel with a group-by picker and no aggregate picker — and
+                // it is exactly what `SELECT DISTINCT` needs, so a default
+                // that quietly appended a column the caller never asked for
+                // is now a wrong answer rather than a convenience. A caller
+                // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
                 if !spec.having.is_empty() {
@@ -2507,11 +2517,7 @@ fn grouped_headers(
 /// column sits at `fare`'s ordinal, or with the bare ordinal when `zones` is
 /// narrower. Again: right numbers, wrong heading.
 fn joined_labels(specs: &[AggregateSpec], inputs: &[Named<'_>]) -> Vec<String> {
-    if specs.is_empty() {
-        // `count` is always there, added by the binding when the reader named
-        // no aggregate.
-        return vec!["count(*)".to_owned()];
-    }
+    // No implicit `count` any more, here or in the binding. See `labels`.
     specs
         .iter()
         .map(|a| {
@@ -2530,9 +2536,11 @@ fn joined_labels(specs: &[AggregateSpec], inputs: &[Named<'_>]) -> Vec<String> {
 }
 
 fn labels(specs: &[AggregateSpec], table: &TableDef) -> Vec<String> {
-    if specs.is_empty() {
-        return vec!["count(*)".to_owned()];
-    }
+    // No header for an aggregate that is not there. This matched the implicit
+    // `count(*)` in `aggregates` and had to be removed with it — a header the
+    // rows have no value for shifts every cell one column left, which is the
+    // failure mode that made `SELECT count(*) FROM books` return the right
+    // numbers under the wrong names.
     specs
         .iter()
         .map(|a| {
@@ -2552,13 +2560,15 @@ fn labels(specs: &[AggregateSpec], table: &TableDef) -> Vec<String> {
 /// Lower the UI's aggregate list onto the kernel's, resolving ordinals
 /// against the table the aggregates read.
 ///
-/// `count(*)` when the list is empty: a grouped query with no aggregate is a
-/// list of distinct keys, and returning nothing beside the key would make the
-/// result look broken rather than minimal.
+/// An empty list is empty. It used to mean `count(*)`, on the argument that a
+/// bare list of keys looks broken rather than minimal — which was a guess about
+/// what a reader wants, made in the one place that could not be overridden, and
+/// it is what `SELECT DISTINCT` needs to be able to ask for.
 fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate>, String> {
-    if specs.is_empty() {
-        return Ok(vec![Aggregate::Count]);
-    }
+    // An empty list means no aggregates, not `count(*)`. See the note on the
+    // join path: the default made `SELECT author_id FROM books GROUP BY
+    // author_id` come back two columns wide, one of which the query does not
+    // mention, and made `SELECT DISTINCT` inexpressible.
     let mut out = Vec::with_capacity(specs.len());
     for spec in specs {
         let column = Ordinal(spec.column as usize);

@@ -417,7 +417,10 @@ type Grouping struct {
 	// 1)` is the second input's second column. For a grouped table every key
 	// is on input 0, and [Key0] spells that.
 	GroupBy []Column
-	// Aggregates is what to compute. At least one.
+	// Aggregates is what to compute per group. Optional: keys with no
+	// aggregates are the distinct combinations of those keys — SELECT
+	// DISTINCT. What the server refuses is neither, which asks for one group
+	// with nothing in it.
 	Aggregates []Aggregate
 	// Having keeps groups. Names keys and aggregates, not columns.
 	Having *Expr

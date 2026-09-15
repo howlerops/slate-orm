@@ -153,10 +153,37 @@ def test_grouping_a_chain(client: Client) -> None:
         assert count >= 1
 
 
-def test_a_grouped_join_needs_at_least_one_aggregate(client: Client) -> None:
+def test_a_grouped_join_with_no_aggregates_is_the_distinct_keys(
+    client: Client,
+) -> None:
+    """This used to assert a refusal, and the refusal was wrong.
+
+    A grouped join with keys and no aggregates is `SELECT DISTINCT` over the
+    joined rows — the kernel has always answered it, and the server refused
+    because its guard tested the aggregates alone. What is still refused is
+    neither keys nor aggregates, which the next test covers.
+    """
     join, authors, _ = _authors_books()
     grouped = GroupedJoinQuery(join)
     grouped.group_by(authors.c.id)
+
+    groups = list(client.aggregate(grouped))
+    assert groups, "the fixture should produce groups"
+    # Bare keys: nothing beside them. A server that appended a count would
+    # still return one group per author and pass a length assertion.
+    assert all(len(g) == 0 for g in groups), [list(g) for g in groups]
+    # And one group per author that has a book, which is what makes the keys
+    # distinct rather than merely present.
+    ids = [g.key[0] for g in groups]
+    assert len(ids) == len(set(ids))
+
+
+def test_a_grouped_join_with_neither_keys_nor_aggregates_is_refused(
+    client: Client,
+) -> None:
+    """One group over every joined row, computing nothing: no answer to give."""
+    join, _authors, _ = _authors_books()
+    grouped = GroupedJoinQuery(join)
 
     with pytest.raises(InvalidRequest):
         list(client.aggregate(grouped))

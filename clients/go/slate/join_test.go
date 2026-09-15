@@ -229,6 +229,74 @@ func TestEveryJoinAlgorithmAgrees(t *testing.T) {
 	}
 }
 
+// Keys and no aggregates are the distinct combinations of those keys, which is
+// what SELECT DISTINCT means. The server used to refuse this along with the
+// genuinely meaningless case (no keys and no aggregates), so a caller wanting
+// distinct values had to ask for a count and throw it away.
+func TestGroupKeysWithNoAggregatesAreTheDistinctValues(t *testing.T) {
+	session := library(t)
+
+	stream, err := session.Aggregate(testContext(t),
+		slate.Query{Table: "books"},
+		slate.Grouping{GroupBy: []slate.Column{slate.Key0(1)}})
+	if err != nil {
+		t.Fatalf("aggregating: %v", err)
+	}
+	groups, err := stream.Collect()
+	if err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+
+	// The oracle: the author ids in the rows themselves, read back through the
+	// same client rather than written down here.
+	rows, err := session.Query(testContext(t), slate.Query{Table: "books"})
+	if err != nil {
+		t.Fatalf("querying: %v", err)
+	}
+	all, err := rows.Collect()
+	if err != nil {
+		t.Fatalf("draining rows: %v", err)
+	}
+	distinct := map[string]struct{}{}
+	for _, row := range all {
+		distinct[fmt.Sprint(row[1])] = struct{}{}
+	}
+	if len(distinct) < 2 {
+		t.Fatalf("a one-value column proves nothing: %v", distinct)
+	}
+	if len(groups) != len(distinct) {
+		t.Fatalf("got %d groups for %d distinct author ids", len(groups), len(distinct))
+	}
+	for _, group := range groups {
+		if _, ok := distinct[fmt.Sprint(group.Key[0])]; !ok {
+			t.Errorf("group key %v is not an author id in the rows", group.Key[0])
+		}
+		// And nothing beside the key: a server that helpfully added a count
+		// would pass every assertion above.
+		if len(group.Values) != 0 {
+			t.Errorf("group %v carries %d values, want none", group.Key, len(group.Values))
+		}
+	}
+}
+
+// Neither keys nor aggregates is still refused: it asks for one group with
+// nothing in it.
+func TestNeitherKeysNorAggregatesIsRefused(t *testing.T) {
+	session := library(t)
+
+	stream, err := session.Aggregate(testContext(t),
+		slate.Query{Table: "books"}, slate.Grouping{})
+	if err == nil {
+		_, err = stream.Collect()
+	}
+	if err == nil {
+		t.Fatal("an aggregate with no keys and no aggregates must be refused")
+	}
+	if !strings.Contains(err.Error(), "nothing in it") {
+		t.Errorf("the refusal should say what was asked for: %v", err)
+	}
+}
+
 func TestAggregateOverOneTable(t *testing.T) {
 	session := library(t)
 

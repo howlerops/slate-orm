@@ -391,7 +391,13 @@ export const groupGe = (r: GroupRef, v: Value): Expr => groupCompare(r, "CMP_OP_
 export interface Grouping {
   /** The key columns. Empty means one group over every row. */
   readonly groupBy?: Column[];
-  /** What to compute. At least one. */
+  /**
+   * What to compute per group.
+   *
+   * May be empty: keys with no aggregates are the distinct combinations of
+   * those keys — `SELECT DISTINCT`. What the server refuses is neither, which
+   * asks for one group with nothing in it.
+   */
   readonly aggregates: Aggregate[];
   /** Keeps groups. Names keys and aggregates, not columns. */
   readonly having?: Expr;

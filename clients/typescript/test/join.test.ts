@@ -176,6 +176,40 @@ test("aggregate over one table", async () => {
   assert.equal(countOfGroup(groups[0]!), 5n);
 });
 
+// Keys and no aggregates are the distinct combinations of those keys, which is
+// what SELECT DISTINCT means. The server used to refuse this along with the
+// genuinely meaningless case below.
+test("group keys with no aggregates are the distinct values", async () => {
+  const session = await library();
+  const groups = await session
+    .aggregate({ table: "books" }, { groupBy: [key0(1)], aggregates: [] })
+    .collect();
+
+  // The oracle: the author ids in the rows themselves, through the same
+  // client, rather than a number written here.
+  const rows = await session.query({ table: "books" }).collect();
+  const distinct = new Set(rows.map((row) => String((row[1] as { value: bigint }).value)));
+  assert.ok(distinct.size > 1, "a one-value column proves nothing");
+  assert.equal(groups.length, distinct.size);
+  for (const group of groups) {
+    assert.ok(distinct.has(String(keyOf(group))), `${keyOf(group)} is not an author id`);
+    // And nothing beside the key: a server that helpfully added a count would
+    // pass every assertion above.
+    assert.equal(group.values.length, 0, "a group carried values it was not asked for");
+  }
+});
+
+test("neither keys nor aggregates is refused", async () => {
+  const session = await library();
+  await assert.rejects(
+    () => session.aggregate({ table: "books" }, { groupBy: [], aggregates: [] }).collect(),
+    (error: Error) => {
+      assert.match(error.message, /nothing in it/);
+      return true;
+    },
+  );
+});
+
 test("a grouped aggregate", async () => {
   const session = await library();
   const groups = await session

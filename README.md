@@ -961,6 +961,18 @@ Built and tested:
       their own, which caught two defects on the first two runs — a missing
       comparison arm that made every decimal compare equal, and a `skip` path
       that did not know the new type code
+- [x] `SELECT DISTINCT`, lowered to a grouping over the selected columns
+      rather than added as an operator — the kernel's `Grouping` with keys and
+      no aggregates already yields the distinct combinations. What stood in the
+      way was two defaults, not a missing feature: the browser binding turned
+      an empty aggregate list into `count(*)`, and the head node refused one
+      outright. The first also meant
+      `SELECT author_id FROM books GROUP BY author_id` came back two columns
+      wide with one the query does not mention; the second meant a client
+      wanting distinct values had to ask for a count and discard it. **This
+      one does cross the wire**, and there is a test for it in Python, Go and
+      TypeScript. `SELECT DISTINCT *` is refused with its reason, since a
+      primary key already makes rows distinct
 - [x] `SELECT count(*) FROM books` — a grouping with no keys, which the kernel
       had always answered and only the SQL front end refused. Lifting it
       surfaced a second bug the reasoning had missed: the header code tested
@@ -994,8 +1006,6 @@ Not built:
       nothing in the expression layer tracks that
 - [ ] A decimal literal in the SQL front end: `WHERE total > 19.99` parses as a
       float and will not match a decimal column
-- [ ] `SELECT DISTINCT` as a keyword, though `GROUP BY` over the same columns
-      already returns the distinct keys
 - [ ] Subqueries, `EXISTS` and `UNION`
 - [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
       same class of mistake as overwriting it, and the same argument applies

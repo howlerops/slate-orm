@@ -52,6 +52,18 @@ const EXAMPLES = [
       "SELECT count(*), min(fare), max(total), avg(distance) FROM trips",
   ],
   [
+    "Every payment type, once",
+    "-- DISTINCT is not an operator here. It lowers to GROUP BY over exactly\n" +
+      "-- the columns selected, with no aggregates -- which is what it means,\n" +
+      "-- and what the kernel has always done. The Spec tab shows the groupBy\n" +
+      "-- and no aggregates at all.\n" +
+      "--\n" +
+      "-- Swap DISTINCT for `, count(*) ... GROUP BY payment` and you get the\n" +
+      "-- next example. Ask for both and it is refused: they are one request\n" +
+      "-- written twice.\n" +
+      "SELECT DISTINCT payment FROM trips",
+  ],
+  [
     "How people pay",
     "SELECT payment, count(*), avg(total), max(tip) FROM trips\n  GROUP BY payment ORDER BY count(*) DESC",
   ],

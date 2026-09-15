@@ -2061,9 +2061,17 @@ pub fn aggregate_from_proto_query(
         _ => {}
     }
 
-    if wire.aggregates.is_empty() {
+    // Keys and no aggregates is `SELECT DISTINCT`, not a mistake: the kernel's
+    // `Grouping` yields exactly the distinct key combinations, and a client
+    // that wants them should not have to ask for a `count(*)` it will throw
+    // away. What stays refused is *neither* — no keys and no aggregates asks
+    // for one group with nothing in it, which is a query that forgot to be a
+    // query.
+    if wire.aggregates.is_empty() && wire.group_by.is_empty() {
         return Err(bad(
-            "an aggregate request with no aggregates is a query; use Query",
+            "an aggregate request with no aggregates and no group keys asks for one group \
+             with nothing in it; use Query for rows, or name group keys for their distinct \
+             combinations",
         ));
     }
 

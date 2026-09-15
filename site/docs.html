@@ -195,10 +195,26 @@ actions = ["everything"]</code></pre>
         </p>
         <p>
           A grouping with no keys is one group over every row, which is what
-          <code>SELECT count(*) FROM trips</code> means. The kernel had always
-          answered it; only the browser's SQL front end refused, and that
-          refusal is gone. Try it from &ldquo;The whole table, in one
-          row&rdquo;.
+          <code>SELECT count(*) FROM trips</code> means. A grouping with keys
+          and no aggregates is the other end of the same dial:
+          <code>SELECT DISTINCT</code>. Both were front-end refusals over a
+          kernel that had always answered them.
+        </p>
+        <p>
+          So <code>DISTINCT</code> is not an operator here &mdash; it lowers to
+          <code>GROUP BY</code> over the columns selected, and the Spec tab
+          shows exactly that. Asking for both is refused: they are one request
+          written twice. <code>SELECT DISTINCT *</code> is refused too, with
+          the reason &mdash; every table has a primary key, so the rows are
+          already distinct and the grouping would cost a full pass to return
+          what it was given.
+        </p>
+        <p>
+          It crosses the wire as well: group keys with no aggregates, from
+          Python, Go or TypeScript. The head node used to refuse that on the
+          aggregates alone, which was right about the case it was written for
+          &mdash; no keys <em>and</em> no aggregates asks for one group with
+          nothing in it &mdash; and wrong about this one.
         </p>
       </div>
       <div class="card">
