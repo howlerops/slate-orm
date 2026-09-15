@@ -38,8 +38,15 @@ fn tables() -> Vec<TableDef> {
 }
 
 fn parsed(text: &str) -> Result<Statement, String> {
+    parse_with_warnings(text).map(|(statement, _)| statement)
+}
+
+/// The statement and the warnings the parser attached to it.
+fn parse_with_warnings(text: &str) -> Result<(Statement, Vec<String>), String> {
     let tables = tables();
-    parse(text, &Schema(&tables)).map_err(|e| format!("{} (at {})", e.message, e.at))
+    parse(text, &Schema(&tables))
+        .map(|p| (p.statement, p.warnings))
+        .map_err(|e| format!("{} (at {})", e.message, e.at))
 }
 
 /// Every statement's result, as the editor gets them.

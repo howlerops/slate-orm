@@ -324,6 +324,31 @@ out.joinRightKey = {
   refusal: await page.locator('[data-app="grid"] .refusal').count(),
 };
 
+// 9c8. Ordering a grouped join's groups, which `JoinSpec` had no field for at
+//      all — so the whole clause was refused on a join. `count(*) DESC` rather
+//      than the key, because the key order is what comes back anyway.
+out.joinOrdered = await type(
+  "SELECT borough, count(*) FROM trips JOIN zones " +
+  "ON trips.pickup_zone = zones.id " +
+  "GROUP BY borough ORDER BY count(*) DESC LIMIT 3",
+);
+out.joinOrderedRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+
+// 9c9. And an unqualified name both tables have. `trips` and `zones` both have
+//      `id`, the rule is left-first, and until now nothing said so on screen.
+//      The query runs; the caution above the table is the point.
+out.ambiguous = await type(
+  "SELECT id, count(*) FROM trips JOIN zones " +
+  "ON trips.pickup_zone = zones.id GROUP BY id LIMIT 5",
+);
+out.ambiguousCaution = await page.locator('[data-app="grid"] .caution').allInnerTexts();
+// Qualifying it is the advice the caution gives, so it had better work.
+out.qualified = await type(
+  "SELECT zones.id, count(*) FROM trips JOIN zones " +
+  "ON trips.pickup_zone = zones.id GROUP BY zones.id LIMIT 5",
+);
+out.qualifiedCaution = await page.locator('[data-app="grid"] .caution').count();
+
 // 9d. The timing in the status bar is the kernel's, not the round trip.
 //     A grouped query returning 226 rows spends ~1% of its wall clock on
 //     JSON, so no breakdown is shown; `SELECT *` over 100,000 rows spends
@@ -826,6 +851,28 @@ def main() -> int:
         and "no such timezone" in seen["badZoneWhy"]
         and "America/New_York" in seen["badZoneWhy"],
         f"{seen['badZoneWhy']!r}",
+    )
+
+    ordered = [int(row.split("\t")[1]) for row in seen["joinOrderedRows"]]
+    check(
+        "a grouped join's groups can be ordered, by an aggregate, in the browser",
+        seen["joinOrdered"]["refusal"] == 0
+        and len(ordered) == 3
+        and all(a >= b for a, b in zip(ordered, ordered[1:])),
+        f"{seen['joinOrdered']['status']!r} {ordered}",
+    )
+    check(
+        "an unqualified name both tables have is called out rather than silent",
+        seen["ambiguous"]["refusal"] == 0
+        and len(seen["ambiguousCaution"]) == 1
+        and "`id` is a column of both" in seen["ambiguousCaution"][0]
+        and "trips.id" in seen["ambiguousCaution"][0],
+        f"{seen['ambiguousCaution']!r}",
+    )
+    check(
+        "and qualifying it — which is what the caution advises — silences it",
+        seen["qualified"]["refusal"] == 0 and seen["qualifiedCaution"] == 0,
+        f"{seen['qualifiedCaution']!r}",
     )
 
     # A computed group key on a join lands after *both* tables. If it landed

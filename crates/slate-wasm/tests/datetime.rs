@@ -1262,3 +1262,276 @@ fn the_zone_is_part_of_the_column_and_of_its_header() {
     assert_eq!(hour(1), hour(2), "{row}");
     assert_eq!((hour(0) - 5).rem_euclid(24), hour(1), "{row}");
 }
+
+// --- ordering a grouped join, and saying when a name is ambiguous ---------
+
+/// `ORDER BY` on a grouped join orders the *groups*, and by an aggregate.
+///
+/// `JoinSpec` had no sort at all, so this was refused with "ORDER BY is not
+/// supported on a join yet" — true of both shapes and explanatory of neither.
+/// A grouped join's groups are `[key, aggregates...]` and the kernel's
+/// `Grouping::sort` has always been able to order them; the spec simply could
+/// not say so.
+///
+/// Ordering by `count(*)` descending rather than by the key, because the key
+/// order is what comes back anyway: an ORDER BY that agrees with the default
+/// passes whether or not it was lowered.
+#[test]
+fn a_grouped_join_can_be_ordered_by_its_aggregate() {
+    let playground = loaded();
+    let by_count = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY count(*) DESC",
+    );
+    let counts: Vec<i64> = by_count["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert!(counts.len() > 1, "the sample covers several boroughs");
+    assert!(
+        counts.windows(2).all(|pair| pair[0] >= pair[1]),
+        "descending by count: {counts:?}"
+    );
+    // The spec carries it, so this is a lowering rather than a coincidence of
+    // how the groups happened to come back.
+    assert_eq!(
+        by_count["spec"]["sort"],
+        json!([{"column": 1, "descending": true}]),
+        "{}",
+        by_count["spec"]
+    );
+
+    // Ascending is the same groups the other way round, which rules out an
+    // ordering that ignores the direction.
+    let ascending = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY count(*) ASC",
+    );
+    let up: Vec<i64> = ascending["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(up, counts.iter().rev().copied().collect::<Vec<_>>());
+
+    // And by the key, which is `column: 0` — the group's first slot, not the
+    // joined row's first column.
+    let by_key = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY borough DESC",
+    );
+    assert_eq!(
+        by_key["spec"]["sort"],
+        json!([{"column": 0, "descending": true}])
+    );
+    let boroughs: Vec<String> = by_key["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        boroughs.windows(2).all(|pair| pair[0] >= pair[1]),
+        "descending by borough: {boroughs:?}"
+    );
+}
+
+/// A computed group key can be ordered too, and only what the groups carry can.
+#[test]
+fn ordering_a_grouped_join_names_the_key_or_an_aggregate() {
+    let playground = loaded();
+    let ordered = ok(
+        &playground,
+        "SELECT hour(pickup_time), count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY hour(pickup_time) ORDER BY hour(pickup_time) DESC",
+    );
+    let hours: Vec<i64> = ordered["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(hours, (0..24).rev().collect::<Vec<_>>());
+
+    // An ungrouped join has no sort to lower onto, and the refusal says which
+    // shape the reader is in rather than "not supported yet".
+    let message = refused(
+        &playground,
+        "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         ORDER BY trips.id",
+    );
+    assert!(message.contains("needs a GROUP BY"), "{message}");
+    assert!(
+        message.contains("orders groups, not joined rows"),
+        "{message}"
+    );
+
+    // An aggregate the select list does not compute is not in the groups.
+    let message = refused(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY max(fare) DESC",
+    );
+    assert!(message.contains("does not compute"), "{message}");
+
+    // Neither is a column that is not the group key.
+    let message = refused(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY zone",
+    );
+    assert!(
+        message.contains("names the group key or one of"),
+        "{message}"
+    );
+}
+
+/// An unqualified name both of a join's tables have is a warning, not silence.
+///
+/// `trips` and `zones` both have `id`, and the resolution rule is left-first —
+/// so `SELECT id ... FROM trips JOIN zones` answers about `trips.id`. That is
+/// a defensible rule and was documented only in the parser's source. The query
+/// still runs; there is now a line on screen saying which side it chose.
+#[test]
+fn an_ambiguous_name_on_a_join_warns_and_still_answers() {
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT id, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY id",
+    );
+    let warnings = answer["warnings"].as_array().expect("a warnings array");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let warning = warnings[0].as_str().unwrap();
+    assert!(warning.contains("`id` is a column of both"), "{warning}");
+    assert!(warning.contains("trips.id"), "{warning}");
+    assert!(warning.contains("Qualify it"), "{warning}");
+    // It really did group by `trips.id`, which is unique, so there is one
+    // group per matched trip rather than one per zone.
+    let groups = answer["rows"].as_array().unwrap().len();
+    assert!(
+        groups > 300,
+        "grouping by trips.id gives many groups: {groups}"
+    );
+
+    // Said once per name, not once per mention: `id` appears twice above.
+    // And a name only one side has says nothing at all.
+    let unambiguous = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY borough",
+    );
+    assert!(
+        unambiguous["warnings"].is_null() || unambiguous["warnings"].as_array().unwrap().is_empty(),
+        "{}",
+        unambiguous["warnings"]
+    );
+
+    // Qualifying it silences the warning, which is the whole point of the
+    // advice the warning gives.
+    let qualified = ok(
+        &playground,
+        "SELECT zones.id, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id GROUP BY zones.id",
+    );
+    assert!(
+        qualified["warnings"].is_null() || qualified["warnings"].as_array().unwrap().is_empty(),
+        "{}",
+        qualified["warnings"]
+    );
+    // And it grouped by the *zone*, so far fewer groups than by trip.
+    let zones = qualified["rows"].as_array().unwrap().len();
+    assert!(zones < groups, "{zones} zones against {groups} trips");
+}
+
+/// `LIMIT` and `OFFSET` on a grouped join cut the **groups**, not the rows.
+///
+/// `OFFSET` was not expressible on a join at all — `JoinSpec` had no field for
+/// it, though `Join` and `Grouping` both do — so this is the first test of
+/// either window on a grouped join.
+///
+/// It also withdraws a hypothesis. `join.limit` used to be set whether or not
+/// the read was grouped, which looked like the mistake the single-table path is
+/// careful to avoid: a window over the rows going *into* a grouping answers a
+/// different question. Putting that "bug" back changed nothing, because
+/// `narrowed_join` in the kernel clears a grouped join's `limit` and `offset`
+/// and says why. The test is kept: it pins the behaviour that makes the
+/// binding's arrangement harmless, and nothing else asserted it from here.
+#[test]
+fn a_grouped_joins_limit_and_offset_cut_the_groups() {
+    let playground = loaded();
+    let all = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY count(*) DESC",
+    );
+    let rows = |answer: &Json| -> Vec<(String, i64)> {
+        answer["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row[0].as_str().unwrap().to_owned(),
+                    row[1].as_str().unwrap().parse().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let every = rows(&all);
+    assert!(every.len() >= 4, "the sample covers several boroughs");
+    // Every group still counts the whole sample between them, which is what
+    // says the limit below is cutting groups rather than rows.
+    assert_eq!(
+        every.iter().map(|(_, n)| n).sum::<i64>(),
+        100_000,
+        "{every:?}"
+    );
+
+    let first_two = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY count(*) DESC LIMIT 2",
+    );
+    assert_eq!(rows(&first_two), every[..2].to_vec());
+
+    let skipped = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones \
+         ON trips.pickup_zone = zones.id \
+         GROUP BY borough ORDER BY count(*) DESC LIMIT 2 OFFSET 1",
+    );
+    assert_eq!(rows(&skipped), every[1..3].to_vec());
+    assert_eq!(skipped["spec"]["offset"], json!(1));
+
+    // And on an *ungrouped* join they cut rows, which is the only thing they
+    // could mean there.
+    let three = ok(
+        &playground,
+        "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id LIMIT 3",
+    );
+    assert_eq!(three["rows"].as_array().unwrap().len(), 3);
+    let past = ok(
+        &playground,
+        "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         LIMIT 3 OFFSET 2",
+    );
+    let three = three["rows"].as_array().unwrap();
+    let past = past["rows"].as_array().unwrap();
+    assert_eq!(past.len(), 3);
+    assert_eq!(&past[..1], &three[2..3], "an offset drops the leading rows");
+}

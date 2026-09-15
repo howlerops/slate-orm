@@ -301,7 +301,30 @@ pub struct JoinSpec {
     pub group_by: Option<u32>,
     /// Computed per group. Each names its side with `AggregateSpec::input`.
     pub aggregates: Vec<AggregateSpec>,
+    /// How to order the **groups** of a grouped join. Empty leaves them in the
+    /// order the encoded key sorts them.
+    ///
+    /// A group is `[key, aggregates...]`, so `column: 0` is the key and
+    /// `column: 1` is the first aggregate — a space of its own with nothing to
+    /// do with either table's ordinals. That is `Grouping::sort`, and it is
+    /// what `ORDER BY count(*) DESC` on a grouped join lowers onto.
+    ///
+    /// Only meaningful with `group_by`. An *ungrouped* join has no sort,
+    /// because `Join` has no sort: the kernel orders groups and not joined
+    /// rows, and the parser refuses `ORDER BY` there with that reason rather
+    /// than accepting it into a field nothing reads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sort: Vec<SortSpec>,
     pub limit: Option<u64>,
+    /// Rows, or groups, to discard first.
+    ///
+    /// On a grouped join this is `Grouping::offset` and on an ungrouped one
+    /// `Join::offset`, both of which the kernel has always had. This spec did
+    /// not, so `LIMIT 3 OFFSET 5` was a parse error on a join and worked on a
+    /// single table — a difference in the *front end* that read as a
+    /// difference in the engine.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: u64,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -385,6 +408,17 @@ struct SqlResult {
     /// telling a reader that this database is slow at `SELECT *` when what is
     /// slow is `serde_json`.
     kernel_ms: f64,
+    /// True things about the statement that are not refusals.
+    ///
+    /// One kind so far: an unqualified name that both of a join's tables have,
+    /// which resolves left-first. That rule was documented in the parser and
+    /// nowhere a reader could see it. See `sql::Parsed::warnings`.
+    ///
+    /// Beside the answer rather than folded into `message`, which the write
+    /// path uses for what it did — a caller that wants to render warnings
+    /// differently from a status line should not have to parse one string.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
     error: Option<SqlFailure>,
 }
 
@@ -408,6 +442,7 @@ impl SqlResult {
             inputs: Vec::new(),
             message: String::new(),
             kernel_ms: 0.0,
+            warnings: Vec::new(),
             error: None,
         }
     }
@@ -904,8 +939,29 @@ impl Playground {
         // `ColumnRef` removes in the clients, done by hand here because this
         // spec is JSON from a browser rather than a typed builder.
         join.compute = joined_computes(&spec.compute, &authors, &books)?;
-        if let Some(limit) = spec.limit {
-            join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+        // `LIMIT` and `OFFSET` belong to whichever thing the read returns: the
+        // joined rows here, the *groups* in the grouped arm below.
+        //
+        // **A withdrawn hypothesis.** This used to set them unconditionally,
+        // and that looked like the mistake the single-table path is careful to
+        // avoid — a window over the rows going *into* a grouping answers a
+        // different question, "the boroughs of the first two matched trips"
+        // rather than "the first two boroughs". So it was written up as a bug
+        // and then mutation-tested by putting it back. Nothing failed:
+        // `narrowed_join` in the kernel clears a grouped join's `limit` and
+        // `offset` and explains why at length, because honouring them made
+        // the answer depend on which join algorithm won — a real defect once,
+        // found by two hash build sides disagreeing.
+        //
+        // So this guard changes no answer, and it stays for legibility: the
+        // spec's window is set where it applies rather than everywhere and
+        // discarded downstream. The claim that it was a live bug is
+        // withdrawn.
+        if spec.group_by.is_none() {
+            if let Some(limit) = spec.limit {
+                join.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+            }
+            join.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
         }
 
         let grouping = match spec.group_by {
@@ -938,11 +994,31 @@ impl Playground {
                 if aggregates.is_empty() {
                     aggregates.push(Aggregate::Count);
                 }
-                Some(Grouping::by([Ordinal(key as usize)], &aggregates))
+                let mut grouping = Grouping::by([Ordinal(key as usize)], &aggregates);
+                if let Some(limit) = spec.limit {
+                    grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
+                }
+                grouping.offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
+                // Over the *group*, not over the joined row: a group is its
+                // key followed by its aggregates, and `SortSpec::column`
+                // indexes that. Resolved in the parser, which is the only
+                // place that knows which aggregate the reader named.
+                grouping.sort = spec
+                    .sort
+                    .iter()
+                    .map(|key| {
+                        let ordinal = Ordinal(key.column as usize);
+                        if key.descending {
+                            SortKey::desc(ordinal)
+                        } else {
+                            SortKey::asc(ordinal)
+                        }
+                    })
+                    .collect();
+                Some(grouping)
             }
         };
 
-        let tables = [&authors, &books];
         let started = now_ms();
         let (explanation, rows, groups) = block_on(async {
             let snapshot = self.store.snapshot().await?;
@@ -979,23 +1055,35 @@ impl Playground {
         .map_err(|e| e.to_string())?;
         let elapsed = now_ms() - started;
 
-        let left_width = tables.first().map_or(0, |t| t.columns().len());
-        let rows: Vec<Vec<String>> = rows
-            .iter()
-            .map(|row| {
-                let mut line = Vec::new();
-                for side in [&row.left, &row.right] {
-                    match side {
-                        Some(values) => line.extend(render(values)),
-                        // An outer join's missing side. Inner joins never
-                        // produce one, but rendering it as text rather than
-                        // skipping keeps the columns aligned with the header.
-                        None => line.extend(std::iter::repeat_n("—".to_owned(), left_width)),
+        let rows: Vec<Vec<String>> =
+            rows.iter()
+                .map(|row| {
+                    let mut line = Vec::new();
+                    // Each side padded to *its own* width. This used the left
+                    // table's width for both, which is wrong whenever the tables
+                    // differ — every cell after the padding would shift, silently,
+                    // with the header still naming what was supposed to be there.
+                    //
+                    // Labelled as latent rather than fixed, because nothing
+                    // reaches it: `JoinSpec` carries no join type, so every join
+                    // this binding runs is inner and no side is ever missing. The
+                    // arm is here so the grid stays aligned the day an outer join
+                    // becomes expressible, and it was wrong in a way that would
+                    // have been found by a reader rather than by a test. Kept
+                    // correct now, while the reason is in front of someone.
+                    for (side, table) in [(&row.left, &authors), (&row.right, &books)] {
+                        match side {
+                            Some(values) => line.extend(render(values)),
+                            // An outer join's missing side. Inner joins never
+                            // produce one, but rendering it as text rather than
+                            // skipping keeps the columns aligned with the header.
+                            None => line
+                                .extend(std::iter::repeat_n("—".to_owned(), table.columns().len())),
+                        }
                     }
-                }
-                line
-            })
-            .collect();
+                    line
+                })
+                .collect();
 
         let rendered_groups: Vec<Vec<String>> = groups
             .iter()
@@ -1079,7 +1167,15 @@ impl Playground {
                 // editor holds the whole buffer, so it is shifted here. Doing
                 // it in the parser would make it wrong for every other caller.
                 Err(e) => SqlResult::failed(&statement, offset + e.at, &e.message),
-                Ok(parsed) => self.statement(&statement, parsed),
+                Ok(parsed) => {
+                    let mut result = self.statement(&statement, parsed.statement);
+                    // Carried through even when the statement failed to run:
+                    // an ambiguous name is a plausible reason for the failure,
+                    // and dropping the warning at the point it is most useful
+                    // would be the worst moment to be quiet.
+                    result.warnings = parsed.warnings;
+                    result
+                }
             };
             let refused = result.error.is_some();
             out.push(result);

@@ -173,7 +173,9 @@ fn validate_grouping(schema: &JoinSchema, grouping: &Grouping, at: &str) -> Resu
         if column.0 >= schema.width() {
             return Err(KernelError::JoinNotSupported {
                 reason: format!(
-                    "the grouping names {column:?}, which is outside the {} ordinals of                      {at} — a group key or an aggregate past the end reads as null on                      every row, which returns one group rather than an error",
+                    "the grouping names {column:?}, which is outside the {} ordinals of \
+                     {at} — a group key or an aggregate past the end reads as null \
+                     on every row, which returns one group rather than an error",
                     schema.width()
                 ),
             });

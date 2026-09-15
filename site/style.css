@@ -323,6 +323,14 @@ body.app {
 .empty, .refusal { padding: 16px 14px; font-size: 13px; color: var(--dim); }
 .refusal { color: var(--warn); font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 .refusal b { color: var(--text); }
+/* A warning is not a refusal: the query ran and the answer is below it. Its
+   own class rather than `.refusal` with a tone, so the two cannot be mistaken
+   for each other at a glance — which is the whole point of showing it. */
+.caution {
+  padding: 10px 14px; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.6; color: var(--warn);
+  border-bottom: 1px solid var(--line);
+}
 
 .badges { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 14px 0; }
 .badge {

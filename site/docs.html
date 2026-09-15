@@ -208,7 +208,16 @@ actions = ["everything"]</code></pre>
           either table, and a qualified name like <code>zones.id</code> picks
           its side. So <code>SELECT hour(pickup_time), avg(fare) &hellip; FROM
           trips JOIN zones</code> works, where a key on one side and an
-          aggregate on the other used to be the only shape available.
+          aggregate on the other used to be the only shape available. An
+          <em>unqualified</em> name that both tables have resolves to the left
+          one and says so above the results, rather than choosing in silence.
+        </p>
+        <p>
+          A grouped join can be ordered &mdash; <code>ORDER BY count(*)
+          DESC</code> &mdash; and the ordering is over the <em>groups</em>: a
+          group is its key followed by its aggregates. An ungrouped join cannot
+          be ordered at all, and says why: the kernel orders groups, not joined
+          rows.
         </p>
         <p>
           They read <strong>UTC</strong> unless given a second argument: a

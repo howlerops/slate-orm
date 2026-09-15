@@ -30,6 +30,8 @@
 //!         [ HAVING <group-cond> (AND <group-cond>)* ]
 //!         [ ORDER BY <col | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
+//!
+//!         -- on a join: one GROUP BY key, and ORDER BY needs it
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
 //! DELETE  FROM <table> WHERE <pk> = <literal>
@@ -63,12 +65,25 @@
 //! computed columns, because they are three questions: in New York the second
 //! and third differ for a third of the year.
 //!
-//! A call works on a join as well, where it must be the group key and reads a
-//! column of the left side: `SELECT hour(pickup_time), count(*) FROM trips
-//! JOIN zones ON ... GROUP BY hour(pickup_time)`. On a join the computed
-//! column lands after *both* tables' columns — the right table already owns
-//! the ordinals directly after the left — which is why the kernel refuses a
-//! computed column declared on a side.
+//! A call works on a join as well, where it must be the group key and may read
+//! either side: `SELECT hour(pickup_time), count(*) FROM trips JOIN zones ON
+//! ... GROUP BY hour(pickup_time)`. On a join the computed column lands after
+//! *both* tables' columns — the right table already owns the ordinals directly
+//! after the left — which is why the kernel refuses a computed column declared
+//! on a side.
+//!
+//! On a join an unqualified name is resolved against the left table first, so
+//! a bare `id` over `trips JOIN zones` means `trips.id`. That is not refused —
+//! refusing every ambiguous name would refuse `SELECT hour(pickup_time)` on
+//! any schema where both tables happen to have one — but it is no longer
+//! silent: the result carries a warning naming the side it chose and how to
+//! say the other. See [`Parsed::warnings`].
+//!
+//! `ORDER BY` on a join needs a `GROUP BY`, and orders the **groups**: a group
+//! is its key followed by its aggregates, so `ORDER BY count(*) DESC` is a
+//! sort key on the group's second slot. An *ungrouped* join cannot be ordered
+//! at all, and the refusal says why — `Join` has no sort field, because the
+//! kernel orders groups and not joined rows.
 //!
 //! `<group-cond>` is the same, except the left side names a *group* — a group
 //! key or one of the aggregates the select list computes — so
@@ -350,6 +365,33 @@ struct Parser<'a> {
     schema: &'a Schema<'a>,
     /// Where the end of input is, for an error past the last token.
     end: usize,
+    /// Things worth saying that are not errors. See [`Parsed::warnings`].
+    warnings: Vec<String>,
+}
+
+/// One parsed statement, and anything worth telling the reader about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parsed {
+    /// The statement, lowered onto the spec types.
+    pub statement: Statement,
+    /// Warnings: true things about what was written that are not refusals.
+    ///
+    /// Only one kind so far, and it is the one this exists for. An unqualified
+    /// name on a join resolves against the left table first, so on `trips JOIN
+    /// zones` a bare `id` silently means `trips.id` — which is a reasonable
+    /// rule and an unreasonable thing to do in silence when `zones.id` is the
+    /// one the reader meant. The query still runs; the warning says which side
+    /// was chosen and how to say the other.
+    ///
+    /// Warnings rather than a refusal, for the reason the resolution rule is
+    /// left-first in the first place: refusing every ambiguous name would
+    /// refuse `SELECT hour(pickup_time)` on any schema where both tables
+    /// happen to have a `pickup_time`, and the reader who wrote it was not
+    /// being ambiguous on purpose.
+    ///
+    /// Returned beside the statement rather than inside it, because a warning
+    /// is about the *text* and the statement is what the text meant.
+    pub warnings: Vec<String>,
 }
 
 /// Parse one statement.
@@ -358,7 +400,7 @@ struct Parser<'a> {
 ///
 /// Returns the position and what was expected, for anything outside the
 /// grammar in this module's documentation.
-pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Statement, SqlError> {
+pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Parsed, SqlError> {
     let toks = lex(text)?;
     if toks.is_empty() {
         return Err(SqlError {
@@ -371,6 +413,7 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Statement, SqlError> {
         toks,
         i: 0,
         schema,
+        warnings: Vec::new(),
     };
     let statement = parser.statement()?;
     // Trailing tokens are an error rather than ignored. A reader who writes
@@ -383,7 +426,10 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Statement, SqlError> {
             at,
         });
     }
-    Ok(statement)
+    Ok(Parsed {
+        statement,
+        warnings: parser.warnings,
+    })
 }
 
 impl Parser<'_> {
@@ -542,6 +588,13 @@ impl Parser<'_> {
     /// refuse it outright — and refusing would break `SELECT hour(pickup_time)`
     /// on a schema where both tables happen to have an `id`.
     ///
+    /// It is no longer *silent* about that, though: a bare name that resolves
+    /// on both sides adds a warning naming the side it chose and how to spell
+    /// the other. The rule was documented here and nowhere the reader could
+    /// see it, so `SELECT id FROM trips JOIN zones ON ...` answered about
+    /// `trips.id` with nothing on screen to say so. `&mut self` rather than
+    /// `&self` for exactly that reason.
+    ///
     /// This is the whole of the joined-space fix at the parser. Every joined
     /// position used to be resolved against one *fixed* side: a computed
     /// column and the group key against the left, an aggregate against the
@@ -551,7 +604,7 @@ impl Parser<'_> {
     /// instead, and the note recording that called it a `JoinSpec` limitation.
     /// It was.
     fn resolve_side(
-        &self,
+        &mut self,
         raw: &str,
         left: &TableDef,
         right: &TableDef,
@@ -564,6 +617,21 @@ impl Parser<'_> {
             return Ok((0, self.resolve(raw, left, at)?));
         }
         if let Ok(column) = self.resolve(raw, left, at) {
+            // Both sides have it, and the left one won. Said once per name
+            // rather than once per mention: `SELECT id ... GROUP BY id` names
+            // the same column twice and a reader does not need telling twice.
+            if self.resolve(raw, right, at).is_ok() {
+                let warning = format!(
+                    "`{raw}` is a column of both `{}` and `{}`; this read \
+                     `{}.{raw}`. Qualify it to choose.",
+                    left.name(),
+                    right.name(),
+                    left.name()
+                );
+                if !self.warnings.contains(&warning) {
+                    self.warnings.push(warning);
+                }
+            }
             return Ok((0, column));
         }
         match self.resolve(raw, right, at) {
@@ -923,8 +991,92 @@ impl Parser<'_> {
     /// Find-or-add, for the reason the single-table one is: the same call
     /// written in the select list and in `GROUP BY` is one computed column,
     /// and registering it twice would return one group per pair.
+    /// Which slot of a *group* a name denotes, over a grouped join.
+    ///
+    /// A group is `[key, aggregates...]`, so this returns 0 for the group key
+    /// and `1 + n` for the `n`th aggregate the select list computes. That is a
+    /// space of its own: it has nothing to do with either table's ordinals,
+    /// and lowering an ORDER BY onto the joined row instead would sort the
+    /// rows going *into* the grouping — which the groups then discard, so the
+    /// reader's ordering disappears and the sort is wasted work. The
+    /// single-table path had exactly that bug and a refusal test found it.
+    ///
+    /// Looked up rather than registered, for the reason `group_ordinal` is:
+    /// `ORDER BY max(year)` over a grouping that computes no `max(year)` is
+    /// an ordering by a value the groups do not have.
+    fn join_group_ordinal(
+        &mut self,
+        item: &SelectItem,
+        spec: &JoinSpec,
+        left: &TableDef,
+        right: &TableDef,
+        at: usize,
+    ) -> Result<u32, SqlError> {
+        match item {
+            SelectItem::Aggregate { kind, argument, at } => {
+                // Matched by what the select list already computes, on either
+                // side, so `count(*)` and `max(fare)` both resolve and
+                // `max(year)` over a grouping that averages it does not.
+                let wanted = self
+                    .aggregate(kind, argument.as_deref(), left, *at)
+                    .map(|mut a| {
+                        a.input = 0;
+                        a
+                    })
+                    .or_else(|_| {
+                        self.aggregate(kind, argument.as_deref(), right, *at)
+                            .map(|mut a| {
+                                a.input = 1;
+                                a
+                            })
+                    })
+                    .map_err(|_| SqlError {
+                        message: format!(
+                            "`{kind}()` reads a column of `{}` or `{}`; `{}` is neither",
+                            left.name(),
+                            right.name(),
+                            argument.as_deref().unwrap_or("*")
+                        ),
+                        at: *at,
+                    })?;
+                spec.aggregates
+                    .iter()
+                    .position(|a| *a == wanted)
+                    .and_then(|i| u32::try_from(i + 1).ok())
+                    .ok_or_else(|| SqlError {
+                        message: format!(
+                            "ORDER BY names `{kind}({})`, which this query does not \
+                             compute — add it to the select list",
+                            argument.as_deref().unwrap_or("*")
+                        ),
+                        at: *at,
+                    })
+            }
+            // A column or a call: it has to *be* the group key, since a
+            // grouped join has exactly one and the groups carry nothing else.
+            other => {
+                // Resolved against the joined row so it can be compared with
+                // `group_by`, which is in that space. Registering a new
+                // computed column here would be wrong — but `group_by` is
+                // already set by the time ORDER BY is parsed, so a call the
+                // grouping did not name simply fails the comparison below.
+                let mut copy = spec.clone();
+                let ordinal = self.join_value_ordinal(other, &mut copy, left, right, at)?;
+                if spec.group_by == Some(ordinal) {
+                    return Ok(0);
+                }
+                Err(SqlError {
+                    message: "ORDER BY on a grouped join names the group key or one of \
+                              its aggregates; a group carries nothing else"
+                        .to_owned(),
+                    at,
+                })
+            }
+        }
+    }
+
     fn join_value_ordinal(
-        &self,
+        &mut self,
         item: &SelectItem,
         spec: &mut JoinSpec,
         left: &TableDef,
@@ -1482,13 +1634,42 @@ impl Parser<'_> {
         }
 
         if self.eat("order") {
-            return Err(SqlError {
-                message: "ORDER BY is not supported on a join yet".to_owned(),
-                at: self.at(),
-            });
+            self.expect("by")?;
+            // Only over groups. `Join` has no sort field — the kernel orders
+            // *groups* and not joined rows — so an ungrouped join's ORDER BY
+            // has nowhere to be lowered, and the refusal now says which of the
+            // two shapes the reader is in rather than "not supported yet",
+            // which was true of both and explained neither.
+            if spec.group_by.is_none() {
+                return Err(SqlError {
+                    message: "ORDER BY on a join needs a GROUP BY: the kernel orders groups, not \
+                              joined rows, so there is nothing to lower an ordering of \
+                              whole rows onto"
+                        .to_owned(),
+                    at: self.at(),
+                });
+            }
+            loop {
+                let at = self.at();
+                let item = self.select_item()?;
+                let column = self.join_group_ordinal(&item, &spec, left, &right, at)?;
+                let descending = if self.eat("desc") {
+                    true
+                } else {
+                    self.eat("asc");
+                    false
+                };
+                spec.sort.push(SortSpec { column, descending });
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
         }
         if self.eat("limit") {
             spec.limit = Some(self.count("LIMIT")?);
+        }
+        if self.eat("offset") {
+            spec.offset = self.count("OFFSET")?;
         }
         Ok(Statement::Join(spec))
     }

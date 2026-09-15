@@ -352,10 +352,31 @@ function showError(result, buffer) {
 /// fast the query was.
 const RENDER_CAP = 1000;
 
+/// Warnings above the table: true things about the query that are not errors.
+///
+/// One kind so far, and it is the reason this exists: on a join an unqualified
+/// name resolves against the left table, so `SELECT id FROM trips JOIN zones`
+/// answers about `trips.id`. The rule was in the parser's source comments and
+/// nowhere a reader could see it — which is the same as not having one, since
+/// the reader is the person who typed the ambiguous name.
+///
+/// Above the results rather than in the status bar, because the status bar
+/// sums a whole buffer and this is about one statement's answer. Styled as a
+/// caution rather than a refusal: the query ran.
+function renderWarnings(result) {
+  const warnings = result?.warnings ?? [];
+  if (!warnings.length) return "";
+  return warnings
+    .map((text) => `<div class="caution">${escape(text)}</div>`)
+    .join("");
+}
+
 function renderRows(result) {
   const grid = $("grid");
   if (!result || (!result.columns.length && !result.rows.length)) {
-    grid.innerHTML = `<div class="empty">${escape(result?.message || "done")}</div>`;
+    grid.innerHTML =
+      renderWarnings(result) +
+      `<div class="empty">${escape(result?.message || "done")}</div>`;
     return;
   }
   // Which ordinals the plan actually decoded. A column outside this list came
@@ -379,7 +400,8 @@ function renderRows(result) {
       return `<tr>${cells}</tr>`;
     })
     .join("");
-  grid.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  grid.innerHTML = renderWarnings(result) +
+    `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   if (!result.rows.length) {
     grid.innerHTML += '<div class="empty">no rows</div>';
   } else if (result.rows.length > shown.length) {
