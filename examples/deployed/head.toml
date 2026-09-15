@@ -1,0 +1,71 @@
+# A head node serving the workbench's dataset from object storage.
+#
+# The tables are the workbench's, column for column and id for id — see
+# `crates/slate-wasm/src/taxi.rs`. That is the whole point of this example: the
+# browser runs the kernel in a tab against these tables, and this runs the same
+# kernel behind gRPC, behind SlateDB, behind an S3 bucket. Same data, same
+# questions, two entirely different paths to the answer.
+#
+# `run.sh` fills in `[storage.s3]` from the environment the S3 server printed.
+
+[listen]
+address = "127.0.0.1:0"
+
+[auth]
+mode = "trusted-header"
+
+[storage]
+backend = "s3"
+# Wait for object storage before acknowledging a write. The other setting,
+# `visible`, returns as soon as readers can see it and loses acknowledged
+# writes if the writer dies before its next flush — which is the right trade
+# for a cache and the wrong one for a demonstration that claims durability.
+durability = "durable"
+
+[storage.s3]
+# Everything from `SLATE_S3_*`, which is how the same file points at the local
+# server, at MinIO, or at a real bucket without being edited.
+from_env = true
+
+[[tables]]
+name = "trips"
+id = 3
+columns = [
+  { name = "id",           type = "u64" },
+  { name = "pickup_zone",  type = "u64" },
+  { name = "dropoff_zone", type = "u64" },
+  # Seconds since the epoch. There is no date type, here or in the kernel.
+  { name = "pickup_time",  type = "i64" },
+  { name = "duration",     type = "i64" },
+  # The one nullable column, because the source really is missing it on 4.7%
+  # of rows. Filling it in would make `count(passengers)` a synonym for
+  # `count(*)`.
+  { name = "passengers",   type = "i64", nullable = true },
+  { name = "distance",     type = "f64" },
+  { name = "fare",         type = "f64" },
+  { name = "tip",          type = "f64" },
+  { name = "total",        type = "f64" },
+  { name = "payment",      type = "str" },
+]
+primary_key = ["id"]
+
+[[tables.indexes]]
+name = "by_pickup_zone"
+id = 1
+columns = ["pickup_zone"]
+
+[[tables]]
+name = "zones"
+id = 4
+columns = [
+  { name = "id",           type = "u64" },
+  { name = "borough",      type = "str" },
+  { name = "zone",         type = "str" },
+  { name = "service_zone", type = "str" },
+]
+primary_key = ["id"]
+
+[[security.grants]]
+role = "app"
+tables = ["trips", "zones"]
+actions = ["everything"]

@@ -90,8 +90,13 @@ where
     }
 }
 
-const ACCESS_KEY: &str = "slateorm";
-const SECRET_KEY: &str = "slateormsecret";
+/// The fixed credentials this server accepts.
+///
+/// Public so `examples/s3_server.rs` can print them for a head node to use.
+/// There is no secret here: the server holds a temporary directory that is
+/// deleted when it stops.
+pub const ACCESS_KEY: &str = "slateorm";
+pub const SECRET_KEY: &str = "slateormsecret";
 
 /// A running S3 server. Dropping it stops the server and deletes its storage.
 pub struct LocalS3 {
@@ -168,6 +173,11 @@ impl LocalS3 {
     /// What this server has been asked to do.
     pub fn counters(&self) -> Arc<S3Counters> {
         Arc::clone(&self.counters)
+    }
+
+    /// Where this server is listening, as a URL.
+    pub fn endpoint(&self) -> String {
+        format!("http://{}", self.address)
     }
 
     /// A config pointing at this server.

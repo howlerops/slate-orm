@@ -256,6 +256,30 @@ jobs:
         working-directory: examples/explorer/web
       - run: python3 site/check/workbench.py
 
+  deployed:
+    name: deployed against object storage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: deployed
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install grpcio protobuf
+      # The whole stack: a real S3 server, SlateDB on it, a head node on that,
+      # and the Python SDK over gRPC — checked against a fold done in Python
+      # from the same packed file the browser reads.
+      #
+      # A prefix rather than all 100,000 trips: the load is ~9,000 rows/s
+      # through the full path, and the differential checks say the same thing
+      # over 20,000 as over all of them. The full run is what `./run.sh` does
+      # by default for a person, and what the ledger's numbers came from.
+      - run: ./run.sh --trips 20000
+        working-directory: examples/deployed
+
   demo:
     name: three SDKs, one database
     runs-on: ubuntu-latest

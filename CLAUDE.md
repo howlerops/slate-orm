@@ -71,11 +71,11 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — thirteen jobs covering the Rust workspace, the Go, Python and
+branch** — fourteen jobs covering the Rust workspace, the Go, Python and
 TypeScript clients, the demo frontend, the pre-commit hook's own tests, a
 workspace-layout guard, the landing page's quickstarts, the three-SDK
-conformance runner, a browser e2e, MinIO, and the release build for both
-shipping targets.
+conformance runner, a browser e2e, MinIO, the whole stack deployed against
+object storage, and the release build for both shipping targets.
 
 That sentence was false until recently in a way worth knowing about: the
 workflow existed, was marked active, and had run **zero times**, because it
@@ -95,6 +95,7 @@ python3 site/check/quickstarts.py                       # the docs page's code
 python3 site/check/workbench.py                         # the kernel, in a browser
 cd examples/explorer && ./run.sh --conformance          # the three SDKs agree
 cd examples/explorer && ./run.sh --e2e                  # the demo, in a browser
+cd examples/deployed && ./run.sh                        # the whole stack, for real
 ```
 
 The client suites and the demo build `slate-serverd` with `cargo` by default.
