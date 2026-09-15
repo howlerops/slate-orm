@@ -1963,7 +1963,19 @@ impl Playground {
                 Some(i) => i,
                 None => {
                     groups.push(KeyGroup {
-                        space: if space == 0x01 { "rows" } else { "index" }.to_owned(),
+                        space: match space {
+                            0x01 => "rows",
+                            0x02 => "index",
+                            // 0x03 is per-table schema state, written by
+                            // `slate_kernel::migrate`. Nothing in the browser
+                            // runs a migration today, so no key of this space
+                            // reaches here — but calling it an index and then
+                            // decoding it as one is the kind of wrong label
+                            // that survives for years, and the arm is a line.
+                            0x03 => "schema",
+                            _ => "unknown",
+                        }
+                        .to_owned(),
                         path,
                         label,
                         id,
@@ -2248,6 +2260,13 @@ fn header(key: &[u8]) -> Option<(u8, u32)> {
 
 /// Which table or index a key's header names, and what to call it.
 fn describe(space: u8, id: u32, tables: &[TableDef]) -> (String, String, Option<TableDef>) {
+    if space == 0x03 {
+        let name = tables
+            .iter()
+            .find(|t| t.id().0 == id)
+            .map_or_else(|| format!("table {id}"), |t| t.name().to_owned());
+        return (format!("schema/{name}"), name, None);
+    }
     if space == 0x01 {
         for table in tables {
             if table.id().0 == id {
@@ -2297,6 +2316,11 @@ fn hex(key: &[u8]) -> String {
 /// `decode_index_entry` are the functions the read path uses. A key this
 /// cannot decode is reported as such rather than guessed at.
 fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
+    // Schema state is one key per table with nothing after the header, so there
+    // is nothing to decode and the index decoder below would call it corrupt.
+    if space == 0x03 {
+        return "schema state".to_owned();
+    }
     let Some(table) = table else {
         return "unknown table".to_owned();
     };

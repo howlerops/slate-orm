@@ -1,0 +1,758 @@
+//! Migrations, and the defect they exist for.
+//!
+//! The first test is the measurement that motivated the whole module: adding an
+//! index to a table that already holds rows does not make a query slower, it
+//! makes it return **nothing**. Everything else here is about making that
+//! impossible to reach by accident.
+
+// Tests assert exact outcomes and are meant to panic when one is wrong.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+use slate_kernel::memory::MemoryStore;
+use slate_kernel::migrate::{self, MigrationPlan, Refusal, Step};
+use slate_kernel::store::{KeyRange, KvSnapshot, KvStore, KvTransaction};
+use slate_kernel::{
+    Action, CmpOp, Expr, Grant, KernelError, Principal, RecordStore, ScanOrder, SecurityCatalog,
+    SecurityContext,
+};
+use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
+use slate_tuple::{Value, ValueType};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as Atomics};
+
+/// A store that counts the writes through it.
+///
+/// Needed because "did the migration do anything" is a claim about writes, and
+/// the report is the runner's own account of itself. A runner that wrote the
+/// state key unconditionally would return an empty step list and still write.
+struct Counting {
+    inner: MemoryStore,
+    puts: Arc<AtomicUsize>,
+}
+
+struct CountingTxn<'a> {
+    inner: Box<dyn KvTransaction + Send + 'a>,
+    puts: Arc<AtomicUsize>,
+}
+
+impl Clone for Counting {
+    /// Shares the store and the counter, because `MemoryStore::clone` shares
+    /// its own state and a counter that reset per clone would count nothing.
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            puts: Arc::clone(&self.puts),
+        }
+    }
+}
+
+impl Counting {
+    fn new() -> Self {
+        Self {
+            inner: MemoryStore::new(),
+            puts: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+    fn puts(&self) -> usize {
+        self.puts.load(Atomics::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl KvStore for Counting {
+    async fn begin(&self) -> slate_kernel::Result<Box<dyn KvTransaction + Send + '_>> {
+        Ok(Box::new(CountingTxn {
+            inner: self.inner.begin().await?,
+            puts: Arc::clone(&self.puts),
+        }))
+    }
+}
+
+#[async_trait::async_trait]
+impl KvSnapshot for CountingTxn<'_> {
+    async fn get(&self, key: &[u8]) -> slate_kernel::Result<Option<bytes::Bytes>> {
+        self.inner.get(key).await
+    }
+    async fn scan(
+        &self,
+        range: KeyRange,
+        order: ScanOrder,
+    ) -> slate_kernel::Result<Box<dyn slate_kernel::store::KvIterator + Send + '_>> {
+        self.inner.scan(range, order).await
+    }
+    fn is_point_in_time(&self) -> bool {
+        self.inner.is_point_in_time()
+    }
+}
+
+#[async_trait::async_trait]
+impl KvTransaction for CountingTxn<'_> {
+    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> slate_kernel::Result<()> {
+        self.puts.fetch_add(1, Atomics::SeqCst);
+        self.inner.put(key, value)
+    }
+    fn delete(&self, key: Vec<u8>) -> slate_kernel::Result<()> {
+        self.inner.delete(key)
+    }
+    async fn commit(self: Box<Self>) -> slate_kernel::Result<Option<u64>> {
+        self.inner.commit().await
+    }
+    fn rollback(self: Box<Self>) {
+        self.inner.rollback();
+    }
+}
+
+const USERS: TableId = TableId(1);
+const BY_EMAIL: IndexId = IndexId(10);
+const MEMBERS: TableId = TableId(2);
+const BY_TEAM_EMAIL: IndexId = IndexId(11);
+
+/// The table, with its index optional so the same data can be read back under
+/// a schema that has one and a schema that does not.
+fn users(indexed: bool) -> TableDef {
+    let mut builder = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"]);
+    if indexed {
+        builder = builder.index(IndexDef::builder("by_email", BY_EMAIL).column("email"));
+    }
+    builder.build().unwrap()
+}
+
+/// A second table, three columns wide, for the partial index.
+///
+/// Separate from `users` because the width matters to the planner: an index on
+/// `email` plus the primary key covers every column of `users`, so an index-only
+/// scan is available and gets chosen. Add a third column and the index stops
+/// covering, the plan needs a row lookup per match, and on a small table a full
+/// scan wins. That is why the defect at the top of this file needs the narrow
+/// shape to be *visible* — see the comment there.
+fn members(index: Option<slate_schema::IndexBuilder>) -> TableDef {
+    let mut builder = TableDef::builder("members", MEMBERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .column("team", ValueType::U64)
+        .primary_key(["id"]);
+    if let Some(index) = index {
+        builder = builder.index(index);
+    }
+    builder.build().unwrap()
+}
+
+/// How many entries the keyspace actually holds for an index.
+///
+/// The oracle the planner-visible assertions cannot be: whether a query finds a
+/// row depends on which plan the cost model picked, and that changes with the
+/// width of the table and the number of rows. The number of keys under the
+/// index prefix does not depend on anything but the backfill.
+async fn index_entries(store: &MemoryStore, index: IndexId) -> usize {
+    let txn = store.begin().await.unwrap();
+    let mut cursor = txn
+        .scan(
+            KeyRange::prefix(&slate_kernel::keys::index_prefix_of(index)),
+            ScanOrder::Ascending,
+        )
+        .await
+        .unwrap();
+    let mut n = 0;
+    while cursor.next().await.unwrap().is_some() {
+        n += 1;
+    }
+    drop(cursor);
+    txn.rollback();
+    n
+}
+
+fn catalog(table: TableDef) -> Catalog {
+    Catalog::from_tables([table]).unwrap()
+}
+
+fn context() -> SecurityContext {
+    SecurityContext::new(Principal::new(Value::U64(1)).with_role("member"))
+}
+
+fn security() -> SecurityCatalog {
+    SecurityCatalog::new()
+        .grant(Grant::new("member", USERS, Action::EVERYTHING))
+        .grant(Grant::new("member", MEMBERS, Action::EVERYTHING))
+}
+
+fn row(table: &TableDef, id: u64, email: &str, team: u64) -> Row {
+    let mut values = vec![Value::U64(id), Value::Str(email.into())];
+    if table.columns().len() > 2 {
+        values.push(Value::U64(team));
+    }
+    Row::new(values)
+}
+
+async fn seed<S: KvStore + Clone>(store: &S, table: &TableDef, rows: &[(u64, &str, u64)]) {
+    let records = RecordStore::new(store.clone(), catalog(table.clone()), security());
+    let txn = records.begin().await.unwrap();
+    for (id, email, team) in rows {
+        txn.insert(&context(), table, &row(table, *id, email, *team))
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+}
+
+/// How many rows a filter on `email` returns, under `table`'s schema.
+async fn found<S: KvStore + Clone>(store: &S, table: &TableDef, email: &str) -> usize {
+    let records = RecordStore::new(store.clone(), catalog(table.clone()), security());
+    let txn = records.begin().await.unwrap();
+    let cursor = txn
+        .query(
+            &context(),
+            table,
+            Expr::compare(Ordinal(1), CmpOp::Eq, Value::Str(email.into())),
+            ScanOrder::Ascending,
+        )
+        .await
+        .unwrap();
+    let rows = cursor.collect().await.unwrap();
+    txn.rollback();
+    rows.len()
+}
+
+#[tokio::test]
+async fn an_index_added_after_the_rows_returns_nothing_until_it_is_built() {
+    let store = MemoryStore::new();
+    let before = users(false);
+    let after = users(true);
+    seed(
+        &store,
+        &before,
+        &[(1, "a@x", 1), (2, "b@x", 1), (3, "c@x", 2)],
+    )
+    .await;
+
+    // The defect, measured. The planner sees an index covering the predicate,
+    // costs it as the cheap option, and scans a key range nothing ever wrote
+    // into. No error, no warning, and the row is still on disk.
+    //
+    // The shape matters, and it makes the defect worse rather than narrower:
+    // `users` is two columns wide, so the index plus the primary key covers the
+    // query and an index-only scan is the cheapest plan. Widen the table by one
+    // column and the same query on the same unbuilt index answers *correctly*,
+    // because a full scan wins on cost. So whether an unmigrated deploy returns
+    // right answers or empty ones depends on the cost model — which is not a
+    // thing anyone should be relying on, and is why the fix is a refusal at
+    // startup rather than a note about when it matters.
+    assert_eq!(
+        found(&store, &after, "b@x").await,
+        0,
+        "this is the defect; if it has been fixed elsewhere, this test should be rewritten \
+         rather than deleted"
+    );
+    // The same query under the schema that wrote the rows finds it, which is
+    // what makes the line above a wrong answer rather than an empty table.
+    assert_eq!(found(&store, &before, "b@x").await, 1);
+
+    // The migration is the fix. Two steps, because this table predates the
+    // state key entirely — which is the case every existing deployment is in
+    // the first time it runs this.
+    let report = migrate::migrate(&store, &catalog(after.clone()))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            report.steps.as_slice(),
+            [
+                Step::Register { .. },
+                Step::BuildIndex {
+                    index: BY_EMAIL,
+                    ..
+                }
+            ]
+        ),
+        "{:?}",
+        report.steps
+    );
+    assert_eq!(report.entries_written, vec![3]);
+
+    assert_eq!(found(&store, &after, "b@x").await, 1);
+    assert_eq!(found(&store, &after, "nobody@x").await, 0);
+}
+
+#[tokio::test]
+async fn a_table_nobody_has_migrated_is_refused_at_startup_not_at_query_time() {
+    let store = MemoryStore::new();
+    let before = users(false);
+    seed(&store, &before, &[(1, "a@x", 1)]).await;
+
+    // `verify` is the guard, and it names the index rather than the table: an
+    // operator reading this has to know what to run and why.
+    let error = migrate::verify(&store, &catalog(users(true)))
+        .await
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("by_email"), "{message}");
+    assert!(message.contains("returns no rows"), "{message}");
+
+    migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+    migrate::verify(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn migrating_twice_does_nothing_the_second_time() {
+    let store = MemoryStore::new();
+    seed(&store, &users(false), &[(1, "a@x", 1), (2, "b@x", 1)]).await;
+    let catalog = catalog(users(true));
+
+    let first = migrate::migrate(&store, &catalog).await.unwrap();
+    assert_eq!(first.entries_written, vec![2]);
+
+    // Not "it does not crash": the plan is *empty*, so a second deploy of the
+    // same binary does no work at all. A runner that rebuilt every index on
+    // every start would pass a test that only checked the rows afterwards.
+    let plan = migrate::plan(&store, &catalog).await.unwrap();
+    assert!(plan.is_empty(), "{plan:?}");
+    let second = migrate::migrate(&store, &catalog).await.unwrap();
+    assert!(second.steps.is_empty(), "{:?}", second.steps);
+    assert_eq!(found(&store, &users(true), "b@x").await, 1);
+}
+
+#[tokio::test]
+async fn a_migration_with_nothing_to_do_writes_nothing_at_all() {
+    // "No steps" and "no writes" are different claims, and only the second one
+    // is what a deploy actually wants: rewriting an unchanged state record on
+    // every start is a write-write conflict surface against every other process
+    // doing the same. Asserting the step list alone let a mutation that removed
+    // the guard survive, so this counts the puts.
+    let counted = Counting::new();
+    let settled = catalog(users(true));
+    migrate::migrate(&counted, &settled).await.unwrap();
+    seed(&counted, &users(true), &[(1, "a@x", 1)]).await;
+
+    let before = counted.puts();
+    migrate::migrate(&counted, &settled).await.unwrap();
+    assert_eq!(
+        counted.puts() - before,
+        0,
+        "a migration with nothing to do still wrote to the store"
+    );
+    // And the check that keeps the counter honest: a migration with something
+    // to do does write.
+    let before = counted.puts();
+    migrate::migrate(&counted, &catalog(members(None)))
+        .await
+        .unwrap();
+    assert!(counted.puts() > before, "the counter is not counting");
+}
+
+#[tokio::test]
+async fn a_new_table_costs_one_registration_and_no_reads() {
+    let store = MemoryStore::new();
+    let catalog = catalog(users(true));
+    let report = migrate::migrate(&store, &catalog).await.unwrap();
+    // Register, then build — and the build writes nothing, because there is
+    // nothing to build over. The first deploy of a new table is free.
+    assert!(
+        matches!(
+            report.steps.as_slice(),
+            [Step::Register { .. }, Step::BuildIndex { .. }]
+        ),
+        "{:?}",
+        report.steps
+    );
+    assert_eq!(report.entries_written, vec![0]);
+    migrate::verify(&store, &catalog).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_changed_column_type_is_refused_rather_than_read_as_something_else() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+    seed(&store, &users(true), &[(1, "a@x", 1)]).await;
+
+    // `email` was text and is now bytes. Same number of columns, same
+    // positions, same primary key — so nothing about the *shape* changed and
+    // nothing fails at write time. Old rows simply decode as a type they were
+    // not written as, which is the quiet corruption the fingerprint is for.
+    let retyped = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Bytes)
+        .primary_key(["id"])
+        .index(IndexDef::builder("by_email", BY_EMAIL).column("email"))
+        .build()
+        .unwrap();
+    // The column count is deliberately unchanged, so this refusal can only come
+    // from the type. An earlier version of this test changed the width too, and
+    // passed for that reason instead.
+    assert_eq!(retyped.columns().len(), users(true).columns().len());
+
+    let plan = migrate::plan(&store, &catalog(retyped.clone()))
+        .await
+        .unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(matches!(
+        plan.refusals.as_slice(),
+        [Refusal::LayoutChanged { .. }]
+    ));
+    // And the refusal is a refusal: applying it runs none of the steps.
+    let error = migrate::apply(&store, &catalog(retyped.clone()), &plan)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, KernelError::MigrationRefused { .. }),
+        "{error}"
+    );
+    let message = error.to_string();
+    // The message names what the fingerprint covers, because the fingerprint
+    // itself cannot say which of them moved.
+    assert!(message.contains("each one's type"), "{message}");
+    assert!(message.contains("Renames"), "{message}");
+}
+
+#[tokio::test]
+async fn a_rename_is_not_a_migration() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+    seed(&store, &users(true), &[(1, "a@x", 1)]).await;
+
+    // A name appears nowhere on disk, which is why `renamed_column` is free.
+    // If the fingerprint covered names this would be refused, and a rename
+    // would be indistinguishable from the type change above.
+    let renamed = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email_address", ValueType::Str)
+        .primary_key(["id"])
+        .renamed_column("email_address", "email")
+        .index(IndexDef::builder("by_email", BY_EMAIL).column("email_address"))
+        .build()
+        .unwrap();
+
+    let plan = migrate::plan(&store, &catalog(renamed.clone()))
+        .await
+        .unwrap();
+    assert!(plan.is_empty(), "a rename asked for work: {plan:?}");
+}
+
+#[tokio::test]
+async fn adding_a_nullable_column_is_not_a_migration_but_it_is_a_new_layout() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(false)))
+        .await
+        .unwrap();
+    seed(&store, &users(false), &[(1, "a@x", 1)]).await;
+
+    let widened = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .added_column("nickname", ValueType::Str, 2)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+
+    // It changes the fingerprint — the column count moved — and that is
+    // correct: the decoder reads a different number of columns. What matters
+    // is that it is *refused*, loudly, rather than silently accepted, because
+    // the runner cannot tell an appended column from a retyped one and the
+    // safe answer to "I cannot tell" is no.
+    //
+    // This is the sharpest limitation of the fingerprint and it is recorded
+    // rather than papered over: a genuinely additive change needs a hand.
+    let plan = migrate::plan(&store, &catalog(widened)).await.unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+}
+
+#[tokio::test]
+async fn building_a_unique_index_over_duplicates_refuses_instead_of_hiding_a_row() {
+    let store = MemoryStore::new();
+    let plain = users(false);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+    // Two rows with the same email, which the schema of the day permitted.
+    seed(&store, &plain, &[(1, "same@x", 1), (2, "same@x", 2)]).await;
+
+    let unique = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_email", BY_EMAIL)
+                .column("email")
+                .unique(),
+        )
+        .build()
+        .unwrap();
+
+    // A unique entry's key omits the primary key, so the second row writes the
+    // *same* key. Left alone it would overwrite the first row's pointer and
+    // leave an index naming one row and hiding the other — a worse outcome than
+    // the missing index this module exists to fix.
+    let error = migrate::migrate(&store, &catalog(unique.clone()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, KernelError::UniqueViolation { .. }),
+        "{error}"
+    );
+    // And it left nothing behind: the failing batch rolled back, so the index
+    // holds no entries at all rather than the one it wrote before the clash.
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 0);
+    // The state still says the index is not built, so `verify` refuses rather
+    // than reporting a half-built index as done.
+    assert!(migrate::verify(&store, &catalog(unique)).await.is_err());
+}
+
+#[tokio::test]
+async fn a_partial_index_backfills_only_the_rows_it_admits() {
+    let store = MemoryStore::new();
+    let plain = members(None);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+    seed(
+        &store,
+        &plain,
+        &[(1, "a@x", 1), (2, "b@x", 1), (3, "c@x", 2), (4, "d@x", 2)],
+    )
+    .await;
+
+    let partial = members(Some(
+        IndexDef::builder("by_team_email", BY_TEAM_EMAIL)
+            .column("email")
+            .only_where(Expr::compare(Ordinal(2), CmpOp::Eq, Value::U64(1))),
+    ));
+
+    // Two of the four rows are on team 1. A backfill that ignored `admits`
+    // would write four entries, and the index would then claim rows the
+    // predicate excludes — which the planner trusts and does not re-check.
+    let report = migrate::migrate(&store, &catalog(partial.clone()))
+        .await
+        .unwrap();
+    assert_eq!(report.entries_written, vec![2], "{report:?}");
+    // Asserted against the keyspace rather than against a query, because a
+    // query's answer here depends on which plan the cost model picks.
+    assert_eq!(index_entries(&store, BY_TEAM_EMAIL).await, 2);
+}
+
+#[tokio::test]
+async fn dropping_an_index_from_the_schema_reclaims_its_entries() {
+    let store = MemoryStore::new();
+    let indexed = users(true);
+    migrate::migrate(&store, &catalog(indexed.clone()))
+        .await
+        .unwrap();
+    seed(&store, &indexed, &[(1, "a@x", 1), (2, "b@x", 1)]).await;
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 2);
+
+    // The write path only deletes entries for indexes it can see, so an index
+    // removed from the schema leaves keys that nothing will ever reclaim: not a
+    // correctness problem, because nothing reads them, but dead weight that
+    // outlives every row it described.
+    let plan = migrate::plan(&store, &catalog(users(false))).await.unwrap();
+    assert!(
+        matches!(
+            plan.steps.as_slice(),
+            [Step::DropIndex {
+                index: BY_EMAIL,
+                ..
+            }]
+        ),
+        "{:?}",
+        plan.steps
+    );
+    migrate::apply(&store, &catalog(users(false)), &plan)
+        .await
+        .unwrap();
+
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 0);
+    // And the rows themselves are untouched.
+    assert_eq!(found(&store, &users(false), "b@x").await, 1);
+}
+
+#[tokio::test]
+async fn a_backfill_larger_than_one_batch_writes_every_row() {
+    let store = MemoryStore::new();
+    let plain = users(false);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+
+    // Over the batch size, so the resume path runs for real. A backfill whose
+    // batches restarted from the beginning would loop for ever; one that
+    // skipped a key at each boundary would be short by the number of batches,
+    // which is why this asserts the exact count rather than "more than one".
+    let owned: Vec<(u64, String, u64)> = (1..=2_500u64)
+        .map(|id| (id, format!("u{id}@x"), id % 3))
+        .collect();
+    let rows: Vec<(u64, &str, u64)> = owned
+        .iter()
+        .map(|(id, email, team)| (*id, email.as_str(), *team))
+        .collect();
+    for chunk in rows.chunks(500) {
+        seed(&store, &plain, chunk).await;
+    }
+
+    let report = migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+    assert_eq!(report.entries_written, vec![2_500], "{report:?}");
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 2_500);
+    // Spot-check the rows either side of every batch boundary.
+    for id in [1u64, 1_000, 1_001, 2_000, 2_001, 2_500] {
+        assert_eq!(
+            found(&store, &users(true), &format!("u{id}@x")).await,
+            1,
+            "row {id} is missing from the index"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_state_record_is_a_refusal_naming_the_table() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+
+    // Overwrite the state key with something that is not a state record.
+    let txn = store.begin().await.unwrap();
+    txn.put(
+        slate_kernel::keys::meta_key(USERS),
+        slate_tuple::encode(&[
+            Value::U64(99),
+            Value::U64(1),
+            Value::U64(1),
+            Value::Bytes(Vec::new().into()),
+        ]),
+    )
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let plan = migrate::plan(&store, &catalog(users(true))).await.unwrap();
+    assert!(
+        matches!(
+            plan.refusals.as_slice(),
+            [Refusal::UnknownFormat { format: 99, .. }]
+        ),
+        "{plan:?}"
+    );
+    assert!(
+        plan.why_blocked().contains("users"),
+        "{}",
+        plan.why_blocked()
+    );
+}
+
+#[test]
+fn the_fingerprint_ignores_names_and_notices_layout() {
+    let base = users(false);
+    let same = users(false);
+    assert_eq!(migrate::fingerprint(&base), migrate::fingerprint(&same));
+
+    let renamed = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email_address", ValueType::Str)
+        .primary_key(["id"])
+        .build()
+        .unwrap();
+    assert_eq!(
+        migrate::fingerprint(&base),
+        migrate::fingerprint(&renamed),
+        "a rename moves no bytes and must not look like a migration"
+    );
+
+    // Nullability changes how a value is read back, so it counts.
+    let nullable = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .nullable_column("email", ValueType::Str)
+        .primary_key(["id"])
+        .build()
+        .unwrap();
+    assert_ne!(migrate::fingerprint(&base), migrate::fingerprint(&nullable));
+
+    // So does the primary key: it is the row key. Two cases, because they fail
+    // separately — a key of a different *length* and a key of the same length
+    // over a different column. Only the second catches a fingerprint that
+    // hashes how many key columns there are and not which.
+    let widened_key = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id", "email"])
+        .build()
+        .unwrap();
+    assert_ne!(
+        migrate::fingerprint(&base),
+        migrate::fingerprint(&widened_key)
+    );
+
+    let moved_key = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["email"])
+        .build()
+        .unwrap();
+    assert_eq!(moved_key.primary_key().len(), base.primary_key().len());
+    assert_ne!(
+        migrate::fingerprint(&base),
+        migrate::fingerprint(&moved_key),
+        "the key moved to another column; the length is the same and the row keys are not"
+    );
+
+    // And the tenant column, which is what decides whether index keys carry a
+    // tenant prefix. `None` and `Some(Ordinal(0))` must differ: a table whose
+    // tenant is its first key column lays its index out differently from one
+    // with no tenant scoping at all, and both have the same columns.
+    let plain_pair = TableDef::builder("scoped", TableId(3))
+        .column("tenant", ValueType::U64)
+        .column("name", ValueType::Str)
+        .primary_key(["tenant", "name"])
+        .build()
+        .unwrap();
+    let scoped = TableDef::builder("scoped", TableId(3))
+        .column("tenant", ValueType::U64)
+        .column("name", ValueType::Str)
+        .primary_key(["tenant", "name"])
+        .tenant_column("tenant")
+        .build()
+        .unwrap();
+    assert_ne!(
+        migrate::fingerprint(&plain_pair),
+        migrate::fingerprint(&scoped),
+        "tenant scoping changes the index key layout and must not fingerprint the same"
+    );
+
+    // An index is not in the fingerprint at all: it is tracked by name in the
+    // built list, and adding one is a step rather than a refusal.
+    assert_eq!(
+        migrate::fingerprint(&base),
+        migrate::fingerprint(&users(true))
+    );
+}
+
+#[test]
+fn a_plan_with_a_refusal_is_blocked_and_says_so() {
+    let plan = MigrationPlan {
+        steps: vec![Step::Register {
+            table: USERS,
+            name: "users".into(),
+        }],
+        refusals: vec![Refusal::LayoutChanged {
+            table: "users".into(),
+            stored: 1,
+            current: 2,
+        }],
+    };
+    assert!(plan.is_blocked());
+    assert!(!plan.is_empty());
+    assert!(plan.why_blocked().contains("users"));
+}

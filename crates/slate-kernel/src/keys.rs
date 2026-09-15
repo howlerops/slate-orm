@@ -6,6 +6,7 @@
 //! ```text
 //! row entry     0x01 <table id : u32 BE> <primary key tuple>
 //! index entry   0x02 <index id : u32 BE> <tenant?> <indexed tuple> <primary key tuple>
+//! schema state  0x03 <table id : u32 BE>
 //! ```
 //!
 //! The leading byte separates the two spaces, and the fixed-width id that
@@ -34,13 +35,21 @@
 //! which gives the SQL behaviour that nulls do not collide with each other.
 
 use crate::error::{KernelError, Result};
-use slate_schema::{IndexDef, TableDef};
+use slate_schema::{IndexDef, TableDef, TableId};
 use slate_tuple::{Direction, Value, encode, encode_value_into, prefix_successor};
 
 /// Keyspace discriminator for row entries.
 const ROW_SPACE: u8 = 0x01;
 /// Keyspace discriminator for secondary index entries.
 const INDEX_SPACE: u8 = 0x02;
+/// Keyspace discriminator for per-table schema state.
+///
+/// One key per table, holding what the last migration left behind: the schema
+/// version the data was written under, and which indexes have actually been
+/// built. See [`crate::migrate`] for why that has to be on disk rather than
+/// inferred — an index the code declares and the keyspace does not hold makes
+/// queries return *nothing*, and nothing in the rows themselves says so.
+const META_SPACE: u8 = 0x03;
 
 /// Length of a `<space byte><id : u32 BE>` header.
 const HEADER_LEN: usize = 1 + 4;
@@ -75,6 +84,22 @@ fn append(out: &mut Vec<u8>, values: &[Value]) {
 #[must_use]
 pub fn table_prefix(table: &TableDef) -> Vec<u8> {
     header(ROW_SPACE, table.id().0)
+}
+
+/// The key holding `table`'s schema state.
+///
+/// Keyed on the table id alone, so it is one point get at startup per table
+/// rather than a scan, and so a table that has never been migrated is a missing
+/// key rather than an absent row in a list.
+#[must_use]
+pub fn meta_key(table: TableId) -> Vec<u8> {
+    header(META_SPACE, table.0)
+}
+
+/// The prefix covering every table's schema state.
+#[must_use]
+pub fn meta_prefix() -> Vec<u8> {
+    vec![META_SPACE]
 }
 
 /// The prefix covering every row of `table` belonging to `tenant`.
@@ -126,6 +151,19 @@ pub fn index_prefix(table: &TableDef, index: &IndexDef, tenant: Option<&Value>) 
         encode_value_into(&mut out, tenant, Direction::Asc);
     }
     out
+}
+
+/// The prefix covering every entry of an index named only by its id.
+///
+/// [`index_prefix`] needs the `TableDef` and `IndexDef`, which a migration
+/// dropping an index does not have: the index is gone from the schema, and
+/// having its definition is precisely what "the catalog no longer declares it"
+/// rules out. The index keyspace is keyed on the id alone — see the module docs
+/// — so the id is enough, and the catalog guarantees index ids are unique
+/// across every table.
+#[must_use]
+pub fn index_prefix_of(index: slate_schema::IndexId) -> Vec<u8> {
+    header(INDEX_SPACE, index.0)
 }
 
 /// A stored secondary index entry.

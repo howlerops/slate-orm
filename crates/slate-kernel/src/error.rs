@@ -125,6 +125,17 @@ pub enum KernelError {
         table: String,
     },
 
+    /// A migration will not run, and why.
+    ///
+    /// Its own variant rather than a general-purpose "invalid": every use is a
+    /// schema that cannot be reconciled with what is on disk, and an operator
+    /// reading a log wants to know that before reading the sentence.
+    #[error("migration refused: {reason}")]
+    MigrationRefused {
+        /// What is in the way.
+        reason: String,
+    },
+
     /// Another writer has taken over; this one is no longer the writer.
     ///
     /// Terminal, and deliberately distinct from [`KernelError::TransactionConflict`].

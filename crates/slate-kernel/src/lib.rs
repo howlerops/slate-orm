@@ -19,6 +19,7 @@ pub mod keys;
 pub mod latency;
 pub mod limits;
 pub mod memory;
+pub mod migrate;
 pub mod plan;
 pub mod pool;
 pub mod query;
@@ -46,6 +47,9 @@ pub use join::{
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
 pub use limits::{
     DEFAULT_DISTINCT_LIMIT, DEFAULT_GROUP_LIMIT, DEFAULT_SORT_LIMIT, ExecutionLimits,
+};
+pub use migrate::{
+    MigrationPlan, Refusal, Report as MigrationReport, Step as MigrationStep, TableState,
 };
 pub use plan::{
     Access, Plan, Projection, implies, plan, plan_full, plan_hinted, plan_projected, plan_with,

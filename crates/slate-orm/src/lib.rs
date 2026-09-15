@@ -331,9 +331,10 @@ pub use slate_kernel::{
     Access, AccessSummary, Action, Aggregate, Chain, ChainCursor, ChainPlan, ChainRow, CmpOp,
     ColumnStats, Explanation, Expr, Grant, Group, Join, JoinAlgorithm, JoinCursor, JoinExplanation,
     JoinKey, JoinSchema, JoinStep, JoinStepPlan, JoinType, JoinedRow, KernelError, KeyRange,
-    NullsOrder, Plan, Policy, Principal, Projection, Query, QueryCursor, RecordSnapshot,
-    RecordStore, RecordTransaction, ReplicaPool, RetryPolicy, ScanOrder, SecurityCatalog,
-    SecurityContext, Side, SortKey, Statistics, TableStats, Truth, latency, memory,
+    MigrationPlan, MigrationReport, MigrationStep, NullsOrder, Plan, Policy, Principal, Projection,
+    Query, QueryCursor, RecordSnapshot, RecordStore, RecordTransaction, Refusal, ReplicaPool,
+    RetryPolicy, ScanOrder, SecurityCatalog, SecurityContext, Side, SortKey, Statistics,
+    TableState, TableStats, Truth, latency, memory, migrate,
 };
 pub use slate_schema::{
     Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Ordinal, Row, SchemaError, TableDef,
