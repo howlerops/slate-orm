@@ -1116,7 +1116,13 @@ fn refusals_name_what_was_wrong() {
         ("DELETE FROM books WHERE author_id = 1", "primary key only"),
         ("INSERT INTO books VALUES (1, 2)", "takes 4 values"),
         ("INSERT INTO books (id) VALUES (1)", "no column list"),
-        ("SELECT count(*) FROM books", "needs a GROUP BY"),
+        // `SELECT count(*) FROM books` used to be here. It is not a refusal
+        // any more: a grouping with no keys is one group over every row, which
+        // the kernel has always answered, and refusing it was a front-end
+        // guard that mistook the usual shape for the only one. What is still
+        // refused is a *column* beside the aggregate, because the single row
+        // it returns has no one value for that column to take.
+        ("SELECT title, count(*) FROM books", "needs a GROUP BY"),
         // These two used to be refusals, when the parser knew one join and
         // checked the `ON` clause against it. Any pair of tables and columns
         // is legal now — `books.id = authors.id` is a meaningless join and a
@@ -1426,7 +1432,13 @@ fn grouped_refusals_name_what_was_wrong() {
             "SELECT title, count(*) FROM books GROUP BY author_id",
             "neither a group key nor an aggregate",
         ),
-        ("SELECT count(*) FROM books", "needs a GROUP BY"),
+        // `SELECT count(*) FROM books` used to be here. It is not a refusal
+        // any more: a grouping with no keys is one group over every row, which
+        // the kernel has always answered, and refusing it was a front-end
+        // guard that mistook the usual shape for the only one. What is still
+        // refused is a *column* beside the aggregate, because the single row
+        // it returns has no one value for that column to take.
+        ("SELECT title, count(*) FROM books", "needs a GROUP BY"),
         (
             "SELECT author_id, median(year) FROM books GROUP BY author_id",
             "no such aggregate",

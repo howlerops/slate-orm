@@ -684,3 +684,71 @@ fn an_unknown_aggregate_is_refused_by_name() {
         "got {answer}"
     );
 }
+
+/// `SELECT count(*) FROM books` — one group, over every row.
+///
+/// This was a front-end refusal and nothing else: the kernel has always
+/// answered a grouping with no keys, returning a single group whose key is
+/// empty. The guard that refused it mistook the usual shape for the only one.
+#[test]
+fn a_whole_table_aggregate_needs_no_group_by() {
+    let playground = Playground::new();
+    let answer: Json =
+        serde_json::from_str(&playground.sql("SELECT count(*) FROM books")).expect("json");
+    let first = &answer.as_array().expect("statements")[0];
+    let rows = first["rows"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "one group over the whole table: {first}");
+    // The same 4,824 rows `the_fixture_is_seeded_and_readable` counts by hand,
+    // which is what makes this a count rather than a shape check. Values come
+    // back as strings: the grid renders them and never does arithmetic.
+    assert_eq!(
+        rows[0].as_array().expect("row")[0],
+        json!("4824"),
+        "{first}"
+    );
+    // And the header says what the column is, rather than naming the table's
+    // first column over an aggregate.
+    assert_eq!(first["columns"], json!(["count(*)"]), "{first}");
+}
+
+/// Several aggregates at once, still with no GROUP BY.
+#[test]
+fn several_whole_table_aggregates_come_back_in_order() {
+    let playground = Playground::new();
+    let answer: Json =
+        serde_json::from_str(&playground.sql("SELECT count(*), min(year), max(year) FROM books"))
+            .expect("json");
+    let first = &answer.as_array().expect("statements")[0];
+    let rows = first["rows"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "{first}");
+    let row = rows[0].as_array().expect("row");
+    assert_eq!(row.len(), 3, "{first}");
+    assert_eq!(row[0], json!("4824"), "{first}");
+    // min before max, in the order they were written — a pair that would read
+    // the same either way if the years happened to match.
+    let min: i64 = row[1].as_str().expect("min").parse().expect("a year");
+    let max: i64 = row[2].as_str().expect("max").parse().expect("a year");
+    assert!(min < max, "min should be below max: {first}");
+    // One header per value, and the width has to match or the grid mislabels
+    // every cell — which is exactly what it did before this commit.
+    assert_eq!(
+        first["columns"].as_array().expect("columns").len(),
+        row.len(),
+        "{first}"
+    );
+}
+
+/// A bare column beside an aggregate is still refused without a GROUP BY.
+///
+/// The query returns one row over the whole table, and there is no single
+/// value for a column to take in it. Lifting the aggregate guard must not lift
+/// this one with it.
+#[test]
+fn a_column_beside_a_whole_table_aggregate_is_refused() {
+    let playground = Playground::new();
+    let answer: Json =
+        serde_json::from_str(&playground.sql("SELECT title, count(*) FROM books")).expect("json");
+    let first = &answer.as_array().expect("statements")[0];
+    let message = first["error"]["message"].as_str().unwrap_or("");
+    assert!(message.contains("GROUP BY"), "{first}");
+}

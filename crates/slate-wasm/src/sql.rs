@@ -1025,19 +1025,29 @@ impl Parser<'_> {
                     }
                 }
                 SelectItem::Aggregate { kind, argument, at } => {
-                    if !grouping {
-                        return Err(SqlError {
-                            message: "an aggregate needs a GROUP BY — try \
-                                      `SELECT pickup_zone, count(*) FROM trips GROUP BY \
-                                      pickup_zone`"
-                                .to_owned(),
-                            at: *at,
-                        });
-                    }
+                    // No GROUP BY is not an error: it is one group, over every
+                    // row. The kernel has always supported a grouping with no
+                    // keys — `Grouping::by([], ...)` returns a single group
+                    // whose key is empty — so `SELECT count(*) FROM trips` was
+                    // refused here and nowhere else, by a guard that mistook
+                    // "the usual shape" for "the only shape".
                     spec.aggregates
                         .push(self.aggregate(kind, argument.as_deref(), &table, *at)?);
                 }
             }
+        }
+        // Every non-aggregate in the list has to be a group key, and with no
+        // GROUP BY there are none — so a bare column beside an aggregate is
+        // the same error it is with a grouping, and has to say so here because
+        // the loop above only checks it when `grouping` is true.
+        if !grouping && !spec.aggregates.is_empty() && !spec.columns.is_empty() {
+            return Err(SqlError {
+                message: "a column beside an aggregate needs a GROUP BY — without one the \
+                          query returns a single row over the whole table, and there is no \
+                          one value for that column to take"
+                    .to_owned(),
+                at: self.at(),
+            });
         }
         if grouping && spec.aggregates.is_empty() && !list.is_empty() {
             // `SELECT zone FROM trips GROUP BY zone` — the distinct keys. The

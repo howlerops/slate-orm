@@ -1612,7 +1612,12 @@ impl Playground {
         match parsed {
             sql::Statement::Select(spec) => {
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
-                let grouped = !spec.group_by.is_empty();
+                // The same test `answer_spec` dispatches on, and it has to be
+                // the same test: this decides the headers and that decides the
+                // rows, so testing the keys here and "keys or aggregates"
+                // there put four table column names over a three-value
+                // aggregate row. A grouping with no keys is still a grouping.
+                let grouped = !spec.group_by.is_empty() || !spec.aggregates.is_empty();
                 let columns = self
                     .table(&spec.table)
                     .map(|t| {
@@ -2036,7 +2041,11 @@ impl Playground {
 
         let query = build(spec, &table)?;
 
-        if !spec.group_by.is_empty() {
+        // Aggregates with no keys are still a grouping — one group, over every
+        // row — so the dispatch is on "does this return groups", not on "are
+        // there keys". Testing only the keys is what made `SELECT count(*)
+        // FROM trips` unreachable.
+        if !spec.group_by.is_empty() || !spec.aggregates.is_empty() {
             // Built without them: `build` puts sort, limit and offset on the
             // query, and a LIMIT applied to the rows going into a grouping
             // silently answers a different question — the first 10 rows'
