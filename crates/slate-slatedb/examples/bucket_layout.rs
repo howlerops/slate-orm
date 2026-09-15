@@ -24,10 +24,17 @@ use slate_kernel::RecordStore;
 use slate_kernel::security::{Action, Grant, SecurityCatalog, SecurityContext};
 use slate_slatedb::SlateStore;
 use slatedb::Db;
+use slatedb::admin::Admin;
+use slatedb::config::{GarbageCollectorDirectoryOptions, GarbageCollectorOptions};
 use slatedb::object_store::local::LocalFileSystem;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Where the database lives inside the bucket. Named once because the `Admin`
+/// that collects the WAL has to be pointed at the same place the `Db` was.
+const SLATE_PATH: &str = "/records";
 
 struct Entry {
     path: String,
@@ -45,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // objects; a listing taken before it is a true listing of a state nobody
     // ships, and a misleading picture of what the data costs at rest.
     let object_store = Arc::new(LocalFileSystem::new_with_prefix(&root)?);
-    let db = Arc::new(Db::open("/records", object_store).await?);
+    let db = Arc::new(Db::open(SLATE_PATH, object_store).await?);
     let kv = SlateStore::from_db(Arc::clone(&db));
 
     let trips = slate_wasm::taxi::trips();
@@ -77,6 +84,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(store);
     db.close().await?;
 
+    // What the bucket holds the instant a bulk load closes, kept so the
+    // difference can be reported rather than asserted.
+    let mut loaded = Vec::new();
+    walk(&root, &root, &mut loaded)?;
+    let after_load: u64 = loaded.iter().map(|e| e.bytes).sum();
+
+    // Closing flushes the memtable into an SST. It does not release the WAL
+    // segment that carried the same rows, so a listing here shows the trips
+    // twice — 21.7 MB for 11.0 MB of data — and reads as "this layer doubles
+    // your storage bill".
+    //
+    // Running the collector at this point does not help, which is the part
+    // worth knowing. SlateDB's WAL GC keeps every segment from the manifest's
+    // `replay_after_wal_id` *inclusive* onwards, and after the load that
+    // boundary is the very segment holding the trips. Reopening the database
+    // does not move it either — it writes a fence at the next id and leaves
+    // the boundary where it was. Only a write past the boundary releases it.
+    //
+    // So the load is followed by one: the last trip row written over itself.
+    // That is not a trick to make the number smaller, it is what any database
+    // that is still being used does within a second of finishing a load, and
+    // the resting size of one that never writes again is a number nobody
+    // needs. It is a real row through the real record layer, so what it costs
+    // — a 296-byte SST and a 196-byte WAL segment — is in the listing too.
+    let object_store = Arc::new(LocalFileSystem::new_with_prefix(&root)?);
+    let db = Arc::new(Db::open(SLATE_PATH, Arc::clone(&object_store) as _).await?);
+    let store = RecordStore::new(
+        SlateStore::from_db(Arc::clone(&db)),
+        slate_wasm::taxi::catalog(),
+        SecurityCatalog::new().grant(Grant::new(
+            "app",
+            slate_wasm::taxi::TRIPS,
+            Action::EVERYTHING,
+        )),
+    );
+    let txn = store.begin().await?;
+    let Some(last) = rows.last() else {
+        return Err("the trip file decoded to nothing".into());
+    };
+    txn.update(&root_ctx, &trips, last).await?;
+    txn.commit().await?;
+    drop(store);
+    db.close().await?;
+
+    // `min_age` is zero because these objects are seconds old and the default
+    // threshold exists to stop a *running* system collecting a segment a slow
+    // reader still needs. Nothing is open on this store — both handles are
+    // closed — so there is no reader to protect. Do not copy this setting into
+    // anything that serves traffic.
+    let reclaimable = GarbageCollectorDirectoryOptions {
+        interval: None,
+        min_age: Duration::ZERO,
+        dry_run: false,
+    };
+    Admin::builder(
+        SLATE_PATH,
+        Arc::new(LocalFileSystem::new_with_prefix(&root)?),
+    )
+    .build()
+    .run_gc_once(GarbageCollectorOptions {
+        manifest_options: Some(reclaimable),
+        wal_options: Some(reclaimable),
+        ..GarbageCollectorOptions::default()
+    })
+    .await?;
+
     let mut entries = Vec::new();
     walk(&root, &root, &mut entries)?;
     entries.sort_by(|a: &Entry, b: &Entry| a.path.cmp(&b.path));
@@ -96,6 +169,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{:>12}  {}", human(entry.bytes), entry.path);
         }
         println!("\n{} objects, {} total", entries.len(), human(total));
+        println!(
+            "({} before the WAL boundary moved and the collector ran)",
+            human(after_load)
+        );
     }
 
     std::fs::remove_dir_all(&root)?;

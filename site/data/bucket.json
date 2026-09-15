@@ -1,13 +1,14 @@
 [
-  { "path": "records/compacted/01M2GPGFBS7MC1HW1D7EZDNW6G.sst", "bytes": 11538479 },
+  { "path": "records/compacted/01M2HASY09NFHWEVP83RQ7H2YJ.sst", "bytes": 11538479 },
+  { "path": "records/compacted/01M2HASYA4PJFYCYKFGZDT0W4D.sst", "bytes": 376 },
   { "path": "records/compactions/00000000000000000001.compactions", "bytes": 26 },
   { "path": "records/compactions/00000000000000000002.compactions", "bytes": 42 },
   { "path": "records/compactions/00000000000000000003.compactions", "bytes": 42 },
-  { "path": "records/manifest/00000000000000000001.manifest", "bytes": 130 },
-  { "path": "records/manifest/00000000000000000002.manifest", "bytes": 138 },
-  { "path": "records/manifest/00000000000000000003.manifest", "bytes": 146 },
-  { "path": "records/manifest/00000000000000000004.manifest", "bytes": 450 },
-  { "path": "records/manifest/00000000000000000005.manifest", "bytes": 450 },
+  { "path": "records/compactions/00000000000000000004.compactions", "bytes": 42 },
+  { "path": "records/compactions/00000000000000000005.compactions", "bytes": 42 },
+  { "path": "records/gc/manifest.boundary", "bytes": 1 },
+  { "path": "records/manifest/00000000000000000009.manifest", "bytes": 682 },
   { "path": "records/wal/00000000000000000001.sst", "bytes": 0 },
-  { "path": "records/wal/00000000000000000002.sst", "bytes": 11255018 }
+  { "path": "records/wal/00000000000000000003.sst", "bytes": 0 },
+  { "path": "records/wal/00000000000000000004.sst", "bytes": 268 }
 ]

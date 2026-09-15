@@ -127,6 +127,11 @@ database, which flushes, but does not wait for the WAL to be reclaimed after
 compaction — so the 21.7 MB total roughly double-counts the data. The listing
 is true and the total is not the steady-state size on disk.
 
+> **Closed on 2026-09-15** by `the-wal-the-collector-would-not-take`, and the
+> diagnosis above turned out to be wrong: waiting does nothing, because SlateDB
+> retains the boundary segment deliberately. The listing now reads 11.0 MB, and
+> a browser assertion covers the arithmetic.
+
 **It is one bucket at one moment.** No compaction over time, no second writer,
 no fencing, none of the things `docs/topology.md` is about.
 

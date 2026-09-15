@@ -514,6 +514,26 @@ def main() -> int:
         len(set(storage["pagedKeys"])) == len(storage["pagedKeys"]) == 50,
         f"{len(storage['pagedKeys'])} keys, {len(set(storage['pagedKeys']))} distinct",
     )
+    # The listing used to total 21.7 MB for 11.0 MB of rows, because the WAL
+    # segment that carried the load was still sitting beside the SST holding
+    # the same data. Nothing caught it: every assertion here was about which
+    # *kinds* of object appear, and both listings have an SST and a WAL. This
+    # one is about the arithmetic, so a regenerated `bucket.json` that
+    # double-counts fails rather than quietly reappearing on the page.
+    scale = {"B": 1, "KB": 1024, "MB": 1024 * 1024}
+
+    def size_of(row: str) -> float | None:
+        found = re.search(r"([\d.]+)\s*(B|KB|MB)\b", row)
+        return float(found.group(1)) * scale[found.group(2)] if found else None
+
+    sizes = [n for n in (size_of(r) for r in seen["bucketRows"]) if n is not None]
+    total_shown = seen["storage"]["bucketTotal"]
+    check(
+        "the bucket total does not count the rows twice",
+        len(sizes) == len(seen["bucketRows"]) and sum(sizes) < max(sizes) * 1.5,
+        f"{total_shown!r}: largest object {max(sizes) if sizes else 0:.0f}, "
+        f"total {sum(sizes):.0f} across {len(sizes)}/{len(seen['bucketRows'])} rows",
+    )
     check(
         "the bucket listing is a real one: SST, WAL and manifest",
         any(".sst" in r and "compacted" in r for r in seen["bucketRows"])

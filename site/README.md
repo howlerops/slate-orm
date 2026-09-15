@@ -216,10 +216,34 @@ cargo run --release -p slate-slatedb --example bucket_layout
 cargo run --release -p slate-slatedb --example bucket_layout -- --json > site/data/bucket.json
 ```
 
-11 objects, 21.7 MB: one compacted SST holding the rows and the index entries,
-a write-ahead log, five manifests and three compaction records. `LocalFileSystem`
-rather than MinIO because SlateDB writes objects through `object_store` either
-way — the paths are what an S3 bucket holds, with a different scheme in front.
+12 objects, 11.0 MB: one compacted SST holding the rows and the index entries,
+a second of 376 bytes, one live WAL segment of 268 bytes, a manifest, five
+compaction records and two spent WAL fences. `LocalFileSystem` rather than
+MinIO because SlateDB writes objects through `object_store` either way — the
+paths are what an S3 bucket holds, with a different scheme in front.
+
+### Why the listing is taken one write after the load
+
+It used to read **21.7 MB**, and that number was wrong in a way worth writing
+down: the WAL segment carrying the 100,000 trips was still sitting beside the
+SST that now held the same rows, so the data was counted twice and the page
+implied a record layer doubles your storage bill.
+
+Running the garbage collector does not fix it. SlateDB's WAL GC retains every
+segment from the manifest's `replay_after_wal_id` *inclusive* onward, and after
+a bulk load that boundary **is** the segment holding the load — measured, by
+reading the manifest: `replay_after_wal_id=2` with the trips in segment 2.
+Reopening the database does not move it either; that writes a fence at the next
+id and leaves the boundary alone (`replay_after_wal_id=2`, `next_wal_sst_id=4`).
+Only a write *past* the boundary releases it.
+
+So the example writes one: the last trip row over itself, through the record
+layer, after the load. That is not a trick to shrink the number — it is what
+any database still being used does within a second of a load finishing, and the
+resting size of one that never writes again is a number nobody needs. What that
+write costs is in the listing rather than hidden: the 376-byte SST and the
+268-byte WAL segment are it. The example still prints the pre-collection total
+in brackets, so the 21.7 MB is reported rather than quietly disappeared.
 
 The listing is **static and dated**: it is a snapshot of one load, and if the
 schema or the sample changes it has to be regenerated. Nothing checks that it
