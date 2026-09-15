@@ -64,7 +64,7 @@
 
 use crate::error::{KernelError, Result};
 use crate::keys;
-use crate::store::{KeyRange, KvStore, ScanOrder};
+use crate::store::{KeyRange, KvSnapshot, KvStore, ScanOrder};
 use slate_schema::{Catalog, IndexDef, IndexId, TableDef, TableId, decode_row};
 use slate_tuple::{Value, ValueType};
 
@@ -412,13 +412,32 @@ pub async fn stored_state<S: KvStore + ?Sized>(
     catalog: &Catalog,
 ) -> Result<Vec<(TableId, core::result::Result<TableState, Refusal>)>> {
     let txn = store.begin().await?;
+    let out = stored_state_of(txn.as_ref(), catalog).await;
+    txn.rollback();
+    out
+}
+
+/// [`stored_state`] over a snapshot rather than a store.
+///
+/// Reading the state needs `get` and nothing else, so the read half of this
+/// module works on anything that can be read — including a **read replica**,
+/// which has a `KvSnapshot` and no way to open a transaction at all. That
+/// matters because a replica serves queries through the same indexes: a node
+/// that holds no writer still has to be able to tell that what it is reading
+/// has not been migrated, even though it can do nothing about it.
+///
+/// # Errors
+/// If the snapshot cannot be read.
+pub async fn stored_state_of(
+    snapshot: &(impl KvSnapshot + ?Sized),
+    catalog: &Catalog,
+) -> Result<Vec<(TableId, core::result::Result<TableState, Refusal>)>> {
     let mut out = Vec::new();
     for table in catalog.tables() {
-        if let Some(bytes) = txn.get(&keys::meta_key(table.id())).await? {
+        if let Some(bytes) = snapshot.get(&keys::meta_key(table.id())).await? {
             out.push((table.id(), decode_state(table, &bytes)));
         }
     }
-    txn.rollback();
     Ok(out)
 }
 
@@ -427,8 +446,22 @@ pub async fn stored_state<S: KvStore + ?Sized>(
 /// # Errors
 /// If the store cannot be read.
 pub async fn plan<S: KvStore + ?Sized>(store: &S, catalog: &Catalog) -> Result<MigrationPlan> {
+    let txn = store.begin().await?;
+    let out = plan_of(txn.as_ref(), catalog).await;
+    txn.rollback();
+    out
+}
+
+/// [`plan`] over a snapshot rather than a store. See [`stored_state_of`].
+///
+/// # Errors
+/// If the snapshot cannot be read.
+pub async fn plan_of(
+    snapshot: &(impl KvSnapshot + ?Sized),
+    catalog: &Catalog,
+) -> Result<MigrationPlan> {
     let mut out = MigrationPlan::default();
-    let recorded = stored_state(store, catalog).await?;
+    let recorded = stored_state_of(snapshot, catalog).await?;
 
     for table in catalog.tables() {
         let current = fingerprint(table);
@@ -580,7 +613,18 @@ pub async fn migrate<S: KvStore + ?Sized>(store: &S, catalog: &Catalog) -> Resul
 /// # Errors
 /// If the store cannot be read, or if anything is outstanding.
 pub async fn verify<S: KvStore + ?Sized>(store: &S, catalog: &Catalog) -> Result<()> {
-    let plan = plan(store, catalog).await?;
+    let txn = store.begin().await?;
+    let out = verify_of(txn.as_ref(), catalog).await;
+    txn.rollback();
+    out
+}
+
+/// [`verify`] over a snapshot rather than a store. See [`stored_state_of`].
+///
+/// # Errors
+/// If the snapshot cannot be read, or if anything is outstanding.
+pub async fn verify_of(snapshot: &(impl KvSnapshot + ?Sized), catalog: &Catalog) -> Result<()> {
+    let plan = plan_of(snapshot, catalog).await?;
     if plan.is_blocked() {
         return Err(KernelError::MigrationRefused {
             reason: plan.why_blocked(),

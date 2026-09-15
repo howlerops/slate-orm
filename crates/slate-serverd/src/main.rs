@@ -209,6 +209,50 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         (Some(writer), replicas)
     };
 
+    // The schema, before the socket. An index the keyspace does not hold makes
+    // the queries that would use it return *no rows* — see
+    // `slate_kernel::migrate` — so this runs before anything can ask.
+    //
+    // Before binding rather than after: a node that binds and then migrates is
+    // a node that accepts a connection and answers it wrongly, which is the
+    // failure being prevented rather than a smaller version of it.
+    match &writer {
+        Some(Writer::Memory(store)) => {
+            reconcile(store.as_ref(), &catalog, document.schema.migrate_on_start).await?;
+        }
+        Some(Writer::Slate(store)) => {
+            reconcile(store.as_ref(), &catalog, document.schema.migrate_on_start).await?;
+        }
+        // A read-only node has no writer and cannot migrate anything. It still
+        // has to know, because it serves reads from replicas of the same
+        // keyspace and would return the same empty answers — so it checks what
+        // it can reach and says so. A warning and not a refusal: a follower
+        // that starts beside a leader may look before the leader has finished,
+        // and a restart loop on a node that is about to be correct is a worse
+        // outage than the window it closes. The window itself is recorded in
+        // the ledger rather than hidden here.
+        None => {
+            // One replica is enough: they are replicas of one keyspace, so a
+            // second would report the same thing in different words.
+            if let Some(replica) = replicas.first() {
+                let snapshot = replica
+                    .snapshot()
+                    .await
+                    .map_err(|why| Fault::new(format!("cannot read a replica: {why}")))?;
+                if let Err(why) =
+                    slate_kernel::migrate::verify_of(snapshot.as_ref(), &catalog).await
+                {
+                    warnings.push(format!(
+                        "this node holds no writer and the keyspace it reads is not migrated \
+                         ({why}). Reads through an unbuilt index return no rows rather than an \
+                         error. It becomes correct on its own once the node holding the writer \
+                         lease migrates and this replica catches up"
+                    ));
+                }
+            }
+        }
+    }
+
     // Bound before the banner, so a client that connects the instant it reads
     // the banner finds the socket already accepting rather than racing it.
     let listener = tokio::net::TcpListener::bind(address)
@@ -546,6 +590,76 @@ fn routing(settings: &config::Routing) -> Started<RoutingPolicy> {
 /// rather than against the running node. What it does remove is the *hand*
 /// copying — a client generator can read this instead of a person transcribing
 /// ordinals into another language, which is the mechanical half of the drift.
+/// Bring the keyspace into line with the catalog, or refuse to serve.
+///
+/// `migrate` when configured to, `verify` when not. The two are not "do it" and
+/// "skip it": the second still refuses to start on anything outstanding, so
+/// turning the migration off buys the operator control over *when* a backfill
+/// runs, never permission to serve without one.
+async fn reconcile<S: slate_kernel::store::KvStore + ?Sized>(
+    store: &S,
+    catalog: &Catalog,
+    migrate: bool,
+) -> Started<()> {
+    use slate_kernel::migrate::{self, Step};
+
+    if !migrate {
+        return migrate::verify(store, catalog).await.map_err(|why| {
+            Fault::new(format!(
+                "{why}. `[schema] migrate_on_start` is false, so this node will not build it \
+                 itself; run a node with it enabled, or set it to true here"
+            ))
+        });
+    }
+
+    let plan = migrate::plan(store, catalog)
+        .await
+        .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?;
+    if plan.is_empty() {
+        return Ok(());
+    }
+    if plan.is_blocked() {
+        return Err(Fault::new(format!(
+            "this binary's schema cannot be applied to the data already stored: {}",
+            plan.why_blocked()
+        )));
+    }
+
+    // Announced before it runs, not after. A backfill of a large table is the
+    // one startup step that can take minutes, and an operator watching a node
+    // that has printed nothing cannot tell working from hung.
+    let building: Vec<&str> = plan
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            Step::BuildIndex { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if !building.is_empty() {
+        eprintln!(
+            "slate-serverd: building {} index{} before serving: {}",
+            building.len(),
+            if building.len() == 1 { "" } else { "es" },
+            building.join(", "),
+        );
+    }
+
+    let started = std::time::Instant::now();
+    let report = migrate::apply(store, catalog, &plan)
+        .await
+        .map_err(|why| Fault::new(format!("migration failed: {why}")))?;
+    let entries: usize = report.entries_written.iter().sum();
+    if !building.is_empty() {
+        eprintln!(
+            "slate-serverd: built {entries} index entr{} in {:.1?}",
+            if entries == 1 { "y" } else { "ies" },
+            started.elapsed(),
+        );
+    }
+    Ok(())
+}
+
 fn describe(catalog: &Catalog) -> String {
     let tables: Vec<serde_json::Value> = catalog
         .tables()

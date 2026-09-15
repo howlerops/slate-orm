@@ -100,6 +100,9 @@ pub(crate) struct Document {
     /// What the planner is told about the data.
     #[serde(default)]
     pub(crate) planner: Planner,
+    /// What happens to the schema on the way up.
+    #[serde(default)]
+    pub(crate) schema: Schema,
     /// How long a shutdown may take.
     #[serde(default)]
     pub(crate) shutdown: Shutdown,
@@ -398,6 +401,40 @@ pub(crate) struct Planner {
     /// without asking.
     #[serde(default)]
     pub(crate) analyze_on_start: bool,
+}
+
+/// What happens to the schema on the way up.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Schema {
+    /// Build any index the keyspace does not already hold, before serving.
+    ///
+    /// **On by default**, which is the opposite of `analyze_on_start` above,
+    /// and for the opposite reason. Statistics are an optimisation: a node that
+    /// skips them answers correctly and more slowly. An unbuilt index is not —
+    /// a query the planner routes through it returns *no rows*, with no error,
+    /// and the rows are still on disk. The expensive case and the case you need
+    /// are therefore the same case, and defaulting to off would make the safe
+    /// configuration the one nobody writes down.
+    ///
+    /// Turning it off does not mean ignoring the problem. The node then
+    /// *verifies* instead and refuses to start if anything is outstanding,
+    /// which is the setting for a deployment that wants to run a large backfill
+    /// deliberately rather than inside a rolling restart.
+    #[serde(default = "yes")]
+    pub(crate) migrate_on_start: bool,
+}
+
+impl Default for Schema {
+    fn default() -> Self {
+        Self {
+            migrate_on_start: true,
+        }
+    }
+}
+
+const fn yes() -> bool {
+    true
 }
 
 /// How long a shutdown may take.
