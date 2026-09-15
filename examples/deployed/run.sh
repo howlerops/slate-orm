@@ -67,6 +67,19 @@ if [ -z "$python_only" ]; then
   # Built before anything starts, so a compile error is a compile error and
   # not a head node that came up and then had nothing to talk to it.
   (cd "$here/go" && go build -o "$work/go-check" .)
+  # `@slate-orm/client` is a `file:` dependency on `clients/typescript`, and
+  # what `node/src/check.ts` imports is that package's *built* `dist/`, which
+  # an `npm install` does not produce -- it only symlinks the directory. So
+  # the client is built here, first.
+  #
+  # Leaving this out passed locally for the worst possible reason: an earlier
+  # run of `examples/explorer` had left a `dist/` behind, so the compile found
+  # a client that this script never built and nothing said so. On a clean
+  # checkout it is `TS2307: Cannot find module '@slate-orm/client'`, which is
+  # how CI found it. `examples/explorer/run.sh` builds it for the neighbouring
+  # reason -- there, a stale `dist/` means the node adapter runs yesterday's
+  # client and the conformance runner reports three SDKs disagreeing.
+  (cd "$root/clients/typescript" && npm install --silent && npm run build --silent)
   (cd "$here/node" && npm install --silent && npx tsc -p tsconfig.json)
 fi
 
