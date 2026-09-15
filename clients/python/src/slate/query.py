@@ -30,7 +30,15 @@ import enum
 from collections.abc import Iterable, Sequence
 
 from ._proto.slate.v1 import records_pb2 as pb
-from .expr import ColumnRef, Columns, Expr, aggregate_ref, computed_ref, group_key_ref
+from .expr import (
+    ColumnRef,
+    Columns,
+    Expr,
+    aggregate_ref,
+    computed_ref,
+    group_key_ref,
+    joined_computed_ref,
+)
 from .scalar import Scalar
 from .schema import Table, fingerprint_of
 
@@ -582,6 +590,7 @@ class JoinQuery:
         self._limit: int | None = None
         self._offset = 0
         self._build_limit: int | None = None
+        self._compute: list[Scalar] = []
 
     def add(
         self,
@@ -625,6 +634,34 @@ class JoinQuery:
         self._build_limit = rows
         return self
 
+    def compute(self, *values: Scalar) -> JoinQuery:
+        """Values computed per *joined* row, named with `computed(i)`.
+
+        The arrangement `Query.compute` uses on one table, lifted one level.
+        What is new is that the expression is evaluated over the joined row, so
+        it may read both sides at once — which is the thing no input's own
+        `compute` can express, and the reason this lives here rather than
+        there.
+
+        An input's computed value is appended to *that input's* row, and a
+        joined row is packed by declared table width, so such a value has no
+        slot in the joined space and naming one across inputs is refused. A
+        value declared here does have one, past every input's columns.
+
+        Each may read every input's columns and the values *before* it, so the
+        second may read `computed(0)` and not the other way round.
+        """
+        self._compute.extend(values)
+        return self
+
+    def computed(self, index: int) -> ColumnRef:
+        """The `index`th value the join itself computes, counting from zero.
+
+        Not `inputs[n].computed(i)`, which names an input's own — a different
+        kind on the wire, with a different space and a different refusal.
+        """
+        return joined_computed_ref(index)
+
     @property
     def inputs(self) -> Sequence[JoinInput]:
         return tuple(self._inputs)
@@ -633,6 +670,7 @@ class JoinQuery:
         query = pb.JoinQuery(
             inputs=[i.to_proto() for i in self._inputs],
             offset=self._offset,
+            compute=[s.to_proto() for s in self._compute],
         )
         if self._limit is not None:
             query.limit = self._limit

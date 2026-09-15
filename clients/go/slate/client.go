@@ -216,11 +216,17 @@ func rowsToProto(rows [][]Value) []*pb.Row {
 	return out
 }
 
-// rowFromProto decodes a row, refusing one that carries computed values.
+// rowFromProto decodes a row's stored columns, leaving its computed values
+// behind.
 //
 // A computed value is not a column, and a caller that indexed past the end of
-// the table's own columns would get one silently. `Query` puts them in
-// `Computed`, and this is the read path for stored rows.
+// the table's own columns would get one silently — so they travel in `Row.computed`
+// on the wire and come back through `computedFromProto` here.
+//
+// This comment used to say the function *refused* such a row. It never did: it
+// read `row.Values` and ignored `row.Computed`, which is the right behaviour
+// and was described as a different one. Nothing depended on the wrong reading,
+// because until now no Go request could produce a computed value at all.
 func rowFromProto(row *pb.Row) ([]Value, error) {
 	if row == nil {
 		return nil, nil
@@ -230,6 +236,40 @@ func rowFromProto(row *pb.Row) ([]Value, error) {
 		decoded, err := valueFromProto(v)
 		if err != nil {
 			return nil, fmt.Errorf("column %d: %w", i, err)
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
+}
+
+// computedFromProto decodes a row's computed values, which are carried apart
+// from its columns for the reason [rowFromProto] gives.
+func computedFromProto(row *pb.Row) ([]Value, error) {
+	if row == nil || len(row.Computed) == 0 {
+		return nil, nil
+	}
+	out := make([]Value, 0, len(row.Computed))
+	for i, v := range row.Computed {
+		decoded, err := valueFromProto(v)
+		if err != nil {
+			return nil, fmt.Errorf("computed value %d: %w", i, err)
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
+}
+
+// valuesFromProto decodes a bare list of values, for a join's own computed
+// values — which belong to no input and so are not inside any `Row`.
+func valuesFromProto(values []*pb.Value, what string) ([]Value, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]Value, 0, len(values))
+	for i, v := range values {
+		decoded, err := valueFromProto(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s %d: %w", what, i, err)
 		}
 		out = append(out, decoded)
 	}
@@ -332,6 +372,7 @@ type RowStream struct {
 	cancel   context.CancelFunc
 	session  *Session
 	batch    [][]Value
+	computed [][]Value
 	at       int
 	servedBy *ServedBy
 	warnings []string
@@ -381,6 +422,7 @@ func (r *RowStream) Next() bool {
 			r.warnings = append(r.warnings, message.Warnings...)
 		}
 		r.batch = r.batch[:0]
+		r.computed = r.computed[:0]
 		r.at = 0
 		for _, row := range message.Rows {
 			decoded, err := rowFromProto(row)
@@ -389,7 +431,14 @@ func (r *RowStream) Next() bool {
 				r.done = true
 				return false
 			}
+			extra, err := computedFromProto(row)
+			if err != nil {
+				r.err = err
+				r.done = true
+				return false
+			}
 			r.batch = append(r.batch, decoded)
+			r.computed = append(r.computed, extra)
 		}
 	}
 	return true
@@ -403,6 +452,13 @@ func (r *RowStream) trailers() metadata.MD {
 }
 
 // Row is the row [RowStream.Next] advanced to.
+//
+// Stored columns only. What [Query.Compute] produced is in [RowStream.Computed]
+// — beside the row rather than as a tail of it, so an ordinal still means a
+// column and a caller that indexes past the end gets nothing rather than
+// silently getting a computed value.
+//
+// It advances the cursor, so [RowStream.Computed] must be read first.
 func (r *RowStream) Row() []Value {
 	if r.at >= len(r.batch) {
 		return nil
@@ -410,6 +466,17 @@ func (r *RowStream) Row() []Value {
 	row := r.batch[r.at]
 	r.at++
 	return row
+}
+
+// Computed is what [Query.Compute] produced for the row [RowStream.Row] is
+// about to return, in declaration order. Empty when the query computes nothing.
+//
+// Read it *before* [RowStream.Row], which advances the cursor.
+func (r *RowStream) Computed() []Value {
+	if r.at >= len(r.computed) {
+		return nil
+	}
+	return r.computed[r.at]
 }
 
 // Err is why the stream stopped, or nil if it simply ended.
@@ -670,6 +737,7 @@ type JoinStream struct {
 	cancel   context.CancelFunc
 	session  *Session
 	batch    [][][]Value
+	computed [][]Value
 	at       int
 	servedBy *ServedBy
 	warnings []string
@@ -728,6 +796,7 @@ func (j *JoinStream) Next() bool {
 		}
 		j.warnings = append(j.warnings, message.Warnings...)
 		j.batch = j.batch[:0]
+		j.computed = j.computed[:0]
 		j.at = 0
 		for _, joined := range message.Rows {
 			inputs := make([][]Value, 0, len(joined.Inputs))
@@ -746,10 +815,35 @@ func (j *JoinStream) Next() bool {
 				}
 				inputs = append(inputs, row)
 			}
+			extra, err := valuesFromProto(joined.Computed, "the join's computed value")
+			if err != nil {
+				j.err = err
+				j.done = true
+				return false
+			}
 			j.batch = append(j.batch, inputs)
+			j.computed = append(j.computed, extra)
 		}
 	}
 	return true
+}
+
+// Computed is what [JoinQuery.Compute] produced for the row [JoinStream.Row]
+// is about to return, in declaration order. Empty when the join computes
+// nothing.
+//
+// Beside the inputs rather than inside one of them, because a value that may
+// read every input belongs to none of them. An input's *own* computed values
+// are not here: they are that input's, and this client does not return them
+// separately per input — see [ComputedAt], which explains why an input's
+// computed value cannot be named across a join either.
+//
+// Read it *before* [JoinStream.Row], which advances the cursor.
+func (j *JoinStream) Computed() []Value {
+	if j.at >= len(j.computed) {
+		return nil
+	}
+	return j.computed[j.at]
 }
 
 // Row is the joined row [JoinStream.Next] advanced to: one slice per input,

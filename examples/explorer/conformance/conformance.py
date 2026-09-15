@@ -128,6 +128,24 @@ CASES: list[tuple[str, str, Any, str]] = [
     *[(f"a {kind} join", "/api/join", {"type": kind}, "app")
       for kind in ("inner", "left", "right", "full")],
 
+    # `decade` is the only case here whose group key is not a column: it is a
+    # value the *join* computes, `books.year / 10 * 10`. Every SDK builds that
+    # expression itself, so this is the one case that compares three
+    # independent `Scalar` surfaces rather than three ways of naming a column —
+    # which is what all three refused to do until they had one.
+    ("a grouped join by a computed decade", "/api/aggregate",
+     {"groupBy": "decade", "sort": "key", "direction": "asc"}, "app"),
+
+    ("a computed decade, ordered by count", "/api/aggregate",
+     {"groupBy": "decade", "sort": "count", "direction": "desc"}, "app"),
+
+    ("a computed decade with a HAVING", "/api/aggregate",
+     {"groupBy": "decade", "having": {"minCount": 2}, "sort": "key",
+      "direction": "asc"}, "app"),
+
+    ("explaining a grouped join over a computed decade", "/api/explain-aggregate",
+     {"groupBy": "decade", "sort": "key", "direction": "asc"}, "app"),
+
     ("a grouped join by author", "/api/aggregate",
      {"groupBy": "author", "sort": "count", "direction": "desc"}, "app"),
 
@@ -176,12 +194,33 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("no such table", "/api/query", {"table": "nope"}, "app"),
     ("no such filter operator", "/api/query",
      {"table": "books", "filter": {"op": "approximately", "column": 0}}, "app"),
-    ("a grouping that needs a computed column", "/api/aggregate",
-     {"groupBy": "decade"}, "app"),
+    ("no such grouping", "/api/aggregate", {"groupBy": "century"}, "app"),
 
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 ]
+
+
+#: Cases whose right answer *is* a refusal.
+#:
+#: Everything else must come back without an `error`, and that guard matters
+#: more than it looks: three adapters returning the identical error agree, so a
+#: case that silently became unserveable would keep passing. That is exactly
+#: what happened here — `{"groupBy": "decade"}` was a refusal case ("a grouping
+#: that needs a computed column") until all three SDKs grew a way to declare
+#: one, and without this list the four new cases that group by a computed
+#: decade would have passed just as happily if the feature had never worked.
+#:
+#: Listed by name rather than by a fifth tuple element, so adding a case is
+#: still one line and forgetting to mark it fails loudly rather than quietly.
+EXPECTED_REFUSALS = {
+    "a reader may not explain",
+    "a reader may not explain a grouping",
+    "a stranger may not read",
+    "no such table",
+    "no such filter operator",
+    "no such grouping",
+}
 
 
 def normalise(answer: Any) -> Any:
@@ -223,6 +262,22 @@ def main() -> int:
 
         rendered = {sdk: json.dumps(a, sort_keys=True) for sdk, a in answers.items()}
         if len(set(rendered.values())) == 1:
+            # Agreement is necessary and not sufficient: see EXPECTED_REFUSALS.
+            agreed = next(iter(answers.values()))
+            refused = isinstance(agreed, dict) and "error" in agreed
+            if refused and name not in EXPECTED_REFUSALS:
+                failures.append(
+                    f"{name} ({identity}): all three refused it, and this case "
+                    f"is supposed to return an answer"
+                )
+                failures.append(f"    {json.dumps(agreed)[:400]}")
+                continue
+            if not refused and name in EXPECTED_REFUSALS:
+                failures.append(
+                    f"{name} ({identity}): listed as a refusal and all three "
+                    f"answered it; the list is stale"
+                )
+                continue
             if args.verbose:
                 print(f"  ok    {name}")
             continue

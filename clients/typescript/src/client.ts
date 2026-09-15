@@ -138,15 +138,44 @@ function rowToWire(values: Value[]): Record<string, unknown> {
 }
 
 /**
- * A row as it arrived.
+ * A row's stored columns, as they arrived.
  *
- * Refuses one carrying computed values: a computed value is not a column, and
- * a caller indexing past the table's own columns would get one silently.
+ * Its computed values are left behind: a computed value is not a column, and a
+ * caller indexing past the table's own columns would get one silently. They
+ * come back through `computedFromWire`, on the `withComputed` iterators.
+ *
+ * This comment used to say the function *refused* such a row. It never did — it
+ * read `values` and ignored `computed`, which is the right behaviour described
+ * as a different one. Nothing depended on the wrong reading, because until now
+ * no request this client could build produced a computed value at all.
  */
 function rowFromWire(row: unknown): Value[] {
   if (!row || typeof row !== "object") return [];
   const values = (row as { values?: unknown[] }).values ?? [];
   return values.map(valueFromWire);
+}
+
+/** A row's computed values, which travel apart from its columns. */
+function computedFromWire(row: unknown): Value[] {
+  if (!row || typeof row !== "object") return [];
+  const values = (row as { computed?: unknown[] }).computed ?? [];
+  return values.map(valueFromWire);
+}
+
+/** A row and what the query computed for it. See `RowStream.withComputed`. */
+export interface ComputedRow {
+  /** The stored columns, in table order. */
+  readonly values: Value[];
+  /** What `Query.compute` produced, in declaration order. */
+  readonly computed: Value[];
+}
+
+/** A joined row and what the join computed for it. See `JoinStream.withComputed`. */
+export interface ComputedJoinedRow {
+  /** One array per input, `undefined` where an outer join found no match. */
+  readonly inputs: (Value[] | undefined)[];
+  /** What `JoinQuery.compute` produced, in declaration order. */
+  readonly computed: Value[];
 }
 
 /** A connection to a head node. Safe to share; a [Session] is not. */
@@ -785,6 +814,38 @@ export class RowStream implements AsyncIterable<Value[]> {
   }
 
   /**
+   * The same rows, each paired with what `Query.compute` produced for it.
+   *
+   * An *alternative* to iterating this stream directly, not an addition: a gRPC
+   * stream is consumed once, so a caller uses one or the other. The plain
+   * iterator stays the default because most queries compute nothing and
+   * `for await (const row of stream)` should keep yielding a row.
+   */
+  async *withComputed(): AsyncIterableIterator<ComputedRow> {
+    try {
+      for await (const message of this.#stream as AsyncIterable<Record<string, unknown>>) {
+        const servedBy = message["servedBy"];
+        if (servedBy && !this.#servedBy) {
+          const sb = servedBy as { replica?: string; sequence?: string };
+          this.#servedBy = {
+            replica: sb.replica ?? "",
+            sequence: BigInt(sb.sequence ?? 0),
+          };
+          this.#onServedBy(servedBy);
+        }
+        const warnings = message["warnings"] as string[] | undefined;
+        if (warnings?.length) this.#warnings.push(...warnings);
+        for (const row of (message["rows"] as unknown[]) ?? []) {
+          yield { values: rowFromWire(row), computed: computedFromWire(row) };
+        }
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+  }
+
+  /**
    * Drain into an array.
    *
    * For an answer known to be small. Iterate a large table instead.
@@ -843,6 +904,36 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
             const row = (input as { row?: unknown }).row;
             return row ? rowFromWire(row) : undefined;
           });
+        }
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * The same rows, each paired with what `JoinQuery.compute` produced for it.
+   *
+   * Beside the inputs rather than inside one of them, because a value that may
+   * read every input belongs to none of them.
+   *
+   * An *alternative* to iterating this stream directly, for the reason
+   * `RowStream.withComputed` gives: a gRPC stream is consumed once.
+   */
+  async *withComputed(): AsyncIterableIterator<ComputedJoinedRow> {
+    try {
+      for await (const message of this.#stream as AsyncIterable<Record<string, unknown>>) {
+        this.#note(message);
+        const rows = (message["rows"] as { inputs?: unknown[]; computed?: unknown[] }[]) ?? [];
+        for (const joined of rows) {
+          yield {
+            inputs: (joined.inputs ?? []).map((input) => {
+              const row = (input as { row?: unknown }).row;
+              return row ? rowFromWire(row) : undefined;
+            }),
+            computed: (joined.computed ?? []).map(valueFromWire),
+          };
         }
       }
     } catch (error) {

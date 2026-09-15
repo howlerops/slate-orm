@@ -75,19 +75,88 @@ func (a Algorithm) wire() *pb.JoinAlgorithm {
 type Column struct {
 	// Input is the input's position, in the order they were added.
 	Input uint32
-	// Ordinal is the column's position in that input's own table.
+	// Ordinal is the column's position in that input's own table — or, for a
+	// computed value, which of them it is.
 	Ordinal Ordinal
+	// kind is which of the wire's reference kinds this is.
+	//
+	// Unexported, and zero means a stored column, so a `Column{Input: 1,
+	// Ordinal: 2}` literal written before computed values existed still means
+	// what it meant. The constructors below are the way to get the other
+	// kinds, which is also what keeps the kinds from being mixed by arithmetic.
+	kind refKind
 }
+
+// Which of `ColumnRef`'s kinds a [Column] names.
+//
+// The wire distinguishes them rather than carrying a flat ordinal, because
+// they live in different spaces and an ordinal that is in range in the wrong
+// one is a query about a different column. See `ColumnRef` in `records.proto`.
+type refKind int
+
+const (
+	// refColumn is a stored column of an input's table. The zero value.
+	refColumn refKind = iota
+	// refComputed is the nth value that input's own query computes.
+	refComputed
+	// refJoinedComputed is the nth value the *join* computes, which belongs to
+	// no input and sits past every input's columns.
+	refJoinedComputed
+)
 
 // At names column `ordinal` of input `input`.
 func At(input uint32, ordinal Ordinal) Column {
 	return Column{Input: input, Ordinal: ordinal}
 }
 
+// ComputedAt names the `n`th value input `input` computes.
+//
+// Legal wherever that input's own rows are read — its filter, its sort, and a
+// single-table grouping. Not across a join: an input's computed values are
+// appended to that input's row and a joined row is packed by declared table
+// width, so there is no slot for one and the server says so. [JoinComputed] is
+// the kind that does have a slot.
+func ComputedAt(input uint32, n uint32) Column {
+	return Column{Input: input, Ordinal: Ordinal(n), kind: refComputed}
+}
+
+// Computed0 names the `n`th value the only input computes, for a single-table
+// query.
+//
+// `ComputedAt(0, n)` says the same thing; this reads better where there is no
+// join, in the same way [Key0] does.
+func Computed0(n uint32) Column { return ComputedAt(0, n) }
+
+// JoinComputed names the `n`th value the **join itself** computes — the ones
+// in [JoinQuery.Compute], not any one input's.
+//
+// It is evaluated over the whole joined row, so it may read every input, and
+// it sits past every input's columns: the one place an ordinal can be added
+// without moving one that already exists. That is what makes it addressable
+// where an input's own computed value is not.
+//
+// No input index, because the value belongs to the request rather than to one
+// of its tables.
+func JoinComputed(n uint32) Column {
+	return Column{Ordinal: Ordinal(n), kind: refJoinedComputed}
+}
+
 func (c Column) ref() *pb.ColumnRef {
-	return &pb.ColumnRef{
-		Input: c.Input,
-		Of:    &pb.ColumnRef_Column{Column: uint32(c.Ordinal)},
+	switch c.kind {
+	case refComputed:
+		return &pb.ColumnRef{
+			Input: c.Input,
+			Of:    &pb.ColumnRef_Computed{Computed: uint32(c.Ordinal)},
+		}
+	case refJoinedComputed:
+		return &pb.ColumnRef{
+			Of: &pb.ColumnRef_JoinedComputed{JoinedComputed: uint32(c.Ordinal)},
+		}
+	default:
+		return &pb.ColumnRef{
+			Input: c.Input,
+			Of:    &pb.ColumnRef_Column{Column: uint32(c.Ordinal)},
+		}
 	}
 }
 
@@ -122,6 +191,13 @@ type JoinInput struct {
 	Columns []Ordinal
 	// Descending reads this input backwards where the access path allows it.
 	Descending bool
+	// Compute is values this input computes from its own rows, named with
+	// [ComputedAt].
+	//
+	// Readable by this input's own filter, and returned beside its columns on
+	// an ungrouped join. Not readable across the join and not groupable — see
+	// [ComputedAt] — for which [JoinQuery.Compute] is the answer.
+	Compute []Scalar
 }
 
 // JoinQuery joins two or more tables.
@@ -140,6 +216,20 @@ type JoinQuery struct {
 	// BuildLimit caps rows held in a hash build side. The server clamps a
 	// value above its own ceiling and says so in a warning.
 	BuildLimit *uint64
+	// Compute is values computed per *joined* row, appended after every
+	// input's columns and named with [JoinComputed].
+	//
+	// The arrangement [Query.Compute] uses on one table, lifted one level. What
+	// is new is that the expression is evaluated over the joined row, so it may
+	// read both sides at once — which is the thing no input's own `Compute` can
+	// express, and the reason this field is here rather than there.
+	//
+	// Each may read every input's columns and the values *before* it, so
+	// `Compute[1]` may read `JoinComputed(0)` and not the other way round.
+	//
+	// An ungrouped join returns them on [JoinStream.Computed]; a grouped one
+	// exposes them to `GroupBy` and the aggregates.
+	Compute []Scalar
 }
 
 // JoinBuilder accumulates inputs and hands out their positions.
@@ -170,7 +260,12 @@ func (b *JoinBuilder) Inputs() int { return len(b.inputs) }
 // toProto renders the join. `schemas` supplies each input's declaration, so a
 // join checks every table it reads rather than none of them.
 func (q JoinQuery) toProto(schemas Schemas) *pb.JoinQuery {
-	out := &pb.JoinQuery{Offset: q.Offset, Limit: q.Limit, BuildLimit: q.BuildLimit}
+	out := &pb.JoinQuery{
+		Offset:     q.Offset,
+		Limit:      q.Limit,
+		BuildLimit: q.BuildLimit,
+		Compute:    scalarsToProto(q.Compute),
+	}
 	for _, input := range q.Inputs {
 		query := Query{
 			Table:      input.Table,
@@ -180,6 +275,7 @@ func (q JoinQuery) toProto(schemas Schemas) *pb.JoinQuery {
 		if input.Filter != nil {
 			query.Filter = input.Filter
 		}
+		query.Compute = input.Compute
 		wire := &pb.JoinInput{
 			Query:    query.toProto(schemas.claimFor(input.Table)),
 			JoinType: input.Type.wire(),

@@ -80,6 +80,9 @@ class _Kind(enum.Enum):
 
     COLUMN = "column"
     COMPUTED = "computed"
+    #: The `n`th value the **join itself** computes, which belongs to no input
+    #: and sits past every input's columns. See `joined_computed_ref`.
+    JOINED_COMPUTED = "joined_computed"
     GROUP_KEY = "group_key"
     AGGREGATE = "aggregate"
 
@@ -113,6 +116,12 @@ class ColumnRef:
         return ref
 
     def __str__(self) -> str:
+        if self.kind is _Kind.JOINED_COMPUTED:
+            # No input, and saying "input 0's" would be a lie that sends
+            # someone looking at the first table.
+            return f"the join's computed value {self.index}" + (
+                f" ({self.label})" if self.label else ""
+            )
         where = f"input {self.input}"
         what = f"{self.kind.value} {self.index}"
         return f"{where}'s {what}" + (f" ({self.label})" if self.label else "")
@@ -505,6 +514,25 @@ def computed_ref(input: int, index: int) -> ColumnRef:
     as `i64(...)` or `u64(...)`.
     """
     return ColumnRef(input=input, kind=_Kind.COMPUTED, index=index, label=f"computed {index}")
+
+
+def joined_computed_ref(index: int) -> ColumnRef:
+    """The `index`th value the **join** computes — `JoinQuery.compute`, not any
+    one input's.
+
+    Internal: `JoinQuery` exposes this as `.computed(i)`.
+
+    This is the kind `computed_ref` cannot be. An input's computed value has no
+    slot in a joined row at all, because that space is packed by declared table
+    width and the ordinal such a value would take is the next table's first
+    column. A value belonging to the join has one, past every input's columns,
+    which is the only place an ordinal can be added without moving one that
+    already exists.
+
+    `input` is zero and must be: the value belongs to the request rather than to
+    one of its tables, as with a group key.
+    """
+    return ColumnRef(input=0, kind=_Kind.JOINED_COMPUTED, index=index)
 
 
 def group_key_ref(index: int) -> ColumnRef:

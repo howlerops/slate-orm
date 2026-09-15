@@ -2671,6 +2671,16 @@ async fn a_grouped_join_can_group_by_the_joins_computed_value() {
 /// One wire shape serves both, so a chain that forgot to read `compute` would
 /// be a silent difference between two and three inputs — exactly the kind of
 /// gap the single `JoinQuery` message exists to prevent.
+/// `sales.units * books.year`, spanning two of the chain's three tables.
+///
+/// A named helper rather than an inline expression, because `cargo fmt` breaks
+/// the multiplication across lines inside the `computing([...])` literal and
+/// clippy then reads the wrap as a missing comma — a warning that is fatal in
+/// CI under `-D warnings`.
+fn units_times_year(space: &JoinSchema, books: &TableDef, sales: &TableDef) -> Scalar {
+    Scalar::Column(space.at(2, at(sales, "units"))) * Scalar::Column(space.at(1, at(books, "year")))
+}
+
 #[tokio::test]
 async fn a_chains_computed_values_come_back_over_the_wire() {
     let (serving, backing) = seeded().await;
@@ -2687,11 +2697,8 @@ async fn a_chains_computed_values_come_back_over_the_wire() {
             space.at(1, at(&b, "id")),
             at(&s, "book_id"),
         ))
-        // Reads the first and the last table of the chain at once.
-        .computing([
-            Scalar::Column(space.at(2, at(&s, "units")))
-                * Scalar::Column(space.at(1, at(&b, "year"))),
-        ]);
+        // Reads the middle and the last table of the chain at once.
+        .computing([units_times_year(&space, &b, &s)]);
 
     let owned = [a.clone(), b.clone(), s.clone()];
     let refs: Vec<&TableDef> = owned.iter().collect();

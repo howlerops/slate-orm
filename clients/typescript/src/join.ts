@@ -1,4 +1,5 @@
 import { type Expr, type Ordinal, type Direction, queryToWire, type Query } from "./query.js";
+import { type Scalar, scalarsToWire } from "./scalar.js";
 import { type Value, valueToWire } from "./value.js";
 
 /**
@@ -12,11 +13,66 @@ import { type Value, valueToWire } from "./value.js";
  */
 export interface Column {
   readonly input: number;
+  /**
+   * The column's position in that input's own table — or, for a computed
+   * value, which of them it is.
+   */
   readonly ordinal: Ordinal;
+  /**
+   * Which of the wire's reference kinds this is. Absent means a stored column,
+   * so an `{ input, ordinal }` literal written before computed values existed
+   * still means what it meant.
+   *
+   * The wire distinguishes the kinds rather than carrying a flat ordinal,
+   * because they live in different spaces and an ordinal that is in range in
+   * the wrong one is a query about a different column.
+   */
+  readonly kind?: "column" | "computed" | "joined-computed";
 }
 
 /** Names column `ordinal` of input `input`. */
 export const at = (input: number, ordinal: Ordinal): Column => ({ input, ordinal });
+
+/**
+ * Names the `n`th value input `input` computes.
+ *
+ * Legal wherever that input's own rows are read — its filter, its sort, and a
+ * single-table grouping. Not across a join: an input's computed values are
+ * appended to that input's row and a joined row is packed by declared table
+ * width, so there is no slot for one and the server says so.
+ * {@link joinComputed} is the kind that does have a slot.
+ */
+export const computedAt = (input: number, n: number): Column => ({
+  input,
+  ordinal: n,
+  kind: "computed",
+});
+
+/**
+ * Names the `n`th value the only input computes, for a single-table query.
+ *
+ * `computedAt(0, n)` says the same thing; this reads better where there is no
+ * join, in the same way `key0` does.
+ */
+export const computed0 = (n: number): Column => computedAt(0, n);
+
+/**
+ * Names the `n`th value the **join itself** computes — the ones in
+ * `JoinQuery.compute`, not any one input's.
+ *
+ * It is evaluated over the whole joined row, so it may read every input, and it
+ * sits past every input's columns: the one place an ordinal can be added
+ * without moving one that already exists. That is what makes it addressable
+ * where an input's own computed value is not.
+ *
+ * No input index, because the value belongs to the request rather than to one
+ * of its tables.
+ */
+export const joinComputed = (n: number): Column => ({
+  input: 0,
+  ordinal: n,
+  kind: "joined-computed",
+});
 
 /**
  * Names column `ordinal` of the only input, for grouping one table.
@@ -26,7 +82,19 @@ export const at = (input: number, ordinal: Ordinal): Column => ({ input, ordinal
  */
 export const key0 = (ordinal: Ordinal): Column => at(0, ordinal);
 
-const columnWire = (c: Column) => ({ input: c.input, column: c.ordinal });
+/** A reference in its wire form, by kind. Exported for `scalar.ts`. */
+export const columnWire = (c: Column): Record<string, unknown> => {
+  switch (c.kind) {
+    case "computed":
+      return { input: c.input, computed: c.ordinal };
+    case "joined-computed":
+      // No input: the value belongs to the request rather than to one of its
+      // tables, and the server refuses a non-zero one here.
+      return { joinedComputed: c.ordinal };
+    default:
+      return { input: c.input, column: c.ordinal };
+  }
+};
 
 /** Which rows survive a join. */
 export type JoinType = "inner" | "left" | "right" | "full";
@@ -93,6 +161,13 @@ export interface JoinInput {
   readonly columns?: Ordinal[];
   /** Reads this input backwards where the access path allows it. */
   readonly descending?: boolean;
+  /**
+   * Values this input computes from its own rows, named with `computedAt`.
+   *
+   * Readable by this input's own filter. Not readable across the join and not
+   * groupable — see `computedAt` — for which `JoinQuery.compute` is the answer.
+   */
+  readonly compute?: Scalar[];
 }
 
 /**
@@ -112,6 +187,22 @@ export interface JoinQuery {
    * own ceiling and says so in a warning.
    */
   readonly buildLimit?: number | bigint;
+  /**
+   * Values computed per *joined* row, appended after every input's columns and
+   * named with `joinComputed`.
+   *
+   * The arrangement `Query.compute` uses on one table, lifted one level. What
+   * is new is that the expression is evaluated over the joined row, so it may
+   * read both sides at once — which is the thing no input's own `compute` can
+   * express, and the reason this field is here rather than there.
+   *
+   * Each may read every input's columns and the values *before* it, so
+   * `compute[1]` may read `joinComputed(0)` and not the other way round.
+   *
+   * An ungrouped join returns them on each row's `computed`; a grouped one
+   * exposes them to `groupBy` and the aggregates.
+   */
+  readonly compute?: Scalar[];
 }
 
 /**
@@ -162,6 +253,7 @@ export function joinToWire(
         ...(input.filter ? { filter: input.filter } : {}),
         ...(input.columns ? { columns: input.columns } : {}),
         ...(input.descending ? { descending: input.descending } : {}),
+        ...(input.compute ? { compute: input.compute } : {}),
       };
       const wire: Record<string, unknown> = {
         query: queryToWire(query, claim(input.table)),
@@ -182,6 +274,9 @@ export function joinToWire(
   if (join.limit !== undefined) out["limit"] = String(join.limit);
   if (join.offset !== undefined) out["offset"] = String(join.offset);
   if (join.buildLimit !== undefined) out["buildLimit"] = String(join.buildLimit);
+  if (join.compute && join.compute.length > 0) {
+    out["compute"] = scalarsToWire(join.compute);
+  }
   return out;
 }
 

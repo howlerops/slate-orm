@@ -1,3 +1,5 @@
+import { type Column, columnWire } from "./join.js";
+import { type Scalar, scalarsToWire } from "./scalar.js";
 import { type Value, valueToWire } from "./value.js";
 
 /**
@@ -22,22 +24,22 @@ export const alwaysTrue = (): Expr => ({ wire: { literal: true } });
 /** Admits none. */
 export const alwaysFalse = (): Expr => ({ wire: { literal: false } });
 
-const compare = (column: Ordinal, op: string, value: Value): Expr => ({
+const compareColumn = (column: Ordinal, op: string, value: Value): Expr => ({
   wire: { compare: { column: columnRef(column), op, value: valueToWire(value) } },
 });
 
 /** `column = value`. */
-export const eq = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_EQ", v);
+export const eq = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_EQ", v);
 /** `column <> value`. */
-export const ne = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_NE", v);
+export const ne = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_NE", v);
 /** `column < value`. */
-export const lt = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_LT", v);
+export const lt = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_LT", v);
 /** `column <= value`. */
-export const le = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_LE", v);
+export const le = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_LE", v);
 /** `column > value`. */
-export const gt = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_GT", v);
+export const gt = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_GT", v);
 /** `column >= value`. */
-export const ge = (c: Ordinal, v: Value): Expr => compare(c, "CMP_OP_GE", v);
+export const ge = (c: Ordinal, v: Value): Expr => compareColumn(c, "CMP_OP_GE", v);
 
 /** `column IS NULL`. */
 export const isNull = (column: Ordinal): Expr => ({
@@ -90,13 +92,61 @@ export const or = (...parts: Expr[]): Expr =>
 /** Inverts a predicate. */
 export const not = (inner: Expr): Expr => ({ wire: { negation: inner.wire } });
 
+/**
+ * A comparison operator, for {@link compare}.
+ *
+ * The `eq` family covers the common case of a stored column of the query's own
+ * table and takes a bare {@link Ordinal}. This type exists so the same six
+ * comparisons can be written against any reference — a computed value, a column
+ * of another input, a value the join computed — without six more exported
+ * names each.
+ */
+export type Operator = "eq" | "ne" | "lt" | "le" | "gt" | "ge";
+
+const OPERATORS: Record<Operator, string> = {
+  eq: "CMP_OP_EQ",
+  ne: "CMP_OP_NE",
+  lt: "CMP_OP_LT",
+  le: "CMP_OP_LE",
+  gt: "CMP_OP_GT",
+  ge: "CMP_OP_GE",
+};
+
+/**
+ * A comparison naming any reference: `at`, `computedAt`, `computed0` or
+ * `joinComputed`.
+ *
+ * `compare(computed0(0), "gt", int(10))` filters on a query's first computed
+ * value; `gt(2, ...)` remains the short way to say "column 2 of this table".
+ */
+export const compare = (column: Column, op: Operator, value: Value): Expr => ({
+  wire: { compare: { column: columnWire(column), op: OPERATORS[op], value: valueToWire(value) } },
+});
+
+/** `IS NULL` over any reference. See {@link compare}. */
+export const isNullAt = (column: Column): Expr => ({
+  wire: { isNull: { column: columnWire(column), negated: false } },
+});
+
+/** `IS NOT NULL` over any reference. */
+export const isNotNullAt = (column: Column): Expr => ({
+  wire: { isNull: { column: columnWire(column), negated: true } },
+});
+
 /** Which way a sort key orders. */
 export type Direction = "asc" | "desc";
 
-/** One column of an ordering. */
+/**
+ * One column of an ordering.
+ *
+ * `column` is an ordinal of the query's own table. `ref`, when set, names any
+ * reference instead — a computed value, say — and wins over `column`.
+ */
 export interface SortKey {
   readonly column: Ordinal;
   readonly direction?: Direction;
+  /** Overrides `column` with a qualified reference. See `computed0`. */
+  readonly ref?: Column;
 }
 
 /** Selects rows from one table. */
@@ -121,6 +171,18 @@ export interface Query {
   readonly columns?: Ordinal[];
   /** Reads the table backwards where the access path allows it. */
   readonly descending?: boolean;
+  /**
+   * Values computed per row, appended after the table's own columns and named
+   * with `computed0`.
+   *
+   * A filter, a sort key, a GROUP BY key or an aggregate names one the same way
+   * it names a column, so none of them has to learn what an expression is. The
+   * `n`th may read the `n` before it and not itself or a later one.
+   *
+   * They come back in each row's `computed`, beside the row rather than as a
+   * tail of it, so an ordinal still means a column.
+   */
+  readonly compute?: Scalar[];
 }
 
 /**
@@ -145,10 +207,13 @@ export function queryToWire(
   }
   if (query.sort && query.sort.length > 0) {
     out["sort"] = query.sort.map((key) => ({
-      column: columnRef(key.column),
+      column: key.ref ? columnWire(key.ref) : columnRef(key.column),
       direction:
         key.direction === "desc" ? "SORT_DIRECTION_DESC" : "SORT_DIRECTION_ASC",
     }));
+  }
+  if (query.compute && query.compute.length > 0) {
+    out["compute"] = scalarsToWire(query.compute);
   }
   return out;
 }

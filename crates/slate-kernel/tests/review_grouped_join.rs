@@ -714,10 +714,7 @@ async fn a_computed_value_may_read_both_sides_at_once() {
         else {
             panic!("shelf is not a string")
         };
-        assert_eq!(
-            row.computed,
-            vec![Value::Str(format!("{region}/{shelf}"))]
-        );
+        assert_eq!(row.computed, vec![Value::Str(format!("{region}/{shelf}"))]);
         seen += 1;
     }
     assert_eq!(seen, BOOK_ROWS as usize);

@@ -19,6 +19,7 @@ import {
   at,
   count,
   Client,
+  div,
   eq,
   ge,
   groupGe,
@@ -28,12 +29,17 @@ import {
   isIn,
   isNotNull,
   isNull,
+  int,
+  joinComputed,
   le,
+  lit,
   like,
   lt,
+  mul,
   ne,
   newJoin,
   not,
+  ref,
   and as andOf,
   or as orOf,
   SlateError,
@@ -45,6 +51,7 @@ import {
   type JoinType,
   type Ordinal,
   type Query,
+  type Scalar,
   type Session,
   type Value,
 } from "@slate-orm/client";
@@ -212,7 +219,20 @@ class Adapter {
    * explanation of a *different* request is worse than none.
    */
   #buildAggregate(body: AggregateSpec): { join: JoinQuery; grouping: Grouping } {
+    const b = newJoin();
+    const authors = b.add({ table: "authors" });
+    const books = b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
+
+    // `decade` is not a column at all. It used to be refused here, in all three
+    // adapters, with "needs a computed column, which this demo does not
+    // declare" — true of the clients rather than of the database, since the
+    // kernel has had scalar expressions throughout. Hand-bucketing it here
+    // would have been the adapter doing the database's job.
+    //
+    // `books.year / 10 * 10`, computed over the *joined* row. Integer division
+    // truncates toward zero, which is what a decade means for these years.
     let key;
+    let compute: Scalar[] = [];
     switch (body.groupBy) {
       case "author":
         key = at(0, 1);
@@ -221,23 +241,17 @@ class Adapter {
         key = at(0, 2);
         break;
       case "decade":
-        // Not a column. The kernel can compute one with a scalar expression;
-        // hand-bucketing it here would be the adapter doing the database's job.
-        throw new Error(
-          "grouping by decade needs a computed column, which this demo does not declare",
-        );
+        compute = [mul(div(ref(at(books, 3)), lit(int(10))), lit(int(10)))];
+        key = joinComputed(0);
+        break;
       default:
         throw new Error(`no such grouping: ${body.groupBy}`);
     }
 
-    const b = newJoin();
-    const authors = b.add({ table: "authors" });
-    b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
-
     const column = body.sort === "key" ? groupKey(0) : agg(0);
     const direction = body.direction === "desc" ? ("desc" as const) : ("asc" as const);
     return {
-      join: b.query(),
+      join: { ...b.query(), compute },
       grouping: {
         groupBy: [key],
         aggregates: [count()],

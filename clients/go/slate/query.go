@@ -135,6 +135,75 @@ func columnRef(col Ordinal) *pb.ColumnRef {
 	return &pb.ColumnRef{Of: &pb.ColumnRef_Column{Column: uint32(col)}}
 }
 
+// Operator is a comparison, for [Compare] and [CompareGroup].
+//
+// The [Eq] family covers the common case of a stored column of the query's own
+// table and takes a bare [Ordinal]. This type exists so the same six
+// comparisons can be written against any reference — a computed value, a
+// column of another input, a value the join computed — without six more
+// exported names each.
+type Operator int
+
+// The comparison operators.
+const (
+	// OpEq is `=`.
+	OpEq Operator = iota
+	// OpNe is `<>`.
+	OpNe
+	// OpLt is `<`.
+	OpLt
+	// OpLe is `<=`.
+	OpLe
+	// OpGt is `>`.
+	OpGt
+	// OpGe is `>=`.
+	OpGe
+)
+
+func (o Operator) wire() pb.CmpOp {
+	switch o {
+	case OpNe:
+		return pb.CmpOp_CMP_OP_NE
+	case OpLt:
+		return pb.CmpOp_CMP_OP_LT
+	case OpLe:
+		return pb.CmpOp_CMP_OP_LE
+	case OpGt:
+		return pb.CmpOp_CMP_OP_GT
+	case OpGe:
+		return pb.CmpOp_CMP_OP_GE
+	default:
+		return pb.CmpOp_CMP_OP_EQ
+	}
+}
+
+// Compare is a comparison naming any reference: [At], [ComputedAt],
+// [Computed0] or [JoinComputed].
+//
+// `Compare(Computed0(0), OpGt, I64(10))` filters on a query's first computed
+// value; `Eq(2, ...)` remains the short way to say "column 2 of this table".
+func Compare(c Column, op Operator, v Value) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Compare{Compare: &pb.Compare{
+		Column: c.ref(),
+		Op:     op.wire(),
+		Value:  v.toProto(),
+	}}}}
+}
+
+// IsNullAt is `IS NULL` over any reference. See [Compare].
+func IsNullAt(c Column) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_IsNull{IsNull: &pb.IsNull{
+		Column: c.ref(), Negated: false,
+	}}}}
+}
+
+// IsNotNullAt is `IS NOT NULL` over any reference.
+func IsNotNullAt(c Column) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_IsNull{IsNull: &pb.IsNull{
+		Column: c.ref(), Negated: true,
+	}}}}
+}
+
 // Direction is which way a sort key orders.
 type Direction int
 
@@ -147,9 +216,23 @@ const (
 )
 
 // SortKey is one column of an ordering.
+//
+// `Column` is an ordinal of the query's own table. `Ref`, when set, names any
+// reference instead — a computed value, say — and wins over `Column`. Two
+// fields rather than changing the type of one, because a `SortKey{Column: 2}`
+// literal written before computed values existed still means column 2.
 type SortKey struct {
 	Column    Ordinal
 	Direction Direction
+	// Ref overrides `Column` with a qualified reference. See [Computed0].
+	Ref *Column
+}
+
+func (k SortKey) ref() *pb.ColumnRef {
+	if k.Ref != nil {
+		return k.Ref.ref()
+	}
+	return columnRef(k.Column)
 }
 
 // Query selects rows from one table.
@@ -175,6 +258,16 @@ type Query struct {
 	Columns []Ordinal
 	// Descending reads the table backwards where the access path allows it.
 	Descending bool
+	// Compute is values computed per row, appended after the table's own
+	// columns and named with [Computed0].
+	//
+	// A filter, a sort key, a GROUP BY key or an aggregate names one the same
+	// way it names a column, so none of them has to learn what an expression
+	// is. The `n`th may read the `n` before it and not itself or a later one.
+	//
+	// They come back in [RowStream.Computed], beside the row rather than as a
+	// tail of it, so an ordinal still means a column.
+	Compute []Scalar
 }
 
 // Limit is a convenience for setting [Query.Limit].
@@ -187,7 +280,12 @@ func Filter(e Expr) *Expr { return &e }
 // or nil where it has none — attached here rather than by each call site,
 // because a read that forgets it is a read that is silently unchecked.
 func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
-	out := &pb.Query{Table: q.Table, Offset: q.Offset, Schema: claim}
+	out := &pb.Query{
+		Table:   q.Table,
+		Offset:  q.Offset,
+		Schema:  claim,
+		Compute: scalarsToProto(q.Compute),
+	}
 	if q.Filter != nil {
 		out.Filter = q.Filter.wire
 	}
@@ -210,7 +308,7 @@ func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
 			direction = pb.SortDirection_SORT_DIRECTION_DESC
 		}
 		out.Sort = append(out.Sort, &pb.SortKey{
-			Column:    columnRef(key.Column),
+			Column:    key.ref(),
 			Direction: direction,
 		})
 	}

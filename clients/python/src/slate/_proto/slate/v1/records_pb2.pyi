@@ -685,6 +685,7 @@ class ColumnRef(_message.Message):
     COMPUTED_FIELD_NUMBER: _builtins.int
     GROUP_KEY_FIELD_NUMBER: _builtins.int
     AGGREGATE_FIELD_NUMBER: _builtins.int
+    JOINED_COMPUTED_FIELD_NUMBER: _builtins.int
     input: _builtins.int
     """Which input of the request, counting from zero in the order the request
     declares them. Always zero for a single-table read, which is why a client
@@ -699,6 +700,22 @@ class ColumnRef(_message.Message):
     """The nth GROUP BY key. Only inside a grouped result's `having`."""
     aggregate: _builtins.int
     """The nth aggregate. Only inside a grouped result's `having`."""
+    joined_computed: _builtins.int
+    """The nth value the **join itself** computes — `JoinQuery.compute`, not any
+    one input's. It sits past every input's columns, which is the one place
+    an ordinal can be added without moving one that already exists, and it
+    can read any input.
+
+    This is the kind `computed` cannot be. A computed value of an *input* has
+    no slot in the joined space at all: that space is packed by declared
+    table width, so the ordinal such a value would take is the next table's
+    first column. A value belonging to the join has a slot, because the join
+    is what defines where the columns end.
+
+    `input` is ignored here and must be zero: the value belongs to the
+    request rather than to one of its tables, for the same reason `group_key`
+    and `aggregate` set it to zero.
+    """
     def __init__(
         self,
         *,
@@ -707,12 +724,13 @@ class ColumnRef(_message.Message):
         computed: _builtins.int = ...,
         group_key: _builtins.int = ...,
         aggregate: _builtins.int = ...,
+        joined_computed: _builtins.int = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "of", b"of"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "joined_computed", b"joined_computed", "of", b"of"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "input", b"input", "of", b"of"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "input", b"input", "joined_computed", b"joined_computed", "of", b"of"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["column", "computed", "group_key", "aggregate"]  # noqa: Y015
+    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["column", "computed", "group_key", "aggregate", "joined_computed"]  # noqa: Y015
     _WhichOneofArgType_of: _TypeAlias = _typing.Literal["of", b"of"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_of) -> _WhichOneofReturnType_of | None: ...
 
@@ -1616,14 +1634,10 @@ class JoinInput(_message.Message):
         values are appended to that input's own row, and the joined ordinal space
         is packed by declared table width, so such a value has no slot in it; the
         reference is refused rather than landing on whatever column happens to sit
-        at that offset.
-
-        The kernel has since grown `Join::compute` — values computed over the
-        *joined* row and appended after every table's columns, which can read any
-        input — and this protocol does not carry it yet. A join's computed column
-        is reachable from the browser binding and not over gRPC. That is a gap,
-        not a decision; adding it means giving `ColumnRef` a way to name a slot
-        that belongs to the join rather than to an input.
+        at that offset. `JoinQuery.compute` is the addressable kind — but not here:
+        `having` decides whether a pair is admitted and the computed values are
+        produced *from* the admitted pair, so one read here would not exist yet.
+        `AggregateQuery.having` is where a condition on a computed value goes.
         """
 
     @_builtins.property
@@ -1672,6 +1686,7 @@ class JoinQuery(_message.Message):
     LIMIT_FIELD_NUMBER: _builtins.int
     OFFSET_FIELD_NUMBER: _builtins.int
     BUILD_LIMIT_FIELD_NUMBER: _builtins.int
+    COMPUTE_FIELD_NUMBER: _builtins.int
     limit: _builtins.int
     """Maximum joined rows to return."""
     offset: _builtins.int
@@ -1699,6 +1714,31 @@ class JoinQuery(_message.Message):
         self-join needs no other machinery.
         """
 
+    @_builtins.property
+    def compute(self) -> _containers.RepeatedCompositeFieldContainer[Global___Scalar]:
+        """Values computed per joined row, appended after **every** input's columns.
+
+        The arrangement `Query.compute` uses on one table, lifted one level: the
+        nth is named by `ColumnRef.joined_computed = n`, so a group key or an
+        aggregate addresses it the ordinary way. What is new is that the expression
+        is evaluated over the *joined* row, so it may read both sides at once —
+        `hour(trips.pickup_time)` and `input 0's a - input 1's b` are the same kind
+        of thing here.
+
+        It is on the join rather than on an input's `Query` because an input's own
+        computed value has nowhere to go once the row is flattened for grouping:
+        the inputs are concatenated by declared table width, so a value appended to
+        input 0's row lands where input 1's first column belongs. Grouping such a
+        join used to return input 1's first column as the group key, with no error.
+
+        Each may read every input's columns and the computed values **before** it,
+        so `compute[1]` may read `compute[0]` and not the other way round. Naming
+        itself or a later one is refused rather than read as null.
+
+        An ungrouped `Join` returns these on `JoinedRow.computed`; a grouped one
+        exposes them to `group_by`, `aggregates` and, through the group, `having`.
+        """
+
     def __init__(
         self,
         *,
@@ -1706,10 +1746,11 @@ class JoinQuery(_message.Message):
         limit: _builtins.int | None = ...,
         offset: _builtins.int = ...,
         build_limit: _builtins.int | None = ...,
+        compute: _abc.Iterable[Global___Scalar] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "build_limit", b"build_limit", "limit", b"limit"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "build_limit", b"build_limit", "inputs", b"inputs", "limit", b"limit", "offset", b"offset"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "build_limit", b"build_limit", "compute", b"compute", "inputs", b"inputs", "limit", b"limit", "offset", b"offset"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__build_limit: _TypeAlias = _typing.Literal["build_limit"]  # noqa: Y015
     _WhichOneofArgType__build_limit: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit"]  # noqa: Y015
@@ -1734,16 +1775,30 @@ class JoinedRow(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
     INPUTS_FIELD_NUMBER: _builtins.int
+    COMPUTED_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def inputs(self) -> _containers.RepeatedCompositeFieldContainer[Global___JoinedInput]: ...
+    @_builtins.property
+    def computed(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """What `JoinQuery.compute` produced for this row, in order. Empty when the
+        join computes nothing.
+
+        Beside the inputs rather than inside one of them, because a value that may
+        read every input belongs to none of them — putting it on an input would
+        make its position depend on which input, which is the arithmetic
+        `ColumnRef` exists to remove. An input's *own* computed values still come
+        back inside that input's `Row.computed`, where they have always been.
+        """
+
     def __init__(
         self,
         *,
         inputs: _abc.Iterable[Global___JoinedInput] | None = ...,
+        computed: _abc.Iterable[Global___Value] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["inputs", b"inputs"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["computed", b"computed", "inputs", b"inputs"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

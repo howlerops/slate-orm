@@ -86,6 +86,15 @@ nulls.
 
 A grouped join, which is what the chart draws.
 
+`decade` is not a column. It is `books.year / 10 * 10`, declared on the join as
+a computed value and named as the join's rather than as an input's — the
+distinction is the point, since an input's computed value has no slot in a
+joined row at all. All three adapters used to refuse it with "needs a computed
+column, which this demo does not declare", which was true of the clients and
+never of the database; it is the case that now makes the conformance runner
+compare the three SDKs on a computed value, without the contract growing a
+general expression language to keep three implementations of.
+
 → `{"groups": [{"key": [tagged...], "count": {"u64":"3"}}, ...]}`
 
 ### `POST /api/explain`

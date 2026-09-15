@@ -141,29 +141,41 @@ func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, erro
 		return none, slate.Grouping{}, fmt.Errorf("decoding the aggregate: %w", err)
 	}
 
-	// Which column of the joined schema to group on. `decade` is not a column
-	// at all and is refused rather than faked: the kernel can compute one with
-	// a scalar expression, this client cannot yet declare one, and returning a
-	// hand-bucketed answer would be the adapter doing the database's job.
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+	})
+
+	// Which column of the joined schema to group on.
+	//
+	// `decade` is not a column at all. It used to be refused here, in all three
+	// adapters, with "needs a computed column, which this demo does not
+	// declare" — true of the clients rather than of the database, since the
+	// kernel has had scalar expressions throughout. Returning a hand-bucketed
+	// answer would have been the adapter doing the database's job, so it was
+	// left refused and recorded.
+	//
+	// It is declared now: `books.year / 10 * 10`, computed over the *joined*
+	// row and named with `JoinComputed(0)`. Integer division truncates toward
+	// zero, which is what a decade means for these years.
 	var key slate.Column
+	var compute []slate.Scalar
 	switch spec.GroupBy {
 	case "author":
 		key = slate.At(0, 1) // authors.name
 	case "country":
 		key = slate.At(0, 2) // authors.country
 	case "decade":
-		return none, slate.Grouping{}, fmt.Errorf(
-			"grouping by decade needs a computed column, which this demo does not declare")
+		compute = []slate.Scalar{slate.Mul(
+			slate.Div(slate.Ref(slate.At(books, 3)), slate.Lit(slate.Int(10))),
+			slate.Lit(slate.Int(10)),
+		)}
+		key = slate.JoinComputed(0)
 	default:
 		return none, slate.Grouping{}, fmt.Errorf("no such grouping: %s", spec.GroupBy)
 	}
-
-	b := slate.NewJoin()
-	authors := b.Add(slate.JoinInput{Table: "authors"})
-	b.Add(slate.JoinInput{
-		Table: "books",
-		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
-	})
 
 	grouping := slate.Grouping{
 		GroupBy:    []slate.Column{key},
@@ -190,7 +202,9 @@ func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, erro
 		{Column: slate.Key(0), Direction: slate.Asc},
 	}
 
-	return b.Query(), grouping, nil
+	join := b.Query()
+	join.Compute = compute
+	return join, grouping, nil
 }
 
 func (s *server) aggregate(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {

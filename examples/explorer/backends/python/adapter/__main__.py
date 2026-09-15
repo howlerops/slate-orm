@@ -28,8 +28,10 @@ from slate import (
     JoinType,
     Query,
     SlateError,
+    as_scalar,
     asc,
     desc,
+    i64,
     u64,
 )
 
@@ -177,7 +179,7 @@ class Adapter:
         """
         join = JoinQuery()
         authors = join.add(AUTHORS)
-        join.add(BOOKS, on=[(authors.c.id, "author_id")])
+        books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
 
         by = body.get("groupBy")
         if by == "author":
@@ -185,13 +187,18 @@ class Adapter:
         elif by == "country":
             key = authors.c.country
         elif by == "decade":
-            # Not a column. The kernel can compute one with a scalar
-            # expression; hand-bucketing it here would be the adapter doing the
-            # database's job, and the three adapters would then have to bucket
-            # identically for no reason.
-            raise ValueError(
-                "grouping by decade needs a computed column, which this demo does not declare"
-            )
+            # Not a column at all. This used to be refused here, in all three
+            # adapters, with "needs a computed column, which this demo does not
+            # declare" -- true of the clients rather than of the database, since
+            # the kernel has had scalar expressions throughout. Hand-bucketing
+            # it here would have been the adapter doing the database's job, and
+            # would have made three adapters bucket identically for no reason.
+            #
+            # `books.year / 10 * 10`, computed over the *joined* row. Integer
+            # division truncates toward zero, which is what a decade means for
+            # these years.
+            join.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+            key = join.computed(0)
         else:
             raise ValueError(f"no such grouping: {by}")
 

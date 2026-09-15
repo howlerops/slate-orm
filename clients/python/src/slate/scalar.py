@@ -39,6 +39,7 @@ from .values import PyValue, to_value
 
 __all__ = [
     "CalendarPart",
+    "as_scalar",
     "Metric",
     "Scalar",
     "TimeUnit",

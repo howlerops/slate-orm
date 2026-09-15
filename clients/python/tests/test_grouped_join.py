@@ -23,7 +23,12 @@ from slate import (
     InvalidRequest,
     JoinInput,
     JoinQuery,
+    as_scalar,
+    concat,
     desc,
+    i64,
+    lit,
+    upper,
 )
 
 from .fixture import AUTHORS, BOOKS, SALES
@@ -155,3 +160,80 @@ def test_a_grouped_join_needs_at_least_one_aggregate(client: Client) -> None:
 
     with pytest.raises(InvalidRequest):
         list(client.aggregate(grouped))
+
+
+# --- a computed value belonging to the join -------------------------------
+
+
+def test_grouping_by_a_value_the_join_computes(client: Client) -> None:
+    """`JoinQuery.compute` is the kind an input's own `compute` cannot be.
+
+    An input's computed value is appended to *that input's* row, and a joined
+    row is packed by declared table width — so such a value has no slot in the
+    joined space at all, and naming one across inputs is refused. A value
+    declared on the *join* has one, past every input's columns, and can read
+    any input.
+
+    This module's header says the grouped-join cases are the ones the Rust wire
+    tests found worth having. This is the newest of them: until `JoinQuery`
+    grew `compute`, the query below could not be expressed over gRPC by any
+    client, only by the browser binding.
+    """
+    join, _, books = _authors_books()
+    # The decade a book came out in, which neither table stores.
+    join.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+
+    grouped = GroupedJoinQuery(join)
+    grouped.group_by(join.computed(0))
+    grouped.aggregate(Agg.count())
+
+    groups = [tag_group(g) for g in client.aggregate(grouped)]
+    assert groups, "the fixture should produce groups"
+    for group in groups:
+        kind, decade = group["key"][0]
+        assert kind == "i64", f"a decade computed from an i64 year is an i64, got {kind}"
+        assert decade % 10 == 0, f"{decade} is not a decade"
+
+
+def test_a_joins_computed_value_may_read_both_inputs(client: Client) -> None:
+    """The case no input's own `compute` can express, which is why this exists.
+
+    A value reading one table could have been declared on that input. One
+    reading *both* could not: an input's computed value is evaluated over that
+    input's row alone.
+    """
+    join, authors, books = _authors_books()
+    join.compute(concat(authors.c.name, lit("/"), books.c.title))
+
+    grouped = GroupedJoinQuery(join)
+    grouped.group_by(join.computed(0))
+    grouped.aggregate(Agg.count())
+
+    groups = [tag_group(g) for g in client.aggregate(grouped)]
+    assert groups, "the fixture should produce groups"
+    for group in groups:
+        kind, joined = group["key"][0]
+        assert kind == "str"
+        assert "/" in joined, f"{joined!r} should span both tables"
+
+
+def test_an_inputs_computed_value_is_not_nameable_across_a_join(
+    client: Client,
+) -> None:
+    """And the refusal says which kind does work, rather than just refusing.
+
+    The two kinds are a hair apart in spelling — `inputs[0].computed(0)` and
+    `join.computed(0)` — and one of them silently meant the next table's first
+    column before the server learned to refuse it. So the message naming
+    `joined_computed` is the load-bearing part, not the refusal itself.
+    """
+    join, authors, _ = _authors_books()
+    authors.compute(upper(authors.c.name))
+
+    grouped = GroupedJoinQuery(join)
+    grouped.group_by(authors.computed(0))
+    grouped.aggregate(Agg.count())
+
+    with pytest.raises(InvalidRequest) as refused:
+        list(client.aggregate(grouped))
+    assert "joined_computed" in str(refused.value), refused.value
