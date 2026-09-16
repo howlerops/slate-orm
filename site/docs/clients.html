@@ -117,11 +117,16 @@
     <h2>What does not cross the wire yet</h2>
 
     <p>
-      Relationships, keyset pagination, conditional writes and the decimal type are
-      reachable from the Rust record layer and not from the clients. Three of them
-      want the same protocol change — a cursor field, an expected-row field, and a
-      decimal case on <code>Value</code> — so the honest answer is to make it once.
+      Conditional writes and the decimal type are reachable from the Rust record
+      layer and not from the clients. Both want the same kind of protocol change
+      — an expected-row field, and a decimal case on <code>Value</code>.
       <a href="limits.html">The full list is here.</a>
+    </p>
+
+    <p>
+      Relationships and keyset pagination used to be on that list and are not:
+      every client has <code>related</code> and <code>page</code> now, and the
+      three-SDK conformance runner compares all three on both.
     </p>
     <nav class="doc-pager" data-docs="pager"></nav>
   </article>

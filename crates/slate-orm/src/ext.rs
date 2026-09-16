@@ -398,7 +398,13 @@ impl Records for RecordTransaction<'_> {
                     .to_owned(),
             }));
         };
-        let rows: Vec<R> = self.query_records(context, query).await?;
+        // Declared paging even on the first page, which carries no cursor.
+        // Without it the kernel's cursor refusals wait until one is being
+        // carried, so a caller paging a sorted read gets page one and a cursor
+        // and is refused on page two — learning on the second request that the
+        // first was never resumable. `Query::after` sets this for the pages
+        // after the first; this is the one that needs saying.
+        let rows: Vec<R> = self.query_records(context, &query.clone().paging()).await?;
         // A short page proves there is nothing after it; a full one proves
         // nothing either way. See `Page`.
         let next = if rows.len() < limit {

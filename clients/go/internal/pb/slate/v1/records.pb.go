@@ -3461,7 +3461,45 @@ type Query struct {
 	// On a join it is per input, because each input names its own table's
 	// ordinals and a client can be right about one table and wrong about
 	// another.
-	Schema        *SchemaCheck `protobuf:"bytes,10,opt,name=schema,proto3" json:"schema,omitempty"`
+	Schema *SchemaCheck `protobuf:"bytes,10,opt,name=schema,proto3" json:"schema,omitempty"`
+	// Resume after the row with this primary key — keyset pagination.
+	//
+	// A whole primary key, in key order, and empty for the first page. The next
+	// page starts at the first row *strictly* after it in the scan order, so a
+	// caller pages by remembering where it got to rather than by counting how
+	// many rows it has had.
+	//
+	// `offset` counts rows and is only correct while nothing changes: delete a
+	// row ahead of the cursor between two pages and the reader silently skips
+	// one, insert one and they see a row twice. A key does not move when its
+	// neighbours change. It is also cheaper — `offset n` reads and discards `n`
+	// rows, where a key lets the range start after the cursor.
+	//
+	// A cursor pins the access path to the table's own key range, so a query
+	// that would be answered from an index, or sorted into an order the key does
+	// not give, is refused by name rather than paged wrongly. The refusals are
+	// the kernel's and say which of those happened.
+	After []*Value `protobuf:"bytes,11,rep,name=after,proto3" json:"after,omitempty"`
+	// Ask for `QueryResponse.next_cursor`, because a `limit` alone does not say
+	// whether one is wanted.
+	//
+	// `SELECT … LIMIT 10` and "the first page of ten" are the same request on
+	// the wire and different intentions, and the difference matters because of
+	// what the server must refuse. A cursor is the last row's primary key, so a
+	// projection that drops a key column cannot produce one — and the choice is
+	// then between refusing the request by name and serving it with no cursor,
+	// which is the silent version of the same failure. Refusing is only
+	// available if the server knows a cursor was wanted, so the caller says.
+	//
+	// With it: `limit` is required (a page with no size is the whole table), the
+	// projection must keep every key column, and everything the kernel refuses a
+	// cursor for is refused whether or not `after` is set — so the *first* page
+	// of an unpageable read fails, rather than the second.
+	//
+	// A `bool` and not a `Unit`, unlike the `oneof` arms above: the false
+	// spelling here is the absence of the request and is exactly what a client
+	// that zeroed the struct means.
+	Paged         bool `protobuf:"varint,12,opt,name=paged,proto3" json:"paged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3564,6 +3602,20 @@ func (x *Query) GetSchema() *SchemaCheck {
 		return x.Schema
 	}
 	return nil
+}
+
+func (x *Query) GetAfter() []*Value {
+	if x != nil {
+		return x.After
+	}
+	return nil
+}
+
+func (x *Query) GetPaged() bool {
+	if x != nil {
+		return x.Paged
+	}
+	return false
 }
 
 // An algorithm to run instead of the cheapest one.
@@ -5067,7 +5119,24 @@ type QueryResponse struct {
 	// planner had made the same decision on a request that ran at a different
 	// moment against a possibly different view. A warning is about the request
 	// that carried it or it is about nothing.
-	Warnings      []string `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	Warnings []string `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	// Where to resume, for a caller paging with `Query.after`.
+	//
+	// On the **last** message of a paged read, and empty on every other message
+	// and on every unpaged read. Empty also means "this page was short, so there
+	// is provably nothing after it" — a caller loops until it comes back empty.
+	//
+	// The server builds it rather than the caller, because building it means
+	// knowing which columns are the primary key and in what order, and a cursor
+	// built from the wrong column still pages — just through the wrong sequence.
+	// That is the same argument `Records::page_records` makes for existing at
+	// all, and the reason a projection that drops a key column is refused rather
+	// than served without a cursor.
+	//
+	// A full page returns a cursor even when it is the last one. Reading one row
+	// further to find out would be paid on every page to save one empty request
+	// at the end of a sequence most callers never finish.
+	NextCursor    []*Value `protobuf:"bytes,4,rep,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5119,6 +5188,13 @@ func (x *QueryResponse) GetServedBy() *ServedBy {
 func (x *QueryResponse) GetWarnings() []string {
 	if x != nil {
 		return x.Warnings
+	}
+	return nil
+}
+
+func (x *QueryResponse) GetNextCursor() []*Value {
+	if x != nil {
+		return x.NextCursor
 	}
 	return nil
 }
@@ -6697,7 +6773,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x05index\x18\x02 \x01(\tH\x00R\x05index\x12/\n" +
 	"\n" +
 	"table_scan\x18\x03 \x01(\x0e2\x0e.slate.v1.UnitH\x00R\ttableScanB\x06\n" +
-	"\x04pathJ\x04\b\x01\x10\x02\"\x8f\x03\n" +
+	"\x04pathJ\x04\b\x01\x10\x02\"\xcc\x03\n" +
 	"\x05Query\x12\x14\n" +
 	"\x05table\x18\x01 \x01(\tR\x05table\x12&\n" +
 	"\x06filter\x18\x02 \x01(\v2\x0e.slate.v1.ExprR\x06filter\x12)\n" +
@@ -6711,7 +6787,9 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x04hint\x18\b \x01(\v2\x14.slate.v1.AccessHintR\x04hint\x12*\n" +
 	"\acompute\x18\t \x03(\v2\x10.slate.v1.ScalarR\acompute\x12-\n" +
 	"\x06schema\x18\n" +
-	" \x01(\v2\x15.slate.v1.SchemaCheckR\x06schemaB\b\n" +
+	" \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\x12%\n" +
+	"\x05after\x18\v \x03(\v2\x0f.slate.v1.ValueR\x05after\x12\x14\n" +
+	"\x05paged\x18\f \x01(\bR\x05pagedB\b\n" +
 	"\x06_limit\"\x86\x01\n" +
 	"\rJoinAlgorithm\x12/\n" +
 	"\n" +
@@ -6796,11 +6874,13 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\fQueryRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12%\n" +
 	"\x05query\x18\x02 \x01(\v2\x0f.slate.v1.QueryR\x05query\x121\n" +
-	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\x7f\n" +
+	"\tfreshness\x18\x03 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\"\xb1\x01\n" +
 	"\rQueryResponse\x12!\n" +
 	"\x04rows\x18\x01 \x03(\v2\r.slate.v1.RowR\x04rows\x12/\n" +
 	"\tserved_by\x18\x02 \x01(\v2\x12.slate.v1.ServedByR\bservedBy\x12\x1a\n" +
-	"\bwarnings\x18\x03 \x03(\tR\bwarnings\"\x8b\x01\n" +
+	"\bwarnings\x18\x03 \x03(\tR\bwarnings\x120\n" +
+	"\vnext_cursor\x18\x04 \x03(\v2\x0f.slate.v1.ValueR\n" +
+	"nextCursor\"\x8b\x01\n" +
 	"\vJoinRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12'\n" +
 	"\x04join\x18\x02 \x01(\v2\x13.slate.v1.JoinQueryR\x04join\x121\n" +
@@ -7179,111 +7259,113 @@ var file_slate_v1_records_proto_depIdxs = []int32{
 	43,  // 76: slate.v1.Query.hint:type_name -> slate.v1.AccessHint
 	28,  // 77: slate.v1.Query.compute:type_name -> slate.v1.Scalar
 	18,  // 78: slate.v1.Query.schema:type_name -> slate.v1.SchemaCheck
-	12,  // 79: slate.v1.JoinAlgorithm.hash_build:type_name -> slate.v1.Side
-	1,   // 80: slate.v1.JoinAlgorithm.nested_loop:type_name -> slate.v1.Unit
-	19,  // 81: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
-	19,  // 82: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
-	44,  // 83: slate.v1.JoinInput.query:type_name -> slate.v1.Query
-	46,  // 84: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
-	11,  // 85: slate.v1.JoinInput.join_type:type_name -> slate.v1.JoinType
-	20,  // 86: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
-	45,  // 87: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
-	47,  // 88: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
-	28,  // 89: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
-	50,  // 90: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
-	15,  // 91: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
-	17,  // 92: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
-	1,   // 93: slate.v1.Freshness.any:type_name -> slate.v1.Unit
-	1,   // 94: slate.v1.Freshness.latest:type_name -> slate.v1.Unit
-	17,  // 95: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
-	18,  // 96: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
-	17,  // 97: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
-	18,  // 98: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
-	17,  // 99: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
-	18,  // 100: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
-	17,  // 101: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
-	51,  // 102: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
-	18,  // 103: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
-	17,  // 104: slate.v1.GetResponse.row:type_name -> slate.v1.Row
-	52,  // 105: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
-	44,  // 106: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
-	51,  // 107: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
-	17,  // 108: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
-	52,  // 109: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
-	48,  // 110: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
-	51,  // 111: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
-	49,  // 112: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
-	52,  // 113: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
-	44,  // 114: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
-	19,  // 115: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
-	39,  // 116: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
-	20,  // 117: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
-	48,  // 118: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
-	41,  // 119: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
-	69,  // 120: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	51,  // 121: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
-	40,  // 122: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
-	52,  // 123: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
-	44,  // 124: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
-	51,  // 125: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
-	52,  // 126: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	48,  // 127: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
-	51,  // 128: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
-	69,  // 129: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	51,  // 130: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
-	73,  // 131: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
-	77,  // 132: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
-	52,  // 133: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	78,  // 134: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
-	52,  // 135: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	73,  // 136: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
-	11,  // 137: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
-	45,  // 138: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
-	13,  // 139: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
-	14,  // 140: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
-	81,  // 141: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
-	15,  // 142: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
-	51,  // 143: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
-	18,  // 144: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
-	84,  // 145: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
-	52,  // 146: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
-	15,  // 147: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
-	17,  // 148: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
-	53,  // 149: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	55,  // 150: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	57,  // 151: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	59,  // 152: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	60,  // 153: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	61,  // 154: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	63,  // 155: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	65,  // 156: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	67,  // 157: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	70,  // 158: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	82,  // 159: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
-	72,  // 160: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	74,  // 161: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	75,  // 162: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
-	79,  // 163: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	54,  // 164: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	56,  // 165: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	58,  // 166: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	62,  // 167: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	62,  // 168: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	62,  // 169: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	64,  // 170: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	66,  // 171: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	68,  // 172: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	71,  // 173: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	83,  // 174: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
-	73,  // 175: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	77,  // 176: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	76,  // 177: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
-	80,  // 178: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	164, // [164:179] is the sub-list for method output_type
-	149, // [149:164] is the sub-list for method input_type
-	149, // [149:149] is the sub-list for extension type_name
-	149, // [149:149] is the sub-list for extension extendee
-	0,   // [0:149] is the sub-list for field type_name
+	15,  // 79: slate.v1.Query.after:type_name -> slate.v1.Value
+	12,  // 80: slate.v1.JoinAlgorithm.hash_build:type_name -> slate.v1.Side
+	1,   // 81: slate.v1.JoinAlgorithm.nested_loop:type_name -> slate.v1.Unit
+	19,  // 82: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
+	19,  // 83: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
+	44,  // 84: slate.v1.JoinInput.query:type_name -> slate.v1.Query
+	46,  // 85: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
+	11,  // 86: slate.v1.JoinInput.join_type:type_name -> slate.v1.JoinType
+	20,  // 87: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
+	45,  // 88: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
+	47,  // 89: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
+	28,  // 90: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
+	50,  // 91: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
+	15,  // 92: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
+	17,  // 93: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
+	1,   // 94: slate.v1.Freshness.any:type_name -> slate.v1.Unit
+	1,   // 95: slate.v1.Freshness.latest:type_name -> slate.v1.Unit
+	17,  // 96: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
+	18,  // 97: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 98: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
+	18,  // 99: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 100: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
+	18,  // 101: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 102: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
+	51,  // 103: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
+	18,  // 104: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 105: slate.v1.GetResponse.row:type_name -> slate.v1.Row
+	52,  // 106: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 107: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
+	51,  // 108: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
+	17,  // 109: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
+	52,  // 110: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
+	15,  // 111: slate.v1.QueryResponse.next_cursor:type_name -> slate.v1.Value
+	48,  // 112: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
+	51,  // 113: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
+	49,  // 114: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
+	52,  // 115: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 116: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
+	19,  // 117: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
+	39,  // 118: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
+	20,  // 119: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
+	48,  // 120: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
+	41,  // 121: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
+	69,  // 122: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	51,  // 123: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
+	40,  // 124: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
+	52,  // 125: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 126: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
+	51,  // 127: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
+	52,  // 128: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	48,  // 129: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
+	51,  // 130: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
+	69,  // 131: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	51,  // 132: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
+	73,  // 133: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
+	77,  // 134: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
+	52,  // 135: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	78,  // 136: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
+	52,  // 137: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	73,  // 138: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
+	11,  // 139: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
+	45,  // 140: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
+	13,  // 141: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
+	14,  // 142: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
+	81,  // 143: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
+	15,  // 144: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
+	51,  // 145: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
+	18,  // 146: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
+	84,  // 147: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
+	52,  // 148: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
+	15,  // 149: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
+	17,  // 150: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
+	53,  // 151: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	55,  // 152: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	57,  // 153: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	59,  // 154: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	60,  // 155: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	61,  // 156: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	63,  // 157: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	65,  // 158: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	67,  // 159: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	70,  // 160: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	82,  // 161: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
+	72,  // 162: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	74,  // 163: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	75,  // 164: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	79,  // 165: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	54,  // 166: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	56,  // 167: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	58,  // 168: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	62,  // 169: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	62,  // 170: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	62,  // 171: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	64,  // 172: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	66,  // 173: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	68,  // 174: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	71,  // 175: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	83,  // 176: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
+	73,  // 177: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	77,  // 178: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	76,  // 179: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	80,  // 180: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	166, // [166:181] is the sub-list for method output_type
+	151, // [151:166] is the sub-list for method input_type
+	151, // [151:151] is the sub-list for extension type_name
+	151, // [151:151] is the sub-list for extension extendee
+	0,   // [0:151] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }

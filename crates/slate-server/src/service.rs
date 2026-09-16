@@ -1022,22 +1022,40 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         // on it. The first message of the stream is always sent and already
         // carries `served_by`, so there was a header to put this in all along.
         let (query, warnings) = query_from_proto(&wire, table)?;
+        if wire.paged {
+            crate::convert::check_paged(&query, table)?;
+        }
         let stored = table.columns().len();
         let batch_size = self.limits.rows_per_message.max(1);
 
         if !request.transaction.is_empty() {
             // A transactional read is answered in one go; see `Sessions::query`
             // for why it cannot stream.
+            let limit = query.limit;
             let rows = self
                 .sessions
                 .query(&request.transaction, &context, table.id(), query)
                 .await?;
+            // A short page proves there is nothing after it. A full one proves
+            // nothing either way and gets a cursor anyway: reading one row
+            // further to find out would be paid on every page to save one
+            // empty request at the end of a sequence most callers never
+            // finish. `Page` in the record layer makes the same trade.
+            let cursor = match (wire.paged, limit, rows.last()) {
+                (true, Some(limit), Some(row)) if rows.len() >= limit => row
+                    .primary_key_values(table)
+                    .iter()
+                    .map(value_to_proto)
+                    .collect(),
+                _ => Vec::new(),
+            };
             return Ok(Response::new(replay(
                 rows,
                 stored,
                 in_transaction(),
                 warnings,
                 batch_size,
+                cursor,
             )));
         }
 
@@ -1049,6 +1067,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             pool: Arc::clone(&self.pool),
             table: table.id(),
             context,
+            paged: wire.paged,
             query,
             warnings,
             batch_size,
@@ -1461,11 +1480,13 @@ fn replay(
     served_by: pb::ServedBy,
     warnings: Vec<String>,
     batch_size: usize,
+    cursor: Vec<pb::Value>,
 ) -> RowStream {
     let mut messages = vec![Ok(pb::QueryResponse {
         rows: Vec::new(),
         served_by: Some(served_by),
         warnings,
+        next_cursor: Vec::new(),
     })];
     for batch in rows.chunks(batch_size) {
         messages.push(Ok(pb::QueryResponse {
@@ -1475,7 +1496,23 @@ fn replay(
                 .collect(),
             served_by: None,
             warnings: Vec::new(),
+            next_cursor: Vec::new(),
         }));
+    }
+    // On the last message, and on its own when the rows divided evenly into
+    // batches — a caller reads the cursor off whichever message carries it,
+    // and an empty trailing message is cheaper than making every batch carry
+    // a field only one of them can fill.
+    if !cursor.is_empty() {
+        match messages.last_mut() {
+            Some(Ok(last)) if !last.rows.is_empty() => last.next_cursor = cursor,
+            _ => messages.push(Ok(pb::QueryResponse {
+                rows: Vec::new(),
+                served_by: None,
+                warnings: Vec::new(),
+                next_cursor: cursor,
+            })),
+        }
     }
     Box::pin(futures::stream::iter(messages))
 }
@@ -1492,6 +1529,8 @@ struct Scan {
     batch_size: usize,
     freshness: Freshness,
     affinity: Option<Value>,
+    /// Whether the caller asked for `next_cursor`. See `Query.paged`.
+    paged: bool,
 }
 
 impl Scan {
@@ -1543,6 +1582,7 @@ impl Scan {
                 rows: Vec::new(),
                 served_by: Some(served_by),
                 warnings: self.warnings.clone(),
+                next_cursor: Vec::new(),
             }))
             .await
             .is_err()
@@ -1552,9 +1592,22 @@ impl Scan {
 
         let stored = definition.columns().len();
         let mut batch = Vec::with_capacity(self.batch_size);
+        // The last row and how many went out, for the cursor.
+        //
+        // The row is *moved* here rather than having its key extracted per
+        // row: the key is wanted once, at the end, and pulling it out on every
+        // iteration would allocate two vectors per row to throw away all but
+        // the last pair. This assignment costs nothing — `row` is already
+        // owned and `row_to_proto_split` only borrows it.
+        let mut last: Option<Row> = None;
+        let mut sent = 0usize;
         loop {
             match cursor.next().await {
-                Ok(Some(row)) => batch.push(row_to_proto_split(&row, stored)),
+                Ok(Some(row)) => {
+                    sent += 1;
+                    batch.push(row_to_proto_split(&row, stored));
+                    last = Some(row);
+                }
                 Ok(None) => break,
                 Err(error) => {
                     let _ = sender.send(Err(from_kernel(&error))).await;
@@ -1568,6 +1621,7 @@ impl Scan {
                         rows,
                         served_by: None,
                         warnings: Vec::new(),
+                        next_cursor: Vec::new(),
                     }))
                     .await
                     .is_err()
@@ -1578,12 +1632,31 @@ impl Scan {
                 }
             }
         }
-        if !batch.is_empty() {
+        // A short page proves there is nothing after it and gets no cursor. A
+        // full one proves nothing either way and gets one anyway: reading one
+        // row further to find out would be paid on every page to save one
+        // empty request at the end of a sequence most callers never finish.
+        // `Page` in the record layer makes the same trade.
+        //
+        // One check of `paged`, not two. It was two — a guard on collecting
+        // the key as well as this one — and the second was unobservable given
+        // the first, which a mutation forcing it to `true` proved by surviving
+        // the whole suite.
+        let cursor = match (self.paged, self.query.limit, &last) {
+            (true, Some(limit), Some(row)) if sent >= limit => row
+                .primary_key_values(definition)
+                .iter()
+                .map(value_to_proto)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if !batch.is_empty() || !cursor.is_empty() {
             let _ = sender
                 .send(Ok(pb::QueryResponse {
                     rows: batch,
                     served_by: None,
                     warnings: Vec::new(),
+                    next_cursor: cursor,
                 }))
                 .await;
         }

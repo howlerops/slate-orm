@@ -286,6 +286,38 @@ class Adapter:
         rows.sort(key=lambda row: json.dumps(row, sort_keys=True))
         return {"rows": rows}
 
+    def page(self, session, body):
+        """One page of `books` by keyset, and where to resume.
+
+        The cursor comes back as a row so the three adapters encode it the way
+        they encode everything else, and so the corpus compares its *type* as
+        well as its value -- a cursor arriving as a bare number would agree
+        across three clients that had all lost the same distinction.
+        """
+        query = Query(BOOKS)
+        if body.get("limit"):
+            query.limit(int(body["limit"]))
+        if body.get("after"):
+            query.after([decode(v) for v in body["after"]])
+        if body.get("columns"):
+            query.select(*(query.c[BOOKS.column_names[i]] for i in body["columns"]))
+        keys = []
+        for key in body.get("sort") or []:
+            column = query.c[BOOKS.column_names[key["column"]]]
+            keys.append(desc(column) if key.get("direction") == "desc" else asc(column))
+        if keys:
+            query.sort(*keys)
+
+        page = session.page(query)
+        # `None` rather than an empty list for the last page, so "there is
+        # nothing after this" is one value in all three adapters, not two.
+        cursor = None if page.is_last else [encode(v) for v in page.cursor]
+        return {
+            "rows": [encode_row(list(row)) for row in page.rows],
+            "cursor": cursor,
+            "isLast": page.is_last,
+        }
+
     def _build_aggregate(self, body):
         """The join and grouping the contract's aggregate body names.
 
@@ -486,6 +518,7 @@ ROUTES = {
     "/api/explain-aggregate": "explain_aggregate",
     "/api/nearest": "nearest",
     "/api/chain": "chain",
+    "/api/page": "page",
     "/api/related": "related",
     "/api/transaction": "transaction",
 }

@@ -436,6 +436,27 @@ function relatedFromWire(response: unknown, keys: Value[]): Value[][][] {
   return keys.map((key) => byKey.get(valueKey(key)) ?? []);
 }
 
+/**
+ * One page of a keyset-paged read, and where to resume.
+ *
+ * `cursor` is `undefined` when this page was short and there is provably
+ * nothing after it. A page that comes back *full* might be the last one, and
+ * the only way to know is to ask again: the server returns a cursor anyway
+ * rather than reading one row further to find out, because that extra read
+ * would be paid on every page to save one empty request at the end of a
+ * sequence most callers never finish.
+ */
+export interface Page {
+  /** The rows, at most `query.limit` of them. */
+  readonly rows: Value[][];
+  /** The cursor for the next page, absent when this one ended the sequence. */
+  readonly cursor?: Value[];
+  /** Whether there is provably nothing after this page. */
+  readonly isLast: boolean;
+  /** Which store answered. */
+  readonly servedBy?: ServedBy;
+}
+
 export class Session {
   readonly #client: Client;
   readonly #monotonic: boolean;
@@ -602,6 +623,83 @@ export class Session {
       this.#observeServedBy((response as { servedBy?: unknown }).servedBy);
     }
     return relatedFromWire(response, keys);
+  }
+
+  /**
+   * One page of a keyset-paged read, with the cursor for the next.
+   *
+   * `query.limit` must be set: a page with no size is the whole table, and the
+   * cursor it would return names its last row. Put the returned `cursor` in
+   * `query.after` for the page after this one, and stop when `isLast`.
+   *
+   * ```ts
+   * let cursor: Value[] | undefined;
+   * for (;;) {
+   *   const page = await session.page({ table: "books", limit: 100, after: cursor });
+   *   for (const row of page.rows) { … }
+   *   if (page.isLast) break;
+   *   cursor = page.cursor;
+   * }
+   * ```
+   *
+   * Not `offset`, which counts rows and is only correct while nothing changes:
+   * delete a row ahead of the cursor between two pages and the reader silently
+   * skips one, insert one and they see a row twice, and nothing reports either.
+   *
+   * The whole page is read before this resolves, unlike `query`, which streams.
+   * A page is bounded by its own limit, so there is nothing to stream *to* —
+   * and the cursor arrives at the end, so a caller would have to drain the
+   * stream before it could ask for the next page anyway.
+   */
+  async page(query: Query): Promise<Page> {
+    const stream = this.#client.stream("Query", {
+      query: queryToWire({ ...query, paged: true }, this.#client.claim(query.table)),
+      freshness: this.#freshness(),
+    });
+
+    const rows: Value[][] = [];
+    let cursor: Value[] | undefined;
+    let servedBy: ServedBy | undefined;
+    // Wrapped, as `RowStream` wraps it: a refusal arrives as the stream's
+    // first error, and an unwrapped one reaches the caller as a raw
+    // `ServiceError` that `isKind` cannot read. The server's refusals are half
+    // of what paging is — a page it cannot build a cursor for — so a caller
+    // that could not classify them would have nothing to catch.
+    try {
+      for await (const message of stream as AsyncIterable<Record<string, unknown>>) {
+        if (servedBy === undefined) {
+          const wire = message["servedBy"];
+          if (wire && typeof wire === "object") {
+            const { replica, sequence } = wire as { replica?: string; sequence?: string };
+            if (sequence !== undefined && sequence !== null) {
+              servedBy = { replica: replica ?? "", sequence: BigInt(sequence) };
+            }
+          }
+          this.#observeServedBy(message["servedBy"]);
+        }
+        for (const row of (message["rows"] as unknown[] | undefined) ?? []) {
+          rows.push(rowFromWire(row));
+        }
+        // On whichever message carries it, not on the last one: a page whose
+        // rows divide evenly into batches gets a trailing message with the
+        // cursor and no rows, and one that does not gets it on the final batch.
+        const next = message["nextCursor"] as unknown[] | undefined;
+        if (next && next.length > 0) cursor = next.map(valueFromWire);
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+    // Built by parts rather than as one literal: `exactOptionalPropertyTypes`
+    // distinguishes "absent" from "present and undefined", and a cursor that
+    // is present-and-undefined would read as a page that has one.
+    const page: { rows: Value[][]; isLast: boolean; cursor?: Value[]; servedBy?: ServedBy } = {
+      rows,
+      isLast: cursor === undefined,
+    };
+    if (cursor !== undefined) page.cursor = cursor;
+    if (servedBy !== undefined) page.servedBy = servedBy;
+    return page;
   }
 
   /** Read joined rows. */

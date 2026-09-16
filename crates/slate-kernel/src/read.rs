@@ -46,8 +46,10 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         // a cursor before they get here. A cursor names a *row*, and what a
         // grouped read returns is groups — resuming after a row would drop
         // every row before it from the aggregate and report the remainder as
-        // though it were the whole.
+        // though it were the whole. `paging` goes with it for the same reason:
+        // it is the intent to resume, and there is nothing here to resume.
         after: None,
+        paging: false,
     }
 }
 
@@ -440,7 +442,13 @@ impl<'a> SecuredReads<'a> {
             table,
             Action::Read,
         )?));
-        let Some(after) = &query.after else {
+        // A read that is *paging* takes the cursor path whether or not it is
+        // carrying one yet. Otherwise the first page of an unpageable read is
+        // served happily, with a cursor, and the second request is the one
+        // that fails — so the caller learns on page two that page one was
+        // never resumable, which is the worst moment to find out and the one
+        // `Query::paging` exists to move earlier.
+        if !query.paging {
             return Ok(plan_hinted(
                 table,
                 secured,
@@ -452,7 +460,7 @@ impl<'a> SecuredReads<'a> {
                 query.hint,
                 &query.compute,
             ));
-        };
+        }
 
         // A cursor pins the access path to the table's own key range, unless
         // the caller pinned it somewhere else themselves. Not a preference the
@@ -492,7 +500,12 @@ impl<'a> SecuredReads<'a> {
                     .to_owned(),
             });
         }
-        plan.resume_after(table, after)
+        // The first page has nothing to resume from and is otherwise the same
+        // read, planned the same way and subject to the same refusals.
+        match &query.after {
+            Some(after) => plan.resume_after(table, after),
+            None => Ok(plan),
+        }
     }
 
     /// Compute `aggregates` over the rows `query` selects.

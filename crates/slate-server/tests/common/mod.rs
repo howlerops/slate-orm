@@ -534,6 +534,8 @@ pub fn plain_query(table: &str) -> pb::Query {
         offset: 0,
         hint: None,
         compute: Vec::new(),
+        after: Vec::new(),
+        paged: false,
         // `None` for a table this catalog does not have, so that a test about
         // an unknown table still reaches the server's own refusal rather than
         // being stopped here.

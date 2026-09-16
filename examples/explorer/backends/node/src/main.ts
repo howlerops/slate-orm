@@ -301,6 +301,47 @@ class Adapter {
   }
 
   /**
+   * One page of `books` by keyset, and where to resume.
+   *
+   * The cursor comes back as a row so the three adapters encode it the way
+   * they encode everything else, and so the corpus compares its *type* as well
+   * as its value — a cursor arriving as a bare number would agree across three
+   * clients that had all lost the same distinction.
+   */
+  async page(
+    session: Session,
+    body: {
+      limit?: number;
+      after?: Record<string, unknown>[];
+      columns?: number[];
+      sort?: { column: number; direction?: string }[];
+    },
+  ): Promise<unknown> {
+    const query: Query = {
+      table: "books",
+      ...(body.limit ? { limit: body.limit } : {}),
+      ...(body.after ? { after: body.after.map(decode) } : {}),
+      ...(body.columns ? { columns: body.columns } : {}),
+      ...(body.sort
+        ? {
+            sort: body.sort.map((key) => ({
+              column: key.column,
+              direction: key.direction === "desc" ? ("desc" as const) : ("asc" as const),
+            })),
+          }
+        : {}),
+    };
+    const page = await session.page(query);
+    // `null` rather than an empty list for the last page, so "there is nothing
+    // after this" is one value in all three adapters, not two.
+    return {
+      rows: page.rows.map(encodeRow),
+      cursor: page.isLast ? null : (page.cursor ?? []).map(encode),
+      isLast: page.isLast,
+    };
+  }
+
+  /**
    * Three tables in one request: authors, their books, those books' sales.
    *
    * Separate from `/api/join` because it is the thing worth comparing and not
@@ -600,6 +641,7 @@ async function main(): Promise<void> {
     "/api/explain-aggregate": (s, b) => adapter.explainAggregate(s, b),
     "/api/nearest": (s, b) => adapter.nearest(s, b),
     "/api/chain": (s, b) => adapter.chain(s, b),
+    "/api/page": (s, b) => adapter.page(s, b),
     "/api/related": (s, b) => adapter.related(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };

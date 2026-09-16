@@ -268,6 +268,28 @@ type Query struct {
 	// They come back in [RowStream.Computed], beside the row rather than as a
 	// tail of it, so an ordinal still means a column.
 	Compute []Scalar
+	// After resumes at the first row strictly after this primary key —
+	// keyset pagination. Empty is the first page.
+	//
+	// Not Offset, which counts rows and is only correct while nothing
+	// changes: delete a row ahead of the cursor between two pages and the
+	// reader silently skips one, insert one and they see a row twice, and
+	// nothing reports either. A key does not move when its neighbours change.
+	// It is also cheaper — Offset n reads and discards n rows, where a key
+	// lets the range start after the cursor, so every page costs what the
+	// first one costs.
+	//
+	// Use [Session.Page], which sets Paged and hands back the next cursor.
+	After []Value
+	// Paged asks the server for the cursor to the next page.
+	//
+	// Separate from After, because the first page has no cursor to resume
+	// from and still wants one back. Separate from Limit, because `LIMIT 10`
+	// and "the first page of ten" are the same request and different
+	// intentions — and the server refuses a page it cannot build a cursor for
+	// (no limit, or a projection dropping a key column) rather than serving it
+	// without one, which it can only do if it knows one was wanted.
+	Paged bool
 }
 
 // Limit is a convenience for setting [Query.Limit].
@@ -285,6 +307,10 @@ func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
 		Offset:  q.Offset,
 		Schema:  claim,
 		Compute: scalarsToProto(q.Compute),
+		Paged:   q.Paged,
+	}
+	for _, value := range q.After {
+		out.After = append(out.After, value.toProto())
 	}
 	if q.Filter != nil {
 		out.Filter = q.Filter.wire

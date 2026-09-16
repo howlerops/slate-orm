@@ -17,6 +17,7 @@ export {
   type ComputedJoinedRow,
   type Relation,
   type Way,
+  type Page,
 } from "./client.js";
 export { SlateError, isKind, LEADER_KEY, type Kind } from "./errors.js";
 export {

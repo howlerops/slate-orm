@@ -211,9 +211,21 @@
         is asserted both ways round.
       </p>
       <p>
-        <code>page_records</code> returns the rows and the cursor for the
-        next page, so a caller never names a key column. A sorted query or a
-        grouped read is refused rather than paged wrongly.
+        <code>page_records</code> in Rust, and <code>page</code> in all three
+        clients, return the rows and the cursor for the next page &mdash; so a
+        caller never names a key column. The <em>server</em> builds the cursor,
+        because building one means knowing which columns are the primary key
+        and in what order, and a cursor built from the wrong column still
+        pages: just through the wrong sequence.
+      </p>
+      <p>
+        A sorted query, a grouped read, and a projection that drops a key
+        column are all refused by name rather than paged wrongly. The last of
+        those is what the server building the cursor costs: there would be no
+        key to build one from, and serving the page without a cursor is the
+        silent version &mdash; the caller loops until the cursor is absent,
+        gets none on the first page, and reads one page of a large table as the
+        whole answer.
       </p>
 
     <h2>Writing</h2>

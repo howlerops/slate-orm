@@ -623,3 +623,62 @@ func (s *server) chain(ctx context.Context, session *slate.Session, body json.Ra
 	sortJoined(out)
 	return map[string]any{"rows": out}, nil
 }
+
+// page reads one page of `books` by keyset, and reports where to resume.
+//
+// The cursor comes back as a row so the three adapters encode it the same way
+// they encode everything else, and so the corpus compares its *type* as well
+// as its value — a cursor that arrived as a bare number would agree across
+// three clients that had all lost the same distinction.
+func (s *server) page(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Limit  uint64            `json:"limit"`
+		After  []json.RawMessage `json:"after"`
+		Sort   []sortSpec        `json:"sort"`
+		Column []int             `json:"columns"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the page: %w", err)
+	}
+
+	query := slate.Query{Table: "books"}
+	if spec.Limit > 0 {
+		query.Limit = slate.Limit(spec.Limit)
+	}
+	for _, raw := range spec.After {
+		value, err := decode(raw)
+		if err != nil {
+			return nil, err
+		}
+		query.After = append(query.After, value)
+	}
+	for _, c := range spec.Column {
+		query.Columns = append(query.Columns, slate.Ordinal(c))
+	}
+	for _, key := range spec.Sort {
+		direction := slate.Asc
+		if key.Direction == "desc" {
+			direction = slate.Desc
+		}
+		query.Sort = append(query.Sort, slate.SortKey{
+			Column: key.Column, Direction: direction,
+		})
+	}
+
+	page, err := session.Page(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]tagged, 0, len(page.Rows))
+	for _, row := range page.Rows {
+		rows = append(rows, encodeRow(row))
+	}
+	// `nil` rather than an empty list for the last page, so "there is nothing
+	// after this" is one value in all three adapters rather than two.
+	var cursor []tagged
+	if !page.IsLast() {
+		cursor = encodeRow(page.Cursor)
+	}
+	return map[string]any{"rows": rows, "cursor": cursor, "isLast": page.IsLast()}, nil
+}

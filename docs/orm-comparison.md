@@ -107,7 +107,6 @@ then did not ship it to the three audiences most likely to need it.
 
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
-| Keyset pagination on the wire | Drizzle, Prisma (`cursor`) | `Page`/`next` exist in `slate-orm/src/ext.rs:31`; no cursor field in the proto |
 | Batch: several independent statements, one round trip | Drizzle `batch`, Prisma `$transaction([…])` | `grep -rn "fn batch\|Batch" crates/slate-server/src/` → nothing |
 | Many-to-many / `has_many through` | all | `Related` is one `local`→`foreign` ordinal pair; derive accepts only `has_many`/`belongs_to` |
 | Nested / recursive eager loading | Ecto, SQLAlchemy, Prisma | `load_related` is one level; no nesting |
@@ -126,6 +125,12 @@ then did not ship it to the three audiences most likely to need it.
 | Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
 | Per-request logging and metrics | all | already recorded in the README: `slate-serverd` logs startup and warnings, nothing per request |
 | Retrying `transact` in Go and TypeScript | — | already recorded in the README; Python has one |
+
+> **Built: "Keyset pagination on the wire".** `Query.after` carries the cursor,
+> `Query.paged` asks for the next one, and `QueryResponse.next_cursor` returns
+> it. All three clients have `page`. The row is removed from the table above
+> rather than left with a note, because unlike the chains row it was correct
+> when it was written.
 
 > **Withdrawn: "Chains (3+ table joins) on the wire".** This table listed it as
 > missing, on the evidence that "proto has `Join`, no chain RPC; `chain`
@@ -248,7 +253,7 @@ claim nothing measures is a claim nothing keeps.
 
 *Stops at.* One level, one relationship per request, to start. Nesting is P5.
 
-### P3 — Chains, keyset pagination and `RETURNING` on the wire — **chains were not missing**
+### P3 — Chains, keyset pagination and `RETURNING` on the wire — **two of three**
 
 > The chains third of this is withdrawn: they have been on the wire since
 > `JoinQuery.inputs` became repeated, and all three clients test them. See the
@@ -257,9 +262,12 @@ claim nothing measures is a claim nothing keeps.
 > types plus a `reader` whose row policy hides a book *and* the sale hanging
 > off it.
 >
-> Keyset pagination and `RETURNING` are still outstanding and still real:
-> `Query.after` exists in the kernel and has no field in the proto,
-> `WriteResponse` carries a count and no rows.
+> Keyset pagination is built too: `Query.after` and `Query.paged` on the
+> request, `QueryResponse.next_cursor` on the response, `page` in all three
+> clients, and eight conformance cases including the three refusals.
+>
+> `RETURNING` is what is left of this item, and is still real: `WriteResponse`
+> carries an affected count and no rows.
 
 ### P3 — Chains, keyset pagination and `RETURNING` on the wire
 

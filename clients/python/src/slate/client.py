@@ -31,6 +31,7 @@ call site, and populates `served_by` before the first row.
 
 from __future__ import annotations
 
+import dataclasses
 import contextlib
 import random
 import time
@@ -47,7 +48,7 @@ from .freshness import Freshness, ReadToken, ServedBy, Watermark
 from .query import AggregateQuery, GroupedJoinQuery, JoinQuery, Query
 from .rows import Group, JoinedRow, Row
 from .schema import Table, fingerprint_of
-from .values import PyValue, to_value
+from .values import PyValue, from_value, to_value
 
 __all__ = [
     "Client",
@@ -379,6 +380,30 @@ class _Stream(Iterator[T]):
 
     def __exit__(self, *exc: object) -> None:
         self.cancel()
+
+
+@dataclasses.dataclass(frozen=True)
+class Page:
+    """One page of a keyset-paged read, and where to resume.
+
+    `cursor` is `None` when this page was short and there is provably nothing
+    after it. A page that comes back *full* might be the last one, and the only
+    way to know is to ask again: this returns a cursor anyway rather than
+    reading one row further to find out, because that extra read would be paid
+    on every page to save one empty request at the end of a sequence most
+    callers never finish. So a caller looping until `is_last` makes one final
+    request that returns nothing, which is the ordinary shape of every cursor
+    API and is documented rather than optimised away.
+    """
+
+    rows: list[Row]
+    cursor: list[PyValue] | None
+    served_by: ServedBy | None
+
+    @property
+    def is_last(self) -> bool:
+        """Whether there is provably nothing after this page."""
+        return self.cursor is None
 
 
 class RowStream(_Stream[Row]):
@@ -713,6 +738,70 @@ class _Ops:
         stream = RowStream(self._stream(self._conn.stub.Query, request), query.table)
         self._observe_read(stream.served_by)
         return stream
+
+    def page(self, query: Query, *, freshness: Freshness | None = None) -> Page:
+        """One page of a keyset-paged read, with the cursor for the next.
+
+        `query.limit` must be set: a page with no size is the whole table, and
+        the cursor it would return names its last row. Pass `page.cursor` to
+        `Query.after` for the page after this one, and stop when it is `None`.
+
+        ```python
+        cursor = None
+        while True:
+            page = session.page(Query(BOOKS).limit(100).after(cursor))
+            for row in page.rows:
+                ...
+            if page.is_last:
+                break
+            cursor = page.cursor
+        ```
+
+        Not `offset`, which counts rows and is only correct while nothing
+        changes: delete a row ahead of the cursor between two pages and the
+        reader silently skips one, insert one and they see a row twice, and
+        nothing reports either.
+
+        The whole page is read before this returns, unlike `query`, which
+        streams. A page is bounded by its own limit, so there is nothing to
+        stream *to* -- and the cursor arrives at the end, so a caller would
+        have to drain the stream before it could ask for the next page anyway.
+        """
+        # Set on the request rather than on `query`, which belongs to the
+        # caller: `page(q)` followed by `query(q)` must not have quietly turned
+        # `q` into a paged read.
+        wire = query.to_proto()
+        wire.paged = True
+        request = pb.QueryRequest(transaction=self._transaction_id(), query=wire)
+        wire_freshness = self._freshness(freshness)
+        if wire_freshness is not None:
+            request.freshness.CopyFrom(wire_freshness)
+
+        rows: list[Row] = []
+        cursor: list[PyValue] | None = None
+        served_by: ServedBy | None = None
+        # Wrapped as `_Stream._pump` wraps it: a refusal arrives as the
+        # stream's first error, and an unwrapped one reaches the caller as a
+        # `grpc.RpcError` that `except SlateError` cannot catch. The server's
+        # refusals are half of what paging is -- a page it cannot build a
+        # cursor for -- so a caller that could not catch them would have
+        # nothing to handle.
+        try:
+            for message in self._stream(self._conn.stub.Query, request):
+                response = cast(pb.QueryResponse, message)
+                if served_by is None:
+                    served_by = ServedBy.from_proto(response.served_by)
+                rows.extend(Row.from_proto(r, query.table) for r in response.rows)
+                # On whichever message carries it, not on the last one: a page
+                # whose rows divide evenly into batches gets a trailing message
+                # with the cursor and no rows, and one that does not gets it on
+                # the final batch.
+                if response.next_cursor:
+                    cursor = [from_value(v) for v in response.next_cursor]
+        except grpc.RpcError as error:
+            raise from_rpc_error(error) from error
+        self._observe_read(served_by)
+        return Page(rows=rows, cursor=cursor, served_by=served_by)
 
     def join(self, join: JoinQuery, *, freshness: Freshness | None = None) -> JoinStream:
         """Run a join or chain.

@@ -121,7 +121,8 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
         KernelError::DuplicatePrimaryKey { table }
         | KernelError::RowNotFound { table }
         | KernelError::TenantRequired { table }
-        | KernelError::RowCheckFailed { table } => put("table", table.clone()),
+        | KernelError::RowCheckFailed { table }
+        | KernelError::InvalidCursor { table, .. } => put("table", table.clone()),
         KernelError::AccessDenied { table, action } => {
             put("table", table.clone());
             put("action", (*action).to_owned());
@@ -183,6 +184,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::KeyDecode(_) => "KEY_DECODE",
         KernelError::CorruptIndexEntry { .. } => "CORRUPT_INDEX_ENTRY",
         KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
+        KernelError::InvalidCursor { .. } => "INVALID_CURSOR",
         // See the module docs: a token is a promise of a stable meaning, and
         // nobody has decided this one's.
         _ => "UNCLASSIFIED",
@@ -242,6 +244,18 @@ pub fn code_for(error: &KernelError) -> Code {
         | KernelError::NotSummable { .. }
         | KernelError::ComparisonTypeMismatch { .. }
         | KernelError::JoinNotSupported { .. } => Code::InvalidArgument,
+
+        // A cursor that is not a whole primary key, or one on a read that
+        // cannot be resumed from a key — an index scan, a sort the key does
+        // not give, a grouped read. All of them are the request, and the
+        // message says which.
+        //
+        // This fell to the wildcard and came back `INTERNAL` until the wire
+        // grew a cursor field, because until then no remote caller could set
+        // one and the mapping was unreachable. A caller cannot tell "I sent a
+        // bad request" from "the server broke" at `INTERNAL`, and the second
+        // invites a retry that will fail identically forever.
+        KernelError::InvalidCursor { .. } => Code::InvalidArgument,
 
         // A stored key or index entry did not decode. This is the index and
         // the table disagreeing, which the write path is built to prevent, so

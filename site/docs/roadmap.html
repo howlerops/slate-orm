@@ -192,7 +192,6 @@
         </thead>
         <tbody>
           <tr><td>Chains (3+ table joins) on the wire</td><td>all</td></tr>
-          <tr><td>Keyset pagination on the wire</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Batch: independent statements, one round trip</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Many-to-many and <code>has_many through</code></td><td>all</td></tr>
           <tr><td>Nested eager loading</td><td>Ecto, SQLAlchemy, Prisma</td></tr>
@@ -280,8 +279,14 @@
       </li>
       <li>
         <strong>Chains, keyset pagination and <code>RETURNING</code> on the
-        wire.</strong> Three cases of &ldquo;the kernel has it, the wire does
-        not&rdquo;.
+        wire. &mdash; two of three.</strong> Chains were never missing: a
+        <code>JoinQuery</code> carries as many inputs as it is given, so a
+        chain needs no separate RPC, and all three clients already tested one.
+        The conformance runner compares them on a three-table chain now.
+        Keyset pagination is built &mdash; a cursor on the request, the next
+        one on the response, <code>page</code> in all three clients &mdash; and
+        every read it cannot page is refused by name rather than paged wrongly.
+        <code>RETURNING</code> is what is left.
       </li>
       <li><strong>Many-to-many and <code>has_many through</code>.</strong></li>
       <li><strong>Nested eager loading</strong>, with a depth limit that refuses by name.</li>

@@ -146,6 +146,8 @@ pub struct Query {
     pub compute: Vec<crate::scalar::Scalar>,
     /// Resume after this primary key. See [`Query::after`].
     pub after: Option<Vec<Value>>,
+    /// Whether this read will be resumed from a cursor. See [`Query::paging`].
+    pub paging: bool,
 }
 
 impl Default for Query {
@@ -168,6 +170,7 @@ impl Query {
             hint: None,
             compute: Vec::new(),
             after: None,
+            paging: false,
         }
     }
 
@@ -208,6 +211,24 @@ impl Query {
     #[must_use]
     pub fn after(mut self, key: impl Into<Vec<Value>>) -> Self {
         self.after = Some(key.into());
+        self.paging = true;
+        self
+    }
+
+    /// Declare that this read will be resumed, without resuming one yet.
+    ///
+    /// Every refusal [`Query::after`] can raise is raised by the *first* page
+    /// too, which has no cursor to carry. Without this the first page of a
+    /// read that cannot be paged is served happily, with a cursor, and the
+    /// second request is the one that fails — so the caller discovers on page
+    /// two that page one was never resumable.
+    ///
+    /// Set for you by `after`, because a request carrying a cursor is
+    /// self-evidently paging. It is separate only because the first page is
+    /// not.
+    #[must_use]
+    pub const fn paging(mut self) -> Self {
+        self.paging = true;
         self
     }
 

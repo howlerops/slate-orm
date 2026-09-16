@@ -41,6 +41,7 @@ from .expr import (
 )
 from .scalar import Scalar
 from .schema import Table, fingerprint_of
+from .values import PyValue, to_value
 
 __all__ = [
     "Agg",
@@ -170,6 +171,7 @@ class Query(_QueryBase):
         self._sort: list[SortKey] = []
         self._limit: int | None = None
         self._offset = 0
+        self._after: list[PyValue] = []
 
     def where(self, filter: Expr) -> Query:
         """Keep only rows this admits. Replaces any earlier filter."""
@@ -223,6 +225,23 @@ class Query(_QueryBase):
         self._offset = offset
         return self
 
+    def after(self, cursor: Sequence[PyValue] | None) -> Query:
+        """Resume after the row with this primary key -- keyset pagination.
+
+        `None` or an empty cursor is the first page. Pass the cursor a previous
+        `Page` came back with to get the one after it.
+
+        `offset` counts rows and is only correct while nothing changes: delete a
+        row ahead of the cursor between two pages and the reader silently skips
+        one, insert one and they see a row twice. A key does not move when its
+        neighbours change. It is also cheaper -- `offset n` reads and discards
+        `n` rows, where a key lets the range start after the cursor, so every
+        page costs what the first one costs.
+        """
+        self._after = list(cursor) if cursor else []
+        return self
+
+
     def using_index(self, name: str) -> Query:
         """Take this index instead of the cheapest path.
 
@@ -247,6 +266,29 @@ class Query(_QueryBase):
         if self._limit is not None:
             query.limit = self._limit
         query.offset = self._offset
+        # Typed against the primary key rather than left to be inferred: a
+        # cursor is a key, its column types are declared, and an `int` with no
+        # hint is refused because the wire has both `int64_value` and
+        # `uint64_value`. Hinting makes `after([7])` mean what it looks like,
+        # and a cursor read back off a `Page` round-trips without the caller
+        # re-wrapping every value.
+        if self._after:
+            key_types = self.table.key_types()
+            if len(self._after) != len(key_types):
+                raise ValueError(
+                    f"a cursor is a whole primary key: `{self.table.name}` has "
+                    f"{len(key_types)} key column(s), and this one has "
+                    f"{len(self._after)}"
+                )
+            query.after.extend(
+                to_value(v, hint)
+                for v, hint in zip(self._after, key_types, strict=True)
+            )
+        # `paged` is deliberately not settable here. It asks for a cursor on the
+        # *response*, and a cursor only comes back through `Session.page` --
+        # `query` streams rows and drops it. A builder method for it would let
+        # a caller ask for something it could not then receive, so `page` sets
+        # the field on the request it sends.
         return query
 
 

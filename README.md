@@ -480,6 +480,16 @@ describe, so a query that paged correctly on a small table would start returning
 wrong pages once it grew. A sorted query, a grouped read and an explicit index
 hint are each refused rather than paged wrongly.
 
+The three clients have it too — `page` in Python, Go and TypeScript, over
+`Query.after`, `Query.paged` and `QueryResponse.next_cursor`. The **server**
+builds the cursor, because building one means knowing which columns are the
+primary key and in what order, and one built from the wrong column still pages,
+just through the wrong sequence. What that costs is one more refusal: a paged
+read whose projection drops a key column has no key to build a cursor from, and
+is refused by name rather than served without one — which would be the silent
+version, where the caller loops until the cursor is absent, gets none on the
+first page, and reads one page of a large table as the whole answer.
+
 ### Conditional writes, because the store cannot see a lost update
 
 The store detects two writers overlapping in time. The common failure is the
@@ -1069,18 +1079,22 @@ Built and tested:
 
 Not built:
 
-- [ ] **None of the four features above cross the wire.** Three of them want
-      the same protocol change: the gRPC `Query` carries no cursor field, the
-      write path no expected-row field, and `Value` no decimal case, so
-      pagination, the conditional update and the decimal type are reachable
-      from the Rust ORM and not from Python, Go or TypeScript. Relationships
-      want nothing from the protocol — `load_related` lowers to an `IN` the
-      wire already carries — and are missing from the clients only because
-      nobody has written the three helpers. A decimal that reaches a client
+- [ ] **Two of the four features above do not cross the wire.** The write path
+      carries no expected-row field and `Value` has no decimal case, so the
+      conditional update and the decimal type are reachable from the Rust ORM
+      and not from Python, Go or TypeScript. A decimal that reaches a client
       today becomes a visible `<unrepresentable decimal>` marker rather than a
       silent null — pinned by a test whose own doc comment says it is a pin and
-      not an endorsement. Three features wanting one protocol change is an
-      argument for making it once rather than three times
+      not an endorsement.
+
+      Relationships and pagination were on this list and are not. `Related` is
+      an RPC now and `Query` carries `after`, `paged` and a `next_cursor` on
+      the way back; all three clients have `related` and `page`, and the
+      three-SDK conformance runner compares them on both. The prediction that
+      the cursor "wants the same protocol change" as the other two was wrong in
+      an instructive way: it wanted *three* fields rather than one, because the
+      server has to be told a cursor is wanted before it can refuse a read it
+      cannot build one for
 - [ ] A read-only node that starts while the leader has not yet migrated warns
       and serves. During that window a query through an unbuilt index returns
       no rows. Closing it means the follower waiting for the leader, which

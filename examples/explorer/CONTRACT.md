@@ -214,6 +214,33 @@ Reading it `parents` goes through `books`, which carries the row policy. As
 lose it. A client that resolved the relationship from rows it already held
 would not lose it, which is the argument for the call existing at all.
 
+### `POST /api/page`
+
+```json
+{"limit": 4, "after": [{"u64": "13"}]}
+```
+
+One page of `books` by keyset. `after` is the cursor a previous page returned,
+absent for the first. `columns` and `sort` are there so the corpus can reach the
+refusals — see below.
+
+→ `{"rows": [row, …], "cursor": [value, …] | null, "isLast": bool}`
+
+`cursor` is `null` when the page was short and there is provably nothing after
+it. A page that comes back *full* gets a cursor even when it is the last one:
+reading one row further to find out would be paid on every page to save one
+empty request at the end of a sequence most callers never finish.
+
+The cursor comes back as a row of tagged values rather than as bare numbers, so
+the corpus compares its *type* as well as its value — a client that had lost
+the `u64`/`i64` distinction would look right on its own.
+
+Three requests here are expected to be refused, and the refusal is the answer
+being compared: a page with no limit (a page with no size is the whole table),
+a projection that drops a primary-key column (the cursor is that key, so there
+would be nothing to build one from), and a sort into an order the key does not
+give (the page boundary would not be where the cursor says).
+
 ### `POST /api/transaction`
 
 ```json

@@ -161,9 +161,18 @@ fn any_query() -> impl Strategy<Value = Query> {
             Just(Some(AccessHint::Index(IndexId(1)))),
             Just(Some(AccessHint::Index(IndexId(2)))),
         ],
+        // A cursor, now that the wire carries one. `Some(vec![])` is left out
+        // rather than forgotten: an empty cursor is how the proto spells
+        // *absent*, because proto3 cannot tell an unset repeated field from an
+        // empty one, so it is the one value that cannot survive the round trip
+        // and the one the server reads as `None`.
+        prop_oneof![
+            Just(None),
+            prop::collection::vec(any_value(), 1..3).prop_map(Some),
+        ],
     )
         .prop_map(
-            |(filter, order, projection, sort, limit, offset, hint)| Query {
+            |(filter, order, projection, sort, limit, offset, hint, after)| Query {
                 filter,
                 order,
                 projection,
@@ -172,11 +181,11 @@ fn any_query() -> impl Strategy<Value = Query> {
                 offset,
                 hint,
                 compute: Vec::new(),
-                // Not generated, because the wire has no cursor field: a
-                // round-trip property over a value the proto cannot carry would
-                // fail for a reason that is not a bug. When the field is added,
-                // this is the line that has to stop being `None`.
-                after: None,
+                // `paging` is implied by `after` on the way in and is set by
+                // `Query::after`, so a generated `after` must carry it or the
+                // round trip compares a value the builder cannot produce.
+                paging: after.is_some(),
+                after,
             },
         )
 }

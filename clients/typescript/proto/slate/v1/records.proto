@@ -692,6 +692,44 @@ message Query {
   // ordinals and a client can be right about one table and wrong about
   // another.
   SchemaCheck schema = 10;
+  // Resume after the row with this primary key — keyset pagination.
+  //
+  // A whole primary key, in key order, and empty for the first page. The next
+  // page starts at the first row *strictly* after it in the scan order, so a
+  // caller pages by remembering where it got to rather than by counting how
+  // many rows it has had.
+  //
+  // `offset` counts rows and is only correct while nothing changes: delete a
+  // row ahead of the cursor between two pages and the reader silently skips
+  // one, insert one and they see a row twice. A key does not move when its
+  // neighbours change. It is also cheaper — `offset n` reads and discards `n`
+  // rows, where a key lets the range start after the cursor.
+  //
+  // A cursor pins the access path to the table's own key range, so a query
+  // that would be answered from an index, or sorted into an order the key does
+  // not give, is refused by name rather than paged wrongly. The refusals are
+  // the kernel's and say which of those happened.
+  repeated Value after = 11;
+  // Ask for `QueryResponse.next_cursor`, because a `limit` alone does not say
+  // whether one is wanted.
+  //
+  // `SELECT … LIMIT 10` and "the first page of ten" are the same request on
+  // the wire and different intentions, and the difference matters because of
+  // what the server must refuse. A cursor is the last row's primary key, so a
+  // projection that drops a key column cannot produce one — and the choice is
+  // then between refusing the request by name and serving it with no cursor,
+  // which is the silent version of the same failure. Refusing is only
+  // available if the server knows a cursor was wanted, so the caller says.
+  //
+  // With it: `limit` is required (a page with no size is the whole table), the
+  // projection must keep every key column, and everything the kernel refuses a
+  // cursor for is refused whether or not `after` is set — so the *first* page
+  // of an unpageable read fails, rather than the second.
+  //
+  // A `bool` and not a `Unit`, unlike the `oneof` arms above: the false
+  // spelling here is the absence of the request and is exactly what a client
+  // that zeroed the struct means.
+  bool paged = 12;
 }
 
 // ── Joins and chains ─────────────────────────────────────────────────────────
@@ -1113,6 +1151,23 @@ message QueryResponse {
   // moment against a possibly different view. A warning is about the request
   // that carried it or it is about nothing.
   repeated string warnings = 3;
+  // Where to resume, for a caller paging with `Query.after`.
+  //
+  // On the **last** message of a paged read, and empty on every other message
+  // and on every unpaged read. Empty also means "this page was short, so there
+  // is provably nothing after it" — a caller loops until it comes back empty.
+  //
+  // The server builds it rather than the caller, because building it means
+  // knowing which columns are the primary key and in what order, and a cursor
+  // built from the wrong column still pages — just through the wrong sequence.
+  // That is the same argument `Records::page_records` makes for existing at
+  // all, and the reason a projection that drops a key column is refused rather
+  // than served without a cursor.
+  //
+  // A full page returns a cursor even when it is the last one. Reading one row
+  // further to find out would be paid on every page to save one empty request
+  // at the end of a sequence most callers never finish.
+  repeated Value next_cursor = 4;
 }
 
 message JoinRequest {

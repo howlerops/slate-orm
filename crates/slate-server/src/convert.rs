@@ -1273,6 +1273,15 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
     let space = Space::input(table, query.compute.len(), index);
     pb::Query {
         table: table.name().to_owned(),
+        after: query
+            .after
+            .as_ref()
+            .map(|key| key.iter().map(value_to_proto).collect())
+            .unwrap_or_default(),
+        // The kernel's `paging` is the intent to resume, which *is* part of
+        // the plan — it decides whether a cursor refusal applies. `after`
+        // implies it on the way back in, so only a first page needs it stated.
+        paged: query.paging,
         filter: Some(expr_to_proto(&space, &query.filter)),
         order: match query.order {
             ScanOrder::Ascending => pb::ScanOrder::Ascending as i32,
@@ -1398,6 +1407,22 @@ pub fn query_from_proto_at(
 
     let sort = sort_from_proto(&space, &query.sort, "the sort")?;
 
+    // A cursor is a whole primary key, and the kernel says so too — but it
+    // says it against a decoded key, and the decode is here. Empty means the
+    // first page rather than an empty key, because proto3 cannot tell an unset
+    // repeated field from an empty one and "resume after no columns" is not a
+    // thing a caller can mean.
+    let after_is_set = !query.after.is_empty();
+    let after = if query.after.is_empty() {
+        None
+    } else {
+        let mut key = Vec::with_capacity(query.after.len());
+        for value in &query.after {
+            key.push(value_from_proto(value)?);
+        }
+        Some(key)
+    };
+
     let hint = match query.hint.as_ref().and_then(|hint| hint.path.as_ref()) {
         None => None,
         Some(pb::access_hint::Path::TableScan(value)) => {
@@ -1426,15 +1451,59 @@ pub fn query_from_proto_at(
             offset: query.offset as usize,
             hint,
             compute,
-            // The wire carries no cursor yet, so a remote caller pages by
-            // offset. Hard-coded rather than plumbed through a field that does
-            // not exist: `None` here is the honest translation of a request
-            // that could not have asked for one, and the day the proto grows
-            // the field this line is where it lands.
-            after: None,
+            after,
+            // The kernel raises every cursor refusal on a read that says it is
+            // paging, cursor or not — so the first page of an unpageable read
+            // fails rather than the second. `after` implies it; this carries
+            // the caller's intent for the page that has no cursor yet.
+            paging: query.paged || after_is_set,
         },
         warnings,
     ))
+}
+
+/// Refuse a paged read that could not produce a cursor.
+///
+/// Every one of these is something the server would otherwise answer with rows
+/// and no cursor, which a caller looping until the cursor is empty reads as
+/// "the last page" — so a paged read of a hundred thousand rows would silently
+/// stop after the first ten. A refusal naming the reason is the difference
+/// between a missing feature and a wrong answer.
+///
+/// The kernel's own cursor refusals (an index scan, a sort the key does not
+/// give, a grouped read) are not repeated here: they fire when the query runs,
+/// they name the case precisely, and duplicating them would be a second
+/// statement of the same rule to keep in agreement. They fire on the *first*
+/// page as well as later ones, because `paged` sets `after` aside — see
+/// `Query.paged` in the proto.
+pub fn check_paged(query: &Query, table: &TableDef) -> Result<(), Status> {
+    if query.limit.is_none() {
+        return Err(bad(
+            "a paged read needs a limit: a page with no size is the whole table, and the cursor \
+             it would return names its last row",
+        ));
+    }
+    if let Projection::Columns(columns) = &query.projection {
+        let missing: Vec<String> = table
+            .primary_key()
+            .iter()
+            .filter(|key| !columns.contains(key))
+            .map(|key| {
+                table
+                    .column(*key)
+                    .map_or_else(|| format!("column {}", key.0), |c| c.name().to_owned())
+            })
+            .collect();
+        if !missing.is_empty() {
+            return Err(bad(format!(
+                "a paged read's projection must keep every primary-key column, because the \
+                 cursor is the last row's key: `{}` is missing {}",
+                table.name(),
+                missing.join(", ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Refuse the parts of a `Query` that have no meaning where it is being used.
@@ -1458,6 +1527,17 @@ fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Sta
     if query.offset != 0 {
         return Err(bad(format!(
             "{what} has an offset, which would change the answer rather than skip rows; {instead}"
+        )));
+    }
+    // A cursor names a row of the *result*, and a join input's rows are not
+    // the result. The kernel refuses one on a grouped read for the same
+    // reason and says so in `no_cursor_on_groups`; it has no equivalent for a
+    // join side, because a join side's `Query` never carried one until this
+    // field existed. Refused rather than dropped.
+    if !query.after.is_empty() {
+        return Err(bad(format!(
+            "{what} has a cursor, which names a row of the result rather than one of its \
+             inputs; {instead}"
         )));
     }
     Ok(())

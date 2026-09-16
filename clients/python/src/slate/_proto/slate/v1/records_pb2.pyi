@@ -1561,11 +1561,34 @@ class Query(_message.Message):
     HINT_FIELD_NUMBER: _builtins.int
     COMPUTE_FIELD_NUMBER: _builtins.int
     SCHEMA_FIELD_NUMBER: _builtins.int
+    AFTER_FIELD_NUMBER: _builtins.int
+    PAGED_FIELD_NUMBER: _builtins.int
     table: _builtins.str
     """Table name, resolved against the server's catalog."""
     order: Global___ScanOrder.ValueType
     limit: _builtins.int
     offset: _builtins.int
+    paged: _builtins.bool
+    """Ask for `QueryResponse.next_cursor`, because a `limit` alone does not say
+    whether one is wanted.
+
+    `SELECT … LIMIT 10` and "the first page of ten" are the same request on
+    the wire and different intentions, and the difference matters because of
+    what the server must refuse. A cursor is the last row's primary key, so a
+    projection that drops a key column cannot produce one — and the choice is
+    then between refusing the request by name and serving it with no cursor,
+    which is the silent version of the same failure. Refusing is only
+    available if the server knows a cursor was wanted, so the caller says.
+
+    With it: `limit` is required (a page with no size is the whole table), the
+    projection must keep every key column, and everything the kernel refuses a
+    cursor for is refused whether or not `after` is set — so the *first* page
+    of an unpageable read fails, rather than the second.
+
+    A `bool` and not a `Unit`, unlike the `oneof` arms above: the false
+    spelling here is the absence of the request and is exactly what a client
+    that zeroed the struct means.
+    """
     @_builtins.property
     def filter(self) -> Global___Expr:
         """Rows to keep. Absent means every row."""
@@ -1602,6 +1625,27 @@ class Query(_message.Message):
         another.
         """
 
+    @_builtins.property
+    def after(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """Resume after the row with this primary key — keyset pagination.
+
+        A whole primary key, in key order, and empty for the first page. The next
+        page starts at the first row *strictly* after it in the scan order, so a
+        caller pages by remembering where it got to rather than by counting how
+        many rows it has had.
+
+        `offset` counts rows and is only correct while nothing changes: delete a
+        row ahead of the cursor between two pages and the reader silently skips
+        one, insert one and they see a row twice. A key does not move when its
+        neighbours change. It is also cheaper — `offset n` reads and discards `n`
+        rows, where a key lets the range start after the cursor.
+
+        A cursor pins the access path to the table's own key range, so a query
+        that would be answered from an index, or sorted into an order the key does
+        not give, is refused by name rather than paged wrongly. The refusals are
+        the kernel's and say which of those happened.
+        """
+
     def __init__(
         self,
         *,
@@ -1615,10 +1659,12 @@ class Query(_message.Message):
         hint: Global___AccessHint | None = ...,
         compute: _abc.Iterable[Global___Scalar] | None = ...,
         schema: Global___SchemaCheck | None = ...,
+        after: _abc.Iterable[Global___Value] | None = ...,
+        paged: _builtins.bool = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "filter", b"filter", "hint", b"hint", "limit", b"limit", "projection", b"projection", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "compute", b"compute", "filter", b"filter", "hint", b"hint", "limit", b"limit", "offset", b"offset", "order", b"order", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "after", b"after", "compute", b"compute", "filter", b"filter", "hint", b"hint", "limit", b"limit", "offset", b"offset", "order", b"order", "paged", b"paged", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
     _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015
@@ -2481,6 +2527,7 @@ class QueryResponse(_message.Message):
     ROWS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
     WARNINGS_FIELD_NUMBER: _builtins.int
+    NEXT_CURSOR_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]: ...
     @_builtins.property
@@ -2499,16 +2546,37 @@ class QueryResponse(_message.Message):
         that carried it or it is about nothing.
         """
 
+    @_builtins.property
+    def next_cursor(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """Where to resume, for a caller paging with `Query.after`.
+
+        On the **last** message of a paged read, and empty on every other message
+        and on every unpaged read. Empty also means "this page was short, so there
+        is provably nothing after it" — a caller loops until it comes back empty.
+
+        The server builds it rather than the caller, because building it means
+        knowing which columns are the primary key and in what order, and a cursor
+        built from the wrong column still pages — just through the wrong sequence.
+        That is the same argument `Records::page_records` makes for existing at
+        all, and the reason a projection that drops a key column is refused rather
+        than served without a cursor.
+
+        A full page returns a cursor even when it is the last one. Reading one row
+        further to find out would be paid on every page to save one empty request
+        at the end of a sequence most callers never finish.
+        """
+
     def __init__(
         self,
         *,
         rows: _abc.Iterable[Global___Row] | None = ...,
         served_by: Global___ServedBy | None = ...,
         warnings: _abc.Iterable[_builtins.str] | None = ...,
+        next_cursor: _abc.Iterable[Global___Value] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["next_cursor", b"next_cursor", "rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

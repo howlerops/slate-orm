@@ -172,6 +172,36 @@ export interface Query {
   /** Reads the table backwards where the access path allows it. */
   readonly descending?: boolean;
   /**
+   * Resumes at the first row strictly after this primary key — keyset
+   * pagination. Absent or empty is the first page.
+   *
+   * Not `offset`, which counts rows and is only correct while nothing changes:
+   * delete a row ahead of the cursor between two pages and the reader silently
+   * skips one, insert one and they see a row twice, and nothing reports either.
+   * A key does not move when its neighbours change. It is also cheaper —
+   * `offset n` reads and discards `n` rows, where a key lets the range start
+   * after the cursor, so every page costs what the first one costs.
+   *
+   * Use {@link Session.page}, which sets `paged` and hands back the cursor.
+   *
+   * Explicitly `| undefined`, unlike the other optional fields here: a caller
+   * paging in a loop holds `Value[] | undefined` and passes it straight back,
+   * and under `exactOptionalPropertyTypes` a bare `?:` would reject the first
+   * iteration — the one where there is no cursor yet.
+   */
+  readonly after?: Value[] | undefined;
+  /**
+   * Asks the server for the cursor to the next page.
+   *
+   * Separate from `after`, because the first page has no cursor to resume from
+   * and still wants one back. Separate from `limit`, because `LIMIT 10` and
+   * "the first page of ten" are the same request and different intentions —
+   * and the server refuses a page it cannot build a cursor for (no limit, or a
+   * projection dropping a key column) rather than serving it without one,
+   * which it can only do if it knows one was wanted.
+   */
+  readonly paged?: boolean;
+  /**
    * Values computed per row, appended after the table's own columns and named
    * with `computed0`.
    *
@@ -215,5 +245,9 @@ export function queryToWire(
   if (query.compute && query.compute.length > 0) {
     out["compute"] = scalarsToWire(query.compute);
   }
+  if (query.after && query.after.length > 0) {
+    out["after"] = query.after.map(valueToWire);
+  }
+  if (query.paged) out["paged"] = true;
   return out;
 }

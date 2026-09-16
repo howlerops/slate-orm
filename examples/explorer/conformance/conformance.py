@@ -299,6 +299,42 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("no such foreign key", "/api/related",
      {"way": "children", "through": "nosuch", "keys": [{"u64": "10"}]}, "app"),
 
+    # Keyset pagination. The cursor is the server's, built from the last row's
+    # primary key, so what is compared is whether the three clients read it off
+    # the same message and hand it back in the same shape — a cursor that
+    # arrived as a bare number rather than a `u64` would look identical in one
+    # client and fail against the others.
+    ("the first page of books", "/api/page", {"limit": 4}, "app"),
+
+    # The second page, by the cursor the first one returns. Written out rather
+    # than threaded, so the corpus stays a list of independent requests: book
+    # 13 is the fourth by id, so this is what the first page's cursor is.
+    ("the second page, resumed from a cursor", "/api/page",
+     {"limit": 4, "after": [{"u64": "13"}]}, "app"),
+
+    # Short, so there is provably nothing after it and `cursor` is absent in
+    # all three rather than empty in one of them.
+    ("a page larger than the table", "/api/page", {"limit": 100}, "app"),
+
+    # The last *full* page still carries a cursor, and the page after it is
+    # empty — the documented cost of not reading one row ahead every time.
+    ("the page after the last row", "/api/page",
+     {"limit": 4, "after": [{"u64": "20"}]}, "app"),
+
+    # As a reader, whose row policy hides a book: the page is one row short of
+    # its limit and must be so in all three, which a client that counted rows
+    # before the policy applied would get wrong.
+    ("a reader's first page", "/api/page", {"limit": 4}, "reader"),
+
+    ("a page with no limit", "/api/page", {}, "app"),
+    ("a page whose projection drops the key", "/api/page",
+     {"limit": 4, "columns": [1, 2]}, "app"),
+    # The kernel's own refusal, reaching the wire: a sort into an order the
+    # primary key does not give means the page boundary is not where the cursor
+    # says. Refused rather than paged wrongly, and all three must say so.
+    ("a page sorted into an order the key does not give", "/api/page",
+     {"limit": 4, "sort": [{"column": 4, "direction": "desc"}]}, "app"),
+
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 ]
@@ -325,6 +361,9 @@ EXPECTED_REFUSALS = {
     "no such grouping",
     "no such foreign key",
     "a stranger may not load a relationship",
+    "a page with no limit",
+    "a page whose projection drops the key",
+    "a page sorted into an order the key does not give",
 }
 
 
