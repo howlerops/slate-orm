@@ -8,7 +8,7 @@
 ## What changed
 
 `DeleteWhere` and `UpdateWhere`, with `returning`, in Python, Go and
-TypeScript. Ten tests in Python, eight in Go, eight in TypeScript, and five
+TypeScript. Ten tests in Python, nine in Go, nine in TypeScript, and five
 conformance cases comparing the three. `WriteResult` grew a `rows` field in all
 three.
 
@@ -120,10 +120,21 @@ million-row response in memory on both sides. The server-side entry noted the
 same bound on the kernel's side; this adds a wire-shaped version of it and
 still does not measure it.
 
-No client exposes predicate writes in a *transaction* except Python, which gets
-it free from its session object. Go and TypeScript take a `Session`, which
+~~No client exposes predicate writes in a *transaction* except Python, which
+gets it free from its session object. Go and TypeScript take a `Session`, which
 already carries the transaction if there is one, so the capability is there —
-but only Python has a test that rolls one back.
+but only Python has a test that rolls one back.~~
+
+**Withdrawn before this entry was committed, and it was a real gap rather than
+a testing one.** Go's `Transaction` and TypeScript's are their own types, not a
+`Session` carrying a flag, so a method added to the session is simply absent
+from the transaction: neither client could do a predicate write inside a
+transaction at all. Writing the missing test is what found it —
+`tx.DeleteWhere undefined`. Both now have `DeleteWhere` and `UpdateWhere`, and
+a test that rolls one back and checks no sequence comes home until commit. The
+guess that the capability was already there is exactly the kind this branch has
+now been wrong about twice; the lesson is the same both times, which is to run
+the thing rather than reason about the type.
 
 The demo frontend does not show predicate writes. The adapters serve
 `/api/predicate-write` and the corpus compares it; the SolidJS app has no

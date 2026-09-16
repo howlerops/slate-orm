@@ -196,3 +196,20 @@ test("a column assigned twice is refused", async () => {
   );
   assert.equal(await remaining(session), COUNT);
 });
+
+test("a predicate write rolls back with its transaction", async () => {
+  // Python had this and Go and TypeScript did not, although all three can do
+  // it. A capability nothing exercises is a capability nobody has checked —
+  // and in fact neither `Transaction` had the methods at all until this test
+  // asked for them.
+  const session = await seeded();
+  const tx = await session.begin();
+  const result = await tx.deleteWhere({ table: "papers", returning: true });
+  assert.equal(result.affected, BigInt(COUNT));
+  assert.equal(result.rows.length, COUNT);
+  // A write inside a transaction has no sequence until it commits.
+  assert.equal(result.sequence, undefined);
+  await tx.rollback();
+
+  assert.equal(await remaining(session), COUNT, "the rollback undid it");
+});

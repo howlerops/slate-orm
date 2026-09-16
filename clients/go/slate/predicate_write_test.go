@@ -240,3 +240,41 @@ func TestPredicateWriteMatchingNothingWritesNothing(t *testing.T) {
 		t.Fatalf("%d rows left, want %d", got, paperCount)
 	}
 }
+
+// TestPredicateWriteRollsBackWithItsTransaction: a predicate write inside a
+// transaction is undone with it, and reports no sequence until it commits.
+//
+// Python had this and Go and TypeScript did not, although all three take a
+// session that already carries the transaction. A capability nothing exercises
+// is a capability nobody has checked.
+func TestPredicateWriteRollsBackWithItsTransaction(t *testing.T) {
+	session := seeded(t)
+	ctx := testContext(t)
+
+	tx, err := session.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	result, err := tx.DeleteWhere(ctx, slate.DeleteWhere{
+		Table: "papers", Returning: true,
+	})
+	if err != nil {
+		t.Fatalf("deleting: %v", err)
+	}
+	if result.Affected != paperCount || len(result.Rows) != paperCount {
+		t.Fatalf("affected = %d with %d rows, want %d of each",
+			result.Affected, len(result.Rows), paperCount)
+	}
+	// A write inside a transaction has no sequence until that transaction
+	// commits.
+	if result.Sequence != nil {
+		t.Fatalf("sequence = %v, want none until commit", *result.Sequence)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+
+	if got := len(remaining(t, session)); got != paperCount {
+		t.Fatalf("%d rows left after the rollback, want %d", got, paperCount)
+	}
+}

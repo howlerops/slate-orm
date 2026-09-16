@@ -115,3 +115,40 @@ func filterProto(filter *Expr) *pb.Expr {
 	}
 	return filter.wire
 }
+
+// DeleteWhere deletes every row the predicate selects, inside the transaction.
+//
+// The session-level method is the same call without a transaction id on it.
+// Both exist because [Transaction] is its own type rather than a [Session]
+// carrying a flag — so a method added to one is simply absent from the other,
+// which is how these two came to be missing until a test tried to use them.
+func (t *Transaction) DeleteWhere(ctx context.Context, write DeleteWhere) (WriteResult, error) {
+	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return t.session.client.rpc.DeleteWhere(ctx, &pb.DeleteWhereRequest{
+			Transaction: t.id,
+			Table:       write.Table,
+			Filter:      filterProto(write.Filter),
+			Returning:   write.Returning,
+			Schema:      t.session.client.schemas.claimFor(write.Table),
+		})
+	})
+}
+
+// UpdateWhere assigns to columns of every row the predicate selects, inside
+// the transaction.
+func (t *Transaction) UpdateWhere(ctx context.Context, write UpdateWhere) (WriteResult, error) {
+	assignments := make([]*pb.Assignment, 0, len(write.Set))
+	for _, a := range write.Set {
+		assignments = append(assignments, a.toProto())
+	}
+	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return t.session.client.rpc.UpdateWhere(ctx, &pb.UpdateWhereRequest{
+			Transaction: t.id,
+			Table:       write.Table,
+			Filter:      filterProto(write.Filter),
+			Assignments: assignments,
+			Returning:   write.Returning,
+			Schema:      t.session.client.schemas.claimFor(write.Table),
+		})
+	})
+}

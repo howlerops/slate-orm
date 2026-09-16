@@ -962,6 +962,30 @@ export class Transaction {
   }
 
   /** Add rows inside the transaction. */
+  /**
+   * Delete every row the predicate selects, inside the transaction.
+   *
+   * The session-level method is the same call without a transaction id. Both
+   * exist because `Transaction` is its own class rather than a `Session`
+   * carrying a flag — so a method added to one is simply absent from the
+   * other, which is how these two came to be missing until a test tried to
+   * use them.
+   */
+  deleteWhere(write: DeleteWhere): Promise<WriteResult> {
+    return this.#session.writeThrough("DeleteWhere", {
+      ...deleteWhereToWire(write, this.#client.claim(write.table)),
+      transaction: this.#id,
+    });
+  }
+
+  /** Assign to columns of every row the predicate selects, in the transaction. */
+  updateWhere(write: UpdateWhere): Promise<WriteResult> {
+    return this.#session.writeThrough("UpdateWhere", {
+      ...updateWhereToWire(write, this.#client.claim(write.table)),
+      transaction: this.#id,
+    });
+  }
+
   insert(table: string, ...rows: Value[][]): Promise<WriteResult> {
     return this.#session.writeThrough("Insert", {
       transaction: this.#id,
