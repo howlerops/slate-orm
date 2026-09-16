@@ -72,8 +72,16 @@
         correctness work is real and the operational track record is zero.
       </p>
       <p>
-        <strong>No SQL.</strong> Queries are built from typed client APIs.
-        There is no parser and no plan for one.
+        <strong>No SQL on the wire.</strong> Queries are built from typed
+        client APIs and travel as a spec, not a string; the head node has no
+        parser and no plan for one. The <a href="../workbench.html">workbench</a>
+        does have a SQL front end, and it runs in the browser, compiling a
+        subset to that same spec — joins, chains, grouping,
+        <code>HAVING</code>, <code>DISTINCT</code> and
+        <code>IN (SELECT …)</code>, stopping at <code>UNION</code>,
+        <code>EXISTS</code> and anything correlated. Every stop is refused by
+        name with the reason, which is the whole difference between a subset
+        and a dialect.
       </p>
       <p>
         <strong>No in-place promotion</strong> of a read replica to writer —

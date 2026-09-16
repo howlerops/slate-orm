@@ -153,12 +153,34 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterSpec {
     pub column: u32,
     pub op: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub value: String,
+    /// The candidate list, when `op` is `in`.
+    ///
+    /// A separate field rather than `value` holding a comma-joined string,
+    /// because a string value can itself contain a comma and splitting one
+    /// would make `WHERE payment IN ('cash, tip')` two candidates instead of
+    /// one — silently, and only for the data that has a comma in it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    /// Where the candidate list comes from, when it comes from a query.
+    ///
+    /// `WHERE pickup_zone IN (SELECT id FROM zones WHERE borough = 'Queens')`
+    /// is *two* reads: the inner one runs first, its single column becomes
+    /// `values`, and the outer one is an ordinary `Expr::In` the planner can
+    /// already turn into point gets or an index range. That is the same
+    /// lowering `load_related` uses in the Rust layer, and the reason a
+    /// subquery needed no new kernel operator.
+    ///
+    /// Only an *uncorrelated* subquery fits: the inner query is run once,
+    /// before the outer one, so it cannot mention a column of the outer table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subquery: Option<Box<QuerySpec>>,
 }
 
 /// One computed column: a function of one of the table's own columns.
@@ -375,7 +397,7 @@ pub struct JoinSpec {
 /// produces a two-input `ChainSpec` — that would be a second spec for a query
 /// the first already expresses, which is the drift this front end exists to
 /// avoid.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainSpec {
     /// The tables, in the order the chain reads them. At least three.
@@ -416,7 +438,7 @@ pub struct ChainSpec {
 }
 
 /// One table of a chain.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainInputSpec {
     /// The table's name, as the catalog spells it.
@@ -1620,7 +1642,10 @@ impl Playground {
     /// the editor can reach and no plan that only the editor can produce.
     fn statement(&self, text: &str, parsed: sql::Statement) -> SqlResult {
         match parsed {
-            sql::Statement::Select(spec) => {
+            sql::Statement::Select(mut spec) => {
+                if let Err(message) = self.resolve_subqueries(&mut spec) {
+                    return SqlResult::failed(text, 0, &message);
+                }
                 let spec_json = serde_json::to_value(&spec).unwrap_or(serde_json::Value::Null);
                 // The same test `answer_spec` dispatches on, and it has to be
                 // the same test: this decides the headers and that decides the
@@ -1799,6 +1824,7 @@ impl Playground {
                 column: u32::try_from(pk.0).unwrap_or(0),
                 op: "eq".to_owned(),
                 value: key.to_owned(),
+                ..FilterSpec::default()
             }],
             ..QuerySpec::default()
         };
@@ -2046,8 +2072,74 @@ impl Playground {
     /// The SQL editor lands here, which is the point of taking this split: a
     /// statement is parsed into the very spec the JSON path deserialises, so
     /// there is one query path and one `EXPLAIN`, not one per front end.
+    /// Run every `IN (SELECT …)` and turn it into a candidate list.
+    ///
+    /// Two reads, not a join: the inner query runs once, its single column
+    /// becomes `values`, and the outer one is then an ordinary `Expr::In` that
+    /// the planner already turns into point gets or an index range. That is the
+    /// whole of subquery support, and it is why none of it reached the kernel.
+    ///
+    /// The list is rendered to text rather than kept as values, because that is
+    /// what a `FilterSpec` holds and what the Spec tab shows — the subquery
+    /// stays in the spec beside it, so a reader sees both the query they wrote
+    /// and the candidates it produced, which is the thing most worth seeing
+    /// when the answer is not the one they expected. `text` and `literal` are
+    /// inverses for every type this can produce.
+    ///
+    /// **Nulls are dropped.** A null candidate can never equal anything, so in
+    /// a `WHERE` it excludes the row either way — the kernel would answer
+    /// `Unknown` where this answers `False`, and both exclude. It would matter
+    /// under a `NOT IN`, which is refused for exactly this reason.
+    fn resolve_subqueries(&self, spec: &mut QuerySpec) -> Result<(), String> {
+        for filter in &mut spec.filters {
+            let Some(inner) = filter.subquery.clone() else {
+                continue;
+            };
+            // Nested subqueries are not refused by the parser and would recurse
+            // here; one level is what the grammar can produce today, and this
+            // is the line that would need to become a depth check if that
+            // changes.
+            let rows = self.rows_of(&inner)?;
+            let column = inner.columns.first().copied().unwrap_or(0) as usize;
+            let mut values = Vec::with_capacity(rows.len());
+            for row in &rows {
+                match row.values().get(column) {
+                    Some(Value::Null) | None => {}
+                    Some(value) => values.push(text(value)),
+                }
+            }
+            filter.values = values;
+        }
+        Ok(())
+    }
+
+    /// The rows one spec returns, without rendering or timing them.
+    ///
+    /// For a subquery, which wants the values and none of the presentation.
+    fn rows_of(&self, spec: &QuerySpec) -> Result<Vec<Row>, String> {
+        let table = self.table(&spec.table)?;
+        let query = build(spec, &table)?;
+        block_on(async {
+            let snapshot = self.store.snapshot().await?;
+            let mut cursor = snapshot.execute(&self.context, &table, &query).await?;
+            let mut out = Vec::new();
+            while let Some(row) = cursor.next().await? {
+                out.push(row);
+            }
+            Ok::<_, slate_kernel::KernelError>(out)
+        })
+        .map_err(|e| e.to_string())
+    }
+
     fn answer_spec(&self, spec: &QuerySpec) -> Result<Answer, String> {
         let table = self.table(&spec.table)?;
+
+        // Before `build`, which is where a filter becomes an `Expr` and a
+        // subquery still holding its inner spec would be an `IN` over an empty
+        // list — matching nothing, with no error anywhere.
+        let mut spec = spec.clone();
+        self.resolve_subqueries(&mut spec)?;
+        let spec = &spec;
 
         let query = build(spec, &table)?;
 
@@ -2186,6 +2278,26 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
     let def = table
         .column(column)
         .ok_or_else(|| format!("{} has no column {}", table.name(), filter.column))?;
+
+    if filter.op == "in" {
+        // Typed one at a time against this column, like every other literal.
+        // The subquery form has already been run by `resolve_subqueries` and
+        // its rows rendered into `values`; by here the two are the same thing.
+        let mut values = Vec::with_capacity(filter.values.len());
+        for text in &filter.values {
+            values.push(literal(text, def.value_type()).map_err(|why| {
+                if filter.subquery.is_some() {
+                    // Without this the message is about a value the reader
+                    // never typed, and points at the outer column rather than
+                    // at the subquery that produced it.
+                    format!("the subquery produced a value this column cannot hold: {why}")
+                } else {
+                    why
+                }
+            })?);
+        }
+        return Ok(Expr::In { column, values });
+    }
 
     // Patterns are strings whatever the column is.
     match filter.op.as_str() {

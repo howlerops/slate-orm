@@ -103,6 +103,51 @@
         nothing in it &mdash; and wrong about this one.
       </p>
 
+    <h3>Subqueries, in one shape</h3>
+      <p>
+        <code>WHERE author_id IN (SELECT id FROM authors WHERE country = 'US')</code>
+        works, and nothing about it reached the kernel. The inner query runs
+        once, before the outer one; its single column becomes the
+        <code>values</code> of an ordinary <code>IN</code>; and the planner's
+        existing handling of that &mdash; point gets on a key, a range on an
+        index, a hash set on a scan &mdash; does the rest. The Spec tab shows
+        both halves: the subquery as written, and the candidate list it
+        produced, so a surprising answer can be read back to whichever of the
+        two caused it.
+      </p>
+      <p>
+        One shape, and the edges are refusals rather than approximations. A
+        <em>correlated</em> subquery cannot work at all here, because the
+        inner query runs once and would have to run per outer row &mdash; and
+        it fails naturally, since a column of the outer table is simply not a
+        column of the inner one. <code>EXISTS</code> is correlated by nature
+        and is refused with the <code>IN</code> form that expresses the same
+        question. <code>NOT EXISTS</code> and <code>NOT IN</code> are both
+        anti-joins, and neither exists below: the kernel's <code>IN</code> is
+        three-valued, so a null in the list makes the answer unknown rather
+        than false, and negating it would not mean what a reader expects
+        exactly where nulls are involved.
+      </p>
+      <p>
+        A candidate whose type could never equal the outer column &mdash;
+        <code>title IN (SELECT id FROM authors)</code> &mdash; is refused at
+        parse time rather than answered with nothing. That query errors
+        nowhere downstream: <code>1</code> renders to text and parses back as
+        the string <code>"1"</code>, which no title equals, and zero rows with
+        no complaint is indistinguishable from a fact about the data. Mixed
+        integer widths are allowed, because they round-trip and refusing them
+        would refuse a query that works.
+      </p>
+      <p>
+        <code>UNION</code>, <code>INTERSECT</code> and <code>EXCEPT</code> are
+        refused by name too. A statement compiles to one query spec &mdash;
+        one table, one filter set, one plan, the same structure the three
+        clients put on the wire &mdash; and the spec has no set operator, so
+        there is nowhere to lower one onto. Two statements separated by
+        <code>;</code> run both halves and show both plans, which gets
+        everything but the deduplication.
+      </p>
+
     <h3>Computed columns</h3>
       <p>
         <code>hour()</code>, <code>day_of_week()</code>, <code>year()</code>

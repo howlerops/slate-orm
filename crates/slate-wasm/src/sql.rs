@@ -112,6 +112,33 @@ use crate::{
     QuerySpec, SortSpec,
 };
 use slate_schema::TableDef;
+use slate_tuple::ValueType;
+
+/// Can a candidate of type `inner` ever equal a value of type `outer`?
+///
+/// Used to refuse `WHERE title IN (SELECT id FROM authors)` at parse time
+/// rather than answer it with nothing. That query is not an error anywhere
+/// downstream: the binding renders each candidate to text and parses it back
+/// against the outer column's type, and `1` parses perfectly well as the
+/// string `"1"` — so a comparison that can never be true returns zero rows and
+/// looks like a fact about the data. Zero rows with no explanation is the worst
+/// answer this front end can give, because it is indistinguishable from a
+/// correct one.
+///
+/// The rule is *same type, or both numeric*, and the width mixing is
+/// deliberate: `u64 IN (SELECT an_i64 …)` is an ordinary thing to write, the
+/// text round-trip handles it, and a negative candidate against a `u64` column
+/// already fails loudly at run time with the value in the message. Refusing
+/// that pair here would refuse a query that works.
+fn comparable(outer: ValueType, inner: ValueType) -> bool {
+    fn numeric(t: ValueType) -> bool {
+        matches!(
+            t,
+            ValueType::I64 | ValueType::U64 | ValueType::F64 | ValueType::Decimal
+        )
+    }
+    outer == inner || (numeric(outer) && numeric(inner))
+}
 
 /// A parsed statement, already lowered onto the spec types.
 #[derive(Debug, Clone, PartialEq)]
@@ -481,6 +508,34 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Parsed, SqlError> {
     // whole table is the worst possible response to it.
     if let Some(extra) = parser.toks.get(parser.i) {
         let at = extra.at;
+        // The set operators get their own message. "unexpected `UNION`" is
+        // true and reads as a parser that has not heard of it, when the real
+        // answer is that there is nowhere for it to go: a statement compiles
+        // to one `QuerySpec`, which names one table and one plan, and that is
+        // the same structure the three clients put on the wire.
+        if let Tok::Word(word) = &extra.tok {
+            let word = word.to_ascii_lowercase();
+            if matches!(word.as_str(), "union" | "intersect" | "except") {
+                return Err(SqlError {
+                    message: format!(
+                        "{} is not supported: a statement compiles to one query spec — one \
+                         table, one filter set, one plan — and the spec has no set \
+                         operator, so there is nothing to lower this onto.{} Two \
+                         statements separated by `;` run both halves and show you \
+                         both plans",
+                        word.to_uppercase(),
+                        if word == "union" {
+                            " Combining the two answers is the easy half; it is the \
+                             deduplication across them that nothing here can do, because \
+                             each statement is planned and executed on its own."
+                        } else {
+                            ""
+                        }
+                    ),
+                    at,
+                });
+            }
+        }
         return Err(SqlError {
             message: format!("unexpected {}", parser.describe(parser.i)),
             at,
@@ -1740,9 +1795,225 @@ impl Parser<'_> {
     }
 
     fn condition(&mut self, table: &TableDef) -> Result<FilterSpec, SqlError> {
+        let at = self.at();
+
+        // `EXISTS` and `NOT EXISTS` open a condition rather than follow a
+        // column, so without this they reach `column` and come back as "no
+        // such column: `exists`" — which sends a reader to their schema
+        // looking for a word they got out of SQL. Both are refused by name,
+        // and the first one is refused with the form that does work.
+        let negated = self.peek_word().as_deref() == Some("not");
+        let exists_at = if negated { self.i + 1 } else { self.i };
+        if matches!(
+            self.toks.get(exists_at),
+            Some(Spanned { tok: Tok::Word(w), .. }) if w.eq_ignore_ascii_case("exists")
+        ) {
+            return Err(SqlError {
+                message: if negated {
+                    // An anti-join, and unlike `EXISTS` it has no `IN` form to
+                    // point at: the rewrite would be `NOT IN`, which is refused
+                    // one screen down for a reason that is not about this.
+                    "NOT EXISTS is not supported: it asks for the rows with no match, \
+                     which is an anti-join, and the only shape this front end has for a \
+                     subquery is a candidate list to compare against. Its rewrite would \
+                     be `NOT IN`, which is refused here too"
+                        .to_owned()
+                } else {
+                    "EXISTS is not supported: it is correlated — the inner query asks \
+                     something about each outer row — and a subquery here runs once, \
+                     before the outer query, to build a candidate list. Written as \
+                     `key IN (SELECT other_key FROM other WHERE …)` the same question \
+                     works, and that is the form this compiles"
+                        .to_owned()
+                },
+                at,
+            });
+        }
+
         let column = self.column(table)?;
+        if self.peek_word().as_deref() == Some("not") {
+            // `NOT IN` is not `IN` negated. `Expr::In` is three-valued — a null
+            // candidate makes the answer Unknown rather than False — so the
+            // negation a reader expects and the one the kernel would give
+            // differ exactly where nulls are involved, which is the case
+            // nobody tests. Refused rather than lowered onto something close.
+            return Err(SqlError {
+                message: "NOT IN is not supported: `IN` is three-valued here — a null in \
+                          the list makes the answer unknown rather than false — so negating \
+                          it does not mean what it looks like. Filter the other way, or use \
+                          `!=` against a single value"
+                    .to_owned(),
+                at: self.at(),
+            });
+        }
+        if self.eat("in") {
+            return self.in_tail(column, at, table);
+        }
         let (op, value) = self.comparison_tail()?;
-        Ok(FilterSpec { column, op, value })
+        Ok(FilterSpec {
+            column,
+            op,
+            value,
+            ..FilterSpec::default()
+        })
+    }
+
+    /// `IN (1, 2, 3)`, or `IN (SELECT one_column FROM other WHERE …)`.
+    ///
+    /// Both forms end as the same `Expr::In`, which the planner already turns
+    /// into point gets or an index range — that is why a subquery needed no new
+    /// kernel operator. The difference is only where the list comes from: a
+    /// literal one is in the spec, and a queried one is filled in by the
+    /// binding, which runs the inner query first.
+    ///
+    /// Only an *uncorrelated* subquery fits that shape. The inner query runs
+    /// once, before the outer one, so it cannot see a row of the outer table —
+    /// and because it is parsed against its own table, a column of the outer
+    /// one is already "no such column" there.
+    fn in_tail(
+        &mut self,
+        column: u32,
+        at: usize,
+        table: &TableDef,
+    ) -> Result<FilterSpec, SqlError> {
+        self.expect_symbol("(")?;
+
+        if self.peek_word().as_deref() == Some("select") {
+            let (subquery, candidate) = self.subquery()?;
+            self.expect_symbol(")")?;
+            let outer = table
+                .columns()
+                .get(column as usize)
+                .map(slate_schema::ColumnDef::value_type);
+            if let (Some(outer), Some(inner)) = (outer, candidate)
+                && !comparable(outer, inner)
+            {
+                return Err(SqlError {
+                    message: format!(
+                        "`{}` is {} and the subquery produces {}: no candidate could ever \
+                         equal it, so this would answer nothing rather than fail",
+                        table
+                            .columns()
+                            .get(column as usize)
+                            .map_or("that column", slate_schema::ColumnDef::name),
+                        outer.name(),
+                        inner.name()
+                    ),
+                    at,
+                });
+            }
+            return Ok(FilterSpec {
+                column,
+                op: "in".to_owned(),
+                subquery: Some(Box::new(subquery)),
+                ..FilterSpec::default()
+            });
+        }
+
+        let mut values = vec![self.literal()?];
+        while self.eat_symbol(",") {
+            values.push(self.literal()?);
+        }
+        self.expect_symbol(")")?;
+        Ok(FilterSpec {
+            column,
+            op: "in".to_owned(),
+            values,
+            ..FilterSpec::default()
+        })
+    }
+
+    /// The inner `SELECT` of an `IN (…)`: one column, one table, an optional
+    /// `WHERE`, and nothing else.
+    ///
+    /// Everything else is refused by name rather than ignored. A subquery with
+    /// a `GROUP BY` or a `JOIN` is a reasonable thing to write and this cannot
+    /// run it; accepting the text and quietly answering a different question is
+    /// the failure this parser has been bitten by before.
+    /// Returns the spec and, when the selected item is a plain column of the
+    /// inner table, its type — which is what [`Self::in_tail`] type-checks
+    /// against the outer column. `None` for a computed item such as
+    /// `hour(pickup_time)`, whose result type is the function's rather than the
+    /// column's and is not worth a second table here; the run-time parse still
+    /// catches a mismatch there, with the offending value in the message.
+    fn subquery(&mut self) -> Result<(QuerySpec, Option<ValueType>), SqlError> {
+        self.expect("select")?;
+        if self.peek_word().as_deref() == Some("distinct") {
+            // Harmless and redundant: `Expr::In` compares against a list, and a
+            // repeated candidate changes no answer. Saying so beats either
+            // accepting a word that does nothing or leaving a reader to guess
+            // whether it mattered.
+            return Err(SqlError {
+                message: "DISTINCT inside `IN (…)` is redundant: a repeated candidate \
+                          changes no answer, because the list is compared against rather \
+                          than scanned"
+                    .to_owned(),
+                at: self.at(),
+            });
+        }
+
+        let at = self.at();
+        let item = self.select_item()?;
+        if self.eat_symbol(",") {
+            return Err(SqlError {
+                message: "a subquery in `IN (…)` returns one column: it is the candidate \
+                          list, and there is nothing for a second column to be compared to"
+                    .to_owned(),
+                at,
+            });
+        }
+        if matches!(item, SelectItem::Aggregate { .. }) {
+            return Err(SqlError {
+                message: "an aggregate inside `IN (…)` is one value rather than a list, \
+                          and a subquery here builds a list"
+                    .to_owned(),
+                at,
+            });
+        }
+
+        self.expect("from")?;
+        let inner = self.table()?;
+        let mut spec = QuerySpec {
+            table: inner.name().to_owned(),
+            ..QuerySpec::default()
+        };
+
+        // Resolved against the *inner* table, which is what makes a correlated
+        // subquery a refusal rather than a wrong answer: a column of the outer
+        // table is simply not one of this table's.
+        let ordinal = self.value_ordinal(&item, &mut spec, &inner, at, "IN (SELECT …)")?;
+        spec.columns.push(ordinal);
+        let candidate = match item {
+            SelectItem::Column { .. } => inner
+                .columns()
+                .get(ordinal as usize)
+                .map(slate_schema::ColumnDef::value_type),
+            _ => None,
+        };
+
+        if self.eat("where") {
+            spec.filters = self.conditions(&inner)?;
+        }
+        for clause in ["group", "order", "limit", "offset", "having", "join"] {
+            if self.peek_word().as_deref() == Some(clause) {
+                return Err(SqlError {
+                    message: format!(
+                        "`{}` inside `IN (…)` is not supported: the subquery runs once to \
+                         build a candidate list, so it is one table, one column and an \
+                         optional WHERE. Run it as its own statement if you need more",
+                        // `GROUP` and `ORDER` are one word to the lexer and two
+                        // to the reader, and a message naming half a clause
+                        // reads as a typo in the parser.
+                        match clause {
+                            "group" | "order" => format!("{} BY", clause.to_uppercase()),
+                            other => other.to_uppercase(),
+                        }
+                    ),
+                    at: self.at(),
+                });
+            }
+        }
+        Ok((spec, candidate))
     }
 
     /// The operator and the literal after it, shared by `WHERE` and `HAVING`.
@@ -1801,7 +2072,12 @@ impl Parser<'_> {
         let item = self.select_item()?;
         let column = self.group_ordinal(&item, spec, table, at, "HAVING")?;
         let (op, value) = self.comparison_tail()?;
-        Ok(FilterSpec { column, op, value })
+        Ok(FilterSpec {
+            column,
+            op,
+            value,
+            ..FilterSpec::default()
+        })
     }
 
     // --- the join ---------------------------------------------------------
@@ -1914,7 +2190,12 @@ impl Parser<'_> {
                 // is not a column of `zones`" — about a column `zones`
                 // certainly has, on a query that never named `zones`.
                 let (op, value) = self.comparison_tail()?;
-                mine.push(FilterSpec { column, op, value });
+                mine.push(FilterSpec {
+                    column,
+                    op,
+                    value,
+                    ..FilterSpec::default()
+                });
                 if !self.eat("and") {
                     break;
                 }
@@ -2105,7 +2386,12 @@ impl Parser<'_> {
                     "HAVING",
                 )?;
                 let (op, value) = self.comparison_tail()?;
-                having.push(FilterSpec { column, op, value });
+                having.push(FilterSpec {
+                    column,
+                    op,
+                    value,
+                    ..FilterSpec::default()
+                });
                 if self.eat("and") {
                     continue;
                 }

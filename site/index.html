@@ -181,8 +181,11 @@ Table Scan on trips  (rows=100000 cost=13.50 decodes=[1])</code></pre>
           <h3>Not SQL</h3>
           <p>
             The wire carries a query <em>spec</em>, not a string. The workbench's editor is
-            a front end that compiles a SQL subset to that spec — no subqueries, no
-            <code>UNION</code>.
+            a front end that compiles a SQL subset to that spec — it reaches joins, chains,
+            grouping, <code>HAVING</code>, <code>DISTINCT</code> and
+            <code>IN (SELECT …)</code>, and stops at <code>UNION</code>,
+            <code>EXISTS</code> and anything correlated, each refused by name with the
+            reason.
           </p>
         </div>
         <div class="card">

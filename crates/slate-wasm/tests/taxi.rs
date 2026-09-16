@@ -882,3 +882,56 @@ fn having_is_refused_where_it_cannot_mean_anything() {
         .contains("OR is not supported in HAVING"),
     );
 }
+
+/// A subquery's null candidates are dropped, and a null outer value is
+/// excluded — on the only fixture that has nulls at all.
+///
+/// The books fixture cannot express this: nothing there is null and the SQL
+/// front end has no `NULL` literal, so `IN` over a null candidate is
+/// unreachable from a test written against it. Here 4.7% of the month has no
+/// passenger count, so `passengers IN (SELECT passengers FROM trips)` is the
+/// whole question in one statement: the inner query returns those nulls and
+/// the binding drops them, and the outer rows holding a null are excluded
+/// because a null equals nothing.
+///
+/// Both directions collapse to the same count, which is what makes the oracle
+/// simple: exactly the rows with a passenger count come back. A build that
+/// kept null candidates would still return this number — `Truth::Unknown`
+/// excludes as `False` does in a WHERE — which is the reason `NOT IN` is
+/// refused rather than lowered, and is written up beside `resolve_subqueries`.
+#[test]
+fn a_subquery_drops_its_null_candidates() {
+    let playground = loaded();
+    let answer = sql(
+        &playground,
+        "SELECT count(*) FROM trips WHERE passengers IN (SELECT passengers FROM trips)",
+    );
+
+    let rows = taxi::decode(&trip_bytes()).expect("decode");
+    let present = rows
+        .iter()
+        .filter(|r| !matches!(r.values()[5], slate_tuple::Value::Null))
+        .count();
+    assert!(
+        present < rows.len(),
+        "no nulls in the fixture, so this proves nothing"
+    );
+
+    let got: usize = answer["rows"][0][0]
+        .as_str()
+        .expect("a count")
+        .parse()
+        .expect("a number");
+    assert_eq!(got, present, "{answer}");
+
+    // And the candidate list itself carries no null: it is rendered to text,
+    // and a null that survived would arrive as the string "null" and then fail
+    // to parse as a u64 — loudly, but for the wrong reason.
+    let values = answer["spec"]["filters"][0]["values"]
+        .as_array()
+        .expect("values");
+    assert!(
+        values.iter().all(|v| v.as_str() != Some("null")),
+        "a null reached the candidate list"
+    );
+}

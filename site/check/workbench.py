@@ -336,6 +336,23 @@ out.joinRightKey = {
   refusal: await page.locator('[data-app="grid"] .refusal').count(),
 };
 
+// 9c7a2. A subquery: `pickup_zone IN (SELECT id FROM zones WHERE borough =
+//        'Brooklyn')`. The inner query runs once and its single column
+//        becomes the candidate list of an ordinary IN, so what is checked is
+//        that the list arrived — an empty one matches nothing and would come
+//        back as a confident zero.
+await page.locator('.examples button:has-text("Brooklyn rides begin")').click();
+await page.waitForTimeout(900);
+out.subquery = {
+  headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
+  rows: await page.locator('[data-app="grid"] tbody tr').allInnerTexts(),
+  refusal: await page.locator('[data-app="grid"] .refusal').count(),
+};
+// The Spec tab keeps both halves, which is the thing the panel exists to show.
+await page.locator('[data-tab="spec"]').click();
+out.subquerySpec = await page.locator('[data-app="spec"]').innerText();
+await page.locator('[data-tab="results"]').click();
+
 // 9c7b. One table read twice under two aliases, which is the query the taxi
 //       schema is actually for: `trips` reaches `zones` through both
 //       `pickup_zone` and `dropoff_zone`. Until aliases existed this was a
@@ -1036,6 +1053,30 @@ def main() -> int:
         "the same table twice under one name is refused, and names the way out",
         "is read twice under one name" in seen["aliasCollisionWhy"],
         seen["aliasCollisionWhy"][:160],
+    )
+
+    # The subquery example, end to end in the browser.
+    subquery = seen["subquery"]
+    check(
+        "a subquery answers rather than refusing",
+        subquery["refusal"] == 0 and len(subquery["rows"]) == 1,
+        f"{subquery['refusal']} refusals, {len(subquery['rows'])} rows",
+    )
+    # 848 of the 100,000 sampled trips start in Brooklyn. Asserted as a band
+    # rather than the number, because the sample is a file somebody may
+    # replace — but a band well away from 0 and from 100,000, because those
+    # are the two answers a broken candidate list gives.
+    trips = int(subquery["rows"][0].split("\t")[0].replace(",", ""))
+    check(
+        "the candidate list reached the outer query",
+        0 < trips < 20000,
+        f"{trips} trips, expected a few hundred",
+    )
+    spec = seen["subquerySpec"]
+    check(
+        "the spec shows the subquery beside the candidates it produced",
+        '"subquery"' in spec and '"values"' in spec and '"zones"' in spec,
+        spec.replace("\n", " ")[:200],
     )
 
     # A bare right-table column as the group key.

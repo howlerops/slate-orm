@@ -116,6 +116,17 @@ fn render(spec: &QuerySpec, table: &TableDef) -> String {
             .filters
             .iter()
             .map(|f| {
+                // `IN` renders as a list rather than `column IN value`, and
+                // it is the only op whose text comes from `values`. A
+                // subquery is never generated: nothing in production renders
+                // a spec back to SQL, this oracle is the only renderer there
+                // is, and teaching it to emit `IN (SELECT …)` would be
+                // writing the inverse of the parser purely to test it against
+                // itself.
+                if f.op == "in" {
+                    let list: Vec<String> = f.values.iter().map(|v| literal(f.column, v)).collect();
+                    return format!("{} IN ({})", name(f.column), list.join(", "));
+                }
                 let op = match f.op.as_str() {
                     "eq" => "=",
                     "ne" => "!=",
@@ -177,6 +188,25 @@ fn value_for(ordinal: u32) -> BoxedStrategy<String> {
     }
 }
 
+/// A literal `IN (…)`, which the parser and the renderer both have to agree
+/// about — a list of one, and a list that needs quoting, included.
+fn in_filter_strategy() -> BoxedStrategy<FilterSpec> {
+    (0u32..4)
+        .prop_flat_map(|column| {
+            (
+                Just(column),
+                proptest::collection::vec(value_for(column), 1..4),
+            )
+        })
+        .prop_map(|(column, values)| FilterSpec {
+            column,
+            op: "in".to_owned(),
+            values,
+            ..FilterSpec::default()
+        })
+        .boxed()
+}
+
 fn filter_strategy() -> BoxedStrategy<FilterSpec> {
     (0u32..4)
         .prop_flat_map(|column| {
@@ -195,6 +225,7 @@ fn filter_strategy() -> BoxedStrategy<FilterSpec> {
             column,
             op: op.to_owned(),
             value,
+            ..FilterSpec::default()
         })
         .boxed()
 }
@@ -202,7 +233,10 @@ fn filter_strategy() -> BoxedStrategy<FilterSpec> {
 prop_compose! {
     fn spec_strategy()(
         columns in proptest::collection::vec(0u32..4, 0..4),
-        filters in proptest::collection::vec(filter_strategy(), 0..3),
+        filters in proptest::collection::vec(
+            prop_oneof![3 => filter_strategy(), 1 => in_filter_strategy()],
+            0..3,
+        ),
         sort in proptest::collection::vec(
             (0u32..4, any::<bool>()).prop_map(|(column, descending)| SortSpec { column, descending }),
             0..3,

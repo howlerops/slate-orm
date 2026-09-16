@@ -1051,6 +1051,21 @@ Built and tested:
       surfaced a second bug the reasoning had missed: the header code tested
       for a grouping differently from the dispatch, so the right values came
       back under the wrong column names
+- [x] Uncorrelated subqueries: `WHERE author_id IN (SELECT id FROM authors
+      WHERE country = 'US')`. Two reads, not an operator — the inner query
+      runs once, its single column becomes the `values` of an ordinary
+      `Expr::In`, and the planner's existing handling of that does the rest,
+      so none of it reached the kernel. The Spec tab keeps both the subquery
+      and the candidate list it produced, which is the thing worth seeing when
+      the answer is not the expected one. Browser front end only: the wire
+      carries the resolved `IN`, because by the time a spec leaves the tab the
+      subquery is already a list
+- [x] A candidate type that could never match the outer column is refused at
+      parse time. `title IN (SELECT id FROM authors)` errors nowhere
+      downstream — `1` renders to text and parses back as the string `"1"` —
+      so it would have returned zero rows and looked like a fact about the
+      data. Mixed integer widths are allowed: they round-trip, and refusing
+      them would refuse a query that works
 
 Not built:
 
@@ -1096,7 +1111,19 @@ Not built:
       `Begin`/`Commit`/`Rollback` and leave every caller to write their own
       backoff, which is the divergence the conformance runner cannot see because
       it compares answers rather than ergonomics
-- [ ] Subqueries, `EXISTS` and `UNION`
+- [ ] `EXISTS`, `UNION`, `INTERSECT`, `EXCEPT`, and a correlated subquery.
+      Each refused by name with its reason rather than left to fail as a
+      syntax error, and the reasons differ. `EXISTS` is correlated by nature —
+      the inner query asks about each outer row, and a subquery here runs once
+      — so it is refused with the `IN (SELECT …)` form that expresses the same
+      question. `NOT EXISTS` is an anti-join, and so is the `NOT IN` it would
+      rewrite to; the kernel has `Expr::In` and no negation of it, and adding
+      one is not a parser change. The set operators have nowhere to go: a
+      statement compiles to one query spec, which names one table and one
+      plan, and two statements separated by `;` get everything but the
+      deduplication. A correlated subquery needs no refusal of its own — the
+      inner query is parsed against the inner table, so a column of the outer
+      one is already "no such column" there
 - [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
       same class of mistake as overwriting it, and the same argument applies
 

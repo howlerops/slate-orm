@@ -64,6 +64,26 @@ const EXAMPLES = [
       "SELECT DISTINCT payment FROM trips",
   ],
   [
+    "Where Brooklyn rides begin",
+    "-- A subquery, and two reads rather than a join. The inner SELECT runs\n" +
+      "-- once, its single column becomes the candidate list of an ordinary\n" +
+      "-- IN, and the planner handles that exactly as it would a list you\n" +
+      "-- typed -- so none of this reached the kernel. The Spec tab keeps both\n" +
+      "-- halves: the subquery as written, and the 61 zone ids it produced.\n" +
+      "--\n" +
+      "-- A join would answer the same question and carry `zones` columns\n" +
+      "-- through the whole plan for nothing; this asks about `trips` only.\n" +
+      "--\n" +
+      "-- One shape, and the edges are refusals with reasons rather than\n" +
+      "-- approximations. The inner query is parsed against the inner table,\n" +
+      "-- so a correlated reference is already `no such column`; EXISTS is\n" +
+      "-- correlated by nature and is refused pointing here; NOT IN and NOT\n" +
+      "-- EXISTS are anti-joins the kernel has no operator for; and UNION has\n" +
+      "-- nowhere to go, because a statement compiles to one spec.\n" +
+      "SELECT count(*), avg(total) FROM trips\n" +
+      "  WHERE pickup_zone IN (SELECT id FROM zones WHERE borough = 'Brooklyn')",
+  ],
+  [
     "How people pay",
     "SELECT payment, count(*), avg(total), max(tip) FROM trips\n  GROUP BY payment ORDER BY count(*) DESC",
   ],
@@ -658,8 +678,39 @@ const bytes = (n) =>
       ? `${(n / 1024).toFixed(1)} KB`
       : `${n} B`;
 
+// How many candidates of an `IN` list the Spec panel prints before eliding.
+//
+// The list a subquery produces is as long as its answer: `id IN (SELECT id
+// FROM trips)` is a hundred thousand of them, which is 1.7 MB of pretty JSON
+// in one <pre> — measured, not guessed. The query itself is fine (161 ms on
+// that fixture), so this elides the *rendering* and nothing else. Twenty is
+// enough to see the shape and the type.
+const SPEC_VALUES_SHOWN = 20;
+
+// A copy of the spec with long `values` arrays cut short, and said so.
+//
+// Deliberately not a truncation of the JSON text: the panel's whole claim is
+// that this is the structure the clients send, so an elision has to be legible
+// as one. The marker carries the real length, and the spec the binding
+// returned is untouched — this only changes what is printed.
+function elide(node) {
+  if (Array.isArray(node)) return node.map(elide);
+  if (node === null || typeof node !== "object") return node;
+  const out = {};
+  for (const [key, value] of Object.entries(node)) {
+    out[key] =
+      key === "values" && Array.isArray(value) && value.length > SPEC_VALUES_SHOWN
+        ? [
+            ...value.slice(0, SPEC_VALUES_SHOWN),
+            `… ${value.length - SPEC_VALUES_SHOWN} more, ${value.length} in all — every one of them is sent`,
+          ]
+        : elide(value);
+  }
+  return out;
+}
+
 function renderSpec(result) {
-  $("spec").textContent = JSON.stringify(result.spec, null, 2);
+  $("spec").textContent = JSON.stringify(elide(result.spec), null, 2);
 }
 
 function logAll(results) {
