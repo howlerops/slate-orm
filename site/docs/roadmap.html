@@ -264,12 +264,19 @@
         survived the first pass and each became a test.
       </li>
       <li>
-        <strong>Relations on the wire and in the three clients.</strong> The
-        relationship lives in the catalog, so clients name one rather than
-        describe one &mdash; which is also what stops them disagreeing about it.
-        Tested by the conformance runner, plus an assertion on the
-        <em>read count</em>, because &ldquo;one read, not N&rdquo; is the whole
-        claim.
+        <strong>Relations on the wire and in the three clients. &mdash; done.</strong>
+        A <code>Related</code> RPC: the caller names a foreign key and sends a
+        key per parent, and one read comes back grouped. The relationship lives
+        in the catalog already &mdash; a foreign key encodes both directions
+        &mdash; so clients name one rather than describe one, which is what
+        stops them disagreeing about it. Seven cases in the conformance runner
+        compare the three, including a parent with nothing related, a repeated
+        key, and the backwards read as <code>reader</code>, where a row policy
+        hides a book and all three have to lose it identically. Plus an
+        assertion on the <em>read count</em> &mdash; fifty parents, one request,
+        counted at the transport &mdash; because &ldquo;one read, not N&rdquo;
+        is the whole claim. Thirteen mutations across the three clients, no
+        survivors.
       </li>
       <li>
         <strong>Chains, keyset pagination and <code>RETURNING</code> on the

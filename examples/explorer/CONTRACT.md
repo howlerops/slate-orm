@@ -165,6 +165,36 @@ plans have the same `access` and the same `display` shape.
 `estimatedRows` and `estimatedCost` are **excluded**, as on `/api/explain`, for
 the same reason: floats the three clients may format differently.
 
+### `POST /api/related`
+
+```json
+{"way": "children", "keys": [{"u64": "10"}, {"u64": "11"}]}
+```
+
+Loads one relationship for many parents, in a single read. The relationship is
+`sales.book_id -> books`, the demo's only foreign key — `books.author_id`
+cannot be one, because `Author Unknown` names author 99 on purpose so that a
+right or full join has an unmatched side to show.
+
+`way` is `children` (a book's sales) or `parents` (a sale's book). `through`
+names the foreign key and defaults to `sale_book`; it is settable only so the
+corpus can name a key that does not exist and compare the three refusals.
+
+→ `{"groups": [[row, …], …]}`
+
+One group per key **the caller sent**, in the caller's order, including the
+empty ones. That is not the shape the server replies in: it sends one group per
+*distinct* key that matched something, and says nothing about the order the
+caller asked in. Each client puts the answer back into the caller's order
+itself, so this is where the three can disagree without the server noticing —
+which is why a repeated key, an empty group and a key for a row that does not
+exist are all cases here.
+
+Reading it `parents` goes through `books`, which carries the row policy. As
+`reader` the group for book 20 comes back empty, exactly as a direct read would
+lose it. A client that resolved the relationship from rows it already held
+would not lose it, which is the argument for the call existing at all.
+
 ### `POST /api/transaction`
 
 ```json

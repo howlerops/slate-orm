@@ -61,6 +61,21 @@ columns = [
 ]
 primary_key = ["id"]
 
+# The demo's one foreign key, and so its one relationship.
+#
+# Not `books.author_id -> authors`, which is the obvious candidate and cannot
+# be one: `Author Unknown` names author 99 on purpose, so that a right or full
+# join has an unmatched side to show. A foreign key would refuse that row at
+# write time, and the join demonstration would go with it.
+#
+# `sales.book_id` has no such orphan, and reading it backwards -- the books
+# behind a page of sales -- goes through the table that carries the row
+# policy, which is what makes the conformance case worth running as `reader`.
+[[tables.foreign_keys]]
+name = "sale_book"
+parent = "books"
+columns = ["book_id"]
+
 # `app` can do everything, including EXPLAIN.
 [[security.grants]]
 role = "app"

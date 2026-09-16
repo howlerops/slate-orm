@@ -189,6 +189,26 @@ read-modify-write cannot offer. Mutation-test each one.
 
 *Stops at.* No `UPDATE … FROM`, no predicate write across a join. One table.
 
+### P2 — Relations on the wire and in the three clients — **built**
+
+> Done, as a `Related` RPC — the server-side option, as recommended. All three
+> clients have it, on a session and inside a transaction, and seven cases in
+> the three-SDK conformance runner compare them: an empty group, a repeated
+> key, both directions, and the parents read as `reader`, where the row policy
+> hides a book and every client has to lose it identically. Nine tests in
+> Python, eleven in Go, ten in TypeScript, and thirteen mutations across the
+> three client implementations with no survivors.
+>
+> The read-count assertion the plan asked for is
+> `TestRelatedIsOneRequestHoweverManyParents` in Go and
+> `test_it_is_one_request_however_many_parents` in Python: fifty parents, one
+> request, counted at the transport rather than inferred.
+>
+> One correction to the plan below: *"carry the relationship declaration in the
+> catalog"* was already true. A foreign key encodes both directions, so no new
+> schema type was needed, and adding one could only have disagreed with the key
+> it duplicated.
+
 ### P2 — Relations on the wire and in the three clients
 
 A `Related` RPC, or a `relations` block on `QueryRequest` — the design choice

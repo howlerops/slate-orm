@@ -198,6 +198,41 @@ class Adapter {
   }
 
   /**
+   * One relationship, loaded for many parents in one read.
+   *
+   * `sales.book_id -> books`, the demo's only foreign key: `books.author_id`
+   * cannot be one, because `Author Unknown` names author 99 on purpose so the
+   * outer joins have an unmatched side to show.
+   *
+   * Read the `parents` way it goes through `books`, which carries the row
+   * policy — so a `reader` asking for the books behind a page of sales must
+   * see the same gap in all three SDKs, and a client that resolved the
+   * relationship itself rather than asking the server would not have one.
+   */
+  async related(
+    session: Session,
+    body: { way?: string; keys?: Record<string, unknown>[]; through?: string },
+  ): Promise<unknown> {
+    const parents = body.way === "parents";
+    const keys = (body.keys ?? []).map(decode);
+    // `through` is overridable only so the conformance corpus can name a key
+    // that does not exist and compare the three refusals, which is the one
+    // thing about this call the three could spell differently.
+    const groups = await session.related(
+      parents ? "books" : "sales",
+      {
+        on: "sales",
+        through: body.through || "sale_book",
+        way: parents ? "parents" : "children",
+      },
+      keys,
+    );
+    // A group per key the caller sent, in the caller's order, including the
+    // empty ones — the shape all three clients promise.
+    return { groups: groups.map((group) => group.map(encodeRow)) };
+  }
+
+  /**
    * The embedding every `/api/nearest` request measures against.
    *
    * Fixed rather than taken from the request body, because the point is that
@@ -519,6 +554,7 @@ async function main(): Promise<void> {
     "/api/explain": (s, b) => adapter.explain(s, b),
     "/api/explain-aggregate": (s, b) => adapter.explainAggregate(s, b),
     "/api/nearest": (s, b) => adapter.nearest(s, b),
+    "/api/related": (s, b) => adapter.related(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

@@ -49,8 +49,8 @@ from slate import (
     year,
 )
 
-from .schema import AUTHORS, BOOKS, BY_NAME
-from .values import encode, encode_row, format_float
+from .schema import AUTHORS, BOOKS, BY_NAME, SALES
+from .values import decode, encode, encode_row, format_float
 
 # The demo's three personas, mapped onto head-node identities.
 #
@@ -71,8 +71,6 @@ def build_filter(query, table, spec: dict[str, Any] | None):
     for one little language is three things to keep in agreement, and the first
     divergence would look like a database bug.
     """
-    from .values import decode
-
     if spec is None:
         return None
     op = spec.get("op")
@@ -148,6 +146,36 @@ class Adapter:
     def query(self, session, body):
         rows = [encode_row(list(row)) for row in session.query(build_query(body))]
         return {"rows": rows}
+
+    def related(self, session, body):
+        """One relationship, loaded for many parents in one read.
+
+        `sales.book_id -> books`, the demo's only foreign key: `books.author_id`
+        cannot be one, because `Author Unknown` names author 99 on purpose so
+        the outer joins have an unmatched side to show.
+
+        Read the `parents` way it goes through `books`, which carries the row
+        policy -- so a `reader` asking for the books behind a page of sales
+        must see the same gap in all three SDKs, and a client that resolved the
+        relationship itself rather than asking the server would not have one.
+        """
+        parents = body.get("way") == "parents"
+        keys = [decode(raw) for raw in body.get("keys", [])]
+        # `through` is overridable only so the conformance corpus can name a
+        # key that does not exist and compare the three refusals, which is the
+        # one thing about this call the three could spell differently.
+        groups = session.related(
+            BOOKS if parents else SALES,
+            keys,
+            through=body.get("through") or "sale_book",
+            on=SALES,
+            children=not parents,
+        )
+        # A group per key the caller sent, in the caller's order, including the
+        # empty ones -- the shape all three clients promise.
+        return {
+            "groups": [[encode_row(list(row)) for row in group] for group in groups]
+        }
 
     #: The embedding every `/api/nearest` request measures against.
     #:
@@ -411,6 +439,7 @@ ROUTES = {
     "/api/explain": "explain",
     "/api/explain-aggregate": "explain_aggregate",
     "/api/nearest": "nearest",
+    "/api/related": "related",
     "/api/transaction": "transaction",
 }
 

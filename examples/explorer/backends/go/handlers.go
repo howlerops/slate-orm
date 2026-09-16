@@ -495,3 +495,64 @@ func (s *server) nearest(ctx context.Context, session *slate.Session, body json.
 // ref is `&c` for a Column literal, which Go will not take the address of
 // inline.
 func ref(c slate.Column) *slate.Column { return &c }
+
+// related loads one relationship for many parents, in one read.
+//
+// The relationship is `sales.book_id -> books`, the only foreign key in the
+// demo's schema: `books.author_id` cannot be one, because `Author Unknown`
+// names author 99 on purpose so the outer joins have an unmatched side.
+//
+// Reading it the `parents` way goes through `books`, which carries the row
+// policy — so a `reader` asking for the books behind a page of sales must see
+// the same gap in all three SDKs, and a client that resolved the relationship
+// itself rather than asking the server would not have that gap at all.
+func (s *server) related(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Way  string            `json:"way"`
+		Keys []json.RawMessage `json:"keys"`
+		// Overridable only so the conformance corpus can name a key that does
+		// not exist and compare the three refusals, which is the one thing
+		// about this call the three could spell differently.
+		Through string `json:"through"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the relation: %w", err)
+	}
+
+	way, table := slate.Children, "sales"
+	if spec.Way == "parents" {
+		way, table = slate.Parents, "books"
+	}
+	through := spec.Through
+	if through == "" {
+		through = "sale_book"
+	}
+
+	keys := make([][]slate.Value, 0, len(spec.Keys))
+	for _, raw := range spec.Keys {
+		value, err := decode(raw)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, []slate.Value{value})
+	}
+
+	groups, err := session.Related(ctx, table,
+		slate.Relation{On: "sales", Through: through, Way: way}, keys...)
+	if err != nil {
+		return nil, err
+	}
+
+	// A group per key the caller sent, in the caller's order, including the
+	// empty ones — which is the shape all three clients promise and the one
+	// worth comparing.
+	out := make([][][]tagged, 0, len(groups))
+	for _, group := range groups {
+		rows := make([][]tagged, 0, len(group))
+		for _, row := range group {
+			rows = append(rows, encodeRow(row))
+		}
+		out = append(out, rows)
+	}
+	return map[string]any{"groups": out}, nil
+}

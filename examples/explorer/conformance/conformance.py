@@ -236,6 +236,53 @@ CASES: list[tuple[str, str, Any, str]] = [
      {"table": "books", "filter": {"op": "approximately", "column": 0}}, "app"),
     ("no such grouping", "/api/aggregate", {"groupBy": "century"}, "app"),
 
+    # Relationships. One read resolves a page of parents, and the three SDKs
+    # each group the response back onto the caller's own key order — which is
+    # where they can disagree without the server noticing, since the server
+    # sends one group per *distinct* key and says nothing about the order the
+    # caller asked in.
+    #
+    # `sales.book_id -> books` is the demo's only foreign key; see head.toml
+    # for why it is not `books.author_id`.
+    ("the sales of several books", "/api/related",
+     {"way": "children", "keys": [{"u64": "10"}, {"u64": "11"}, {"u64": "12"}]}, "app"),
+
+    # A book nothing has sold, so a client that dropped the empty group rather
+    # than returning it disagrees. 21 does not exist at all, which is the same
+    # answer by a different route and must also be an empty group rather than
+    # a refusal.
+    ("a book with no sales, and a book that does not exist", "/api/related",
+     {"way": "children", "keys": [{"u64": "21"}, {"u64": "10"}]}, "app"),
+
+    # The same key twice. The server sends one group; each client has to hand
+    # it back twice, and one that returned two groups or one would differ.
+    ("a repeated key", "/api/related",
+     {"way": "children", "keys": [{"u64": "10"}, {"u64": "10"}]}, "app"),
+
+    ("no keys at all", "/api/related", {"way": "children", "keys": []}, "app"),
+
+    # Backwards: the books behind a page of sales. Sales 100 and 110 point at
+    # books 10 and 20, and two sales of one book collapse to one group.
+    ("the books behind several sales", "/api/related",
+     {"way": "parents", "keys": [{"u64": "10"}, {"u64": "20"}, {"u64": "10"}]}, "app"),
+
+    # And the same question as a `reader`, whose row policy hides book 20
+    # (published 1951). The relationship load has to lose that book exactly as
+    # a direct read would — a client resolving the relationship itself would
+    # not, which is the security argument for the RPC existing at all.
+    ("a reader's books behind several sales", "/api/related",
+     {"way": "parents", "keys": [{"u64": "10"}, {"u64": "20"}]}, "reader"),
+
+    # `parents`, not `children`: a stranger *is* granted read on `sales`, and
+    # only `books` and `authors` are denied. Written the other way round first,
+    # where it quietly returned rows and asserted nothing.
+    ("a stranger may not load a relationship", "/api/related",
+     {"way": "parents", "keys": [{"u64": "100"}]}, "stranger"),
+
+    # The refusal has to name the keys that do exist, identically in all three.
+    ("no such foreign key", "/api/related",
+     {"way": "children", "through": "nosuch", "keys": [{"u64": "10"}]}, "app"),
+
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 ]
@@ -260,6 +307,8 @@ EXPECTED_REFUSALS = {
     "no such table",
     "no such filter operator",
     "no such grouping",
+    "no such foreign key",
+    "a stranger may not load a relationship",
 }
 
 
