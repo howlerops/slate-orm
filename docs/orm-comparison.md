@@ -107,7 +107,6 @@ then did not ship it to the three audiences most likely to need it.
 
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
-| Chains (3+ table joins) on the wire | all | proto has `Join`, no chain RPC; `chain` appears only in comments |
 | Keyset pagination on the wire | Drizzle, Prisma (`cursor`) | `Page`/`next` exist in `slate-orm/src/ext.rs:31`; no cursor field in the proto |
 | Batch: several independent statements, one round trip | Drizzle `batch`, Prisma `$transaction([…])` | `grep -rn "fn batch\|Batch" crates/slate-server/src/` → nothing |
 | Many-to-many / `has_many through` | all | `Related` is one `local`→`foreign` ordinal pair; derive accepts only `has_many`/`belongs_to` |
@@ -127,6 +126,24 @@ then did not ship it to the three audiences most likely to need it.
 | Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
 | Per-request logging and metrics | all | already recorded in the README: `slate-serverd` logs startup and warnings, nothing per request |
 | Retrying `transact` in Go and TypeScript | — | already recorded in the README; Python has one |
+
+> **Withdrawn: "Chains (3+ table joins) on the wire".** This table listed it as
+> missing, on the evidence that "proto has `Join`, no chain RPC; `chain`
+> appears only in comments". Both halves are literally true and the conclusion
+> is wrong. `JoinQuery.inputs` is `repeated JoinInput`, `service.rs` says
+> *"a join or a chain: one request shape, two kernel paths"* above the handler
+> that routes them, and all three clients have chain tests already — Go's
+> `TestGroupingAChain`, Python's `test_grouping_a_chain`, TypeScript's
+> `"grouping a chain"`. A chain needs no separate RPC because a chain is a join
+> with more inputs.
+>
+> A `grep` for a *name* is weak evidence of a missing *capability*, and this is
+> what that looks like when it goes wrong.
+>
+> The real gap behind the row was narrower and is now closed: the three-SDK
+> conformance runner did not compare the clients on a chain, because the demo's
+> `/api/join` was hard-coded to two tables. There is a `/api/chain` now and five
+> cases over it.
 
 ## Refused, with the reasoning
 
@@ -230,6 +247,19 @@ test that asserts the read count — the whole claim is "one read, not N", and a
 claim nothing measures is a claim nothing keeps.
 
 *Stops at.* One level, one relationship per request, to start. Nesting is P5.
+
+### P3 — Chains, keyset pagination and `RETURNING` on the wire — **chains were not missing**
+
+> The chains third of this is withdrawn: they have been on the wire since
+> `JoinQuery.inputs` became repeated, and all three clients test them. See the
+> withdrawal above the P1 section. What was real is now built — the conformance
+> runner compares the three on a three-table chain, five cases, all four join
+> types plus a `reader` whose row policy hides a book *and* the sale hanging
+> off it.
+>
+> Keyset pagination and `RETURNING` are still outstanding and still real:
+> `Query.after` exists in the kernel and has no field in the proto,
+> `WriteResponse` carries a count and no rows.
 
 ### P3 — Chains, keyset pagination and `RETURNING` on the wire
 

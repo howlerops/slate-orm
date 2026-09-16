@@ -77,6 +77,25 @@ query language to keep three implementations of.
 A `null` side is an outer join's unmatched row, kept distinct from a row of
 nulls.
 
+### `POST /api/chain`
+
+```json
+{"type": "inner", "limit": 10}
+```
+
+Three tables in one read: `authors`, their `books`, and those books' `sales`.
+Same body as `/api/join`.
+
+→ `{"rows": [{"authors": row|null, "books": row|null, "sales": row|null}, …]}`,
+sorted, for the reason `/api/join` gives.
+
+A chain is **not** a separate RPC: `JoinQuery` carries `repeated JoinInput` and
+the kernel takes its chain path past two of them. What differs between the
+three SDKs, and so what this compares, is how each spells the third input's
+attachment — it joins back to the *second* input, and a client that attached it
+to the first would produce a cross join with exactly the right number of
+columns.
+
 ### `POST /api/aggregate`
 
 ```json

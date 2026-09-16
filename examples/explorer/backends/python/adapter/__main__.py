@@ -240,6 +240,52 @@ class Adapter:
         rows.sort(key=lambda row: json.dumps(row, sort_keys=True))
         return {"rows": rows}
 
+    def chain(self, session, body):
+        """Three tables in one request: authors, their books, those books' sales.
+
+        Separate from `/api/join` because it is the thing worth comparing and
+        not a variation on a two-table join. A chain is not a different RPC --
+        a `JoinQuery` carries as many inputs as it is given and the kernel
+        picks its chain path past two -- so what could differ between the three
+        SDKs is how each spells the *third* input's attachment: it joins back
+        to the second, and a client that attached it to the first would produce
+        a cross join with the right number of columns.
+        """
+        kinds = {
+            "inner": JoinType.INNER,
+            "left": JoinType.LEFT,
+            "right": JoinType.RIGHT,
+            "full": JoinType.FULL,
+        }
+        kind = kinds.get(body.get("type", ""))
+        if kind is None:
+            raise ValueError(f"no such join type: {body.get('type')}")
+
+        join = JoinQuery()
+        authors = join.add(AUTHORS)
+        books = join.add(BOOKS, on=[(authors.c.id, "author_id")], join_type=kind)
+        # books.id to sales.book_id -- named against the *second* input, which
+        # is what makes this a chain rather than two joins onto the first.
+        join.add(SALES, on=[(books.c.id, "book_id")], join_type=kind)
+        if body.get("limit") is not None:
+            join.limit(int(body["limit"]))
+
+        def side(joined, at):
+            # `None` where an outer join found no match, kept distinct from a
+            # row of nulls.
+            return encode_row(list(joined[at])) if joined[at] is not None else None
+
+        rows = [
+            {
+                "authors": side(joined, 0),
+                "books": side(joined, 1),
+                "sales": side(joined, 2),
+            }
+            for joined in session.join(join)
+        ]
+        rows.sort(key=lambda row: json.dumps(row, sort_keys=True))
+        return {"rows": rows}
+
     def _build_aggregate(self, body):
         """The join and grouping the contract's aggregate body names.
 
@@ -439,6 +485,7 @@ ROUTES = {
     "/api/explain": "explain",
     "/api/explain-aggregate": "explain_aggregate",
     "/api/nearest": "nearest",
+    "/api/chain": "chain",
     "/api/related": "related",
     "/api/transaction": "transaction",
 }

@@ -71,6 +71,7 @@ func main() {
 	mux.HandleFunc("/api/explain", s.handle(s.explain))
 	mux.HandleFunc("/api/explain-aggregate", s.handle(s.explainAggregate))
 	mux.HandleFunc("/api/nearest", s.handle(s.nearest))
+	mux.HandleFunc("/api/chain", s.handle(s.chain))
 	mux.HandleFunc("/api/related", s.handle(s.related))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 

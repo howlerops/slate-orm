@@ -301,6 +301,51 @@ class Adapter {
   }
 
   /**
+   * Three tables in one request: authors, their books, those books' sales.
+   *
+   * Separate from `/api/join` because it is the thing worth comparing and not
+   * a variation on a two-table join. A chain is not a different RPC — a
+   * `JoinQuery` carries as many inputs as it is given and the kernel picks its
+   * chain path past two — so what could differ between the three SDKs is how
+   * each spells the *third* input's attachment: it joins back to the second,
+   * and a client that attached it to the first would produce a cross join with
+   * the right number of columns.
+   */
+  async chain(session: Session, body: { type?: string; limit?: number }): Promise<unknown> {
+    const kinds: Record<string, JoinType> = {
+      inner: "inner", left: "left", right: "right", full: "full",
+    };
+    const kind = kinds[body.type ?? ""];
+    if (!kind) throw new Error(`no such join type: ${body.type}`);
+
+    const b = newJoin();
+    const authors = b.add({ table: "authors" });
+    const books = b.add({
+      table: "books",
+      type: kind,
+      on: [{ earlier: at(authors, 0), own: 1 }],
+    });
+    // books.id to sales.book_id: `earlier` names the *second* input, which is
+    // what makes this a chain rather than two joins onto the first.
+    b.add({
+      table: "sales",
+      type: kind,
+      on: [{ earlier: at(books, 0), own: 1 }],
+    });
+
+    const joined = await session
+      .join(b.query(body.limit !== undefined ? { limit: body.limit } : {}))
+      .collect();
+    const rows = joined.map((row) => ({
+      authors: row[0] ? encodeRow(row[0]) : null,
+      books: row[1] ? encodeRow(row[1]) : null,
+      sales: row[2] ? encodeRow(row[2]) : null,
+    }));
+    rows.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
+    return { rows };
+  }
+
+  /**
    * The join and grouping the contract's aggregate body names.
    *
    * Shared by `aggregate` and `explainAggregate` for the same reason the kernel
@@ -554,6 +599,7 @@ async function main(): Promise<void> {
     "/api/explain": (s, b) => adapter.explain(s, b),
     "/api/explain-aggregate": (s, b) => adapter.explainAggregate(s, b),
     "/api/nearest": (s, b) => adapter.nearest(s, b),
+    "/api/chain": (s, b) => adapter.chain(s, b),
     "/api/related": (s, b) => adapter.related(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };

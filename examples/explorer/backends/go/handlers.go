@@ -556,3 +556,70 @@ func (s *server) related(ctx context.Context, session *slate.Session, body json.
 	}
 	return map[string]any{"groups": out}, nil
 }
+
+// chain reads three tables in one request: authors, their books, and the sales
+// of those books.
+//
+// Separate from `/api/join` because it is the thing worth comparing and not a
+// variation on a two-table join. A chain is not a different RPC — `JoinQuery`
+// carries `repeated JoinInput` and the kernel picks its chain path when there
+// are more than two — so what could differ between the three SDKs is how each
+// spells the *third* input's attachment: it joins back to the second, not to
+// the first, and a client that got that wrong would produce a cross join with
+// the right number of columns.
+func (s *server) chain(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Type  string  `json:"type"`
+		Limit *uint64 `json:"limit"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the chain: %w", err)
+	}
+	kinds := map[string]slate.JoinType{
+		"inner": slate.Inner, "left": slate.Left,
+		"right": slate.Right, "full": slate.Full,
+	}
+	kind, ok := kinds[spec.Type]
+	if !ok {
+		return nil, fmt.Errorf("no such join type: %s", spec.Type)
+	}
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		Type:  kind,
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+	})
+	// books.id to sales.book_id: `Earlier` names the *second* input, which is
+	// what makes this a chain rather than two joins onto the first.
+	b.Add(slate.JoinInput{
+		Table: "sales",
+		Type:  kind,
+		On:    []slate.On{{Earlier: slate.At(books, 0), Own: 1}},
+	})
+	query := b.Query()
+	query.Limit = spec.Limit
+
+	stream, err := session.Join(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		entry := map[string]any{"authors": nil, "books": nil, "sales": nil}
+		for at, name := range []string{"authors", "books", "sales"} {
+			if at < len(row) && row[at] != nil {
+				entry[name] = encodeRow(row[at])
+			}
+		}
+		out = append(out, entry)
+	}
+	sortJoined(out)
+	return map[string]any{"rows": out}, nil
+}

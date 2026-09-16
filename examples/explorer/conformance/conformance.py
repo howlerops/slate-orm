@@ -128,6 +128,22 @@ CASES: list[tuple[str, str, Any, str]] = [
     *[(f"a {kind} join", "/api/join", {"type": kind}, "app")
       for kind in ("inner", "left", "right", "full")],
 
+    # Three tables in one read. A chain is not a separate RPC — `JoinQuery`
+    # carries as many inputs as it is given — so what is being compared is how
+    # each SDK spells the third input's attachment: it joins back to the
+    # *second*, and a client that attached it to the first would produce a
+    # cross join with exactly the right number of columns and far too many
+    # rows. All four types, because the outer cases are where a chain's
+    # unmatched sides are hardest to get right: `Author Unknown` has a book and
+    # no author, `Ann Leckie` has no books at all, and every book has a sale.
+    *[(f"a {kind} chain", "/api/chain", {"type": kind}, "app")
+      for kind in ("inner", "left", "right", "full")],
+
+    # And as a reader, whose row policy hides a book — so the chain has to lose
+    # that book *and* the sale hanging off it, which a client resolving the
+    # third step itself would not.
+    ("a reader's chain", "/api/chain", {"type": "inner"}, "reader"),
+
     # `decade` is the only case here whose group key is not a column: it is a
     # value the *join* computes, `books.year / 10 * 10`. Every SDK builds that
     # expression itself, so this is the one case that compares three
