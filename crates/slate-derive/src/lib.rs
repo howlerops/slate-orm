@@ -170,6 +170,15 @@ struct RelationSpec {
     has_many: bool,
     local: Option<Ident>,
     foreign: Option<Ident>,
+    /// The join table, for `has_many(Far, through = Join)`.
+    ///
+    /// Present only for a many-to-many, and it emits a `Through` impl rather
+    /// than a `Related` one: the relationship itself is already expressible as
+    /// two `Related`s and needs no declaration. What cannot be inferred is
+    /// *which* table is the join table, because a blanket impl over the two
+    /// halves leaves the join type unconstrained (`E0207`). So this is a name
+    /// for a fact the compiler cannot work out, not a new capability.
+    through: Option<Type>,
     span: Span,
 }
 
@@ -195,6 +204,7 @@ fn parse_relation(
 
     let mut local = None;
     let mut foreign = None;
+    let mut through = None;
     while content.peek(Token![,]) {
         content.parse::<Token![,]>()?;
         if content.is_empty() {
@@ -202,6 +212,20 @@ fn parse_relation(
         }
         let key: Ident = content.parse()?;
         content.parse::<Token![=]>()?;
+        // `through` names a *type*; `local` and `foreign` name fields. Parsed
+        // apart because a `Type` swallows an `Ident` and the error for a typo
+        // would then be about a missing field rather than a missing option.
+        if key == "through" {
+            if !has_many {
+                return Err(syn::Error::new(
+                    key.span(),
+                    "`through` belongs on `has_many`; a `belongs_to` through a join table \
+                     is the join table's own `has_many`",
+                ));
+            }
+            through = Some(content.parse::<Type>()?);
+            continue;
+        }
         let value: Ident = content.parse()?;
         match key.to_string().as_str() {
             "local" => local = Some(value),
@@ -209,7 +233,9 @@ fn parse_relation(
             other => {
                 return Err(syn::Error::new(
                     key.span(),
-                    format!("unknown option `{other}`; expected `local` or `foreign`"),
+                    format!(
+                        "unknown option `{other}`; expected `local`, `foreign` or `through`"
+                    ),
                 ));
             }
         }
@@ -219,6 +245,7 @@ fn parse_relation(
         has_many,
         local,
         foreign,
+        through,
         span,
     })
 }
@@ -574,6 +601,22 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             let other = &spec.other;
             let self_ident = &input.ident;
 
+            // A `through` relationship emits a name and no behaviour. The
+            // capability — two batched reads with the join rows as the
+            // intermediate key set — is `load_related_through`, which needs
+            // only the two `Related` impls the join table's own declarations
+            // already provide. What cannot be inferred is which table stands
+            // in the middle, so that is all this says.
+            if let Some(join) = &spec.through {
+                return quote! {
+                    impl #impl_generics ::slate_orm::Through<#other>
+                        for #self_ident #ty_generics #where_clause
+                    {
+                        type Join = #join;
+                    }
+                };
+            }
+
             // The local side is a column of *this* struct, whose ordinals the
             // macro already knows, so it is emitted as a constant and the
             // checking happened in `validate_relations` with a span on the
@@ -763,6 +806,20 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// What is here is the local side, and the two defaults that can fail to exist.
 fn validate_relations(fields: &[FieldSpec], relations: &[RelationSpec]) -> syn::Result<()> {
     for spec in relations {
+        // A `through` relationship names no columns on either side: it is the
+        // join table's two ordinary relationships that carry them, and this
+        // one only says which table stands in the middle. So the column rules
+        // below do not apply to it, and requiring `foreign` here would demand
+        // a column that has no meaning on this attribute.
+        if spec.through.is_some() {
+            if spec.local.is_some() || spec.foreign.is_some() {
+                return Err(syn::Error::new(
+                    spec.span,
+                    "`through` takes no `local` or `foreign`: the columns belong to the join                      table's own `has_many` and `belongs_to`, and naming them here would be                      a second place for them to disagree",
+                ));
+            }
+            continue;
+        }
         // A has-many's foreign column is the child's foreign key, and a child's
         // foreign key has no relationship to its primary key — there is nothing
         // sensible to default it to, so it is required rather than guessed.

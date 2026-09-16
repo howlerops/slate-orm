@@ -299,6 +299,18 @@ and is the reason the cursor exists.
 
 *Stops at.* `RETURNING` returns the rows as written, not a projection.
 
+### P4 — Many-to-many, and `has_many through` — **built**
+
+> Done, and smaller than it looked. `load_related_through` has the bounds
+> `P: Related<J>, J: Related<C>` and nothing else — a many-to-many *is* the
+> composition of the two relationships the derive already emits, so the
+> capability needed no new declaration. `#[record(has_many(Tag, through =
+> ArticleTag))]` exists and emits a `Through` impl, but only as a *name*: a
+> blanket impl over the two halves is refused by `E0207` because the join type
+> is unconstrained, so which table stands in the middle has to be stated. Six
+> tests, six mutations; the wrong join table is a compile error rather than a
+> wrong answer.
+
 ### P4 — Many-to-many, and `has_many through`
 
 `#[record(has_many(Tag, through = ArticleTag))]`. Two batched reads rather than

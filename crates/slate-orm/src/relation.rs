@@ -216,6 +216,150 @@ where
         .collect())
 }
 
+/// Every parent's related rows *through a join table*, from two reads.
+///
+/// `Article → ArticleTag → Tag`: entry `i` is the tags of article `i`, in the
+/// order its join rows appear. A parent with none gets an empty vector, the
+/// same shape [`load_related`] returns.
+///
+/// # This needed no new declaration, and that is the finding
+///
+/// The plan for this called for `#[record(has_many(Tag, through =
+/// ArticleTag))]` — a third kind of relationship beside `has_many` and
+/// `belongs_to`. It is not one. A many-to-many is exactly the composition of
+/// the two that already exist: `P: Related<J>` is the has-many onto the join
+/// table, `J: Related<C>` is the join table's belongs-to onto the far side,
+/// and this function is those two bounds and nothing else. No new trait, no
+/// new attribute, no change to the derive.
+///
+/// [`Through`] exists anyway, and is *only* a name: it lets a caller write
+/// `load_through::<_, Article, Tag>` instead of naming `ArticleTag` at the
+/// call site. It adds no capability, which is why it is a blanket impl over
+/// the same two bounds rather than something the derive emits.
+///
+/// # Two reads, not one and not N
+///
+/// One read for the join rows of every parent, one for the far rows of every
+/// join row. Both go through [`load_related`], so both deduplicate their `IN`
+/// values: a thousand articles sharing one tag send that tag's id once.
+///
+/// Not one read, because that would be a join, and a join returns the product
+/// — every article's row repeated once per tag — which is more bytes than the
+/// two reads and has to be regrouped anyway. Not three: the join rows are the
+/// intermediate key set and nothing else needs reading.
+///
+/// # Duplicates are returned, not removed
+///
+/// Two join rows pointing at the same far row give that row twice. Removing
+/// them would need `C: Ord` or `C: Hash`, which [`Record`] does not require,
+/// so the choice is between narrowing the bound for every caller and returning
+/// what the join table says. SQL's `has_many through` has the same behaviour
+/// without a `DISTINCT`, and a join table with a uniqueness constraint — which
+/// is what a join table should have — cannot produce them.
+///
+/// # The wrong join table does not compile
+///
+/// `Through::Join` naming the far type rather than the middle one is the
+/// mistake the attribute makes available, and it is caught by the type system
+/// rather than by a test: `load_through` requires `Join: Related<C>`, and
+/// `Tag: Related<Tag>` does not exist. Checked by making that mutation, which
+/// failed to build rather than returning a wrong answer.
+///
+/// # Errors
+/// If a parent's or a join row's column is missing, or either read fails.
+pub async fn load_related_through<S, P, J, C>(
+    store: &S,
+    context: &SecurityContext,
+    parents: &[P],
+) -> Result<Vec<Vec<C>>>
+where
+    S: Records + Sync + ?Sized,
+    P: Record + Related<J>,
+    J: Record + Related<C>,
+    C: Record,
+{
+    // No guard for an empty `parents` here, although `load_related` has one.
+    // Written with one first, and a mutation removing it changed no answer:
+    // `load_related` returns early itself, so the counts are empty, the
+    // flattened join rows are empty, and the early return below produces the
+    // same empty vector. Two guards for one condition, the second
+    // unobservable — which is a comment claiming a saving that was already
+    // made a line deeper.
+
+    // Read one: every parent's join rows, grouped by parent.
+    let per_parent: Vec<Vec<J>> = load_related::<S, P, J>(store, context, parents).await?;
+
+    // How many join rows each parent had, kept before the grouping is
+    // flattened away. Counts rather than clones: `Record` does not require
+    // `Clone`, so flattening has to move, and moving loses the boundaries
+    // unless they are recorded first.
+    let counts: Vec<usize> = per_parent.iter().map(Vec::len).collect();
+
+    // Read two: the far rows of every join row, in one flat batch. Flattened
+    // so the second read sees every join row at once — reading per parent
+    // group would be the N+1 this exists to avoid, with N the parent count
+    // rather than the row count.
+    let flat: Vec<J> = per_parent.into_iter().flatten().collect();
+    if flat.is_empty() {
+        return Ok(counts.iter().map(|_| Vec::new()).collect());
+    }
+    let per_join: Vec<Vec<C>> = load_related::<S, J, C>(store, context, &flat).await?;
+
+    // Regroup by walking the join rows in the order they were flattened, so
+    // the cursor tracks without a lookup table.
+    let mut groups = per_join.into_iter();
+    let mut out: Vec<Vec<C>> = Vec::with_capacity(counts.len());
+    for count in counts {
+        let mut mine: Vec<C> = Vec::new();
+        for _ in 0..count {
+            if let Some(found) = groups.next() {
+                mine.extend(found);
+            }
+        }
+        out.push(mine);
+    }
+    Ok(out)
+}
+
+/// A many-to-many: which join table stands between `Self` and `C`.
+///
+/// Emitted by `#[record(has_many(Tag, through = ArticleTag))]`, and this is
+/// the *only* thing that attribute produces — the capability is already there
+/// without it, in [`load_related_through`], which needs no declaration at all
+/// because a many-to-many is the composition of a has-many and a belongs-to.
+///
+/// So why does the attribute exist? Because the composition cannot be
+/// *inferred*. A blanket impl over `P: Related<J>, J: Related<C>` is the
+/// obvious way to derive this for free, and the compiler refuses it: `J` is
+/// not constrained by the trait, the self type or the predicates, so nothing
+/// determines which join table to pick if two would do. Written that way
+/// first, and `E0207` is the reason it is not written that way now. Which
+/// table is the join table is a fact about the schema, and somebody has to
+/// say it.
+pub trait Through<C: Record>: Record {
+    /// The join table between `Self` and `C`.
+    type Join: Record;
+}
+
+/// [`load_related_through`] with the join table inferred from [`Through`].
+///
+/// # Errors
+/// As [`load_related_through`].
+pub async fn load_through<S, P, C>(
+    store: &S,
+    context: &SecurityContext,
+    parents: &[P],
+) -> Result<Vec<Vec<C>>>
+where
+    S: Records + Sync + ?Sized,
+    P: Record + Through<C>,
+    P: Related<<P as Through<C>>::Join>,
+    <P as Through<C>>::Join: Related<C>,
+    C: Record,
+{
+    load_related_through::<S, P, <P as Through<C>>::Join, C>(store, context, parents).await
+}
+
 /// One record's value at an ordinal.
 ///
 /// Goes through `to_row` rather than asking the type for a field, because
