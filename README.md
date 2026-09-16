@@ -7,11 +7,12 @@ indexes, query planning and row-level security over an ordered key-value store
 on object storage.
 
 Run a query against it in your browser:
-**<https://howlerops.github.io/slate-orm/>** — the kernel compiled to
-WebAssembly, over 100,000 real New York taxi trips, with the planner's
-`EXPLAIN` beside every answer.
-Documentation is one click away, at
-**<https://howlerops.github.io/slate-orm/docs.html>**.
+**<https://howlerops.github.io/slate-orm/workbench.html>** — the kernel
+compiled to WebAssembly, over 100,000 real New York taxi trips, with the
+planner's `EXPLAIN` beside every answer. The
+[front page](https://howlerops.github.io/slate-orm/) says what it is, and the
+[documentation](https://howlerops.github.io/slate-orm/docs/) is a click from
+either.
 
 The closest blueprint is FoundationDB's Record Layer rather than an ORM. The
 derive macro is a surface; the value is in the kernel underneath it, which owns

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>What it does — slate docs</title>
+<meta name="description" content="Planning, joins, aggregates, computed columns, relationships, pagination, decimals, migrations and conditional writes." />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="../theme.css" />
+<link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <a class="brand" href="../index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">docs</span>
+  </a>
+  <nav class="site-nav">
+    <a href="index.html" aria-current="true">Docs</a>
+    <a href="../workbench.html">Workbench</a>
+    <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+  </nav>
+</header>
+
+<div class="doc-shell">
+
+  <aside class="doc-side" data-docs="sidebar"></aside>
+  <noscript>
+    <aside class="doc-side nav-fallback">
+      <h2 class="nav-section">Getting started</h2>
+      <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+        <li><a href="concepts.html">Five things to know first</a></li>
+      </ul>
+      <h2 class="nav-section">The database</h2>
+      <ul>
+        <li><a href="features.html">What it does</a></li>
+        <li><a href="storage.html">Keys, rows and indexes</a></li>
+        <li><a href="security.html">Security in the kernel</a></li>
+      </ul>
+      <h2 class="nav-section">Running it</h2>
+      <ul>
+        <li><a href="deployment.html">One writer, many readers</a></li>
+        <li><a href="clients.html">The three clients</a></li>
+      </ul>
+      <h2 class="nav-section">Honesty</h2>
+      <ul>
+        <li><a href="limits.html">What it is not</a></li>
+      </ul>
+    </aside>
+  </noscript>
+
+  <article class="doc-article" data-docs="article">
+    <p class="doc-kicker">The database</p>
+    <h1>What it does</h1>
+
+    <p>
+      Every item here is reachable from the Rust record layer. Which of them cross
+      the wire to the Python, Go and TypeScript clients is a separate question, and
+      <a href="clients.html">the clients page</a> answers it.
+    </p>
+
+    <h2>Reading</h2>
+
+    <h3>A planner that costs</h3>
+      <p>
+        Table scans, index scans, point gets, ranges from <code>IN</code>
+        lists and <code>LIKE</code> prefixes, covering scans that never touch
+        a row, and histograms for range selectivity.
+      </p>
+
+    <h3>Joins and aggregates</h3>
+      <p>
+        Hash and index nested-loop, cost-chosen, all four join types, chains
+        of three or more tables, grouped joins and grouped chains, ordered
+        and limited over groups, and <code>HAVING</code> to filter them.
+      </p>
+      <p>
+        A grouping with no keys is one group over every row, which is what
+        <code>SELECT count(*) FROM trips</code> means. A grouping with keys
+        and no aggregates is the other end of the same dial:
+        <code>SELECT DISTINCT</code>. Both were front-end refusals over a
+        kernel that had always answered them.
+      </p>
+      <p>
+        So <code>DISTINCT</code> is not an operator here &mdash; it lowers to
+        <code>GROUP BY</code> over the columns selected, and the Spec tab
+        shows exactly that. Asking for both is refused: they are one request
+        written twice. <code>SELECT DISTINCT *</code> is refused too, with
+        the reason &mdash; every table has a primary key, so the rows are
+        already distinct and the grouping would cost a full pass to return
+        what it was given.
+      </p>
+      <p>
+        It crosses the wire as well: group keys with no aggregates, from
+        Python, Go or TypeScript. The head node used to refuse that on the
+        aggregates alone, which was right about the case it was written for
+        &mdash; no keys <em>and</em> no aggregates asks for one group with
+        nothing in it &mdash; and wrong about this one.
+      </p>
+
+    <h3>Computed columns</h3>
+      <p>
+        <code>hour()</code>, <code>day_of_week()</code>, <code>year()</code>
+        and the rest are evaluated per row and group, sort and filter like
+        any column, on a single table or on a join. There is no date type: a
+        timestamp is seconds since the epoch in an integer column.
+      </p>
+      <p>
+        On a join, every position is resolved in the <em>joined</em> row: the
+        group key, the computed column and the aggregates may each read
+        either table, and a qualified name like <code>zones.id</code> picks
+        its side. So <code>SELECT hour(pickup_time), avg(fare) &hellip; FROM
+        trips JOIN zones</code> works, where a key on one side and an
+        aggregate on the other used to be the only shape available. An
+        <em>unqualified</em> name that both tables have resolves to the left
+        one and says so above the results, rather than choosing in silence.
+      </p>
+      <p>
+        A grouped join can be ordered &mdash; <code>ORDER BY count(*)
+        DESC</code> &mdash; and the ordering is over the <em>groups</em>: a
+        group is its key followed by its aggregates. An ungrouped join cannot
+        be ordered at all, and says why: the kernel orders groups, not joined
+        rows.
+      </p>
+      <p>
+        They read <strong>UTC</strong> unless given a second argument: a
+        fixed offset, <code>hour(pickup_time, '-05:00')</code>, or a named
+        zone, <code>hour(pickup_time, 'America/New_York')</code>. A name is
+        resolved against a transition table built from IANA's
+        <code>tzdata</code> &mdash; a few kilobytes of sorted integers for a
+        curated list of zones, not the whole database &mdash; so daylight
+        saving is looked up at each row's instant rather than guessed at. A
+        zone outside the list is refused, and the refusal names the ones that
+        are in it. The taxi sample in the workbench is New York wall clock
+        already, which is why its quietest hour is 04:00 and not 09:00.
+      </p>
+
+    <h3>Relationships, loaded not lazy</h3>
+      <p>
+        <code>#[record(has_many(Book, foreign = author_id))]</code> declares
+        one, and <code>load_related</code> fetches every parent's children in
+        <strong>one</strong> read &mdash; measured at 1 scan where the
+        per-parent loop it replaces takes 3. There is deliberately no lazy
+        accessor: the feature an ORM is judged on and the N+1 it is blamed
+        for are the same feature, because an accessor cannot tell whether it
+        is being called once or ten thousand times.
+      </p>
+      <p>
+        Columns are named by <em>field ident</em>, not by string, so a typo is
+        a compile error on both sides rather than a panic on first use.
+      </p>
+
+    <h3>Pages that do not shift</h3>
+      <p>
+        <code>OFFSET</code> reads and discards every row it skips, and counts
+        rows &mdash; so a row deleted between two pages makes the reader
+        silently miss one. A cursor is the last row's primary key and narrows
+        the scan range instead: <strong>page 99 of 100 read 5 key-value pairs
+        against the offset version's 495</strong>, and the deleted-row case
+        is asserted both ways round.
+      </p>
+      <p>
+        <code>page_records</code> returns the rows and the cursor for the
+        next page, so a caller never names a key column. A sorted query or a
+        grouped read is refused rather than paged wrongly.
+      </p>
+
+    <h2>Writing</h2>
+
+    <h3>Conditional writes</h3>
+      <p>
+        The store detects two writers overlapping in time. The common failure
+        is the other one: read a row, decide, write it in a later transaction
+        while somebody else wrote it in between. Nothing overlaps, so nothing
+        is detected, and an edit is silently lost.
+        <code>replace_record(&amp;previous, &amp;next)</code> writes only if
+        the stored row still equals what was read.
+      </p>
+
+    <h3>Migrations, before the socket opens</h3>
+      <p>
+        Adding an index to a populated table used to make queries through it
+        return <em>nothing</em> &mdash; no error, rows still on disk, and
+        intermittently, depending on whether the index covered the query.
+        Schema state now lives in its own keyspace, and the daemon
+        reconciles before it binds its listener: a node that binds first
+        accepts a connection and answers it wrongly.
+      </p>
+      <p>
+        <code>[schema] migrate_on_start = false</code> makes it verify and
+        refuse to start instead, which is not the same as skipping.
+      </p>
+
+    <h2>Types</h2>
+
+    <h3>Exact decimals</h3>
+      <p>
+        A hundred rows of ten cents sum to exactly <code>$10.00</code>; the
+        same rows as <code>f64</code> give <code>9.99999999999998</code>.
+        Both are asserted, because a test that only showed the right answer
+        would not establish there was anything to fix.
+      </p>
+      <p>
+        The scale lives on the <em>column</em>, so a decimal is an integer
+        count of the smallest unit: it encodes as an integer, the ordering is
+        the integer ordering, and <code>SUM</code> is exact. The cost is that
+        a value cannot print itself &mdash; rendering needs the column.
+      </p>
+
+    <h3>No date type, and an enum is its own name</h3>
+      <p>
+        The value model is closed &mdash; nine types, each one the tuple codec
+        can order &mdash; so a Rust type that needs storing gets a mapping
+        onto an existing one rather than a tenth. A <code>Timestamp</code> is
+        an <code>i64</code> of seconds: chronological order <em>is</em> integer
+        order, already proven, and every calendar function reads seconds.
+        <code>#[derive(Enum)]</code> stores the variant name in a
+        <code>Str</code>.
+      </p>
+      <p>
+        A name rather than an ordinal because the two fail differently.
+        Reordering variants silently reinterprets every stored row, and
+        reordering is an accident &mdash; alphabetising, inserting in the
+        middle. Renaming does the same damage but is deliberate, and the
+        compiler makes you visit every use site. <code>rename</code> lets the
+        Rust spelling and the stored one move apart.
+      </p>
+      <p>
+        <code>Json&lt;T&gt;</code> is a string that happens to hold JSON, and
+        every query against it is a query against that string. There is no
+        path expression: a document has no useful total order, so it could not
+        be a key, an index or a range. If a field inside needs querying, it is
+        a column.
+      </p>
+    <nav class="doc-pager" data-docs="pager"></nav>
+  </article>
+
+  <aside class="doc-toc"><div data-docs="toc"></div></aside>
+
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="../workbench.html">Workbench</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://slatedb.io">SlateDB</a>
+    </nav>
+    <p>Apache 2.0. Built on <a href="https://slatedb.io">SlateDB</a>, and not affiliated with it.</p>
+  </div>
+</footer>
+
+<script type="module" src="nav.js"></script>
+</body>
+</html>

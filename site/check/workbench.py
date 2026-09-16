@@ -9,6 +9,11 @@ the same reason; this executes the application.
 
     python3 site/check/workbench.py
 
+The page under test is `site/workbench.html`. It was `index.html` until the
+landing page took that name; the constant below is spelled once so the move
+could not leave this opening a 404 — which would render as a blank document,
+and a blank document has no console errors to fail on.
+
 Needs the wasm built (`sh site/build-wasm.sh`) and Playwright's Chromium,
 which the demo's frontend already depends on.
 
@@ -419,7 +424,7 @@ out.keyboard = await read();
 
 // 12. The docs are one click away, which is the other half of the request
 //     this page was built for.
-out.docsLink = await page.locator('header a[href="docs.html"]').count();
+out.docsLink = await page.locator('header a[href="docs/index.html"]').count();
 
 // 13. What a write costs, which is the number a record layer most wants to
 //     show and the one this page could not show at all until writes were
@@ -522,7 +527,7 @@ def main() -> int:
     driver.write_text(DRIVER)
     try:
         result = subprocess.run(
-            ["node", str(driver), f"http://127.0.0.1:{port}/index.html"],
+            ["node", str(driver), f"http://127.0.0.1:{port}/workbench.html"],
             cwd=RUNNER,
             capture_output=True,
             text=True,
@@ -786,7 +791,7 @@ def main() -> int:
     check(
         "the docs are one click from the workbench",
         seen["docsLink"] >= 1,
-        "no header link to docs.html",
+        "no header link to docs/index.html",
     )
     # Every statement in the buffer is timed, the write included. `> 0` rather
     # than merely present: a binding that reported a blank, or a zero, for a

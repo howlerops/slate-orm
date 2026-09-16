@@ -6,8 +6,9 @@ executed" and then, honestly, that nothing re-ran them. That is the shape of
 staleness that matters most: a quickstart's code sample is the first thing a
 reader tries and the last thing anybody edits when an API changes.
 
-So this extracts the four `<pre><code>` panels out of `site/docs.html`, starts
-a head node from the TOML panel, and runs the three snippets against it.
+So this extracts the four `<pre><code>` panels out of
+`site/docs/quickstart.html`, starts a head node from the TOML panel, and runs
+the three snippets against it.
 
 What "exactly as they are printed" costs, and where it is spent:
 
@@ -44,11 +45,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-#: The quickstart used to live on the landing page. It moved to the docs when
-#: the workbench took over `index.html`, and this constant is the reason the
-#: move was not silent: with the old path the panel regex finds nothing and
-#: `panels()` raises, rather than checking a page that no longer has code on it.
-INDEX = ROOT / "site" / "docs.html"
+#: The quickstart has moved twice: off the landing page when the workbench took
+#: over `index.html`, and again out of the single `docs.html` when the docs
+#: became a directory. Both moves were caught by this constant rather than by a
+#: reader — with a stale path the panel regex finds nothing and `panels()`
+#: raises, rather than quietly checking a page that has no code on it.
+INDEX = ROOT / "site" / "docs" / "quickstart.html"
 
 # The row every snippet inserts and reads back. Asserting on the title rather
 # than on an exit status is the difference between "the program ran" and "the

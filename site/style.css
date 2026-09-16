@@ -1,152 +1,50 @@
-/* One stylesheet, hand-written, no build step.
+/* The workbench application: its layout, its panes, its storage browser.
  *
- * The site exists so people can use the SDKs. Everything here serves reading
- * code and copying a snippet; there is nothing to sell, so there is no hero
- * gradient and no logo wall. */
+ * Loads *after* `theme.css`, which owns the palette, the type and the shared
+ * components. Nothing here declares a colour — the aliases below map this
+ * file's original names onto the shared tokens, so the four hundred lines that
+ * follow did not have to be rewritten to adopt the theme, and a future change
+ * to the palette still reaches them.
+ *
+ * What used to be above this line was the old single-page docs site: a hero, a
+ * card grid, a callout, a footer. Those moved to `docs/` with their own
+ * stylesheet, and keeping a second, differently-coloured `.card` here would
+ * have been a rule that wins on one page and loses on another depending on
+ * load order — which is the kind of bug that is invisible until it is not.
+ */
 
 :root {
-  --bg: #0d1016;
-  --panel: #141922;
-  --panel-2: #1a212c;
-  --line: #232c3a;
-  --text: #e3e8f0;
-  --dim: #8d97a9;
-  --dimmer: #626c7e;
-  --accent: #6cb6f2;
-  --accent-dim: #2a6a9e;
-  --good: #6ddc9a;
-  --warn: #f0b166;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  color-scheme: dark;
+  --panel:     var(--card);
+  --panel-2:   var(--card-hover);
+  --line:      var(--border);
+  --text:      var(--fg);
+  --dim:       var(--muted-med);
+  --dimmer:    var(--muted);
+  --accent:    var(--gold);
+  --accent-dim: var(--gold-dark);
+  --good:      #6ddc9a;
+  --warn:      var(--gold-bright);
+  --mono:      var(--font-mono);
 }
 
-* { box-sizing: border-box; }
+/* --- the header bar ------------------------------------------------------ */
 
-html { scroll-behavior: smooth; }
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-
-code, pre, .mono { font-family: var(--mono); }
-code { font-size: 0.9em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
-pre {
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 0;
-}
-pre code { background: none; padding: 0; font-size: inherit; }
-
-.wrap { max-width: 940px; margin: 0 auto; padding: 0 20px; }
-
-/* --- header ------------------------------------------------------------- */
-
-header.site {
-  border-bottom: 1px solid var(--line);
-  position: sticky; top: 0; background: rgba(13, 16, 22, 0.88);
-  backdrop-filter: blur(8px); z-index: 10;
-}
-header.site .wrap { display: flex; align-items: center; gap: 24px; height: 58px; }
-header.site .name { font-weight: 650; letter-spacing: -0.01em; font-size: 17px; color: var(--text); }
-header.site nav { margin-left: auto; display: flex; gap: 20px; font-size: 14px; }
-header.site nav a { color: var(--dim); }
-header.site nav a:hover { color: var(--text); text-decoration: none; }
-
-/* --- hero --------------------------------------------------------------- */
-
-.hero { padding: 72px 0 48px; border-bottom: 1px solid var(--line); }
-.hero h1 {
-  font-size: 42px; line-height: 1.15; margin: 0 0 16px;
-  font-weight: 660; letter-spacing: -0.025em; max-width: 18ch;
-}
-.hero p.lead { font-size: 18px; color: var(--dim); max-width: 62ch; margin: 0 0 12px; }
-.hero p.lead strong { color: var(--text); font-weight: 600; }
-.actions { display: flex; gap: 12px; margin-top: 28px; flex-wrap: wrap; }
 .button {
-  display: inline-block; padding: 9px 18px; border-radius: 7px; font-size: 14px;
-  font-weight: 550; border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  display: inline-block;
+  padding: 7px 15px;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color .18s, background .18s;
 }
-.button:hover { border-color: var(--accent-dim); text-decoration: none; }
-.button.primary { background: var(--accent); border-color: var(--accent); color: #08111a; }
-.button.primary:hover { filter: brightness(1.08); }
-
-/* --- sections ----------------------------------------------------------- */
-
-section { padding: 52px 0; border-bottom: 1px solid var(--line); }
-section:last-of-type { border-bottom: 0; }
-section h2 {
-  font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
-  color: var(--dimmer); margin: 0 0 22px; font-weight: 620;
-}
-section h3 { font-size: 17px; margin: 0 0 8px; font-weight: 620; letter-spacing: -0.01em; }
-section p { color: var(--dim); margin: 0 0 14px; max-width: 68ch; }
-section p strong { color: var(--text); font-weight: 600; }
-
-.grid { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-.card {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: 10px; padding: 18px 20px;
-}
-.card p { font-size: 14px; margin: 0; }
-.card p + p { margin-top: 10px; }
-
-/* --- tabs --------------------------------------------------------------- */
-
-.tabs { display: flex; gap: 4px; margin-bottom: -1px; }
-.tabs button {
-  background: var(--panel); border: 1px solid var(--line); border-bottom-color: transparent;
-  color: var(--dim); font: inherit; font-size: 13px; font-weight: 550;
-  padding: 8px 16px; border-radius: 8px 8px 0 0; cursor: pointer;
-}
-.tabs button[aria-selected="true"] { color: var(--text); background: var(--panel-2); }
-.tabs button:not([aria-selected="true"]):hover { color: var(--text); }
-.tab-body { border: 1px solid var(--line); border-radius: 0 8px 8px 8px; overflow: hidden; }
-.tab-body pre { border: 0; border-radius: 0; background: var(--panel-2); }
-.tab-body > div[hidden] { display: none; }
-.install { border-top: 1px solid var(--line); padding: 10px 16px; font-size: 13px; color: var(--dim); background: var(--panel); }
-.install code { background: transparent; padding: 0; color: var(--text); }
-
-/* --- lists -------------------------------------------------------------- */
-
-ul.plain { list-style: none; padding: 0; margin: 0; }
-ul.plain li {
-  padding: 9px 0 9px 26px; position: relative; color: var(--dim);
-  font-size: 14.5px; border-bottom: 1px solid var(--line);
-}
-ul.plain li:last-child { border-bottom: 0; }
-ul.plain li b { color: var(--text); font-weight: 600; }
-ul.plain li::before {
-  content: "✓"; position: absolute; left: 2px; color: var(--good); font-size: 13px;
-}
-ul.plain.not li::before { content: "—"; color: var(--dimmer); }
-
-/* --- callout ------------------------------------------------------------ */
-
-.callout {
-  border: 1px solid var(--line); border-left: 3px solid var(--warn);
-  background: var(--panel); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 8px 0 0;
-}
-.callout p { margin: 0; font-size: 14.5px; }
-.callout p + p { margin-top: 10px; }
-
-/* --- footer ------------------------------------------------------------- */
-
-footer.site { padding: 32px 0 56px; color: var(--dimmer); font-size: 13.5px; }
-footer.site .row { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 12px; }
-footer.site a { color: var(--dim); }
-
-@media (max-width: 640px) {
-  .hero { padding: 48px 0 36px; }
-  .hero h1 { font-size: 32px; }
-  header.site nav { gap: 14px; font-size: 13px; }
-  header.site .wrap { gap: 12px; }
-}
+.button:hover { border-color: var(--gold-border); background: var(--gold-dim); text-decoration: none }
+.button.primary { background: var(--gold); border-color: var(--gold); color: var(--ink) }
+.button.primary:hover { background: var(--gold-bright); border-color: var(--gold-bright) }
+.button:disabled { opacity: .5; cursor: default }
 
 /* --- the workbench -------------------------------------------------------
  *
@@ -168,15 +66,19 @@ body.app {
 .bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  height: 52px;
+  gap: 14px;
+  padding: 0 18px;
+  height: 56px;
   flex: none;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  /* Frosted, to match the marketing header — even though nothing scrolls under
+     it here, because the two pages sit one click apart and a bar that changes
+     texture between them reads as two sites. */
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
 }
-.bar .name { font-weight: 650; font-size: 16px; letter-spacing: -0.01em; }
-.bar .what { color: var(--dim); font-size: 13px; }
+.bar .brand { gap: 9px }
 .bar .engine {
   font-family: var(--mono); font-size: 11.5px; color: var(--dimmer);
   border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px;

@@ -814,7 +814,7 @@ async function boot() {
     status(`the database did not start: ${error}`, "bad");
     $("grid").innerHTML =
       '<div class="refusal">This needs WebAssembly. Everything here is described in ' +
-      '<a href="docs.html">the docs</a>, which need nothing but a browser.</div>';
+      '<a href="docs/index.html">the docs</a>, which need nothing but a browser.</div>';
   }
 }
 

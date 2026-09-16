@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Security in the kernel — slate docs</title>
+<meta name="description" content="Row-level security compiled into the predicate the executor evaluates and the bounds it scans, not checked by a wrapper." />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="../theme.css" />
+<link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <a class="brand" href="../index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">docs</span>
+  </a>
+  <nav class="site-nav">
+    <a href="index.html" aria-current="true">Docs</a>
+    <a href="../workbench.html">Workbench</a>
+    <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+  </nav>
+</header>
+
+<div class="doc-shell">
+
+  <aside class="doc-side" data-docs="sidebar"></aside>
+  <noscript>
+    <aside class="doc-side nav-fallback">
+      <h2 class="nav-section">Getting started</h2>
+      <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+        <li><a href="concepts.html">Five things to know first</a></li>
+      </ul>
+      <h2 class="nav-section">The database</h2>
+      <ul>
+        <li><a href="features.html">What it does</a></li>
+        <li><a href="storage.html">Keys, rows and indexes</a></li>
+        <li><a href="security.html">Security in the kernel</a></li>
+      </ul>
+      <h2 class="nav-section">Running it</h2>
+      <ul>
+        <li><a href="deployment.html">One writer, many readers</a></li>
+        <li><a href="clients.html">The three clients</a></li>
+      </ul>
+      <h2 class="nav-section">Honesty</h2>
+      <ul>
+        <li><a href="limits.html">What it is not</a></li>
+      </ul>
+    </aside>
+  </noscript>
+
+  <article class="doc-article" data-docs="article">
+    <p class="doc-kicker">The database</p>
+    <h1>Security in the kernel, not in the ORM</h1>
+
+    <h3>Security in the kernel</h3>
+      <p>
+        RBAC and row policies are compiled into the predicate the executor
+        evaluates and the bounds it scans — not checked by a wrapper a caller
+        could route around.
+      </p>
+
+    <h2>Why this is structural</h2>
+
+    <p>
+      This is the part most key-value-layer projects get wrong, and it is a matter
+      of structure rather than of care. Policies are not checked by a wrapper a
+      caller could step around: they are compiled into the predicate the executor
+      evaluates and into the bounds it scans. Every read and write on
+      <code>RecordTransaction</code> takes a <code>SecurityContext</code>, so there
+      is no unauthenticated door — bypassing is possible, but only by naming
+      <code>SecurityContext::superuser()</code>, which is one <code>grep</code>
+      away.
+    </p>
+
+    <p>
+      Before any row is touched: an RBAC check against the catalog, a mandatory
+      tenant restriction on tenant-scoped tables, then the OR of the matching
+      row-level-security policies. Writes are checked in both directions as in
+      Postgres — an update may only touch a row the caller can already see and may
+      only leave behind a row they could have written, so a policy cannot be escaped
+      by editing your way out of it.
+    </p>
+
+    <div class="aside">
+      <p>
+        <strong>The head node does not authenticate.</strong> It reads the caller's
+        identity from request headers and trusts them. That is deliberate and it is
+        documented on <a href="concepts.html">the concepts page</a> — but it means a
+        node reachable by anything other than a proxy you control is a node anyone
+        can be a superuser on.
+      </p>
+    </div>
+    <nav class="doc-pager" data-docs="pager"></nav>
+  </article>
+
+  <aside class="doc-toc"><div data-docs="toc"></div></aside>
+
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="../workbench.html">Workbench</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://slatedb.io">SlateDB</a>
+    </nav>
+    <p>Apache 2.0. Built on <a href="https://slatedb.io">SlateDB</a>, and not affiliated with it.</p>
+  </div>
+</footer>
+
+<script type="module" src="nav.js"></script>
+</body>
+</html>

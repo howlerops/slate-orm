@@ -3,41 +3,84 @@
 Published at **<https://howlerops.github.io/slate-orm/>**, from `main`, by
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push.
 
-Two pages and a stylesheet. `index.html` is the **workbench** — an application
-that runs slate's kernel in the browser. `docs.html` is everything written
-down: what the project is, the quickstart, and the concepts the clients assume.
-No build step for the pages themselves, but the workbench needs the wasm built
-first:
+Three things, no build step for any of them:
+
+```
+index.html        the landing page
+workbench.html    an application: slate's kernel, in the browser
+docs/             nine pages with a sidebar, `nav.js` and `docs.css`
+theme.css         the tokens and shared components, used by all of them
+fonts/            four woff2 files, self-hosted
+```
+
+The workbench needs the wasm built first; everything else is served as-is:
 
 ```sh
 sh site/build-wasm.sh
 python3 -m http.server --directory site 8000
 ```
 
-## Why the home page is an application
+## The look
 
-It used to be a landing page with a query panel two thirds of the way down.
-Nobody found the panel — the first report about it was somebody asking whether
-it had deployed at all — and a panel of dropdowns can only ask the questions
-its author thought of.
+The design language is the one at [ironrain.app](https://ironrain.app), which
+is the other site in this family — dark first, a gold accent, Instrument Serif
+for display over DM Sans, a sticky frosted header on a 1080px column. Adopted
+rather than invented, so that two projects by the same hand look like two
+projects by the same hand. `theme.css` holds the tokens and is the contract: a
+page that wants a new colour adds a token there rather than a hex code of its
+own.
 
-So the workbench is the home page: a schema tree, an editor, results, and the
-plan beside them. The claim this project makes that is most worth checking is
-"the planner picks an access path, and the choice is not the obvious one". You
-cannot check that by reading; you check it by writing a query and looking at
-what it did. The prose moved to `docs.html`, one click away in the header.
+Dark is the default and light comes from `prefers-color-scheme` alone. There is
+deliberately no toggle — a toggle is a preference to store, a flash of the
+wrong theme to prevent and a second code path, for a reader who has already
+told their operating system which one they want.
 
-The cost is real and is not hidden: every visitor now downloads roughly 690 KB
-of gzipped WebAssembly on arrival, where before it was fetched only for readers
-who scrolled to the panel. That is the price of the page being the thing rather
-than describing it. `docs.html` loads none of it.
+**The fonts are committed, not fetched.** Four woff2 files, 138 KB, latin only.
+A `<link>` to `fonts.googleapis.com` is a third-party request on every view of
+a site that otherwise makes none, and it fails behind a TLS-inspecting proxy
+and offline. The browser check caught the proxy case the first time it ran
+against these pages, which is how the decision got made rather than argued.
 
-## Why there is no build step for the pages
+## Why the workbench is not the home page any more
 
-Two pages. A static-site generator would add a toolchain that has to be
-installed, upgraded and eventually migrated, in exchange for templating two
-files that share one `<header>`. The trade flips as soon as there are ten
-pages or the content wants to live in Markdown.
+For a while it was. The reasoning still holds and is worth keeping: a landing
+page with a query panel two thirds of the way down gets nobody to the panel,
+and the claim this project most wants checked — "the planner picks an access
+path, and the choice is not the obvious one" — cannot be checked by reading.
+
+What changed is that the cost was real too. Every visitor downloaded roughly
+690 KB of gzipped WebAssembly on arrival, including the ones who wanted to know
+what the project *was*. The landing page now answers that in text and puts
+"Open the workbench" first, twice; `workbench.html` is one click away and
+unchanged in every other respect.
+
+## Why the docs are nine pages and one JavaScript file
+
+The shape is the one [slatedb.io](https://slatedb.io/docs/get-started/introduction/)
+uses, because it is the shape a reader of database documentation already knows
+how to use: a sidebar of sections, a page per idea, a table of contents on the
+right, previous and next at the foot.
+
+The sidebar is stated **once**, in `docs/nav.js`, and rendered into every page.
+Writing it into nine files by hand is the failure this repository keeps finding:
+a thing said N times goes stale in N-1 of them, and a nav link that has stopped
+matching the page it points at is invisible until somebody follows it.
+
+The cost is that the sidebar needs JavaScript, and it is paid for rather than
+waved away. Every page carries a `<noscript>` copy as plain markup — which is a
+*second* statement of the list, and therefore exactly the thing just described.
+`site/check/docs.py` compares the two, in order, link for link and label for
+label, so the duplication cannot drift. The page's own content never depends on
+the script.
+
+## Why there is still no build step
+
+Nine pages share one `<head>` and one `<header>`, which is real duplication and
+the usual argument for a generator. It is boilerplate duplication, though: it
+does not encode a fact that can go stale, and the one thing that can — the
+navigation — is generated. A static-site generator would add a toolchain to be
+installed, upgraded and eventually migrated, and the trade does not flip until
+the content wants to live in Markdown.
 
 ## The data is real
 
@@ -307,7 +350,7 @@ cargo build -p slate-serverd --bin slate-serverd
 python3 site/check/quickstarts.py
 ```
 
-That extracts the four `<pre><code>` panels out of `docs.html`, validates the
+That extracts the four `<pre><code>` panels out of `docs/quickstart.html`, validates the
 TOML panel with `slate-serverd --check`, starts a node from it, and runs the
 Python, Go and TypeScript snippets against that node. Each must insert a row
 and read it back — asserting on the row rather than on an exit status, because
@@ -339,7 +382,7 @@ first code block does not work is exactly what the checker is for.
 
 ## Keeping it honest
 
-`docs.html` makes claims about what is built. Every one of them is supposed to
+The docs make claims about what is built. Every one of them is supposed to
 be true on `main`, and its "What it is not" section is supposed to match the
 README's not-built list. **If you change what the project does, change this
 too** — a front page that oversells is the most-read stale documentation a

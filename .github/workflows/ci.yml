@@ -221,10 +221,14 @@ jobs:
         working-directory: clients/typescript
       - run: npm run build
         working-directory: clients/typescript
-      # Extracts the four `<pre><code>` panels out of `site/index.html`,
-      # validates the TOML with `--check`, starts a node from it, and runs the
-      # Python, Go and TypeScript snippets against that node. Its first run
-      # found the page's TOML invalid.
+      # The docs site holds together: every relative link resolves, and the
+      # `<noscript>` sidebar on each page matches the one `nav.js` renders.
+      # Needs no server and no browser, so it runs first and fails fast.
+      - run: python3 site/check/docs.py
+      # Extracts the four `<pre><code>` panels out of
+      # `site/docs/quickstart.html`, validates the TOML with `--check`, starts a
+      # node from it, and runs the Python, Go and TypeScript snippets against
+      # that node. Its first run found the page's TOML invalid.
       - run: python3 site/check/quickstarts.py
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd

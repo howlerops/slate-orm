@@ -1,0 +1,139 @@
+/*
+ * The landing page only. Everything shared lives in `theme.css`, which loads
+ * first; this file adds the hero and the alternating section bands and nothing
+ * the workbench or the docs need.
+ */
+
+/* ── Hero ───────────────────────────────────────────────────── */
+
+.hero {
+  padding: 96px 0 72px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* The gold wash behind the headline. Decorative and unclickable. */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 900px 600px at 30% -60px,
+    var(--gold-glow) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+.hero > .wrap { position: relative }
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  color: var(--muted-med);
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 5px 14px;
+  border-radius: 100px;
+  margin-bottom: 30px;
+}
+.hero-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 10px rgba(196, 155, 33, .7);
+  flex-shrink: 0;
+}
+
+.hero-h1 {
+  font-size: clamp(38px, 7vw, 74px);
+  line-height: 1.02;
+  letter-spacing: -.025em;
+  margin: 0 0 28px;
+  max-width: 900px;
+}
+
+.hero-lede { margin: 0 0 36px }
+
+.hero-cta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 44px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.chips li {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-med);
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 5px 13px;
+  border-radius: 100px;
+}
+/* An inline chip inside a pill would be a box in a box. */
+.chips code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: .95em;
+  color: inherit;
+}
+
+/* ── Bands ──────────────────────────────────────────────────── */
+
+.band {
+  padding: var(--sec-pad) 0;
+  border-top: 1px solid var(--border-sub);
+}
+
+.band-h2 {
+  font-size: clamp(28px, 4vw, 48px);
+  max-width: 18ch;
+  margin-bottom: 20px;
+}
+
+.band-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: center;
+}
+/* `min-width: 0` or a wide <pre> refuses to shrink and pushes the grid out of
+   the viewport, which is the classic grid-overflow trap and the reason the
+   code column scrolls rather than the page. */
+.band-inner > * { min-width: 0 }
+
+.band-inner .lede { margin: 0 0 18px }
+.band-inner .btn { margin-top: 10px }
+
+.band-code {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  padding: 24px 26px;
+  border-radius: var(--radius);
+}
+
+@media (max-width: 860px) {
+  .band-inner { grid-template-columns: 1fr; gap: 32px }
+}
+
+@media (max-width: 760px) {
+  .hero { padding: 56px 0 52px }
+  .hero-cta { flex-direction: column; align-items: stretch }
+  .hero-cta .btn { justify-content: center }
+  .band-h2 { max-width: none }
+}

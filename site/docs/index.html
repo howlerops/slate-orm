@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Introduction — slate docs</title>
+<meta name="description" content="A record layer for SlateDB: typed schemas, secondary indexes, a cost-based planner and row-level security over an ordered key-value store on object storage." />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="../theme.css" />
+<link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <a class="brand" href="../index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">docs</span>
+  </a>
+  <nav class="site-nav">
+    <a href="index.html" aria-current="true">Docs</a>
+    <a href="../workbench.html">Workbench</a>
+    <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+  </nav>
+</header>
+
+<div class="doc-shell">
+
+  <aside class="doc-side" data-docs="sidebar"></aside>
+  <noscript>
+    <aside class="doc-side nav-fallback">
+      <h2 class="nav-section">Getting started</h2>
+      <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+        <li><a href="concepts.html">Five things to know first</a></li>
+      </ul>
+      <h2 class="nav-section">The database</h2>
+      <ul>
+        <li><a href="features.html">What it does</a></li>
+        <li><a href="storage.html">Keys, rows and indexes</a></li>
+        <li><a href="security.html">Security in the kernel</a></li>
+      </ul>
+      <h2 class="nav-section">Running it</h2>
+      <ul>
+        <li><a href="deployment.html">One writer, many readers</a></li>
+        <li><a href="clients.html">The three clients</a></li>
+      </ul>
+      <h2 class="nav-section">Honesty</h2>
+      <ul>
+        <li><a href="limits.html">What it is not</a></li>
+      </ul>
+    </aside>
+  </noscript>
+
+  <article class="doc-article" data-docs="article">
+    <p class="doc-kicker">Getting started</p>
+    <h1>A record layer, <em>not an ORM</em>.</h1>
+
+    <p>
+      slate puts typed schemas, secondary indexes, a cost-based query planner and
+      row-level security on top of <a href="https://slatedb.io">SlateDB</a> — an
+      LSM key-value store that lives on object storage. The closest blueprint is
+      FoundationDB's Record Layer. The derive macro is a surface; the value is in
+      the kernel underneath it, which owns the keyspace, index maintenance, and the
+      point where access policy is enforced.
+    </p>
+
+    <div class="aside">
+      <p>
+        <strong>Status: early.</strong> The Rust record layer works end to end and
+        is tested, including a cost-based planner, index-only scans, joins,
+        aggregates, read replicas and S3-compatible storage. There is a gRPC head
+        node with writer leadership, and typed Python, Go and TypeScript clients
+        over it, each tested against a real daemon and required to agree with the
+        other two. Nothing here is published to a package registry and none of it is
+        production-ready.
+      </p>
+    </div>
+
+    <h2>Where to start</h2>
+
+    <p>
+      If you want to <strong>see it work</strong>, the
+      <a href="../workbench.html">workbench</a> is the kernel compiled to
+      WebAssembly, running in your tab over 100,000 real New York taxi trips, with
+      the planner's <code>EXPLAIN</code> beside every answer. There is no server
+      behind it.
+    </p>
+
+    <p>
+      If you want to <strong>build something</strong>, the
+      <a href="quickstart.html">quickstart</a> starts a head node from one TOML file
+      and talks to it from three languages. Read
+      <a href="concepts.html">five things to know first</a> before the API surprises
+      you — the client libraries are small, and they make more sense once those are
+      clear.
+    </p>
+
+    <p>
+      If you want to know <strong>whether it is any good</strong>, start with
+      <a href="limits.html">what it is not</a>. The repository's
+      <code>docs/correctness.md</code> and <code>docs/performance.md</code> carry
+      the worked examples, including several where a claim was measured and then
+      withdrawn.
+    </p>
+
+    <h2>How it is put together</h2>
+
+    <p>
+      The interesting part of this project is not the feature list, it is the
+      evidence. Most of what is here exists because a test found it.
+    </p>
+    <ul class="plain">
+      <li><b>Oracles, not examples.</b> Every plan agrees with a full scan.
+        Every join algorithm agrees with every other. A grouped join agrees
+        with folding the join by hand. An n-way chain agrees with nested
+        two-way joins.</li>
+      <li><b>Mutation testing.</b> Changes are checked by breaking them and
+        requiring a <em>named</em> test to fail. Several tests exist only
+        because a mutation survived — and several of those revealed a test
+        whose assertion the bug also satisfied.</li>
+      <li><b>Crash and fault injection.</b> Torn writes, object-store failures,
+        overlapping writers across a lease change, and a restart suite over
+        the S3 path.</li>
+      <li><b>An adversarial security review</b>, with each finding either fixed
+        and pinned by a probe, or closed as inherent with the claim it
+        contradicted narrowed to the truth.</li>
+      <li><b>A ledger.</b> Every change carries an entry saying why it exists,
+        what it was weighed against, and where it stops. A pre-commit hook
+        refuses the commit otherwise.</li>
+    </ul>
+
+    <h2>Seeing it work</h2>
+
+    <p>
+      <a href="https://github.com/howlerops/slate-orm/tree/main/examples/explorer">The explorer</a>
+      is an interactive demo: one database, three SDKs, and a switch that swaps
+      which client library serves the request. A second switch changes
+      <em>who the database thinks is asking</em>, so a row policy visibly takes
+      rows away and a role without the right grant is refused — none of it
+      enforced by the demo.
+    </p>
+    <pre><code>git clone https://github.com/howlerops/slate-orm
+cd slate-orm/examples/explorer && ./run.sh</code></pre>
+    <p style="margin-top: 14px">
+      For the kernel alone, with nothing to install, the
+      <a href="index.html">workbench</a> runs it in your browser: the same
+      planner and executor, driven from a query editor, over a real month of
+      New York taxi trips, with the plan beside every answer.
+    </p>
+    <nav class="doc-pager" data-docs="pager"></nav>
+  </article>
+
+  <aside class="doc-toc"><div data-docs="toc"></div></aside>
+
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="../workbench.html">Workbench</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://slatedb.io">SlateDB</a>
+    </nav>
+    <p>Apache 2.0. Built on <a href="https://slatedb.io">SlateDB</a>, and not affiliated with it.</p>
+  </div>
+</footer>
+
+<script type="module" src="nav.js"></script>
+</body>
+</html>

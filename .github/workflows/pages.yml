@@ -78,10 +78,15 @@ jobs:
       # in production rather than a build error.
       - name: The pages exist
         run: |
-          for page in site/index.html site/docs.html site/style.css \
-                      site/workbench.js site/slate_wasm.js site/slate_wasm_bg.wasm; do
+          for page in site/index.html site/workbench.html site/theme.css \
+                      site/home.css site/style.css site/workbench.js \
+                      site/docs/index.html site/docs/docs.css site/docs/nav.js \
+                      site/slate_wasm.js site/slate_wasm_bg.wasm; do
             [ -s "$page" ] || { echo "$page is missing or empty" >&2; exit 1; }
           done
+          # Only `docs/index.html` is named above; the rest of the directory is
+          # `site/check/docs.py`'s business, and it checks every page against
+          # the one list that names them.
 
       - uses: actions/configure-pages@v5
         with:

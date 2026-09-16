@@ -1,0 +1,354 @@
+/*
+ * The shared look: tokens and the handful of components every page uses.
+ *
+ * The design language is the one at ironrain.app, which is the other site in
+ * this family — dark first, a gold accent, a serif for display and a sans for
+ * body, and a sticky frosted header over a 1080px column. Adopted rather than
+ * invented so that two projects by the same hand look like two projects by the
+ * same hand; the tokens below are the contract, and a page that wants a new
+ * colour should add a token here rather than a hex code in its own file.
+ *
+ * Dark is the default and light comes from `prefers-color-scheme` alone. There
+ * is deliberately no toggle: a toggle is a preference to store, a flash of the
+ * wrong theme to prevent, and a second code path — for a reader who has
+ * already told their operating system which one they want.
+ *
+ * `workbench.css` carries the application's own layout and loads *after* this.
+ */
+
+/* ── Fonts, self-hosted ─────────────────────────────────────── */
+/*
+ * Four files, 138 KB, committed. Not loaded from Google, and that is the whole
+ * reason they are here: a `<link>` to `fonts.googleapis.com` is a third-party
+ * request on every page view of a site that otherwise makes none, it fails
+ * behind a TLS-inspecting proxy, and it fails offline. The browser check caught
+ * the second of those the first time it ran against the new pages.
+ *
+ * Latin only. DM Sans and Fira Code are variable fonts, so one file each covers
+ * every weight this site uses; Instrument Serif needs two, upright and italic.
+ *
+ * `swap` rather than `block`: the text is the page, and a reader should get it
+ * in the system serif rather than wait. The fallbacks in `--font-*` are chosen
+ * so the reflow when the real face arrives is small rather than absent.
+ *
+ * The `url()`s are relative to *this stylesheet*, not to the page that loads
+ * it — which is why `site/docs/*.html` reaching `../theme.css` gets the same
+ * four files without a second copy of this block.
+ */
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url('fonts/dm-sans.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fira Code';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('fonts/fira-code.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/instrument-serif.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/instrument-serif-italic.woff2') format('woff2');
+}
+
+:root {
+  --bg:          #09090a;
+  --fg:          #f0ece2;
+  --muted:       #6e6860;
+  --muted-med:   #9a9088;
+
+  --gold:        #c49b21;
+  --gold-bright: #d4b820;
+  --gold-light:  #d4c066;
+  --gold-dark:   #9a7a18;
+  --gold-gradient: linear-gradient(135deg, #d4c066, #c49b21, #9a7a18);
+  --gold-dim:    rgba(196, 155, 33, 0.12);
+  --gold-border: rgba(196, 155, 33, 0.28);
+  --gold-glow:   rgba(196, 155, 33, 0.07);
+
+  --card:        #111013;
+  --card-hover:  #181620;
+  --border:      #1e1c22;
+  --border-sub:  #141318;
+  --ink:         #130e00;   /* text on a gold button */
+
+  --font-display:  'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-sans:     'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:     ui-monospace, 'SF Mono', 'Fira Code', Menlo, 'Courier New', monospace;
+  --font-wordmark: 'Fira Code', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --max-w:     1080px;
+  --radius:    18px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+  --sec-pad:   112px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:         #fafaf7;
+    --fg:         #0e0d0b;
+    --muted:      #706860;
+    --muted-med:  #908880;
+    --card:       #f1ede6;
+    --card-hover: #e8e4dc;
+    --border:     #ddd9d0;
+    --border-sub: #e8e4dc;
+    --gold-dim:   rgba(196, 155, 33, 0.10);
+    --gold-glow:  rgba(196, 155, 33, 0.05);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box }
+
+html { scroll-behavior: smooth }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.wrap {
+  max-width: var(--max-w);
+  margin-inline: auto;
+  padding-inline: 28px;
+}
+
+a { color: var(--gold); text-decoration: none; transition: opacity .15s }
+a:hover { opacity: .75; text-decoration: underline }
+
+img { max-width: 100%; display: block }
+
+code {
+  font-family: var(--font-mono);
+  font-size: .88em;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--gold);
+  padding: .1em .38em;
+  border-radius: var(--radius-xs);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 18px 20px;
+  overflow-x: auto;
+}
+/* A code block's own <code> is not an inline chip: no second border, no gold. */
+pre code {
+  background: none;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Anchored headings clear the sticky header rather than hiding under it. */
+[id] { scroll-margin-top: 84px }
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+  padding-bottom: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  border-bottom: 1px solid var(--border-sub);
+  /* Full bleed, with the *content* aligned to the same column as every
+     section below. `100%` and not `100vw`: a classic scrollbar gutter is
+     inside one and outside the other, so `100vw` puts the header a few pixels
+     off from the page on every platform that reserves one. */
+  padding-inline: max(20px, calc((100% - var(--max-w)) / 2 + 28px));
+}
+
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.brand:hover { opacity: 1; text-decoration: none }
+
+.brand-mark {
+  font-family: var(--font-wordmark);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  background: var(--gold-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.brand-what {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.site-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap }
+.site-nav a {
+  padding: 6px 10px;
+  border-radius: var(--radius-xs);
+  color: var(--muted-med);
+  font-size: 14px;
+  font-weight: 500;
+}
+.site-nav a:hover,
+.site-nav a[aria-current] {
+  color: var(--fg);
+  background: var(--card);
+  opacity: 1;
+  text-decoration: none;
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.15px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: border-color .18s, background .18s, box-shadow .18s, opacity .15s;
+}
+.btn:hover {
+  border-color: var(--gold-border);
+  background: var(--gold-dim);
+  opacity: 1;
+  text-decoration: none;
+}
+.btn.primary {
+  background: var(--gold);
+  color: var(--ink);
+  border-color: var(--gold);
+  font-weight: 700;
+}
+.btn.primary:hover {
+  background: var(--gold-bright);
+  border-color: var(--gold-bright);
+  box-shadow: 0 4px 24px rgba(196, 155, 33, .32);
+}
+.btn.ghost { background: var(--card) }
+.btn.ghost:hover { background: var(--card-hover) }
+
+/* ── Section furniture ──────────────────────────────────────── */
+
+.eyebrow {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 14px;
+}
+
+.display {
+  font-family: var(--font-display);
+  line-height: 1.06;
+  letter-spacing: -.02em;
+  margin: 0;
+}
+.display em { font-style: italic; color: var(--gold) }
+
+.lede {
+  font-size: clamp(16px, 2vw, 19px);
+  color: var(--muted-med);
+  line-height: 1.65;
+  max-width: 62ch;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 26px 26px 22px;
+  transition: border-color .18s, background .18s;
+}
+.card:hover { border-color: var(--gold-border) }
+.card h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin: 0 0 10px;
+}
+.card p { margin: 0 0 12px; color: var(--muted-med); font-size: 15px }
+.card p:last-child { margin-bottom: 0 }
+.card strong { color: var(--fg); font-weight: 600 }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding-top: 28px;
+  padding-bottom: 44px;
+  margin-top: 64px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.site-footer nav { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px }
+.site-footer nav a { color: var(--muted-med) }
+.site-footer p { margin: 0; max-width: 70ch }
+
+/* ── Narrow ─────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  :root { --sec-pad: 72px }
+  .wrap { padding-inline: 20px }
+  .card-grid { grid-template-columns: 1fr }
+  .site-header { flex-wrap: wrap; gap: 8px }
+}

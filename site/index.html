@@ -3,160 +3,224 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>slate — query workbench</title>
-<meta name="description" content="A record layer over an LSM key-value store, compiled to WebAssembly and running in your browser: write a query, see the rows, and see the plan the cost-based planner chose for it." />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%236cb6f2'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%230d1016'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%230d1016'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%230d1016'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="style.css" />
+<title>slate — a record layer for SlateDB</title>
+<meta name="description" content="Typed schemas, secondary indexes, a cost-based query planner and row-level security over an ordered key-value store on object storage. Run a query against it in your browser." />
+<meta property="og:title" content="slate — a record layer for SlateDB" />
+<meta property="og:description" content="Typed schemas, secondary indexes, a cost-based query planner and row-level security over an ordered key-value store on object storage. The kernel compiles to WebAssembly, so the front page is a real database." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="home.css" />
 </head>
-<body class="app">
+<body>
 
-<header class="bar">
-  <span class="name">slate</span>
-  <span class="what">query workbench</span>
-  <span class="engine" data-app="engine">starting…</span>
-  <div class="modes" role="tablist" aria-label="view">
-    <button type="button" role="tab" data-mode="query" aria-selected="true">Query</button>
-    <button type="button" role="tab" data-mode="storage" aria-selected="false">Storage</button>
-  </div>
-  <nav>
-    <a href="docs.html" class="button primary">Docs</a>
-    <a href="https://github.com/howlerops/slate-orm" class="button">GitHub</a>
+<header class="site-header">
+  <a class="brand" href="index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">record layer</span>
+  </a>
+  <nav class="site-nav">
+    <a href="workbench.html">Workbench</a>
+    <a href="docs/index.html">Docs</a>
+    <a href="docs/quickstart.html">Quickstart</a>
+    <a href="https://github.com/howlerops/slate-orm">GitHub</a>
   </nav>
 </header>
 
-<main class="workbench">
-  <aside class="tree">
-    <div class="tree-section">
-      <h2>Database</h2>
-      <div data-app="tables" class="tree-tables"></div>
-    </div>
+<main>
 
-    <div class="tree-section">
-      <h2>Try one</h2>
-      <ul class="examples" data-app="examples"></ul>
-    </div>
+  <section class="hero">
+    <div class="wrap">
+      <span class="hero-badge"><span class="hero-dot"></span> Early — works end to end, published nowhere</span>
 
-    <div class="tree-section tree-note">
-      <p>
-        This is <b>slate's own kernel</b> compiled to WebAssembly — the
-        planner, the executor and an in-memory store, running in this tab.
-        There is no server.
+      <h1 class="display hero-h1">
+        Rows, indexes and a planner,<br />
+        <em>on top of object storage.</em>
+      </h1>
+
+      <p class="lede hero-lede">
+        A <strong>record layer</strong> for <a href="https://slatedb.io">SlateDB</a>: typed
+        schemas, secondary indexes maintained in the same transaction as the row, a
+        cost-based query planner, and row-level security enforced in the kernel rather
+        than by a wrapper. The closest blueprint is FoundationDB's Record Layer, not an ORM.
       </p>
-      <p>
-        The data is real: <b>100,000 New York yellow-taxi trips</b> from
-        January 2024, sampled from the TLC's published month, joined to their
-        own 265-zone lookup. Fares, tips and missing passenger counts are as
-        published.
-      </p>
-      <p>
-        slate has no SQL. What you type is parsed into its <b>query spec</b>,
-        the same structure the Python, Go and TypeScript clients send, and the
-        <b>Spec</b> tab shows what your statement compiled to.
-      </p>
-      <p>
-        Writes land in this tab only. Reload, or press <b>Reset data</b>, to
-        get the fixture back.
-      </p>
-      <p>
-        The <b>Storage</b> tab shows what is actually stored: every row and
-        index entry as a key, and the real S3 bucket those keys land in.
-      </p>
-    </div>
-  </aside>
 
-  <section class="console">
-    <div class="toolbar">
-      <button type="button" class="button primary" data-app="run">Run</button>
-      <span class="key">⌘ / Ctrl + ↵</span>
-      <button type="button" class="button" data-app="reset">Reset data</button>
-      <span class="status" data-app="status">loading the database…</span>
-    </div>
-
-    <textarea
-      data-app="editor"
-      class="editor"
-      spellcheck="false"
-      autocapitalize="off"
-      autocomplete="off"
-      aria-label="SQL editor"
-    >-- 100,000 real New York taxi trips, January 2024.
-SELECT pickup_zone, count(*) FROM trips
-  GROUP BY pickup_zone ORDER BY count(*) DESC LIMIT 10</textarea>
-
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="results" aria-selected="true">Results</button>
-      <button type="button" role="tab" data-tab="plan" aria-selected="false">Plan</button>
-      <button type="button" role="tab" data-tab="spec" aria-selected="false">Spec</button>
-      <button type="button" role="tab" data-tab="log" aria-selected="false">Log</button>
-    </div>
-
-    <div class="panes">
-      <div data-pane="results" class="pane">
-        <div class="grid" data-app="grid"></div>
+      <div class="hero-cta">
+        <a class="btn primary" href="workbench.html">Open the workbench →</a>
+        <a class="btn ghost" href="docs/index.html">Read the docs</a>
       </div>
 
-      <div data-pane="plan" class="pane" hidden>
-        <div class="badges" data-app="badges"></div>
-        <pre data-app="plan"></pre>
-        <p class="note" data-app="plannote"></p>
-      </div>
+      <ul class="chips">
+        <li>Rust</li>
+        <li>gRPC head node</li>
+        <li>Python · Go · TypeScript</li>
+        <li>S3-compatible</li>
+        <li>No <code>unsafe</code></li>
+      </ul>
+    </div>
+  </section>
 
-      <div data-pane="spec" class="pane" hidden>
-        <p class="note">
-          What the statement compiled to. This is the query an SDK sends over
-          gRPC: the editor is a front end, not a second engine.
+  <section class="band" id="try">
+    <div class="wrap band-inner">
+      <div>
+        <span class="eyebrow">Run it now</span>
+        <h2 class="display band-h2">The front page <em>is</em> the database.</h2>
+        <p class="lede">
+          The kernel compiles to WebAssembly, so the planner and the executor run in your
+          tab with no server behind them. The fixture is <strong>100,000 real New York
+          yellow-taxi trips</strong> from January 2024, joined to their own 265-zone
+          lookup — fares, tips and missing passenger counts as published.
         </p>
-        <pre data-app="spec"></pre>
+        <p class="lede">
+          Every answer comes with the plan the cost model chose for it, and the
+          <strong>Spec</strong> tab shows what your statement compiled to: the same
+          structure the three clients send over gRPC.
+        </p>
+        <a class="btn primary" href="workbench.html">Open the workbench →</a>
       </div>
+      <pre class="band-code"><code>SELECT pickup_zone, count(*) FROM trips
+  GROUP BY pickup_zone
+  ORDER BY count(*) DESC
+  LIMIT 10
 
-      <div data-pane="log" class="pane" hidden>
-        <div class="log" data-app="log"></div>
+pickup_zone   count(*)
+        132      4,837
+        161      4,832
+        237      4,789
+
+Table Scan on trips  (rows=100000 cost=13.50 decodes=[1])</code></pre>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <span class="eyebrow">What it does</span>
+      <h2 class="display band-h2">A key's encoding <em>is</em> its index.</h2>
+      <div class="card-grid" style="margin-top: 44px">
+
+        <div class="card">
+          <h3>One ordered keyspace</h3>
+          <p>
+            Rows under one prefix, secondary index entries under another. There is no
+            separate index structure, and <strong>index entries are written in the same
+            transaction as the row</strong> — no background builder to fall behind, no
+            repair path to get wrong.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>A planner that costs</h3>
+          <p>
+            Table scans, index scans, point gets, ranges from <code>IN</code> lists and
+            <code>LIKE</code> prefixes, covering scans that never touch a row, and
+            histograms for range selectivity. <code>EXPLAIN</code> says which it picked.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Joins, aggregates, grouping</h3>
+          <p>
+            Hash and index nested-loop, cost-chosen, all four join types, chains of three
+            or more tables, grouped joins and grouped chains, ordered and limited over
+            groups, and <code>HAVING</code>.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Security in the kernel</h3>
+          <p>
+            Policies are compiled into the predicate the executor evaluates and into the
+            bounds it scans — not checked by a wrapper a caller could step around. Every
+            read and write takes a security context, so there is <strong>no
+            unauthenticated door</strong>.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>One writer, many readers</h3>
+          <p>
+            A gRPC head node holds a writer lease over the object store; replicas serve
+            reads and a session's watermark keeps a caller's reads from going backwards.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Three clients that must agree</h3>
+          <p>
+            Python, Go and TypeScript, each tested against a real daemon — and a
+            conformance runner that sends the same requests to all three and requires
+            <strong>byte-identical</strong> answers. It found three divergences on its
+            first run.
+          </p>
+        </div>
+
       </div>
     </div>
   </section>
-  <section class="storage" hidden>
-    <div class="storage-head">
-      <h2>Every byte this database holds</h2>
-      <p>
-        Two views of the same data. The <b>keyspace</b> is what the record
-        layer writes: one ordered key space, rows under one prefix and
-        secondary index entries under another — there is no separate index
-        structure. The <b>bucket</b> is what an operator sees: SlateDB batches
-        those keys into SSTs, a write-ahead log and a manifest, and the object
-        store holds files.
+
+  <section class="band" id="honest">
+    <div class="wrap">
+      <span class="eyebrow">Where it stops</span>
+      <h2 class="display band-h2">The things it is <em>not</em>.</h2>
+      <p class="lede" style="margin-top: 18px">
+        Stated here rather than discovered later. The full list, with what each one would
+        cost to close, is in <a href="docs/limits.html">the docs</a> and in the
+        repository's <code>README</code>.
       </p>
-      <p class="note">
-        The keyspace below is read live from the store in this tab, so it moves
-        when you insert a row. The bucket listing is a real one, captured by
-        seeding this same 100,000-trip sample into a real SlateDB store over a
-        real object store —
-        <code>cargo run -p slate-slatedb --example bucket_layout</code> — and
-        shipped with the page. There is no SlateDB in a browser.
-      </p>
-    </div>
-    <div class="storage-panes">
-      <div class="storage-col">
-        <div class="storage-caption">keyspace <span data-app="keytotal"></span></div>
-        <div class="tree-storage" data-app="keyspace"></div>
-      </div>
-      <div class="storage-col">
-        <div class="storage-caption">bucket <span data-app="buckettotal"></span></div>
-        <div class="bucket" data-app="bucket"></div>
+      <div class="card-grid" style="margin-top: 40px">
+        <div class="card">
+          <h3>Not published anywhere</h3>
+          <p>
+            Nothing here is on a package registry, and none of it is production-ready. It
+            works end to end and is tested; that is a different claim.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Not SQL</h3>
+          <p>
+            The wire carries a query <em>spec</em>, not a string. The workbench's editor is
+            a front end that compiles a SQL subset to that spec — no subqueries, no
+            <code>UNION</code>.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Not one node's worth of write throughput</h3>
+          <p>
+            One writer holds the lease. Readers scale; writes do not, and a promotion is a
+            restart rather than a handover in place.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Not measured everywhere it runs</h3>
+          <p>
+            The cost model was calibrated against a real S3 server at 200,000 rows.
+            Nothing has been measured at a size where compaction, tiering and a cold cache
+            all matter at once.
+          </p>
+        </div>
       </div>
     </div>
   </section>
+
 </main>
 
-<noscript>
-  <div class="fallback">
+<footer class="site-footer">
+  <div class="wrap">
+    <nav>
+      <a href="workbench.html">Workbench</a>
+      <a href="docs/index.html">Docs</a>
+      <a href="docs/quickstart.html">Quickstart</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://slatedb.io">SlateDB</a>
+    </nav>
     <p>
-      The workbench needs JavaScript and WebAssembly. The
-      <a href="docs.html">docs</a> describe what it would have shown, and the
-      quickstart there runs the same queries against a real head node.
+      Built on <a href="https://slatedb.io">SlateDB</a>. Not affiliated with it. The taxi
+      data is the NYC TLC's published January 2024 yellow-trip month, sampled.
     </p>
   </div>
-</noscript>
+</footer>
 
-<script type="module" src="workbench.js"></script>
 </body>
 </html>

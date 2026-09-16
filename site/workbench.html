@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>slate — query workbench</title>
+<meta name="description" content="A record layer over an LSM key-value store, compiled to WebAssembly and running in your browser: write a query, see the rows, and see the plan the cost-based planner chose for it." />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="app">
+
+<header class="bar">
+  <a class="brand" href="index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">workbench</span>
+  </a>
+  <span class="engine" data-app="engine">starting…</span>
+  <div class="modes" role="tablist" aria-label="view">
+    <button type="button" role="tab" data-mode="query" aria-selected="true">Query</button>
+    <button type="button" role="tab" data-mode="storage" aria-selected="false">Storage</button>
+  </div>
+  <nav>
+    <a href="docs/index.html" class="button primary">Docs</a>
+    <a href="https://github.com/howlerops/slate-orm" class="button">GitHub</a>
+  </nav>
+</header>
+
+<main class="workbench">
+  <aside class="tree">
+    <div class="tree-section">
+      <h2>Database</h2>
+      <div data-app="tables" class="tree-tables"></div>
+    </div>
+
+    <div class="tree-section">
+      <h2>Try one</h2>
+      <ul class="examples" data-app="examples"></ul>
+    </div>
+
+    <div class="tree-section tree-note">
+      <p>
+        This is <b>slate's own kernel</b> compiled to WebAssembly — the
+        planner, the executor and an in-memory store, running in this tab.
+        There is no server.
+      </p>
+      <p>
+        The data is real: <b>100,000 New York yellow-taxi trips</b> from
+        January 2024, sampled from the TLC's published month, joined to their
+        own 265-zone lookup. Fares, tips and missing passenger counts are as
+        published.
+      </p>
+      <p>
+        slate has no SQL. What you type is parsed into its <b>query spec</b>,
+        the same structure the Python, Go and TypeScript clients send, and the
+        <b>Spec</b> tab shows what your statement compiled to.
+      </p>
+      <p>
+        Writes land in this tab only. Reload, or press <b>Reset data</b>, to
+        get the fixture back.
+      </p>
+      <p>
+        The <b>Storage</b> tab shows what is actually stored: every row and
+        index entry as a key, and the real S3 bucket those keys land in.
+      </p>
+    </div>
+  </aside>
+
+  <section class="console">
+    <div class="toolbar">
+      <button type="button" class="button primary" data-app="run">Run</button>
+      <span class="key">⌘ / Ctrl + ↵</span>
+      <button type="button" class="button" data-app="reset">Reset data</button>
+      <span class="status" data-app="status">loading the database…</span>
+    </div>
+
+    <textarea
+      data-app="editor"
+      class="editor"
+      spellcheck="false"
+      autocapitalize="off"
+      autocomplete="off"
+      aria-label="SQL editor"
+    >-- 100,000 real New York taxi trips, January 2024.
+SELECT pickup_zone, count(*) FROM trips
+  GROUP BY pickup_zone ORDER BY count(*) DESC LIMIT 10</textarea>
+
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="results" aria-selected="true">Results</button>
+      <button type="button" role="tab" data-tab="plan" aria-selected="false">Plan</button>
+      <button type="button" role="tab" data-tab="spec" aria-selected="false">Spec</button>
+      <button type="button" role="tab" data-tab="log" aria-selected="false">Log</button>
+    </div>
+
+    <div class="panes">
+      <div data-pane="results" class="pane">
+        <div class="grid" data-app="grid"></div>
+      </div>
+
+      <div data-pane="plan" class="pane" hidden>
+        <div class="badges" data-app="badges"></div>
+        <pre data-app="plan"></pre>
+        <p class="note" data-app="plannote"></p>
+      </div>
+
+      <div data-pane="spec" class="pane" hidden>
+        <p class="note">
+          What the statement compiled to. This is the query an SDK sends over
+          gRPC: the editor is a front end, not a second engine.
+        </p>
+        <pre data-app="spec"></pre>
+      </div>
+
+      <div data-pane="log" class="pane" hidden>
+        <div class="log" data-app="log"></div>
+      </div>
+    </div>
+  </section>
+  <section class="storage" hidden>
+    <div class="storage-head">
+      <h2>Every byte this database holds</h2>
+      <p>
+        Two views of the same data. The <b>keyspace</b> is what the record
+        layer writes: one ordered key space, rows under one prefix and
+        secondary index entries under another — there is no separate index
+        structure. The <b>bucket</b> is what an operator sees: SlateDB batches
+        those keys into SSTs, a write-ahead log and a manifest, and the object
+        store holds files.
+      </p>
+      <p class="note">
+        The keyspace below is read live from the store in this tab, so it moves
+        when you insert a row. The bucket listing is a real one, captured by
+        seeding this same 100,000-trip sample into a real SlateDB store over a
+        real object store —
+        <code>cargo run -p slate-slatedb --example bucket_layout</code> — and
+        shipped with the page. There is no SlateDB in a browser.
+      </p>
+    </div>
+    <div class="storage-panes">
+      <div class="storage-col">
+        <div class="storage-caption">keyspace <span data-app="keytotal"></span></div>
+        <div class="tree-storage" data-app="keyspace"></div>
+      </div>
+      <div class="storage-col">
+        <div class="storage-caption">bucket <span data-app="buckettotal"></span></div>
+        <div class="bucket" data-app="bucket"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<noscript>
+  <div class="fallback">
+    <p>
+      The workbench needs JavaScript and WebAssembly. The
+      <a href="docs/index.html">docs</a> describe what it would have shown, and the
+      quickstart there runs the same queries against a real head node.
+    </p>
+  </div>
+</noscript>
+
+<script type="module" src="workbench.js"></script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Keys, rows and indexes — slate docs</title>
+<meta name="description" content="One ordered keyspace: rows under one prefix, secondary index entries under another, and index maintenance atomic with the write." />
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23c49b21'/%3E%3Crect x='3' y='4' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23130e00'/%3E%3Crect x='3' y='10' width='6' height='2' fill='%23130e00'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="../theme.css" />
+<link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <a class="brand" href="../index.html">
+    <span class="brand-mark">slate</span>
+    <span class="brand-what">docs</span>
+  </a>
+  <nav class="site-nav">
+    <a href="index.html" aria-current="true">Docs</a>
+    <a href="../workbench.html">Workbench</a>
+    <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+  </nav>
+</header>
+
+<div class="doc-shell">
+
+  <aside class="doc-side" data-docs="sidebar"></aside>
+  <noscript>
+    <aside class="doc-side nav-fallback">
+      <h2 class="nav-section">Getting started</h2>
+      <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+        <li><a href="concepts.html">Five things to know first</a></li>
+      </ul>
+      <h2 class="nav-section">The database</h2>
+      <ul>
+        <li><a href="features.html">What it does</a></li>
+        <li><a href="storage.html">Keys, rows and indexes</a></li>
+        <li><a href="security.html">Security in the kernel</a></li>
+      </ul>
+      <h2 class="nav-section">Running it</h2>
+      <ul>
+        <li><a href="deployment.html">One writer, many readers</a></li>
+        <li><a href="clients.html">The three clients</a></li>
+      </ul>
+      <h2 class="nav-section">Honesty</h2>
+      <ul>
+        <li><a href="limits.html">What it is not</a></li>
+      </ul>
+    </aside>
+  </noscript>
+
+  <article class="doc-article" data-docs="article">
+    <p class="doc-kicker">The database</p>
+    <h1>A key's encoding <em>is</em> its index.</h1>
+
+    <p>
+      Everything slate stores is one ordered keyspace. There is no separate index
+      structure, and that is the decision every other one follows from.
+    </p>
+
+    <pre><code>row entry     0x01 &lt;table id : u32 BE&gt; &lt;primary key tuple&gt;
+index entry   0x02 &lt;index id : u32 BE&gt; &lt;tenant?&gt; &lt;indexed tuple&gt; &lt;primary key tuple&gt;
+schema state  0x03 &lt;table id : u32 BE&gt;</code></pre>
+
+    <h3>Rows on a KV store</h3>
+      <p>
+        An order-preserving tuple codec puts rows and secondary index entries
+        in one keyspace. Index maintenance is atomic with the write.
+      </p>
+
+    <h2>Byte order is value order</h2>
+
+    <p>
+      <code>slate-tuple</code> guarantees it, and two properties do the work. Both
+      were found by property testing before either had callers.
+    </p>
+
+    <ul>
+      <li>
+        <strong>Every element's encoding is prefix-free.</strong> With a one-byte
+        string terminator, <code>enc("\xff")</code> is a proper prefix of
+        <code>enc("\xff\0")</code>. Ascending order survives that, but a descending
+        column then fails to reverse them, and in a mixed-direction key the
+        <em>following</em> element's bytes can decide the comparison outright. The
+        terminator is two bytes so no element can prefix another, which makes
+        "complement the bytes" an exact order reversal.
+      </li>
+      <li>
+        <strong>Integer encodings are canonical.</strong> A non-minimal length is
+        rejected on decode; accepting it would give one value two encodings and
+        silently break the uniqueness of a unique index.
+      </li>
+    </ul>
+
+    <h2>Unique indexes collide by construction</h2>
+
+    <p>
+      A unique index with no null in its indexed values leaves the primary key out
+      of the key and puts it in the value. Two writers racing for the same slot then
+      write the <em>same key</em>, so the store's own write-write conflict detection
+      picks a winner — no read-check, and no dependence on the isolation level. A
+      null puts the primary key back into the key, which gives the SQL behaviour
+      that nulls do not collide with each other.
+    </p>
+
+    <p>
+      The read the record store does before a unique write exists only to produce a
+      useful error instead of a bare retry.
+    </p>
+
+    <h2>See it for yourself</h2>
+
+    <p>
+      The workbench's <strong>Storage</strong> tab shows both halves: the keyspace
+      read live from the store in your tab, so it moves when you insert a row, and a
+      real bucket listing captured by seeding the same 100,000-trip sample into a
+      real SlateDB store over a real object store.
+      <a href="../workbench.html">Open it</a>.
+    </p>
+    <nav class="doc-pager" data-docs="pager"></nav>
+  </article>
+
+  <aside class="doc-toc"><div data-docs="toc"></div></aside>
+
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="../workbench.html">Workbench</a>
+      <a href="https://github.com/howlerops/slate-orm">GitHub</a>
+      <a href="https://slatedb.io">SlateDB</a>
+    </nav>
+    <p>Apache 2.0. Built on <a href="https://slatedb.io">SlateDB</a>, and not affiliated with it.</p>
+  </div>
+</footer>
+
+<script type="module" src="nav.js"></script>
+</body>
+</html>
