@@ -49,7 +49,10 @@ export const SECTIONS = [
   },
   {
     title: "Honesty",
-    pages: [["limits.html", "What it is not"]],
+    pages: [
+      ["limits.html", "What it is not"],
+      ["roadmap.html", "Against the other ORMs"],
+    ],
   },
 ];
 
