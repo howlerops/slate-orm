@@ -1,11 +1,16 @@
 # Publish `site/` to GitHub Pages.
 #
-# Two static pages and a stylesheet with no build step, so this uploads the
-# directory as it stands. The quickstarts on those pages are *executed* by the
-# `quickstarts` job in `ci.yml` — this workflow deliberately does not repeat
-# that check, but it does depend on it having run: publishing a landing page
-# whose first code block does not work is the failure the checker exists for,
-# and it is worth saying out loud that the guard lives one workflow over.
+# Publishes at https://howlerops.github.io/slate-orm/ — a landing page, the
+# workbench, nine documentation pages, three stylesheets and four self-hosted
+# fonts. No build step for any of it except the workbench's wasm, built below,
+# so this uploads the directory as it stands.
+#
+# The quickstarts on those pages are *executed* by the `quickstarts` job in
+# `ci.yml`, and the pages are checked against each other by `docs.py` in the
+# same workflow — this one deliberately does not repeat either, but it does
+# depend on them having run: publishing a page whose first code block does not
+# work is the failure those checkers exist for, and it is worth saying out loud
+# that the guards live one workflow over.
 #
 # Enables Pages itself on the first run (`enablement: true` below), so a fresh
 # clone of this repository does not need somebody to find Settings → Pages
@@ -23,8 +28,8 @@ name: Pages
 # would have said so. The same shape of filter, in `release.yml`, would have
 # made a tagged release upload nothing.
 #
-# Publishing three static files costs seconds and is idempotent. A deploy that
-# silently does not happen costs a stale site nobody notices.
+# Publishing a directory of static files costs seconds and is idempotent. A
+# deploy that silently does not happen costs a stale site nobody notices.
 on:
   push:
     branches: [main]
