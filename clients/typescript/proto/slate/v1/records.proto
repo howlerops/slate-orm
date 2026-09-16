@@ -1350,6 +1350,86 @@ message LeadershipStatus {
   string stepped_down_because = 4;
 }
 
+// ── Relationships ────────────────────────────────────────────────────────────
+//
+// One relationship, for many parents, in one read.
+//
+// The N+1 this replaces is the reason the record layer has `load_related`, and
+// until now that was reachable only from Rust: a Python, Go or TypeScript
+// caller who wanted an author's books wrote the two-step fetch by hand, and the
+// one who forgot wrote the loop.
+//
+// # Why there is no relationship declaration
+//
+// A relationship is named by the **foreign key that already declares it**,
+// rather than by a new catalog entry. `books.author_id -> authors` is a foreign
+// key; "an author's books" is that key read backwards and "a book's author" is
+// it read forwards. Adding a second declaration of the same fact would create
+// the possibility of the two disagreeing, and a catalog that says a
+// relationship exists where no constraint enforces it describes rows the
+// database will not keep.
+//
+// The cost is that a relationship *not* backed by a foreign key cannot be
+// expressed here, and the Rust `Related` trait does allow one. That divergence
+// is real and is written up in `docs/orm-comparison.md`.
+message Relation {
+  // The table that holds the foreign key — always the child, whichever
+  // direction is being read.
+  string table = 1;
+  // The key's name on that table, as the catalog spells it.
+  string foreign_key = 2;
+
+  enum Direction {
+    DIRECTION_UNSPECIFIED = 0;
+    // The children: rows of `table` whose key matches the parents. `authors`
+    // to `books`, a has-many.
+    CHILDREN = 1;
+    // The parents: rows of the key's parent table matching the children's key
+    // values. `books` to `authors`, a belongs-to. `table` is still the child.
+    PARENTS = 2;
+  }
+  Direction direction = 3;
+}
+
+message RelatedRequest {
+  string transaction = 1;
+  Relation relation = 2;
+  // The relating value of each parent row, in the caller's own order.
+  //
+  // Duplicates are expected and are the point: two books by one author send
+  // `1, 1`, the server reads that key once, and the response carries one group
+  // the caller maps both books onto. Sending the caller's order rather than a
+  // deduplicated set keeps the request honest about how many rows are being
+  // resolved, which is what the read-count assertion in the conformance runner
+  // is measuring against.
+  repeated Value keys = 3;
+  Freshness freshness = 4;
+  // See `SchemaCheck`, against the table the rows come back from — which is
+  // the child for `CHILDREN` and the parent for `PARENTS`.
+  SchemaCheck schema = 5;
+}
+
+// Rows grouped by the value that related them, not repeated per parent.
+//
+// Two parents sharing a key get one group between them. Repeating the rows
+// would undo on the response the saving the deduplicated read just made, which
+// on a has-many over a popular parent is most of the bytes.
+message RelatedResponse {
+  message Group {
+    // The relating value these rows matched.
+    Value key = 1;
+    // The rows, in the related table's own order.
+    repeated Row rows = 2;
+  }
+  // One entry per *distinct* key that matched something. A key that matched
+  // nothing is absent rather than present-and-empty: the caller is mapping its
+  // own parents onto this, and "no group" and "empty group" mean the same
+  // thing to that loop.
+  repeated Group groups = 1;
+  ServedBy served_by = 2;
+  repeated string warnings = 3;
+}
+
 service Records {
   rpc Begin(BeginRequest) returns (BeginResponse);
   rpc Commit(CommitRequest) returns (CommitResponse);
@@ -1363,6 +1443,7 @@ service Records {
   rpc Query(QueryRequest) returns (stream QueryResponse);
   rpc Join(JoinRequest) returns (stream JoinResponse);
   rpc Aggregate(AggregateRequest) returns (stream AggregateResponse);
+  rpc Related(RelatedRequest) returns (RelatedResponse);
 
   rpc Explain(ExplainRequest) returns (ExplainResponse);
   rpc ExplainJoin(ExplainJoinRequest) returns (JoinExplainResponse);

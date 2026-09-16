@@ -15,6 +15,8 @@ export {
   type Leadership,
   type ComputedRow,
   type ComputedJoinedRow,
+  type Relation,
+  type Way,
 } from "./client.js";
 export { SlateError, isKind, LEADER_KEY, type Kind } from "./errors.js";
 export {
@@ -64,6 +66,7 @@ export {
   uuid,
   vector,
   valuesEqual,
+  valueKey,
   formatUuid,
 } from "./value.js";
 export {

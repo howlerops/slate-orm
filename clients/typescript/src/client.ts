@@ -15,7 +15,7 @@ import {
   joinToWire,
 } from "./join.js";
 import { type Query, queryToWire } from "./query.js";
-import { type Value, valueFromWire, valueToWire } from "./value.js";
+import { type Value, valueFromWire, valueKey, valueToWire } from "./value.js";
 
 /**
  * Who a request runs as.
@@ -379,6 +379,63 @@ export class Client {
  * sees that write. Without it a replica read can be served by a node that has
  * not caught up — correct, and surprising.
  */
+/**
+ * Which way a relationship is read.
+ *
+ * Both name the *same* foreign key, because a foreign key is the
+ * relationship: `shelves.library_id -> libraries` read forwards is a shelf's
+ * library, and read backwards is a library's shelves.
+ */
+export type Way = "children" | "parents";
+
+/**
+ * One relationship, named by the foreign key that already declares it.
+ *
+ * Nothing about the relationship is described here — a table and a key name go
+ * to the server, which resolves them against its catalog. A client that
+ * described it instead ("relate these two ordinals") could describe it
+ * differently from the next client and both be right, which is the divergence
+ * the conformance runner exists to catch.
+ */
+export interface Relation {
+  /** The table holding the foreign key. Always the child, either way. */
+  readonly on: string;
+  /** That key's name, as the catalog spells it. */
+  readonly through: string;
+  /** `"children"` for a library's shelves, `"parents"` for a shelf's library. */
+  readonly way?: Way;
+}
+
+function relationToWire(relation: Relation): Record<string, unknown> {
+  return {
+    table: relation.on,
+    foreignKey: relation.through,
+    direction: relation.way === "parents" ? "PARENTS" : "CHILDREN",
+  };
+}
+
+/** The response, grouped back onto the caller's own key order. */
+function relatedFromWire(response: unknown, keys: Value[]): Value[][][] {
+  const groups =
+    ((response as { groups?: unknown[] }).groups ?? []) as {
+      key?: unknown;
+      rows?: unknown[];
+    }[];
+
+  // Keyed on the decoded value rather than matched pairwise: a caller
+  // resolving a page of parents sends hundreds of keys, and a scan per key
+  // would make the one saved round trip quadratic on the way back out.
+  const byKey = new Map<string, Value[][]>();
+  for (const group of groups) {
+    byKey.set(
+      valueKey(valueFromWire(group.key)),
+      (group.rows ?? []).map(rowFromWire),
+    );
+  }
+  // Empty, not missing: the caller indexes this by its own loop counter.
+  return keys.map((key) => byKey.get(valueKey(key)) ?? []);
+}
+
 export class Session {
   readonly #client: Client;
   readonly #monotonic: boolean;
@@ -492,6 +549,59 @@ export class Session {
       freshness: this.#freshness(),
     });
     return new RowStream(stream, (sb) => this.#observeServedBy(sb));
+  }
+
+  /**
+   * Load one relationship for many parents, in a single read.
+   *
+   * Returns an array the same length as `keys`: entry `i` is the rows related
+   * to `keys[i]`, and a key with nothing related to it gets `[]` rather than
+   * being left out, so the result is indexable by the caller's own loop
+   * counter.
+   *
+   * Duplicate keys are expected and are the point: two shelves in one library
+   * send the same value twice, the server reads it once, and both map onto the
+   * one group that comes back. So this is one round trip whatever the number
+   * of parents, which is the reason it exists rather than a loop over `get`.
+   *
+   * `table` is the table the rows come back as — `relation.on` for children,
+   * and the key's parent for parents. It is named separately because the
+   * client decodes against it and does not hold the catalog.
+   */
+  related(table: string, relation: Relation, keys: Value[]): Promise<Value[][][]> {
+    return this.relatedIn(undefined, table, relation, keys);
+  }
+
+  /**
+   * @internal
+   *
+   * Both paths through one request rather than two nearly identical ones: the
+   * schema claim is attached by hand at every call site, and a second site
+   * that forgot it would simply not be checked. A mutation dropping it from a
+   * duplicated transaction path survived the whole suite, which is why there
+   * is no longer a duplicated transaction path.
+   */
+  async relatedIn(
+    transaction: string | undefined,
+    table: string,
+    relation: Relation,
+    keys: Value[],
+  ): Promise<Value[][][]> {
+    const request: Record<string, unknown> = {
+      relation: relationToWire(relation),
+      keys: keys.map(valueToWire),
+      schema: this.#client.claim(table),
+    };
+    // A transaction's reads go to the writer, which is already ahead of any
+    // floor this session could name.
+    if (transaction !== undefined) request["transaction"] = transaction;
+    else request["freshness"] = this.#freshness();
+
+    const response = await this.#client.call<unknown>("Related", request);
+    if (transaction === undefined) {
+      this.#observeServedBy((response as { servedBy?: unknown }).servedBy);
+    }
+    return relatedFromWire(response, keys);
   }
 
   /** Read joined rows. */
@@ -815,6 +925,14 @@ export class Transaction {
       query: queryToWire(query, this.#client.claim(query.table)),
     });
     return new RowStream(stream, () => {});
+  }
+
+  /**
+   * Load one relationship inside the transaction, seeing its uncommitted
+   * writes. Otherwise exactly {@link Session.related}.
+   */
+  related(table: string, relation: Relation, keys: Value[]): Promise<Value[][][]> {
+    return this.#session.relatedIn(this.#id, table, relation, keys);
   }
 }
 

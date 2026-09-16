@@ -168,3 +168,29 @@ export function formatUuid(value: Uint8Array): string {
     hex.slice(20, 32),
   ].join("-");
 }
+
+/**
+ * A string that is the same for two values exactly when they are the same
+ * value, for use as a `Map` key.
+ *
+ * The kind is part of it: `7` as an `i64` and `7` as a `u64` are different
+ * values to this server, and a key built from the number alone would collapse
+ * them into one — which is the same mistake the tagged union exists to stop.
+ *
+ * Not the serialised protobuf, which is what the Go and Python clients use: a
+ * `Value` arriving here has already been decoded, and re-encoding it to
+ * compare would mean carrying the wire shape around for no gain.
+ */
+export function valueKey(value: Value): string {
+  switch (value.kind) {
+    case "null":
+      return "null";
+    case "bytes":
+    case "uuid":
+      return `${value.kind}:${Buffer.from(value.value).toString("hex")}`;
+    case "vector":
+      return `vector:${value.value.join(",")}`;
+    default:
+      return `${value.kind}:${String(value.value)}`;
+  }
+}
