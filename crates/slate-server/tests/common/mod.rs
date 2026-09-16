@@ -404,8 +404,40 @@ pub fn head(
     replicas: Vec<Arc<dyn KvReadStore>>,
     leadership: Arc<Leadership>,
 ) -> Head<MemoryStore> {
-    Head::new(
+    head_with(
+        writer,
+        replicas,
+        leadership,
         HeadConfig::new(catalog(), security()),
+    )
+}
+
+/// A head node built from a configuration the caller has adjusted.
+///
+/// Exists for the tests that need a *limit* rather than the defaults — a
+/// ceiling is only testable by setting it low enough to reach, and a test that
+/// sent a thousand-and-first operation to reach the real one would be slow and
+/// would still not pin the message.
+/// The configuration `head` uses, for a test that wants to adjust it.
+pub fn config() -> HeadConfig {
+    HeadConfig::new(catalog(), security())
+}
+
+/// A leadership that has already won its campaign.
+pub async fn leader() -> Arc<Leadership> {
+    let leadership = Leadership::new(Arc::new(AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+    leadership
+}
+
+pub fn head_with(
+    writer: Arc<MemoryStore>,
+    replicas: Vec<Arc<dyn KvReadStore>>,
+    leadership: Arc<Leadership>,
+    config: HeadConfig,
+) -> Head<MemoryStore> {
+    Head::new(
+        config,
         writer,
         replicas,
         leadership,

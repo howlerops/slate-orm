@@ -494,3 +494,53 @@ async fn a_batch_is_one_round_trip() {
         "batched {batched:?} against {alone:?} singly — batching should not cost more"
     );
 }
+
+/// A batch over `max_batch_operations` is refused, and says both numbers.
+///
+/// The cap had no test at all when it was added — a `Limits` field, a daemon
+/// config key and an `if`, none of which anything exercised. A limit nothing
+/// tests is a limit that can stop working without anyone noticing, which is
+/// the same class as the `protoc` guard that had never run.
+#[tokio::test]
+async fn a_batch_over_the_cap_is_refused() {
+    let leadership = common::leader().await;
+    let serving = common::serve(common::head_with(
+        Arc::new(MemoryStore::new()),
+        Vec::new(),
+        leadership,
+        common::config().with_limits(slate_server::Limits {
+            // Two rather than the real thousand: a ceiling is only testable by
+            // setting it low enough to reach, and sending a thousand and one
+            // operations would be slow and would pin nothing extra.
+            max_batch_operations: Some(2),
+            ..slate_server::Limits::default()
+        }),
+    ))
+    .await;
+    let mut client = serving.client().await;
+
+    // Two is allowed.
+    client
+        .batch(app(batch(
+            vec![insert(1), insert(2)],
+            pb::Atomicity::Independent,
+        )))
+        .await
+        .expect("a batch at the cap");
+
+    // Three is not, and the message names the cap and the size — a refusal
+    // that says only "too many" leaves the caller guessing at both.
+    let status = client
+        .batch(app(batch(
+            vec![insert(3), insert(4), insert(5)],
+            pb::Atomicity::Independent,
+        )))
+        .await
+        .expect_err("a batch over the cap should be refused");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(status.message().contains('2'), "{}", status.message());
+    assert!(status.message().contains('3'), "{}", status.message());
+
+    // And nothing from the refused batch landed.
+    assert_eq!(ids(&mut client).await, vec![1, 2]);
+}

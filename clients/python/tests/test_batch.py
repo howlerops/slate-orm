@@ -23,6 +23,7 @@ from slate import (
     DeleteWhere,
     InvalidRequest,
     Query,
+    Table,
     UpdateWhere,
     i64,
     u64,
@@ -158,21 +159,61 @@ def test_a_batch_carries_every_kind_of_write(client: Client) -> None:
 
 def test_a_batch_may_span_tables(client: Client) -> None:
     """Each operation names its own table, so its returned rows decode against
-    the right one — a single table on the result would be wrong for all but the
-    first."""
+    the right one.
+
+    The second operation is a `returning` delete on a *different* table, and
+    that is load-bearing: an implementation that decoded every row against the
+    first operation's table passes a batch where only one operation returns
+    anything. Found by a mutation that did exactly that and survived.
+    """
     from .fixture import USERS
 
+    # A user to delete, so the second operation has a row to return.
+    # tenant_id must be the caller's tenant and `owner` the caller: `users`
+    # carries a row policy, which is what caught the first draft of this.
+    client.insert(USERS, [(u64(1), u64(7_000_001), u64(1), "batched@example.test")])
+
+    w = DeleteWhere(USERS)
     b = Batch(Atomicity.INDEPENDENT)
     b.insert(DOCS, [_row(0)])
-    # `users` is keyed on (tenant_id, id), so both go in the key. The client
-    # checks the arity before sending, which is how the first draft of this
-    # test was caught.
-    b.delete(USERS, [[u64(1), u64(9_999_999)]])  # not there; a delete of nothing
+    b.delete_where(w.where(w.c.id.eq(u64(7_000_001))).returning())
     result = client.batch(b)
 
     assert [one.ok for one in result.outcomes] == [True, True]
     assert result.outcomes[0].written.affected == 1
-    assert result.outcomes[1].written.affected == 0
+    removed = result.outcomes[1].written
+    assert removed.affected == 1
+    # `email` exists on `users` and not on `docs`. A row decoded against the
+    # wrong table reads a different column here, or none.
+    assert removed.rows[0].get("email") == "batched@example.test"
+
+
+def test_the_schema_claim_rides_on_a_batched_write(client: Client) -> None:
+    """Attached per operation, and a misdeclared table is refused.
+
+    Found by a surviving mutation, and the same one survived in all three
+    clients — which makes it a blind spot rather than an oversight. It matters
+    as much here as anywhere: a batched insert whose claim is dropped is a
+    write the server cannot check the shape of.
+    """
+    from slate import Column, ValueType
+
+    renamed = Table(
+        "docs",
+        [
+            Column("id", ValueType.U64),
+            Column("sort", ValueType.STR),  # `kind`, misdeclared
+            Column("size", ValueType.I64),
+            Column("note", ValueType.STR),
+        ],
+        primary_key=["id"],
+    )
+
+    b = Batch(Atomicity.INDEPENDENT)
+    b.insert(renamed, [_row(0)])
+    with pytest.raises(InvalidRequest):
+        client.batch(b)
+    assert _mine(client) == [], "nothing was written on the way to being refused"
 
 
 def test_an_atomic_batch_joins_an_open_transaction(client: Client) -> None:

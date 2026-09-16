@@ -87,7 +87,23 @@ def main() -> int:
     client.wait_for_ready(timeout=30.0)
 
     # --- the rows arrived, all of them ------------------------------------
-    total = one_group(client, AggregateQuery(TRIPS).aggregate(Agg.count()))
+    #
+    # `Freshness.latest()`, and it is load-bearing rather than tidy. This
+    # deployment declares two replicas that poll on an interval, so a count
+    # with no freshness demand may be served by one that has not yet seen the
+    # loader's last chunk — and then this check reports data loss that did not
+    # happen. It did exactly that in CI on 2026-09-16: 18,000 against 20,000,
+    # one 2,000-row chunk short, while the freshness-demanding count further
+    # down passed in the same run and saw all 20,000.
+    #
+    # The name of this check is a durability claim, and a stale read cannot
+    # disprove durability. Asking for the latest snapshot is the question the
+    # name was always making.
+    total = one_group(
+        client,
+        AggregateQuery(TRIPS).aggregate(Agg.count()),
+        freshness=Freshness.latest(),
+    )
     check(
         "every trip survived the wire, the WAL and the bucket",
         total == len(trips),
@@ -340,8 +356,10 @@ def groups(client: Client, query: AggregateQuery) -> list[tuple[int, int]]:
     ]
 
 
-def one_group(client: Client, query: AggregateQuery) -> int:
-    for group in client.aggregate(query):
+def one_group(
+    client: Client, query: AggregateQuery, freshness: Freshness | None = None
+) -> int:
+    for group in client.aggregate(query, freshness=freshness):
         return int(group.aggregates[0])
     return 0
 

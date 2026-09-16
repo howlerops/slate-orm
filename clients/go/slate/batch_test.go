@@ -279,3 +279,40 @@ func TestIndependentBatchMayNotRunInsideATransaction(t *testing.T) {
 		t.Fatal(`"independent operations that roll back together" should be refused`)
 	}
 }
+
+// TestTheSchemaClaimRidesOnABatchedWrite: a misdeclared table is refused, and
+// nothing lands.
+//
+// Found by a surviving mutation — dropping the claim from every operation
+// changed no answer — and the same mutation survived in all three clients,
+// which makes it a blind spot rather than an oversight. It matters as much
+// here as anywhere: a batched insert whose claim is dropped is a write the
+// server cannot check the shape of.
+func TestTheSchemaClaimRidesOnABatchedWrite(t *testing.T) {
+	server := start(t, batchTables)
+	// `body` misdeclared as `text`: the same width and types, a different
+	// name, which is exactly the drift a width check would miss.
+	swapped := slate.TableDef{
+		Name: "notes",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "text", Type: slate.TypeString},
+		},
+		PrimaryKey: []string{"id"},
+	}
+	session := server.client(t).Declaring(slate.Schemas{"notes": swapped}).Session()
+
+	b := slate.NewBatch(slate.Independent).Insert("notes", note(1))
+	if _, err := session.Batch(testContext(t), b); !slate.IsKind(
+		err, slate.KindInvalidRequest,
+	) {
+		t.Fatalf("a batch against a misdeclared table: err = %v, want KindInvalidRequest", err)
+	}
+
+	// And nothing was written on the way to being refused. Read through a
+	// session that declares nothing, so the check above is not what hides it.
+	plain := server.client(t).Session()
+	if got := present(t, plain); len(got) != 0 {
+		t.Fatalf("%d rows written by a refused batch", len(got))
+	}
+}

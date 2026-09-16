@@ -212,3 +212,44 @@ test("an independent batch may not run inside a transaction", async () => {
   );
   await tx.rollback();
 });
+
+test("the schema claim rides on a batched write", async () => {
+  // Found by a surviving mutation — dropping the claim from a batched insert
+  // changed no answer — and the same mutation survived in all three clients,
+  // which makes it a blind spot rather than an oversight. A batched insert
+  // whose claim is dropped is a write the server cannot check the shape of.
+  const server = await start(BATCH_TABLES);
+  servers.push(server);
+  // `body` misdeclared as `text`: same width, same types, a different name —
+  // exactly the drift a width check would miss.
+  const session = server
+    .client()
+    .declaring({
+      notes: {
+        name: "notes",
+        columns: [
+          { name: "id", type: "u64" },
+          { name: "text", type: "string" },
+        ],
+        primaryKey: ["id"],
+      },
+    })
+    .session();
+
+  await assert.rejects(
+    () =>
+      session.batch({
+        atomicity: "independent",
+        operations: [{ kind: "insert", table: "notes", rows: [note(1)] }],
+      }),
+    (error: Error) => {
+      assert.ok(error instanceof SlateError);
+      assert.equal(error.kind, "invalid-request");
+      return true;
+    },
+  );
+
+  // And nothing landed. Read through a session that declares nothing, so the
+  // check above is not what hides it.
+  assert.equal(await present(server.client().session()), 0);
+});

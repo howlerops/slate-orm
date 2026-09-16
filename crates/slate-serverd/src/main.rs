@@ -752,6 +752,27 @@ mod tests {
                 .to_string()
                 .contains("send no rows")
         );
+
+        // Zero is refused here too, rather than read as "no limit" — the same
+        // rule the other two follow, and for the same reason: a zero is a typo
+        // far more often than an intention.
+        let settings: config::LimitSettings = toml::from_str("max_batch_operations = 0").unwrap();
+        assert!(
+            limits(&settings)
+                .unwrap_err()
+                .to_string()
+                .contains("refuse every batch")
+        );
+
+        // And a real one is carried through, which is what says the field is
+        // wired rather than merely parsed.
+        let settings: config::LimitSettings = toml::from_str("max_batch_operations = 7").unwrap();
+        assert_eq!(limits(&settings).unwrap().max_batch_operations, Some(7));
+
+        // Unset keeps the default rather than becoming `None`, which would be
+        // an uncapped batch arrived at by saying nothing.
+        let empty: config::LimitSettings = toml::from_str("").unwrap();
+        assert_eq!(limits(&empty).unwrap().max_batch_operations, Some(1_000));
     }
 
     #[test]
