@@ -53,6 +53,7 @@ use crate::proto::records_server::{Records, RecordsServer};
 use crate::session::{
     GroupedExplanation, Limits, MultiCursor, MultiExplanation, MultiRow, Sessions,
 };
+use crate::status::reason_of;
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
     Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
@@ -484,6 +485,306 @@ impl<S: KvStore + KvReadStore> Head<S> {
     /// borrowed transaction. It reports `Send is not general enough` at the
     /// handler, several frames from the cause. An enum of the three write
     /// shapes has concrete lifetimes and no such problem.
+    /// One operation, decoded and authorized, before anything is written.
+    ///
+    /// `at` is the operation's index, so a refusal says which one — a batch of
+    /// fifty whose message is "no such column" and nothing else is a message
+    /// that costs the caller a bisection.
+    fn decode_operation(
+        &self,
+        context: &SecurityContext,
+        operation: &pb::BatchOperation,
+        at: usize,
+    ) -> Result<Decoded<'_>, Status> {
+        use pb::batch_operation::Of;
+        let named = |status: Status| -> Status {
+            Status::new(
+                status.code(),
+                format!("operation {at}: {}", status.message()),
+            )
+        };
+        let Some(of) = operation.of.as_ref() else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!("operation {at} is empty"),
+            ));
+        };
+        // Refused rather than ignored: a caller who set it is asking for the
+        // batch to join their transaction, and the request-level
+        // `transaction` field is where that is said.
+        let carried = match of {
+            Of::Insert(r) => &r.transaction,
+            Of::Update(r) => &r.transaction,
+            Of::Delete(r) => &r.transaction,
+            Of::DeleteWhere(r) => &r.transaction,
+            Of::UpdateWhere(r) => &r.transaction,
+        };
+        if !carried.is_empty() {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "operation {at} sets `transaction`, which has no meaning inside a batch; \
+                     put it on the `BatchRequest` instead, with ALL_OR_NOTHING"
+                ),
+            ));
+        }
+
+        match of {
+            Of::Insert(r) => {
+                let table = self
+                    .authorized_table(context, &r.table, Action::Insert)
+                    .map_err(named)?;
+                fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
+                let rows = r
+                    .rows
+                    .iter()
+                    .map(row_from_proto)
+                    .collect::<Result<Vec<Row>, Status>>()
+                    .map_err(named)?;
+                Ok(Decoded::Insert {
+                    table,
+                    rows,
+                    upsert: r.upsert,
+                })
+            }
+            Of::Update(r) => {
+                let table = self
+                    .authorized_table(context, &r.table, Action::Update)
+                    .map_err(named)?;
+                fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
+                let rows = r
+                    .rows
+                    .iter()
+                    .map(row_from_proto)
+                    .collect::<Result<Vec<Row>, Status>>()
+                    .map_err(named)?;
+                Ok(Decoded::Update { table, rows })
+            }
+            Of::Delete(r) => {
+                let table = self
+                    .authorized_table(context, &r.table, Action::Delete)
+                    .map_err(named)?;
+                fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
+                let keys = r
+                    .primary_keys
+                    .iter()
+                    .map(|key| primary_key_from_proto(key, table))
+                    .collect::<Result<Vec<Vec<Value>>, Status>>()
+                    .map_err(named)?;
+                Ok(Decoded::Delete { table, keys })
+            }
+            Of::DeleteWhere(r) => {
+                let table = self
+                    .authorized_table(context, &r.table, Action::Delete)
+                    .map_err(named)?;
+                fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
+                let predicate = predicate_from_proto(r.filter.as_ref(), table).map_err(named)?;
+                Ok(Decoded::DeleteWhere {
+                    table,
+                    predicate,
+                    returning: r.returning,
+                })
+            }
+            Of::UpdateWhere(r) => {
+                let table = self
+                    .authorized_table(context, &r.table, Action::Update)
+                    .map_err(named)?;
+                fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
+                let predicate = predicate_from_proto(r.filter.as_ref(), table).map_err(named)?;
+                let assignments = assignments_from_proto(&r.assignments, table).map_err(named)?;
+                if assignments.is_empty() {
+                    return Err(Status::new(
+                        Code::InvalidArgument,
+                        format!("operation {at}: an update needs at least one assignment"),
+                    ));
+                }
+                Ok(Decoded::UpdateWhere {
+                    table,
+                    predicate,
+                    assignments,
+                    returning: r.returning,
+                })
+            }
+        }
+    }
+
+    /// Every operation in one transaction: all of them land, or none does.
+    async fn batch_atomically(
+        &self,
+        context: &SecurityContext,
+        decoded: Vec<Decoded<'_>>,
+        transaction: &str,
+    ) -> Result<Response<pb::BatchResponse>, Status> {
+        if !transaction.is_empty() {
+            // The caller's own transaction. The batch does not commit — that
+            // is the caller's to do — so there is no sequence to report yet,
+            // which is the same rule every other write inside a transaction
+            // follows.
+            // The per-operation session methods that already exist, rather
+            // than a new `Command` carrying a `Decoded`: the session actor
+            // takes owned values and a `TableId`, and `Decoded` borrows a
+            // `&TableDef` from the catalog. Reusing the five methods keeps a
+            // batched write and a lone write on one path through the actor.
+            for operation in decoded {
+                match operation {
+                    Decoded::Insert {
+                        table,
+                        rows,
+                        upsert,
+                    } => {
+                        self.sessions
+                            .insert(transaction, context, table.id(), rows, upsert)
+                            .await?;
+                    }
+                    Decoded::Update { table, rows } => {
+                        self.sessions
+                            .update(transaction, context, table.id(), rows)
+                            .await?;
+                    }
+                    Decoded::Delete { table, keys } => {
+                        self.sessions
+                            .delete(transaction, context, table.id(), keys)
+                            .await?;
+                    }
+                    Decoded::DeleteWhere {
+                        table, predicate, ..
+                    } => {
+                        self.sessions
+                            .delete_where(transaction, context, table.id(), predicate)
+                            .await?;
+                    }
+                    Decoded::UpdateWhere {
+                        table,
+                        predicate,
+                        assignments,
+                        ..
+                    } => {
+                        self.sessions
+                            .update_where(transaction, context, table.id(), predicate, assignments)
+                            .await?;
+                    }
+                }
+            }
+            return Ok(Response::new(pb::BatchResponse {
+                results: Vec::new(),
+                sequence: None,
+            }));
+        }
+
+        let writer = self.leader()?;
+        let decoded = &decoded;
+        let outcome = writer
+            .transact_boxed_tracked(move |txn| {
+                Box::pin(async move {
+                    for operation in decoded {
+                        operation.apply(txn, context).await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await;
+        match outcome {
+            Ok(((), token)) => Ok(Response::new(pb::BatchResponse {
+                // No per-operation results: they all happened. Reporting a
+                // list of successes would invite a caller to check it, and the
+                // only thing it could ever say is "yes" for every entry.
+                results: Vec::new(),
+                sequence: token.map(ReadToken::sequence),
+            })),
+            Err(error) => {
+                if matches!(error, KernelError::WriterFenced) {
+                    self.leadership.fenced().await;
+                }
+                Err(from_kernel(&error))
+            }
+        }
+    }
+
+    /// Each operation on its own, each reported on its own.
+    async fn batch_independently(
+        &self,
+        context: &SecurityContext,
+        decoded: Vec<Decoded<'_>>,
+    ) -> Result<Response<pb::BatchResponse>, Status> {
+        let mut results = Vec::with_capacity(decoded.len());
+        let mut sequence = None;
+        for operation in &decoded {
+            match self.autocommit(context, operation.as_write()).await {
+                Ok((written, token)) => {
+                    if let Some(token) = token {
+                        // The last one that committed, so a caller can read
+                        // its own writes. Later ones overwrite earlier, which
+                        // is what "last" means and is monotonic because the
+                        // writer is.
+                        sequence = Some(token.sequence());
+                    }
+                    results.push(pb::BatchResult {
+                        of: Some(pb::batch_result::Of::Ok(returning(
+                            written,
+                            None,
+                            operation.returning(),
+                            operation.table(),
+                        ))),
+                    });
+                }
+                // A failure is a result, not the end of the batch. That is
+                // the whole difference from ALL_OR_NOTHING, and it is why
+                // `results` exists at all.
+                Err(status) => results.push(pb::BatchResult {
+                    of: Some(pb::batch_result::Of::Error(pb::BatchError {
+                        code: status.code() as i32,
+                        message: status.message().to_owned(),
+                        reason: reason_of(&status),
+                    })),
+                }),
+            }
+        }
+        Ok(Response::new(pb::BatchResponse { results, sequence }))
+    }
+
+    /// Apply a batch, the way its `atomicity` says to.
+    ///
+    /// The two paths share the decoding and differ in everything after it,
+    /// which is the point: an independent batch is N autocommits with N
+    /// results, and an atomic one is one transaction with none. Writing them
+    /// as one loop with a flag was the first attempt and it produced a
+    /// function whose every other line was `if atomic`, which is the shape
+    /// that lets one path quietly acquire the other's behaviour.
+    async fn run_batch(
+        &self,
+        context: &SecurityContext,
+        request: pb::BatchRequest,
+        atomicity: Atomicity,
+    ) -> Result<Response<pb::BatchResponse>, Status> {
+        // Decoded up front, all of it, before anything is written. A batch
+        // that fails to decode its ninth operation must not have applied its
+        // first eight — under `INDEPENDENT` that is exactly what a lazy decode
+        // would do, and the caller would see a malformed-request error next to
+        // eight rows that had already landed.
+        let mut decoded = Vec::with_capacity(request.operations.len());
+        for (at, operation) in request.operations.iter().enumerate() {
+            decoded.push(self.decode_operation(context, operation, at)?);
+        }
+
+        match atomicity {
+            Atomicity::AllOrNothing => {
+                self.batch_atomically(context, decoded, &request.transaction)
+                    .await
+            }
+            Atomicity::Independent => {
+                if !request.transaction.is_empty() {
+                    return Err(Status::new(
+                        Code::InvalidArgument,
+                        "an INDEPENDENT batch cannot run inside a transaction: \
+                         \"independent operations, all of which roll back together\" is two \
+                         contradictory requests, and the caller means one of them",
+                    ));
+                }
+                self.batch_independently(context, decoded).await
+            }
+        }
+    }
+
     async fn autocommit(
         &self,
         context: &SecurityContext,
@@ -630,6 +931,120 @@ impl Write<'_> {
                 .map(touched),
         }
     }
+}
+
+/// One batch operation, decoded and authorized, ready to apply.
+///
+/// Deliberately the same five shapes as [`Write`], plus the two fields a
+/// predicate write needs to build its response. It is not `Write` itself
+/// because `Write` borrows its rows from the request and a batch owns them —
+/// the request is consumed before the first write lands, so that a batch which
+/// fails to decode its last operation has applied none of the others.
+enum Decoded<'a> {
+    Insert {
+        table: &'a TableDef,
+        rows: Vec<Row>,
+        upsert: bool,
+    },
+    Update {
+        table: &'a TableDef,
+        rows: Vec<Row>,
+    },
+    Delete {
+        table: &'a TableDef,
+        keys: Vec<Vec<Value>>,
+    },
+    DeleteWhere {
+        table: &'a TableDef,
+        predicate: Expr,
+        returning: bool,
+    },
+    UpdateWhere {
+        table: &'a TableDef,
+        predicate: Expr,
+        assignments: Vec<(Ordinal, Scalar)>,
+        returning: bool,
+    },
+}
+
+impl<'a> Decoded<'a> {
+    /// The borrowed form [`Write::apply`] takes.
+    ///
+    /// Borrowing rather than converting, so the two paths run the identical
+    /// code a lone RPC runs. A second `apply` for batches is the way a batched
+    /// insert and a lone one come to disagree about, say, whether `upsert`
+    /// replaces.
+    fn as_write(&'a self) -> Write<'a> {
+        match self {
+            Self::Insert {
+                table,
+                rows,
+                upsert,
+            } => Write::Insert {
+                table,
+                rows,
+                upsert: *upsert,
+            },
+            Self::Update { table, rows } => Write::Update { table, rows },
+            Self::Delete { table, keys } => Write::Delete { table, keys },
+            Self::DeleteWhere {
+                table, predicate, ..
+            } => Write::DeleteWhere { table, predicate },
+            Self::UpdateWhere {
+                table,
+                predicate,
+                assignments,
+                ..
+            } => Write::UpdateWhere {
+                table,
+                predicate,
+                assignments,
+            },
+        }
+    }
+
+    /// Apply it inside a transaction the caller already has.
+    async fn apply(
+        &self,
+        transaction: &RecordTransaction<'_>,
+        context: &SecurityContext,
+    ) -> Result<(), KernelError> {
+        self.as_write()
+            .apply(transaction, context)
+            .await
+            .map(|_| ())
+    }
+
+    fn table(&self) -> &'a TableDef {
+        match self {
+            Self::Insert { table, .. }
+            | Self::Update { table, .. }
+            | Self::Delete { table, .. }
+            | Self::DeleteWhere { table, .. }
+            | Self::UpdateWhere { table, .. } => table,
+        }
+    }
+
+    /// Whether this operation asked for its rows back. Only the two predicate
+    /// writes can, which is why the other three answer `false` rather than
+    /// carrying a field that is always unset.
+    fn returning(&self) -> bool {
+        match self {
+            Self::DeleteWhere { returning, .. } | Self::UpdateWhere { returning, .. } => *returning,
+            _ => false,
+        }
+    }
+}
+
+/// Which guarantee a batch was asked for.
+///
+/// The wire enum, narrowed to the two that mean something — the unspecified
+/// case is refused at the handler and never reaches here, so this type cannot
+/// represent it and no code below has to consider it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Atomicity {
+    Independent,
+    AllOrNothing,
 }
 
 /// A write's response, with the rows only if the caller asked for them.
@@ -974,6 +1389,53 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             request.returning,
             table,
         )))
+    }
+
+    async fn batch(
+        &self,
+        request: Request<pb::BatchRequest>,
+    ) -> Result<Response<pb::BatchResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+
+        // Refused, not defaulted. The two guarantees differ only when
+        // something fails, so a caller who never said which they wanted finds
+        // out on the day it matters. A zeroed request means neither.
+        let atomicity = match pb::Atomicity::try_from(request.atomicity) {
+            Ok(pb::Atomicity::Independent) => Atomicity::Independent,
+            Ok(pb::Atomicity::AllOrNothing) => Atomicity::AllOrNothing,
+            _ => {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    "a batch must say `atomicity`: INDEPENDENT applies each operation on its \
+                     own and reports each separately, ALL_OR_NOTHING applies them in one \
+                     transaction and fails the request if any of them does. They differ only \
+                     when something fails, which is why neither is the default",
+                ));
+            }
+        };
+
+        // A batch of nothing is a round trip that asks for nothing, and is
+        // likelier a caller whose list came out empty than one who meant it.
+        if request.operations.is_empty() {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                "a batch needs at least one operation",
+            ));
+        }
+        if let Some(limit) = self.limits.max_batch_operations
+            && request.operations.len() > limit
+        {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "a batch may carry at most {limit} operations; this one carries {}",
+                    request.operations.len()
+                ),
+            ));
+        }
+
+        self.run_batch(&context, request, atomicity).await
     }
 
     async fn get(

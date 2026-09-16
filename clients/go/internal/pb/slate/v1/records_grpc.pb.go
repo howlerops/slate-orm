@@ -27,6 +27,7 @@ const (
 	Records_Delete_FullMethodName           = "/slate.v1.Records/Delete"
 	Records_DeleteWhere_FullMethodName      = "/slate.v1.Records/DeleteWhere"
 	Records_UpdateWhere_FullMethodName      = "/slate.v1.Records/UpdateWhere"
+	Records_Batch_FullMethodName            = "/slate.v1.Records/Batch"
 	Records_Get_FullMethodName              = "/slate.v1.Records/Get"
 	Records_Query_FullMethodName            = "/slate.v1.Records/Query"
 	Records_Join_FullMethodName             = "/slate.v1.Records/Join"
@@ -52,6 +53,9 @@ type RecordsClient interface {
 	// write per row. Both go to the writer, like every other write.
 	DeleteWhere(ctx context.Context, in *DeleteWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	UpdateWhere(ctx context.Context, in *UpdateWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
+	// Several writes in one round trip. The caller says whether they are
+	// independent or atomic; there is no default.
+	Batch(ctx context.Context, in *BatchRequest, opts ...grpc.CallOption) (*BatchResponse, error)
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueryResponse], error)
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinResponse], error)
@@ -145,6 +149,16 @@ func (c *recordsClient) UpdateWhere(ctx context.Context, in *UpdateWhereRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteResponse)
 	err := c.cc.Invoke(ctx, Records_UpdateWhere_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *recordsClient) Batch(ctx context.Context, in *BatchRequest, opts ...grpc.CallOption) (*BatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchResponse)
+	err := c.cc.Invoke(ctx, Records_Batch_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +296,9 @@ type RecordsServer interface {
 	// write per row. Both go to the writer, like every other write.
 	DeleteWhere(context.Context, *DeleteWhereRequest) (*WriteResponse, error)
 	UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error)
+	// Several writes in one round trip. The caller says whether they are
+	// independent or atomic; there is no default.
+	Batch(context.Context, *BatchRequest) (*BatchResponse, error)
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	Query(*QueryRequest, grpc.ServerStreamingServer[QueryResponse]) error
 	Join(*JoinRequest, grpc.ServerStreamingServer[JoinResponse]) error
@@ -324,6 +341,9 @@ func (UnimplementedRecordsServer) DeleteWhere(context.Context, *DeleteWhereReque
 }
 func (UnimplementedRecordsServer) UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateWhere not implemented")
+}
+func (UnimplementedRecordsServer) Batch(context.Context, *BatchRequest) (*BatchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Batch not implemented")
 }
 func (UnimplementedRecordsServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
@@ -517,6 +537,24 @@ func _Records_UpdateWhere_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Records_Batch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).Batch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_Batch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).Batch(ctx, req.(*BatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Records_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetRequest)
 	if err := dec(in); err != nil {
@@ -696,6 +734,10 @@ var Records_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateWhere",
 			Handler:    _Records_UpdateWhere_Handler,
+		},
+		{
+			MethodName: "Batch",
+			Handler:    _Records_Batch_Handler,
 		},
 		{
 			MethodName: "Get",

@@ -1140,6 +1140,108 @@ message UpdateWhereRequest {
   SchemaCheck schema = 6;
 }
 
+// Whether a batch's operations stand alone or land together.
+//
+// Required, and `UNSPECIFIED` is refused rather than defaulted. The two are
+// different guarantees and the difference is invisible until something fails:
+// a caller who believed they had atomicity and had independence discovers it
+// on the day a write in the middle is rejected and the ones before it stayed.
+// A zeroed request must therefore mean neither, which is what makes this an
+// enum with a refused zero rather than a `bool atomic`.
+enum Atomicity {
+  // Not said. Refused, with a message naming both options.
+  ATOMICITY_UNSPECIFIED = 0;
+  // A network optimisation and nothing else. Each operation is applied on its
+  // own, in order; one failing does not undo the ones before it or stop the
+  // ones after, and each gets its own result. This is several statements sent
+  // together, not a transaction.
+  ATOMICITY_INDEPENDENT = 1;
+  // A transaction. Every operation lands or none does, and the first failure
+  // fails the request — there are no per-operation results to report, because
+  // the successful ones did not happen either.
+  ATOMICITY_ALL_OR_NOTHING = 2;
+}
+
+// One write in a batch.
+//
+// The existing request messages rather than new ones, so a batched insert and
+// a lone insert are the same bytes and cannot drift apart. Their `transaction`
+// field is the one part that has no meaning here, and it is **refused** rather
+// than ignored: a caller who sets it is asking for something this does not do,
+// and silently dropping it is how a caller ends up believing their batch ran
+// inside their transaction.
+message BatchOperation {
+  oneof of {
+    InsertRequest insert = 1;
+    UpdateRequest update = 2;
+    DeleteRequest delete = 3;
+    DeleteWhereRequest delete_where = 4;
+    UpdateWhereRequest update_where = 5;
+  }
+}
+
+// Several writes, one round trip.
+message BatchRequest {
+  // Applied in order. Empty is refused: a batch of nothing is a round trip
+  // that asks for nothing, and is likelier to be a caller that built its list
+  // wrong than one that meant it.
+  repeated BatchOperation operations = 1;
+  // Which guarantee. See `Atomicity`; there is no default.
+  Atomicity atomicity = 2;
+  // Run the whole batch inside an already-open transaction.
+  //
+  // Only with `ALL_OR_NOTHING`, and then it is that transaction's atomicity
+  // rather than a second one: the batch does not commit. With `INDEPENDENT` it
+  // is refused, because "independent operations inside one transaction" is two
+  // contradictory statements and the caller means one of them.
+  string transaction = 3;
+}
+
+// What each operation did, in the order they were sent.
+message BatchResponse {
+  // One per operation, same length and same order as the request.
+  //
+  // Present for `INDEPENDENT` only. `ALL_OR_NOTHING` reports nothing per
+  // operation because there is nothing to report separately: they all
+  // happened, or the request failed and none did.
+  repeated BatchResult results = 1;
+  // Where the writer got to. For `ALL_OR_NOTHING` it is the one commit; for
+  // `INDEPENDENT` it is the last operation that committed, so a caller can
+  // still read its own writes. Absent inside a caller's transaction, which has
+  // not committed.
+  optional uint64 sequence = 2;
+}
+
+// One operation's outcome, which may be a failure.
+//
+// A `oneof` rather than a `WriteResponse` with an optional error, because
+// exactly one of the two is always true and a message that can carry both is a
+// message somebody will read the wrong half of.
+message BatchResult {
+  oneof of {
+    // It happened. The same `WriteResponse` the lone RPC returns, including
+    // `rows` when the operation asked for them.
+    WriteResponse ok = 1;
+    // It did not. The code and message the lone RPC would have failed with.
+    BatchError error = 2;
+  }
+}
+
+// A failed operation, in the shape a `Status` would have had.
+//
+// Not `google.rpc.Status` itself: this file imports nothing, and adding a
+// dependency to carry two fields would make every client's build depend on a
+// well-known-types path that three toolchains resolve differently.
+message BatchError {
+  // The gRPC status code, as an integer, the way a client's own error type
+  // spells it.
+  int32 code = 1;
+  // The message a caller would have seen from the same operation sent alone.
+  string message = 2;
+  // The stable reason token, as `ErrorDetail.reason`.
+  string reason = 3;
+}
+
 // ── Reads ────────────────────────────────────────────────────────────────────
 
 // Read one row by its primary key.
@@ -1567,6 +1669,9 @@ service Records {
   // write per row. Both go to the writer, like every other write.
   rpc DeleteWhere(DeleteWhereRequest) returns (WriteResponse);
   rpc UpdateWhere(UpdateWhereRequest) returns (WriteResponse);
+  // Several writes in one round trip. The caller says whether they are
+  // independent or atomic; there is no default.
+  rpc Batch(BatchRequest) returns (BatchResponse);
 
   rpc Get(GetRequest) returns (GetResponse);
   rpc Query(QueryRequest) returns (stream QueryResponse);

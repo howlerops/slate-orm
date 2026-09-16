@@ -42,6 +42,10 @@ class RecordsStub:
     write per row. Both go to the writer, like every other write.
     """
     UpdateWhere: _grpc.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]
+    Batch: _grpc.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]
+    """Several writes in one round trip. The caller says whether they are
+    independent or atomic; there is no default.
+    """
     Get: _grpc.UnaryUnaryMultiCallable[_records_pb2.GetRequest, _records_pb2.GetResponse]
     Query: _grpc.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]
     Join: _grpc.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]
@@ -66,6 +70,10 @@ class RecordsAsyncStub(RecordsStub):
     write per row. Both go to the writer, like every other write.
     """
     UpdateWhere: _aio.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
+    Batch: _aio.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]  # type: ignore[assignment]
+    """Several writes in one round trip. The caller says whether they are
+    independent or atomic; there is no default.
+    """
     Get: _aio.UnaryUnaryMultiCallable[_records_pb2.GetRequest, _records_pb2.GetResponse]  # type: ignore[assignment]
     Query: _aio.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]  # type: ignore[assignment]
     Join: _aio.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]  # type: ignore[assignment]
@@ -135,6 +143,16 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
         request: _records_pb2.UpdateWhereRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]: ...
+
+    @_abc_1.abstractmethod
+    def Batch(
+        self,
+        request: _records_pb2.BatchRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.BatchResponse, _abc.Awaitable[_records_pb2.BatchResponse]]:
+        """Several writes in one round trip. The caller says whether they are
+        independent or atomic; there is no default.
+        """
 
     @_abc_1.abstractmethod
     def Get(

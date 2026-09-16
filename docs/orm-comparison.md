@@ -337,6 +337,25 @@ one; the join table's rows are the intermediate key set.
 One level of nesting, then a depth limit with a named refusal rather than
 unbounded recursion — the same shape as the subquery depth note.
 
+### P6 — Batch: several statements, one round trip — **built**
+
+> Done, as a `Batch` RPC with a required `atomicity`.
+> `ATOMICITY_UNSPECIFIED` is refused with a message naming both options, which
+> is the "impossible to miss" this item asked for: the two guarantees differ
+> only when something fails, so a zeroed request must mean neither.
+>
+> `INDEPENDENT` reports one result per operation and a failure is one of those
+> results; `ALL_OR_NOTHING` reports none, because they all happened or the
+> request failed. An atomic batch may join a caller's open transaction and does
+> not commit it; an independent one inside a transaction is refused as two
+> contradictory requests.
+>
+> Measured, as the item required: fifty single inserts over loopback took 46–49
+> ms and the same fifty as one batch took 4.9–5.1 ms across five runs, **9.4×
+> to 10.0×**. Round trips are counted rather than timed — 50 against 1, by
+> construction — and the wall clock is reported rather than asserted, because a
+> threshold on a shared runner is a flake waiting for a slow morning.
+
 ### P6 — Batch: several statements, one round trip
 
 A `Batch` RPC taking a list of independent operations. Distinct from a

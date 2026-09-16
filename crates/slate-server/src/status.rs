@@ -104,6 +104,32 @@ fn with_details(code: Code, message: String, info: rpc::ErrorInfo) -> Status {
     Status::with_details(code, message, status.encode_to_vec().into())
 }
 
+/// The stable reason token carried in a `Status`'s details, or `""`.
+///
+/// The inverse of [`with_details`], and it exists for one caller: a batch
+/// reports each independent operation's failure as data rather than as an
+/// error, so it has to put back into a message what the lone RPC puts into
+/// trailers. Decoding what this module encoded is closing a loop rather than
+/// parsing something foreign — if the encoding changes, this fails to compile
+/// beside it.
+///
+/// `""` for a status that carries no details, which is every status built by
+/// hand at a handler rather than from a [`KernelError`]. A caller reads that
+/// as "no stable token", which is true: those messages are prose.
+pub fn reason_of(status: &Status) -> String {
+    let Ok(decoded) = rpc::Status::decode(status.details()) else {
+        return String::new();
+    };
+    for detail in &decoded.details {
+        if detail.type_url == ERROR_INFO_URL
+            && let Ok(info) = rpc::ErrorInfo::decode(detail.value.as_slice())
+        {
+            return info.reason;
+        }
+    }
+    String::new()
+}
+
 /// The stable token for a kernel error, and its payload.
 fn error_info(error: &KernelError) -> rpc::ErrorInfo {
     let mut metadata = HashMap::new();

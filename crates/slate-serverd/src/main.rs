@@ -537,6 +537,14 @@ fn limits(settings: &config::LimitSettings) -> Started<Limits> {
         }
         limits.rows_per_message = rows;
     }
+    if let Some(operations) = settings.max_batch_operations {
+        if operations == 0 {
+            return Err(Fault::new(
+                "`[limits] max_batch_operations = 0` would refuse every batch; leave it unset for the default of 1000",
+            ));
+        }
+        limits.max_batch_operations = Some(operations);
+    }
     Ok(limits)
 }
 

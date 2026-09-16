@@ -370,6 +370,12 @@ pub(crate) struct LimitSettings {
     /// How many rows go in one message of a query stream.
     #[serde(default)]
     pub(crate) rows_per_message: Option<usize>,
+    /// How many operations one `Batch` may carry.
+    ///
+    /// `0` is refused rather than read as "no limit", the same as every other
+    /// limit in this table — a zero here is a typo far more often than an
+    /// intention, and the way to mean "no limit" is to say so.
+    pub(crate) max_batch_operations: Option<usize>,
     /// How many requests may be in flight at once across all connections.
     ///
     /// Unset means unbounded, which is what shipped: a caller could open as

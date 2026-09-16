@@ -397,6 +397,52 @@ SIDE_LEFT: Side.ValueType  # 0
 SIDE_RIGHT: Side.ValueType  # 1
 Global___Side: _TypeAlias = Side  # noqa: Y015
 
+class _Atomicity:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _AtomicityEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_Atomicity.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    ATOMICITY_UNSPECIFIED: _Atomicity.ValueType  # 0
+    """Not said. Refused, with a message naming both options."""
+    ATOMICITY_INDEPENDENT: _Atomicity.ValueType  # 1
+    """A network optimisation and nothing else. Each operation is applied on its
+    own, in order; one failing does not undo the ones before it or stop the
+    ones after, and each gets its own result. This is several statements sent
+    together, not a transaction.
+    """
+    ATOMICITY_ALL_OR_NOTHING: _Atomicity.ValueType  # 2
+    """A transaction. Every operation lands or none does, and the first failure
+    fails the request — there are no per-operation results to report, because
+    the successful ones did not happen either.
+    """
+
+class Atomicity(_Atomicity, metaclass=_AtomicityEnumTypeWrapper):
+    """Whether a batch's operations stand alone or land together.
+
+    Required, and `UNSPECIFIED` is refused rather than defaulted. The two are
+    different guarantees and the difference is invisible until something fails:
+    a caller who believed they had atomicity and had independence discovers it
+    on the day a write in the middle is rejected and the ones before it stayed.
+    A zeroed request must therefore mean neither, which is what makes this an
+    enum with a refused zero rather than a `bool atomic`.
+    """
+
+ATOMICITY_UNSPECIFIED: Atomicity.ValueType  # 0
+"""Not said. Refused, with a message naming both options."""
+ATOMICITY_INDEPENDENT: Atomicity.ValueType  # 1
+"""A network optimisation and nothing else. Each operation is applied on its
+own, in order; one failing does not undo the ones before it or stop the
+ones after, and each gets its own result. This is several statements sent
+together, not a transaction.
+"""
+ATOMICITY_ALL_OR_NOTHING: Atomicity.ValueType  # 2
+"""A transaction. Every operation lands or none does, and the first failure
+fails the request — there are no per-operation results to report, because
+the successful ones did not happen either.
+"""
+Global___Atomicity: _TypeAlias = Atomicity  # noqa: Y015
+
 @_typing.final
 class Value(_message.Message):
     """One element of a row or a predicate, mirroring `slate_tuple::Value`."""
@@ -2534,6 +2580,210 @@ class UpdateWhereRequest(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___UpdateWhereRequest: _TypeAlias = UpdateWhereRequest  # noqa: Y015
+
+@_typing.final
+class BatchOperation(_message.Message):
+    """One write in a batch.
+
+    The existing request messages rather than new ones, so a batched insert and
+    a lone insert are the same bytes and cannot drift apart. Their `transaction`
+    field is the one part that has no meaning here, and it is **refused** rather
+    than ignored: a caller who sets it is asking for something this does not do,
+    and silently dropping it is how a caller ends up believing their batch ran
+    inside their transaction.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    INSERT_FIELD_NUMBER: _builtins.int
+    UPDATE_FIELD_NUMBER: _builtins.int
+    DELETE_FIELD_NUMBER: _builtins.int
+    DELETE_WHERE_FIELD_NUMBER: _builtins.int
+    UPDATE_WHERE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def insert(self) -> Global___InsertRequest: ...
+    @_builtins.property
+    def update(self) -> Global___UpdateRequest: ...
+    @_builtins.property
+    def delete(self) -> Global___DeleteRequest: ...
+    @_builtins.property
+    def delete_where(self) -> Global___DeleteWhereRequest: ...
+    @_builtins.property
+    def update_where(self) -> Global___UpdateWhereRequest: ...
+    def __init__(
+        self,
+        *,
+        insert: Global___InsertRequest | None = ...,
+        update: Global___UpdateRequest | None = ...,
+        delete: Global___DeleteRequest | None = ...,
+        delete_where: Global___DeleteWhereRequest | None = ...,
+        update_where: Global___UpdateWhereRequest | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["delete", b"delete", "delete_where", b"delete_where", "insert", b"insert", "of", b"of", "update", b"update", "update_where", b"update_where"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["delete", b"delete", "delete_where", b"delete_where", "insert", b"insert", "of", b"of", "update", b"update", "update_where", b"update_where"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["insert", "update", "delete", "delete_where", "update_where"]  # noqa: Y015
+    _WhichOneofArgType_of: _TypeAlias = _typing.Literal["of", b"of"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_of) -> _WhichOneofReturnType_of | None: ...
+
+Global___BatchOperation: _TypeAlias = BatchOperation  # noqa: Y015
+
+@_typing.final
+class BatchRequest(_message.Message):
+    """Several writes, one round trip."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    OPERATIONS_FIELD_NUMBER: _builtins.int
+    ATOMICITY_FIELD_NUMBER: _builtins.int
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    atomicity: Global___Atomicity.ValueType
+    """Which guarantee. See `Atomicity`; there is no default."""
+    transaction: _builtins.str
+    """Run the whole batch inside an already-open transaction.
+
+    Only with `ALL_OR_NOTHING`, and then it is that transaction's atomicity
+    rather than a second one: the batch does not commit. With `INDEPENDENT` it
+    is refused, because "independent operations inside one transaction" is two
+    contradictory statements and the caller means one of them.
+    """
+    @_builtins.property
+    def operations(self) -> _containers.RepeatedCompositeFieldContainer[Global___BatchOperation]:
+        """Applied in order. Empty is refused: a batch of nothing is a round trip
+        that asks for nothing, and is likelier to be a caller that built its list
+        wrong than one that meant it.
+        """
+
+    def __init__(
+        self,
+        *,
+        operations: _abc.Iterable[Global___BatchOperation] | None = ...,
+        atomicity: Global___Atomicity.ValueType = ...,
+        transaction: _builtins.str = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["atomicity", b"atomicity", "operations", b"operations", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___BatchRequest: _TypeAlias = BatchRequest  # noqa: Y015
+
+@_typing.final
+class BatchResponse(_message.Message):
+    """What each operation did, in the order they were sent."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    RESULTS_FIELD_NUMBER: _builtins.int
+    SEQUENCE_FIELD_NUMBER: _builtins.int
+    sequence: _builtins.int
+    """Where the writer got to. For `ALL_OR_NOTHING` it is the one commit; for
+    `INDEPENDENT` it is the last operation that committed, so a caller can
+    still read its own writes. Absent inside a caller's transaction, which has
+    not committed.
+    """
+    @_builtins.property
+    def results(self) -> _containers.RepeatedCompositeFieldContainer[Global___BatchResult]:
+        """One per operation, same length and same order as the request.
+
+        Present for `INDEPENDENT` only. `ALL_OR_NOTHING` reports nothing per
+        operation because there is nothing to report separately: they all
+        happened, or the request failed and none did.
+        """
+
+    def __init__(
+        self,
+        *,
+        results: _abc.Iterable[Global___BatchResult] | None = ...,
+        sequence: _builtins.int | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_sequence", b"_sequence", "sequence", b"sequence"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_sequence", b"_sequence", "results", b"results", "sequence", b"sequence"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__sequence: _TypeAlias = _typing.Literal["sequence"]  # noqa: Y015
+    _WhichOneofArgType__sequence: _TypeAlias = _typing.Literal["_sequence", b"_sequence"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__sequence) -> _WhichOneofReturnType__sequence | None: ...
+
+Global___BatchResponse: _TypeAlias = BatchResponse  # noqa: Y015
+
+@_typing.final
+class BatchResult(_message.Message):
+    """One operation's outcome, which may be a failure.
+
+    A `oneof` rather than a `WriteResponse` with an optional error, because
+    exactly one of the two is always true and a message that can carry both is a
+    message somebody will read the wrong half of.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    OK_FIELD_NUMBER: _builtins.int
+    ERROR_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def ok(self) -> Global___WriteResponse:
+        """It happened. The same `WriteResponse` the lone RPC returns, including
+        `rows` when the operation asked for them.
+        """
+
+    @_builtins.property
+    def error(self) -> Global___BatchError:
+        """It did not. The code and message the lone RPC would have failed with."""
+
+    def __init__(
+        self,
+        *,
+        ok: Global___WriteResponse | None = ...,
+        error: Global___BatchError | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "of", b"of", "ok", b"ok"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "of", b"of", "ok", b"ok"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["ok", "error"]  # noqa: Y015
+    _WhichOneofArgType_of: _TypeAlias = _typing.Literal["of", b"of"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_of) -> _WhichOneofReturnType_of | None: ...
+
+Global___BatchResult: _TypeAlias = BatchResult  # noqa: Y015
+
+@_typing.final
+class BatchError(_message.Message):
+    """A failed operation, in the shape a `Status` would have had.
+
+    Not `google.rpc.Status` itself: this file imports nothing, and adding a
+    dependency to carry two fields would make every client's build depend on a
+    well-known-types path that three toolchains resolve differently.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CODE_FIELD_NUMBER: _builtins.int
+    MESSAGE_FIELD_NUMBER: _builtins.int
+    REASON_FIELD_NUMBER: _builtins.int
+    code: _builtins.int
+    """The gRPC status code, as an integer, the way a client's own error type
+    spells it.
+    """
+    message: _builtins.str
+    """The message a caller would have seen from the same operation sent alone."""
+    reason: _builtins.str
+    """The stable reason token, as `ErrorDetail.reason`."""
+    def __init__(
+        self,
+        *,
+        code: _builtins.int = ...,
+        message: _builtins.str = ...,
+        reason: _builtins.str = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["code", b"code", "message", b"message", "reason", b"reason"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___BatchError: _TypeAlias = BatchError  # noqa: Y015
 
 @_typing.final
 class GetRequest(_message.Message):

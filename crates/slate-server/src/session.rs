@@ -83,6 +83,14 @@ pub struct Limits {
     /// step is gone. The argument for lowering this to 112 is withdrawn: it
     /// was buying back a delay that should not have been there.
     pub rows_per_message: usize,
+    /// How many operations one `Batch` may carry, or `None` for no cap.
+    ///
+    /// A batch is a round trip's worth of work done in one request, so the
+    /// cap is on the *request* rather than on the rows it touches — the
+    /// per-operation limits the rest of this struct sets still apply to each
+    /// one. `None` is allowed and is not the default: an uncapped batch is a
+    /// client deciding how long the server's next unit of work is.
+    pub max_batch_operations: Option<usize>,
 }
 
 impl Default for Limits {
@@ -91,6 +99,11 @@ impl Default for Limits {
             max_transactions: 1024,
             idle_timeout: Duration::from_secs(30),
             rows_per_message: 256,
+            // A thousand writes in one request is far past where the round
+            // trip is the cost, and is a number a client reaches by accident
+            // rather than on purpose. Not measured: it is a guard against a
+            // request nobody should send, not a tuning knob.
+            max_batch_operations: Some(1_000),
         }
     }
 }
