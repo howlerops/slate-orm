@@ -409,7 +409,7 @@ pub use slate_kernel::{
     JoinCursor, JoinExplanation, JoinKey, JoinSchema, JoinStep, JoinStepPlan, JoinType, JoinedRow,
     KernelError, KeyRange, Metric, MigrationPlan, MigrationReport, MigrationStep, NullsOrder, Plan,
     Policy, Principal, Projection, Query, QueryCursor, RecordSnapshot, RecordStore,
-    RecordTransaction, Refusal, ReplicaPool, RetryPolicy, ScanOrder, Scalar, SecurityCatalog,
+    RecordTransaction, Refusal, ReplicaPool, RetryPolicy, Scalar, ScanOrder, SecurityCatalog,
     SecurityContext, Side, SortKey, Statistics, TableState, TableStats, TimeUnit, Truth, latency,
     memory, migrate,
 };

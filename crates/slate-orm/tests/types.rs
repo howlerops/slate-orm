@@ -17,8 +17,8 @@
 
 use slate_kernel::memory::MemoryStore;
 use slate_orm::{
-    Action, CalendarPart, Enum, Expr, Field, FieldError, Grant, Query, Record, RecordStore, Records,
-    Scalar, SecurityCatalog, SecurityContext, Timestamp, Value, ValueType,
+    Action, CalendarPart, Enum, Expr, Field, FieldError, Grant, Query, Record, RecordStore,
+    Records, Scalar, SecurityCatalog, SecurityContext, Timestamp, Value, ValueType,
 };
 use slate_schema::{Catalog, TableId};
 

@@ -131,7 +131,11 @@ fn distinct_lowers_to_a_grouping_with_no_aggregates() {
     let playground = Playground::new();
     let answer = first(&playground, "SELECT DISTINCT author_id FROM books");
 
-    assert_eq!(answer["spec"]["groupBy"], serde_json::json!([1]), "{answer}");
+    assert_eq!(
+        answer["spec"]["groupBy"],
+        serde_json::json!([1]),
+        "{answer}"
+    );
     assert!(answer["spec"]["aggregates"].is_null(), "{answer}");
     assert_eq!(answer["kind"], "group", "{answer}");
 }
@@ -144,8 +148,15 @@ fn distinct_lowers_to_a_grouping_with_no_aggregates() {
 #[test]
 fn a_column_named_twice_is_one_key() {
     let playground = Playground::new();
-    let answer = first(&playground, "SELECT DISTINCT author_id, author_id FROM books");
-    assert_eq!(answer["spec"]["groupBy"], serde_json::json!([1]), "{answer}");
+    let answer = first(
+        &playground,
+        "SELECT DISTINCT author_id, author_id FROM books",
+    );
+    assert_eq!(
+        answer["spec"]["groupBy"],
+        serde_json::json!([1]),
+        "{answer}"
+    );
     assert_eq!(columns(&answer), vec!["author_id"], "{answer}");
 }
 
@@ -184,7 +195,11 @@ fn distinct_over_a_computed_column_registers_it_once() {
     let compute = answer["spec"]["compute"].as_array().expect("compute");
     assert_eq!(compute.len(), 1, "{answer}");
     // Ordinal 4 is the first computed column: books has four columns.
-    assert_eq!(answer["spec"]["groupBy"], serde_json::json!([4]), "{answer}");
+    assert_eq!(
+        answer["spec"]["groupBy"],
+        serde_json::json!([4]),
+        "{answer}"
+    );
 }
 
 /// WHERE filters the rows going in; the distinct keys come from what survives.
@@ -202,7 +217,10 @@ fn where_narrows_the_rows_before_they_are_deduplicated() {
     );
     // Strictly fewer, or the filter is not doing anything and this test would
     // pass against a build that ignored WHERE entirely.
-    assert!(some < all, "{some} distinct authors of {all} after a filter");
+    assert!(
+        some < all,
+        "{some} distinct authors of {all} after a filter"
+    );
     assert!(some > 0, "the filter left nothing, so this proves nothing");
 }
 
@@ -237,7 +255,10 @@ fn distinct_on_a_join_groups_in_the_joined_space() {
 #[test]
 fn a_grouping_with_no_aggregates_returns_only_the_keys() {
     let playground = Playground::new();
-    let answer = first(&playground, "SELECT author_id FROM books GROUP BY author_id");
+    let answer = first(
+        &playground,
+        "SELECT author_id FROM books GROUP BY author_id",
+    );
     assert_eq!(columns(&answer), vec!["author_id"], "{answer}");
     for row in answer["rows"].as_array().expect("rows") {
         assert_eq!(row.as_array().expect("row").len(), 1, "{answer}");

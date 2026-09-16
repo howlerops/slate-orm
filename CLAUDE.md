@@ -71,9 +71,9 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — fifteen jobs covering the Rust workspace, the Go, Python and
-TypeScript clients, the demo frontend, the pre-commit hook's own tests, a
-workspace-layout guard, the landing page's quickstarts, the three-SDK
+branch** — sixteen jobs covering formatting, the Rust workspace, the Go,
+Python and TypeScript clients, the demo frontend, the pre-commit hook's own
+tests, a workspace-layout guard, the landing page's quickstarts, the three-SDK
 conformance runner, a browser e2e, MinIO, the whole stack deployed against
 object storage, and the release build for both shipping targets.
 
@@ -87,6 +87,7 @@ applies to anything you add here too.
 Locally, the useful subset:
 
 ```sh
+cargo fmt -p <the crates you touched>                   # CI checks --all; see below
 cargo test -p <the crates you touched> --no-fail-fast   # see the disk note below
 cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
 sh .githooks/test-pre-commit.sh                         # the hook's own suite
@@ -108,7 +109,10 @@ that is set and missing is a hard error, never a silent fall back to building.
 ## Practical notes
 
 - `cargo fmt --all` touches other agents' in-flight files. Use
-  `cargo fmt -p <your-crates>`.
+  `cargo fmt -p <your-crates>`, and actually run it: CI checks `--all`, and a
+  session that formatted nothing turned that job red on nothing but line
+  breaks. It is its own job now, so it no longer hides clippy and the tests
+  behind it, but red is still red.
 - Disk is tight and several builds run at once. A linker `Bus error`, an
   `rustc-LLVM ERROR: IO failure`, or a sudden burst of `E0463: can't find
   crate` is almost always ENOSPC or a damaged build cache, not your code.

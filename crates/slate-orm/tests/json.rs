@@ -57,7 +57,10 @@ fn settings() -> Settings {
 fn a_json_column_is_a_string_column() {
     let table = Profile::table();
     assert_eq!(
-        table.column(Profile::COLUMNS.settings).unwrap().value_type(),
+        table
+            .column(Profile::COLUMNS.settings)
+            .unwrap()
+            .value_type(),
         ValueType::Str
     );
 }
@@ -281,10 +284,8 @@ fn json_hash_maps_do_not_have_a_stable_encoding() {
     // notice and correct for it.
     for encoding in &seen {
         let back: BTreeMap<String, i32> = serde_json::from_str(encoding).unwrap();
-        let want: BTreeMap<String, i32> = pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), *v))
-            .collect();
+        let want: BTreeMap<String, i32> =
+            pairs.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect();
         assert_eq!(back, want, "{encoding}");
     }
 }

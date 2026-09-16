@@ -22,16 +22,37 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  rust:
-    name: fmt, clippy, test
+  # Its own job, not the first step of the one below, and the reason is worth
+  # the extra runner. `cargo fmt --all -- --check` takes seconds and needs no
+  # build, but as step one of `rust` a single missing line break failed that
+  # job before clippy or any of the workspace tests had run — so a commit whose
+  # only fault was whitespace reported exactly the same red as one that broke
+  # the kernel, and reported nothing about whether it had. That happened, and
+  # the run read as "failed but blocked nothing" because the other fourteen
+  # jobs are independent and went green around it.
+  #
+  # Split, a formatting miss says "formatting" and the tests still say whether
+  # the code works. No cache: `cargo fmt` parses the sources and does not
+  # compile them, so there is nothing for `rust-cache` to restore.
+  fmt:
+    name: formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          components: rustfmt
       - run: cargo fmt --all -- --check
+
+  rust:
+    name: clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
       # `cargo test --workspace` builds default features, so an optional one is

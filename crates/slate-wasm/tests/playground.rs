@@ -714,7 +714,10 @@ fn a_whole_table_aggregate_needs_no_group_by() {
     // nothing checks is how the last one went stale.
     assert!(first["spec"]["groupBy"].is_null(), "{first}");
     assert_eq!(
-        first["spec"]["aggregates"].as_array().expect("aggregates").len(),
+        first["spec"]["aggregates"]
+            .as_array()
+            .expect("aggregates")
+            .len(),
         1,
         "{first}"
     );
