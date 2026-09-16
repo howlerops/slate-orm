@@ -29,6 +29,7 @@ const (
 	Records_Query_FullMethodName            = "/slate.v1.Records/Query"
 	Records_Join_FullMethodName             = "/slate.v1.Records/Join"
 	Records_Aggregate_FullMethodName        = "/slate.v1.Records/Aggregate"
+	Records_Related_FullMethodName          = "/slate.v1.Records/Related"
 	Records_Explain_FullMethodName          = "/slate.v1.Records/Explain"
 	Records_ExplainJoin_FullMethodName      = "/slate.v1.Records/ExplainJoin"
 	Records_ExplainAggregate_FullMethodName = "/slate.v1.Records/ExplainAggregate"
@@ -49,6 +50,7 @@ type RecordsClient interface {
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueryResponse], error)
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinResponse], error)
 	Aggregate(ctx context.Context, in *AggregateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AggregateResponse], error)
+	Related(ctx context.Context, in *RelatedRequest, opts ...grpc.CallOption) (*RelatedResponse, error)
 	Explain(ctx context.Context, in *ExplainRequest, opts ...grpc.CallOption) (*ExplainResponse, error)
 	ExplainJoin(ctx context.Context, in *ExplainJoinRequest, opts ...grpc.CallOption) (*JoinExplainResponse, error)
 	ExplainAggregate(ctx context.Context, in *ExplainAggregateRequest, opts ...grpc.CallOption) (*AggregateExplainResponse, error)
@@ -190,6 +192,16 @@ func (c *recordsClient) Aggregate(ctx context.Context, in *AggregateRequest, opt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Records_AggregateClient = grpc.ServerStreamingClient[AggregateResponse]
 
+func (c *recordsClient) Related(ctx context.Context, in *RelatedRequest, opts ...grpc.CallOption) (*RelatedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RelatedResponse)
+	err := c.cc.Invoke(ctx, Records_Related_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *recordsClient) Explain(ctx context.Context, in *ExplainRequest, opts ...grpc.CallOption) (*ExplainResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExplainResponse)
@@ -244,6 +256,7 @@ type RecordsServer interface {
 	Query(*QueryRequest, grpc.ServerStreamingServer[QueryResponse]) error
 	Join(*JoinRequest, grpc.ServerStreamingServer[JoinResponse]) error
 	Aggregate(*AggregateRequest, grpc.ServerStreamingServer[AggregateResponse]) error
+	Related(context.Context, *RelatedRequest) (*RelatedResponse, error)
 	Explain(context.Context, *ExplainRequest) (*ExplainResponse, error)
 	ExplainJoin(context.Context, *ExplainJoinRequest) (*JoinExplainResponse, error)
 	ExplainAggregate(context.Context, *ExplainAggregateRequest) (*AggregateExplainResponse, error)
@@ -287,6 +300,9 @@ func (UnimplementedRecordsServer) Join(*JoinRequest, grpc.ServerStreamingServer[
 }
 func (UnimplementedRecordsServer) Aggregate(*AggregateRequest, grpc.ServerStreamingServer[AggregateResponse]) error {
 	return status.Error(codes.Unimplemented, "method Aggregate not implemented")
+}
+func (UnimplementedRecordsServer) Related(context.Context, *RelatedRequest) (*RelatedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Related not implemented")
 }
 func (UnimplementedRecordsServer) Explain(context.Context, *ExplainRequest) (*ExplainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Explain not implemented")
@@ -480,6 +496,24 @@ func _Records_Aggregate_Handler(srv interface{}, stream grpc.ServerStream) error
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Records_AggregateServer = grpc.ServerStreamingServer[AggregateResponse]
 
+func _Records_Related_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RelatedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).Related(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_Related_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).Related(ctx, req.(*RelatedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Records_Explain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExplainRequest)
 	if err := dec(in); err != nil {
@@ -586,6 +620,10 @@ var Records_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Get",
 			Handler:    _Records_Get_Handler,
+		},
+		{
+			MethodName: "Related",
+			Handler:    _Records_Related_Handler,
 		},
 		{
 			MethodName: "Explain",

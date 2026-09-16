@@ -394,8 +394,15 @@ func (s *Session) Query(ctx context.Context, query Query) (*RowStream, error) {
 	return &RowStream{stream: stream, cancel: cancel, session: s}, nil
 }
 
-// Next advances to the next row, reporting false when there are none left or
-// the stream failed. Check [RowStream.Err] afterwards.
+// Next reports whether another row is available, fetching a batch if the
+// current one is spent, and false when there are none left or the stream
+// failed. Check [RowStream.Err] afterwards.
+//
+// It does not advance: [RowStream.Row] does, which is what lets
+// [RowStream.Computed] be read for the same row first. So `for s.Next() {}`
+// with no Row() call in the body never terminates and spins at full CPU —
+// this comment said "advances to the next row", and a test written from it
+// did exactly that.
 func (r *RowStream) Next() bool {
 	for r.at >= len(r.batch) {
 		if r.done {

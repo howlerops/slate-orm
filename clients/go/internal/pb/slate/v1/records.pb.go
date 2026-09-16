@@ -811,6 +811,59 @@ func (LeadershipStatus_Standing) EnumDescriptor() ([]byte, []int) {
 	return file_slate_v1_records_proto_rawDescGZIP(), []int{65, 0}
 }
 
+type Relation_Direction int32
+
+const (
+	Relation_DIRECTION_UNSPECIFIED Relation_Direction = 0
+	// The children: rows of `table` whose key matches the parents. `authors`
+	// to `books`, a has-many.
+	Relation_CHILDREN Relation_Direction = 1
+	// The parents: rows of the key's parent table matching the children's key
+	// values. `books` to `authors`, a belongs-to. `table` is still the child.
+	Relation_PARENTS Relation_Direction = 2
+)
+
+// Enum value maps for Relation_Direction.
+var (
+	Relation_Direction_name = map[int32]string{
+		0: "DIRECTION_UNSPECIFIED",
+		1: "CHILDREN",
+		2: "PARENTS",
+	}
+	Relation_Direction_value = map[string]int32{
+		"DIRECTION_UNSPECIFIED": 0,
+		"CHILDREN":              1,
+		"PARENTS":               2,
+	}
+)
+
+func (x Relation_Direction) Enum() *Relation_Direction {
+	p := new(Relation_Direction)
+	*p = x
+	return p
+}
+
+func (x Relation_Direction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Relation_Direction) Descriptor() protoreflect.EnumDescriptor {
+	return file_slate_v1_records_proto_enumTypes[14].Descriptor()
+}
+
+func (Relation_Direction) Type() protoreflect.EnumType {
+	return &file_slate_v1_records_proto_enumTypes[14]
+}
+
+func (x Relation_Direction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Relation_Direction.Descriptor instead.
+func (Relation_Direction) EnumDescriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{66, 0}
+}
+
 // One element of a row or a predicate, mirroring `slate_tuple::Value`.
 type Value struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -6195,6 +6248,300 @@ func (x *LeadershipStatus) GetSteppedDownBecause() string {
 	return ""
 }
 
+// ── Relationships ────────────────────────────────────────────────────────────
+//
+// One relationship, for many parents, in one read.
+//
+// The N+1 this replaces is the reason the record layer has `load_related`, and
+// until now that was reachable only from Rust: a Python, Go or TypeScript
+// caller who wanted an author's books wrote the two-step fetch by hand, and the
+// one who forgot wrote the loop.
+//
+// # Why there is no relationship declaration
+//
+// A relationship is named by the **foreign key that already declares it**,
+// rather than by a new catalog entry. `books.author_id -> authors` is a foreign
+// key; "an author's books" is that key read backwards and "a book's author" is
+// it read forwards. Adding a second declaration of the same fact would create
+// the possibility of the two disagreeing, and a catalog that says a
+// relationship exists where no constraint enforces it describes rows the
+// database will not keep.
+//
+// The cost is that a relationship *not* backed by a foreign key cannot be
+// expressed here, and the Rust `Related` trait does allow one. That divergence
+// is real and is written up in `docs/orm-comparison.md`.
+type Relation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The table that holds the foreign key — always the child, whichever
+	// direction is being read.
+	Table string `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
+	// The key's name on that table, as the catalog spells it.
+	ForeignKey    string             `protobuf:"bytes,2,opt,name=foreign_key,json=foreignKey,proto3" json:"foreign_key,omitempty"`
+	Direction     Relation_Direction `protobuf:"varint,3,opt,name=direction,proto3,enum=slate.v1.Relation_Direction" json:"direction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Relation) Reset() {
+	*x = Relation{}
+	mi := &file_slate_v1_records_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Relation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Relation) ProtoMessage() {}
+
+func (x *Relation) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Relation.ProtoReflect.Descriptor instead.
+func (*Relation) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *Relation) GetTable() string {
+	if x != nil {
+		return x.Table
+	}
+	return ""
+}
+
+func (x *Relation) GetForeignKey() string {
+	if x != nil {
+		return x.ForeignKey
+	}
+	return ""
+}
+
+func (x *Relation) GetDirection() Relation_Direction {
+	if x != nil {
+		return x.Direction
+	}
+	return Relation_DIRECTION_UNSPECIFIED
+}
+
+type RelatedRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Transaction string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	Relation    *Relation              `protobuf:"bytes,2,opt,name=relation,proto3" json:"relation,omitempty"`
+	// The relating value of each parent row, in the caller's own order.
+	//
+	// Duplicates are expected and are the point: two books by one author send
+	// `1, 1`, the server reads that key once, and the response carries one group
+	// the caller maps both books onto. Sending the caller's order rather than a
+	// deduplicated set keeps the request honest about how many rows are being
+	// resolved, which is what the read-count assertion in the conformance runner
+	// is measuring against.
+	Keys      []*Value   `protobuf:"bytes,3,rep,name=keys,proto3" json:"keys,omitempty"`
+	Freshness *Freshness `protobuf:"bytes,4,opt,name=freshness,proto3" json:"freshness,omitempty"`
+	// See `SchemaCheck`, against the table the rows come back from — which is
+	// the child for `CHILDREN` and the parent for `PARENTS`.
+	Schema        *SchemaCheck `protobuf:"bytes,5,opt,name=schema,proto3" json:"schema,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelatedRequest) Reset() {
+	*x = RelatedRequest{}
+	mi := &file_slate_v1_records_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelatedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelatedRequest) ProtoMessage() {}
+
+func (x *RelatedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelatedRequest.ProtoReflect.Descriptor instead.
+func (*RelatedRequest) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *RelatedRequest) GetTransaction() string {
+	if x != nil {
+		return x.Transaction
+	}
+	return ""
+}
+
+func (x *RelatedRequest) GetRelation() *Relation {
+	if x != nil {
+		return x.Relation
+	}
+	return nil
+}
+
+func (x *RelatedRequest) GetKeys() []*Value {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *RelatedRequest) GetFreshness() *Freshness {
+	if x != nil {
+		return x.Freshness
+	}
+	return nil
+}
+
+func (x *RelatedRequest) GetSchema() *SchemaCheck {
+	if x != nil {
+		return x.Schema
+	}
+	return nil
+}
+
+// Rows grouped by the value that related them, not repeated per parent.
+//
+// Two parents sharing a key get one group between them. Repeating the rows
+// would undo on the response the saving the deduplicated read just made, which
+// on a has-many over a popular parent is most of the bytes.
+type RelatedResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// One entry per *distinct* key that matched something. A key that matched
+	// nothing is absent rather than present-and-empty: the caller is mapping its
+	// own parents onto this, and "no group" and "empty group" mean the same
+	// thing to that loop.
+	Groups        []*RelatedResponse_Group `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
+	ServedBy      *ServedBy                `protobuf:"bytes,2,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
+	Warnings      []string                 `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelatedResponse) Reset() {
+	*x = RelatedResponse{}
+	mi := &file_slate_v1_records_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelatedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelatedResponse) ProtoMessage() {}
+
+func (x *RelatedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelatedResponse.ProtoReflect.Descriptor instead.
+func (*RelatedResponse) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *RelatedResponse) GetGroups() []*RelatedResponse_Group {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *RelatedResponse) GetServedBy() *ServedBy {
+	if x != nil {
+		return x.ServedBy
+	}
+	return nil
+}
+
+func (x *RelatedResponse) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
+}
+
+type RelatedResponse_Group struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The relating value these rows matched.
+	Key *Value `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	// The rows, in the related table's own order.
+	Rows          []*Row `protobuf:"bytes,2,rep,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelatedResponse_Group) Reset() {
+	*x = RelatedResponse_Group{}
+	mi := &file_slate_v1_records_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelatedResponse_Group) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelatedResponse_Group) ProtoMessage() {}
+
+func (x *RelatedResponse_Group) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelatedResponse_Group.ProtoReflect.Descriptor instead.
+func (*RelatedResponse_Group) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{68, 0}
+}
+
+func (x *RelatedResponse_Group) GetKey() *Value {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *RelatedResponse_Group) GetRows() []*Row {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
 var File_slate_v1_records_proto protoreflect.FileDescriptor
 
 const file_slate_v1_records_proto_rawDesc = "" +
@@ -6546,7 +6893,29 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x11STANDING_FOLLOWER\x10\x01\x12\x13\n" +
 	"\x0fSTANDING_LEADER\x10\x02\x12\x19\n" +
 	"\x15STANDING_STEPPED_DOWN\x10\x03B\r\n" +
-	"\v_generation*\x1b\n" +
+	"\v_generation\"\xc0\x01\n" +
+	"\bRelation\x12\x14\n" +
+	"\x05table\x18\x01 \x01(\tR\x05table\x12\x1f\n" +
+	"\vforeign_key\x18\x02 \x01(\tR\n" +
+	"foreignKey\x12:\n" +
+	"\tdirection\x18\x03 \x01(\x0e2\x1c.slate.v1.Relation.DirectionR\tdirection\"A\n" +
+	"\tDirection\x12\x19\n" +
+	"\x15DIRECTION_UNSPECIFIED\x10\x00\x12\f\n" +
+	"\bCHILDREN\x10\x01\x12\v\n" +
+	"\aPARENTS\x10\x02\"\xe9\x01\n" +
+	"\x0eRelatedRequest\x12 \n" +
+	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12.\n" +
+	"\brelation\x18\x02 \x01(\v2\x12.slate.v1.RelationR\brelation\x12#\n" +
+	"\x04keys\x18\x03 \x03(\v2\x0f.slate.v1.ValueR\x04keys\x121\n" +
+	"\tfreshness\x18\x04 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\x12-\n" +
+	"\x06schema\x18\x05 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\xe6\x01\n" +
+	"\x0fRelatedResponse\x127\n" +
+	"\x06groups\x18\x01 \x03(\v2\x1f.slate.v1.RelatedResponse.GroupR\x06groups\x12/\n" +
+	"\tserved_by\x18\x02 \x01(\v2\x12.slate.v1.ServedByR\bservedBy\x12\x1a\n" +
+	"\bwarnings\x18\x03 \x03(\tR\bwarnings\x1aM\n" +
+	"\x05Group\x12!\n" +
+	"\x03key\x18\x01 \x01(\v2\x0f.slate.v1.ValueR\x03key\x12!\n" +
+	"\x04rows\x18\x02 \x03(\v2\r.slate.v1.RowR\x04rows*\x1b\n" +
 	"\tNullValue\x12\x0e\n" +
 	"\n" +
 	"NULL_VALUE\x10\x00*\x10\n" +
@@ -6610,7 +6979,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x04Side\x12\r\n" +
 	"\tSIDE_LEFT\x10\x00\x12\x0e\n" +
 	"\n" +
-	"SIDE_RIGHT\x10\x012\x96\a\n" +
+	"SIDE_RIGHT\x10\x012\xd6\a\n" +
 	"\aRecords\x128\n" +
 	"\x05Begin\x12\x16.slate.v1.BeginRequest\x1a\x17.slate.v1.BeginResponse\x12;\n" +
 	"\x06Commit\x12\x17.slate.v1.CommitRequest\x1a\x18.slate.v1.CommitResponse\x12A\n" +
@@ -6622,6 +6991,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x05Query\x12\x16.slate.v1.QueryRequest\x1a\x17.slate.v1.QueryResponse0\x01\x127\n" +
 	"\x04Join\x12\x15.slate.v1.JoinRequest\x1a\x16.slate.v1.JoinResponse0\x01\x12F\n" +
 	"\tAggregate\x12\x1a.slate.v1.AggregateRequest\x1a\x1b.slate.v1.AggregateResponse0\x01\x12>\n" +
+	"\aRelated\x12\x18.slate.v1.RelatedRequest\x1a\x19.slate.v1.RelatedResponse\x12>\n" +
 	"\aExplain\x12\x18.slate.v1.ExplainRequest\x1a\x19.slate.v1.ExplainResponse\x12J\n" +
 	"\vExplainJoin\x12\x1c.slate.v1.ExplainJoinRequest\x1a\x1d.slate.v1.JoinExplainResponse\x12Y\n" +
 	"\x10ExplainAggregate\x12!.slate.v1.ExplainAggregateRequest\x1a\".slate.v1.AggregateExplainResponse\x12E\n" +
@@ -6640,8 +7010,8 @@ func file_slate_v1_records_proto_rawDescGZIP() []byte {
 	return file_slate_v1_records_proto_rawDescData
 }
 
-var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 14)
-var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 66)
+var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 15)
+var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 70)
 var file_slate_v1_records_proto_goTypes = []any{
 	(NullValue)(0),                   // 0: slate.v1.NullValue
 	(Unit)(0),                        // 1: slate.v1.Unit
@@ -6657,247 +7027,263 @@ var file_slate_v1_records_proto_goTypes = []any{
 	(JoinType)(0),                    // 11: slate.v1.JoinType
 	(Side)(0),                        // 12: slate.v1.Side
 	(LeadershipStatus_Standing)(0),   // 13: slate.v1.LeadershipStatus.Standing
-	(*Value)(nil),                    // 14: slate.v1.Value
-	(*Vector)(nil),                   // 15: slate.v1.Vector
-	(*Row)(nil),                      // 16: slate.v1.Row
-	(*SchemaCheck)(nil),              // 17: slate.v1.SchemaCheck
-	(*ColumnRef)(nil),                // 18: slate.v1.ColumnRef
-	(*Expr)(nil),                     // 19: slate.v1.Expr
-	(*ExprList)(nil),                 // 20: slate.v1.ExprList
-	(*Compare)(nil),                  // 21: slate.v1.Compare
-	(*CompareColumns)(nil),           // 22: slate.v1.CompareColumns
-	(*IsNull)(nil),                   // 23: slate.v1.IsNull
-	(*Like)(nil),                     // 24: slate.v1.Like
-	(*Matches)(nil),                  // 25: slate.v1.Matches
-	(*InList)(nil),                   // 26: slate.v1.InList
-	(*Scalar)(nil),                   // 27: slate.v1.Scalar
-	(*ScalarPair)(nil),               // 28: slate.v1.ScalarPair
-	(*ScalarList)(nil),               // 29: slate.v1.ScalarList
-	(*TimePart)(nil),                 // 30: slate.v1.TimePart
-	(*CalendarField)(nil),            // 31: slate.v1.CalendarField
-	(*CalendarTrunc)(nil),            // 32: slate.v1.CalendarTrunc
-	(*ZoneShift)(nil),                // 33: slate.v1.ZoneShift
-	(*Case)(nil),                     // 34: slate.v1.Case
-	(*CaseBranch)(nil),               // 35: slate.v1.CaseBranch
-	(*Distance)(nil),                 // 36: slate.v1.Distance
-	(*RegexpReplace)(nil),            // 37: slate.v1.RegexpReplace
-	(*Aggregate)(nil),                // 38: slate.v1.Aggregate
-	(*Group)(nil),                    // 39: slate.v1.Group
-	(*SortKey)(nil),                  // 40: slate.v1.SortKey
-	(*Projection)(nil),               // 41: slate.v1.Projection
-	(*AccessHint)(nil),               // 42: slate.v1.AccessHint
-	(*Query)(nil),                    // 43: slate.v1.Query
-	(*JoinAlgorithm)(nil),            // 44: slate.v1.JoinAlgorithm
-	(*JoinOn)(nil),                   // 45: slate.v1.JoinOn
-	(*JoinInput)(nil),                // 46: slate.v1.JoinInput
-	(*JoinQuery)(nil),                // 47: slate.v1.JoinQuery
-	(*JoinedRow)(nil),                // 48: slate.v1.JoinedRow
-	(*JoinedInput)(nil),              // 49: slate.v1.JoinedInput
-	(*Freshness)(nil),                // 50: slate.v1.Freshness
-	(*ServedBy)(nil),                 // 51: slate.v1.ServedBy
-	(*BeginRequest)(nil),             // 52: slate.v1.BeginRequest
-	(*BeginResponse)(nil),            // 53: slate.v1.BeginResponse
-	(*CommitRequest)(nil),            // 54: slate.v1.CommitRequest
-	(*CommitResponse)(nil),           // 55: slate.v1.CommitResponse
-	(*RollbackRequest)(nil),          // 56: slate.v1.RollbackRequest
-	(*RollbackResponse)(nil),         // 57: slate.v1.RollbackResponse
-	(*InsertRequest)(nil),            // 58: slate.v1.InsertRequest
-	(*UpdateRequest)(nil),            // 59: slate.v1.UpdateRequest
-	(*DeleteRequest)(nil),            // 60: slate.v1.DeleteRequest
-	(*WriteResponse)(nil),            // 61: slate.v1.WriteResponse
-	(*GetRequest)(nil),               // 62: slate.v1.GetRequest
-	(*GetResponse)(nil),              // 63: slate.v1.GetResponse
-	(*QueryRequest)(nil),             // 64: slate.v1.QueryRequest
-	(*QueryResponse)(nil),            // 65: slate.v1.QueryResponse
-	(*JoinRequest)(nil),              // 66: slate.v1.JoinRequest
-	(*JoinResponse)(nil),             // 67: slate.v1.JoinResponse
-	(*AggregateQuery)(nil),           // 68: slate.v1.AggregateQuery
-	(*AggregateRequest)(nil),         // 69: slate.v1.AggregateRequest
-	(*AggregateResponse)(nil),        // 70: slate.v1.AggregateResponse
-	(*ExplainRequest)(nil),           // 71: slate.v1.ExplainRequest
-	(*ExplainResponse)(nil),          // 72: slate.v1.ExplainResponse
-	(*ExplainJoinRequest)(nil),       // 73: slate.v1.ExplainJoinRequest
-	(*ExplainAggregateRequest)(nil),  // 74: slate.v1.ExplainAggregateRequest
-	(*AggregateExplainResponse)(nil), // 75: slate.v1.AggregateExplainResponse
-	(*JoinExplainResponse)(nil),      // 76: slate.v1.JoinExplainResponse
-	(*JoinInputPlan)(nil),            // 77: slate.v1.JoinInputPlan
-	(*LeadershipRequest)(nil),        // 78: slate.v1.LeadershipRequest
-	(*LeadershipStatus)(nil),         // 79: slate.v1.LeadershipStatus
+	(Relation_Direction)(0),          // 14: slate.v1.Relation.Direction
+	(*Value)(nil),                    // 15: slate.v1.Value
+	(*Vector)(nil),                   // 16: slate.v1.Vector
+	(*Row)(nil),                      // 17: slate.v1.Row
+	(*SchemaCheck)(nil),              // 18: slate.v1.SchemaCheck
+	(*ColumnRef)(nil),                // 19: slate.v1.ColumnRef
+	(*Expr)(nil),                     // 20: slate.v1.Expr
+	(*ExprList)(nil),                 // 21: slate.v1.ExprList
+	(*Compare)(nil),                  // 22: slate.v1.Compare
+	(*CompareColumns)(nil),           // 23: slate.v1.CompareColumns
+	(*IsNull)(nil),                   // 24: slate.v1.IsNull
+	(*Like)(nil),                     // 25: slate.v1.Like
+	(*Matches)(nil),                  // 26: slate.v1.Matches
+	(*InList)(nil),                   // 27: slate.v1.InList
+	(*Scalar)(nil),                   // 28: slate.v1.Scalar
+	(*ScalarPair)(nil),               // 29: slate.v1.ScalarPair
+	(*ScalarList)(nil),               // 30: slate.v1.ScalarList
+	(*TimePart)(nil),                 // 31: slate.v1.TimePart
+	(*CalendarField)(nil),            // 32: slate.v1.CalendarField
+	(*CalendarTrunc)(nil),            // 33: slate.v1.CalendarTrunc
+	(*ZoneShift)(nil),                // 34: slate.v1.ZoneShift
+	(*Case)(nil),                     // 35: slate.v1.Case
+	(*CaseBranch)(nil),               // 36: slate.v1.CaseBranch
+	(*Distance)(nil),                 // 37: slate.v1.Distance
+	(*RegexpReplace)(nil),            // 38: slate.v1.RegexpReplace
+	(*Aggregate)(nil),                // 39: slate.v1.Aggregate
+	(*Group)(nil),                    // 40: slate.v1.Group
+	(*SortKey)(nil),                  // 41: slate.v1.SortKey
+	(*Projection)(nil),               // 42: slate.v1.Projection
+	(*AccessHint)(nil),               // 43: slate.v1.AccessHint
+	(*Query)(nil),                    // 44: slate.v1.Query
+	(*JoinAlgorithm)(nil),            // 45: slate.v1.JoinAlgorithm
+	(*JoinOn)(nil),                   // 46: slate.v1.JoinOn
+	(*JoinInput)(nil),                // 47: slate.v1.JoinInput
+	(*JoinQuery)(nil),                // 48: slate.v1.JoinQuery
+	(*JoinedRow)(nil),                // 49: slate.v1.JoinedRow
+	(*JoinedInput)(nil),              // 50: slate.v1.JoinedInput
+	(*Freshness)(nil),                // 51: slate.v1.Freshness
+	(*ServedBy)(nil),                 // 52: slate.v1.ServedBy
+	(*BeginRequest)(nil),             // 53: slate.v1.BeginRequest
+	(*BeginResponse)(nil),            // 54: slate.v1.BeginResponse
+	(*CommitRequest)(nil),            // 55: slate.v1.CommitRequest
+	(*CommitResponse)(nil),           // 56: slate.v1.CommitResponse
+	(*RollbackRequest)(nil),          // 57: slate.v1.RollbackRequest
+	(*RollbackResponse)(nil),         // 58: slate.v1.RollbackResponse
+	(*InsertRequest)(nil),            // 59: slate.v1.InsertRequest
+	(*UpdateRequest)(nil),            // 60: slate.v1.UpdateRequest
+	(*DeleteRequest)(nil),            // 61: slate.v1.DeleteRequest
+	(*WriteResponse)(nil),            // 62: slate.v1.WriteResponse
+	(*GetRequest)(nil),               // 63: slate.v1.GetRequest
+	(*GetResponse)(nil),              // 64: slate.v1.GetResponse
+	(*QueryRequest)(nil),             // 65: slate.v1.QueryRequest
+	(*QueryResponse)(nil),            // 66: slate.v1.QueryResponse
+	(*JoinRequest)(nil),              // 67: slate.v1.JoinRequest
+	(*JoinResponse)(nil),             // 68: slate.v1.JoinResponse
+	(*AggregateQuery)(nil),           // 69: slate.v1.AggregateQuery
+	(*AggregateRequest)(nil),         // 70: slate.v1.AggregateRequest
+	(*AggregateResponse)(nil),        // 71: slate.v1.AggregateResponse
+	(*ExplainRequest)(nil),           // 72: slate.v1.ExplainRequest
+	(*ExplainResponse)(nil),          // 73: slate.v1.ExplainResponse
+	(*ExplainJoinRequest)(nil),       // 74: slate.v1.ExplainJoinRequest
+	(*ExplainAggregateRequest)(nil),  // 75: slate.v1.ExplainAggregateRequest
+	(*AggregateExplainResponse)(nil), // 76: slate.v1.AggregateExplainResponse
+	(*JoinExplainResponse)(nil),      // 77: slate.v1.JoinExplainResponse
+	(*JoinInputPlan)(nil),            // 78: slate.v1.JoinInputPlan
+	(*LeadershipRequest)(nil),        // 79: slate.v1.LeadershipRequest
+	(*LeadershipStatus)(nil),         // 80: slate.v1.LeadershipStatus
+	(*Relation)(nil),                 // 81: slate.v1.Relation
+	(*RelatedRequest)(nil),           // 82: slate.v1.RelatedRequest
+	(*RelatedResponse)(nil),          // 83: slate.v1.RelatedResponse
+	(*RelatedResponse_Group)(nil),    // 84: slate.v1.RelatedResponse.Group
 }
 var file_slate_v1_records_proto_depIdxs = []int32{
 	0,   // 0: slate.v1.Value.null_value:type_name -> slate.v1.NullValue
-	15,  // 1: slate.v1.Value.vector_value:type_name -> slate.v1.Vector
-	14,  // 2: slate.v1.Row.values:type_name -> slate.v1.Value
-	14,  // 3: slate.v1.Row.computed:type_name -> slate.v1.Value
-	21,  // 4: slate.v1.Expr.compare:type_name -> slate.v1.Compare
-	22,  // 5: slate.v1.Expr.compare_columns:type_name -> slate.v1.CompareColumns
-	23,  // 6: slate.v1.Expr.is_null:type_name -> slate.v1.IsNull
-	24,  // 7: slate.v1.Expr.like:type_name -> slate.v1.Like
-	25,  // 8: slate.v1.Expr.matches:type_name -> slate.v1.Matches
-	26,  // 9: slate.v1.Expr.in_list:type_name -> slate.v1.InList
-	20,  // 10: slate.v1.Expr.conjunction:type_name -> slate.v1.ExprList
-	20,  // 11: slate.v1.Expr.disjunction:type_name -> slate.v1.ExprList
-	19,  // 12: slate.v1.Expr.negation:type_name -> slate.v1.Expr
-	19,  // 13: slate.v1.ExprList.exprs:type_name -> slate.v1.Expr
-	18,  // 14: slate.v1.Compare.column:type_name -> slate.v1.ColumnRef
+	16,  // 1: slate.v1.Value.vector_value:type_name -> slate.v1.Vector
+	15,  // 2: slate.v1.Row.values:type_name -> slate.v1.Value
+	15,  // 3: slate.v1.Row.computed:type_name -> slate.v1.Value
+	22,  // 4: slate.v1.Expr.compare:type_name -> slate.v1.Compare
+	23,  // 5: slate.v1.Expr.compare_columns:type_name -> slate.v1.CompareColumns
+	24,  // 6: slate.v1.Expr.is_null:type_name -> slate.v1.IsNull
+	25,  // 7: slate.v1.Expr.like:type_name -> slate.v1.Like
+	26,  // 8: slate.v1.Expr.matches:type_name -> slate.v1.Matches
+	27,  // 9: slate.v1.Expr.in_list:type_name -> slate.v1.InList
+	21,  // 10: slate.v1.Expr.conjunction:type_name -> slate.v1.ExprList
+	21,  // 11: slate.v1.Expr.disjunction:type_name -> slate.v1.ExprList
+	20,  // 12: slate.v1.Expr.negation:type_name -> slate.v1.Expr
+	20,  // 13: slate.v1.ExprList.exprs:type_name -> slate.v1.Expr
+	19,  // 14: slate.v1.Compare.column:type_name -> slate.v1.ColumnRef
 	2,   // 15: slate.v1.Compare.op:type_name -> slate.v1.CmpOp
-	14,  // 16: slate.v1.Compare.value:type_name -> slate.v1.Value
-	18,  // 17: slate.v1.CompareColumns.left:type_name -> slate.v1.ColumnRef
+	15,  // 16: slate.v1.Compare.value:type_name -> slate.v1.Value
+	19,  // 17: slate.v1.CompareColumns.left:type_name -> slate.v1.ColumnRef
 	2,   // 18: slate.v1.CompareColumns.op:type_name -> slate.v1.CmpOp
-	18,  // 19: slate.v1.CompareColumns.right:type_name -> slate.v1.ColumnRef
-	18,  // 20: slate.v1.IsNull.column:type_name -> slate.v1.ColumnRef
-	18,  // 21: slate.v1.Like.column:type_name -> slate.v1.ColumnRef
-	18,  // 22: slate.v1.Matches.column:type_name -> slate.v1.ColumnRef
-	18,  // 23: slate.v1.InList.column:type_name -> slate.v1.ColumnRef
-	14,  // 24: slate.v1.InList.values:type_name -> slate.v1.Value
-	18,  // 25: slate.v1.Scalar.column:type_name -> slate.v1.ColumnRef
-	14,  // 26: slate.v1.Scalar.literal:type_name -> slate.v1.Value
-	28,  // 27: slate.v1.Scalar.add:type_name -> slate.v1.ScalarPair
-	28,  // 28: slate.v1.Scalar.sub:type_name -> slate.v1.ScalarPair
-	28,  // 29: slate.v1.Scalar.mul:type_name -> slate.v1.ScalarPair
-	28,  // 30: slate.v1.Scalar.div:type_name -> slate.v1.ScalarPair
-	27,  // 31: slate.v1.Scalar.length:type_name -> slate.v1.Scalar
-	29,  // 32: slate.v1.Scalar.concat:type_name -> slate.v1.ScalarList
-	27,  // 33: slate.v1.Scalar.lower:type_name -> slate.v1.Scalar
-	27,  // 34: slate.v1.Scalar.upper:type_name -> slate.v1.Scalar
-	30,  // 35: slate.v1.Scalar.extract:type_name -> slate.v1.TimePart
-	30,  // 36: slate.v1.Scalar.date_trunc:type_name -> slate.v1.TimePart
-	34,  // 37: slate.v1.Scalar.case:type_name -> slate.v1.Case
-	29,  // 38: slate.v1.Scalar.coalesce:type_name -> slate.v1.ScalarList
-	36,  // 39: slate.v1.Scalar.distance:type_name -> slate.v1.Distance
-	37,  // 40: slate.v1.Scalar.regexp_replace:type_name -> slate.v1.RegexpReplace
-	31,  // 41: slate.v1.Scalar.calendar_part:type_name -> slate.v1.CalendarField
-	27,  // 42: slate.v1.Scalar.round:type_name -> slate.v1.Scalar
-	32,  // 43: slate.v1.Scalar.calendar_trunc:type_name -> slate.v1.CalendarTrunc
-	33,  // 44: slate.v1.Scalar.zone_shift:type_name -> slate.v1.ZoneShift
-	27,  // 45: slate.v1.ScalarPair.left:type_name -> slate.v1.Scalar
-	27,  // 46: slate.v1.ScalarPair.right:type_name -> slate.v1.Scalar
-	27,  // 47: slate.v1.ScalarList.scalars:type_name -> slate.v1.Scalar
+	19,  // 19: slate.v1.CompareColumns.right:type_name -> slate.v1.ColumnRef
+	19,  // 20: slate.v1.IsNull.column:type_name -> slate.v1.ColumnRef
+	19,  // 21: slate.v1.Like.column:type_name -> slate.v1.ColumnRef
+	19,  // 22: slate.v1.Matches.column:type_name -> slate.v1.ColumnRef
+	19,  // 23: slate.v1.InList.column:type_name -> slate.v1.ColumnRef
+	15,  // 24: slate.v1.InList.values:type_name -> slate.v1.Value
+	19,  // 25: slate.v1.Scalar.column:type_name -> slate.v1.ColumnRef
+	15,  // 26: slate.v1.Scalar.literal:type_name -> slate.v1.Value
+	29,  // 27: slate.v1.Scalar.add:type_name -> slate.v1.ScalarPair
+	29,  // 28: slate.v1.Scalar.sub:type_name -> slate.v1.ScalarPair
+	29,  // 29: slate.v1.Scalar.mul:type_name -> slate.v1.ScalarPair
+	29,  // 30: slate.v1.Scalar.div:type_name -> slate.v1.ScalarPair
+	28,  // 31: slate.v1.Scalar.length:type_name -> slate.v1.Scalar
+	30,  // 32: slate.v1.Scalar.concat:type_name -> slate.v1.ScalarList
+	28,  // 33: slate.v1.Scalar.lower:type_name -> slate.v1.Scalar
+	28,  // 34: slate.v1.Scalar.upper:type_name -> slate.v1.Scalar
+	31,  // 35: slate.v1.Scalar.extract:type_name -> slate.v1.TimePart
+	31,  // 36: slate.v1.Scalar.date_trunc:type_name -> slate.v1.TimePart
+	35,  // 37: slate.v1.Scalar.case:type_name -> slate.v1.Case
+	30,  // 38: slate.v1.Scalar.coalesce:type_name -> slate.v1.ScalarList
+	37,  // 39: slate.v1.Scalar.distance:type_name -> slate.v1.Distance
+	38,  // 40: slate.v1.Scalar.regexp_replace:type_name -> slate.v1.RegexpReplace
+	32,  // 41: slate.v1.Scalar.calendar_part:type_name -> slate.v1.CalendarField
+	28,  // 42: slate.v1.Scalar.round:type_name -> slate.v1.Scalar
+	33,  // 43: slate.v1.Scalar.calendar_trunc:type_name -> slate.v1.CalendarTrunc
+	34,  // 44: slate.v1.Scalar.zone_shift:type_name -> slate.v1.ZoneShift
+	28,  // 45: slate.v1.ScalarPair.left:type_name -> slate.v1.Scalar
+	28,  // 46: slate.v1.ScalarPair.right:type_name -> slate.v1.Scalar
+	28,  // 47: slate.v1.ScalarList.scalars:type_name -> slate.v1.Scalar
 	3,   // 48: slate.v1.TimePart.unit:type_name -> slate.v1.TimeUnit
-	27,  // 49: slate.v1.TimePart.value:type_name -> slate.v1.Scalar
+	28,  // 49: slate.v1.TimePart.value:type_name -> slate.v1.Scalar
 	4,   // 50: slate.v1.CalendarField.part:type_name -> slate.v1.CalendarPart
-	27,  // 51: slate.v1.CalendarField.value:type_name -> slate.v1.Scalar
+	28,  // 51: slate.v1.CalendarField.value:type_name -> slate.v1.Scalar
 	5,   // 52: slate.v1.CalendarTrunc.unit:type_name -> slate.v1.CalendarUnit
-	27,  // 53: slate.v1.CalendarTrunc.value:type_name -> slate.v1.Scalar
-	27,  // 54: slate.v1.ZoneShift.value:type_name -> slate.v1.Scalar
-	35,  // 55: slate.v1.Case.branches:type_name -> slate.v1.CaseBranch
-	27,  // 56: slate.v1.Case.otherwise:type_name -> slate.v1.Scalar
-	19,  // 57: slate.v1.CaseBranch.when:type_name -> slate.v1.Expr
-	27,  // 58: slate.v1.CaseBranch.then:type_name -> slate.v1.Scalar
-	27,  // 59: slate.v1.Distance.left:type_name -> slate.v1.Scalar
-	27,  // 60: slate.v1.Distance.right:type_name -> slate.v1.Scalar
+	28,  // 53: slate.v1.CalendarTrunc.value:type_name -> slate.v1.Scalar
+	28,  // 54: slate.v1.ZoneShift.value:type_name -> slate.v1.Scalar
+	36,  // 55: slate.v1.Case.branches:type_name -> slate.v1.CaseBranch
+	28,  // 56: slate.v1.Case.otherwise:type_name -> slate.v1.Scalar
+	20,  // 57: slate.v1.CaseBranch.when:type_name -> slate.v1.Expr
+	28,  // 58: slate.v1.CaseBranch.then:type_name -> slate.v1.Scalar
+	28,  // 59: slate.v1.Distance.left:type_name -> slate.v1.Scalar
+	28,  // 60: slate.v1.Distance.right:type_name -> slate.v1.Scalar
 	6,   // 61: slate.v1.Distance.metric:type_name -> slate.v1.Metric
-	27,  // 62: slate.v1.RegexpReplace.value:type_name -> slate.v1.Scalar
+	28,  // 62: slate.v1.RegexpReplace.value:type_name -> slate.v1.Scalar
 	7,   // 63: slate.v1.Aggregate.function:type_name -> slate.v1.AggregateFunction
-	18,  // 64: slate.v1.Aggregate.column:type_name -> slate.v1.ColumnRef
-	14,  // 65: slate.v1.Group.key:type_name -> slate.v1.Value
-	14,  // 66: slate.v1.Group.values:type_name -> slate.v1.Value
-	18,  // 67: slate.v1.SortKey.column:type_name -> slate.v1.ColumnRef
+	19,  // 64: slate.v1.Aggregate.column:type_name -> slate.v1.ColumnRef
+	15,  // 65: slate.v1.Group.key:type_name -> slate.v1.Value
+	15,  // 66: slate.v1.Group.values:type_name -> slate.v1.Value
+	19,  // 67: slate.v1.SortKey.column:type_name -> slate.v1.ColumnRef
 	9,   // 68: slate.v1.SortKey.direction:type_name -> slate.v1.SortDirection
 	10,  // 69: slate.v1.SortKey.nulls:type_name -> slate.v1.NullsOrder
-	18,  // 70: slate.v1.Projection.columns:type_name -> slate.v1.ColumnRef
+	19,  // 70: slate.v1.Projection.columns:type_name -> slate.v1.ColumnRef
 	1,   // 71: slate.v1.AccessHint.table_scan:type_name -> slate.v1.Unit
-	19,  // 72: slate.v1.Query.filter:type_name -> slate.v1.Expr
+	20,  // 72: slate.v1.Query.filter:type_name -> slate.v1.Expr
 	8,   // 73: slate.v1.Query.order:type_name -> slate.v1.ScanOrder
-	41,  // 74: slate.v1.Query.projection:type_name -> slate.v1.Projection
-	40,  // 75: slate.v1.Query.sort:type_name -> slate.v1.SortKey
-	42,  // 76: slate.v1.Query.hint:type_name -> slate.v1.AccessHint
-	27,  // 77: slate.v1.Query.compute:type_name -> slate.v1.Scalar
-	17,  // 78: slate.v1.Query.schema:type_name -> slate.v1.SchemaCheck
+	42,  // 74: slate.v1.Query.projection:type_name -> slate.v1.Projection
+	41,  // 75: slate.v1.Query.sort:type_name -> slate.v1.SortKey
+	43,  // 76: slate.v1.Query.hint:type_name -> slate.v1.AccessHint
+	28,  // 77: slate.v1.Query.compute:type_name -> slate.v1.Scalar
+	18,  // 78: slate.v1.Query.schema:type_name -> slate.v1.SchemaCheck
 	12,  // 79: slate.v1.JoinAlgorithm.hash_build:type_name -> slate.v1.Side
 	1,   // 80: slate.v1.JoinAlgorithm.nested_loop:type_name -> slate.v1.Unit
-	18,  // 81: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
-	18,  // 82: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
-	43,  // 83: slate.v1.JoinInput.query:type_name -> slate.v1.Query
-	45,  // 84: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
+	19,  // 81: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
+	19,  // 82: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
+	44,  // 83: slate.v1.JoinInput.query:type_name -> slate.v1.Query
+	46,  // 84: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
 	11,  // 85: slate.v1.JoinInput.join_type:type_name -> slate.v1.JoinType
-	19,  // 86: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
-	44,  // 87: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
-	46,  // 88: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
-	27,  // 89: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
-	49,  // 90: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
-	14,  // 91: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
-	16,  // 92: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
+	20,  // 86: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
+	45,  // 87: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
+	47,  // 88: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
+	28,  // 89: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
+	50,  // 90: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
+	15,  // 91: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
+	17,  // 92: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
 	1,   // 93: slate.v1.Freshness.any:type_name -> slate.v1.Unit
 	1,   // 94: slate.v1.Freshness.latest:type_name -> slate.v1.Unit
-	16,  // 95: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
-	17,  // 96: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
-	16,  // 97: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
-	17,  // 98: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
-	16,  // 99: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
-	17,  // 100: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
-	16,  // 101: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
-	50,  // 102: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
-	17,  // 103: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
-	16,  // 104: slate.v1.GetResponse.row:type_name -> slate.v1.Row
-	51,  // 105: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
-	43,  // 106: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
-	50,  // 107: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
-	16,  // 108: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
-	51,  // 109: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
-	47,  // 110: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
-	50,  // 111: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
-	48,  // 112: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
-	51,  // 113: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
-	43,  // 114: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
-	18,  // 115: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
-	38,  // 116: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
-	19,  // 117: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
-	47,  // 118: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
-	40,  // 119: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
-	68,  // 120: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	50,  // 121: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
-	39,  // 122: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
-	51,  // 123: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
-	43,  // 124: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
-	50,  // 125: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
-	51,  // 126: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	47,  // 127: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
-	50,  // 128: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
-	68,  // 129: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	50,  // 130: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
-	72,  // 131: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
-	76,  // 132: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
-	51,  // 133: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	77,  // 134: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
-	51,  // 135: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	72,  // 136: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
+	17,  // 95: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
+	18,  // 96: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 97: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
+	18,  // 98: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 99: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
+	18,  // 100: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 101: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
+	51,  // 102: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
+	18,  // 103: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 104: slate.v1.GetResponse.row:type_name -> slate.v1.Row
+	52,  // 105: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 106: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
+	51,  // 107: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
+	17,  // 108: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
+	52,  // 109: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
+	48,  // 110: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
+	51,  // 111: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
+	49,  // 112: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
+	52,  // 113: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 114: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
+	19,  // 115: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
+	39,  // 116: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
+	20,  // 117: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
+	48,  // 118: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
+	41,  // 119: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
+	69,  // 120: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	51,  // 121: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
+	40,  // 122: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
+	52,  // 123: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
+	44,  // 124: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
+	51,  // 125: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
+	52,  // 126: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	48,  // 127: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
+	51,  // 128: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
+	69,  // 129: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	51,  // 130: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
+	73,  // 131: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
+	77,  // 132: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
+	52,  // 133: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	78,  // 134: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
+	52,  // 135: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	73,  // 136: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
 	11,  // 137: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
-	44,  // 138: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
+	45,  // 138: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
 	13,  // 139: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
-	52,  // 140: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	54,  // 141: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	56,  // 142: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	58,  // 143: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	59,  // 144: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	60,  // 145: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	62,  // 146: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	64,  // 147: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	66,  // 148: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	69,  // 149: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	71,  // 150: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	73,  // 151: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	74,  // 152: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
-	78,  // 153: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	53,  // 154: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	55,  // 155: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	57,  // 156: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	61,  // 157: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	61,  // 158: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	61,  // 159: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	63,  // 160: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	65,  // 161: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	67,  // 162: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	70,  // 163: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	72,  // 164: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	76,  // 165: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	75,  // 166: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
-	79,  // 167: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	154, // [154:168] is the sub-list for method output_type
-	140, // [140:154] is the sub-list for method input_type
-	140, // [140:140] is the sub-list for extension type_name
-	140, // [140:140] is the sub-list for extension extendee
-	0,   // [0:140] is the sub-list for field type_name
+	14,  // 140: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
+	81,  // 141: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
+	15,  // 142: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
+	51,  // 143: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
+	18,  // 144: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
+	84,  // 145: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
+	52,  // 146: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
+	15,  // 147: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
+	17,  // 148: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
+	53,  // 149: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	55,  // 150: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	57,  // 151: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	59,  // 152: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	60,  // 153: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	61,  // 154: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	63,  // 155: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	65,  // 156: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	67,  // 157: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	70,  // 158: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	82,  // 159: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
+	72,  // 160: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	74,  // 161: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	75,  // 162: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	79,  // 163: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	54,  // 164: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	56,  // 165: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	58,  // 166: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	62,  // 167: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	62,  // 168: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	62,  // 169: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	64,  // 170: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	66,  // 171: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	68,  // 172: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	71,  // 173: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	83,  // 174: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
+	73,  // 175: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	77,  // 176: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	76,  // 177: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	80,  // 178: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	164, // [164:179] is the sub-list for method output_type
+	149, // [149:164] is the sub-list for method input_type
+	149, // [149:149] is the sub-list for extension type_name
+	149, // [149:149] is the sub-list for extension extendee
+	0,   // [0:149] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }
@@ -6982,8 +7368,8 @@ func file_slate_v1_records_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_slate_v1_records_proto_rawDesc), len(file_slate_v1_records_proto_rawDesc)),
-			NumEnums:      14,
-			NumMessages:   66,
+			NumEnums:      15,
+			NumMessages:   70,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
