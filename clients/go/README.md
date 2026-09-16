@@ -110,6 +110,23 @@ a `COUNT(*)` without reading a row — so the two describe different plans.
 `Explanation.Decodes` is where the difference shows when the access path does
 not change. Exactly one of `Input` and `Join` comes back, matching the request.
 
+## Deadlines
+
+The context, and nothing else:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+rows, err := session.Query(ctx, slate.Query{Table: "trips"})
+```
+
+Every method takes a `context.Context` and grpc-go honours its deadline, so
+this client needed nothing added where the Python and TypeScript ones each grew
+a `with_timeout`. That was a claim until `deadline_test.go` was written: it ends
+a call against a listener that accepts and never speaks, and checks the error is
+`KindDeadlineExceeded` rather than something else — beside a test showing the
+same call not returning when the context has no deadline.
+
 ## Schema checks
 
 Optional, and worth turning on. Declare a table and every request naming it

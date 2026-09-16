@@ -121,6 +121,28 @@ a `count(*)` without reading a row — so the two describe different plans.
 `Explanation.decodes` is where the difference shows when the access path does
 not change. Exactly one of `input` and `join` comes back, matching the request.
 
+## Deadlines
+
+None by default; `withTimeout` gives a view that has one:
+
+```ts
+const slow = client.withTimeout(60_000);   // milliseconds
+const rows = await slow.session().query({ table: "trips" }).collect();
+```
+
+A new `Client` over the same connection, identity and schema declarations, so a
+short deadline cannot be left switched on by a caller who forgot to restore it,
+and one view can be handed to a background task while another is in use.
+
+**Milliseconds here, seconds in the Python client** — each follows its own
+language, and each names the unit in the parameter, which is the whole defence
+against a caller reading one and writing the other.
+
+The deadline covers a whole streaming call rather than each message. There is no
+default, deliberately: adding one would turn a slow query into a failure in
+every caller that upgraded without asking for it, and `test/deadline.test.ts`
+demonstrates the cost of that choice as well as the fix.
+
 ## Schema checks
 
 Optional, and worth turning on. Declare a table and every request naming it

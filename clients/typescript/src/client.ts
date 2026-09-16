@@ -202,11 +202,42 @@ export interface ComputedJoinedRow {
 export class Client {
   readonly #raw: RawClient;
   readonly #identity: Identity;
+  readonly #timeoutMs: number | undefined;
   #schemas: Schemas | undefined;
 
-  private constructor(raw: RawClient, identity: Identity) {
+  private constructor(
+    raw: RawClient,
+    identity: Identity,
+    timeoutMs?: number,
+    schemas?: Schemas,
+  ) {
     this.#raw = raw;
     this.#identity = identity;
+    this.#timeoutMs = timeoutMs;
+    this.#schemas = schemas;
+  }
+
+  /**
+   * The same connection, under a per-call deadline.
+   *
+   * **Milliseconds**, which is what every other duration in JavaScript is; the
+   * Python client's `with_timeout` takes *seconds*, and both name their unit in
+   * the parameter because a caller reading one and writing the other would
+   * otherwise be off by a thousand.
+   *
+   * A new `Client` rather than a setting, so a short deadline cannot be left
+   * switched on by a caller who forgot to restore it, and so one view can be
+   * handed to a background task while another is in use. The underlying
+   * connection, identity and schema declarations are shared; `close()` on
+   * either closes it.
+   *
+   * The deadline covers a whole streaming call, not each message: a scan that
+   * returns rows steadily for longer than this is cancelled part-way. That is
+   * what a gRPC deadline means, and it is why this is per call rather than one
+   * number for the connection.
+   */
+  withTimeout(milliseconds: number | undefined): Client {
+    return new Client(this.#raw, this.#identity, milliseconds, this.#schemas);
   }
 
   /**
@@ -243,6 +274,14 @@ export class Client {
     const Records = service();
     const raw = new Records(target, credentials) as RawClient;
     return new Client(raw, identity);
+  }
+
+  /** @internal The call options every RPC carries, deadline included. */
+  #options(): grpc.CallOptions {
+    // An absolute instant, because that is what grpc-js wants: a relative
+    // number here would be read as a Unix timestamp in 1970 and expire every
+    // call immediately.
+    return this.#timeoutMs === undefined ? {} : { deadline: Date.now() + this.#timeoutMs };
   }
 
   /** Release the connection. */
@@ -311,6 +350,7 @@ export class Client {
         this.#raw,
         request,
         this.metadata(),
+        this.#options(),
         (error: grpc.ServiceError | null, response: T) => {
           if (error) reject(fromServiceError(error));
           else resolve(response);
@@ -323,7 +363,12 @@ export class Client {
   stream(method: string, request: unknown): grpc.ClientReadableStream<unknown> {
     const fn = this.#raw[method];
     if (!fn) throw new Error(`slate: this server has no ${method} method`);
-    return fn.call(this.#raw, request, this.metadata()) as grpc.ClientReadableStream<unknown>;
+    return fn.call(
+      this.#raw,
+      request,
+      this.metadata(),
+      this.#options(),
+    ) as grpc.ClientReadableStream<unknown>;
   }
 }
 

@@ -1015,6 +1015,16 @@ Built and tested:
       their own, which caught two defects on the first two runs — a missing
       comparison arm that made every decimal compare equal, and a `skip` path
       that did not know the new type code
+- [x] A per-call deadline in every client. Python and TypeScript passed none on
+      any RPC, so a head node that accepted a connection and then stopped
+      answering blocked the caller **for ever** — a failure no error-code
+      classification helps with, because no error arrives. Both grew a view
+      (`with_timeout`, seconds; `withTimeout`, milliseconds) rather than a
+      mutable setting, over the same connection and freshness scope. Go needed
+      nothing: every method already takes a `context.Context`, which was a claim
+      until `deadline_test.go` checked it. Each client has a test that
+      demonstrates the *hang* against a listener that accepts and never speaks,
+      beside the one that shows the deadline ending it
 - [x] Type mapping without widening the value model: `Timestamp` (an `i64` of
       seconds, so nothing on disk changes), `#[derive(Enum)]` (the variant
       name in a `Str`, with `rename`, because a reorder is the accident and a
@@ -1076,6 +1086,15 @@ Not built:
       code rather than a dependency in the record layer
 - [ ] Anything inside a `Json<T>`: no path expression, no index on a field, no
       partial update. Deliberate, and the reason is in the type's own docs
+- [ ] A request id a caller could correlate with a server log line. Blocked on
+      the other half: `slate-serverd` logs its startup and its warnings and
+      **nothing per request**, so an id sent from a client would have nothing to
+      be correlated against. The useful order is a request log first
+- [ ] A retrying `transact` in the Go and TypeScript clients. Python has one,
+      with full-jitter exponential backoff; the other two offer
+      `Begin`/`Commit`/`Rollback` and leave every caller to write their own
+      backoff, which is the divergence the conformance runner cannot see because
+      it compares answers rather than ergonomics
 - [ ] Subqueries, `EXISTS` and `UNION`
 - [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
       same class of mistake as overwriting it, and the same argument applies

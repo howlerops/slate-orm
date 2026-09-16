@@ -156,6 +156,35 @@ checking.
 
 ---
 
+## Deadlines
+
+Every call takes the session's deadline, and there is none by default:
+
+```python
+client = Client("127.0.0.1:50051", timeout=5.0)   # seconds
+slow = client.with_timeout(60.0)                  # a view, for a big scan
+rows = list(slow.query(Query(TRIPS)))
+```
+
+`with_timeout` returns a *new* session over the same connection and the same
+freshness scope — so a write through one is visible to a read through the
+other, and a short deadline cannot be left switched on by a caller who forgot
+to restore it. A transaction inherits the deadline of the session that began
+it.
+
+The deadline covers a whole streaming call rather than each message, which is
+what a gRPC deadline means and why this is per call rather than one number for
+the connection: a point get and a hundred-thousand-row scan do not want the
+same value.
+
+**Seconds here, milliseconds in the TypeScript client** — each follows its own
+language, and each names the unit in the parameter.
+
+There is no default, deliberately. Adding one would turn a slow query into a
+failure in every caller that upgraded without asking for it. The cost of that
+choice is that a head node which accepts a connection and then stops answering
+blocks a caller for ever, which `tests/test_deadlines.py` demonstrates.
+
 ## Layout
 
 ```

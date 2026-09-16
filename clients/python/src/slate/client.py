@@ -453,6 +453,13 @@ class _Ops:
 
     _conn: _Connection
 
+    #: Seconds allowed for each call, or `None` for no deadline.
+    #:
+    #: A class attribute so that every `_Ops` has one whether or not its
+    #: `__init__` set it, which is what keeps `Transaction` — constructed from a
+    #: `Session` rather than from arguments — from silently losing it.
+    _timeout: float | None = None
+
     def _transaction_id(self) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
 
@@ -469,14 +476,28 @@ class _Ops:
 
     def _unary(self, method: Callable[..., T], request: object) -> T:
         try:
-            return method(request, metadata=self._conn.identity.metadata)
+            return method(
+                request,
+                metadata=self._conn.identity.metadata,
+                timeout=self._timeout,
+            )
         except grpc.RpcError as error:
             raise from_rpc_error(error) from error
 
     def _stream(self, method: Callable[..., Iterator[object]], request: object) -> Iterator[object]:
         # The call object is returned without a round trip; the failure arrives
         # when the first message is read, which `_Stream` does eagerly.
-        return method(request, metadata=self._conn.identity.metadata)
+        #
+        # The deadline covers the *whole stream*, not each message — a scan that
+        # returns rows steadily for longer than the timeout is cancelled
+        # part-way. That is what gRPC deadlines mean, and it is the reason
+        # `with_timeout` exists rather than one value for the connection: a
+        # point get and a hundred-thousand-row scan do not want the same number.
+        return method(
+            request,
+            metadata=self._conn.identity.metadata,
+            timeout=self._timeout,
+        )
 
     def _rows_proto(self, table: Table, rows: Iterable[Sequence[PyValue] | Row]) -> list[pb.Row]:
         types = table.column_types()
@@ -721,10 +742,42 @@ class Session(_Ops):
     naming a token.
     """
 
-    def __init__(self, conn: _Connection, *, monotonic_reads: bool = True) -> None:
+    def __init__(
+        self,
+        conn: _Connection,
+        *,
+        monotonic_reads: bool = True,
+        timeout: float | None = None,
+        _watermark: Watermark | None = None,
+    ) -> None:
         self._conn = conn
-        self._watermark = Watermark()
+        # Shared by reference when one is passed, which is what lets
+        # `with_timeout` return a *different* session over the *same* freshness
+        # scope. Copying it would mean a write through one view and a read
+        # through the other could not see each other, which is the bug this
+        # class exists to prevent.
+        self._watermark = Watermark() if _watermark is None else _watermark
         self._monotonic_reads = monotonic_reads
+        self._timeout = timeout
+
+    def with_timeout(self, seconds: float | None) -> Session:
+        """This session's operations, under a different per-call deadline.
+
+        A new object rather than a mutable setting, so it is safe to hand one
+        view to a background thread while another is in use — and so a caller
+        cannot leave a short deadline switched on by forgetting to restore it.
+        The freshness scope is shared, so a write through one view is visible to
+        a read through the other.
+
+        `None` means no deadline, which is gRPC's default and this client's,
+        and is only the right answer when something else bounds the call.
+        """
+        return Session(
+            self._conn,
+            monotonic_reads=self._monotonic_reads,
+            timeout=seconds,
+            _watermark=self._watermark,
+        )
 
     # --- freshness --------------------------------------------------------
 
@@ -854,6 +907,9 @@ class Transaction(_Ops):
     def __init__(self, session: Session, id: str) -> None:
         self._session = session
         self._conn = session._conn
+        # Inherited, not defaulted: a caller who set a deadline on the session
+        # meant it for the work, and the work is mostly inside transactions.
+        self._timeout = session._timeout
         self._id = id
         self._finished = False
         #: The sequence the commit landed at, once it has. `None` if the
@@ -931,6 +987,7 @@ class Client(Session):
         *,
         channel: grpc.Channel | None = None,
         monotonic_reads: bool = True,
+        timeout: float | None = None,
         options: Sequence[tuple[str, object]] | None = None,
     ) -> None:
         owns = channel is None
@@ -943,16 +1000,29 @@ class Client(Session):
         super().__init__(
             _Connection(channel, identity or Identity(), owns),
             monotonic_reads=monotonic_reads,
+            timeout=timeout,
         )
         self._monotonic_default = monotonic_reads
 
-    def session(self, *, monotonic_reads: bool | None = None) -> Session:
-        """An independent freshness scope over the same connection."""
+    def session(
+        self,
+        *,
+        monotonic_reads: bool | None = None,
+        timeout: float | None = None,
+    ) -> Session:
+        """An independent freshness scope over the same connection.
+
+        `timeout` defaults to this client's, rather than to `None`: a caller who
+        set one meant it for the connection, and a `session()` that quietly
+        dropped it would leave exactly the calls a busy process makes most
+        without a deadline. Pass `timeout=None` explicitly to opt out.
+        """
         return Session(
             self._conn,
             monotonic_reads=self._monotonic_default
             if monotonic_reads is None
             else monotonic_reads,
+            timeout=self._timeout if timeout is None else timeout,
         )
 
     def close(self) -> None:
