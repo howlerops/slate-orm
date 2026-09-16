@@ -87,4 +87,27 @@ SECRETS = Table(
 )
 
 #: Every table the server serves, for the width check.
-ALL = (DOCS, USERS, AUTHORS, BOOKS, SALES, SECRETS)
+LIBRARIES = Table(
+    "libraries",
+    [
+        Column("tenant_id", U64),
+        Column("id", U64),
+        Column("name", STR),
+    ],
+    primary_key=["tenant_id", "id"],
+)
+
+# The child of a real foreign key, `shelf_library`, which is what makes a
+# relationship nameable — see the note beside these two in the testserver.
+SHELVES = Table(
+    "shelves",
+    [
+        Column("tenant_id", U64),
+        Column("id", U64),
+        Column("library_id", U64),
+        Column("label", STR),
+    ],
+    primary_key=["tenant_id", "id"],
+)
+
+ALL = (DOCS, USERS, AUTHORS, BOOKS, SALES, SECRETS, LIBRARIES, SHELVES)

@@ -41,6 +41,7 @@ class RecordsStub:
     Query: _grpc.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]
     Join: _grpc.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]
     Aggregate: _grpc.UnaryStreamMultiCallable[_records_pb2.AggregateRequest, _records_pb2.AggregateResponse]
+    Related: _grpc.UnaryUnaryMultiCallable[_records_pb2.RelatedRequest, _records_pb2.RelatedResponse]
     Explain: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainRequest, _records_pb2.ExplainResponse]
     ExplainJoin: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainJoinRequest, _records_pb2.JoinExplainResponse]
     ExplainAggregate: _grpc.UnaryUnaryMultiCallable[_records_pb2.ExplainAggregateRequest, _records_pb2.AggregateExplainResponse]
@@ -59,6 +60,7 @@ class RecordsAsyncStub(RecordsStub):
     Query: _aio.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]  # type: ignore[assignment]
     Join: _aio.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]  # type: ignore[assignment]
     Aggregate: _aio.UnaryStreamMultiCallable[_records_pb2.AggregateRequest, _records_pb2.AggregateResponse]  # type: ignore[assignment]
+    Related: _aio.UnaryUnaryMultiCallable[_records_pb2.RelatedRequest, _records_pb2.RelatedResponse]  # type: ignore[assignment]
     Explain: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainRequest, _records_pb2.ExplainResponse]  # type: ignore[assignment]
     ExplainJoin: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainJoinRequest, _records_pb2.JoinExplainResponse]  # type: ignore[assignment]
     ExplainAggregate: _aio.UnaryUnaryMultiCallable[_records_pb2.ExplainAggregateRequest, _records_pb2.AggregateExplainResponse]  # type: ignore[assignment]
@@ -134,6 +136,13 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
         request: _records_pb2.AggregateRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_abc.Iterator[_records_pb2.AggregateResponse], _abc.AsyncIterator[_records_pb2.AggregateResponse]]: ...
+
+    @_abc_1.abstractmethod
+    def Related(
+        self,
+        request: _records_pb2.RelatedRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.RelatedResponse, _abc.Awaitable[_records_pb2.RelatedResponse]]: ...
 
     @_abc_1.abstractmethod
     def Explain(

@@ -84,6 +84,11 @@ class RecordsStub:
                 request_serializer=slate_dot_v1_dot_records__pb2.AggregateRequest.SerializeToString,
                 response_deserializer=slate_dot_v1_dot_records__pb2.AggregateResponse.FromString,
                 _registered_method=True)
+        self.Related = channel.unary_unary(
+                '/slate.v1.Records/Related',
+                request_serializer=slate_dot_v1_dot_records__pb2.RelatedRequest.SerializeToString,
+                response_deserializer=slate_dot_v1_dot_records__pb2.RelatedResponse.FromString,
+                _registered_method=True)
         self.Explain = channel.unary_unary(
                 '/slate.v1.Records/Explain',
                 request_serializer=slate_dot_v1_dot_records__pb2.ExplainRequest.SerializeToString,
@@ -169,6 +174,12 @@ class RecordsServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Related(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Explain(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -245,6 +256,11 @@ def add_RecordsServicer_to_server(servicer, server):
                     servicer.Aggregate,
                     request_deserializer=slate_dot_v1_dot_records__pb2.AggregateRequest.FromString,
                     response_serializer=slate_dot_v1_dot_records__pb2.AggregateResponse.SerializeToString,
+            ),
+            'Related': grpc.unary_unary_rpc_method_handler(
+                    servicer.Related,
+                    request_deserializer=slate_dot_v1_dot_records__pb2.RelatedRequest.FromString,
+                    response_serializer=slate_dot_v1_dot_records__pb2.RelatedResponse.SerializeToString,
             ),
             'Explain': grpc.unary_unary_rpc_method_handler(
                     servicer.Explain,
@@ -537,6 +553,33 @@ class Records:
             '/slate.v1.Records/Aggregate',
             slate_dot_v1_dot_records__pb2.AggregateRequest.SerializeToString,
             slate_dot_v1_dot_records__pb2.AggregateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Related(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/slate.v1.Records/Related',
+            slate_dot_v1_dot_records__pb2.RelatedRequest.SerializeToString,
+            slate_dot_v1_dot_records__pb2.RelatedResponse.FromString,
             options,
             channel_credentials,
             insecure,

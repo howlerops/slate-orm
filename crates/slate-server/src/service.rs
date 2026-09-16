@@ -43,6 +43,7 @@ use crate::convert::{
     explanation_to_proto, freshness_from_proto, group_to_proto, grouped_explanation_to_proto,
     join_explanation_to_proto, join_from_proto, multi_row_to_proto, primary_key_from_proto,
     query_from_proto, row_from_proto, row_to_proto, row_to_proto_split, two_tables,
+    value_from_proto, value_to_proto,
 };
 use crate::fingerprint;
 use crate::leadership::{Leadership, Standing};
@@ -53,12 +54,13 @@ use crate::session::{
 };
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
-    Action, ExecutionLimits, Freshness, Group, KernelError, KvReadStore, KvStore, Query, ReadToken,
-    RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, SecurityCatalog,
-    SecurityContext, Statistics,
+    Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
+    ReadToken, RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy,
+    SecurityCatalog, SecurityContext, Statistics,
 };
-use slate_schema::{Catalog, Row, TableDef, TableId};
+use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::Value;
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -812,6 +814,193 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             found: row.is_some(),
             row: row.as_ref().map(row_to_proto),
             served_by: Some(served_by),
+        }))
+    }
+
+    async fn related(
+        &self,
+        request: Request<pb::RelatedRequest>,
+    ) -> Result<Response<pb::RelatedResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let Some(relation) = request.relation.as_ref() else {
+            return Err(Status::new(Code::InvalidArgument, "no relation given"));
+        };
+
+        // Resolve the relationship against the catalog's foreign keys, not
+        // against a separate declaration. See `Relation` in the proto for why
+        // there is no separate declaration to resolve against.
+        let child = self.table(&relation.table)?;
+        let Some(key) = child
+            .foreign_keys()
+            .iter()
+            .find(|k| k.name() == relation.foreign_key)
+        else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` has no foreign key named `{}`; it has {}",
+                    child.name(),
+                    relation.foreign_key,
+                    if child.foreign_keys().is_empty() {
+                        "none".to_owned()
+                    } else {
+                        child
+                            .foreign_keys()
+                            .iter()
+                            .map(|k| format!("`{}`", k.name()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ),
+            ));
+        };
+
+        let parent = self.pool.catalog().table(key.parent()).ok_or_else(|| {
+            Status::new(
+                Code::Internal,
+                format!("`{}` names a parent that is not in the catalog", key.name()),
+            )
+        })?;
+
+        // The relating column is the one key column that is *not* the tenant.
+        //
+        // A tenant-scoped table almost always has a composite key —
+        // `(tenant_id, id)` — and refusing every composite key would refuse the
+        // commonest multi-tenant schema there is. It does not need refusing,
+        // because the tenant is not part of what relates two rows: the security
+        // catalog forces `tenant_column = principal.tenant` onto every read of
+        // such a table, so the tenant is already pinned before the filter below
+        // is applied, and matching on it again would be a tautology.
+        //
+        // What genuinely cannot work is a key with two *non-tenant* columns: the
+        // filter compares one column against one list, and a real composite
+        // needs `(a, b) IN [(…), (…)]`, which the kernel has no operator for.
+        // Refused by name rather than by relating on the first column alone,
+        // which would match every row whose first key part agreed — more rows
+        // than were asked for, with no error.
+        fn relating(columns: &[Ordinal], table: &TableDef) -> Option<Ordinal> {
+            let tenant = table.tenant_column();
+            let mut rest = columns.iter().filter(|c| Some(**c) != tenant);
+            let only = rest.next()?;
+            rest.next().is_none().then_some(*only)
+        }
+        fn besides_the_tenant(columns: &[Ordinal], table: &TableDef) -> usize {
+            columns
+                .iter()
+                .filter(|c| Some(**c) != table.tenant_column())
+                .count()
+        }
+
+        let Some(child_column) = relating(key.columns(), child) else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` relates on {} columns besides the tenant; a relationship is \
+                     resolved with one column against one list, and a genuine composite \
+                     key needs a tuple comparison the kernel does not have",
+                    relation.foreign_key,
+                    besides_the_tenant(key.columns(), child)
+                ),
+            ));
+        };
+        let Some(parent_column) = relating(parent.primary_key(), parent) else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` has {} primary key columns besides the tenant; relating on a \
+                     composite key is not supported",
+                    parent.name(),
+                    besides_the_tenant(parent.primary_key(), parent)
+                ),
+            ));
+        };
+
+        // Which table the rows come from, and which of its columns the keys are
+        // matched against, is the whole of what the direction decides.
+        let (rows_from, match_on) = match relation.direction() {
+            pb::relation::Direction::Children => (child, child_column),
+            pb::relation::Direction::Parents => (parent, parent_column),
+            pb::relation::Direction::Unspecified => {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    "no direction given: CHILDREN reads the rows holding the foreign \
+                     key, PARENTS reads the rows it points at",
+                ));
+            }
+        };
+        let rows_from = self.authorized_table(&context, rows_from.name(), Action::Read)?;
+        fingerprint::check(rows_from, request.schema.as_ref())?;
+
+        let values = distinct_keys(&request.keys)?;
+
+        // No keys, no read. An `IN ()` matches nothing and still pays for a
+        // scan, and the caller with no parents wanted no rows.
+        //
+        // `served_by` is left unset rather than filled in, which is the whole
+        // reason this is not a one-line guard: nothing served this, so naming a
+        // replica — or claiming `in_transaction` outside a transaction, which
+        // the first version of this did — would be reporting a read that did
+        // not happen to a caller who may be using that field to track a
+        // watermark.
+        if values.is_empty() {
+            return Ok(Response::new(pb::RelatedResponse {
+                groups: Vec::new(),
+                served_by: None,
+                warnings: Vec::new(),
+            }));
+        }
+
+        let query = Query::all().filter(Expr::In {
+            column: match_on,
+            values,
+        });
+
+        let (rows, served_by) = if request.transaction.is_empty() {
+            let freshness = freshness_from_proto(request.freshness.as_ref())?;
+            let affinity = Self::affinity(rows_from, &context);
+            let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
+            let mut cursor = view
+                .execute(&context, rows_from, &query)
+                .await
+                .map_err(|e| from_kernel(&e))?;
+            let mut rows = Vec::new();
+            while let Some(row) = cursor.next().await.map_err(|e| from_kernel(&e))? {
+                rows.push(row);
+            }
+            drop(cursor);
+            (rows, served_by)
+        } else {
+            let rows = self
+                .sessions
+                .query(&request.transaction, &context, rows_from.id(), query)
+                .await?;
+            (rows, in_transaction())
+        };
+
+        // Grouped by the value that related them, so two parents sharing a key
+        // share one group rather than each carrying a copy.
+        let mut groups: BTreeMap<Value, Vec<pb::Row>> = BTreeMap::new();
+        for row in &rows {
+            let Some(key) = row.values().get(match_on.0) else {
+                continue;
+            };
+            groups
+                .entry(key.clone())
+                .or_default()
+                .push(row_to_proto(row));
+        }
+
+        Ok(Response::new(pb::RelatedResponse {
+            groups: groups
+                .into_iter()
+                .map(|(key, rows)| pb::related_response::Group {
+                    key: Some(value_to_proto(&key)),
+                    rows,
+                })
+                .collect(),
+            served_by: Some(served_by),
+            warnings: Vec::new(),
         }))
     }
 
@@ -1618,5 +1807,66 @@ impl MultiScan {
                 }))
                 .await;
         }
+    }
+}
+
+/// The `IN` list a set of parent keys becomes: sorted, and each value once.
+///
+/// A free function rather than four lines inline, because the deduplication is
+/// the saving this whole call exists for and it is **invisible in the answer**.
+/// Removing it returns exactly the same rows — the grouping is by the row's own
+/// value, so a repeated candidate creates no repeated group — and costs a
+/// filter with ten thousand entries where two would do. A saving nothing can
+/// observe is a saving nothing keeps, so it is named and tested here.
+///
+/// Sorted as well as deduplicated: `Expr::In` is turned into scan bounds, and
+/// an unsorted list costs the planner a sort it would have to do anyway.
+fn distinct_keys(keys: &[pb::Value]) -> Result<Vec<Value>, Status> {
+    let mut values = Vec::with_capacity(keys.len());
+    for key in keys {
+        values.push(value_from_proto(key)?);
+    }
+    values.sort();
+    values.dedup();
+    Ok(values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{distinct_keys, pb};
+    use slate_tuple::Value;
+
+    fn u64s(ns: &[u64]) -> Vec<pb::Value> {
+        ns.iter()
+            .map(|n| pb::Value {
+                kind: Some(pb::value::Kind::Uint64Value(*n)),
+            })
+            .collect()
+    }
+
+    /// Fifty parents over two libraries send two candidates.
+    ///
+    /// The number the caller sent is deliberately much larger than the number
+    /// that survives, because "ten thousand books by one author send one value"
+    /// is the claim and a two-element input could pass by accident.
+    #[test]
+    fn repeated_keys_collapse_to_one_candidate_each() {
+        let many: Vec<u64> = (0..50).map(|n| 10 + (n % 2)).collect();
+        let got = distinct_keys(&u64s(&many)).expect("valid values");
+        assert_eq!(got, vec![Value::U64(10), Value::U64(11)]);
+    }
+
+    /// And they come back in order, which is what the scan bounds want.
+    #[test]
+    fn candidates_are_sorted() {
+        let got = distinct_keys(&u64s(&[9, 3, 7, 3])).expect("valid values");
+        assert_eq!(got, vec![Value::U64(3), Value::U64(7), Value::U64(9)]);
+    }
+
+    /// No parents, no candidates — which is what lets the caller skip the read
+    /// entirely rather than scanning for an `IN ()` that matches nothing.
+    #[test]
+    fn no_keys_is_no_candidates() {
+        assert!(distinct_keys(&[]).expect("valid values").is_empty());
     }
 }

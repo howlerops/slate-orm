@@ -50,7 +50,7 @@ use slate_kernel::{
     JoinType, KernelError, KvReadStore, Policy, Principal, Query, RecordStore, Scalar, ScanOrder,
     SecurityCatalog, SecurityContext, SortKey,
 };
-use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
+use slate_schema::{Catalog, ForeignKeyDef, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_server::leadership::Leadership;
 use slate_server::lease::{Lease, LeaseError, Term};
 use slate_server::{Head, HeadConfig, MetadataIdentity};
@@ -76,6 +76,8 @@ const AUTHORS: TableId = TableId(3);
 const BOOKS: TableId = TableId(4);
 const SALES: TableId = TableId(5);
 const SECRETS: TableId = TableId(6);
+const LIBRARIES: TableId = TableId(7);
+const SHELVES: TableId = TableId(8);
 
 fn docs() -> TableDef {
     TableDef::builder("docs", DOCS)
@@ -136,6 +138,48 @@ fn books() -> TableDef {
         .expect("valid schema")
 }
 
+// A parent and a child with a **real foreign key**, for the `Related` call.
+//
+// Deliberately not `authors`/`books`, which have the same shape and no
+// constraint between them. Adding one there would change what an insert into
+// `books` is allowed to do, and six test files write books without writing an
+// author first — so the constraint would be tested by breaking tests that are
+// about something else. A relationship needs a foreign key to be nameable, so
+// the fixture gets a pair that has one.
+//
+// The key is composite — `(tenant_id, library_id)` against `(tenant_id, id)` —
+// because that is what a tenant-scoped schema produces, and it is the case the
+// handler has to get right: the tenant is pinned by the security context and
+// is not part of what relates the two rows.
+fn libraries() -> TableDef {
+    TableDef::builder("libraries", LIBRARIES)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("name", ValueType::Str)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .build()
+        .expect("valid schema")
+}
+
+fn shelves() -> TableDef {
+    TableDef::builder("shelves", SHELVES)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("library_id", ValueType::U64)
+        .column("label", ValueType::Str)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(IndexDef::builder("by_library", IndexId(7)).column("library_id"))
+        .foreign_key(
+            ForeignKeyDef::builder("shelf_library", LIBRARIES)
+                .column("tenant_id")
+                .column("library_id"),
+        )
+        .build()
+        .expect("valid schema")
+}
+
 fn sales() -> TableDef {
     TableDef::builder("sales", SALES)
         .column("tenant_id", ValueType::U64)
@@ -164,8 +208,17 @@ fn secrets() -> TableDef {
 }
 
 fn catalog() -> Catalog {
-    Catalog::from_tables([docs(), users(), authors(), books(), sales(), secrets()])
-        .expect("valid catalog")
+    Catalog::from_tables([
+        docs(),
+        users(),
+        authors(),
+        books(),
+        sales(),
+        secrets(),
+        libraries(),
+        shelves(),
+    ])
+    .expect("valid catalog")
 }
 
 fn at(table: &TableDef, column: &str) -> Ordinal {
@@ -188,6 +241,8 @@ fn security() -> SecurityCatalog {
         .grant(Grant::new("app", AUTHORS, Action::EVERYTHING))
         .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
         .grant(Grant::new("app", SALES, Action::EVERYTHING))
+        .grant(Grant::new("app", LIBRARIES, Action::EVERYTHING))
+        .grant(Grant::new("app", SHELVES, Action::EVERYTHING))
         .grant(Grant::new("reader", DOCS, Action::ALL))
         // Deliberately no grant on `secrets`.
         .policy(Policy::new(

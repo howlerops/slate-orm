@@ -3158,3 +3158,199 @@ class LeadershipStatus(_message.Message):
     def WhichOneof(self, oneof_group: _WhichOneofArgType__generation) -> _WhichOneofReturnType__generation | None: ...
 
 Global___LeadershipStatus: _TypeAlias = LeadershipStatus  # noqa: Y015
+
+@_typing.final
+class Relation(_message.Message):
+    """── Relationships ────────────────────────────────────────────────────────────
+
+    One relationship, for many parents, in one read.
+
+    The N+1 this replaces is the reason the record layer has `load_related`, and
+    until now that was reachable only from Rust: a Python, Go or TypeScript
+    caller who wanted an author's books wrote the two-step fetch by hand, and the
+    one who forgot wrote the loop.
+
+    # Why there is no relationship declaration
+
+    A relationship is named by the **foreign key that already declares it**,
+    rather than by a new catalog entry. `books.author_id -> authors` is a foreign
+    key; "an author's books" is that key read backwards and "a book's author" is
+    it read forwards. Adding a second declaration of the same fact would create
+    the possibility of the two disagreeing, and a catalog that says a
+    relationship exists where no constraint enforces it describes rows the
+    database will not keep.
+
+    The cost is that a relationship *not* backed by a foreign key cannot be
+    expressed here, and the Rust `Related` trait does allow one. That divergence
+    is real and is written up in `docs/orm-comparison.md`.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    class _Direction:
+        ValueType = _typing.NewType("ValueType", _builtins.int)
+        V: _TypeAlias = ValueType  # noqa: Y015
+
+    class _DirectionEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[Relation._Direction.ValueType], _builtins.type):
+        DESCRIPTOR: _descriptor.EnumDescriptor
+        DIRECTION_UNSPECIFIED: Relation._Direction.ValueType  # 0
+        CHILDREN: Relation._Direction.ValueType  # 1
+        """The children: rows of `table` whose key matches the parents. `authors`
+        to `books`, a has-many.
+        """
+        PARENTS: Relation._Direction.ValueType  # 2
+        """The parents: rows of the key's parent table matching the children's key
+        values. `books` to `authors`, a belongs-to. `table` is still the child.
+        """
+
+    class Direction(_Direction, metaclass=_DirectionEnumTypeWrapper): ...
+    DIRECTION_UNSPECIFIED: Relation.Direction.ValueType  # 0
+    CHILDREN: Relation.Direction.ValueType  # 1
+    """The children: rows of `table` whose key matches the parents. `authors`
+    to `books`, a has-many.
+    """
+    PARENTS: Relation.Direction.ValueType  # 2
+    """The parents: rows of the key's parent table matching the children's key
+    values. `books` to `authors`, a belongs-to. `table` is still the child.
+    """
+
+    TABLE_FIELD_NUMBER: _builtins.int
+    FOREIGN_KEY_FIELD_NUMBER: _builtins.int
+    DIRECTION_FIELD_NUMBER: _builtins.int
+    table: _builtins.str
+    """The table that holds the foreign key — always the child, whichever
+    direction is being read.
+    """
+    foreign_key: _builtins.str
+    """The key's name on that table, as the catalog spells it."""
+    direction: Global___Relation.Direction.ValueType
+    def __init__(
+        self,
+        *,
+        table: _builtins.str = ...,
+        foreign_key: _builtins.str = ...,
+        direction: Global___Relation.Direction.ValueType = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["direction", b"direction", "foreign_key", b"foreign_key", "table", b"table"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___Relation: _TypeAlias = Relation  # noqa: Y015
+
+@_typing.final
+class RelatedRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    RELATION_FIELD_NUMBER: _builtins.int
+    KEYS_FIELD_NUMBER: _builtins.int
+    FRESHNESS_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    transaction: _builtins.str
+    @_builtins.property
+    def relation(self) -> Global___Relation: ...
+    @_builtins.property
+    def keys(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """The relating value of each parent row, in the caller's own order.
+
+        Duplicates are expected and are the point: two books by one author send
+        `1, 1`, the server reads that key once, and the response carries one group
+        the caller maps both books onto. Sending the caller's order rather than a
+        deduplicated set keeps the request honest about how many rows are being
+        resolved, which is what the read-count assertion in the conformance runner
+        is measuring against.
+        """
+
+    @_builtins.property
+    def freshness(self) -> Global___Freshness: ...
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`, against the table the rows come back from — which is
+        the child for `CHILDREN` and the parent for `PARENTS`.
+        """
+
+    def __init__(
+        self,
+        *,
+        transaction: _builtins.str = ...,
+        relation: Global___Relation | None = ...,
+        keys: _abc.Iterable[Global___Value] | None = ...,
+        freshness: Global___Freshness | None = ...,
+        schema: Global___SchemaCheck | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "relation", b"relation", "schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "keys", b"keys", "relation", b"relation", "schema", b"schema", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___RelatedRequest: _TypeAlias = RelatedRequest  # noqa: Y015
+
+@_typing.final
+class RelatedResponse(_message.Message):
+    """Rows grouped by the value that related them, not repeated per parent.
+
+    Two parents sharing a key get one group between them. Repeating the rows
+    would undo on the response the saving the deduplicated read just made, which
+    on a has-many over a popular parent is most of the bytes.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class Group(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        ROWS_FIELD_NUMBER: _builtins.int
+        @_builtins.property
+        def key(self) -> Global___Value:
+            """The relating value these rows matched."""
+
+        @_builtins.property
+        def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+            """The rows, in the related table's own order."""
+
+        def __init__(
+            self,
+            *,
+            key: Global___Value | None = ...,
+            rows: _abc.Iterable[Global___Row] | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["key", b"key"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "rows", b"rows"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+    GROUPS_FIELD_NUMBER: _builtins.int
+    SERVED_BY_FIELD_NUMBER: _builtins.int
+    WARNINGS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def groups(self) -> _containers.RepeatedCompositeFieldContainer[Global___RelatedResponse.Group]:
+        """One entry per *distinct* key that matched something. A key that matched
+        nothing is absent rather than present-and-empty: the caller is mapping its
+        own parents onto this, and "no group" and "empty group" mean the same
+        thing to that loop.
+        """
+
+    @_builtins.property
+    def served_by(self) -> Global___ServedBy: ...
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]: ...
+    def __init__(
+        self,
+        *,
+        groups: _abc.Iterable[Global___RelatedResponse.Group] | None = ...,
+        served_by: Global___ServedBy | None = ...,
+        warnings: _abc.Iterable[_builtins.str] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___RelatedResponse: _TypeAlias = RelatedResponse  # noqa: Y015

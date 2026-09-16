@@ -635,6 +635,73 @@ class _Ops:
             return None
         return Row.from_proto(response.row, table)
 
+    def related(
+        self,
+        table: Table,
+        keys: Sequence[PyValue],
+        *,
+        through: str,
+        on: Table,
+        children: bool = True,
+        freshness: Freshness | None = None,
+    ) -> list[list[Row]]:
+        """Load one relationship for many parent rows, in a single read.
+
+        Returns a list the same length as `keys`: entry `i` is the rows related
+        to `keys[i]`. A key with nothing related to it gets an empty list, not a
+        missing entry, so the result is indexable by the caller's own loop
+        counter.
+
+        The relationship is named by the foreign key that already declares it,
+        rather than by anything the client holds:
+
+        - `on` is the table that holds the foreign key — always the child,
+          whichever way the relationship is being read.
+        - `through` is that key's name.
+        - `children=True` reads the rows holding the key (an author's books);
+          `children=False` reads the rows it points at (a book's author).
+        - `table` is the table the rows come back as, which is `on` for
+          children and the key's parent for parents. It is passed separately
+          because the client decodes against it and does not hold the catalog.
+
+        Duplicate keys are expected and are the point. Two books by one author
+        send the same value twice, the server reads it once, and both books map
+        onto the one group that comes back — so this is one read whatever the
+        number of parents, which is the whole reason it exists.
+        """
+        request = pb.RelatedRequest(
+            transaction=self._transaction_id(),
+            relation=pb.Relation(
+                table=on.name,
+                foreign_key=through,
+                direction=(
+                    pb.Relation.Direction.CHILDREN
+                    if children
+                    else pb.Relation.Direction.PARENTS
+                ),
+            ),
+            keys=[to_value(key) for key in keys],
+            schema=self._schema_check(table),
+        )
+        wire_freshness = self._freshness(freshness)
+        if wire_freshness is not None:
+            request.freshness.CopyFrom(wire_freshness)
+        response = self._unary(self._conn.stub.Related, request)
+        self._observe_read(ServedBy.from_proto(response.served_by))
+
+        # Keyed by the serialised value, not by the Python object: the server
+        # groups on the kernel's own equality and the client has to agree with
+        # it, and `1` and `1.0` are one key in Python and two on the wire.
+        grouped: dict[bytes, list[Row]] = {}
+        for group in response.groups:
+            grouped[group.key.SerializeToString(deterministic=True)] = [
+                Row.from_proto(row, table) for row in group.rows
+            ]
+        return [
+            grouped.get(to_value(key).SerializeToString(deterministic=True), [])
+            for key in keys
+        ]
+
     def query(self, query: Query, *, freshness: Freshness | None = None) -> RowStream:
         """Run a query. The stream's first message is read before this returns."""
         request = pb.QueryRequest(
