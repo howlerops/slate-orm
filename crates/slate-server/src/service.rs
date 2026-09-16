@@ -1833,6 +1833,10 @@ fn distinct_keys(keys: &[pb::Value]) -> Result<Vec<Value>, Status> {
 
 #[cfg(test)]
 mod tests {
+    // The workspace bans `expect` in shipping code, and these tests are the
+    // usual exception: a panic here is the failure report.
+    #![allow(clippy::expect_used)]
+
     use super::{distinct_keys, pb};
     use slate_tuple::Value;
 
