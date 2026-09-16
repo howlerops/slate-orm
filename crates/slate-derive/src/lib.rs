@@ -233,9 +233,7 @@ fn parse_relation(
             other => {
                 return Err(syn::Error::new(
                     key.span(),
-                    format!(
-                        "unknown option `{other}`; expected `local`, `foreign` or `through`"
-                    ),
+                    format!("unknown option `{other}`; expected `local`, `foreign` or `through`"),
                 ));
             }
         }

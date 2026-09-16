@@ -19,12 +19,17 @@
 //! table is a fact about the schema that has to be stated.
 
 // Tests assert exact outcomes and are meant to panic when one is wrong.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use slate_orm::{
     Action, Catalog, Expr, Grant, Record, RecordStore, Records, ScanOrder, SecurityCatalog,
-    SecurityContext, TableId, Through, load_related, load_related_through, load_through,
-    memory::MemoryStore,
+    SecurityContext, TableId, Through, load_nested, load_related, load_related_through,
+    load_through, memory::MemoryStore,
 };
 use std::collections::BTreeSet;
 
@@ -93,19 +98,43 @@ async fn seeded() -> (RecordStore<MemoryStore>, SecurityContext, Vec<Article>) {
     let context = context();
     let txn = store.begin().await.unwrap();
     for (id, title) in [(1u64, "One"), (2, "Two"), (3, "Three")] {
-        txn.insert_record(&context, &Article { id, title: title.to_owned() })
-            .await
-            .unwrap();
+        txn.insert_record(
+            &context,
+            &Article {
+                id,
+                title: title.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
     }
-    for (id, label) in [(10u64, "rust"), (20, "databases"), (30, "unused"), (40, "also")] {
-        txn.insert_record(&context, &Tag { id, label: label.to_owned() })
-            .await
-            .unwrap();
+    for (id, label) in [
+        (10u64, "rust"),
+        (20, "databases"),
+        (30, "unused"),
+        (40, "also"),
+    ] {
+        txn.insert_record(
+            &context,
+            &Tag {
+                id,
+                label: label.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
     }
     for (id, article_id, tag_id) in [(1u64, 1u64, 10u64), (2, 1, 20), (3, 2, 20)] {
-        txn.insert_record(&context, &ArticleTag { id, article_id, tag_id })
-            .await
-            .unwrap();
+        txn.insert_record(
+            &context,
+            &ArticleTag {
+                id,
+                article_id,
+                tag_id,
+            },
+        )
+        .await
+        .unwrap();
     }
     txn.commit().await.unwrap();
 
@@ -136,7 +165,11 @@ async fn a_many_to_many_needs_no_new_declaration() {
     assert_eq!(tags.len(), articles.len(), "one entry per parent, in order");
     assert_eq!(labels(&tags[0]), vec!["rust", "databases"]);
     assert_eq!(labels(&tags[1]), vec!["databases"]);
-    assert!(tags[2].is_empty(), "article three has no tags: {:?}", tags[2]);
+    assert!(
+        tags[2].is_empty(),
+        "article three has no tags: {:?}",
+        tags[2]
+    );
 }
 
 /// And with the name, which must agree with the composition exactly.
@@ -156,7 +189,11 @@ async fn the_named_form_agrees_with_the_spelled_out_one() {
     assert_eq!(spelled, named);
     // The attribute resolved to the table it names, rather than to whatever
     // the first `Related` impl happened to be.
-    let _: <Article as Through<Tag>>::Join = ArticleTag { id: 0, article_id: 0, tag_id: 0 };
+    let _: <Article as Through<Tag>>::Join = ArticleTag {
+        id: 0,
+        article_id: 0,
+        tag_id: 0,
+    };
 }
 
 /// The oracle the plan asked for: the explicit two-step, by hand.
@@ -177,9 +214,10 @@ async fn it_agrees_with_the_explicit_two_step() {
     // By hand: for each article, its join rows, then each join row's tag,
     // fetched one at a time. The N+1 this function exists to avoid, used here
     // as the thing that cannot be wrong in the same way.
-    let joins: Vec<Vec<ArticleTag>> = load_related::<_, Article, ArticleTag>(&txn, &context, &articles)
-        .await
-        .unwrap();
+    let joins: Vec<Vec<ArticleTag>> =
+        load_related::<_, Article, ArticleTag>(&txn, &context, &articles)
+            .await
+            .unwrap();
     let mut expected: Vec<Vec<Tag>> = Vec::new();
     for mine in &joins {
         let mut tags: Vec<Tag> = Vec::new();
@@ -213,7 +251,10 @@ async fn an_empty_side_costs_no_second_read() {
 
     // A parent with no join rows still gets its entry, and the far read is
     // skipped rather than issued as an `IN` over nothing.
-    let orphan = vec![Article { id: 3, title: "Three".to_owned() }];
+    let orphan = vec![Article {
+        id: 3,
+        title: "Three".to_owned(),
+    }];
     let empty: Vec<Vec<Tag>> = load_through::<_, Article, Tag>(&txn, &context, &orphan)
         .await
         .unwrap();
@@ -228,13 +269,23 @@ async fn duplicates_are_returned_rather_than_removed() {
     let txn = store.begin().await.unwrap();
     // A second join row for the same pair. A join table with a uniqueness
     // constraint could not hold this; this one has a surrogate key, so it can.
-    txn.insert_record(&context, &ArticleTag { id: 4, article_id: 2, tag_id: 20 })
-        .await
-        .unwrap();
+    txn.insert_record(
+        &context,
+        &ArticleTag {
+            id: 4,
+            article_id: 2,
+            tag_id: 20,
+        },
+    )
+    .await
+    .unwrap();
     txn.commit().await.unwrap();
 
     let txn = store.begin().await.unwrap();
-    let two = vec![Article { id: 2, title: "Two".to_owned() }];
+    let two = vec![Article {
+        id: 2,
+        title: "Two".to_owned(),
+    }];
     let tags: Vec<Vec<Tag>> = load_through::<_, Article, Tag>(&txn, &context, &two)
         .await
         .unwrap();
@@ -277,4 +328,123 @@ async fn parents_sharing_a_tag_share_one_read_of_it() {
         ),
         other => panic!("expected an IN, got {other:?}"),
     }
+}
+
+// ── Nested eager loading ────────────────────────────────────────────────────
+//
+// `Article → ArticleTag → Tag`, keeping the middle. The same two reads
+// `load_related_through` makes — it *is* this function with the join rows
+// dropped — so what is left to test is the pairing: which grandchild went with
+// which child.
+
+/// Each join row carries its own tag, and the pairing is by row.
+#[tokio::test]
+async fn nesting_pairs_each_child_with_its_own_grandchildren() {
+    let (store, context, articles) = seeded().await;
+    let txn = store.begin().await.unwrap();
+
+    let nested: Vec<Vec<(ArticleTag, Vec<Tag>)>> =
+        load_nested::<_, Article, ArticleTag, Tag>(&txn, &context, &articles)
+            .await
+            .unwrap();
+
+    assert_eq!(nested.len(), articles.len());
+    // Article one has two join rows, onto tags 10 and 20 respectively.
+    assert_eq!(nested[0].len(), 2);
+    for (join, tags) in &nested[0] {
+        assert_eq!(tags.len(), 1, "a belongs-to gives exactly one");
+        assert_eq!(
+            tags[0].id, join.tag_id,
+            "the tag paired with a join row must be the one that row names"
+        );
+    }
+    assert_eq!(nested[1].len(), 1);
+    assert!(nested[2].is_empty(), "article three has no join rows");
+}
+
+/// The through form is the nested form with the middle dropped, and that is
+/// how it is implemented — so the two must agree by construction. Asserted
+/// anyway, because "by construction" is the claim most worth a test.
+#[tokio::test]
+async fn through_is_nesting_with_the_middle_discarded() {
+    let (store, context, articles) = seeded().await;
+    let txn = store.begin().await.unwrap();
+
+    let through: Vec<Vec<Tag>> = load_through::<_, Article, Tag>(&txn, &context, &articles)
+        .await
+        .unwrap();
+    let nested: Vec<Vec<(ArticleTag, Vec<Tag>)>> =
+        load_nested::<_, Article, ArticleTag, Tag>(&txn, &context, &articles)
+            .await
+            .unwrap();
+
+    let flattened: Vec<Vec<Tag>> = nested
+        .into_iter()
+        .map(|per_parent| {
+            per_parent
+                .into_iter()
+                .flat_map(|(_join, tags)| tags)
+                .collect()
+        })
+        .collect();
+    assert_eq!(through, flattened);
+}
+
+/// A child with no grandchildren keeps its entry, with an empty list.
+#[tokio::test]
+async fn a_child_with_no_grandchildren_is_still_paired() {
+    let (store, context, _articles) = seeded().await;
+    let txn = store.begin().await.unwrap();
+    // A join row pointing at a tag that does not exist. The foreign key is not
+    // enforced here, which is what makes this case reachable at all.
+    txn.insert_record(
+        &context,
+        &ArticleTag {
+            id: 9,
+            article_id: 3,
+            tag_id: 999,
+        },
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let three = vec![Article {
+        id: 3,
+        title: "Three".to_owned(),
+    }];
+    let nested: Vec<Vec<(ArticleTag, Vec<Tag>)>> =
+        load_nested::<_, Article, ArticleTag, Tag>(&txn, &context, &three)
+            .await
+            .unwrap();
+
+    assert_eq!(nested[0].len(), 1, "the join row is there");
+    assert!(
+        nested[0][0].1.is_empty(),
+        "and its tag list is empty rather than the entry being dropped"
+    );
+}
+
+/// Nesting depth is a compile-time fact, so there is nothing to bound.
+///
+/// Not a runtime assertion — there is no runtime value to assert about. The
+/// test is that this compiles at two levels and that going deeper means
+/// writing more types, which is the property the plan's "depth limit with a
+/// named refusal" was aimed at and which the type system already provides.
+/// A limit would be needed for an `include` list whose depth arrives as data;
+/// nothing here parses one.
+#[tokio::test]
+async fn nesting_depth_is_fixed_when_it_compiles() {
+    let (store, context, articles) = seeded().await;
+    let txn = store.begin().await.unwrap();
+
+    // Two levels. A third would be `load_nested::<_, Article, ArticleTag, Tag,
+    // Something>` — a function that does not exist, so a caller cannot ask for
+    // it by passing a bigger number.
+    let nested: Vec<Vec<(ArticleTag, Vec<Tag>)>> =
+        load_nested::<_, Article, ArticleTag, Tag>(&txn, &context, &articles)
+            .await
+            .unwrap();
+    assert_eq!(nested.len(), articles.len());
 }

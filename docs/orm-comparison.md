@@ -318,6 +318,20 @@ one; the join table's rows are the intermediate key set.
 
 *Test.* Oracle against the equivalent explicit two-step, over generated data.
 
+### P5 — Nested eager loading — **built**
+
+> Done as `load_nested`, which returns each parent's children paired with
+> *their* children. `load_related_through` is now one line of it — the two
+> differ only in whether the middle is kept — so there is one regrouping rather
+> than two.
+>
+> The depth limit this item asked for is not there, and should not be: each
+> level of nesting is a type parameter, so a call's depth is fixed when it
+> compiles and a caller cannot ask for a thousand without writing a thousand
+> types. The refusal would guard nothing. It *would* be needed for an `include`
+> list whose depth arrives as data — `["comments.author.employer"]` on the wire
+> — and nothing here parses one.
+
 ### P5 — Nested eager loading
 
 One level of nesting, then a depth limit with a named refusal rather than

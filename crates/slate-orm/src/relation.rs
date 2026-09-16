@@ -278,42 +278,94 @@ where
     J: Record + Related<C>,
     C: Record,
 {
-    // No guard for an empty `parents` here, although `load_related` has one.
+    // The far rows of [`load_nested`], with the join rows dropped. Expressed
+    // on top of it rather than beside it because the two differ only in
+    // whether the middle is kept, and two copies of the same regrouping is two
+    // places for an off-by-one to live.
+    Ok(load_nested::<S, P, J, C>(store, context, parents)
+        .await?
+        .into_iter()
+        .map(|per_parent| {
+            per_parent
+                .into_iter()
+                .flat_map(|(_join, far)| far)
+                .collect()
+        })
+        .collect())
+}
+
+/// Every parent's children, each paired with its own children, from two reads.
+///
+/// `Article → Comment → Author`: entry `i` is article `i`'s comments, and each
+/// comment carries the authors of *that* comment. One level of nesting, the
+/// intermediate kept — which is the only difference from
+/// [`load_related_through`], and why that function is one line of this one.
+///
+/// # There is no depth limit, because there is no depth
+///
+/// The plan for this asked for "a depth limit with a named refusal rather than
+/// unbounded recursion". There is nothing to bound. Each level of nesting is a
+/// *type parameter*, so the depth of a call is fixed when it compiles: two
+/// levels is `load_nested`, three would be a function with four parameters,
+/// and a caller cannot ask for a thousand without writing a thousand types.
+/// Unbounded recursion needs a depth that arrives at runtime.
+///
+/// That form does exist and is not this one: an `include` list on the wire —
+/// `["comments.author.employer"]` — is a string whose depth a request chooses,
+/// and it would need exactly the refusal the plan describes. Nothing here
+/// parses one, so the refusal would guard nothing. Recorded rather than built,
+/// because a limit nobody can exceed is a limit nobody maintains.
+///
+/// # Errors
+/// If a column a relationship names is missing, or either read fails.
+pub async fn load_nested<S, P, C, G>(
+    store: &S,
+    context: &SecurityContext,
+    parents: &[P],
+) -> Result<Vec<Vec<(C, Vec<G>)>>>
+where
+    S: Records + Sync + ?Sized,
+    P: Record + Related<C>,
+    C: Record + Related<G>,
+    G: Record,
+{
+    // No guard for an empty `parents`, although `load_related` has one.
     // Written with one first, and a mutation removing it changed no answer:
     // `load_related` returns early itself, so the counts are empty, the
-    // flattened join rows are empty, and the early return below produces the
+    // flattened children are empty, and the early return below produces the
     // same empty vector. Two guards for one condition, the second
-    // unobservable — which is a comment claiming a saving that was already
-    // made a line deeper.
+    // unobservable — a comment claiming a saving already made a line deeper.
 
-    // Read one: every parent's join rows, grouped by parent.
-    let per_parent: Vec<Vec<J>> = load_related::<S, P, J>(store, context, parents).await?;
+    // Read one: every parent's children, grouped by parent.
+    let per_parent: Vec<Vec<C>> = load_related::<S, P, C>(store, context, parents).await?;
 
-    // How many join rows each parent had, kept before the grouping is
-    // flattened away. Counts rather than clones: `Record` does not require
-    // `Clone`, so flattening has to move, and moving loses the boundaries
-    // unless they are recorded first.
+    // How many children each parent had, kept before the grouping is flattened
+    // away. Counts rather than clones: `Record` does not require `Clone`, so
+    // flattening has to move, and moving loses the boundaries unless they are
+    // recorded first.
     let counts: Vec<usize> = per_parent.iter().map(Vec::len).collect();
 
-    // Read two: the far rows of every join row, in one flat batch. Flattened
-    // so the second read sees every join row at once — reading per parent
-    // group would be the N+1 this exists to avoid, with N the parent count
-    // rather than the row count.
-    let flat: Vec<J> = per_parent.into_iter().flatten().collect();
+    // Read two: the grandchildren of every child, in one flat batch. Reading
+    // per parent group instead would be the N+1 this exists to avoid, with N
+    // the parent count rather than the row count.
+    let flat: Vec<C> = per_parent.into_iter().flatten().collect();
     if flat.is_empty() {
         return Ok(counts.iter().map(|_| Vec::new()).collect());
     }
-    let per_join: Vec<Vec<C>> = load_related::<S, J, C>(store, context, &flat).await?;
+    let per_child: Vec<Vec<G>> = load_related::<S, C, G>(store, context, &flat).await?;
 
-    // Regroup by walking the join rows in the order they were flattened, so
-    // the cursor tracks without a lookup table.
-    let mut groups = per_join.into_iter();
-    let mut out: Vec<Vec<C>> = Vec::with_capacity(counts.len());
+    // Regroup by walking the children in the order they were flattened, so the
+    // cursor tracks without a lookup table. `zip` truncates to the shorter
+    // side, which cannot bite here — `load_related` returns one entry per
+    // input — and is the reason a mismatch would be silent rather than a
+    // panic, so it is `zip` on purpose and not by habit.
+    let mut pairs = flat.into_iter().zip(per_child);
+    let mut out: Vec<Vec<(C, Vec<G>)>> = Vec::with_capacity(counts.len());
     for count in counts {
-        let mut mine: Vec<C> = Vec::new();
+        let mut mine: Vec<(C, Vec<G>)> = Vec::with_capacity(count);
         for _ in 0..count {
-            if let Some(found) = groups.next() {
-                mine.extend(found);
+            if let Some(pair) = pairs.next() {
+                mine.push(pair);
             }
         }
         out.push(mine);

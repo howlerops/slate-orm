@@ -47,8 +47,8 @@ pub use field::{Field, FieldError, Timestamp, Units};
 pub use json::{Json, JsonError};
 pub use record::{Record, RecordError};
 pub use relation::{
-    Related, Through, load_one_related, load_related, load_related_through, load_through,
-    related_filter,
+    Related, Through, load_nested, load_one_related, load_related, load_related_through,
+    load_through, related_filter,
 };
 
 /// Derive [`Record`] for a struct. See the crate docs for the attributes.
