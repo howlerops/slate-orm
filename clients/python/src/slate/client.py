@@ -43,10 +43,12 @@ import grpc
 
 from ._proto.slate.v1 import records_pb2 as pb
 from ._proto.slate.v1 import records_pb2_grpc as pb_grpc
-from .errors import Conflict, SlateError, from_rpc_error
+from .errors import Conflict, InvalidRequest, SlateError, from_batch_error, from_rpc_error
 from .freshness import Freshness, ReadToken, ServedBy, Watermark
 from .query import (
     AggregateQuery,
+    Atomicity,
+    Batch,
     DeleteWhere,
     GroupedJoinQuery,
     JoinQuery,
@@ -58,6 +60,8 @@ from .schema import Table, fingerprint_of
 from .values import PyValue, from_value, to_value
 
 __all__ = [
+    "BatchOutcome",
+    "BatchResult",
     "Client",
     "Explanation",
     "GroupStream",
@@ -123,6 +127,81 @@ class Identity:
 
     def __repr__(self) -> str:
         return f"Identity({dict(self._metadata)!r})"
+
+
+class BatchOutcome:
+    """One operation's outcome inside an independent batch.
+
+    Exactly one of `written` and `error` is set, which is why they are two
+    fields and not a `WriteResult` with an optional error: a value that can
+    carry both is one somebody reads the wrong half of.
+    """
+
+    __slots__ = ("error", "written")
+
+    def __init__(self, written: WriteResult | None, error: SlateError | None) -> None:
+        #: What the operation did, or `None` if it failed.
+        self.written = written
+        #: Why it failed, or `None` if it did not.
+        #:
+        #: The same exception type the operation would have raised sent alone,
+        #: built rather than caught — see `errors.from_batch_error`. It is
+        #: returned rather than raised because the *request* succeeded, and the
+        #: operations beside it landed.
+        self.error = error
+
+    @property
+    def ok(self) -> bool:
+        """Whether it succeeded."""
+        return self.error is None
+
+    @classmethod
+    def from_proto(cls, result: pb.BatchResult, table: Table) -> BatchOutcome:
+        which = result.WhichOneof("of")
+        if which == "error":
+            return cls(
+                None,
+                from_batch_error(
+                    result.error.code, result.error.message, result.error.reason
+                ),
+            )
+        sequence = result.ok.sequence if result.ok.HasField("sequence") else None
+        return cls(
+            WriteResult(
+                None if sequence is None else ReadToken(sequence),
+                result.ok.affected,
+                [Row.from_proto(r, table) for r in result.ok.rows],
+            ),
+            None,
+        )
+
+    def __repr__(self) -> str:
+        return f"BatchOutcome(ok={self.ok})"
+
+
+class BatchResult:
+    """What a batch returned."""
+
+    __slots__ = ("outcomes", "sequence")
+
+    def __init__(self, sequence: ReadToken | None, outcomes: list[BatchOutcome]) -> None:
+        #: Where the writer got to, or `None` inside a transaction.
+        self.sequence = sequence
+        #: One per operation, in order — but **only** for an independent batch.
+        #:
+        #: Empty for `ALL_OR_NOTHING`, and that is not a missing feature: they
+        #: all happened, or the request raised and none did. A list of
+        #: successes would invite a caller to check it and could only ever say
+        #: "yes".
+        self.outcomes = outcomes
+
+    def __len__(self) -> int:
+        return len(self.outcomes)
+
+    @property
+    def failures(self) -> list[BatchOutcome]:
+        """The outcomes that failed, which is usually the only interesting half."""
+        return [one for one in self.outcomes if not one.ok]
 
 
 class WriteResult:
@@ -664,6 +743,109 @@ class _Ops:
             response.affected,
             rows,
         )
+
+    def batch(self, batch: Batch) -> BatchResult:
+        """Several writes in one round trip.
+
+        With `Atomicity.INDEPENDENT` the result carries one outcome per
+        operation, and a failed operation is one of those outcomes rather than
+        an exception — the *request* succeeded. With `ALL_OR_NOTHING` the
+        result carries none, and a failure raises, because the operations
+        before it did not happen either.
+        """
+        if not batch._operations:
+            raise InvalidRequest(
+                "a batch needs at least one operation",
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+            )
+        operations = [self._operation_proto(kind, payload) for kind, payload in batch._operations]
+        response = self._unary(
+            self._conn.stub.Batch,
+            pb.BatchRequest(
+                operations=operations,
+                atomicity=batch._atomicity.value,
+                transaction=self._transaction_id(),
+            ),
+        )
+        sequence = response.sequence if response.HasField("sequence") else None
+        self._observe(sequence)
+        # The table each operation named, in order, so a returned row decodes
+        # against the right one. A batch may span tables, so a single table on
+        # the result would be wrong for all but the first.
+        tables = [self._operation_table(kind, payload) for kind, payload in batch._operations]
+        outcomes = [
+            BatchOutcome.from_proto(result, table)
+            for result, table in zip(response.results, tables, strict=False)
+        ]
+        return BatchResult(
+            None if sequence is None else ReadToken(sequence), outcomes
+        )
+
+    @staticmethod
+    def _operation_table(kind: str, payload: object) -> Table:
+        if kind in ("delete_where", "update_where"):
+            return payload.table  # type: ignore[union-attr]
+        return payload[0]  # type: ignore[index]
+
+    def _operation_proto(self, kind: str, payload: Any) -> pb.BatchOperation:
+        """One operation, in the same request message the lone RPC sends.
+
+        The same messages rather than batch-specific ones, so a batched insert
+        and a lone insert are the same bytes. `transaction` is left unset on
+        every one of them: it has no meaning inside a batch and the server
+        refuses it, which is the loud version of ignoring it.
+        """
+        if kind == "insert":
+            table, rows, upsert = payload
+            return pb.BatchOperation(
+                insert=pb.InsertRequest(
+                    table=table.name,
+                    rows=self._rows_proto(table, rows),
+                    upsert=upsert,
+                    schema=self._schema_check(table),
+                )
+            )
+        if kind == "update":
+            table, rows = payload
+            return pb.BatchOperation(
+                update=pb.UpdateRequest(
+                    table=table.name,
+                    rows=self._rows_proto(table, rows),
+                    schema=self._schema_check(table),
+                )
+            )
+        if kind == "delete":
+            table, keys = payload
+            return pb.BatchOperation(
+                delete=pb.DeleteRequest(
+                    table=table.name,
+                    primary_keys=[self._key_proto(table, key) for key in keys],
+                    schema=self._schema_check(table),
+                )
+            )
+        if kind == "delete_where":
+            return pb.BatchOperation(
+                delete_where=pb.DeleteWhereRequest(
+                    table=payload.table.name,
+                    filter=payload._filter.to_proto() if payload._filter else None,
+                    returning=payload._returning,
+                    schema=self._schema_check(payload.table),
+                )
+            )
+        if kind == "update_where":
+            return pb.BatchOperation(
+                update_where=pb.UpdateWhereRequest(
+                    table=payload.table.name,
+                    filter=payload._filter.to_proto() if payload._filter else None,
+                    assignments=[
+                        pb.Assignment(column=column.to_proto(), value=value.to_proto())
+                        for column, value in payload._assignments
+                    ],
+                    returning=payload._returning,
+                    schema=self._schema_check(payload.table),
+                )
+            )
+        raise AssertionError(f"unknown batch operation {kind!r}")
 
     def delete_where(self, write: DeleteWhere) -> WriteResult:
         """Delete every row the predicate selects, in one statement.

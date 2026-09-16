@@ -20,6 +20,7 @@ import {
   caseWhen,
   add,
   and,
+  type Atomicity,
   col,
   computed0,
   compare,
@@ -633,6 +634,52 @@ class Adapter {
     };
   }
 
+  /**
+   * Three writes, one of which collides, under the asked-for atomicity.
+   *
+   * The duplicate is the point: it is the operation that makes the two
+   * guarantees visibly different, and `left` afterwards is how the corpus sees
+   * which one happened.
+   */
+  async batch(session: Session, body: { atomicity?: string }): Promise<unknown> {
+    const first = 9200n;
+    const mine = ge(0, uint(first));
+    await session.deleteWhere({ table: "books", filter: mine });
+    await session.insert("books", bookRow(first + 1n, "Already There"));
+
+    const atomicity: Atomicity =
+      body.atomicity === "all-or-nothing" ? "all-or-nothing" : "independent";
+    const outcomes: unknown[] = [];
+    let failed = "";
+    try {
+      const result = await session.batch({
+        atomicity,
+        operations: [
+          { kind: "insert", table: "books", rows: [bookRow(first, "First")] },
+          { kind: "insert", table: "books", rows: [bookRow(first + 1n, "Collides")] },
+          { kind: "insert", table: "books", rows: [bookRow(first + 2n, "Third")] },
+        ],
+      });
+      for (const one of result.outcomes) {
+        if (one.error) {
+          outcomes.push({ kind: one.error.kind, reason: one.error.reason });
+        } else {
+          outcomes.push({ ok: Number(one.written.affected) });
+        }
+      }
+    } catch (error) {
+      // An atomic batch fails the call. Reported as a field rather than
+      // rethrown, so the corpus compares the outcome of the two atomicities
+      // rather than one being a refusal case and one not.
+      if (!(error instanceof SlateError)) throw error;
+      failed = error.kind;
+    }
+
+    let left = 0;
+    for await (const _ of session.query({ table: "books", filter: mine })) left++;
+    return { failed, outcomes, left };
+  }
+
   async transaction(session: Session, body: { commit?: boolean }): Promise<unknown> {
     const probe = 9001n;
     try {
@@ -716,6 +763,7 @@ async function main(): Promise<void> {
     "/api/chain": (s, b) => adapter.chain(s, b),
     "/api/page": (s, b) => adapter.page(s, b),
     "/api/related": (s, b) => adapter.related(s, b),
+    "/api/batch": (s, b) => adapter.batch(s, b),
     "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
@@ -768,3 +816,16 @@ async function main(): Promise<void> {
 }
 
 void main();
+
+/** A whole `books` row, every column in ordinal order. */
+function bookRow(id: bigint, title: string): Value[] {
+  return [
+    uint(id),
+    uint(1n),
+    { kind: "string", value: title },
+    { kind: "int", value: 2020n },
+    { kind: "float", value: 4 },
+    { kind: "int", value: 1767225600n },
+    vector([0.5, 0.5, 0.5, 0.5]),
+  ];
+}

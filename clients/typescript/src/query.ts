@@ -1,6 +1,6 @@
 import { type Column, columnWire } from "./join.js";
 import { type Scalar, scalarsToWire } from "./scalar.js";
-import { type Value, valueToWire } from "./value.js";
+import { rowToWire, type Value, valueToWire } from "./value.js";
 
 /**
  * A column's position in its table, counting from zero.
@@ -335,4 +335,91 @@ export function updateWhereToWire(
     value: a.value.wire,
   }));
   return out;
+}
+
+/**
+ * Whether a batch's operations stand alone or land together.
+ *
+ * There is no default. The two guarantees differ *only when something fails*,
+ * so a caller who never chose finds out on the day a write in the middle is
+ * rejected — and discovers then whether the ones before it stayed.
+ */
+export type Atomicity = "independent" | "all-or-nothing";
+
+/** One write in a {@link Batch}. */
+export type BatchOperation =
+  | { readonly kind: "insert"; readonly table: string; readonly rows: Value[][]; readonly upsert?: boolean }
+  | { readonly kind: "update"; readonly table: string; readonly rows: Value[][] }
+  | { readonly kind: "delete"; readonly table: string; readonly keys: Value[][] }
+  | { readonly kind: "deleteWhere"; readonly write: DeleteWhere }
+  | { readonly kind: "updateWhere"; readonly write: UpdateWhere };
+
+/**
+ * Several writes in one round trip.
+ *
+ * `atomicity` is required rather than defaulted, which is the client-side half
+ * of the server refusing an unspecified one.
+ */
+export interface Batch {
+  readonly atomicity: Atomicity;
+  /** Applied in order. At least one; an empty batch is refused. */
+  readonly operations: BatchOperation[];
+}
+
+const ATOMICITY_WIRE: Record<Atomicity, string> = {
+  independent: "ATOMICITY_INDEPENDENT",
+  "all-or-nothing": "ATOMICITY_ALL_OR_NOTHING",
+};
+
+/** The table an operation names, for decoding its returned rows. */
+export function operationTable(operation: BatchOperation): string {
+  return operation.kind === "deleteWhere" || operation.kind === "updateWhere"
+    ? operation.write.table
+    : operation.table;
+}
+
+export function batchToWire(
+  batch: Batch,
+  transaction: string,
+  claim: (table: string) => Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const operations = batch.operations.map((operation) => {
+    const schema = claim(operationTable(operation));
+    switch (operation.kind) {
+      case "insert":
+        return {
+          insert: {
+            table: operation.table,
+            rows: operation.rows.map(rowToWire),
+            ...(operation.upsert ? { upsert: true } : {}),
+            ...(schema ? { schema } : {}),
+          },
+        };
+      case "update":
+        return {
+          update: {
+            table: operation.table,
+            rows: operation.rows.map(rowToWire),
+            ...(schema ? { schema } : {}),
+          },
+        };
+      case "delete":
+        return {
+          delete: {
+            table: operation.table,
+            primaryKeys: operation.keys.map(rowToWire),
+            ...(schema ? { schema } : {}),
+          },
+        };
+      case "deleteWhere":
+        return { deleteWhere: deleteWhereToWire(operation.write, schema) };
+      case "updateWhere":
+        return { updateWhere: updateWhereToWire(operation.write, schema) };
+    }
+  });
+  return {
+    operations,
+    atomicity: ATOMICITY_WIRE[batch.atomicity],
+    ...(transaction ? { transaction } : {}),
+  };
 }

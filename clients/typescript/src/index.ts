@@ -10,6 +10,8 @@ export {
   type Identity,
   type ReadToken,
   type ServedBy,
+  type BatchOutcome,
+  type BatchResult,
   type WriteResult,
   type Explanation,
   type Leadership,
@@ -98,6 +100,9 @@ export {
   isNotNullAt,
   type Operator,
   type Assignment,
+  type Atomicity,
+  type Batch,
+  type BatchOperation,
   type DeleteWhere,
   type UpdateWhere,
 } from "./query.js";

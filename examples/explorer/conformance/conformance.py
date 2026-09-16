@@ -360,6 +360,20 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a reader may not write by predicate", "/api/predicate-write",
      {"kind": "delete"}, "reader"),
 
+    # A batch, under each atomicity, with the same three operations — one of
+    # which collides. That collision is the whole comparison: independent
+    # reports it and keeps going, atomic fails the call and undoes the rest,
+    # and `left` afterwards is how the corpus sees which happened. Three
+    # clients agreeing on *both* answers is what says the distinction survived
+    # three separate implementations of it.
+    ("an independent batch, reporting a failure it carried on past", "/api/batch",
+     {"atomicity": "independent"}, "app"),
+    ("an atomic batch, undoing everything before the failure", "/api/batch",
+     {"atomicity": "all-or-nothing"}, "app"),
+    # A reader may not write, batched or not, and must be refused before
+    # anything lands.
+    ("a reader may not batch", "/api/batch", {"atomicity": "independent"}, "reader"),
+
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 ]
@@ -391,6 +405,7 @@ EXPECTED_REFUSALS = {
     "a page sorted into an order the key does not give",
     "a predicate update with no assignments",
     "a reader may not write by predicate",
+    "a reader may not batch",
 }
 
 

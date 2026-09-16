@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -786,4 +787,100 @@ func (s *server) predicateWrite(ctx context.Context, session *slate.Session, bod
 		"rows":     returned,
 		"left":     left,
 	}, nil
+}
+
+// The id range the batch handler owns, clear of the fixture, of the
+// transaction probe at 9001 and of the predicate-write range at 9100.
+const batchFirst = 9200
+
+// batchWrite seeds nothing and writes three books, one of which is a
+// duplicate, under whichever atomicity was asked for.
+//
+// The duplicate is the point: it is the operation that makes the two
+// guarantees visibly different, and `left` afterwards is how the corpus sees
+// which one happened.
+func (s *server) batchWrite(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Atomicity string `json:"atomicity"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+
+	// Clean slate, so the demo and the corpus give the same answer run twice.
+	if _, err := session.DeleteWhere(ctx, slate.DeleteWhere{
+		Table:  "books",
+		Filter: slate.Filter(slate.Ge(0, slate.Uint(batchFirst))),
+	}); err != nil {
+		return nil, err
+	}
+	// The row the batch will collide with.
+	if _, err := session.Insert(ctx, "books", book(batchFirst+1, "Already There")); err != nil {
+		return nil, err
+	}
+
+	atomicity := slate.Independent
+	if spec.Atomicity == "all-or-nothing" {
+		atomicity = slate.AllOrNothing
+	}
+	b := slate.NewBatch(atomicity)
+	b.Insert("books", book(batchFirst, "First"))
+	b.Insert("books", book(batchFirst+1, "Collides"))
+	b.Insert("books", book(batchFirst+2, "Third"))
+
+	result, err := session.Batch(ctx, b)
+	failed := ""
+	if err != nil {
+		// An atomic batch fails the call. Reported as a field rather than as
+		// an adapter error, so the corpus compares the *outcome* of the two
+		// atomicities rather than one being a refusal case and one not.
+		var e *slate.Error
+		if errors.As(err, &e) {
+			failed = kindName(e.Kind)
+		} else {
+			return nil, err
+		}
+	}
+
+	outcomes := make([]any, 0, len(result.Outcomes))
+	for _, one := range result.Outcomes {
+		if one.OK() {
+			outcomes = append(outcomes, map[string]any{"ok": one.Written.Affected})
+			continue
+		}
+		var e *slate.Error
+		if !errors.As(one.Err, &e) {
+			return nil, one.Err
+		}
+		outcomes = append(outcomes, map[string]any{
+			"kind": kindName(e.Kind), "reason": e.Reason,
+		})
+	}
+
+	stream, err := session.Query(ctx, slate.Query{
+		Table:  "books",
+		Filter: slate.Filter(slate.Ge(0, slate.Uint(batchFirst))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	left := 0
+	for stream.Next() {
+		stream.Row()
+		left++
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"failed": failed, "outcomes": outcomes, "left": left}, nil
+}
+
+// book is a whole `books` row, every column in ordinal order.
+func book(id uint64, title string) []slate.Value {
+	return []slate.Value{
+		slate.Uint(id), slate.Uint(1), slate.String(title),
+		slate.Int(2020), slate.Float(4.0),
+		slate.Int(1767225600), slate.Vector([]float32{0.5, 0.5, 0.5, 0.5}),
+	}
 }

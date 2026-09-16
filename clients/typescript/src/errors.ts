@@ -63,6 +63,17 @@ export class SlateError extends Error {
   readonly leader: string | undefined;
   /** The call's text-valued trailing metadata. */
   readonly trailers: Readonly<Record<string, string>>;
+  /**
+   * The server's stable token for this failure, or `""`.
+   *
+   * Set for a failure that came back inside a **batch**, where the server puts
+   * it in the message body. Empty for every other failure, and the asymmetry
+   * is real rather than an oversight: a lone call carries its token in
+   * `grpc-status-details-bin`, a protobuf blob this client does not decode —
+   * see the `trailers` comment, which drops binary entries. So a batched
+   * failure currently says more about itself than the same failure alone.
+   */
+  readonly reason: string;
 
   constructor(
     kind: Kind,
@@ -70,9 +81,11 @@ export class SlateError extends Error {
     code: GrpcStatus,
     trailers: Record<string, string>,
     leader?: string,
+    reason = "",
   ) {
     super(leader ? `${kind}: ${message} (leader ${leader})` : `${kind}: ${message}`);
     this.name = "SlateError";
+    this.reason = reason;
     this.kind = kind;
     this.code = code;
     this.trailers = trailers;
@@ -97,6 +110,25 @@ export function isKind(error: unknown, kind: Kind): boolean {
 }
 
 /** The error a gRPC failure becomes. */
+/**
+ * The `SlateError` a batch's per-operation failure becomes.
+ *
+ * An independent batch reports each failure as *data*, inside a successful
+ * response, so the code and message arrive in a message body rather than in
+ * trailers. This turns them back into the same class a lone call throws, so a
+ * caller writes one `instanceof SlateError` check whether or not the write was
+ * batched.
+ */
+export function fromBatchError(failed: {
+  code?: number;
+  message?: string;
+  reason?: string;
+}): SlateError {
+  const code = (failed.code ?? 2) as GrpcStatus;
+  const kind = BY_CODE[code] ?? "internal";
+  return new SlateError(kind, failed.message ?? "", code, {}, undefined, failed.reason ?? "");
+}
+
 export function fromServiceError(error: ServiceError): SlateError {
   const trailers: Record<string, string> = {};
   const metadata = error.metadata?.getMap?.() ?? {};

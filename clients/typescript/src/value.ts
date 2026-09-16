@@ -194,3 +194,14 @@ export function valueKey(value: Value): string {
       return `${value.kind}:${String(value.value)}`;
   }
 }
+
+/**
+ * A row, in the shape the wire wants.
+ *
+ * Here rather than beside the client because `query.ts` needs it too, for a
+ * batch's rows, and `client.ts` imports `query.ts` — so a copy there would be
+ * a circular import or a second implementation.
+ */
+export function rowToWire(values: Value[]): Record<string, unknown> {
+  return { values: values.map(valueToWire) };
+}

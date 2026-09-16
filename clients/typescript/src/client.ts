@@ -5,7 +5,7 @@ import * as protoLoader from "@grpc/proto-loader";
 
 import { directoryOf, findUpContaining } from "./paths.js";
 
-import { fromServiceError, SlateError } from "./errors.js";
+import { fromBatchError, fromServiceError, SlateError } from "./errors.js";
 import { claimFor, type Schemas } from "./schema.js";
 import {
   applyGrouping,
@@ -15,6 +15,8 @@ import {
   joinToWire,
 } from "./join.js";
 import {
+  type Batch,
+  batchToWire,
   type DeleteWhere,
   deleteWhereToWire,
   type Query,
@@ -22,7 +24,7 @@ import {
   type UpdateWhere,
   updateWhereToWire,
 } from "./query.js";
-import { type Value, valueFromWire, valueKey, valueToWire } from "./value.js";
+import { type Value, rowToWire, valueFromWire, valueKey, valueToWire } from "./value.js";
 
 /**
  * Who a request runs as.
@@ -77,6 +79,30 @@ export interface WriteResult {
    * is a fact it does not have.
    */
   readonly rows: Value[][];
+}
+
+/**
+ * One operation's outcome inside an independent batch.
+ *
+ * Exactly one of `written` and `error` is present, which is why this is a
+ * union rather than an object with both optional: a value that can carry both
+ * is one somebody reads the wrong half of.
+ */
+export type BatchOutcome =
+  | { readonly written: WriteResult; readonly error?: undefined }
+  | { readonly written?: undefined; readonly error: SlateError };
+
+/** What a batch returned. */
+export interface BatchResult {
+  /** Where the writer got to, absent inside a transaction. */
+  readonly sequence?: ReadToken;
+  /**
+   * One per operation, in order — but only for an independent batch.
+   *
+   * Empty for `"all-or-nothing"`, which is not a missing feature: they all
+   * happened, or the call threw and none did.
+   */
+  readonly outcomes: BatchOutcome[];
 }
 
 /** The plan a query would run under. */
@@ -149,10 +175,6 @@ function service(): grpc.ServiceClientConstructor {
     cachedService = loaded.slate.v1.Records;
   }
   return cachedService;
-}
-
-function rowToWire(values: Value[]): Record<string, unknown> {
-  return { values: values.map(valueToWire) };
 }
 
 /**
@@ -523,6 +545,67 @@ export class Session {
       return { sequence: token, affected, rows };
     }
     return { affected, rows };
+  }
+
+  /**
+   * Several writes in one round trip.
+   *
+   * With `"independent"` the result carries one outcome per operation, and a
+   * failed operation is one of those outcomes rather than a thrown error — the
+   * *request* succeeded. With `"all-or-nothing"` it carries none, and a
+   * failure throws, because the operations before it did not happen either.
+   */
+  batch(batch: Batch): Promise<BatchResult> {
+    return this.#runBatch(batch, "");
+  }
+
+  /** @internal — shared by {@link Session.batch} and {@link Transaction.batch}. */
+  async runBatchThrough(batch: Batch, transaction: string): Promise<BatchResult> {
+    return this.#runBatch(batch, transaction);
+  }
+
+  async #runBatch(batch: Batch, transaction: string): Promise<BatchResult> {
+    if (batch.operations.length === 0) {
+      // Refused here rather than at the server, which would also refuse it: a
+      // round trip to be told the list was empty is one the caller can be
+      // spared, and the message is the same either way.
+      throw new SlateError(
+        "invalid-request",
+        "a batch needs at least one operation",
+        3 as never,
+        {},
+      );
+    }
+    const response = await this.#client.call<{
+      results?: unknown[];
+      sequence?: string;
+    }>("Batch", batchToWire(batch, transaction, (table) => this.#client.claim(table)));
+
+    let sequence: ReadToken | undefined;
+    if (response.sequence !== undefined && response.sequence !== null) {
+      sequence = BigInt(response.sequence);
+      this.observe(sequence);
+    }
+    const outcomes = (response.results ?? []).map((raw) => {
+      const result = raw as {
+        ok?: { sequence?: string; affected?: string; rows?: unknown[] };
+        error?: { code?: number; message?: string; reason?: string };
+      };
+      if (result.error) {
+        return { error: fromBatchError(result.error) } as BatchOutcome;
+      }
+      const ok = result.ok ?? {};
+      return {
+        written: {
+          affected: BigInt(ok.affected ?? 0),
+          rows: (ok.rows ?? []).map(rowFromWire),
+          ...(ok.sequence !== undefined && ok.sequence !== null
+            ? { sequence: BigInt(ok.sequence) }
+            : {}),
+        },
+      } as BatchOutcome;
+    });
+    return { outcomes, ...(sequence !== undefined ? { sequence } : {}) };
   }
 
   /**
@@ -962,6 +1045,16 @@ export class Transaction {
   }
 
   /** Add rows inside the transaction. */
+  /**
+   * An atomic batch inside the transaction.
+   *
+   * `"independent"` is refused by the server here: "independent operations,
+   * all of which roll back together" is two contradictory requests.
+   */
+  batch(batch: Batch): Promise<BatchResult> {
+    return this.#session.runBatchThrough(batch, this.#id);
+  }
+
   /**
    * Delete every row the predicate selects, inside the transaction.
    *

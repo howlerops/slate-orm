@@ -32,6 +32,8 @@ And `PROTOCOL-FINDINGS.md`, which is what this client was written to produce.
 from __future__ import annotations
 
 from .client import (
+    BatchOutcome,
+    BatchResult,
     Client,
     AggregateExplanation,
     Explanation,
@@ -75,6 +77,8 @@ from .query import (
     JoinQuery,
     JoinType,
     NullsOrder,
+    Atomicity,
+    Batch,
     DeleteWhere,
     Query,
     UpdateWhere,
@@ -158,6 +162,10 @@ __all__ = [
     "PermissionDenied",
     "PyValue",
     "Query",
+    "Atomicity",
+    "Batch",
+    "BatchOutcome",
+    "BatchResult",
     "DeleteWhere",
     "UpdateWhere",
     "ReadToken",

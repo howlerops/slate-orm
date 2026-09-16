@@ -28,7 +28,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 from collections.abc import Iterable, Sequence
-from typing import Self
+from typing import Any, Self
 
 from ._proto.slate.v1 import records_pb2 as pb
 from .expr import (
@@ -47,6 +47,8 @@ from .values import PyValue, to_value
 __all__ = [
     "Agg",
     "AggregateQuery",
+    "Atomicity",
+    "Batch",
     "DeleteWhere",
     "UpdateWhere",
     "GroupedJoinQuery",
@@ -866,4 +868,86 @@ class UpdateWhere(_PredicateWrite):
         because either resolution is a guess at which the caller meant.
         """
         self._assignments.append((column, as_scalar(value)))
+        return self
+
+
+class Atomicity(enum.Enum):
+    """Whether a batch's operations stand alone or land together.
+
+    There is no default, and that is the whole design of `Batch`. The two
+    guarantees differ *only when something fails*, so a caller who never chose
+    finds out on the day a write in the middle is rejected — and discovers then
+    whether the ones before it stayed.
+    """
+
+    #: A network optimisation and nothing else. Each operation is applied on
+    #: its own, in order; one failing neither undoes the ones before it nor
+    #: stops the ones after, and each gets its own result.
+    INDEPENDENT = pb.Atomicity.ATOMICITY_INDEPENDENT
+    #: A transaction. Every operation lands or none does, and the first failure
+    #: raises — there are no per-operation results, because the successful ones
+    #: did not happen either.
+    ALL_OR_NOTHING = pb.Atomicity.ATOMICITY_ALL_OR_NOTHING
+
+
+class Batch:
+    """Several writes in one round trip.
+
+    Built by appending, because the operations are ordered and a list is what
+    that is:
+
+        b = Batch(Atomicity.INDEPENDENT)
+        b.insert(DOCS, rows)
+        b.delete_where(DeleteWhere(DOCS).where(...))
+        result = client.batch(b)
+
+    `atomicity` is required by the constructor rather than defaulted, which is
+    the client-side half of the server refusing an unspecified one.
+    """
+
+    #: A kind and its payload. Rendered to proto by `Client.batch`, which is
+    #: what holds the schema claims — the same reason a `Query` is rendered
+    #: there rather than here. This keeps the ordered list and nothing else.
+    __slots__ = ("_atomicity", "_operations")
+
+    def __init__(self, atomicity: Atomicity) -> None:
+        if not isinstance(atomicity, Atomicity):
+            raise TypeError(
+                "a batch needs an Atomicity: INDEPENDENT applies each operation "
+                "on its own, ALL_OR_NOTHING applies them in one transaction"
+            )
+        self._atomicity = atomicity
+        self._operations: list[tuple[str, Any]] = []
+
+    def __len__(self) -> int:
+        return len(self._operations)
+
+    def insert(self, table: Table, rows: Iterable[Sequence[PyValue]]) -> Batch:
+        """Add rows, refusing a primary key that is taken."""
+        self._operations.append(("insert", (table, list(rows), False)))
+        return self
+
+    def upsert(self, table: Table, rows: Iterable[Sequence[PyValue]]) -> Batch:
+        """Add rows, replacing any whose primary key is taken."""
+        self._operations.append(("insert", (table, list(rows), True)))
+        return self
+
+    def update(self, table: Table, rows: Iterable[Sequence[PyValue]]) -> Batch:
+        """Replace rows, refusing one whose primary key is not there."""
+        self._operations.append(("update", (table, list(rows))))
+        return self
+
+    def delete(self, table: Table, keys: Iterable[Sequence[PyValue]]) -> Batch:
+        """Remove rows by primary key."""
+        self._operations.append(("delete", (table, list(keys))))
+        return self
+
+    def delete_where(self, write: DeleteWhere) -> Batch:
+        """Delete every row a predicate selects."""
+        self._operations.append(("delete_where", write))
+        return self
+
+    def update_where(self, write: UpdateWhere) -> Batch:
+        """Assign to columns of every row a predicate selects."""
+        self._operations.append(("update_where", write))
         return self

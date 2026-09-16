@@ -94,11 +94,23 @@ class SlateError(Exception):
         *,
         code: grpc.StatusCode,
         trailers: dict[str, str] | None = None,
+        reason: str = "",
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.trailers = trailers or {}
+        #: The server's stable token for this failure, or `""`.
+        #:
+        #: Set for a failure that came back inside a **batch**, where the
+        #: server puts it in the message body. Empty for every other failure,
+        #: and that asymmetry is real rather than an oversight: a lone RPC
+        #: carries its token in `grpc-status-details-bin`, a protobuf blob this
+        #: client does not decode. So a batched failure currently says more
+        #: about itself than the same failure sent alone. Recorded here rather
+        #: than hidden, because the fix is to decode the blob on the lone path
+        #: and nobody has needed it enough to do that yet.
+        self.reason = reason
 
     def __str__(self) -> str:
         return f"{self.code.name.lower()}: {self.message}"
@@ -288,6 +300,35 @@ def _trailers(error: grpc.RpcError) -> dict[str, str]:
         if isinstance(value, str):
             out[key] = value
     return out
+
+
+def from_batch_error(code: int, message: str, reason: str) -> SlateError:
+    """The exception a batch's per-operation failure becomes.
+
+    An independent batch reports each failure *as data*, inside a successful
+    response, so the code and message arrive in a message body rather than in
+    trailers. This turns them back into the same exception type the same
+    operation would have raised had it been sent alone — so a caller writes one
+    `except NotFound` whether or not the write was batched.
+
+    `reason` is carried on the exception rather than in `trailers`, because
+    there are no trailers: the whole point of an independent batch is that the
+    request succeeded and the operation did not.
+    """
+    status = _BY_VALUE.get(code, grpc.StatusCode.UNKNOWN)
+    kind: type[SlateError] = _BY_CODE.get(status, InternalError)
+    return kind(message or status.name, code=status, reason=reason)
+
+
+#: gRPC's numeric codes, which arrive as an `int32` in a `BatchError`.
+#:
+#: `grpc.StatusCode` is an enum of `(number, name)` pairs, so this is built
+#: from it rather than typed out — a hand-written table is a second place for
+#: the numbers to be wrong, and they are not this repository's numbers to
+#: choose.
+_BY_VALUE: Final[dict[int, grpc.StatusCode]] = {
+    status.value[0]: status for status in grpc.StatusCode
+}
 
 
 def from_rpc_error(error: grpc.RpcError) -> SlateError:

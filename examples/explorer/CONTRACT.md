@@ -286,3 +286,28 @@ The handler seeds and cleans its own id range rather than touching the fixture.
 The conformance runner drives all three adapters against one database, so a
 case that deleted a fixture row would make every later case depend on which SDK
 happened to run first — and would not be idempotent, which the demo needs.
+
+### `POST /api/batch`
+
+```json
+{ "atomicity": "independent" | "all-or-nothing" }
+```
+
+Seeds one `books` row at 9201, then sends three inserts — 9200, **9201 again**,
+9202 — as one batch under the asked-for atomicity. The collision in the middle
+is the whole point of the endpoint: it is the operation that makes the two
+guarantees visibly different.
+
+```json
+{ "failed": "", "outcomes": [ {"ok": 1}, {"kind": "already-exists", "reason": "DUPLICATE_PRIMARY_KEY"}, {"ok": 1} ], "left": 3 }
+```
+
+Under `independent` the failure is an *outcome* and the operations beside it
+land, so `left` is 3. Under `all-or-nothing` the call fails, `failed` carries
+the error kind, `outcomes` is empty and `left` is 1 — only the seeded row.
+
+`failed` is a field rather than an adapter error on purpose: it keeps both
+atomicities as ordinary cases the corpus compares, instead of one being a
+refusal case and one not. `reason` is the server's stable token, which reaches
+the client through the message body rather than through trailers — a batched
+failure is data, not an exception.

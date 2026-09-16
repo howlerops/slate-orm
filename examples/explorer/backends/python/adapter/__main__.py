@@ -21,6 +21,8 @@ from typing import Any
 from slate import (
     Agg,
     AggregateQuery,
+    Atomicity,
+    Batch,
     DeleteWhere,
     Client,
     GroupedJoinQuery,
@@ -537,6 +539,61 @@ class Adapter:
             "left": left,
         }
 
+    #: The id range the batch handler owns, clear of the fixture, of the
+    #: transaction probe at 9001 and of the predicate-write range at 9100.
+    BATCH_FIRST = 9200
+
+    def batch(self, session, body):
+        """Three writes, one of which collides, under the asked-for atomicity.
+
+        The duplicate is the point: it is the operation that makes the two
+        guarantees visibly different, and `left` afterwards is how the corpus
+        sees which one happened.
+        """
+        first = self.BATCH_FIRST
+        mine = DeleteWhere(BOOKS)
+        session.delete_where(mine.where(mine.c.id.ge(u64(first))))
+        session.insert(BOOKS, [self._book(first + 1, "Already There")])
+
+        atomicity = (
+            Atomicity.ALL_OR_NOTHING
+            if body.get("atomicity") == "all-or-nothing"
+            else Atomicity.INDEPENDENT
+        )
+        b = Batch(atomicity)
+        b.insert(BOOKS, [self._book(first, "First")])
+        b.insert(BOOKS, [self._book(first + 1, "Collides")])
+        b.insert(BOOKS, [self._book(first + 2, "Third")])
+
+        failed = ""
+        outcomes = []
+        try:
+            result = b and session.batch(b)
+            for one in result.outcomes:
+                if one.ok:
+                    outcomes.append({"ok": one.written.affected})
+                else:
+                    outcomes.append(
+                        {"kind": kind_name(one.error), "reason": one.error.reason}
+                    )
+        except SlateError as error:
+            # An atomic batch fails the call. Reported as a field rather than
+            # raised, so the corpus compares the *outcome* of the two
+            # atomicities rather than one being a refusal case and one not.
+            failed = kind_name(error)
+
+        q = Query(BOOKS)
+        left = len(list(session.query(q.where(q.c.id.ge(u64(first))))))
+        return {"failed": failed, "outcomes": outcomes, "left": left}
+
+    @staticmethod
+    def _book(id_: int, title: str) -> list:
+        """A whole `books` row, every column in ordinal order."""
+        return [
+            u64(id_), u64(1), title, i64(2020), 4.0,
+            i64(1767225600), Vector((0.5, 0.5, 0.5, 0.5)),
+        ]
+
     def transaction(self, session, body):
         """The one thing a single request cannot show: a write visible only to
         its own transaction until it commits."""
@@ -583,6 +640,7 @@ ROUTES = {
     "/api/chain": "chain",
     "/api/page": "page",
     "/api/related": "related",
+    "/api/batch": "batch",
     "/api/predicate-write": "predicate_write",
     "/api/transaction": "transaction",
 }

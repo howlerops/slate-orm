@@ -7,6 +7,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
 )
 
 // LeaderKey is the trailer a redirect carries, naming the node to try instead.
@@ -106,6 +108,15 @@ type Error struct {
 	// sends is binary, and a []byte hiding in a map[string]string is the kind
 	// of thing that only fails once it reaches a log line.
 	Trailers map[string]string
+	// Reason is the server's stable token for this failure, or "".
+	//
+	// Set for a failure that came back inside a batch, where the server puts
+	// it in the message body. Empty for every other failure, and the asymmetry
+	// is real rather than an oversight: a lone call carries its token in
+	// grpc-status-details-bin, a protobuf blob this client does not decode —
+	// see the Trailers comment above, which drops binary entries. So a batched
+	// failure currently says more about itself than the same failure alone.
+	Reason string
 }
 
 func (e *Error) Error() string {
@@ -171,6 +182,29 @@ func fromRPC(err error) error {
 	}
 	out := &Error{Kind: kind, Message: st.Message(), Code: st.Code()}
 	return out
+}
+
+// fromBatchError is the *Error a batch's per-operation failure becomes.
+//
+// An independent batch reports each failure as data, inside a successful
+// response, so the code and message arrive in a message body rather than in
+// trailers. This turns them back into the same type a lone call returns, so a
+// caller writes one errors.As whether or not the write was batched.
+func fromBatchError(failed *pb.BatchError) error {
+	if failed == nil {
+		return &Error{Kind: KindInternal, Message: "a batch reported an empty error", Code: codes.Unknown}
+	}
+	code := codes.Code(uint32(failed.Code))
+	kind, known := byCode[code]
+	if !known {
+		kind = KindInternal
+	}
+	return &Error{
+		Kind:    kind,
+		Message: failed.Message,
+		Code:    code,
+		Reason:  failed.Reason,
+	}
 }
 
 // withTrailers refines an error using the call's trailers.
