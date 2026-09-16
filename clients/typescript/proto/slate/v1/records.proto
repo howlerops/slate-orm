@@ -1068,6 +1068,76 @@ message WriteResponse {
   // absent field would make the common `affected == len(rows)` assertion
   // language-specific rather than merely uninformative.
   uint64 affected = 2;
+  // The rows the write acted on, when `returning` asked for them.
+  //
+  // Empty on a write that did not ask, and on one that matched nothing. For
+  // `UpdateWhere` these are the rows **as written**; for `DeleteWhere` they
+  // are the rows as they were before removal, which is the only moment they
+  // exist to be read.
+  //
+  // Only the predicate writes offer it, and the reason is worth stating
+  // because its absence elsewhere looks like an oversight. `Insert` and
+  // `Update` take whole rows and this server applies no `DEFAULT` to them —
+  // the wire's `Row` is full width and its nulls are values a caller meant, so
+  // there is no unset column for a default to fill — and there is no
+  // auto-increment, no trigger and no generated column. The row written is the
+  // row sent, byte for byte, so returning it would hand the caller its own
+  // request back. A predicate write is different: the caller named a
+  // *condition*, not rows, and has no other way to learn which rows matched.
+  repeated Row rows = 3;
+}
+
+// One column and the value to put in it, for `UpdateWhere`.
+message Assignment {
+  // The column, by ordinal within the table being written.
+  ColumnRef column = 1;
+  // What to store, evaluated **over the row as it was read** — so
+  // `views = views + 1` is one write rather than a read, a decision and a
+  // write, and two concurrent increments make two.
+  //
+  // Every assignment in a request reads the original row, so they apply
+  // together: `a = b, b = a` swaps two columns rather than setting both to
+  // `b`. Left-to-right is the other reading and it is the one that surprises
+  // people; SQL takes this one and so does this.
+  Scalar value = 2;
+}
+
+// Delete every row a predicate selects.
+//
+// Not a flag on `DeleteRequest`, which names rows by primary key: one message
+// meaning "these keys" or "this condition" depending on which field is set is
+// one message with two shapes, and the field that is *not* set would be the
+// one that decides.
+//
+// The alternative a caller has without this is to query the keys, carry them
+// back and delete one per key — N+1 by construction, and not atomic with the
+// query that found them: a row inserted in between is missed, and a row
+// deleted in between is deleted twice.
+message DeleteWhereRequest {
+  string transaction = 1;
+  string table = 2;
+  // Which rows. Absent means every row the caller can see, which is a
+  // `DELETE FROM t` with no `WHERE` and is allowed — it is not the sort of
+  // mistake a protocol can tell from an intention.
+  Expr filter = 3;
+  // Return the rows that were removed, as they were before removal.
+  bool returning = 4;
+  // See `SchemaCheck`. Checked before the predicate is resolved, because an
+  // ordinal in the predicate is only meaningful against a declaration.
+  SchemaCheck schema = 5;
+}
+
+// Assign to columns of every row a predicate selects.
+message UpdateWhereRequest {
+  string transaction = 1;
+  string table = 2;
+  Expr filter = 3;
+  // At least one. A column assigned twice is refused rather than resolved,
+  // because either resolution is a guess at which the caller meant.
+  repeated Assignment assignments = 4;
+  // Return the rows as written.
+  bool returning = 5;
+  SchemaCheck schema = 6;
 }
 
 // ── Reads ────────────────────────────────────────────────────────────────────
@@ -1493,6 +1563,10 @@ service Records {
   rpc Insert(InsertRequest) returns (WriteResponse);
   rpc Update(UpdateRequest) returns (WriteResponse);
   rpc Delete(DeleteRequest) returns (WriteResponse);
+  // Predicate writes: one statement rather than a query, a round trip and a
+  // write per row. Both go to the writer, like every other write.
+  rpc DeleteWhere(DeleteWhereRequest) returns (WriteResponse);
+  rpc UpdateWhere(UpdateWhereRequest) returns (WriteResponse);
 
   rpc Get(GetRequest) returns (GetResponse);
   rpc Query(QueryRequest) returns (stream QueryResponse);

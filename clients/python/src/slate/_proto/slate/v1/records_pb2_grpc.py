@@ -64,6 +64,16 @@ class RecordsStub:
                 request_serializer=slate_dot_v1_dot_records__pb2.DeleteRequest.SerializeToString,
                 response_deserializer=slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
                 _registered_method=True)
+        self.DeleteWhere = channel.unary_unary(
+                '/slate.v1.Records/DeleteWhere',
+                request_serializer=slate_dot_v1_dot_records__pb2.DeleteWhereRequest.SerializeToString,
+                response_deserializer=slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+                _registered_method=True)
+        self.UpdateWhere = channel.unary_unary(
+                '/slate.v1.Records/UpdateWhere',
+                request_serializer=slate_dot_v1_dot_records__pb2.UpdateWhereRequest.SerializeToString,
+                response_deserializer=slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+                _registered_method=True)
         self.Get = channel.unary_unary(
                 '/slate.v1.Records/Get',
                 request_serializer=slate_dot_v1_dot_records__pb2.GetRequest.SerializeToString,
@@ -145,6 +155,20 @@ class RecordsServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Delete(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteWhere(self, request, context):
+        """Predicate writes: one statement rather than a query, a round trip and a
+        write per row. Both go to the writer, like every other write.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateWhere(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -235,6 +259,16 @@ def add_RecordsServicer_to_server(servicer, server):
             'Delete': grpc.unary_unary_rpc_method_handler(
                     servicer.Delete,
                     request_deserializer=slate_dot_v1_dot_records__pb2.DeleteRequest.FromString,
+                    response_serializer=slate_dot_v1_dot_records__pb2.WriteResponse.SerializeToString,
+            ),
+            'DeleteWhere': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteWhere,
+                    request_deserializer=slate_dot_v1_dot_records__pb2.DeleteWhereRequest.FromString,
+                    response_serializer=slate_dot_v1_dot_records__pb2.WriteResponse.SerializeToString,
+            ),
+            'UpdateWhere': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateWhere,
+                    request_deserializer=slate_dot_v1_dot_records__pb2.UpdateWhereRequest.FromString,
                     response_serializer=slate_dot_v1_dot_records__pb2.WriteResponse.SerializeToString,
             ),
             'Get': grpc.unary_unary_rpc_method_handler(
@@ -444,6 +478,60 @@ class Records:
             target,
             '/slate.v1.Records/Delete',
             slate_dot_v1_dot_records__pb2.DeleteRequest.SerializeToString,
+            slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteWhere(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/slate.v1.Records/DeleteWhere',
+            slate_dot_v1_dot_records__pb2.DeleteWhereRequest.SerializeToString,
+            slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateWhere(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/slate.v1.Records/UpdateWhere',
+            slate_dot_v1_dot_records__pb2.UpdateWhereRequest.SerializeToString,
             slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
             options,
             channel_credentials,

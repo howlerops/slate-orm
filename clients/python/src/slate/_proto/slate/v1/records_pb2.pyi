@@ -2333,6 +2333,7 @@ class WriteResponse(_message.Message):
 
     SEQUENCE_FIELD_NUMBER: _builtins.int
     AFFECTED_FIELD_NUMBER: _builtins.int
+    ROWS_FIELD_NUMBER: _builtins.int
     sequence: _builtins.int
     """Set only for a single-statement write, which commits. A write inside a
     transaction has no sequence until that transaction commits.
@@ -2359,21 +2360,180 @@ class WriteResponse(_message.Message):
     absent field would make the common `affected == len(rows)` assertion
     language-specific rather than merely uninformative.
     """
+    @_builtins.property
+    def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+        """The rows the write acted on, when `returning` asked for them.
+
+        Empty on a write that did not ask, and on one that matched nothing. For
+        `UpdateWhere` these are the rows **as written**; for `DeleteWhere` they
+        are the rows as they were before removal, which is the only moment they
+        exist to be read.
+
+        Only the predicate writes offer it, and the reason is worth stating
+        because its absence elsewhere looks like an oversight. `Insert` and
+        `Update` take whole rows and this server applies no `DEFAULT` to them —
+        the wire's `Row` is full width and its nulls are values a caller meant, so
+        there is no unset column for a default to fill — and there is no
+        auto-increment, no trigger and no generated column. The row written is the
+        row sent, byte for byte, so returning it would hand the caller its own
+        request back. A predicate write is different: the caller named a
+        *condition*, not rows, and has no other way to learn which rows matched.
+        """
+
     def __init__(
         self,
         *,
         sequence: _builtins.int | None = ...,
         affected: _builtins.int = ...,
+        rows: _abc.Iterable[Global___Row] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_sequence", b"_sequence", "sequence", b"sequence"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_sequence", b"_sequence", "affected", b"affected", "sequence", b"sequence"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_sequence", b"_sequence", "affected", b"affected", "rows", b"rows", "sequence", b"sequence"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__sequence: _TypeAlias = _typing.Literal["sequence"]  # noqa: Y015
     _WhichOneofArgType__sequence: _TypeAlias = _typing.Literal["_sequence", b"_sequence"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType__sequence) -> _WhichOneofReturnType__sequence | None: ...
 
 Global___WriteResponse: _TypeAlias = WriteResponse  # noqa: Y015
+
+@_typing.final
+class Assignment(_message.Message):
+    """One column and the value to put in it, for `UpdateWhere`."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    COLUMN_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def column(self) -> Global___ColumnRef:
+        """The column, by ordinal within the table being written."""
+
+    @_builtins.property
+    def value(self) -> Global___Scalar:
+        """What to store, evaluated **over the row as it was read** — so
+        `views = views + 1` is one write rather than a read, a decision and a
+        write, and two concurrent increments make two.
+
+        Every assignment in a request reads the original row, so they apply
+        together: `a = b, b = a` swaps two columns rather than setting both to
+        `b`. Left-to-right is the other reading and it is the one that surprises
+        people; SQL takes this one and so does this.
+        """
+
+    def __init__(
+        self,
+        *,
+        column: Global___ColumnRef | None = ...,
+        value: Global___Scalar | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["column", b"column", "value", b"value"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["column", b"column", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___Assignment: _TypeAlias = Assignment  # noqa: Y015
+
+@_typing.final
+class DeleteWhereRequest(_message.Message):
+    """Delete every row a predicate selects.
+
+    Not a flag on `DeleteRequest`, which names rows by primary key: one message
+    meaning "these keys" or "this condition" depending on which field is set is
+    one message with two shapes, and the field that is *not* set would be the
+    one that decides.
+
+    The alternative a caller has without this is to query the keys, carry them
+    back and delete one per key — N+1 by construction, and not atomic with the
+    query that found them: a row inserted in between is missed, and a row
+    deleted in between is deleted twice.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    TABLE_FIELD_NUMBER: _builtins.int
+    FILTER_FIELD_NUMBER: _builtins.int
+    RETURNING_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    transaction: _builtins.str
+    table: _builtins.str
+    returning: _builtins.bool
+    """Return the rows that were removed, as they were before removal."""
+    @_builtins.property
+    def filter(self) -> Global___Expr:
+        """Which rows. Absent means every row the caller can see, which is a
+        `DELETE FROM t` with no `WHERE` and is allowed — it is not the sort of
+        mistake a protocol can tell from an intention.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`. Checked before the predicate is resolved, because an
+        ordinal in the predicate is only meaningful against a declaration.
+        """
+
+    def __init__(
+        self,
+        *,
+        transaction: _builtins.str = ...,
+        table: _builtins.str = ...,
+        filter: Global___Expr | None = ...,
+        returning: _builtins.bool = ...,
+        schema: Global___SchemaCheck | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["filter", b"filter", "schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["filter", b"filter", "returning", b"returning", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___DeleteWhereRequest: _TypeAlias = DeleteWhereRequest  # noqa: Y015
+
+@_typing.final
+class UpdateWhereRequest(_message.Message):
+    """Assign to columns of every row a predicate selects."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    TABLE_FIELD_NUMBER: _builtins.int
+    FILTER_FIELD_NUMBER: _builtins.int
+    ASSIGNMENTS_FIELD_NUMBER: _builtins.int
+    RETURNING_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    transaction: _builtins.str
+    table: _builtins.str
+    returning: _builtins.bool
+    """Return the rows as written."""
+    @_builtins.property
+    def filter(self) -> Global___Expr: ...
+    @_builtins.property
+    def assignments(self) -> _containers.RepeatedCompositeFieldContainer[Global___Assignment]:
+        """At least one. A column assigned twice is refused rather than resolved,
+        because either resolution is a guess at which the caller meant.
+        """
+
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck: ...
+    def __init__(
+        self,
+        *,
+        transaction: _builtins.str = ...,
+        table: _builtins.str = ...,
+        filter: Global___Expr | None = ...,
+        assignments: _abc.Iterable[Global___Assignment] | None = ...,
+        returning: _builtins.bool = ...,
+        schema: Global___SchemaCheck | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["filter", b"filter", "schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["assignments", b"assignments", "filter", b"filter", "returning", b"returning", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___UpdateWhereRequest: _TypeAlias = UpdateWhereRequest  # noqa: Y015
 
 @_typing.final
 class GetRequest(_message.Message):

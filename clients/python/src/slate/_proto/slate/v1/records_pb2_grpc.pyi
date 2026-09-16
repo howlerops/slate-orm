@@ -37,6 +37,11 @@ class RecordsStub:
     Insert: _grpc.UnaryUnaryMultiCallable[_records_pb2.InsertRequest, _records_pb2.WriteResponse]
     Update: _grpc.UnaryUnaryMultiCallable[_records_pb2.UpdateRequest, _records_pb2.WriteResponse]
     Delete: _grpc.UnaryUnaryMultiCallable[_records_pb2.DeleteRequest, _records_pb2.WriteResponse]
+    DeleteWhere: _grpc.UnaryUnaryMultiCallable[_records_pb2.DeleteWhereRequest, _records_pb2.WriteResponse]
+    """Predicate writes: one statement rather than a query, a round trip and a
+    write per row. Both go to the writer, like every other write.
+    """
+    UpdateWhere: _grpc.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]
     Get: _grpc.UnaryUnaryMultiCallable[_records_pb2.GetRequest, _records_pb2.GetResponse]
     Query: _grpc.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]
     Join: _grpc.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]
@@ -56,6 +61,11 @@ class RecordsAsyncStub(RecordsStub):
     Insert: _aio.UnaryUnaryMultiCallable[_records_pb2.InsertRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
     Update: _aio.UnaryUnaryMultiCallable[_records_pb2.UpdateRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
     Delete: _aio.UnaryUnaryMultiCallable[_records_pb2.DeleteRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
+    DeleteWhere: _aio.UnaryUnaryMultiCallable[_records_pb2.DeleteWhereRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
+    """Predicate writes: one statement rather than a query, a round trip and a
+    write per row. Both go to the writer, like every other write.
+    """
+    UpdateWhere: _aio.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
     Get: _aio.UnaryUnaryMultiCallable[_records_pb2.GetRequest, _records_pb2.GetResponse]  # type: ignore[assignment]
     Query: _aio.UnaryStreamMultiCallable[_records_pb2.QueryRequest, _records_pb2.QueryResponse]  # type: ignore[assignment]
     Join: _aio.UnaryStreamMultiCallable[_records_pb2.JoinRequest, _records_pb2.JoinResponse]  # type: ignore[assignment]
@@ -106,6 +116,23 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
     def Delete(
         self,
         request: _records_pb2.DeleteRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]: ...
+
+    @_abc_1.abstractmethod
+    def DeleteWhere(
+        self,
+        request: _records_pb2.DeleteWhereRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]:
+        """Predicate writes: one statement rather than a query, a round trip and a
+        write per row. Both go to the writer, like every other write.
+        """
+
+    @_abc_1.abstractmethod
+    def UpdateWhere(
+        self,
+        request: _records_pb2.UpdateWhereRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]: ...
 
