@@ -142,6 +142,16 @@
 
     <h3>Predicate writes &mdash; <code>UPDATE &hellip; WHERE</code> and <code>DELETE &hellip; WHERE</code></h3>
 
+    <div class="callout">
+      <p>
+        <strong>Built, in the kernel and the record layer.</strong>
+        <code>delete_where</code> and <code>update_where</code>, with
+        assignments evaluated over the row as it was read &mdash; so
+        <code>views = views + 1</code> is one write. Not yet on the wire, so the
+        three clients still have the problem described below.
+      </p>
+    </div>
+
     <p>
       An update here is a <em>row replacement</em>: it names whole rows by
       primary key and writes them entire. There is no
@@ -242,13 +252,16 @@
 
     <ol>
       <li>
-        <strong>Predicate writes in the kernel.</strong>
+        <strong>Predicate writes in the kernel. &mdash; done.</strong>
         <code>delete_where</code> and <code>update_where</code>, the latter
         taking assignments over the row&rsquo;s own values so
-        <code>views = views + 1</code> is one write. Tested by an oracle against
-        a brute-force fold, by the RLS matrix extended so a predicate write
+        <code>views = views + 1</code> is one write. Tested by two oracles
+        against a brute-force fold, by a policy test asserting a predicate write
         cannot touch a row the policy hides, and by a concurrency test that
-        read-modify-write cannot pass.
+        read-modify-write cannot pass &mdash; two increments make two, where
+        read-modify-write makes one and <code>update_if_unchanged</code> makes
+        an error. Eighteen mutations, no survivors; four of the eighteen
+        survived the first pass and each became a test.
       </li>
       <li>
         <strong>Relations on the wire and in the three clients.</strong> The

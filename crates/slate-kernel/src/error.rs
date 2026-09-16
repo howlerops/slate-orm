@@ -241,6 +241,34 @@ pub enum KernelError {
         reason: String,
     },
 
+    /// A predicate write named a column the table does not have.
+    ///
+    /// Refused rather than skipped. An assignment to an ordinal past the end of
+    /// the row is a caller whose idea of the schema has drifted from the
+    /// catalog's, and silently dropping it writes every *other* assignment
+    /// against a row shape nobody checked.
+    #[error("`{table}` has no column at {ordinal:?}")]
+    NoSuchColumn {
+        /// The table the write named.
+        table: String,
+        /// The ordinal that is not one of its columns.
+        ordinal: slate_schema::Ordinal,
+    },
+
+    /// A predicate write assigned to the same column twice.
+    ///
+    /// Refused rather than resolved, because both resolutions are a guess.
+    /// Last-wins silently discards the first assignment; first-wins silently
+    /// discards the second; and the caller who wrote both meant something, so
+    /// the only answer that cannot be wrong is to say so.
+    #[error("`{table}` is assigned at {ordinal:?} twice in one update")]
+    DuplicateAssignment {
+        /// The table the write named.
+        table: String,
+        /// The ordinal assigned more than once.
+        ordinal: slate_schema::Ordinal,
+    },
+
     /// A predicate compared two columns that hold different types.
     ///
     /// [`Value`](slate_tuple::Value)'s order is type-first, which is what

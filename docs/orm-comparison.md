@@ -58,6 +58,11 @@ seven ORMs above, `slate-orm` is at or ahead of the field on:
 
 ### 1. Predicate writes — `UPDATE … WHERE` and `DELETE … WHERE`
 
+> **Since this audit was written, this is built in the kernel and the record
+> layer.** The description below is what was found, kept because the reasoning
+> is what justified building it; see P1. It is not yet on the wire, so the
+> three clients still have the problem described here.
+
 **Evidence.** `grep -n "message DeleteRequest" -A 14` on the proto: delete
 takes `repeated Row primary_keys` and nothing else. The proto's own comment on
 `UpdateRequest` says it plainly: *"An update is a row replacement: it names
@@ -152,6 +157,14 @@ is the thing to attack if you disagree.
 Six pieces, ordered by value over cost. Each names what it is, how it will be
 tested, and where it stops. The first two are the ones worth doing whatever
 else happens.
+
+### P1 — Predicate writes in the kernel — **built**
+
+> Done, in `RecordTransaction::delete_where` and `update_where`, and reachable
+> from the record layer as `Records::delete_records_where` and
+> `update_records_where`. Fifteen kernel tests and two record-layer ones;
+> eighteen mutations, no survivors. Still kernel-only: nothing crosses the wire
+> yet, which makes it P3's neighbour rather than finished work.
 
 ### P1 — Predicate writes in the kernel
 

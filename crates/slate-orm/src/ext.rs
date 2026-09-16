@@ -11,7 +11,7 @@ use crate::record::Record;
 use async_trait::async_trait;
 use slate_kernel::{
     Aggregate, Chain, Explanation, Expr, Group, Join, JoinExplanation, KernelError, Projection,
-    Query, RecordTransaction, ScanOrder, SecurityContext, TableStats,
+    Query, RecordTransaction, Scalar, ScanOrder, SecurityContext, TableStats,
 };
 use slate_schema::Ordinal;
 use slate_tuple::Value;
@@ -178,6 +178,48 @@ pub trait Records {
         context: &SecurityContext,
         query: &Query,
     ) -> Result<Page<R>>;
+
+    /// Delete every row a predicate selects, returning how many were removed.
+    ///
+    /// The alternative — query the keys, carry them back, delete one per key —
+    /// is N+1 by construction and, worse, is not atomic with the query that
+    /// found them: a row inserted in between is missed and a row deleted in
+    /// between is deleted twice. This is one statement.
+    ///
+    /// Rows the caller's policy hides are not deleted, because the scan is the
+    /// same policed scan a read takes.
+    ///
+    /// # Errors
+    /// Anything [`Records::delete_record`] can raise, for any matched row —
+    /// including a `RESTRICT` foreign key, which refuses the whole delete
+    /// rather than applying part of it.
+    async fn delete_records_where<R: Record>(
+        &self,
+        context: &SecurityContext,
+        predicate: Expr,
+    ) -> Result<usize>;
+
+    /// Update every row a predicate selects, by assigning to columns.
+    ///
+    /// Each assignment is evaluated over the row **as it was read**, so
+    /// `views = views + 1` is one write rather than a read, a decision and a
+    /// write — which is the difference between two concurrent increments making
+    /// two and making one. Assignments are simultaneous, so `a = b, b = a`
+    /// swaps.
+    ///
+    /// The derive generates a `COLUMNS` constant, so a call site reads
+    /// `Post::COLUMNS.views`.
+    ///
+    /// # Errors
+    /// If a column is named twice or is not one of the table's, and anything
+    /// [`Records::update_record`] can raise for any matched row — the row
+    /// policy on the *new* row included.
+    async fn update_records_where<R: Record>(
+        &self,
+        context: &SecurityContext,
+        predicate: Expr,
+        assignments: &[(Ordinal, Scalar)],
+    ) -> Result<usize>;
 
     /// Count the rows a query matches, without decoding any.
     async fn count_records<R: Record>(
@@ -478,6 +520,27 @@ impl Records for RecordTransaction<'_> {
                 ))
             })
             .collect()
+    }
+
+    async fn delete_records_where<R: Record>(
+        &self,
+        context: &SecurityContext,
+        predicate: Expr,
+    ) -> Result<usize> {
+        self.delete_where(context, R::table(), predicate)
+            .await
+            .map_err(OrmError::from)
+    }
+
+    async fn update_records_where<R: Record>(
+        &self,
+        context: &SecurityContext,
+        predicate: Expr,
+        assignments: &[(Ordinal, Scalar)],
+    ) -> Result<usize> {
+        self.update_where(context, R::table(), predicate, assignments)
+            .await
+            .map_err(OrmError::from)
     }
 
     async fn count_records<R: Record>(

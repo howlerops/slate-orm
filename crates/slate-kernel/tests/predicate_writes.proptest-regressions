@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e7e7c60835fe7505a0e35e1d6447f5024dfc01c56068f502eda1037e593b9a65 # shrinks to rows = [(35, 0, 0), (39, 0, 0), (34, 0, 0), (11, 0, 3), (3, 0, 28), (29, 0, -45)], owner = 0, floor = -18
+cc 50f80f72a7ae53cb2344ba4f4e2ea210a491bbe0fe6dd6174050cb9ac56892db # shrinks to rows = [(18, 0, 0), (1, 0, 0), (10, 0, 0), (21, 0, 0), (38, 0, 0), (0, 0, 0), (33, 0, 0), (26, 0, -38), (34, 0, -35), (39, 0, 44)], owner = 3

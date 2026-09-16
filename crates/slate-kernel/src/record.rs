@@ -1599,6 +1599,168 @@ impl<'a> RecordTransaction<'a> {
         Ok(true)
     }
 
+    /// Delete every row the predicate selects.
+    ///
+    /// `DELETE FROM sessions WHERE expires_at < :t`, which until now had to be
+    /// spelled as a query, a round trip carrying the keys back, and a delete
+    /// per key. That version is N+1 by construction and — worse — is not atomic
+    /// with the query that found the rows, so anything inserted in between is
+    /// missed and anything deleted in between is deleted twice.
+    ///
+    /// Returns how many rows were removed, counting only the rows the predicate
+    /// matched. A cascade may remove more; `delete` has the same shape and the
+    /// same reason — the caller asked about *these* rows.
+    ///
+    /// # Rows the caller cannot see are rows the caller cannot delete
+    ///
+    /// The scan goes through [`Self::execute`], which is the same path a read
+    /// takes and which ANDs the row policy into the predicate. So a policy that
+    /// hides a row hides it here too, and there is no second implementation of
+    /// that rule to drift from the first. That is the security-relevant half of
+    /// this method and it is why the scan is not specialised: a faster private
+    /// scan would be a second place for the policy to be applied, and the one
+    /// that got it wrong would be the one nothing reads.
+    ///
+    /// # Why every match is collected before anything is written
+    ///
+    /// Two reasons, and neither is a preference. A cursor borrows the
+    /// transaction, so writing while iterating will not compile — but more
+    /// importantly `delete` already establishes that nothing is written until
+    /// the whole consequence is known, because a `RESTRICT` discovered halfway
+    /// through would otherwise leave a half-applied delete behind. The same
+    /// argument applies with more force here, where there are many rows.
+    ///
+    /// The cost is that the matched rows are held in memory at once. That is a
+    /// real limit and it is the caller's to bound — `Expr` is the knob, and the
+    /// daemon already caps per-request work above this layer.
+    ///
+    /// # Errors
+    /// Everything [`RecordTransaction::delete`] can raise, for any matched row.
+    pub async fn delete_where(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        predicate: Expr,
+    ) -> Result<usize> {
+        self.security.authorize(context, table, Action::Delete)?;
+
+        let matched = self.matching_rows(context, table, predicate).await?;
+        let mut removed = 0;
+        for row in matched {
+            // Per row, the identical path the keyed delete takes: the cascade
+            // closure and the `RESTRICT` checks it performs. Calling it rather
+            // than reimplementing it is the point — a referential rule that
+            // holds for `delete` and not for `delete_where` is a rule that
+            // holds until somebody uses the other spelling.
+            let doomed = self.deletion_closure(context, table, row).await?;
+            for (owner, victim) in &doomed {
+                self.remove_row(owner, victim)?;
+            }
+            removed += 1;
+        }
+        Ok(removed)
+    }
+
+    /// Update every row the predicate selects, by assigning to columns.
+    ///
+    /// Each assignment is a column and a [`Scalar`] evaluated **over the row as
+    /// it was read**, so `views = views + 1` is one write rather than a read,
+    /// a decision and a write. That distinction is the whole point of this
+    /// method: read-modify-write loses one of two concurrent increments, and
+    /// [`Self::update_if_unchanged`] can only tell you that it happened.
+    ///
+    /// Returns how many rows were written.
+    ///
+    /// Assignments are evaluated against the *original* row and applied
+    /// together, so `a = b, b = a` swaps two columns rather than setting both
+    /// to `b`. Left-to-right application is the other reading and it is the one
+    /// that surprises people; SQL takes this one and so does this.
+    ///
+    /// # Errors
+    /// [`KernelError::DuplicateAssignment`] if a column is assigned twice —
+    /// refused rather than resolved, because either resolution is a guess at
+    /// which the caller meant. Otherwise everything
+    /// [`RecordTransaction::update`] can raise, for any matched row: the new
+    /// row must satisfy the row policy (or a policy could be escaped by editing
+    /// your way out of it), the table's `CHECK` constraints, and its foreign
+    /// keys.
+    pub async fn update_where(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        predicate: Expr,
+        assignments: &[(Ordinal, Scalar)],
+    ) -> Result<usize> {
+        self.security.authorize(context, table, Action::Update)?;
+
+        let mut seen = HashSet::with_capacity(assignments.len());
+        for (ordinal, _) in assignments {
+            if table.columns().get(ordinal.0).is_none() {
+                return Err(KernelError::NoSuchColumn {
+                    table: table.name().to_owned(),
+                    ordinal: *ordinal,
+                });
+            }
+            if !seen.insert(*ordinal) {
+                return Err(KernelError::DuplicateAssignment {
+                    table: table.name().to_owned(),
+                    ordinal: *ordinal,
+                });
+            }
+        }
+        if assignments.is_empty() {
+            return Ok(0);
+        }
+
+        let matched = self.matching_rows(context, table, predicate).await?;
+        let mut written = 0;
+        for existing in matched {
+            let mut values = existing.values().to_vec();
+            // Every scalar reads `existing`, never the partially-built row, so
+            // the assignments are simultaneous rather than sequential.
+            for (ordinal, scalar) in assignments {
+                if let Some(slot) = values.get_mut(ordinal.0) {
+                    *slot = scalar.evaluate(&existing);
+                }
+            }
+            let next = Row::new(values);
+            next.validate(table)?;
+
+            // The same four checks the keyed `update` performs, in the same
+            // order, for the same reasons — the row policy on the *new* row
+            // included, which is what stops a caller editing their way out of
+            // a policy they are inside.
+            self.check_row(context, table, Action::Update, &next)?;
+            check_constraints(table, &next)?;
+            self.check_foreign_keys(context, table, &next, Some(&existing), &HashSet::new())
+                .await?;
+            self.write_row(table, &next, Some(existing)).await?;
+            written += 1;
+        }
+        Ok(written)
+    }
+
+    /// The rows a predicate selects, read through the ordinary policed path.
+    ///
+    /// Shared by the two predicate writes so that there is exactly one place
+    /// where "which rows does this touch" is decided, and it is the same place
+    /// a read decides it.
+    async fn matching_rows(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        predicate: Expr,
+    ) -> Result<Vec<Row>> {
+        let mut cursor = self
+            .execute(context, table, &Query::all().filter(predicate))
+            .await?;
+        let mut rows = Vec::new();
+        while let Some(row) = cursor.next().await? {
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+
     /// Every row a delete of `row` removes, itself first.
     ///
     /// Two passes rather than one. The first follows `CASCADE` edges to a fixed
