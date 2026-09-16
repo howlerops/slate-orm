@@ -1506,6 +1506,32 @@ pub fn check_paged(query: &Query, table: &TableDef) -> Result<(), Status> {
     Ok(())
 }
 
+/// An `UpdateWhere`'s assignments, as the kernel takes them.
+///
+/// A column assigned twice is *not* refused here, although it is refused: the
+/// kernel refuses it, by name, with the table and the ordinal, and stating the
+/// rule twice would leave two places to keep in agreement. This resolves the
+/// references and hands them over.
+pub fn assignments_from_proto(
+    assignments: &[pb::Assignment],
+    table: &TableDef,
+) -> Result<Vec<(Ordinal, Scalar)>, Status> {
+    // No computed values in scope: an assignment stores into a column, and a
+    // `Query`'s `compute` belongs to a read. A `Scalar` here reads the row as
+    // it was, which is what makes `views = views + 1` one write.
+    let space = Space::input(table, 0, 0);
+    let mut out = Vec::with_capacity(assignments.len());
+    for (at, assignment) in assignments.iter().enumerate() {
+        let what = format!("assignment {at}");
+        let column = space.resolve_stored_column(assignment.column.as_ref(), &what)?;
+        let Some(value) = assignment.value.as_ref() else {
+            return Err(bad(format!("{what} has a column and no value")));
+        };
+        out.push((column, scalar_named(&space, value, &what)?));
+    }
+    Ok(out)
+}
+
 /// Refuse the parts of a `Query` that have no meaning where it is being used.
 ///
 /// The kernel documents a join side's `sort`, `limit` and `offset` as ignored,

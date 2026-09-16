@@ -185,6 +185,14 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::CorruptIndexEntry { .. } => "CORRUPT_INDEX_ENTRY",
         KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
         KernelError::InvalidCursor { .. } => "INVALID_CURSOR",
+        KernelError::SortTooLarge { .. } => "SORT_TOO_LARGE",
+        KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
+        KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
+        KernelError::DuplicateAssignment { .. } => "DUPLICATE_ASSIGNMENT",
+        KernelError::NoSuchColumn { .. } => "NO_SUCH_COLUMN",
+        KernelError::RowChanged { .. } => "ROW_CHANGED",
+        KernelError::MigrationRefused { .. } => "MIGRATION_REFUSED",
+        KernelError::TransactionPoisoned => "TRANSACTION_POISONED",
         // See the module docs: a token is a promise of a stable meaning, and
         // nobody has decided this one's.
         _ => "UNCLASSIFIED",
@@ -263,7 +271,43 @@ pub fn code_for(error: &KernelError) -> Code {
         KernelError::KeyDecode(_) | KernelError::CorruptIndexEntry { .. } => Code::DataLoss,
 
         // The server declined to use the memory the query would need.
-        KernelError::JoinBuildTooLarge { .. } => Code::ResourceExhausted,
+        //
+        // All four are the same refusal at four different stages, and the
+        // other three reached the wildcard until predicate writes went looking
+        // for it: a caller that sorted more rows than the limit allows, or
+        // grouped into more groups, got `INTERNAL` — which reads as "the
+        // server broke" and invites a retry that will exceed the same limit
+        // again. They are reachable from any sorted or grouped query and have
+        // been since those went on the wire.
+        KernelError::JoinBuildTooLarge { .. }
+        | KernelError::SortTooLarge { .. }
+        | KernelError::TooManyGroups { .. }
+        | KernelError::TooManyDistinctValues { .. } => Code::ResourceExhausted,
+
+        // The caller's own request, malformed against this schema.
+        // `DuplicateAssignment` and `NoSuchColumn` became reachable when
+        // predicate writes crossed the wire; before that nothing could send an
+        // assignment at all.
+        KernelError::DuplicateAssignment { .. } | KernelError::NoSuchColumn { .. } => {
+            Code::InvalidArgument
+        }
+
+        // The stored row moved between the read and the write. Re-read,
+        // recompute, retry — the same shape as `TransactionConflict`, and the
+        // same code. Not reachable from the wire yet: conditional writes are
+        // kernel-only. Classified anyway, because the next person to put them
+        // on the wire should not have to discover this the way this commit
+        // discovered the three above.
+        KernelError::RowChanged { .. } => Code::Aborted,
+
+        // Both are "not in this state": a migration the catalog will not
+        // accept as it stands, and a transaction that is unusable after an
+        // error and must be rolled back. Retrying either unchanged fails
+        // identically, which is what `FAILED_PRECONDITION` says and `ABORTED`
+        // does not.
+        KernelError::MigrationRefused { .. } | KernelError::TransactionPoisoned => {
+            Code::FailedPrecondition
+        }
 
         // See the module docs: unclassified means do not retry.
         _ => Code::Internal,

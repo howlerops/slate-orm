@@ -533,8 +533,13 @@ impl Records for RecordTransaction<'_> {
         context: &SecurityContext,
         predicate: Expr,
     ) -> Result<usize> {
+        // `.len()`, not the rows: a typed caller that wanted them would pay a
+        // decode per row, and this one asked how many. The kernel method
+        // returns them for a caller that does want them — including the wire
+        // handler, which is where `RETURNING` lives.
         self.delete_where(context, R::table(), predicate)
             .await
+            .map(|rows| rows.len())
             .map_err(OrmError::from)
     }
 
@@ -546,6 +551,7 @@ impl Records for RecordTransaction<'_> {
     ) -> Result<usize> {
         self.update_where(context, R::table(), predicate, assignments)
             .await
+            .map(|rows| rows.len())
             .map_err(OrmError::from)
     }
 

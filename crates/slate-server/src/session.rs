@@ -47,10 +47,11 @@ use crate::leadership::Leadership;
 use crate::status::from_kernel;
 use slate_kernel::security::Principal;
 use slate_kernel::{
-    Chain, ChainCursor, ChainPlan, Explanation, Group, JoinCursor, JoinExplanation, KernelError,
-    KvStore, Query, ReadToken, RecordStore, RecordTransaction, SecurityContext,
+    Chain, ChainCursor, ChainPlan, Explanation, Expr, Group, JoinCursor, JoinExplanation,
+    KernelError, KvStore, Query, ReadToken, RecordStore, RecordTransaction, Scalar,
+    SecurityContext,
 };
-use slate_schema::{Row, TableDef, TableId};
+use slate_schema::{Ordinal, Row, TableDef, TableId};
 use slate_tuple::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -217,6 +218,23 @@ enum Command {
         table: TableId,
         keys: Vec<Vec<Value>>,
         reply: oneshot::Sender<Result<u64, KernelError>>,
+    },
+    /// Both predicate writes reply with the rows rather than a count. The
+    /// kernel has them either way — every row touched had to be read to be
+    /// written — and `RETURNING` is the only thing a caller who named a
+    /// condition rather than rows can use to learn what it hit.
+    DeleteWhere {
+        context: Box<SecurityContext>,
+        table: TableId,
+        predicate: Expr,
+        reply: oneshot::Sender<Result<Vec<Row>, KernelError>>,
+    },
+    UpdateWhere {
+        context: Box<SecurityContext>,
+        table: TableId,
+        predicate: Expr,
+        assignments: Vec<(Ordinal, Scalar)>,
+        reply: oneshot::Sender<Result<Vec<Row>, KernelError>>,
     },
     Get {
         context: Box<SecurityContext>,
@@ -450,6 +468,45 @@ impl Sessions {
             context: Box::new(context.clone()),
             table,
             keys,
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
+    /// Delete every row a predicate selects, in an open transaction.
+    pub async fn delete_where(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        table: TableId,
+        predicate: Expr,
+    ) -> Result<Vec<Row>, Status> {
+        self.dispatch(id, context, |reply| Command::DeleteWhere {
+            context: Box::new(context.clone()),
+            table,
+            predicate,
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
+    /// Assign to columns of every row a predicate selects, in an open
+    /// transaction.
+    pub async fn update_where(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        table: TableId,
+        predicate: Expr,
+        assignments: Vec<(Ordinal, Scalar)>,
+    ) -> Result<Vec<Row>, Status> {
+        self.dispatch(id, context, |reply| Command::UpdateWhere {
+            context: Box::new(context.clone()),
+            table,
+            predicate,
+            assignments,
             reply,
         })
         .await?
@@ -763,6 +820,31 @@ async fn apply<S: KvStore>(
                 }
             }
             answer(reply, outcome.map(|()| affected))
+        }
+        Command::DeleteWhere {
+            context,
+            table,
+            predicate,
+            reply,
+        } => {
+            let definition = table!(table, reply);
+            let outcome = transaction
+                .delete_where(&context, definition, predicate)
+                .await;
+            answer(reply, outcome)
+        }
+        Command::UpdateWhere {
+            context,
+            table,
+            predicate,
+            assignments,
+            reply,
+        } => {
+            let definition = table!(table, reply);
+            let outcome = transaction
+                .update_where(&context, definition, predicate, &assignments)
+                .await;
+            answer(reply, outcome)
         }
         Command::Get {
             context,

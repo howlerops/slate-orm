@@ -45,6 +45,7 @@ use crate::convert::{
     query_from_proto, row_from_proto, row_to_proto, row_to_proto_split, two_tables,
     value_from_proto, value_to_proto,
 };
+use crate::convert::{Space, assignments_from_proto, expr_named};
 use crate::fingerprint;
 use crate::leadership::{Leadership, Standing};
 use crate::proto as pb;
@@ -55,7 +56,7 @@ use crate::session::{
 use crate::status::{from_kernel, redirect};
 use slate_kernel::{
     Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
-    ReadToken, RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy,
+    ReadToken, RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, Scalar,
     SecurityCatalog, SecurityContext, Statistics,
 };
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
@@ -487,7 +488,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
         &self,
         context: &SecurityContext,
         write: Write<'_>,
-    ) -> Result<(u64, Option<ReadToken>), Status> {
+    ) -> Result<(Written, Option<ReadToken>), Status> {
         let writer = self.leader()?;
         // Borrowed, not moved: the closure is `Fn` because it runs once per
         // retry, so each attempt's future takes a reference rather than the
@@ -529,15 +530,47 @@ enum Write<'a> {
         table: &'a TableDef,
         keys: &'a [Vec<Value>],
     },
+    /// Delete every row a predicate selects. One statement, not a query and a
+    /// round trip per key.
+    DeleteWhere {
+        table: &'a TableDef,
+        predicate: &'a Expr,
+    },
+    /// Assign to columns of every row a predicate selects.
+    UpdateWhere {
+        table: &'a TableDef,
+        predicate: &'a Expr,
+        assignments: &'a [(Ordinal, Scalar)],
+    },
+}
+
+/// What a write did: how many rows, and which ones when the caller asked.
+///
+/// The rows are carried even when `returning` was not set, and dropped at the
+/// handler rather than here. The kernel has them either way — every row a
+/// predicate write touches had to be read to be written — so not collecting
+/// them would save nothing, and a second shape for the no-returning case would
+/// be two paths to keep in agreement for no gain.
+struct Written {
+    affected: u64,
+    rows: Vec<Row>,
 }
 
 impl Write<'_> {
-    /// Apply it, returning how many rows it acted on.
+    /// Apply it, returning how many rows it acted on and which they were.
     async fn apply(
         &self,
         transaction: &RecordTransaction<'_>,
         context: &SecurityContext,
-    ) -> Result<u64, KernelError> {
+    ) -> Result<Written, KernelError> {
+        let touched = |rows: Vec<Row>| Written {
+            affected: rows.len() as u64,
+            rows,
+        };
+        let counted = |affected: u64| Written {
+            affected,
+            rows: Vec::new(),
+        };
         match self {
             // `insert_many` overlaps the duplicate-key reads across the batch,
             // so a thousand rows cost one wave of round trips rather than a
@@ -549,7 +582,7 @@ impl Write<'_> {
             } => transaction
                 .insert_many(context, table, rows)
                 .await
-                .map(|()| rows.len() as u64),
+                .map(|()| counted(rows.len() as u64)),
             Self::Insert {
                 table,
                 rows,
@@ -557,14 +590,14 @@ impl Write<'_> {
             } => transaction
                 .upsert_many(context, table, rows)
                 .await
-                .map(|()| rows.len() as u64),
+                .map(|()| counted(rows.len() as u64)),
             // `update_many` reads whether each row exists in one wave, the
             // same as `insert_many`, and refuses the whole batch if any of
             // them is missing rather than applying a prefix.
             Self::Update { table, rows } => transaction
                 .update_many(context, table, rows)
                 .await
-                .map(|()| rows.len() as u64),
+                .map(|()| counted(rows.len() as u64)),
             Self::Delete { table, keys } => {
                 let mut affected = 0;
                 // No `delete_many`, and not for want of noticing: a
@@ -581,8 +614,62 @@ impl Write<'_> {
                         affected += 1;
                     }
                 }
-                Ok(affected)
+                Ok(counted(affected))
             }
+            Self::DeleteWhere { table, predicate } => transaction
+                .delete_where(context, table, (*predicate).clone())
+                .await
+                .map(touched),
+            Self::UpdateWhere {
+                table,
+                predicate,
+                assignments,
+            } => transaction
+                .update_where(context, table, (*predicate).clone(), assignments)
+                .await
+                .map(touched),
+        }
+    }
+}
+
+/// A write's response, with the rows only if the caller asked for them.
+///
+/// Dropped here rather than never collected: the kernel has them either way,
+/// because every row a predicate write touches had to be read to be written.
+/// What `returning` saves is the encoding and the bytes on the wire, which for
+/// a large delete is the whole of the cost.
+fn returning(
+    written: Written,
+    sequence: Option<u64>,
+    wanted: bool,
+    table: &TableDef,
+) -> pb::WriteResponse {
+    pb::WriteResponse {
+        sequence,
+        affected: written.affected,
+        rows: if wanted {
+            let stored = table.columns().len();
+            written
+                .rows
+                .iter()
+                .map(|row| row_to_proto_split(row, stored))
+                .collect()
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// A predicate write's filter. Absent means every row the caller can see.
+///
+/// `Expr::True` rather than a refusal: `DELETE FROM t` with no `WHERE` is a
+/// real statement, and a protocol cannot tell it from the mistake it resembles.
+fn predicate_from_proto(filter: Option<&pb::Expr>, table: &TableDef) -> Result<Expr, Status> {
+    match filter {
+        None => Ok(Expr::True),
+        Some(filter) => {
+            let space = Space::input(table, 0, 0);
+            expr_named(&space, filter, "the filter")
         }
     }
 }
@@ -686,7 +773,8 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 .await?;
             return Ok(Response::new(pb::WriteResponse {
                 sequence: token.map(ReadToken::sequence),
-                affected,
+                affected: affected.affected,
+                rows: Vec::new(),
             }));
         }
 
@@ -697,6 +785,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         Ok(Response::new(pb::WriteResponse {
             sequence: None,
             affected,
+            rows: Vec::new(),
         }))
     }
 
@@ -720,7 +809,8 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 .await?;
             return Ok(Response::new(pb::WriteResponse {
                 sequence: token.map(ReadToken::sequence),
-                affected,
+                affected: affected.affected,
+                rows: Vec::new(),
             }));
         }
 
@@ -731,6 +821,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         Ok(Response::new(pb::WriteResponse {
             sequence: None,
             affected,
+            rows: Vec::new(),
         }))
     }
 
@@ -759,7 +850,8 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 .await?;
             return Ok(Response::new(pb::WriteResponse {
                 sequence: token.map(ReadToken::sequence),
-                affected,
+                affected: affected.affected,
+                rows: Vec::new(),
             }));
         }
 
@@ -770,7 +862,118 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         Ok(Response::new(pb::WriteResponse {
             sequence: None,
             affected,
+            rows: Vec::new(),
         }))
+    }
+
+    async fn delete_where(
+        &self,
+        request: Request<pb::DeleteWhereRequest>,
+    ) -> Result<Response<pb::WriteResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        // Defence in depth, and correctly unobservable: `delete_where`
+        // authorizes `Delete` again in the kernel, so a mutation weakening
+        // this to `Read` survives every test here and the delete still fails.
+        // It stays because the kernel's check is the one that must not be the
+        // only one, not because this one catches something.
+        let table = self.authorized_table(&context, &request.table, Action::Delete)?;
+        // Before the predicate is resolved: an ordinal in it is only
+        // meaningful against a declaration, and one that resolves against the
+        // wrong schema resolves perfectly well.
+        fingerprint::check(table, request.schema.as_ref())?;
+        let predicate = predicate_from_proto(request.filter.as_ref(), table)?;
+
+        let rows = if request.transaction.is_empty() {
+            let (written, token) = self
+                .autocommit(
+                    &context,
+                    Write::DeleteWhere {
+                        table,
+                        predicate: &predicate,
+                    },
+                )
+                .await?;
+            return Ok(Response::new(returning(
+                written,
+                token.map(ReadToken::sequence),
+                request.returning,
+                table,
+            )));
+        } else {
+            self.sessions
+                .delete_where(&request.transaction, &context, table.id(), predicate)
+                .await?
+        };
+        Ok(Response::new(returning(
+            Written {
+                affected: rows.len() as u64,
+                rows,
+            },
+            None,
+            request.returning,
+            table,
+        )))
+    }
+
+    async fn update_where(
+        &self,
+        request: Request<pb::UpdateWhereRequest>,
+    ) -> Result<Response<pb::WriteResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        let table = self.authorized_table(&context, &request.table, Action::Update)?;
+        fingerprint::check(table, request.schema.as_ref())?;
+        let predicate = predicate_from_proto(request.filter.as_ref(), table)?;
+        let assignments = assignments_from_proto(&request.assignments, table)?;
+        // Refused rather than answered with a no-op: "update these rows to
+        // nothing" is not a request anybody makes on purpose, and reporting
+        // zero rows written would look like a predicate that matched nothing.
+        if assignments.is_empty() {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                "an update needs at least one assignment; a predicate write with none would \
+                 report zero rows written and look like a predicate that matched nothing",
+            ));
+        }
+
+        let rows = if request.transaction.is_empty() {
+            let (written, token) = self
+                .autocommit(
+                    &context,
+                    Write::UpdateWhere {
+                        table,
+                        predicate: &predicate,
+                        assignments: &assignments,
+                    },
+                )
+                .await?;
+            return Ok(Response::new(returning(
+                written,
+                token.map(ReadToken::sequence),
+                request.returning,
+                table,
+            )));
+        } else {
+            self.sessions
+                .update_where(
+                    &request.transaction,
+                    &context,
+                    table.id(),
+                    predicate,
+                    assignments,
+                )
+                .await?
+        };
+        Ok(Response::new(returning(
+            Written {
+                affected: rows.len() as u64,
+                rows,
+            },
+            None,
+            request.returning,
+            table,
+        )))
     }
 
     async fn get(

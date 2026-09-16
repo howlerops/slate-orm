@@ -177,7 +177,7 @@ async fn delete_where_removes_exactly_the_matching_rows() {
         .unwrap();
     txn.commit().await.unwrap();
 
-    assert_eq!(removed, 2);
+    assert_eq!(removed.len(), 2);
     let left: Vec<u64> = contents(&store).await.into_iter().map(|r| r.0).collect();
     assert_eq!(left, vec![3, 4]);
 }
@@ -198,7 +198,7 @@ async fn delete_where_matching_nothing_removes_nothing() {
         .unwrap();
     txn.commit().await.unwrap();
 
-    assert_eq!(removed, 0);
+    assert_eq!(removed.len(), 0);
     assert_eq!(contents(&store).await.len(), 1);
 }
 
@@ -270,7 +270,7 @@ async fn update_where_assigns_over_the_rows_own_values() {
         .unwrap();
     txn.commit().await.unwrap();
 
-    assert_eq!(written, 1);
+    assert_eq!(written.len(), 1);
     let got = contents(&store).await;
     assert_eq!(got[0].2, 15, "{got:?}");
     assert_eq!(got[1].2, 20, "the unmatched row changed: {got:?}");
@@ -405,7 +405,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
         .unwrap();
     txn.commit().await.unwrap();
 
-    assert_eq!(removed, 2, "owner 7 has two rows");
+    assert_eq!(removed.len(), 2, "owner 7 has two rows");
     let left: Vec<u64> = contents(&store).await.into_iter().map(|r| r.0).collect();
     assert_eq!(left, vec![2], "owner 8's row was deleted by owner 7");
 
@@ -418,7 +418,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
         .await
         .unwrap();
     txn.commit().await.unwrap();
-    assert_eq!(removed, 3);
+    assert_eq!(removed.len(), 3);
     assert!(contents(&store).await.is_empty());
 
     // And the update half.
@@ -434,7 +434,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
         .await
         .unwrap();
     txn.commit().await.unwrap();
-    assert_eq!(written, 2);
+    assert_eq!(written.len(), 2);
     let got = contents(&store).await;
     assert_eq!(
         got[1].2, 20,
@@ -632,7 +632,7 @@ proptest! {
             let left: Vec<u64> = contents(&store).await.into_iter().map(|r| r.0).collect();
 
             prop_assert_eq!(left, expected.clone());
-            prop_assert_eq!(removed, rows.len() - expected.len());
+            prop_assert_eq!(removed.len(), rows.len() - expected.len());
             Ok(())
         })?;
     }
@@ -680,7 +680,10 @@ proptest! {
                 .collect();
 
             prop_assert_eq!(got, expected);
-            prop_assert_eq!(written, rows.iter().filter(|(_, o, _)| *o == owner).count());
+            prop_assert_eq!(
+                written.len(),
+                rows.iter().filter(|(_, o, _)| *o == owner).count()
+            );
             Ok(())
         })?;
     }

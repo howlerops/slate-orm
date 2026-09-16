@@ -1607,9 +1607,15 @@ impl<'a> RecordTransaction<'a> {
     /// with the query that found the rows, so anything inserted in between is
     /// missed and anything deleted in between is deleted twice.
     ///
-    /// Returns how many rows were removed, counting only the rows the predicate
-    /// matched. A cascade may remove more; `delete` has the same shape and the
-    /// same reason — the caller asked about *these* rows.
+    /// Returns the rows that were removed, as they were before removal, and
+    /// only the rows the predicate matched. A cascade may remove more; `delete`
+    /// has the same shape and the same reason — the caller asked about *these*
+    /// rows. `.len()` is the count.
+    ///
+    /// The rows rather than a count because they are already in memory — every
+    /// one had to be read to be deleted — and because a caller with only the
+    /// predicate has no other way to learn what it destroyed. Reading them
+    /// afterwards is not an option: they are gone.
     ///
     /// # Rows the caller cannot see are rows the caller cannot delete
     ///
@@ -1641,22 +1647,22 @@ impl<'a> RecordTransaction<'a> {
         context: &SecurityContext,
         table: &TableDef,
         predicate: Expr,
-    ) -> Result<usize> {
+    ) -> Result<Vec<Row>> {
         self.security.authorize(context, table, Action::Delete)?;
 
         let matched = self.matching_rows(context, table, predicate).await?;
-        let mut removed = 0;
+        let mut removed = Vec::with_capacity(matched.len());
         for row in matched {
             // Per row, the identical path the keyed delete takes: the cascade
             // closure and the `RESTRICT` checks it performs. Calling it rather
             // than reimplementing it is the point — a referential rule that
             // holds for `delete` and not for `delete_where` is a rule that
             // holds until somebody uses the other spelling.
-            let doomed = self.deletion_closure(context, table, row).await?;
+            let doomed = self.deletion_closure(context, table, row.clone()).await?;
             for (owner, victim) in &doomed {
                 self.remove_row(owner, victim)?;
             }
-            removed += 1;
+            removed.push(row);
         }
         Ok(removed)
     }
@@ -1669,7 +1675,12 @@ impl<'a> RecordTransaction<'a> {
     /// method: read-modify-write loses one of two concurrent increments, and
     /// [`Self::update_if_unchanged`] can only tell you that it happened.
     ///
-    /// Returns how many rows were written.
+    /// Returns the rows **as written**, in key order. `.len()` is the count.
+    ///
+    /// The rows rather than a count for the same reason `delete_where` gives:
+    /// they are already in memory, and a caller with only a predicate and an
+    /// assignment cannot otherwise learn which rows it changed. A read
+    /// afterwards is a different question asked at a different moment.
     ///
     /// Assignments are evaluated against the *original* row and applied
     /// together, so `a = b, b = a` swaps two columns rather than setting both
@@ -1690,7 +1701,7 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         predicate: Expr,
         assignments: &[(Ordinal, Scalar)],
-    ) -> Result<usize> {
+    ) -> Result<Vec<Row>> {
         self.security.authorize(context, table, Action::Update)?;
 
         let mut seen = HashSet::with_capacity(assignments.len());
@@ -1709,11 +1720,11 @@ impl<'a> RecordTransaction<'a> {
             }
         }
         if assignments.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         let matched = self.matching_rows(context, table, predicate).await?;
-        let mut written = 0;
+        let mut written = Vec::with_capacity(matched.len());
         for existing in matched {
             let mut values = existing.values().to_vec();
             // Every scalar reads `existing`, never the partially-built row, so
@@ -1735,7 +1746,7 @@ impl<'a> RecordTransaction<'a> {
             self.check_foreign_keys(context, table, &next, Some(&existing), &HashSet::new())
                 .await?;
             self.write_row(table, &next, Some(existing)).await?;
-            written += 1;
+            written.push(next);
         }
         Ok(written)
     }
