@@ -490,6 +490,41 @@ is refused by name rather than served without one — which would be the silent
 version, where the caller loops until the cursor is absent, gets none on the
 first page, and reads one page of a large table as the whole answer.
 
+### A predicate write says which rows, and can hand them back
+
+`DELETE FROM t WHERE …` in one statement, rather than a query, a round trip and
+a write per key — which is N+1 by construction, and not atomic with the query
+that found the keys: a row inserted in between is missed, and a row deleted in
+between is deleted twice.
+
+```rust
+let gone = txn.delete_where(&ctx, table, Expr::lt(STARTED, Value::I64(cutoff))).await?;
+let bumped = txn
+    .update_where(&ctx, table, Expr::eq(KIND, "page".into()),
+                  &[(VIEWS, Scalar::column(VIEWS) + Scalar::literal(Value::I64(1)))])
+    .await?;
+```
+
+Both return the rows rather than a count — `.len()` is the count. They were
+already in memory, because every row touched had to be read to be written, and
+a caller that named a *condition* has no other way to learn which rows it hit.
+For a delete that is the only moment the answer exists: afterwards the rows are
+gone and no read recovers them.
+
+Each assignment is a `Scalar` over the row **as it was read**, so `views =
+views + 1` is one write rather than a read, a decision and a write, and two
+concurrent increments make two. Assignments apply together rather than
+left-to-right, so `a = b, b = a` swaps.
+
+Over the wire this is `DeleteWhere` and `UpdateWhere`, with a `returning` flag,
+in all three clients. `RETURNING` is offered on these two and on nothing else,
+and the reason is worth stating because its absence elsewhere looks like an
+oversight: an `Insert` here is given a whole row and the server applies no
+`DEFAULT` to it — the wire's row is full width and its nulls are values a
+caller meant — and there is no auto-increment, no trigger and no generated
+column. The row written is the row sent, so returning it would hand the caller
+its own request back.
+
 ### Conditional writes, because the store cannot see a lost update
 
 The store detects two writers overlapping in time. The common failure is the

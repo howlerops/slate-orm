@@ -18,6 +18,8 @@ import {
   agg,
   at,
   caseWhen,
+  add,
+  and,
   col,
   computed0,
   compare,
@@ -560,6 +562,77 @@ class Adapter {
 
   /** The one thing a single request cannot show: a write visible only to its
    * own transaction until it commits. */
+  /**
+   * Seed four rows, write over them by predicate, report what came back.
+   *
+   * The id range is clear of the fixture and of the transaction probe at 9001.
+   * Predicate writes mutate, and the runner drives all three adapters against
+   * one database, so each run seeds its own rows first and the three see the
+   * same four. The fixture is never touched: a case that deleted from it would
+   * make every later case depend on which SDK ran first.
+   *
+   * Self-contained and idempotent, like the transaction probe below and for
+   * the same reason: the demo, and the corpus, must give the same answer run
+   * twice.
+   */
+  async predicateWrite(
+    session: Session,
+    body: { kind?: string; returning?: boolean; noSet?: boolean },
+  ): Promise<unknown> {
+    const first = 9100n;
+    const mine = ge(0, uint(first));
+    // Clean slate. A predicate delete is the tidiest way to say "whatever is
+    // left from last time", and it exercises the feature on the way in.
+    await session.deleteWhere({ table: "books", filter: mine });
+    const rows: Value[][] = [];
+    for (let n = 0n; n < 4n; n++) {
+      rows.push([
+        uint(first + n),
+        uint(1n),
+        { kind: "string", value: `Predicate ${n}` },
+        { kind: "int", value: 2000n + n },
+        { kind: "float", value: 3 },
+        { kind: "int", value: 1767225600n },
+        vector([0.1, 0.2, 0.3, 0.4]),
+      ]);
+    }
+    await session.insert("books", ...rows);
+
+    // Rows 9102 and 9103: year >= 2002.
+    const recent = and(mine, ge(3, { kind: "int", value: 2002n }));
+    const returning = Boolean(body.returning);
+    let result;
+    if (body.kind === "delete") {
+      result = await session.deleteWhere({ table: "books", filter: recent, returning });
+    } else if (body.kind === "update") {
+      result = await session.updateWhere({
+        table: "books",
+        filter: recent,
+        // rating = rating + 1, read off the row as it was.
+        set: body.noSet
+          ? []
+          : [{ column: 4, value: add(col(4), lit({ kind: "float", value: 1 })) }],
+        returning,
+      });
+    } else {
+      throw new Error(`unknown predicate write ${String(body.kind)}`);
+    }
+
+    // How many of the four are left, which is what makes a delete's effect
+    // visible rather than only its report.
+    let left = 0;
+    for await (const _ of session.query({ table: "books", filter: mine })) left++;
+    return {
+      // `Number`, because `affected` is a bigint and `JSON.stringify` refuses
+      // one outright — and because the other two adapters send a JSON number,
+      // so a string here would be a disagreement about the type rather than
+      // about the count. Row counts are far below 2^53.
+      affected: Number(result.affected),
+      rows: result.rows.map(encodeRow),
+      left,
+    };
+  }
+
   async transaction(session: Session, body: { commit?: boolean }): Promise<unknown> {
     const probe = 9001n;
     try {
@@ -643,6 +716,7 @@ async function main(): Promise<void> {
     "/api/chain": (s, b) => adapter.chain(s, b),
     "/api/page": (s, b) => adapter.page(s, b),
     "/api/related": (s, b) => adapter.related(s, b),
+    "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

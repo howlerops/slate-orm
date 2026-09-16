@@ -682,3 +682,108 @@ func (s *server) page(ctx context.Context, session *slate.Session, body json.Raw
 	}
 	return map[string]any{"rows": rows, "cursor": cursor, "isLast": page.IsLast()}, nil
 }
+
+// The id range this handler owns, clear of the fixture and of the
+// transaction probe at 9001.
+//
+// Predicate writes mutate, and the conformance runner drives all three
+// adapters against one database, so each run seeds its own rows first and the
+// three see the same four rows. The fixture is never touched: a case that
+// deleted from it would make every later case depend on which SDK ran first.
+const predicateFirst = 9100
+
+// predicateWrite seeds four rows, writes over them by predicate, and reports
+// what came back.
+//
+// Self-contained and idempotent, like the transaction probe above and for the
+// same reason: the demo, and the corpus, must give the same answer run twice.
+func (s *server) predicateWrite(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Kind      string `json:"kind"`
+		Returning bool   `json:"returning"`
+		NoSet     bool   `json:"noSet"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+
+	// Clean slate. A predicate delete is the tidiest way to say "whatever is
+	// left from last time", and it exercises the feature on the way in.
+	if _, err := session.DeleteWhere(ctx, slate.DeleteWhere{
+		Table:  "books",
+		Filter: slate.Filter(slate.Ge(0, slate.Uint(predicateFirst))),
+	}); err != nil {
+		return nil, err
+	}
+	rows := make([][]slate.Value, 0, 4)
+	for n := uint64(0); n < 4; n++ {
+		rows = append(rows, []slate.Value{
+			slate.Uint(predicateFirst + n), slate.Uint(1),
+			slate.String(fmt.Sprintf("Predicate %d", n)),
+			slate.Int(int64(2000 + n)), slate.Float(3.0),
+			slate.Int(1767225600), slate.Vector([]float32{0.1, 0.2, 0.3, 0.4}),
+		})
+	}
+	if _, err := session.Insert(ctx, "books", rows...); err != nil {
+		return nil, err
+	}
+
+	// Rows 9102 and 9103: year >= 2002.
+	recent := slate.Filter(slate.And(
+		slate.Ge(0, slate.Uint(predicateFirst)),
+		slate.Ge(3, slate.Int(2002)),
+	))
+
+	var result slate.WriteResult
+	var err error
+	switch spec.Kind {
+	case "delete":
+		result, err = session.DeleteWhere(ctx, slate.DeleteWhere{
+			Table: "books", Filter: recent, Returning: spec.Returning,
+		})
+	case "update":
+		set := []slate.Assignment{
+			// rating = rating + 1, read off the row as it was.
+			slate.Assign(4, slate.Add(slate.Col(4), slate.Lit(slate.Float(1.0)))),
+		}
+		if spec.NoSet {
+			set = nil
+		}
+		result, err = session.UpdateWhere(ctx, slate.UpdateWhere{
+			Table: "books", Filter: recent, Set: set, Returning: spec.Returning,
+		})
+	default:
+		return nil, fmt.Errorf("unknown predicate write %q", spec.Kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	returned := make([][]tagged, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		returned = append(returned, encodeRow(row))
+	}
+	// How many of the four are left, which is what makes a delete's effect
+	// visible rather than only its report.
+	stream, err := session.Query(ctx, slate.Query{
+		Table:  "books",
+		Filter: slate.Filter(slate.Ge(0, slate.Uint(predicateFirst))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	left := 0
+	for stream.Next() {
+		stream.Row()
+		left++
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"affected": result.Affected,
+		"rows":     returned,
+		"left":     left,
+	}, nil
+}

@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 from collections.abc import Iterable, Sequence
+from typing import Self
 
 from ._proto.slate.v1 import records_pb2 as pb
 from .expr import (
@@ -39,13 +40,15 @@ from .expr import (
     group_key_ref,
     joined_computed_ref,
 )
-from .scalar import Scalar
+from .scalar import Operand, Scalar, as_scalar
 from .schema import Table, fingerprint_of
 from .values import PyValue, to_value
 
 __all__ = [
     "Agg",
     "AggregateQuery",
+    "DeleteWhere",
+    "UpdateWhere",
     "GroupedJoinQuery",
     "JoinAlgorithm",
     "JoinInput",
@@ -784,3 +787,83 @@ class GroupedJoinQuery(_Grouping):
         query = pb.AggregateQuery(join=self.join.to_proto())
         self._grouping_proto(query)
         return query
+
+
+class _PredicateWrite:
+    """What `DeleteWhere` and `UpdateWhere` share: a table, a filter, a flag.
+
+    Not a `Query`. A `Query` carries a projection, a sort, a limit and an
+    offset, none of which a predicate write accepts, and the pattern this file
+    already follows is to offer exactly the fields the server takes in each
+    position rather than offering all of them and refusing four at runtime.
+    """
+
+    def __init__(self, table: Table) -> None:
+        # One input, and it is input 0 — the same degenerate case a
+        # single-table `Query` is. Nothing here takes an input number.
+        self.table = table
+        self._filter: Expr | None = None
+        self._returning = False
+
+    @property
+    def c(self) -> Columns:
+        """This table's columns. The only way to obtain a reference."""
+        return Columns(self.table, 0)
+
+    def where(self, filter: Expr) -> Self:
+        """Which rows. Replaces any earlier filter.
+
+        Left unset, every row the caller can see matches — a `DELETE FROM t`
+        with no `WHERE`, which is a real statement and is allowed. The server
+        cannot tell it from the mistake it resembles, and neither can this.
+        """
+        self._filter = filter
+        return self
+
+    def returning(self, returning: bool = True) -> Self:
+        """Also return the rows this touched.
+
+        For an update they are the rows **as written**; for a delete, as they
+        were before removal, which is the only moment they exist to be read.
+
+        Off by default because the rows are the whole cost: a predicate delete
+        that matched a million rows would send a million of them back.
+        """
+        self._returning = returning
+        return self
+
+
+class DeleteWhere(_PredicateWrite):
+    """Delete every row a predicate selects, in one statement.
+
+    The alternative without this is to query the keys, carry them back and
+    delete one per key: N+1 by construction, and not atomic with the query
+    that found them — a row inserted in between is missed, and a row deleted
+    in between is deleted twice.
+    """
+
+
+class UpdateWhere(_PredicateWrite):
+    """Assign to columns of every row a predicate selects."""
+
+    def __init__(self, table: Table) -> None:
+        super().__init__(table)
+        self._assignments: list[tuple[ColumnRef, Scalar]] = []
+
+    def set(self, column: ColumnRef, value: Operand) -> UpdateWhere:
+        """Store `value` into `column` for every matched row.
+
+        `value` is evaluated **over the row as it was read**, so
+        `w.set(w.c.views, w.c.views + 1)` is one write rather than a read, a
+        decision and a write — and two concurrent increments make two.
+
+        Every assignment in one request reads the original row, so they apply
+        together: setting `a` from `b` and `b` from `a` swaps them rather than
+        making both `b`. Left-to-right is the other reading and it is the one
+        that surprises people; SQL takes this one and so does this.
+
+        A column set twice is refused by the server rather than resolved,
+        because either resolution is a guess at which the caller meant.
+        """
+        self._assignments.append((column, as_scalar(value)))
+        return self

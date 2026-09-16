@@ -14,7 +14,14 @@ import {
   type JoinQuery,
   joinToWire,
 } from "./join.js";
-import { type Query, queryToWire } from "./query.js";
+import {
+  type DeleteWhere,
+  deleteWhereToWire,
+  type Query,
+  queryToWire,
+  type UpdateWhere,
+  updateWhereToWire,
+} from "./query.js";
 import { type Value, valueFromWire, valueKey, valueToWire } from "./value.js";
 
 /**
@@ -59,6 +66,17 @@ export interface WriteResult {
   readonly sequence?: ReadToken;
   /** How many rows the write touched. */
   readonly affected: bigint;
+  /**
+   * The rows the write touched, when `returning` asked for them.
+   *
+   * Empty unless asked, and empty on a write that matched nothing. Only the
+   * predicate writes can fill it: `insert` and `update` are given whole rows
+   * and this server applies no `DEFAULT` to them, so the row written is the
+   * row sent and returning it would hand back the request. A predicate write
+   * is the other case — the caller named a condition, and which rows matched
+   * is a fact it does not have.
+   */
+  readonly rows: Value[][];
 }
 
 /** The plan a query would run under. */
@@ -492,17 +510,43 @@ export class Session {
   }
 
   async #write(method: string, request: Record<string, unknown>): Promise<WriteResult> {
-    const response = await this.#client.call<{ sequence?: string; affected: string }>(
-      method,
-      request,
-    );
+    const response = await this.#client.call<{
+      sequence?: string;
+      affected: string;
+      rows?: unknown[];
+    }>(method, request);
     const affected = BigInt(response.affected ?? 0);
+    const rows = (response.rows ?? []).map(rowFromWire);
     if (response.sequence !== undefined && response.sequence !== null) {
       const token = BigInt(response.sequence);
       this.observe(token);
-      return { sequence: token, affected };
+      return { sequence: token, affected, rows };
     }
-    return { affected };
+    return { affected, rows };
+  }
+
+  /**
+   * Delete every row a predicate selects, in one statement.
+   *
+   * The alternative without it is to query the keys, carry them back and
+   * delete one per key: N+1 by construction, and not atomic with the query
+   * that found them — a row inserted in between is missed, and a row deleted
+   * in between is deleted twice.
+   *
+   * With `returning`, the result's rows are the rows as they were before
+   * removal, which is the only moment they exist to be read.
+   */
+  deleteWhere(write: DeleteWhere): Promise<WriteResult> {
+    return this.#write("DeleteWhere", deleteWhereToWire(write, this.#client.claim(write.table)));
+  }
+
+  /**
+   * Assign to columns of every row a predicate selects.
+   *
+   * With `returning`, the result's rows are the rows **as written**.
+   */
+  updateWhere(write: UpdateWhere): Promise<WriteResult> {
+    return this.#write("UpdateWhere", updateWhereToWire(write, this.#client.claim(write.table)));
   }
 
   /** Add rows, refusing a primary key that is taken. */

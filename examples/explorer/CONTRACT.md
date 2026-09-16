@@ -259,3 +259,30 @@ Every request may carry `X-Demo-Identity: app | reader | stranger`. The adapter
 maps it to the head node's three identity headers. This is how the demo shows
 RBAC and row-level security live: the same query, three answers, none of them
 the adapter's doing.
+
+### `POST /api/predicate-write`
+
+```json
+{ "kind": "delete" | "update", "returning": false, "noSet": false }
+```
+
+Seeds four `books` with ids 9100–9103 and years 2000–2003, then writes over the
+two with `year >= 2002` by predicate. `kind` picks which write; `returning`
+asks for the rows back; `noSet` sends an update with no assignments, which the
+server refuses.
+
+```json
+{ "affected": 2, "rows": [ [ … ], [ … ] ], "left": 2 }
+```
+
+`rows` is empty unless `returning` asked — for a delete they are the rows as
+they were before removal, for an update as written. `left` is how many of the
+four seeded rows are still there, and it is in the answer on purpose:
+`affected` is the server's report of what it did, and `left` is what the table
+says afterwards. A delete that reported two and removed none would agree across
+three clients on a number it had made up.
+
+The handler seeds and cleans its own id range rather than touching the fixture.
+The conformance runner drives all three adapters against one database, so a
+case that deleted a fixture row would make every later case depend on which SDK
+happened to run first — and would not be idempotent, which the demo needs.

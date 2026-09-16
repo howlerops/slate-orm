@@ -25,6 +25,8 @@ const (
 	Records_Insert_FullMethodName           = "/slate.v1.Records/Insert"
 	Records_Update_FullMethodName           = "/slate.v1.Records/Update"
 	Records_Delete_FullMethodName           = "/slate.v1.Records/Delete"
+	Records_DeleteWhere_FullMethodName      = "/slate.v1.Records/DeleteWhere"
+	Records_UpdateWhere_FullMethodName      = "/slate.v1.Records/UpdateWhere"
 	Records_Get_FullMethodName              = "/slate.v1.Records/Get"
 	Records_Query_FullMethodName            = "/slate.v1.Records/Query"
 	Records_Join_FullMethodName             = "/slate.v1.Records/Join"
@@ -46,6 +48,10 @@ type RecordsClient interface {
 	Insert(ctx context.Context, in *InsertRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	Update(ctx context.Context, in *UpdateRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
+	// Predicate writes: one statement rather than a query, a round trip and a
+	// write per row. Both go to the writer, like every other write.
+	DeleteWhere(ctx context.Context, in *DeleteWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
+	UpdateWhere(ctx context.Context, in *UpdateWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueryResponse], error)
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinResponse], error)
@@ -119,6 +125,26 @@ func (c *recordsClient) Delete(ctx context.Context, in *DeleteRequest, opts ...g
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteResponse)
 	err := c.cc.Invoke(ctx, Records_Delete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *recordsClient) DeleteWhere(ctx context.Context, in *DeleteWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteResponse)
+	err := c.cc.Invoke(ctx, Records_DeleteWhere_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *recordsClient) UpdateWhere(ctx context.Context, in *UpdateWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteResponse)
+	err := c.cc.Invoke(ctx, Records_UpdateWhere_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +278,10 @@ type RecordsServer interface {
 	Insert(context.Context, *InsertRequest) (*WriteResponse, error)
 	Update(context.Context, *UpdateRequest) (*WriteResponse, error)
 	Delete(context.Context, *DeleteRequest) (*WriteResponse, error)
+	// Predicate writes: one statement rather than a query, a round trip and a
+	// write per row. Both go to the writer, like every other write.
+	DeleteWhere(context.Context, *DeleteWhereRequest) (*WriteResponse, error)
+	UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error)
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	Query(*QueryRequest, grpc.ServerStreamingServer[QueryResponse]) error
 	Join(*JoinRequest, grpc.ServerStreamingServer[JoinResponse]) error
@@ -288,6 +318,12 @@ func (UnimplementedRecordsServer) Update(context.Context, *UpdateRequest) (*Writ
 }
 func (UnimplementedRecordsServer) Delete(context.Context, *DeleteRequest) (*WriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedRecordsServer) DeleteWhere(context.Context, *DeleteWhereRequest) (*WriteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWhere not implemented")
+}
+func (UnimplementedRecordsServer) UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateWhere not implemented")
 }
 func (UnimplementedRecordsServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
@@ -441,6 +477,42 @@ func _Records_Delete_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RecordsServer).Delete(ctx, req.(*DeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Records_DeleteWhere_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteWhereRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).DeleteWhere(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_DeleteWhere_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).DeleteWhere(ctx, req.(*DeleteWhereRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Records_UpdateWhere_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateWhereRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).UpdateWhere(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_UpdateWhere_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).UpdateWhere(ctx, req.(*UpdateWhereRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -616,6 +688,14 @@ var Records_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _Records_Delete_Handler,
+		},
+		{
+			MethodName: "DeleteWhere",
+			Handler:    _Records_DeleteWhere_Handler,
+		},
+		{
+			MethodName: "UpdateWhere",
+			Handler:    _Records_UpdateWhere_Handler,
 		},
 		{
 			MethodName: "Get",

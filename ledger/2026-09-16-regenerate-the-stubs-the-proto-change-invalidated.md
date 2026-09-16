@@ -29,9 +29,18 @@ Both exist because a client built from a stale protocol definition does not
 fail to build — it fails at runtime, decoding fields into the wrong shape,
 which is the worst way for it to fail. The guards turn that into a red job.
 
-The Go client passed, because it generates from the proto at build time and has
-nothing committed to go stale. That asymmetry is the reason the other two need
-a guard at all.
+~~The Go client passed, because it generates from the proto at build time and
+has nothing committed to go stale. That asymmetry is the reason the other two
+need a guard at all.~~
+
+**Withdrawn the same day, and wrong when written.** Go commits its stubs like
+Python does, and it has a guard — `TestStubsAreFresh` — that regenerates and
+compares byte for byte. It passed because it *skipped*: the test needs `protoc`
+and no CI job installed one, while its own comment claimed CI did. The Go stubs
+were stale in that very commit, missing `Assignment`, `DeleteWhereRequest` and
+`UpdateWhereRequest`, and the job was green. I did not check before writing the
+explanation; the next commit installs `protoc` and makes the skip fatal under
+`SLATE_REQUIRE_PROTOC`.
 
 ## Alternatives rejected
 
@@ -53,7 +62,8 @@ Rust tree. Hence a copy, hence a copy that can drift, hence the check.
 
 ## Evidence
 
-Python 192 passed. TypeScript 91 passed. Before the fix, TypeScript failed 78
+Python 192 passed. TypeScript 91 passed. Go passed too, and that turned out to
+mean less than it appeared — see the withdrawal above. Before the fix, TypeScript failed 78
 of 91 — not from the proto drift but from a *second* guard underneath it: the
 prebuilt `slate-serverd` predated the source, and the harness refused to test
 "a server this tree did not produce" rather than testing a stale binary

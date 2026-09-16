@@ -71,6 +71,15 @@ type WriteResult struct {
 	Sequence *ReadToken
 	// Affected is how many rows the write touched.
 	Affected uint64
+	// Rows are the rows the write touched, when Returning asked for them.
+	//
+	// Empty unless asked, and empty on a write that matched nothing. Only the
+	// predicate writes can fill it: Insert and Update are given whole rows and
+	// this server applies no DEFAULT to them, so the row written is the row
+	// sent and returning it would hand back the request. A predicate write is
+	// the other case — the caller named a condition, and which rows matched is
+	// a fact it does not have.
+	Rows [][]Value
 }
 
 // Client is a connection to a head node.
@@ -287,6 +296,13 @@ func (s *Session) write(
 		return WriteResult{}, fromRPC(err)
 	}
 	out := WriteResult{Affected: response.Affected}
+	for _, row := range response.Rows {
+		values, err := rowFromProto(row)
+		if err != nil {
+			return WriteResult{}, err
+		}
+		out.Rows = append(out.Rows, values)
+	}
 	if response.Sequence != nil {
 		token := ReadToken(*response.Sequence)
 		out.Sequence = &token

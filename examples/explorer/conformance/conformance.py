@@ -335,6 +335,31 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a page sorted into an order the key does not give", "/api/page",
      {"limit": 4, "sort": [{"column": 4, "direction": "desc"}]}, "app"),
 
+    # Predicate writes, and `returning`. Each case seeds its own four rows in
+    # an id range clear of the fixture, so the three adapters see the same
+    # starting state whichever runs first and a re-run gives the same answer.
+    #
+    # `left` is in the answer because `affected` is the server's report and
+    # `left` is what the table says: a delete that reported three and removed
+    # none would agree across three clients on the number it made up.
+    ("a predicate delete, returning what it destroyed", "/api/predicate-write",
+     {"kind": "delete", "returning": True}, "app"),
+    # The same write without `returning`: the rows must be absent rather than
+    # returned anyway, which is the direction a client is likeliest to get
+    # wrong by ignoring the flag.
+    ("a predicate delete, not returning", "/api/predicate-write",
+     {"kind": "delete"}, "app"),
+    ("a predicate update, returning the rows as written", "/api/predicate-write",
+     {"kind": "update", "returning": True}, "app"),
+    # Refused rather than reported as zero rows written, because zero is what a
+    # predicate that matched nothing reports and the two are different
+    # mistakes. All three must refuse it, and with the same message.
+    ("a predicate update with no assignments", "/api/predicate-write",
+     {"kind": "update", "noSet": True}, "app"),
+    # A reader may not write, and must be refused before anything is removed.
+    ("a reader may not write by predicate", "/api/predicate-write",
+     {"kind": "delete"}, "reader"),
+
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 ]
@@ -364,6 +389,8 @@ EXPECTED_REFUSALS = {
     "a page with no limit",
     "a page whose projection drops the key",
     "a page sorted into an order the key does not give",
+    "a predicate update with no assignments",
+    "a reader may not write by predicate",
 }
 
 

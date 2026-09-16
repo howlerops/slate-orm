@@ -97,6 +97,9 @@ export {
   isNullAt,
   isNotNullAt,
   type Operator,
+  type Assignment,
+  type DeleteWhere,
+  type UpdateWhere,
 } from "./query.js";
 export {
   JoinBuilder,

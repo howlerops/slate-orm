@@ -23,11 +23,30 @@ import (
 //
 // Skipped where `protoc` is absent, which is the one case where a hard failure
 // would be about the machine rather than about the repository. That is a skip
-// of the kind CLAUDE.md warns about — "a skip is green" — so CI installs
-// `protoc` and this runs there for real; the skip exists for a laptop.
+// of the kind CLAUDE.md warns about — "a skip is green" — and the warning was
+// earned: the sentence above used to say "CI installs `protoc` and this runs
+// there for real", and no CI job installed `protoc`. This test had therefore
+// never run anywhere but a laptop, and the stubs went stale again — missing
+// `Assignment`, `DeleteWhereRequest` and `UpdateWhereRequest` — with the Go
+// job green, exactly the drift it was written to stop.
+//
+// So the skip is no longer allowed to be silent where it matters.
+// `SLATE_REQUIRE_PROTOC=1` turns it into a failure, and CI sets it beside the
+// step that installs `protoc`. Installing `protoc` alone would have fixed
+// today and left the same hole open for the next workflow edit that dropped
+// the step; a guard that announces its own absence cannot be switched off by
+// accident.
 func TestStubsAreFresh(t *testing.T) {
 	if _, err := exec.LookPath("protoc"); err != nil {
-		t.Skip("protoc is not installed; CI runs this for real")
+		if os.Getenv("SLATE_REQUIRE_PROTOC") != "" {
+			t.Fatal(
+				"SLATE_REQUIRE_PROTOC is set and protoc is not installed, so this " +
+					"check would have skipped silently — which is how the committed " +
+					"stubs went stale twice. Install protoc, or unset the variable " +
+					"if this is a laptop.",
+			)
+		}
+		t.Skip("protoc is not installed; set SLATE_REQUIRE_PROTOC=1 to make this fatal")
 	}
 	root, err := filepath.Abs("../../..")
 	if err != nil {

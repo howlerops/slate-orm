@@ -21,12 +21,14 @@ from typing import Any
 from slate import (
     Agg,
     AggregateQuery,
+    DeleteWhere,
     Client,
     GroupedJoinQuery,
     Identity,
     JoinQuery,
     JoinType,
     Query,
+    UpdateWhere,
     SlateError,
     Metric,
     TimeUnit,
@@ -474,6 +476,67 @@ class Adapter:
             "display": plan.display,
         }
 
+    #: The id range the predicate-write handler owns, clear of the fixture and
+    #: of the transaction probe at 9001.
+    #:
+    #: Predicate writes mutate, and the runner drives all three adapters
+    #: against one database, so each run seeds its own rows first and the three
+    #: see the same four. The fixture is never touched: a case that deleted
+    #: from it would make every later case depend on which SDK ran first.
+    PREDICATE_FIRST = 9100
+
+    def predicate_write(self, session, body):
+        """Seed four rows, write over them by predicate, report what came back.
+
+        Self-contained and idempotent, like the transaction probe below and for
+        the same reason: the demo, and the corpus, must give the same answer
+        run twice.
+        """
+        first = self.PREDICATE_FIRST
+        mine = DeleteWhere(BOOKS)
+        # Clean slate. A predicate delete is the tidiest way to say "whatever
+        # is left from last time", and it exercises the feature on the way in.
+        session.delete_where(mine.where(mine.c.id.ge(u64(first))))
+        session.insert(
+            BOOKS,
+            [
+                [
+                    u64(first + n), u64(1), f"Predicate {n}", i64(2000 + n),
+                    3.0, i64(1767225600), Vector((0.1, 0.2, 0.3, 0.4)),
+                ]
+                for n in range(4)
+            ],
+        )
+
+        returning = bool(body.get("returning"))
+        kind = body.get("kind")
+        if kind == "delete":
+            w = DeleteWhere(BOOKS)
+            # Rows 9102 and 9103: year >= 2002.
+            result = session.delete_where(
+                w.where(w.c.id.ge(u64(first)) & w.c.year.ge(i64(2002)))
+                .returning(returning)
+            )
+        elif kind == "update":
+            w = UpdateWhere(BOOKS)
+            w.where(w.c.id.ge(u64(first)) & w.c.year.ge(i64(2002)))
+            if not body.get("noSet"):
+                # rating = rating + 1, read off the row as it was.
+                w.set(w.c.rating, w.c.rating + 1.0)
+            result = session.update_where(w.returning(returning))
+        else:
+            raise ValueError(f"unknown predicate write {kind!r}")
+
+        # How many of the four are left, which is what makes a delete's effect
+        # visible rather than only its report.
+        q = Query(BOOKS)
+        left = len(list(session.query(q.where(q.c.id.ge(u64(first))))))
+        return {
+            "affected": result.affected,
+            "rows": [encode_row(row.values) for row in result.rows],
+            "left": left,
+        }
+
     def transaction(self, session, body):
         """The one thing a single request cannot show: a write visible only to
         its own transaction until it commits."""
@@ -520,6 +583,7 @@ ROUTES = {
     "/api/chain": "chain",
     "/api/page": "page",
     "/api/related": "related",
+    "/api/predicate-write": "predicate_write",
     "/api/transaction": "transaction",
 }
 

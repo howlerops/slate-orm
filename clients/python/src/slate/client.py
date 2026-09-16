@@ -45,7 +45,14 @@ from ._proto.slate.v1 import records_pb2 as pb
 from ._proto.slate.v1 import records_pb2_grpc as pb_grpc
 from .errors import Conflict, SlateError, from_rpc_error
 from .freshness import Freshness, ReadToken, ServedBy, Watermark
-from .query import AggregateQuery, GroupedJoinQuery, JoinQuery, Query
+from .query import (
+    AggregateQuery,
+    DeleteWhere,
+    GroupedJoinQuery,
+    JoinQuery,
+    Query,
+    UpdateWhere,
+)
 from .rows import Group, JoinedRow, Row
 from .schema import Table, fingerprint_of
 from .values import PyValue, from_value, to_value
@@ -130,10 +137,24 @@ class WriteResult:
     it for an insert or an update.
     """
 
-    __slots__ = ("affected", "sequence")
+    __slots__ = ("affected", "rows", "sequence")
 
-    def __init__(self, sequence: ReadToken | None, affected: int) -> None:
+    def __init__(
+        self,
+        sequence: ReadToken | None,
+        affected: int,
+        rows: list[Row] | None = None,
+    ) -> None:
         self.sequence = sequence
+        #: The rows the write touched, when `returning()` asked for them.
+        #:
+        #: Empty unless asked, and empty on a write that matched nothing. Only
+        #: the predicate writes can fill it: `insert` and `update` are given
+        #: whole rows and this server applies no `DEFAULT` to them, so the row
+        #: written is the row sent and returning it would hand back the
+        #: request. A predicate write is the other case — the caller named a
+        #: condition, and which rows matched is a fact it does not have.
+        self.rows: list[Row] = rows or []
         #: How many rows the write acted on.
         #:
         #: For a **delete** this is how many existed — a row the caller's
@@ -624,12 +645,64 @@ class _Ops:
         )
         return self._write_result(response)
 
-    def _write_result(self, response: pb.WriteResponse) -> WriteResult:
+    def _write_result(
+        self, response: pb.WriteResponse, table: Table | None = None
+    ) -> WriteResult:
         sequence = response.sequence if response.HasField("sequence") else None
         self._observe(sequence)
-        return WriteResult(
-            None if sequence is None else ReadToken(sequence), response.affected
+        # Decoded against the table the write named, which is the only table a
+        # write touches. A response carrying rows for a write that cannot
+        # return any would decode into nothing here; the server does not send
+        # them, and `table=None` says this call cannot receive them.
+        rows = (
+            [Row.from_proto(r, table) for r in response.rows]
+            if table is not None
+            else []
         )
+        return WriteResult(
+            None if sequence is None else ReadToken(sequence),
+            response.affected,
+            rows,
+        )
+
+    def delete_where(self, write: DeleteWhere) -> WriteResult:
+        """Delete every row the predicate selects, in one statement.
+
+        With `returning()`, `result.rows` are the rows as they were before
+        removal — the only moment they exist to be read.
+        """
+        response = self._unary(
+            self._conn.stub.DeleteWhere,
+            pb.DeleteWhereRequest(
+                transaction=self._transaction_id(),
+                table=write.table.name,
+                filter=write._filter.to_proto() if write._filter else None,
+                returning=write._returning,
+                schema=self._schema_check(write.table),
+            ),
+        )
+        return self._write_result(response, write.table)
+
+    def update_where(self, write: UpdateWhere) -> WriteResult:
+        """Assign to columns of every row the predicate selects.
+
+        With `returning()`, `result.rows` are the rows **as written**.
+        """
+        response = self._unary(
+            self._conn.stub.UpdateWhere,
+            pb.UpdateWhereRequest(
+                transaction=self._transaction_id(),
+                table=write.table.name,
+                filter=write._filter.to_proto() if write._filter else None,
+                assignments=[
+                    pb.Assignment(column=column.to_proto(), value=value.to_proto())
+                    for column, value in write._assignments
+                ],
+                returning=write._returning,
+                schema=self._schema_check(write.table),
+            ),
+        )
+        return self._write_result(response, write.table)
 
     # --- reads ------------------------------------------------------------
 

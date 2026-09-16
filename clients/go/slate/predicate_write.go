@@ -1,0 +1,117 @@
+package slate
+
+import (
+	"context"
+
+	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
+)
+
+// DeleteWhere deletes every row a predicate selects, in one statement.
+//
+// The alternative without it is to query the keys, carry them back and delete
+// one per key: N+1 by construction, and not atomic with the query that found
+// them — a row inserted in between is missed, and a row deleted in between is
+// deleted twice.
+//
+// A struct rather than a builder, like [Query] beside it, so that the fields
+// the server accepts are the fields there are.
+type DeleteWhere struct {
+	// Table is the table's name, as the server's catalog spells it.
+	Table string
+	// Filter admits rows. The zero value means every row the caller can see —
+	// a `DELETE FROM t` with no `WHERE`, which is a real statement and is
+	// allowed. Neither this nor the server can tell it from the mistake it
+	// resembles.
+	Filter *Expr
+	// Returning asks for the rows back, as they were before removal — the only
+	// moment they exist to be read.
+	//
+	// Off by default because the rows are the whole cost: a delete that
+	// matched a million rows would send a million of them back.
+	Returning bool
+}
+
+// UpdateWhere assigns to columns of every row a predicate selects.
+type UpdateWhere struct {
+	// Table is the table's name, as the server's catalog spells it.
+	Table string
+	// Filter admits rows. The zero value means every row the caller can see.
+	Filter *Expr
+	// Set is the assignments, in order. At least one is required; a request
+	// with none is refused rather than reported as zero rows written, because
+	// zero is what a predicate that matched nothing reports.
+	Set []Assignment
+	// Returning asks for the rows back, as written.
+	Returning bool
+}
+
+// An Assignment stores a value into a column.
+type Assignment struct {
+	// Column is the column to write, by ordinal within the table.
+	Column Ordinal
+	// Value is evaluated over the row **as it was read**, so
+	// `Assign(Views, Add(Col(Views), Lit(I64(1))))` is one write rather than a
+	// read, a decision and a write — and two concurrent increments make two.
+	//
+	// Every assignment in one request reads the original row, so they apply
+	// together: assigning a from b and b from a swaps them rather than making
+	// both b. Left-to-right is the other reading and it is the one that
+	// surprises people; SQL takes this one and so does this.
+	Value Scalar
+}
+
+// Assign is an [Assignment], spelled for a call site.
+func Assign(column Ordinal, value Scalar) Assignment {
+	return Assignment{Column: column, Value: value}
+}
+
+func (a Assignment) toProto() *pb.Assignment {
+	return &pb.Assignment{Column: columnRef(a.Column), Value: a.Value.wire}
+}
+
+// DeleteWhere deletes every row the predicate selects.
+//
+// With Returning set, the result's Rows are the rows as they were before
+// removal. Without it they are empty, and the affected count is all that comes
+// back.
+func (s *Session) DeleteWhere(ctx context.Context, write DeleteWhere) (WriteResult, error) {
+	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return s.client.rpc.DeleteWhere(ctx, &pb.DeleteWhereRequest{
+			Table:     write.Table,
+			Filter:    filterProto(write.Filter),
+			Returning: write.Returning,
+			Schema:    s.client.schemas.claimFor(write.Table),
+		})
+	})
+}
+
+// UpdateWhere assigns to columns of every row the predicate selects.
+//
+// With Returning set, the result's Rows are the rows as written.
+func (s *Session) UpdateWhere(ctx context.Context, write UpdateWhere) (WriteResult, error) {
+	assignments := make([]*pb.Assignment, 0, len(write.Set))
+	for _, a := range write.Set {
+		assignments = append(assignments, a.toProto())
+	}
+	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return s.client.rpc.UpdateWhere(ctx, &pb.UpdateWhereRequest{
+			Table:       write.Table,
+			Filter:      filterProto(write.Filter),
+			Assignments: assignments,
+			Returning:   write.Returning,
+			Schema:      s.client.schemas.claimFor(write.Table),
+		})
+	})
+}
+
+// filterProto is the nil-safe unwrap [Query.toProto] does inline.
+//
+// A nil filter is "every row", which the server reads as an absent field
+// rather than as an empty expression — an empty `Expr` would be a client bug
+// the server refuses, and is not the same thing as no filter at all.
+func filterProto(filter *Expr) *pb.Expr {
+	if filter == nil {
+		return nil
+	}
+	return filter.wire
+}

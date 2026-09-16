@@ -251,3 +251,88 @@ export function queryToWire(
   if (query.paged) out["paged"] = true;
   return out;
 }
+
+/**
+ * Delete every row a predicate selects, in one statement.
+ *
+ * A plain object like `Query`, so the fields the server accepts are the fields
+ * there are — rather than a builder offering a projection and a limit that a
+ * predicate write would have to refuse.
+ */
+export interface DeleteWhere {
+  /** The table's name, as the server's catalog spells it. */
+  readonly table: string;
+  /**
+   * Admits rows. Absent means every row the caller can see — a `DELETE FROM t`
+   * with no `WHERE`, which is a real statement and is allowed. Neither this
+   * nor the server can tell it from the mistake it resembles.
+   */
+  readonly filter?: Expr;
+  /**
+   * Ask for the rows back, as they were before removal.
+   *
+   * Off by default because the rows are the whole cost: a delete that matched
+   * a million rows would send a million of them back.
+   */
+  readonly returning?: boolean;
+}
+
+/** One column and the value to store in it, for {@link UpdateWhere}. */
+export interface Assignment {
+  /** The column to write, by ordinal within the table. */
+  readonly column: Ordinal;
+  /**
+   * Evaluated over the row **as it was read**, so `add(col(views), lit(...))`
+   * is one write rather than a read, a decision and a write — and two
+   * concurrent increments make two.
+   *
+   * Every assignment in one request reads the original row, so they apply
+   * together: assigning `a` from `b` and `b` from `a` swaps them rather than
+   * making both `b`. Left-to-right is the other reading and it is the one that
+   * surprises people; SQL takes this one and so does this.
+   */
+  readonly value: Scalar;
+}
+
+/** Assign to columns of every row a predicate selects. */
+export interface UpdateWhere {
+  /** The table's name, as the server's catalog spells it. */
+  readonly table: string;
+  /** Admits rows. Absent means every row the caller can see. */
+  readonly filter?: Expr;
+  /**
+   * The assignments, in order. At least one is required: a request with none
+   * is refused rather than reported as zero rows written, because zero is what
+   * a predicate that matched nothing reports and the two are different
+   * mistakes.
+   */
+  readonly set: Assignment[];
+  /** Ask for the rows back, as written. */
+  readonly returning?: boolean;
+}
+
+export function deleteWhereToWire(
+  write: DeleteWhere,
+  claim?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { table: write.table };
+  if (claim) out["schema"] = claim;
+  if (write.filter) out["filter"] = write.filter.wire;
+  if (write.returning) out["returning"] = true;
+  return out;
+}
+
+export function updateWhereToWire(
+  write: UpdateWhere,
+  claim?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { table: write.table };
+  if (claim) out["schema"] = claim;
+  if (write.filter) out["filter"] = write.filter.wire;
+  if (write.returning) out["returning"] = true;
+  out["assignments"] = write.set.map((a) => ({
+    column: columnRef(a.column),
+    value: a.value.wire,
+  }));
+  return out;
+}

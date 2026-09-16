@@ -120,12 +120,21 @@ jobs:
           name: head-node
           path: bin
       - run: chmod +x bin/slate-serverd
+      # `TestStubsAreFresh` regenerates the committed Go stubs and compares
+      # them byte for byte. It needs `protoc`, skips without it, and its own
+      # comment used to claim CI installed one -- which no job did, so the
+      # check had never run outside a laptop and the stubs went stale a second
+      # time with this job green. `SLATE_REQUIRE_PROTOC` below turns the skip
+      # into a failure, so dropping this step is loud rather than silent.
+      - name: The protobuf compiler, for the stub-freshness check
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: go vet ./...
         working-directory: clients/go
       - run: go test ./...
         working-directory: clients/go
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+          SLATE_REQUIRE_PROTOC: "1"
 
   python:
     name: Python client

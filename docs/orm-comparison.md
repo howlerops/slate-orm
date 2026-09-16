@@ -185,8 +185,14 @@ else happens.
 > Done, in `RecordTransaction::delete_where` and `update_where`, and reachable
 > from the record layer as `Records::delete_records_where` and
 > `update_records_where`. Fifteen kernel tests and two record-layer ones;
-> eighteen mutations, no survivors. Still kernel-only: nothing crosses the wire
-> yet, which makes it P3's neighbour rather than finished work.
+> eighteen mutations, no survivors. ~~Still kernel-only: nothing crosses the
+> wire yet, which makes it P3's neighbour rather than finished work.~~ **No
+> longer true:** `DeleteWhere` and `UpdateWhere` RPCs carry both, with
+> `RETURNING`, and all three clients call them. Twelve wire tests, eight to
+> nine per client, five conformance cases. The kernel methods now return the
+> rows rather than a count — `.len()` is the count — because they were already
+> in memory and a caller that named a condition has no other way to learn what
+> it hit.
 
 ### P1 — Predicate writes in the kernel
 
@@ -253,7 +259,7 @@ claim nothing measures is a claim nothing keeps.
 
 *Stops at.* One level, one relationship per request, to start. Nesting is P5.
 
-### P3 — Chains, keyset pagination and `RETURNING` on the wire — **two of three**
+### P3 — Chains, keyset pagination and `RETURNING` on the wire — **built**
 
 > The chains third of this is withdrawn: they have been on the wire since
 > `JoinQuery.inputs` became repeated, and all three clients test them. See the
@@ -266,8 +272,20 @@ claim nothing measures is a claim nothing keeps.
 > request, `QueryResponse.next_cursor` on the response, `page` in all three
 > clients, and eight conformance cases including the three refusals.
 >
-> `RETURNING` is what is left of this item, and is still real: `WriteResponse`
-> carries an affected count and no rows.
+> ~~`RETURNING` is what is left of this item, and is still real:
+> `WriteResponse` carries an affected count and no rows.~~ Built, and narrower
+> than the item assumed. `WriteResponse.rows` and a `returning` flag exist, on
+> the two *predicate* writes only. The item said "returns the rows as written,
+> not a projection", which takes for granted that rows-as-written differ from
+> rows-as-sent. Over this wire they do not: the proto's `Row` is full width and
+> its nulls are values a caller meant, so no `DEFAULT` is applied, and there is
+> no auto-increment, no trigger and no generated column. `RETURNING` on an
+> insert would hand the caller its own request back. On a predicate write it is
+> the opposite — the caller named a condition, and for a delete the answer
+> stops existing the moment the write lands.
+>
+> So all three thirds are now done, and one of them turned out to be a
+> different feature than it was written as.
 
 ### P3 — Chains, keyset pagination and `RETURNING` on the wire
 

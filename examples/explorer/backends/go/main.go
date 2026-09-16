@@ -74,6 +74,7 @@ func main() {
 	mux.HandleFunc("/api/chain", s.handle(s.chain))
 	mux.HandleFunc("/api/page", s.handle(s.page))
 	mux.HandleFunc("/api/related", s.handle(s.related))
+	mux.HandleFunc("/api/predicate-write", s.handle(s.predicateWrite))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)
