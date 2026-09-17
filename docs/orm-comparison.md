@@ -107,10 +107,9 @@ then did not ship it to the three audiences most likely to need it.
 
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
-| Batch: several independent statements, one round trip | Drizzle `batch`, Prisma `$transaction([…])` | `grep -rn "fn batch\|Batch" crates/slate-server/src/` → nothing |
-| Many-to-many / `has_many through` | all | `Related` is one `local`→`foreign` ordinal pair; derive accepts only `has_many`/`belongs_to` |
-| Nested / recursive eager loading | Ecto, SQLAlchemy, Prisma | `load_related` is one level; no nesting |
-| `RETURNING` on a write | Drizzle, Prisma, Ecto | `WriteResponse` carries an affected count and no rows |
+| Many-to-many / `has_many through` **on the wire** | all | built in Rust (P4); `RelatedRequest` carries one `Relation` and `repeated Value keys`, so a client resolves a join table in two round trips by hand |
+| Nested eager loading **on the wire** | Ecto, SQLAlchemy, Prisma | built in Rust (P5) as `load_nested`; same evidence as the row above |
+| Keyset paging over a join or a chain | Drizzle, Prisma (cursor on a relation query) | `Query` has `after`/`paged`; `JoinQuery` has `offset = 3` and no cursor field |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
 | Client codegen from the catalog | Drizzle, Prisma | every client hand-declares its schema; `SchemaCheck` catches drift at run time instead of compile time |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `grep -rcn "validate\|before_save\|Changeset" crates/slate-orm/src/` → nothing |
@@ -125,6 +124,19 @@ then did not ship it to the three audiences most likely to need it.
 | Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
 | Per-request logging and metrics | all | already recorded in the README: `slate-serverd` logs startup and warnings, nothing per request |
 | Retrying `transact` in Go and TypeScript | — | already recorded in the README; Python has one |
+
+> **Built: "Batch" and "`RETURNING` on a write".** Both rows are removed rather
+> than annotated, on the same grounds as keyset pagination: both were correct
+> when written. `Batch` is an RPC with a required `atomicity` and lives in all
+> three clients; `RETURNING` is `WriteResponse.rows` behind a `returning` flag,
+> on the two *predicate* writes only — see P3, where the item turned out to be
+> a narrower feature than it was written as.
+
+> **Narrowed: the two relationship rows.** Many-to-many and nested loading are
+> built (P4, P5) and reachable only from Rust, so the rows now say *on the
+> wire* and their evidence is the proto rather than the derive macro. This is
+> the third time a capability has existed in Rust a release ahead of the three
+> clients, which is why N1 below is first.
 
 > **Built: "Keyset pagination on the wire".** `Query.after` carries the cursor,
 > `Query.paged` asks for the next one, and `QueryResponse.next_cursor` returns
@@ -174,11 +186,31 @@ is the thing to attack if you disagree.
 - **`UNION` across two independently planned statements with deduplication.**
   There is nowhere for the dedup to happen.
 
-## The plan
+## The first plan — six pieces, all built
 
-Six pieces, ordered by value over cost. Each names what it is, how it will be
-tested, and where it stops. The first two are the ones worth doing whatever
-else happens.
+Six pieces, ordered by value over cost. Each named what it was, how it would be
+tested, and where it stopped. **All six are now built**, and each carries a
+block above its original text saying what it became; the original text is kept
+underneath because the reasoning is what justified the work, and because two of
+the six turned out to be different features than they were written as.
+
+Three of them were also worth more as a lesson than as a feature. P3's
+`RETURNING` shrank to the predicate writes once it was clear that an insert's
+`RETURNING` over this wire hands the caller its own request back. P4's
+many-to-many needed no new capability at all — it is the composition of two
+relationships the derive already emitted. P5's depth limit was refused on
+inspection: a nesting level is a type parameter, so there is nothing to limit
+until an `include` list arrives as data.
+
+**The recurring finding across all six is not in any of them.** Five separate
+times on this branch the code was right and the *check* was the problem: a
+`protoc` guard that had never once run because no CI job installed `protoc`, a
+`max_batch_operations` that shipped as a field, a config key and an `if` with
+nothing exercising any of the three, a durability check served by a replica one
+poll behind, a mutation harness whose test filter did not match the test it
+needed, and four mutation survivors that were all the same unasserted schema
+claim in three languages. That ratio — five check defects to roughly two code
+defects — is the thing to carry into the next six.
 
 ### P1 — Predicate writes in the kernel — **built**
 
@@ -368,13 +400,189 @@ probably by requiring the caller to say which they mean.
 trip count and a wall-clock comparison against the same operations issued
 singly, reported with spread.
 
-## What this plan does not do
+## The next plan
 
-It does not close the whole table. Window functions, CTEs, views, arrays,
+Six again, ordered by value over cost, and drawn from what the last six left
+behind rather than from the table above. Four of them are debts the previous
+plan created: a capability that stops at the Rust edge, a response with no
+ceiling, a token only one path can see, and a demo that shows none of it. That
+is what a plan looks like when the features landed and the edges did not.
+
+Where an item rests on reasoning rather than a run, it says so. A hypothesis
+here is labelled a hypothesis, and the first step of that item is to make it
+fail or withdraw it.
+
+### N1 — `through` and nested loading on the wire
+
+`RelatedRequest` carries one `Relation` and `repeated Value keys`. P4 and P5
+built `load_related_through`, `load_through` and `load_nested`, and every one of
+them is reachable only from Rust. A Python, Go or TypeScript caller who wants an
+article's tags issues two `Related` calls and regroups by hand — which is the
+same shape as the N+1 this whole layer exists to prevent, one level up.
+
+This is the third time: `Related` itself, predicate writes, and now these. The
+first two were caught a commit later and closed. This one has been open since
+P4 landed, and it is first for that reason rather than because it is the
+largest.
+
+*Build.* The design question is whether `RelatedRequest` grows a `repeated
+Relation` — a path, resolved level by level, one round trip — or whether a
+second RPC carries nesting. **Recommendation: a path on the existing request**,
+because the server already deduplicates each level's key set and a second RPC
+would duplicate the grouping logic that `RelatedResponse` already specifies. The
+response then needs a shape for "groups of groups", which is the part worth
+designing carefully: a flat list of levels with parent-key back-references
+avoids nesting the message type, and is what the Rust `load_nested` signature
+`Vec<Vec<(C, Vec<G>)>>` flattens to anyway.
+
+*Test.* The conformance corpus, which is where a three-way disagreement about
+grouping will show up and nowhere else. A read-count assertion per level, the
+same way `TestRelatedIsOneRequestHoweverManyParents` does it for one level —
+the claim is "one read per level, not N", and the levels are where that claim
+gets easier to break. An oracle against the two-step the clients write by hand
+today.
+
+*Stops at.* A path of declared relationships. No predicate on an intermediate
+level, no ordering or limit per level — both are real and both want the level
+to be a `Query` rather than a `Relation`, which is a bigger message than this.
+
+### N2 — A ceiling on `returning`
+
+**Hypothesis, not a finding.** `WriteResponse` is unary and `returning` puts
+every matched row in it. Nothing in `Limits` bounds the count — `grep` for
+`max_encoding_message_size` and `max_decoding_message_size` across
+`crates/slate-server/src/` and `crates/slate-serverd/src/` returns nothing, so
+tonic's defaults apply: no encode cap, a 4 MiB decode cap at the client.
+
+If that reading is right, `delete_where(…, returning = true)` over a large match
+**commits and then fails to deliver**: the rows are gone, the server encodes a
+response the client refuses, and the caller sees a decode error for a write that
+succeeded. That is worse than a refusal, because the error says nothing about
+the write having landed — it is exactly the unknown-outcome case the error
+taxonomy tells callers not to retry, manufactured by us out of a known outcome.
+
+*Build.* First reproduce it, at whatever row count crosses 4 MiB; if it does not
+reproduce, withdraw this item in place and say what actually happens. If it
+does: a `max_returned_rows` in `Limits`, checked **before** the write applies,
+refused as a resource limit naming the count and the cap. Refusing after the
+scan but before the commit is the only ordering that keeps the caller's world
+consistent.
+
+*Test.* The refusal, with the cap forced off to confirm the test fails by name.
+A test that the refused write did not land, which is the actual property. The
+ordering matters more than the limit and is the thing to mutate.
+
+*Stops at.* One number, on the server. Streaming a predicate write's rows back
+the way `Query` streams is the general answer and is a different RPC shape.
+
+### N3 — Keyset paging over a join or a chain
+
+`Query` has `after` and `paged`; `JoinQuery` has `offset = 3` and no cursor.
+Paging a join is therefore offset paging, which is the thing P3's cursor exists
+to replace — a row inserted between pages shifts every later page by one, and a
+caller walking a join sees a row twice or not at all.
+
+*Build.* The design question is what a join's cursor *is*, and it has no obvious
+answer: the driving side's key is not unique after a fan-out, so a cursor over
+it either skips the rest of a group or repeats it. The honest options are a
+composite cursor over the ordering columns plus a tiebreaker from each input's
+key, or a refusal that says paging a join needs an `ORDER BY` whose columns are
+unique and names why. **Write that down before building either.** An undesigned
+cursor that is subtly wrong under concurrency is worse than an offset that is
+obviously wrong under concurrency.
+
+*Test.* The property P3 named and did not get to test on a join: paging through
+with a cursor under concurrent inserts visits every row exactly once. That
+property is the whole item; if a design cannot be tested that way, it is the
+wrong design.
+
+*Stops at.* Whatever the design note concludes. This item may legitimately end
+as a named refusal.
+
+### N4 — The reason token on the lone path
+
+All three clients drop `grpc-status-details-bin`, each with a comment saying so.
+The stable reason token therefore reaches a caller only when the failure was
+*batched*, because a batch has to put it in the message body. Three clients now
+have a `reason` field populated for exactly one kind of failure, with the
+asymmetry written on the field.
+
+*Build.* Decode the details blob on the lone path, in three languages. Python
+and TypeScript already carry the generated types; Go does too. The work is
+small and was skipped because nobody had needed it, which is a reason to do it
+now rather than a reason it stays skipped.
+
+*Test.* Conformance cases comparing `reason` across the three for a lone
+failure, which is the only check that stops one client decoding it differently.
+Mutation: drop the decode, in each, and a named case must fail.
+
+*Stops at.* The token. Not the rest of the details message.
+
+### N5 — The demo shows none of the last three features
+
+The frontend has no UI for predicate writes, for batch, or for relationships
+beyond one level. The adapters serve `/api/batch` and the corpus compares it; a
+visitor cannot see it. Three features shipped, tested from three clients, and
+invisible on the page that exists to show the surface.
+
+*Build.* A predicate-write control that shows the rows it returned — that is
+the feature, and a count would show nothing that a delete-by-key does not. A
+batch control that runs the same operations under both atomicities and shows the
+difference, because the difference is the only thing a batch has to teach.
+
+*Test.* The browser e2e, which already exists and already runs in CI.
+
+*Stops at.* The demo. No new server surface comes out of this item; if one is
+needed, that is a finding and belongs in its own entry.
+
+### N6 — The numbers nothing here measures
+
+Two claims currently rest on inference:
+
+1. **Batching helps a client.** The 9.4×–10.0× is a Rust wire test. The clients
+   add per-request work batching does not save — schema claims, value encoding,
+   per-operation table resolution — so their multiplier is smaller by an unknown
+   amount. A README that says "a batch is a round trip" is making a claim about
+   the clients on the strength of a measurement that did not go through one.
+2. **A batch over the cap costs a round trip.** `max_batch_operations` is
+   enforced server-side only. No client checks length before sending.
+
+*Build.* One benchmark per client, same shape as the Rust one: N singles against
+one batch of N, reported with spread across five runs. Then decide the cap
+question *from the number*: if the refused round trip is cheap relative to the
+batch it would have sent, a client-side copy of a server-configurable limit is
+two numbers that can disagree, and the right answer is to leave it. Do not guess
+which way that goes before measuring.
+
+*Test.* The measurement is the test, reported as a range and not asserted
+against a threshold — a wall-clock assertion on a shared runner is a flake
+waiting for a slow morning, which is why the Rust one reports rather than
+asserts.
+
+*Stops at.* Reporting. No CI gate on a timing number.
+
+### Smaller, and owed
+
+Not plan items; things a session should pick up when it is already in the file.
+
+- **The deployed harness reads without demanding a snapshot.** One read was
+  fixed because it made a durability claim and failed CI on a stale replica.
+  The others are correct-by-luck in the same way and would be better served by
+  pinning the whole run to one snapshot.
+- **No retrying `transact` in Go or TypeScript.** Python has one. Both others
+  have `retryable` on the error and nothing that uses it.
+- **No per-request logging or metrics in `slate-serverd`.** Recorded in the
+  README and still true.
+
+## What neither plan does
+
+Neither closes the whole table. Window functions, CTEs, views, arrays,
 full-text search and set operations are all real absences and none of them is
-in the six. They are planner and kernel work of a different size, and doing any
-of them before predicate writes and wire relations would be building the
-interesting thing instead of the needed one.
+in either six. They are planner and kernel work of a different size, and doing
+any of them before predicate writes and wire relations would have been building
+the interesting thing instead of the needed one. That argument still holds for
+the second six, for a narrower reason: every item in it is an edge the first
+six left unfinished, and finishing what shipped beats starting what has not.
 
 It also does not add validations, changesets or lifecycle hooks. Those are a
 design question rather than a missing function — where does validation live
@@ -384,6 +592,15 @@ constraints beside `CHECK`, so the answer is the same in all three. That is a
 design note somebody should write before any of it is built.
 
 Automatic timestamps and soft-delete conventions are deliberately left out of
-the six as well: both are sugar over things that already work (a default, a
-partial index), and sugar is the right thing to add *after* the shape of the
-write path stops changing, not during.
+both: they are sugar over things that already work (a default, a partial
+index), and sugar is the right thing to add *after* the shape of the write path
+stops changing, not during. The write path changed twice in the first six —
+predicate writes, then batch — which is the evidence for that ordering rather
+than a restatement of it.
+
+Generated migrations and client codegen are also out of both, and are the two
+table rows most likely to be worth a plan of their own next. Codegen in
+particular would turn `SchemaCheck`'s run-time drift refusal into a
+compile-time one in three languages, which is a bigger and better change than
+anything in the second six — and a bad reason to delay the six edges that are
+already half-built.

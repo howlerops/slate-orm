@@ -147,8 +147,11 @@
         <strong>Built, in the kernel and the record layer.</strong>
         <code>delete_where</code> and <code>update_where</code>, with
         assignments evaluated over the row as it was read &mdash; so
-        <code>views = views + 1</code> is one write. Not yet on the wire, so the
-        three clients still have the problem described below.
+        <code>views = views + 1</code> is one write. <strong>On the wire
+        too</strong>, as <code>DeleteWhere</code> and <code>UpdateWhere</code>
+        with an optional <code>RETURNING</code>, and in all three clients. The
+        description below is what was found before it was built, kept because
+        the reasoning is what justified building it.
       </p>
     </div>
 
@@ -176,12 +179,20 @@
     <p>
       <code>#[derive(Record)]</code> accepts <code>has_many</code> and
       <code>belongs_to</code> and emits a <code>Related</code> impl, and
-      <code>load_related</code> dedupes the key set and issues one read. All of
-      that is reachable <strong>only from Rust</strong>. A Python, Go or
-      TypeScript caller writes the two-step fetch by hand, and the one who
-      forgets writes the N+1. We built the good answer and did not ship it to
-      the three audiences most likely to need it.
+      <code>load_related</code> dedupes the key set and issues one read. That
+      was reachable <strong>only from Rust</strong> when this was written: a
+      Python, Go or TypeScript caller wrote the two-step fetch by hand, and the
+      one who forgot wrote the N+1.
     </p>
+    <div class="callout">
+      <p>
+        <strong>Built, as a <code>Related</code> RPC</strong> in all three
+        clients. The one-level form, at least &mdash; many-to-many and nested
+        loading were built afterwards in Rust and have <em>not</em> crossed the
+        wire, which is why they are the first item of the next plan below. The
+        same gap, one level deeper.
+      </p>
+    </div>
 
     <h2>The rest, in rough order of what a user notices</h2>
 
@@ -191,11 +202,8 @@
           <tr><th>Gap</th><th>Who has it</th></tr>
         </thead>
         <tbody>
-          <tr><td>Chains (3+ table joins) on the wire</td><td>all</td></tr>
-          <tr><td>Batch: independent statements, one round trip</td><td>Drizzle, Prisma</td></tr>
-          <tr><td>Many-to-many and <code>has_many through</code></td><td>all</td></tr>
-          <tr><td>Nested eager loading</td><td>Ecto, SQLAlchemy, Prisma</td></tr>
-          <tr><td><code>RETURNING</code> on a write</td><td>Drizzle, Prisma, Ecto</td></tr>
+          <tr><td>Many-to-many and nested loading <strong>on the wire</strong></td><td>all</td></tr>
+          <tr><td>Keyset paging over a join or a chain</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Migrations generated from a schema diff</td><td>Drizzle Kit, Prisma Migrate, Alembic</td></tr>
           <tr><td>Client code generated from the catalog</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Validations, changesets, lifecycle hooks</td><td>Ecto, ActiveRecord, SQLAlchemy</td></tr>
@@ -240,12 +248,13 @@
       </li>
     </ul>
 
-    <h2>The plan</h2>
+    <h2>The first plan &mdash; six pieces, all built</h2>
 
     <p>
-      Six pieces, ordered by value over cost. Each names what it is, how it will
-      be tested, and where it stops &mdash; the full version, with the
-      alternatives weighed for each, is in
+      Six pieces, ordered by value over cost. Each named what it was, how it
+      would be tested, and where it stopped &mdash; the full version, with the
+      alternatives weighed for each and a block on each saying what it became,
+      is in
       <a href="https://github.com/howlerops/slate-orm/blob/main/docs/orm-comparison.md"><code>docs/orm-comparison.md</code></a>.
     </p>
 
@@ -279,32 +288,101 @@
       </li>
       <li>
         <strong>Chains, keyset pagination and <code>RETURNING</code> on the
-        wire. &mdash; two of three.</strong> Chains were never missing: a
-        <code>JoinQuery</code> carries as many inputs as it is given, so a
-        chain needs no separate RPC, and all three clients already tested one.
-        The conformance runner compares them on a three-table chain now.
-        Keyset pagination is built &mdash; a cursor on the request, the next
-        one on the response, <code>page</code> in all three clients &mdash; and
-        every read it cannot page is refused by name rather than paged wrongly.
-        <code>RETURNING</code> is what is left.
+        wire. &mdash; done, and one third of it was a different feature.</strong>
+        Chains were never missing: a <code>JoinQuery</code> carries as many
+        inputs as it is given, so a chain needs no separate RPC, and all three
+        clients already tested one. Keyset pagination is built &mdash; a cursor
+        on the request, the next one on the response, <code>page</code> in all
+        three clients &mdash; and every read it cannot page is refused by name
+        rather than paged wrongly. <code>RETURNING</code> landed narrower than
+        it was written: this wire&rsquo;s rows are full width with no defaults,
+        no auto-increment and no triggers, so an insert&rsquo;s
+        <code>RETURNING</code> would hand the caller its own request back. It
+        exists on the two <em>predicate</em> writes, where the caller named a
+        condition instead of the rows &mdash; and where, for a delete, the
+        answer stops existing the moment the write lands.
       </li>
-      <li><strong>Many-to-many and <code>has_many through</code>.</strong></li>
-      <li><strong>Nested eager loading</strong>, with a depth limit that refuses by name.</li>
       <li>
-        <strong>Batch.</strong> A network optimisation, not an atomicity
-        guarantee &mdash; and the RPC should make confusing the two impossible.
-        Tested by measuring round trips, because that is the claim.
+        <strong>Many-to-many and <code>has_many through</code>. &mdash; done,
+        and smaller than it looked.</strong> A many-to-many <em>is</em> the
+        composition of two relationships the derive already emitted, so the
+        capability needed no new declaration &mdash; only a name for which
+        table stands in the middle, because a blanket impl over the two halves
+        leaves the join type unconstrained and will not compile.
+      </li>
+      <li>
+        <strong>Nested eager loading. &mdash; done, and the depth limit was
+        refused.</strong> Each level of nesting is a type parameter, so a
+        call&rsquo;s depth is fixed when it compiles: a caller cannot ask for a
+        thousand without writing a thousand types, and the refusal would guard
+        nothing. It would be needed for an <code>include</code> list whose depth
+        arrives as data, and nothing here parses one.
+      </li>
+      <li>
+        <strong>Batch. &mdash; done.</strong> A network optimisation, not an
+        atomicity guarantee, and the RPC makes confusing the two impossible: an
+        unspecified atomicity is refused with a message naming both, because
+        the two differ only when something fails. Fifty inserts singly took
+        46&ndash;49&nbsp;ms and the same fifty batched took 4.9&ndash;5.1&nbsp;ms
+        across five runs &mdash; 9.4&times; to 10.0&times;, measured through the
+        Rust wire rather than through a client.
       </li>
     </ol>
 
-    <h2>What the plan does not do</h2>
+    <h2>The next plan</h2>
 
     <p>
-      It does not close the whole table. Window functions, CTEs, views, arrays,
+      Six again, and four of them are debts the first six created: a capability
+      that stops at the Rust edge, a response with no ceiling, a token only one
+      code path can see, and a demo that shows none of it.
+    </p>
+
+    <ol>
+      <li>
+        <strong><code>through</code> and nested loading on the wire.</strong>
+        The third time a capability has existed in Rust while the three clients
+        did without it. First for that reason rather than for its size.
+      </li>
+      <li>
+        <strong>A ceiling on <code>RETURNING</code>.</strong> Stated as a
+        hypothesis until it is reproduced: nothing bounds how many rows a
+        predicate write hands back, and a large enough match may commit and then
+        fail to deliver &mdash; a known outcome turned into an unknown one.
+      </li>
+      <li>
+        <strong>Keyset paging over a join or a chain.</strong> Single-table
+        reads got a cursor; a join still has an offset. What a join&rsquo;s
+        cursor even <em>is</em> needs a design note first, because the driving
+        side&rsquo;s key is not unique after a fan-out.
+      </li>
+      <li>
+        <strong>The stable reason token on the lone path.</strong> All three
+        clients drop binary trailers, so the token reaches a caller only when
+        the failure was batched.
+      </li>
+      <li>
+        <strong>The demo shows the last three features.</strong> Predicate
+        writes, batch and relationships past one level are all invisible on the
+        page that exists to show the surface.
+      </li>
+      <li>
+        <strong>Measure batching from a client.</strong> The 9.4&times; above
+        did not go through one, and the clients do per-request work that
+        batching does not save.
+      </li>
+    </ol>
+
+    <h2>What neither plan does</h2>
+
+    <p>
+      Neither closes the whole table. Window functions, CTEs, views, arrays,
       full-text search and set operations are all real absences and none is in
-      the six: they are planner work of a different size, and doing any of them
-      before predicate writes and wire relations would be building the
-      interesting thing instead of the needed one.
+      either six: they are planner work of a different size, and doing any of
+      them before predicate writes and wire relations would have been building
+      the interesting thing instead of the needed one. The second six has a
+      narrower version of the same argument &mdash; every item in it is an edge
+      the first six left unfinished, and finishing what shipped beats starting
+      what has not.
     </p>
     <p>
       It also leaves out validations and lifecycle hooks, which are a design
