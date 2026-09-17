@@ -31,22 +31,27 @@ package.
 
 # What this cannot do, and why there is no string matching here
 
-The mapping from kernel error to status code is many-to-one, and nothing else
-travels with it. `UNAVAILABLE` alone covers a fenced writer, a replica too
-stale, no replica available and a failed object-store call; `ALREADY_EXISTS`
-covers both a duplicate primary key and a unique-index violation; `NOT_FOUND`
-covers both an unknown table and a missing row. Those distinctions exist in
-`KernelError` and are lost on the wire.
+The mapping from kernel error to status code is many-to-one. `UNAVAILABLE`
+alone covers a fenced writer, a replica too stale, no replica available and a
+failed object-store call; `ALREADY_EXISTS` covers both a duplicate primary key
+and a unique-index violation; `NOT_FOUND` covers both an unknown table and a
+missing row.
 
 They could be recovered by matching on the message text. This package does not,
 because a message is not an interface: it is prose, it is not tested for
 stability anywhere in the server, and a client that branches on it breaks
-silently when somebody improves the wording. Where the distinction is needed it
-is reported as a protocol gap instead — see `PROTOCOL-FINDINGS.md`.
+silently when somebody improves the wording.
 
-The one exception is structural rather than textual: a write refused because
-this node is not the leader carries the leader's address in a `slate-leader`
-trailer, which is metadata rather than prose, and `NotLeader` reads it.
+Two structural discriminators travel alongside the code instead, and both are
+metadata rather than prose. A write refused because this node is not the leader
+carries the leader's address in a `slate-leader` trailer, and `NotLeader` reads
+it. And **every** status carries a `google.rpc.ErrorInfo` in
+`grpc-status-details-bin` whose `reason` is a stable token per kernel variant —
+`UNIQUE_VIOLATION`, `REPLICA_TOO_STALE`, `PREDICATE_WRITE_TOO_LARGE` — which
+`SlateError.reason` exposes on every failure. The server's own guarantee is
+that no two kernel errors behind one status code share a token, so the token
+undoes the collapse the code performs. `_details.py` decodes it, and explains
+at length why it does not import `google.rpc` to do so.
 """
 
 from __future__ import annotations
@@ -54,6 +59,8 @@ from __future__ import annotations
 from typing import Final
 
 import grpc
+
+from ._details import reason_of
 
 __all__ = [
     "AlreadyExists",
@@ -79,6 +86,10 @@ __all__ = [
 #: `crates/slate-server/src/status.rs::LEADER_KEY`.
 LEADER_KEY: Final = "slate-leader"
 
+#: Where gRPC puts a status's `google.rpc.Status`. Named by the gRPC spec
+#: rather than by this server, and binary by the `-bin` convention.
+_DETAILS_KEY: Final = "grpc-status-details-bin"
+
 
 class SlateError(Exception):
     """Anything the head node refused.
@@ -102,14 +113,17 @@ class SlateError(Exception):
         self.trailers = trailers or {}
         #: The server's stable token for this failure, or `""`.
         #:
-        #: Set for a failure that came back inside a **batch**, where the
-        #: server puts it in the message body. Empty for every other failure,
-        #: and that asymmetry is real rather than an oversight: a lone RPC
-        #: carries its token in `grpc-status-details-bin`, a protobuf blob this
-        #: client does not decode. So a batched failure currently says more
-        #: about itself than the same failure sent alone. Recorded here rather
-        #: than hidden, because the fix is to decode the blob on the lone path
-        #: and nobody has needed it enough to do that yet.
+        #: Populated on **every** failure the head node reports, batched or
+        #: not. The two paths carry it differently and that is the server's
+        #: doing rather than this client's: a batched failure has it in the
+        #: message body, because a batch's per-operation errors are data in a
+        #: successful response, and a lone failure has it in
+        #: `grpc-status-details-bin`. `_details.reason_of` decodes the latter.
+        #:
+        #: `""` when the server sent no `ErrorInfo`, when the blob did not
+        #: parse, and for a failure this client raised without ever reaching
+        #: the server. Compare it against the tokens in `status.rs::reason_for`
+        #: rather than branching on `str(error)`.
         self.reason = reason
 
     def __str__(self) -> str:
@@ -161,8 +175,14 @@ class NotLeader(Unavailable):
         *,
         code: grpc.StatusCode,
         trailers: dict[str, str] | None = None,
+        reason: str = "",
     ) -> None:
-        super().__init__(message, code=code, trailers=trailers)
+        # `reason` is accepted and forwarded rather than dropped: this is the
+        # one subclass with its own `__init__`, so a keyword added to the base
+        # is silently unsupported here until something passes it. Something now
+        # does, on every failure, and the suite caught it as a TypeError on a
+        # redirect rather than as a missing token.
+        super().__init__(message, code=code, trailers=trailers, reason=reason)
         self.leader: str | None = self.trailers.get(LEADER_KEY)
 
 
@@ -279,9 +299,14 @@ _BY_CODE: Final[dict[grpc.StatusCode, type[SlateError]]] = {
 def _trailers(error: grpc.RpcError) -> dict[str, str]:
     """The call's trailing metadata, as a dict of the text-valued entries.
 
-    Binary metadata (a `-bin` key) is dropped rather than decoded: nothing the
-    head node sends is binary, and a `bytes` hiding in a `dict[str, str]` is
-    the kind of thing that only fails once it reaches a log line.
+    Binary metadata (a `-bin` key) is dropped rather than decoded: a `bytes`
+    hiding in a `dict[str, str]` is the kind of thing that only fails once it
+    reaches a log line.
+
+    The head node does send one binary entry — `grpc-status-details-bin`, the
+    rich-error blob. It is read by `_reason`, which goes to the metadata
+    directly rather than through this, precisely so that this can keep
+    promising `str` values.
     """
     out: dict[str, str] = {}
     # `trailing_metadata` exists on a `Call`, and every `RpcError` grpc raises
@@ -340,10 +365,36 @@ def from_rpc_error(error: grpc.RpcError) -> SlateError:
     trailers = _trailers(error)
 
     kind: type[SlateError] = _BY_CODE.get(code, InternalError)
-    # The one structural refinement available. A redirect is an UNAVAILABLE
-    # that names a different node, and telling it apart from "storage is down"
-    # is the difference between retrying elsewhere and retrying here.
+    # A redirect is an UNAVAILABLE that names a different node, and telling it
+    # apart from "storage is down" is the difference between retrying elsewhere
+    # and retrying here. Left as a trailer check rather than moved onto the
+    # reason token below, though NOT_LEADER is one: `slate-leader` predates the
+    # details blob, a client that can read the trailer but not the blob still
+    # follows the redirect, and a working discriminator is not worth churning.
     if kind is Unavailable and LEADER_KEY in trailers:
         kind = NotLeader
 
-    return kind(message or code.name, code=code, trailers=trailers)
+    return kind(
+        message or code.name, code=code, trailers=trailers, reason=_reason(error)
+    )
+
+
+def _reason(error: grpc.RpcError) -> str:
+    """The stable token in the call's `grpc-status-details-bin`, or `""`.
+
+    Goes to the trailing metadata directly because `_trailers` drops binary
+    entries by design, and guards the same way and for the same reason: a
+    client that raised while building an error object would hide the server's
+    failure behind its own.
+    """
+    getter = getattr(error, "trailing_metadata", None)
+    if getter is None:
+        return ""
+    try:
+        metadata = getter()
+    except Exception:  # pragma: no cover - defensive, as in `_trailers`
+        return ""
+    for entry in metadata or ():
+        if entry[0] == _DETAILS_KEY and isinstance(entry[1], bytes):
+            return reason_of(entry[1])
+    return ""

@@ -127,7 +127,7 @@ func (s *server) handle(fn handler) http.HandlerFunc {
 			// fault and says so rather than borrowing a database kind.
 			var e *slate.Error
 			if errors.As(err, &e) {
-				writeError(w, http.StatusOK, kindName(e.Kind), e.Message)
+				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason)
 				return
 			}
 			writeError(w, http.StatusBadRequest, "adapter", err.Error())
@@ -178,9 +178,30 @@ func writeJSON(w http.ResponseWriter, body any) {
 	_ = encoder.Encode(body)
 }
 
+// writeError reports a failure the adapter itself raised.
+//
+// No reason: it never reached the server, so there is no token to report, and
+// reporting an empty one would be a claim about a classification the server
+// never made.
 func writeError(w http.ResponseWriter, status int, kind, message string) {
 	w.WriteHeader(status)
 	writeJSON(w, map[string]any{
 		"error": map[string]string{"kind": kind, "message": message},
+	})
+}
+
+// writeSlateError reports a failure the head node classified.
+//
+// reason is always present, empty string included, because whether the server
+// sent a token is itself part of what the three SDKs must agree on: a client
+// that silently stopped decoding the details blob would otherwise report the
+// same body as one that decoded it and found nothing. It is the stronger half
+// of the pair — kind is this adapter's word for a status code, the token is the
+// server's own and is finer than the code — so a client decoding the blob
+// differently from the other two disagrees here rather than in production.
+func writeSlateError(w http.ResponseWriter, kind, message, reason string) {
+	w.WriteHeader(http.StatusOK)
+	writeJSON(w, map[string]any{
+		"error": map[string]string{"kind": kind, "message": message, "reason": reason},
 	})
 }

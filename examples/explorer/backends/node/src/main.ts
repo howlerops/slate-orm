@@ -796,7 +796,19 @@ async function main(): Promise<void> {
           // A slate error keeps its kind; the kinds are spelled the same in all
           // three adapters so the conformance runner compares them.
           send(response, 200, {
-            error: { kind: kindName(error), message: error.message.replace(/^[a-z-]+: /, "") },
+            // `reason` rides along with `kind` and is the stronger of the
+            // two: a kind is this adapter's word for a status code, while the
+            // token is the server's own and is finer than the code. Always
+            // present, empty string included, because whether the server sent
+            // a token is itself part of what the three SDKs must agree on — a
+            // client that silently stopped decoding the details blob would
+            // otherwise report the same body as one that decoded it and found
+            // nothing.
+            error: {
+              kind: kindName(error),
+              message: error.message.replace(/^[a-z-]+: /, ""),
+              reason: error.reason,
+            },
           });
           return;
         }

@@ -1,5 +1,7 @@
 import { status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
 
+import { DETAILS_KEY, reasonOf } from "./details.js";
+
 /** The trailer a redirect carries, naming the node to try instead. */
 export const LEADER_KEY = "slate-leader";
 
@@ -66,12 +68,20 @@ export class SlateError extends Error {
   /**
    * The server's stable token for this failure, or `""`.
    *
-   * Set for a failure that came back inside a **batch**, where the server puts
-   * it in the message body. Empty for every other failure, and the asymmetry
-   * is real rather than an oversight: a lone call carries its token in
-   * `grpc-status-details-bin`, a protobuf blob this client does not decode —
-   * see the `trailers` comment, which drops binary entries. So a batched
-   * failure currently says more about itself than the same failure alone.
+   * Populated on **every** failure the head node reports, batched or not. The
+   * two paths carry it differently, which is the server's doing rather than
+   * this client's: a batched failure has it in the message body, because a
+   * batch's per-operation errors are data inside a successful response, and a
+   * lone failure has it in `grpc-status-details-bin` as a `google.rpc.ErrorInfo`.
+   *
+   * The tokens are one per kernel variant — `UNIQUE_VIOLATION`,
+   * `REPLICA_TOO_STALE`, `PREDICATE_WRITE_TOO_LARGE` — and the server
+   * guarantees no two errors behind one status code share one, which is what
+   * makes this usable where `code` is not. Switch on it rather than on
+   * `message`, which is prose and carries no stability promise.
+   *
+   * `""` when the server sent no `ErrorInfo`, and for a failure raised without
+   * reaching the server.
    */
   readonly reason: string;
 
@@ -133,19 +143,46 @@ export function fromServiceError(error: ServiceError): SlateError {
   const trailers: Record<string, string> = {};
   const metadata = error.metadata?.getMap?.() ?? {};
   for (const [key, value] of Object.entries(metadata)) {
-    // Binary entries are dropped rather than decoded: nothing this server
-    // sends is binary, and a Buffer hiding in a Record<string, string> only
-    // fails once it reaches a log line.
+    // Binary entries are dropped rather than decoded: a Buffer hiding in a
+    // Record<string, string> only fails once it reaches a log line. The server
+    // does send one, `grpc-status-details-bin`, and `reason` below carries what
+    // this client reads out of it, so keeping this `string`-valued loses
+    // nothing.
     if (key.endsWith("-bin")) continue;
     if (typeof value === "string") trailers[key] = value;
   }
 
   let kind = BY_CODE[error.code] ?? "internal";
   let leader: string | undefined;
-  // The one structural refinement available.
+  // Left as a trailer check rather than moved onto the reason token below,
+  // though NOT_LEADER is one: `slate-leader` predates the details blob, a
+  // client that reads the trailer but not the blob still follows the redirect,
+  // and a working discriminator is not worth churning.
   if (kind === "unavailable" && trailers[LEADER_KEY]) {
     kind = "not-leader";
     leader = trailers[LEADER_KEY];
   }
-  return new SlateError(kind, error.details || error.message, error.code, trailers, leader);
+  return new SlateError(
+    kind,
+    error.details || error.message,
+    error.code,
+    trailers,
+    leader,
+    reasonFromMetadata(error),
+  );
+}
+
+/**
+ * The stable token in the call's `grpc-status-details-bin`, or `""`.
+ *
+ * Reaches for the binary entry directly because the trailer map above drops
+ * binary by design. `getMap` coerces, so this uses `get`, which returns the
+ * `Buffer` for a `-bin` key untouched.
+ */
+function reasonFromMetadata(error: ServiceError): string {
+  const values = error.metadata?.get?.(DETAILS_KEY) ?? [];
+  for (const value of values) {
+    if (typeof value !== "string") return reasonOf(value);
+  }
+  return "";
 }

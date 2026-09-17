@@ -360,9 +360,14 @@
         side&rsquo;s key is not unique after a fan-out.
       </li>
       <li>
-        <strong>The stable reason token on the lone path.</strong> All three
-        clients drop binary trailers, so the token reaches a caller only when
-        the failure was batched.
+        <strong>The stable reason token on the lone path. &mdash; done.</strong>
+        All three clients dropped binary trailers, so the token reached a caller
+        only when the failure was batched. It reaches one now on every failure,
+        which is what lets a caller tell a predicate write refused for size
+        apart from a join build, a sort or a group count &mdash; four different
+        problems behind one status code, with four different fixes. Each client
+        decodes the same blob captured off a running head node, and the
+        three-SDK runner compares the token on every refusal it already tested.
       </li>
       <li>
         <strong>The demo shows the last three features.</strong> Predicate

@@ -700,9 +700,22 @@ def handler_for(adapter: Adapter):
             except SlateError as error:
                 # A slate error keeps its kind; the kinds are spelled the same
                 # in all three adapters so the conformance runner compares them.
-                self._send(200, {"error": {"kind": kind_name(error), "message": str(error.message)}})
+                #
+                # `reason` rides along for the same purpose and is the stronger
+                # of the two: a kind is this adapter's word for a status code,
+                # while the token is the server's own and is finer than the
+                # code. A client that decodes the details blob differently from
+                # the other two disagrees here rather than in production.
+                self._send(200, {"error": {
+                    "kind": kind_name(error),
+                    "message": str(error.message),
+                    "reason": error.reason,
+                }})
                 return
             except Exception as error:  # noqa: BLE001 - the adapter's own fault
+                # No `reason`: this one never reached the server, so there is no
+                # token to report and an empty one would be a claim about a
+                # failure the server never saw.
                 self._send(400, {"error": {"kind": "adapter", "message": str(error)}})
                 return
             self._send(200, result)

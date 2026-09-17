@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -104,18 +105,29 @@ type Error struct {
 	Leader string
 	// Trailers are the call's text-valued trailing metadata.
 	//
-	// Binary entries are dropped rather than decoded: nothing this server
-	// sends is binary, and a []byte hiding in a map[string]string is the kind
-	// of thing that only fails once it reaches a log line.
+	// Binary entries are dropped rather than decoded: a []byte hiding in a
+	// map[string]string is the kind of thing that only fails once it reaches a
+	// log line. The server does send one — grpc-status-details-bin, the
+	// rich-error blob — and Reason below carries what this client reads out of
+	// it, so nothing is lost by keeping this map[string]string.
 	Trailers map[string]string
 	// Reason is the server's stable token for this failure, or "".
 	//
-	// Set for a failure that came back inside a batch, where the server puts
-	// it in the message body. Empty for every other failure, and the asymmetry
-	// is real rather than an oversight: a lone call carries its token in
-	// grpc-status-details-bin, a protobuf blob this client does not decode —
-	// see the Trailers comment above, which drops binary entries. So a batched
-	// failure currently says more about itself than the same failure alone.
+	// Populated on every failure the head node reports, batched or not. The
+	// two paths carry it differently, which is the server's doing rather than
+	// this client's: a batched failure has it in the message body, because a
+	// batch's per-operation errors are data inside a successful response, and
+	// a lone failure has it in the status details as a google.rpc.ErrorInfo.
+	//
+	// The tokens are one per kernel variant — UNIQUE_VIOLATION,
+	// REPLICA_TOO_STALE, PREDICATE_WRITE_TOO_LARGE — and the server guarantees
+	// that no two errors behind one status code share one, which is what makes
+	// this usable where Code is not: Code is many-to-one and this is not.
+	// Switch on it rather than on Message, which is prose and is not a
+	// stability promise.
+	//
+	// "" when the server sent no ErrorInfo and for a failure raised without
+	// reaching the server.
 	Reason string
 }
 
@@ -180,8 +192,29 @@ func fromRPC(err error) error {
 	if !known {
 		kind = KindInternal
 	}
-	out := &Error{Kind: kind, Message: st.Message(), Code: st.Code()}
+	out := &Error{Kind: kind, Message: st.Message(), Code: st.Code(), Reason: reasonOf(st)}
 	return out
+}
+
+// reasonOf is the stable token in a status's details, or "".
+//
+// st.Details decodes each packed Any against the global protobuf registry, so
+// this works only because errdetails is imported: without that import the
+// ErrorInfo arrives as an unresolved type and the token is silently lost. That
+// is the failure this whole function exists to fix, so the import is load
+// bearing rather than incidental.
+//
+// Details returns an error in place of a message it could not unmarshal. Those
+// are skipped rather than surfaced: a client that failed to report why a call
+// failed because it could not parse an optional annotation would be replacing
+// the server's error with its own.
+func reasonOf(st *status.Status) string {
+	for _, detail := range st.Details() {
+		if info, ok := detail.(*errdetails.ErrorInfo); ok {
+			return info.GetReason()
+		}
+	}
+	return ""
 }
 
 // fromBatchError is the *Error a batch's per-operation failure becomes.

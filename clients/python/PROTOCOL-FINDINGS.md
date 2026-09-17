@@ -393,6 +393,22 @@ matching on prose. `AlreadyExists` splits into "this id is taken" and "this
 Nothing you have written breaks — details are additive — so this is a new test
 rather than a changed one.
 
+**Done, in all three clients.** `SlateError.reason` (`Error.Reason` in Go,
+`error.reason` in TypeScript) now carries the token on a lone failure as well
+as a batched one; before this it was populated only inside a batch, and the
+comment on the field said so. The three decode the same captured blob in their
+own suites, and the conformance runner compares the token on every refusal it
+already had, so a client that decodes it differently from the other two fails
+there rather than in somebody's logs.
+
+The `metadata` map is deliberately still not surfaced. Its keys vary per
+variant — `index` and `table` on a unique violation, `limit` on a predicate
+write refused for size — and exposing it means promising something about keys
+that differ from error to error. The token alone is what lets a caller branch
+below a status code, and it is what three clients can agree on. The split of
+`AlreadyExists` and `Unavailable` described above therefore remains available
+rather than built: it needs the map, not the token.
+
 ---
 
 ## 7. A primary key of the wrong arity reads as "not found" rather than as a bad request — FIXED
