@@ -476,6 +476,102 @@ function relatedFromWire(response: unknown, keys: Value[]): Value[][][] {
   return keys.map((key) => byKey.get(valueKey(key)) ?? []);
 }
 
+/** One level of a relationship path. */
+export interface Step extends Relation {
+  /**
+   * The table this step's rows come back as — `on` for `"children"` and the
+   * key's parent for `"parents"`.
+   *
+   * Per step rather than per call because a path returns a *different* table
+   * at every level, which is also why the schema claim is sent per step.
+   */
+  readonly table: string;
+}
+
+/**
+ * A row of one level, with the rows of the next level below it.
+ *
+ * `related` is empty on the last level of a path and on any row that related
+ * to nothing. The two are the same to a caller walking the tree, and telling
+ * them apart would mean promising something about the difference between "no
+ * children" and "no more levels".
+ */
+export interface RelatedNode {
+  readonly row: Value[];
+  readonly related: RelatedNode[];
+}
+
+interface WireLevel {
+  keyOrdinal?: number;
+  groups?: { key?: unknown; rows?: unknown[] }[];
+}
+
+/**
+ * Rebuild a path's tree from the flat levels the server sends.
+ *
+ * The server sends one level per step, each grouped by the value that related
+ * its rows, plus the ordinal in the *previous* level's rows where that value
+ * is found. So the walk is: take a row from the level above, read the value at
+ * the next level's `keyOrdinal`, look it up. No catalog and no schema
+ * knowledge, which is why all three SDKs do this the same way.
+ *
+ * The rows are kept in their wire form while the keys are read off them, and
+ * decoded on the way out: `keyOrdinal` indexes the table's columns, and a
+ * decoded row is the same shape, but the *key* has to be compared the way the
+ * server grouped it rather than the way JavaScript compares values.
+ */
+function pathFromWire(response: unknown, keys: Value[]): RelatedNode[][] {
+  const levels = ((response as { levels?: WireLevel[] }).levels ?? []).map(
+    (level) => {
+      const byKey = new Map<string, unknown[]>();
+      for (const group of level.groups ?? []) {
+        byKey.set(valueKey(valueFromWire(group.key)), group.rows ?? []);
+      }
+      return { keyOrdinal: level.keyOrdinal ?? 0, byKey };
+    },
+  );
+
+  const below = (level: number, key: string): RelatedNode[] => {
+    if (level >= levels.length) return [];
+    const rows = levels[level]!.byKey.get(key) ?? [];
+    return rows.map((row) => {
+      let related: RelatedNode[] = [];
+      if (level + 1 < levels.length) {
+        const ordinal = levels[level + 1]!.keyOrdinal;
+        const values = (row as { values?: unknown[] }).values ?? [];
+        if (ordinal >= values.length) {
+          throw new Error(
+            "the server named a key ordinal past the end of a row; " +
+              "the client and the catalog disagree about this table",
+          );
+        }
+        related = below(level + 1, valueKey(valueFromWire(values[ordinal])));
+      }
+      return { row: rowFromWire(row), related };
+    });
+  };
+
+  return keys.map((key) => below(0, valueKey(key)));
+}
+
+/**
+ * The rows `depth` levels down, in the order the levels give them.
+ *
+ * By depth rather than by "nodes with no children", which is how this was
+ * first written in the Python client and which is wrong: a *middle* row that
+ * related to nothing has no children either, so that version handed back a
+ * shelf where a copy was asked for. Caught by a fixture with a deliberately
+ * empty middle row; without one the two readings agree on every input.
+ */
+function leavesOf(tree: RelatedNode[], depth: number): Value[][] {
+  const out: Value[][] = [];
+  for (const node of tree) {
+    if (depth === 0) out.push(node.row);
+    else out.push(...leavesOf(node.related, depth - 1));
+  }
+  return out;
+}
+
 /**
  * One page of a keyset-paged read, and where to resume.
  *
@@ -750,6 +846,90 @@ export class Session {
       this.#observeServedBy((response as { servedBy?: unknown }).servedBy);
     }
     return relatedFromWire(response, keys);
+  }
+
+  /**
+   * Walk a path of relationships for many parents, in one request.
+   *
+   * Returns an array the same length as `keys`: entry `i` is the first level's
+   * rows for `keys[i]`, each carrying its own next level, and so on down the
+   * path. A key that related to nothing gets `[]`.
+   *
+   * ```ts
+   * const trees = await session.relatedPath(
+   *   [
+   *     { on: "shelves", through: "shelf_library", table: "shelves" },
+   *     { on: "copies", through: "copy_shelf", table: "copies" },
+   *   ],
+   *   libraries.map((l) => l[0]!),
+   * );
+   * ```
+   *
+   * **One read per level, whatever the number of parents.** Each step's key
+   * set is the previous step's rows, deduplicated by the server, so a hundred
+   * libraries and a thousand shelves are still two reads. Resolving the path
+   * from the client — one `related` call per level, regrouped by hand — is the
+   * same shape as the N+1 this layer exists to prevent, one level up.
+   *
+   * The depth is bounded by the server's `max_relation_depth`, because one
+   * step is one read and the depth arrives in the request.
+   */
+  relatedPath(path: Step[], keys: Value[]): Promise<RelatedNode[][]> {
+    return this.relatedPathIn(undefined, path, keys);
+  }
+
+  /**
+   * A path's *far* rows per parent, with the levels between dropped.
+   *
+   * The many-to-many: the join rows exist only to connect the two ends and the
+   * caller has no use for them. Exactly `relatedPath` with the intermediate
+   * levels flattened away, and one request either way — which is why it is
+   * written on top of it rather than beside it, as `slate-orm`'s own
+   * `load_related_through` is written on top of `load_nested`. Two regroupings
+   * of one shape is two places for an off-by-one to live.
+   *
+   * Duplicates are kept and are not an error: two join rows pointing at one
+   * far row give it twice, because the caller is the one who knows whether
+   * that means anything.
+   */
+  async relatedThrough(path: Step[], keys: Value[]): Promise<Value[][][]> {
+    const trees = await this.relatedPath(path, keys);
+    return trees.map((tree) => leavesOf(tree, path.length - 1));
+  }
+
+  /** `relatedPath`, inside a transaction. */
+  async relatedPathIn(
+    transaction: string | undefined,
+    path: Step[],
+    keys: Value[],
+  ): Promise<RelatedNode[][]> {
+    if (path.length === 0) {
+      // Refused here rather than at the server: a path of no steps has no
+      // answer shape, and the round trip would only confirm it.
+      throw new SlateError(
+        "invalid-request",
+        "a path needs at least one step; use `related` for one relationship",
+        // The same literal `relatedIn`'s sibling uses above: the status enum
+        // is not imported here, and `3` is INVALID_ARGUMENT.
+        3 as never,
+        {},
+      );
+    }
+    const request: Record<string, unknown> = {
+      path: path.map((step) => ({
+        relation: relationToWire(step),
+        schema: this.#client.claim(step.table),
+      })),
+      keys: keys.map(valueToWire),
+    };
+    if (transaction !== undefined) request["transaction"] = transaction;
+    else request["freshness"] = this.#freshness();
+
+    const response = await this.#client.call<unknown>("Related", request);
+    if (transaction === undefined) {
+      this.#observeServedBy((response as { servedBy?: unknown }).servedBy);
+    }
+    return pathFromWire(response, keys);
   }
 
   /**

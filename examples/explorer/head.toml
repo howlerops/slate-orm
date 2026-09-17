@@ -76,17 +76,45 @@ name = "sale_book"
 parent = "books"
 columns = ["book_id"]
 
+# A table declared after `sales`' key on purpose: in TOML a
+# `[[tables.foreign_keys]]` attaches to the most recent `[[tables]]`, so
+# putting this above `sale_book` silently moved that key onto `editions` and
+# left `sales` with none. The conformance runner caught it on the next run —
+# six cases that had nothing to do with editions all started refusing.
+[[tables]]
+name = "editions"
+id = 4
+columns = [
+  { name = "id",      type = "u64" },
+  { name = "book_id", type = "u64" },
+  { name = "format",  type = "str" },
+]
+primary_key = ["id"]
+
+# The demo's *second* foreign key, and so the reason it can demonstrate a
+# relationship **path** rather than only a relationship.
+#
+# `sales -> books -> editions` is two steps in opposite directions: up to the
+# book a sale sold, then down to that book's editions. One request, two reads,
+# and the second read's keys are the first read's rows — which is the whole
+# point and is what a client looping per row would get wrong by being slower
+# rather than by being different.
+[[tables.foreign_keys]]
+name = "edition_book"
+parent = "books"
+columns = ["book_id"]
+
 # `app` can do everything, including EXPLAIN.
 [[security.grants]]
 role = "app"
-tables = ["authors", "books", "sales"]
+tables = ["authors", "books", "sales", "editions"]
 actions = ["everything"]
 
 # `reader` can read and nothing else — notably not EXPLAIN, which is its own
 # action precisely because a plan is costed against rows a policy may hide.
 [[security.grants]]
 role = "reader"
-tables = ["authors", "books", "sales"]
+tables = ["authors", "books", "sales", "editions"]
 actions = ["read"]
 
 # `stranger` holds a role with no grant at all. Every table is denied, and the

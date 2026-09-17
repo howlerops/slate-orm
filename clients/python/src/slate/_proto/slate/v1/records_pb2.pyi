@@ -3718,6 +3718,42 @@ class Relation(_message.Message):
 Global___Relation: _TypeAlias = Relation  # noqa: Y015
 
 @_typing.final
+class RelatedStep(_message.Message):
+    """One level of a path: a relationship, and the schema claim for the table its
+    rows come back from.
+
+    The schema claim is per step rather than per request because each step
+    returns a *different* table, and one `SchemaCheck` against one of them would
+    leave the rest unchecked while looking like it had checked them.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    RELATION_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def relation(self) -> Global___Relation: ...
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck:
+        """See `SchemaCheck`, against the table this step's rows come back from —
+        the child for `CHILDREN` and the parent for `PARENTS`.
+        """
+
+    def __init__(
+        self,
+        *,
+        relation: Global___Relation | None = ...,
+        schema: Global___SchemaCheck | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["relation", b"relation", "schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["relation", b"relation", "schema", b"schema"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___RelatedStep: _TypeAlias = RelatedStep  # noqa: Y015
+
+@_typing.final
 class RelatedRequest(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -3726,9 +3762,19 @@ class RelatedRequest(_message.Message):
     KEYS_FIELD_NUMBER: _builtins.int
     FRESHNESS_FIELD_NUMBER: _builtins.int
     SCHEMA_FIELD_NUMBER: _builtins.int
+    PATH_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     @_builtins.property
-    def relation(self) -> Global___Relation: ...
+    def relation(self) -> Global___Relation:
+        """One relationship. The original shape, and still the whole request for the
+        single-level case: `path` is what carries more than one.
+
+        Exactly one of `relation` and `path` may be set. Both set is refused
+        rather than resolved by precedence — a request that says two different
+        things about what to read is a client bug, and picking one silently is how
+        it reaches production.
+        """
+
     @_builtins.property
     def keys(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
         """The relating value of each parent row, in the caller's own order.
@@ -3746,7 +3792,29 @@ class RelatedRequest(_message.Message):
     @_builtins.property
     def schema(self) -> Global___SchemaCheck:
         """See `SchemaCheck`, against the table the rows come back from — which is
-        the child for `CHILDREN` and the parent for `PARENTS`.
+        the child for `CHILDREN` and the parent for `PARENTS`. Applies to
+        `relation`; a `path` carries a claim per step instead.
+        """
+
+    @_builtins.property
+    def path(self) -> _containers.RepeatedCompositeFieldContainer[Global___RelatedStep]:
+        """A path of relationships, resolved level by level in one round trip.
+
+        `article → article_tags → tags` is two steps and two reads, not two round
+        trips and not one read per article. Each step's key set is the previous
+        step's rows' relating values, deduplicated, so the read count is the
+        *depth* and never the row count — which is the whole reason this is on the
+        request rather than left to the caller to loop.
+
+        Each step must compose with the one before it: step `i + 1`'s source table
+        has to be the table step `i`'s rows came from, or the path is refused by
+        name. Nothing else would be readable — the keys handed to a step are
+        columns of the previous step's rows.
+
+        **Bounded.** Unlike the Rust `load_nested`, whose depth is a type
+        parameter and therefore fixed at compile time, the depth here arrives in
+        the request. One step is one read, so an unbounded path is a client
+        choosing how many reads the server performs. See `max_relation_depth`.
         """
 
     def __init__(
@@ -3757,10 +3825,11 @@ class RelatedRequest(_message.Message):
         keys: _abc.Iterable[Global___Value] | None = ...,
         freshness: Global___Freshness | None = ...,
         schema: Global___SchemaCheck | None = ...,
+        path: _abc.Iterable[Global___RelatedStep] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "relation", b"relation", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "keys", b"keys", "relation", b"relation", "schema", b"schema", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["freshness", b"freshness", "keys", b"keys", "path", b"path", "relation", b"relation", "schema", b"schema", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -3803,31 +3872,90 @@ class RelatedResponse(_message.Message):
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
         def WhichOneof(self, oneof_group: _Never) -> None: ...
 
+    @_typing.final
+    class Level(_message.Message):
+        """One level of a path's answer.
+
+        Flat rather than nested: a `Level` holding `Level`s would make the message
+        recursive, and every client would need a recursive decoder to read a
+        structure whose depth the request already knows. A flat list with a
+        back-reference per level carries the same tree and is a loop in three
+        languages instead of a recursion in three languages.
+        """
+
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_ORDINAL_FIELD_NUMBER: _builtins.int
+        GROUPS_FIELD_NUMBER: _builtins.int
+        key_ordinal: _builtins.int
+        """Where this level's key is found in the *previous* level's rows.
+
+        The ordinal of the column whose value relates a row of level `i - 1` to
+        its group in level `i`. This is what lets a client rebuild the tree
+        without holding the catalog: take a row from the level above, read the
+        value at this ordinal, look it up in `groups`.
+
+        Zero and meaningless on the first level, whose keys are the request's
+        own and which therefore has no level above it to point into.
+        """
+        @_builtins.property
+        def groups(self) -> _containers.RepeatedCompositeFieldContainer[Global___RelatedResponse.Group]:
+            """As `groups` above, for this level."""
+
+        def __init__(
+            self,
+            *,
+            key_ordinal: _builtins.int = ...,
+            groups: _abc.Iterable[Global___RelatedResponse.Group] | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "key_ordinal", b"key_ordinal"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
+
     GROUPS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
     WARNINGS_FIELD_NUMBER: _builtins.int
+    LEVELS_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def groups(self) -> _containers.RepeatedCompositeFieldContainer[Global___RelatedResponse.Group]:
         """One entry per *distinct* key that matched something. A key that matched
         nothing is absent rather than present-and-empty: the caller is mapping its
         own parents onto this, and "no group" and "empty group" mean the same
         thing to that loop.
+
+        Set for a `relation` request. Empty for a `path` request, which puts every
+        level in `levels` instead — including the first. The response shape
+        mirrors the request shape rather than filling both, so that a one-step
+        path does not ship its rows twice.
         """
 
     @_builtins.property
     def served_by(self) -> Global___ServedBy: ...
     @_builtins.property
     def warnings(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]: ...
+    @_builtins.property
+    def levels(self) -> _containers.RepeatedCompositeFieldContainer[Global___RelatedResponse.Level]:
+        """One entry per step of the request's `path`, in the same order. Empty for a
+        `relation` request.
+
+        A level whose groups are all empty ends the path early — there were no
+        keys left to resolve — and the levels after it are still present and still
+        empty, so that `levels` and `path` stay index-for-index comparable.
+        """
+
     def __init__(
         self,
         *,
         groups: _abc.Iterable[Global___RelatedResponse.Group] | None = ...,
         served_by: Global___ServedBy | None = ...,
         warnings: _abc.Iterable[_builtins.str] | None = ...,
+        levels: _abc.Iterable[Global___RelatedResponse.Level] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["groups", b"groups", "levels", b"levels", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

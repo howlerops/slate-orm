@@ -55,4 +55,15 @@ SALES = Table(
     primary_key=["id"],
 )
 
-BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES)}
+# The far end of the demo's relationship *path*: `sales -> books -> editions`.
+EDITIONS = Table(
+    "editions",
+    [
+        Column("id", U64),
+        Column("book_id", U64),
+        Column("format", STR),
+    ],
+    primary_key=["id"],
+)
+
+BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS)}

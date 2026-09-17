@@ -110,4 +110,17 @@ SHELVES = Table(
     primary_key=["tenant_id", "id"],
 )
 
-ALL = (DOCS, USERS, AUTHORS, BOOKS, SALES, SECRETS, LIBRARIES, SHELVES)
+# A second foreign key, one level further down, so a relationship *path* has
+# somewhere to go: `libraries → shelves → copies`.
+COPIES = Table(
+    "copies",
+    [
+        Column("tenant_id", U64),
+        Column("id", U64),
+        Column("shelf_id", U64),
+        Column("barcode", STR),
+    ],
+    primary_key=["tenant_id", "id"],
+)
+
+ALL = (DOCS, USERS, AUTHORS, BOOKS, SALES, SECRETS, LIBRARIES, SHELVES, COPIES)

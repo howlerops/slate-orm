@@ -87,7 +87,7 @@ from .query import (
     asc,
     desc,
 )
-from .rows import Group, JoinedRow, Row
+from .rows import Group, JoinedRow, RelatedNode, Row, Step
 from .scalar import (
     CalendarUnit,
     Metric,
@@ -171,7 +171,9 @@ __all__ = [
     "ReadToken",
     "ResourceLimit",
     "Retryable",
+    "RelatedNode",
     "Row",
+    "Step",
     "Page",
     "RowStream",
     "Scalar",

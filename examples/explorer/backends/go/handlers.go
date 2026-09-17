@@ -884,3 +884,80 @@ func book(id uint64, title string) []slate.Value {
 		slate.Int(1767225600), slate.Vector([]float32{0.5, 0.5, 0.5, 0.5}),
 	}
 }
+
+// path resolves a relationship path level by level in one request.
+//
+// `sales -> books -> editions`: up to the book a sale sold, then down to that
+// book's editions. Two steps in opposite directions, which is the case worth
+// comparing across three SDKs — a path that only ever went one way would agree
+// even with the two directions confused.
+//
+// The keys are `book_id` values read off sale rows, because that is where a
+// path starts: at the column of the caller's own rows that relates them to the
+// first step.
+//
+// Both shapes in one answer. `trees` keeps the middle level, which is
+// `load_nested`; `through` drops it, which is `load_related_through`. The
+// difference between them is one line in each SDK — "the rows at the bottom"
+// rather than "the rows with nothing below them" — and that line is worth
+// pinning in all three.
+func (s *server) path(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the path request: %w", err)
+	}
+
+	keys := make([][]slate.Value, 0, len(spec.Keys))
+	for _, raw := range spec.Keys {
+		value, err := decode(raw)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, []slate.Value{value})
+	}
+
+	steps := []slate.Step{
+		{Relation: slate.Relation{On: "sales", Through: "sale_book", Way: slate.Parents},
+			Table: "books"},
+		{Relation: slate.Relation{On: "editions", Through: "edition_book", Way: slate.Children},
+			Table: "editions"},
+	}
+
+	trees, err := session.RelatedPath(ctx, steps, keys...)
+	if err != nil {
+		return nil, err
+	}
+	through, err := session.RelatedThrough(ctx, steps, keys...)
+	if err != nil {
+		return nil, err
+	}
+
+	outTrees := make([][]map[string]any, 0, len(trees))
+	for _, tree := range trees {
+		nodes := make([]map[string]any, 0, len(tree))
+		for _, n := range tree {
+			related := make([][]tagged, 0, len(n.Related))
+			for _, leaf := range n.Related {
+				related = append(related, encodeRow(leaf.Row))
+			}
+			nodes = append(nodes, map[string]any{
+				"row":     encodeRow(n.Row),
+				"related": related,
+			})
+		}
+		outTrees = append(outTrees, nodes)
+	}
+
+	outThrough := make([][][]tagged, 0, len(through))
+	for _, rows := range through {
+		encoded := make([][]tagged, 0, len(rows))
+		for _, row := range rows {
+			encoded = append(encoded, encodeRow(row))
+		}
+		outThrough = append(outThrough, encoded)
+	}
+
+	return map[string]any{"trees": outTrees, "through": outThrough}, nil
+}

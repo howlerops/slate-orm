@@ -71,6 +71,7 @@ import {
   type Query,
   type Scalar,
   type Session,
+  type Step,
   type Value,
 } from "@slate-orm/client";
 
@@ -233,6 +234,46 @@ class Adapter {
     // A group per key the caller sent, in the caller's order, including the
     // empty ones — the shape all three clients promise.
     return { groups: groups.map((group) => group.map(encodeRow)) };
+  }
+
+  /**
+   * A relationship *path*, resolved level by level in one request.
+   *
+   * `sales -> books -> editions`: up to the book a sale sold, then down to
+   * that book's editions. Two steps in opposite directions, which is the case
+   * worth comparing across three SDKs — a path that only ever went one way
+   * would agree even with the two directions confused.
+   *
+   * The keys are `book_id` values read off sale rows, because that is where a
+   * path starts: at the column of the caller's own rows that relates them to
+   * the first step.
+   *
+   * Both shapes in one answer. `trees` keeps the middle level, which is
+   * `load_nested`; `through` drops it, which is `load_related_through`. The
+   * difference is one line in each SDK — "the rows at the bottom" rather than
+   * "the rows with nothing below them" — and that line is worth pinning in all
+   * three.
+   */
+  async path(
+    session: Session,
+    body: { keys?: Record<string, unknown>[] },
+  ): Promise<unknown> {
+    const keys = (body.keys ?? []).map(decode);
+    const steps: Step[] = [
+      { on: "sales", through: "sale_book", way: "parents", table: "books" },
+      { on: "editions", through: "edition_book", way: "children", table: "editions" },
+    ];
+    const trees = await session.relatedPath(steps, keys);
+    const through = await session.relatedThrough(steps, keys);
+    return {
+      trees: trees.map((tree) =>
+        tree.map((node) => ({
+          row: encodeRow(node.row),
+          related: node.related.map((leaf) => encodeRow(leaf.row)),
+        })),
+      ),
+      through: through.map((rows) => rows.map(encodeRow)),
+    };
   }
 
   /**
@@ -763,6 +804,7 @@ async function main(): Promise<void> {
     "/api/chain": (s, b) => adapter.chain(s, b),
     "/api/page": (s, b) => adapter.page(s, b),
     "/api/related": (s, b) => adapter.related(s, b),
+    "/api/path": (s, b) => adapter.path(s, b),
     "/api/batch": (s, b) => adapter.batch(s, b),
     "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),

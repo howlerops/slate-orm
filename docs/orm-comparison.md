@@ -412,7 +412,50 @@ Where an item rests on reasoning rather than a run, it says so. A hypothesis
 here is labelled a hypothesis, and the first step of that item is to make it
 fail or withdraw it.
 
-### N1 — `through` and nested loading on the wire
+### N1 — `through` and nested loading on the wire — **built**
+
+> **Done**, as the recommended shape: `repeated RelatedStep path` on the
+> request, and a flat `repeated Level levels` back. Three clients grew
+> `related_path` (the tree, keeping every level) and `related_through` (the far
+> rows, dropping the middles), and the conformance corpus grew three cases —
+> 83, and the three SDKs agree on all of them.
+>
+> **The response shape was the part worth designing, and the thing that made it
+> work is one number per level.** Each `Level` carries `key_ordinal`: where, in
+> the *previous* level's rows, this level's grouping key is found. That is what
+> lets a client rebuild the tree without holding the catalog — take a row from
+> the level above, read the value at that ordinal, look it up — and it is the
+> same three lines in Python, Go and TypeScript rather than three different
+> guesses about the schema.
+>
+> **A path needs a depth limit, and `load_nested` was right that it did not.**
+> That function's own documentation argued it needed none, because each level
+> is a type parameter and "a limit nobody can exceed is a limit nobody
+> maintains" — and then named the form that would need one: a list on the wire
+> whose depth a request chooses. This is that form. One step is one read, so an
+> unbounded path is a caller deciding how many times the server goes to
+> storage. `Limits::max_relation_depth` defaults to four, and the Rust comment
+> that predicted it now points at it.
+>
+> Three things that went wrong and are worth keeping:
+>
+> - **A middle row that related to nothing.** `related_through` was first
+>   written as "the rows with no children", which is wrong: a shelf with no
+>   copies has no children either, so it came back where a copy was asked for.
+>   It is "the rows `len(path) - 1` levels down". Caught by a fixture with a
+>   deliberately bare middle row; the two readings agree on every other input.
+> - **A fixture where the right ordinal is zero proves nothing.** A mutation
+>   ignoring `key_ordinal` entirely passed the whole Go suite, because that
+>   fixture's relating column *was* ordinal 0. Only the Python suite caught it,
+>   and only because its tables are tenant-scoped so `id` sits at ordinal 1 by
+>   accident. Both other fixtures now put a column in front of `id` on purpose.
+> - **A `[[tables.foreign_keys]]` attaches to the nearest `[[tables]]` above
+>   it.** Adding the demo's `editions` table above the existing key silently
+>   moved `sale_book` off `sales`, and six unrelated conformance cases started
+>   refusing. The runner found it on the first run after the change.
+>
+> *Stops at* a path of declared relationships, as written below. No predicate,
+> ordering or limit per level.
 
 `RelatedRequest` carries one `Relation` and `repeated Value keys`. P4 and P5
 built `load_related_through`, `load_through` and `load_nested`, and every one of

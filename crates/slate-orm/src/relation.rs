@@ -310,11 +310,14 @@ where
 /// and a caller cannot ask for a thousand without writing a thousand types.
 /// Unbounded recursion needs a depth that arrives at runtime.
 ///
-/// That form does exist and is not this one: an `include` list on the wire —
-/// `["comments.author.employer"]` — is a string whose depth a request chooses,
-/// and it would need exactly the refusal the plan describes. Nothing here
-/// parses one, so the refusal would guard nothing. Recorded rather than built,
-/// because a limit nobody can exceed is a limit nobody maintains.
+/// That form does exist and is not this one: a path on the wire is a list
+/// whose depth a request chooses, and it needs exactly the refusal the plan
+/// describes. **It now exists** — `RelatedRequest.path` — and so does the
+/// refusal: `Limits::max_relation_depth`, checked in the head node before any
+/// step resolves, because one step is one read. The reasoning above still
+/// holds for *this* function, whose depth is fixed when it compiles; it is the
+/// wire form that needed bounding, and the two are bounded differently because
+/// they are bounded by different things.
 ///
 /// # Errors
 /// If a column a relationship names is missing, or either read fails.

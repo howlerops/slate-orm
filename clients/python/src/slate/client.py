@@ -37,7 +37,7 @@ import random
 import time
 import types
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from typing import Final, TypeVar, cast
+from typing import Any, Final, TypeVar, cast
 
 import grpc
 
@@ -55,7 +55,7 @@ from .query import (
     Query,
     UpdateWhere,
 )
-from .rows import Group, JoinedRow, Row
+from .rows import Group, JoinedRow, RelatedNode, Row, Step, _leaves, _nest
 from .schema import Table, fingerprint_of
 from .values import PyValue, from_value, to_value
 
@@ -782,10 +782,23 @@ class _Ops:
         )
 
     @staticmethod
-    def _operation_table(kind: str, payload: object) -> Table:
+    def _operation_table(kind: str, payload: Any) -> Table:
+        """Which table an operation touches, for decoding its returned rows.
+
+        `payload: Any` rather than `object`, matching `_operation_proto` below
+        and matching `Batch._operations`, which is a `list[tuple[str, Any]]` at
+        the source: the payload's shape is decided by `kind`, and no annotation
+        short of a tagged union says that.
+
+        It used to be `object` with two `type: ignore` comments, and neither
+        suppressed the error it was written for — mypy reported an uncovered
+        `no-any-return` and an uncovered `attr-defined` *through* them. An
+        ignore that does not match is worse than no ignore: it reads as a
+        considered exception and silences nothing.
+        """
         if kind in ("delete_where", "update_where"):
-            return payload.table  # type: ignore[union-attr]
-        return payload[0]  # type: ignore[index]
+            return cast(Table, payload.table)
+        return cast(Table, payload[0])
 
     def _operation_proto(self, kind: str, payload: Any) -> pb.BatchOperation:
         """One operation, in the same request message the lone RPC sends.
@@ -980,6 +993,102 @@ class _Ops:
         return [
             grouped.get(to_value(key).SerializeToString(deterministic=True), [])
             for key in keys
+        ]
+
+    def related_path(
+        self,
+        keys: Sequence[PyValue],
+        path: Sequence[Step],
+        *,
+        freshness: Freshness | None = None,
+    ) -> list[list[RelatedNode]]:
+        """Walk a path of relationships for many parent rows, in one request.
+
+        Returns a list the same length as `keys`: entry `i` is the first
+        level's rows for `keys[i]`, each carrying its own next level, and so on
+        down the path. A key that related to nothing gets an empty list.
+
+        ```python
+        # Every article's tags, through the join table, in one call.
+        trees = session.related_path(
+            [a[0] for a in articles],
+            [
+                Step(on=ARTICLE_TAGS, through="at_article", table=ARTICLE_TAGS),
+                Step(on=ARTICLE_TAGS, through="at_tag", table=TAGS, children=False),
+            ],
+        )
+        for article, tree in zip(articles, trees):
+            tags = [leaf.row for join in tree for leaf in join.related]
+        ```
+
+        **One read per level, whatever the number of parents.** Each step's key
+        set is the previous step's rows, deduplicated by the server, so a
+        hundred articles and a thousand join rows are still two reads. Doing
+        this from the client — one `related` call per level, regrouped by hand
+        — is the same shape as the N+1 this whole layer exists to prevent, one
+        level up, and it is what callers of every SDK had to write until this
+        existed.
+
+        The path is bounded by the server's `max_relation_depth`, because one
+        step is one read and the depth arrives in the request. A path past it
+        is refused with `InvalidRequest` naming the limit.
+        """
+        if not path:
+            raise InvalidRequest(
+                "a path needs at least one step; use `related` for one relationship",
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+            )
+        request = pb.RelatedRequest(
+            transaction=self._transaction_id(),
+            keys=[to_value(key) for key in keys],
+            path=[
+                pb.RelatedStep(
+                    relation=pb.Relation(
+                        table=step.on.name,
+                        foreign_key=step.through,
+                        direction=(
+                            pb.Relation.Direction.CHILDREN
+                            if step.children
+                            else pb.Relation.Direction.PARENTS
+                        ),
+                    ),
+                    schema=self._schema_check(step.table),
+                )
+                for step in path
+            ],
+        )
+        wire_freshness = self._freshness(freshness)
+        if wire_freshness is not None:
+            request.freshness.CopyFrom(wire_freshness)
+        response = self._unary(self._conn.stub.Related, request)
+        self._observe_read(ServedBy.from_proto(response.served_by))
+        return _nest(response, path, keys)
+
+    def related_through(
+        self,
+        keys: Sequence[PyValue],
+        path: Sequence[Step],
+        *,
+        freshness: Freshness | None = None,
+    ) -> list[list[Row]]:
+        """A path's *far* rows per parent, with the levels between dropped.
+
+        The many-to-many: an article's tags, where the join rows exist only to
+        connect the two and the caller has no use for them. Exactly
+        `related_path` with the intermediate levels flattened away, and one
+        request either way — which is why it is written on top of it rather
+        than beside it, as `slate-orm`'s own `load_related_through` is written
+        on top of `load_nested`. Two regroupings of one shape is two places for
+        an off-by-one to live.
+
+        Duplicates are kept and are not an error: two join rows pointing at one
+        tag give that tag twice, because the caller is the one who knows
+        whether that means anything. Deduplicating here would quietly discard a
+        row a caller may be counting.
+        """
+        return [
+            list(_leaves(tree, len(path) - 1))
+            for tree in self.related_path(keys, path, freshness=freshness)
         ]
 
     def query(self, query: Query, *, freshness: Freshness | None = None) -> RowStream:

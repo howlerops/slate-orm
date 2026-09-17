@@ -299,6 +299,31 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("no such foreign key", "/api/related",
      {"way": "children", "through": "nosuch", "keys": [{"u64": "10"}]}, "app"),
 
+    # A relationship *path*: `sales -> books -> editions`, two steps in
+    # opposite directions, one request.
+    #
+    # This is where a three-way disagreement about the regrouping shows up and
+    # nowhere else. The server sends flat levels plus, per level, the ordinal
+    # in the level above where its key is found; each SDK rebuilds the tree
+    # from that, and three separate implementations of one walk is exactly the
+    # shape that drifts. Book 10 has two editions, 11 has one, and 12 has none
+    # — so the answer is not uniform and a client that grouped by the wrong
+    # ordinal would still produce *an* answer.
+    ("a two-step path, with the middle level kept", "/api/path",
+     {"keys": [{"u64": "10"}, {"u64": "11"}, {"u64": "12"}]}, "app"),
+    # A key relating to nothing at either level: 12 has a book and no editions,
+    # 99 has no book at all. The first ends with an empty `related`, the second
+    # with an empty tree, and the difference between those two is the thing a
+    # hand-written regrouping gets wrong.
+    ("a path whose keys run out at different levels", "/api/path",
+     {"keys": [{"u64": "12"}, {"u64": "99"}]}, "app"),
+    # The row policy applies at every level, not only the first. `reader` sees
+    # books published from 1960, so a path through `books` loses the same rows
+    # for all three SDKs — and a client that resolved the path itself would
+    # not lose them at all.
+    ("a reader's path loses what the policy hides", "/api/path",
+     {"keys": [{"u64": "10"}, {"u64": "11"}, {"u64": "12"}]}, "reader"),
+
     # Keyset pagination. The cursor is the server's, built from the last row's
     # primary key, so what is compared is whether the three clients read it off
     # the same message and hand it back in the same shape — a cursor that

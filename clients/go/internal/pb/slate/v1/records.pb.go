@@ -7171,10 +7171,77 @@ func (x *Relation) GetDirection() Relation_Direction {
 	return Relation_DIRECTION_UNSPECIFIED
 }
 
+// One level of a path: a relationship, and the schema claim for the table its
+// rows come back from.
+//
+// The schema claim is per step rather than per request because each step
+// returns a *different* table, and one `SchemaCheck` against one of them would
+// leave the rest unchecked while looking like it had checked them.
+type RelatedStep struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Relation *Relation              `protobuf:"bytes,1,opt,name=relation,proto3" json:"relation,omitempty"`
+	// See `SchemaCheck`, against the table this step's rows come back from —
+	// the child for `CHILDREN` and the parent for `PARENTS`.
+	Schema        *SchemaCheck `protobuf:"bytes,2,opt,name=schema,proto3" json:"schema,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelatedStep) Reset() {
+	*x = RelatedStep{}
+	mi := &file_slate_v1_records_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelatedStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelatedStep) ProtoMessage() {}
+
+func (x *RelatedStep) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelatedStep.ProtoReflect.Descriptor instead.
+func (*RelatedStep) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *RelatedStep) GetRelation() *Relation {
+	if x != nil {
+		return x.Relation
+	}
+	return nil
+}
+
+func (x *RelatedStep) GetSchema() *SchemaCheck {
+	if x != nil {
+		return x.Schema
+	}
+	return nil
+}
+
 type RelatedRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Transaction string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
-	Relation    *Relation              `protobuf:"bytes,2,opt,name=relation,proto3" json:"relation,omitempty"`
+	// One relationship. The original shape, and still the whole request for the
+	// single-level case: `path` is what carries more than one.
+	//
+	// Exactly one of `relation` and `path` may be set. Both set is refused
+	// rather than resolved by precedence — a request that says two different
+	// things about what to read is a client bug, and picking one silently is how
+	// it reaches production.
+	Relation *Relation `protobuf:"bytes,2,opt,name=relation,proto3" json:"relation,omitempty"`
 	// The relating value of each parent row, in the caller's own order.
 	//
 	// Duplicates are expected and are the point: two books by one author send
@@ -7186,15 +7253,34 @@ type RelatedRequest struct {
 	Keys      []*Value   `protobuf:"bytes,3,rep,name=keys,proto3" json:"keys,omitempty"`
 	Freshness *Freshness `protobuf:"bytes,4,opt,name=freshness,proto3" json:"freshness,omitempty"`
 	// See `SchemaCheck`, against the table the rows come back from — which is
-	// the child for `CHILDREN` and the parent for `PARENTS`.
-	Schema        *SchemaCheck `protobuf:"bytes,5,opt,name=schema,proto3" json:"schema,omitempty"`
+	// the child for `CHILDREN` and the parent for `PARENTS`. Applies to
+	// `relation`; a `path` carries a claim per step instead.
+	Schema *SchemaCheck `protobuf:"bytes,5,opt,name=schema,proto3" json:"schema,omitempty"`
+	// A path of relationships, resolved level by level in one round trip.
+	//
+	// `article → article_tags → tags` is two steps and two reads, not two round
+	// trips and not one read per article. Each step's key set is the previous
+	// step's rows' relating values, deduplicated, so the read count is the
+	// *depth* and never the row count — which is the whole reason this is on the
+	// request rather than left to the caller to loop.
+	//
+	// Each step must compose with the one before it: step `i + 1`'s source table
+	// has to be the table step `i`'s rows came from, or the path is refused by
+	// name. Nothing else would be readable — the keys handed to a step are
+	// columns of the previous step's rows.
+	//
+	// **Bounded.** Unlike the Rust `load_nested`, whose depth is a type
+	// parameter and therefore fixed at compile time, the depth here arrives in
+	// the request. One step is one read, so an unbounded path is a client
+	// choosing how many reads the server performs. See `max_relation_depth`.
+	Path          []*RelatedStep `protobuf:"bytes,6,rep,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RelatedRequest) Reset() {
 	*x = RelatedRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[75]
+	mi := &file_slate_v1_records_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7206,7 +7292,7 @@ func (x *RelatedRequest) String() string {
 func (*RelatedRequest) ProtoMessage() {}
 
 func (x *RelatedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[75]
+	mi := &file_slate_v1_records_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7219,7 +7305,7 @@ func (x *RelatedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedRequest.ProtoReflect.Descriptor instead.
 func (*RelatedRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{75}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *RelatedRequest) GetTransaction() string {
@@ -7257,6 +7343,13 @@ func (x *RelatedRequest) GetSchema() *SchemaCheck {
 	return nil
 }
 
+func (x *RelatedRequest) GetPath() []*RelatedStep {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
 // Rows grouped by the value that related them, not repeated per parent.
 //
 // Two parents sharing a key get one group between them. Repeating the rows
@@ -7268,16 +7361,28 @@ type RelatedResponse struct {
 	// nothing is absent rather than present-and-empty: the caller is mapping its
 	// own parents onto this, and "no group" and "empty group" mean the same
 	// thing to that loop.
-	Groups        []*RelatedResponse_Group `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
-	ServedBy      *ServedBy                `protobuf:"bytes,2,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
-	Warnings      []string                 `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	//
+	// Set for a `relation` request. Empty for a `path` request, which puts every
+	// level in `levels` instead — including the first. The response shape
+	// mirrors the request shape rather than filling both, so that a one-step
+	// path does not ship its rows twice.
+	Groups   []*RelatedResponse_Group `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
+	ServedBy *ServedBy                `protobuf:"bytes,2,opt,name=served_by,json=servedBy,proto3" json:"served_by,omitempty"`
+	Warnings []string                 `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	// One entry per step of the request's `path`, in the same order. Empty for a
+	// `relation` request.
+	//
+	// A level whose groups are all empty ends the path early — there were no
+	// keys left to resolve — and the levels after it are still present and still
+	// empty, so that `levels` and `path` stay index-for-index comparable.
+	Levels        []*RelatedResponse_Level `protobuf:"bytes,4,rep,name=levels,proto3" json:"levels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RelatedResponse) Reset() {
 	*x = RelatedResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[76]
+	mi := &file_slate_v1_records_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7289,7 +7394,7 @@ func (x *RelatedResponse) String() string {
 func (*RelatedResponse) ProtoMessage() {}
 
 func (x *RelatedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[76]
+	mi := &file_slate_v1_records_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7302,7 +7407,7 @@ func (x *RelatedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedResponse.ProtoReflect.Descriptor instead.
 func (*RelatedResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{76}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *RelatedResponse) GetGroups() []*RelatedResponse_Group {
@@ -7326,6 +7431,13 @@ func (x *RelatedResponse) GetWarnings() []string {
 	return nil
 }
 
+func (x *RelatedResponse) GetLevels() []*RelatedResponse_Level {
+	if x != nil {
+		return x.Levels
+	}
+	return nil
+}
+
 type RelatedResponse_Group struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The relating value these rows matched.
@@ -7338,7 +7450,7 @@ type RelatedResponse_Group struct {
 
 func (x *RelatedResponse_Group) Reset() {
 	*x = RelatedResponse_Group{}
-	mi := &file_slate_v1_records_proto_msgTypes[77]
+	mi := &file_slate_v1_records_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7350,7 +7462,7 @@ func (x *RelatedResponse_Group) String() string {
 func (*RelatedResponse_Group) ProtoMessage() {}
 
 func (x *RelatedResponse_Group) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[77]
+	mi := &file_slate_v1_records_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7363,7 +7475,7 @@ func (x *RelatedResponse_Group) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedResponse_Group.ProtoReflect.Descriptor instead.
 func (*RelatedResponse_Group) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{76, 0}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{77, 0}
 }
 
 func (x *RelatedResponse_Group) GetKey() *Value {
@@ -7376,6 +7488,75 @@ func (x *RelatedResponse_Group) GetKey() *Value {
 func (x *RelatedResponse_Group) GetRows() []*Row {
 	if x != nil {
 		return x.Rows
+	}
+	return nil
+}
+
+// One level of a path's answer.
+//
+// Flat rather than nested: a `Level` holding `Level`s would make the message
+// recursive, and every client would need a recursive decoder to read a
+// structure whose depth the request already knows. A flat list with a
+// back-reference per level carries the same tree and is a loop in three
+// languages instead of a recursion in three languages.
+type RelatedResponse_Level struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Where this level's key is found in the *previous* level's rows.
+	//
+	// The ordinal of the column whose value relates a row of level `i - 1` to
+	// its group in level `i`. This is what lets a client rebuild the tree
+	// without holding the catalog: take a row from the level above, read the
+	// value at this ordinal, look it up in `groups`.
+	//
+	// Zero and meaningless on the first level, whose keys are the request's
+	// own and which therefore has no level above it to point into.
+	KeyOrdinal uint32 `protobuf:"varint,1,opt,name=key_ordinal,json=keyOrdinal,proto3" json:"key_ordinal,omitempty"`
+	// As `groups` above, for this level.
+	Groups        []*RelatedResponse_Group `protobuf:"bytes,2,rep,name=groups,proto3" json:"groups,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelatedResponse_Level) Reset() {
+	*x = RelatedResponse_Level{}
+	mi := &file_slate_v1_records_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelatedResponse_Level) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelatedResponse_Level) ProtoMessage() {}
+
+func (x *RelatedResponse_Level) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelatedResponse_Level.ProtoReflect.Descriptor instead.
+func (*RelatedResponse_Level) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{77, 1}
+}
+
+func (x *RelatedResponse_Level) GetKeyOrdinal() uint32 {
+	if x != nil {
+		return x.KeyOrdinal
+	}
+	return 0
+}
+
+func (x *RelatedResponse_Level) GetGroups() []*RelatedResponse_Group {
+	if x != nil {
+		return x.Groups
 	}
 	return nil
 }
@@ -7788,20 +7969,29 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\tDirection\x12\x19\n" +
 	"\x15DIRECTION_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bCHILDREN\x10\x01\x12\v\n" +
-	"\aPARENTS\x10\x02\"\xe9\x01\n" +
+	"\aPARENTS\x10\x02\"l\n" +
+	"\vRelatedStep\x12.\n" +
+	"\brelation\x18\x01 \x01(\v2\x12.slate.v1.RelationR\brelation\x12-\n" +
+	"\x06schema\x18\x02 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\x94\x02\n" +
 	"\x0eRelatedRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12.\n" +
 	"\brelation\x18\x02 \x01(\v2\x12.slate.v1.RelationR\brelation\x12#\n" +
 	"\x04keys\x18\x03 \x03(\v2\x0f.slate.v1.ValueR\x04keys\x121\n" +
 	"\tfreshness\x18\x04 \x01(\v2\x13.slate.v1.FreshnessR\tfreshness\x12-\n" +
-	"\x06schema\x18\x05 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\xe6\x01\n" +
+	"\x06schema\x18\x05 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\x12)\n" +
+	"\x04path\x18\x06 \x03(\v2\x15.slate.v1.RelatedStepR\x04path\"\x82\x03\n" +
 	"\x0fRelatedResponse\x127\n" +
 	"\x06groups\x18\x01 \x03(\v2\x1f.slate.v1.RelatedResponse.GroupR\x06groups\x12/\n" +
 	"\tserved_by\x18\x02 \x01(\v2\x12.slate.v1.ServedByR\bservedBy\x12\x1a\n" +
-	"\bwarnings\x18\x03 \x03(\tR\bwarnings\x1aM\n" +
+	"\bwarnings\x18\x03 \x03(\tR\bwarnings\x127\n" +
+	"\x06levels\x18\x04 \x03(\v2\x1f.slate.v1.RelatedResponse.LevelR\x06levels\x1aM\n" +
 	"\x05Group\x12!\n" +
 	"\x03key\x18\x01 \x01(\v2\x0f.slate.v1.ValueR\x03key\x12!\n" +
-	"\x04rows\x18\x02 \x03(\v2\r.slate.v1.RowR\x04rows*\x1b\n" +
+	"\x04rows\x18\x02 \x03(\v2\r.slate.v1.RowR\x04rows\x1aa\n" +
+	"\x05Level\x12\x1f\n" +
+	"\vkey_ordinal\x18\x01 \x01(\rR\n" +
+	"keyOrdinal\x127\n" +
+	"\x06groups\x18\x02 \x03(\v2\x1f.slate.v1.RelatedResponse.GroupR\x06groups*\x1b\n" +
 	"\tNullValue\x12\x0e\n" +
 	"\n" +
 	"NULL_VALUE\x10\x00*\x10\n" +
@@ -7904,7 +8094,7 @@ func file_slate_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
-var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
+var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
 var file_slate_v1_records_proto_goTypes = []any{
 	(NullValue)(0),                   // 0: slate.v1.NullValue
 	(Unit)(0),                        // 1: slate.v1.Unit
@@ -7997,9 +8187,11 @@ var file_slate_v1_records_proto_goTypes = []any{
 	(*LeadershipRequest)(nil),        // 88: slate.v1.LeadershipRequest
 	(*LeadershipStatus)(nil),         // 89: slate.v1.LeadershipStatus
 	(*Relation)(nil),                 // 90: slate.v1.Relation
-	(*RelatedRequest)(nil),           // 91: slate.v1.RelatedRequest
-	(*RelatedResponse)(nil),          // 92: slate.v1.RelatedResponse
-	(*RelatedResponse_Group)(nil),    // 93: slate.v1.RelatedResponse.Group
+	(*RelatedStep)(nil),              // 91: slate.v1.RelatedStep
+	(*RelatedRequest)(nil),           // 92: slate.v1.RelatedRequest
+	(*RelatedResponse)(nil),          // 93: slate.v1.RelatedResponse
+	(*RelatedResponse_Group)(nil),    // 94: slate.v1.RelatedResponse.Group
+	(*RelatedResponse_Level)(nil),    // 95: slate.v1.RelatedResponse.Level
 }
 var file_slate_v1_records_proto_depIdxs = []int32{
 	0,   // 0: slate.v1.Value.null_value:type_name -> slate.v1.NullValue
@@ -8163,55 +8355,60 @@ var file_slate_v1_records_proto_depIdxs = []int32{
 	46,  // 158: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
 	14,  // 159: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
 	15,  // 160: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
-	90,  // 161: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
-	16,  // 162: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
-	52,  // 163: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
-	19,  // 164: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
-	93,  // 165: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
-	53,  // 166: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
-	16,  // 167: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
-	18,  // 168: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
-	54,  // 169: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	56,  // 170: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	58,  // 171: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	60,  // 172: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	61,  // 173: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	62,  // 174: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	65,  // 175: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
-	66,  // 176: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
-	68,  // 177: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
-	72,  // 178: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	74,  // 179: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	76,  // 180: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	79,  // 181: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	91,  // 182: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
-	81,  // 183: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	83,  // 184: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	84,  // 185: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
-	88,  // 186: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	55,  // 187: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	57,  // 188: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	59,  // 189: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	63,  // 190: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	63,  // 191: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	63,  // 192: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	63,  // 193: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
-	63,  // 194: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
-	69,  // 195: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
-	73,  // 196: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	75,  // 197: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	77,  // 198: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	80,  // 199: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	92,  // 200: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
-	82,  // 201: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	86,  // 202: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	85,  // 203: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
-	89,  // 204: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	187, // [187:205] is the sub-list for method output_type
-	169, // [169:187] is the sub-list for method input_type
-	169, // [169:169] is the sub-list for extension type_name
-	169, // [169:169] is the sub-list for extension extendee
-	0,   // [0:169] is the sub-list for field type_name
+	90,  // 161: slate.v1.RelatedStep.relation:type_name -> slate.v1.Relation
+	19,  // 162: slate.v1.RelatedStep.schema:type_name -> slate.v1.SchemaCheck
+	90,  // 163: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
+	16,  // 164: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
+	52,  // 165: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
+	19,  // 166: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
+	91,  // 167: slate.v1.RelatedRequest.path:type_name -> slate.v1.RelatedStep
+	94,  // 168: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
+	53,  // 169: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
+	95,  // 170: slate.v1.RelatedResponse.levels:type_name -> slate.v1.RelatedResponse.Level
+	16,  // 171: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
+	18,  // 172: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
+	94,  // 173: slate.v1.RelatedResponse.Level.groups:type_name -> slate.v1.RelatedResponse.Group
+	54,  // 174: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	56,  // 175: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	58,  // 176: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	60,  // 177: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	61,  // 178: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	62,  // 179: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	65,  // 180: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
+	66,  // 181: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
+	68,  // 182: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
+	72,  // 183: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	74,  // 184: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	76,  // 185: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	79,  // 186: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	92,  // 187: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
+	81,  // 188: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	83,  // 189: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	84,  // 190: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	88,  // 191: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	55,  // 192: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	57,  // 193: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	59,  // 194: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	63,  // 195: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	63,  // 196: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	63,  // 197: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	63,  // 198: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
+	63,  // 199: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
+	69,  // 200: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
+	73,  // 201: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	75,  // 202: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	77,  // 203: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	80,  // 204: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	93,  // 205: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
+	82,  // 206: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	86,  // 207: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	85,  // 208: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	89,  // 209: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	192, // [192:210] is the sub-list for method output_type
+	174, // [174:192] is the sub-list for method input_type
+	174, // [174:174] is the sub-list for extension type_name
+	174, // [174:174] is the sub-list for extension extendee
+	0,   // [0:174] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }
@@ -8309,7 +8506,7 @@ func file_slate_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_slate_v1_records_proto_rawDesc), len(file_slate_v1_records_proto_rawDesc)),
 			NumEnums:      16,
-			NumMessages:   78,
+			NumMessages:   80,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

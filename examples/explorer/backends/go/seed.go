@@ -90,6 +90,22 @@ func (s *server) seed() error {
 		sale(106, 16, 300), sale(107, 17, 175), sale(108, 18, 140),
 		sale(109, 19, 90), sale(110, 20, 60),
 	}
-	_, err := session.Upsert(ctx, "sales", sales...)
+	if _, err := session.Upsert(ctx, "sales", sales...); err != nil {
+		return err
+	}
+
+	// Editions, so `sales -> books -> editions` has a second level. Book 10
+	// has two and book 11 has one; book 12 has none at all, which is the row
+	// that separates "the rows at the bottom" from "the rows with nothing
+	// below them" when a path's middle level is dropped.
+	edition := func(id, book uint64, format string) []slate.Value {
+		return []slate.Value{slate.Uint(id), slate.Uint(book), slate.String(format)}
+	}
+	editions := [][]slate.Value{
+		edition(500, 10, "hardback"),
+		edition(501, 10, "paperback"),
+		edition(502, 11, "paperback"),
+	}
+	_, err := session.Upsert(ctx, "editions", editions...)
 	return err
 }

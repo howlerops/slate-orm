@@ -25,6 +25,7 @@ value of another kind.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator, Sequence
 
 from ._proto.slate.v1 import records_pb2 as pb
@@ -265,3 +266,105 @@ class Group(Sequence[PyValue]):
 
     def __repr__(self) -> str:
         return f"Group(key={self._key!r}, aggregates={self._values!r})"
+
+
+@dataclasses.dataclass(frozen=True)
+class Step:
+    """One level of a relationship path.
+
+    Named the way `Session.related` names one relationship, because it is the
+    same three facts and a fourth that only a path needs:
+
+    - `on` is the table holding the foreign key — always the child, whichever
+      way the relationship is read.
+    - `through` is that key's name.
+    - `children=True` reads the rows holding the key (an article's join rows);
+      `children=False` reads the rows it points at (a join row's tag).
+    - `table` is the table this step's rows come back as, which is `on` for
+      children and the key's parent for parents. Passed separately because the
+      client decodes against it and does not hold the catalog — and because a
+      path returns a *different* table per level, which is also why the schema
+      claim is per step rather than per request.
+    """
+
+    on: Table
+    through: str
+    table: Table
+    children: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class RelatedNode:
+    """A row of one level, with the rows of the next level below it.
+
+    `related` is empty on the last level of a path, and empty on any level
+    whose row related to nothing — the two are the same to a caller walking the
+    tree, and distinguishing them would mean promising something about the
+    difference between "no children" and "no more levels".
+    """
+
+    row: Row
+    related: list[RelatedNode]
+
+
+def _nest(
+    response: pb.RelatedResponse,
+    path: Sequence[Step],
+    keys: Sequence[PyValue],
+) -> list[list[RelatedNode]]:
+    """Rebuild a path's tree from the flat levels the server sends.
+
+    The server sends one level per step, each grouped by the value that related
+    its rows, plus the ordinal in the *previous* level's rows where that value
+    is found. So the walk is: take a row from the level above, read the value
+    at the next level's `key_ordinal`, look it up. No catalog, no schema
+    knowledge, and the same three lines in every SDK.
+
+    Keyed by the serialised protobuf value rather than by the Python object,
+    for the reason `related` gives: the server groups on the kernel's own
+    equality, and `1` and `1.0` are one key in Python and two on the wire.
+    """
+    from .values import to_value
+
+    grouped: list[dict[bytes, list[pb.Row]]] = []
+    for level in response.levels:
+        by_key: dict[bytes, list[pb.Row]] = {}
+        for group in level.groups:
+            by_key[group.key.SerializeToString(deterministic=True)] = list(group.rows)
+        grouped.append(by_key)
+
+    def below(level: int, key: bytes) -> list[RelatedNode]:
+        rows = grouped[level].get(key, []) if level < len(grouped) else []
+        out: list[RelatedNode] = []
+        for row in rows:
+            children: list[RelatedNode] = []
+            if level + 1 < len(response.levels):
+                ordinal = response.levels[level + 1].key_ordinal
+                children = below(
+                    level + 1,
+                    row.values[ordinal].SerializeToString(deterministic=True),
+                )
+            out.append(RelatedNode(Row.from_proto(row, path[level].table), children))
+        return out
+
+    return [below(0, to_value(key).SerializeToString(deterministic=True)) for key in keys]
+
+
+def _leaves(tree: Sequence[RelatedNode], depth: int) -> Iterator[Row]:
+    """The rows `depth` levels down, in the order the levels give them.
+
+    By depth rather than by "nodes with no children", which is the version this
+    was written as and which is wrong: a *middle* row that related to nothing
+    has no children either, and yielding it hands the caller a shelf where it
+    asked for copies. `slate-orm`'s `load_related_through` gets this right by
+    construction — it flattens `(_join, far)` pairs, so a join row with no far
+    rows contributes nothing — and this is the same rule stated as a depth.
+
+    Caught by a fixture with a deliberately empty middle row. Without one, the
+    two readings agree on every input.
+    """
+    for node in tree:
+        if depth == 0:
+            yield node.row
+        else:
+            yield from _leaves(node.related, depth - 1)

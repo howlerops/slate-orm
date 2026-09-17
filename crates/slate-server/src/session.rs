@@ -112,6 +112,22 @@ pub struct Limits {
     /// commit, which is a bigger change than this and is written up in
     /// `docs/orm-comparison.md`.
     pub max_returned_rows: Option<usize>,
+    /// How many steps a `Related` path may have, or `None` for no cap.
+    ///
+    /// One step is one read, performed on the server, so the depth of a path
+    /// is how many reads a single request buys. That number arrives *in the
+    /// request*, which is what makes this different from every nested load
+    /// this repository had before it: `slate-orm`'s `load_nested` takes its
+    /// depth as a type parameter, so a caller cannot ask for a thousand levels
+    /// without writing a thousand types, and its documentation says as much —
+    /// "a limit nobody can exceed is a limit nobody maintains". Putting the
+    /// path on the wire is exactly the form that comment named as needing the
+    /// refusal, because the depth is now a number in a message.
+    ///
+    /// Bounds the reads, not the rows. A step that fans out to a million rows
+    /// is bounded by nothing here; what is bounded is how many times the
+    /// server goes back to storage before it answers.
+    pub max_relation_depth: Option<usize>,
 }
 
 impl Default for Limits {
@@ -131,6 +147,15 @@ impl Default for Limits {
             // Derived from that limit rather than measured, which is why it
             // is round.
             max_returned_rows: Some(10_000),
+            // Four, because the shapes that motivate this are two and three
+            // deep — an article's tags through a join table is two, and the
+            // authors of an article's comments is two with the middle kept —
+            // and a fourth leaves room without inviting a path nobody can
+            // reason about. Not measured: like `max_batch_operations` it is a
+            // guard against a request nobody should send rather than a tuning
+            // knob, and a deployment that genuinely walks five relationships
+            // in one call can raise it.
+            max_relation_depth: Some(4),
         }
     }
 }

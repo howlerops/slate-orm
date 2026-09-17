@@ -202,7 +202,6 @@
           <tr><th>Gap</th><th>Who has it</th></tr>
         </thead>
         <tbody>
-          <tr><td>Many-to-many and nested loading <strong>on the wire</strong></td><td>all</td></tr>
           <tr><td>Keyset paging over a join or a chain</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Migrations generated from a schema diff</td><td>Drizzle Kit, Prisma Migrate, Alembic</td></tr>
           <tr><td>Client code generated from the catalog</td><td>Drizzle, Prisma</td></tr>
@@ -339,9 +338,16 @@
 
     <ol>
       <li>
-        <strong><code>through</code> and nested loading on the wire.</strong>
-        The third time a capability has existed in Rust while the three clients
-        did without it. First for that reason rather than for its size.
+        <strong><code>through</code> and nested loading on the wire.
+        &mdash; done.</strong> The third time a capability had existed in Rust
+        while the three clients did without it, and the last. A request now
+        carries a <em>path</em> of relationships and the answer comes back one
+        level per step, so an article&rsquo;s tags through a join table is one
+        call and two reads rather than two calls and a regrouping by hand.
+        Every client rebuilds the tree the same way, from one number per level
+        that says where the key sits in the level above &mdash; no catalog, no
+        guessing. The depth is bounded, because on the wire a path&rsquo;s
+        depth is a number in a message and each step is a read.
       </li>
       <li>
         <strong>A ceiling on <code>RETURNING</code>. &mdash; done, and the

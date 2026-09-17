@@ -17,7 +17,9 @@ export {
   type Leadership,
   type ComputedRow,
   type ComputedJoinedRow,
+  type RelatedNode,
   type Relation,
+  type Step,
   type Way,
   type Page,
 } from "./client.js";

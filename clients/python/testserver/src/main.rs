@@ -78,6 +78,7 @@ const SALES: TableId = TableId(5);
 const SECRETS: TableId = TableId(6);
 const LIBRARIES: TableId = TableId(7);
 const SHELVES: TableId = TableId(8);
+const COPIES: TableId = TableId(9);
 
 fn docs() -> TableDef {
     TableDef::builder("docs", DOCS)
@@ -180,6 +181,31 @@ fn shelves() -> TableDef {
         .expect("valid schema")
 }
 
+// A third level, so a relationship *path* has somewhere to go.
+//
+// `libraries → shelves → copies` is two steps and, on the wire, two reads. The
+// pair above exists because a relationship needs a foreign key to be nameable;
+// this exists because a path needs *two*, and the same argument that kept
+// `authors`/`books` unconstrained applies here — a new table breaks no test
+// that writes an existing one.
+fn copies() -> TableDef {
+    TableDef::builder("copies", COPIES)
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("shelf_id", ValueType::U64)
+        .column("barcode", ValueType::Str)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .index(IndexDef::builder("by_shelf", IndexId(8)).column("shelf_id"))
+        .foreign_key(
+            ForeignKeyDef::builder("copy_shelf", SHELVES)
+                .column("tenant_id")
+                .column("shelf_id"),
+        )
+        .build()
+        .expect("valid schema")
+}
+
 fn sales() -> TableDef {
     TableDef::builder("sales", SALES)
         .column("tenant_id", ValueType::U64)
@@ -217,6 +243,7 @@ fn catalog() -> Catalog {
         secrets(),
         libraries(),
         shelves(),
+        copies(),
     ])
     .expect("valid catalog")
 }
@@ -243,6 +270,7 @@ fn security() -> SecurityCatalog {
         .grant(Grant::new("app", SALES, Action::EVERYTHING))
         .grant(Grant::new("app", LIBRARIES, Action::EVERYTHING))
         .grant(Grant::new("app", SHELVES, Action::EVERYTHING))
+        .grant(Grant::new("app", COPIES, Action::EVERYTHING))
         .grant(Grant::new("reader", DOCS, Action::ALL))
         // Deliberately no grant on `secrets`.
         .policy(Policy::new(

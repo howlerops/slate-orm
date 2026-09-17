@@ -457,6 +457,132 @@ impl<S: KvStore + KvReadStore> Head<S> {
     ///
     /// One call into the pool, deliberately: see the module docs and
     /// [`ReplicaPool::snapshot_from`].
+    /// One step of a relationship path, resolved against the catalog.
+    ///
+    /// Every field is an answer to "which table, and which column": the whole
+    /// of a relationship, once the catalog has been consulted, is which rows
+    /// come back and which two columns line up.
+    ///
+    /// The two directions are mirror images and that is why this is one
+    /// function rather than two. `CHILDREN` reads the rows holding the foreign
+    /// key, matched on that key, from parents identified by their primary key;
+    /// `PARENTS` reads the rows the key points at, matched on their primary
+    /// key, from children identified by the key they hold. Swap
+    /// `(rows_from, match_on)` with `(source, source_column)` and one becomes
+    /// the other.
+    fn resolve_relation(&self, relation: &pb::Relation) -> Result<ResolvedStep<'_>, Status> {
+        // Resolve the relationship against the catalog's foreign keys, not
+        // against a separate declaration. See `Relation` in the proto for why
+        // there is no separate declaration to resolve against.
+        let child = self.table(&relation.table)?;
+        let Some(key) = child
+            .foreign_keys()
+            .iter()
+            .find(|k| k.name() == relation.foreign_key)
+        else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` has no foreign key named `{}`; it has {}",
+                    child.name(),
+                    relation.foreign_key,
+                    if child.foreign_keys().is_empty() {
+                        "none".to_owned()
+                    } else {
+                        child
+                            .foreign_keys()
+                            .iter()
+                            .map(|k| format!("`{}`", k.name()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ),
+            ));
+        };
+
+        let parent = self.pool.catalog().table(key.parent()).ok_or_else(|| {
+            Status::new(
+                Code::Internal,
+                format!("`{}` names a parent that is not in the catalog", key.name()),
+            )
+        })?;
+
+        // The relating column is the one key column that is *not* the tenant.
+        //
+        // A tenant-scoped table almost always has a composite key —
+        // `(tenant_id, id)` — and refusing every composite key would refuse the
+        // commonest multi-tenant schema there is. It does not need refusing,
+        // because the tenant is not part of what relates two rows: the security
+        // catalog forces `tenant_column = principal.tenant` onto every read of
+        // such a table, so the tenant is already pinned before the filter below
+        // is applied, and matching on it again would be a tautology.
+        //
+        // What genuinely cannot work is a key with two *non-tenant* columns: the
+        // filter compares one column against one list, and a real composite
+        // needs `(a, b) IN [(…), (…)]`, which the kernel has no operator for.
+        // Refused by name rather than by relating on the first column alone,
+        // which would match every row whose first key part agreed — more rows
+        // than were asked for, with no error.
+        fn relating(columns: &[Ordinal], table: &TableDef) -> Option<Ordinal> {
+            let tenant = table.tenant_column();
+            let mut rest = columns.iter().filter(|c| Some(**c) != tenant);
+            let only = rest.next()?;
+            rest.next().is_none().then_some(*only)
+        }
+        fn besides_the_tenant(columns: &[Ordinal], table: &TableDef) -> usize {
+            columns
+                .iter()
+                .filter(|c| Some(**c) != table.tenant_column())
+                .count()
+        }
+
+        let Some(child_column) = relating(key.columns(), child) else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` relates on {} columns besides the tenant; a relationship is \
+                     resolved with one column against one list, and a genuine composite \
+                     key needs a tuple comparison the kernel does not have",
+                    relation.foreign_key,
+                    besides_the_tenant(key.columns(), child)
+                ),
+            ));
+        };
+        let Some(parent_column) = relating(parent.primary_key(), parent) else {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "`{}` has {} primary key columns besides the tenant; relating on a \
+                     composite key is not supported",
+                    parent.name(),
+                    besides_the_tenant(parent.primary_key(), parent)
+                ),
+            ));
+        };
+
+        Ok(match relation.direction() {
+            pb::relation::Direction::Children => ResolvedStep {
+                rows_from: child,
+                match_on: child_column,
+                source: parent,
+                source_column: parent_column,
+            },
+            pb::relation::Direction::Parents => ResolvedStep {
+                rows_from: parent,
+                match_on: parent_column,
+                source: child,
+                source_column: child_column,
+            },
+            pb::relation::Direction::Unspecified => {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    "no direction given: CHILDREN reads the rows holding the foreign \
+                     key, PARENTS reads the rows it points at",
+                ));
+            }
+        })
+    }
+
     async fn read_view(
         &self,
         freshness: Freshness,
@@ -1544,116 +1670,99 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
     ) -> Result<Response<pb::RelatedResponse>, Status> {
         let context = self.context(&request)?;
         let request = request.into_inner();
-        let Some(relation) = request.relation.as_ref() else {
-            return Err(Status::new(Code::InvalidArgument, "no relation given"));
-        };
 
-        // Resolve the relationship against the catalog's foreign keys, not
-        // against a separate declaration. See `Relation` in the proto for why
-        // there is no separate declaration to resolve against.
-        let child = self.table(&relation.table)?;
-        let Some(key) = child
-            .foreign_keys()
-            .iter()
-            .find(|k| k.name() == relation.foreign_key)
-        else {
-            return Err(Status::new(
-                Code::InvalidArgument,
-                format!(
-                    "`{}` has no foreign key named `{}`; it has {}",
-                    child.name(),
-                    relation.foreign_key,
-                    if child.foreign_keys().is_empty() {
-                        "none".to_owned()
-                    } else {
-                        child
-                            .foreign_keys()
-                            .iter()
-                            .map(|k| format!("`{}`", k.name()))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    }
-                ),
-            ));
-        };
-
-        let parent = self.pool.catalog().table(key.parent()).ok_or_else(|| {
-            Status::new(
-                Code::Internal,
-                format!("`{}` names a parent that is not in the catalog", key.name()),
-            )
-        })?;
-
-        // The relating column is the one key column that is *not* the tenant.
-        //
-        // A tenant-scoped table almost always has a composite key —
-        // `(tenant_id, id)` — and refusing every composite key would refuse the
-        // commonest multi-tenant schema there is. It does not need refusing,
-        // because the tenant is not part of what relates two rows: the security
-        // catalog forces `tenant_column = principal.tenant` onto every read of
-        // such a table, so the tenant is already pinned before the filter below
-        // is applied, and matching on it again would be a tautology.
-        //
-        // What genuinely cannot work is a key with two *non-tenant* columns: the
-        // filter compares one column against one list, and a real composite
-        // needs `(a, b) IN [(…), (…)]`, which the kernel has no operator for.
-        // Refused by name rather than by relating on the first column alone,
-        // which would match every row whose first key part agreed — more rows
-        // than were asked for, with no error.
-        fn relating(columns: &[Ordinal], table: &TableDef) -> Option<Ordinal> {
-            let tenant = table.tenant_column();
-            let mut rest = columns.iter().filter(|c| Some(**c) != tenant);
-            let only = rest.next()?;
-            rest.next().is_none().then_some(*only)
-        }
-        fn besides_the_tenant(columns: &[Ordinal], table: &TableDef) -> usize {
-            columns
-                .iter()
-                .filter(|c| Some(**c) != table.tenant_column())
-                .count()
-        }
-
-        let Some(child_column) = relating(key.columns(), child) else {
-            return Err(Status::new(
-                Code::InvalidArgument,
-                format!(
-                    "`{}` relates on {} columns besides the tenant; a relationship is \
-                     resolved with one column against one list, and a genuine composite \
-                     key needs a tuple comparison the kernel does not have",
-                    relation.foreign_key,
-                    besides_the_tenant(key.columns(), child)
-                ),
-            ));
-        };
-        let Some(parent_column) = relating(parent.primary_key(), parent) else {
-            return Err(Status::new(
-                Code::InvalidArgument,
-                format!(
-                    "`{}` has {} primary key columns besides the tenant; relating on a \
-                     composite key is not supported",
-                    parent.name(),
-                    besides_the_tenant(parent.primary_key(), parent)
-                ),
-            ));
-        };
-
-        // Which table the rows come from, and which of its columns the keys are
-        // matched against, is the whole of what the direction decides.
-        let (rows_from, match_on) = match relation.direction() {
-            pb::relation::Direction::Children => (child, child_column),
-            pb::relation::Direction::Parents => (parent, parent_column),
-            pb::relation::Direction::Unspecified => {
+        // One shape in, one shape out. Internally there is only ever a path:
+        // a `relation` request is a path of one, resolved by the same loop, so
+        // that the single-level case cannot drift from the multi-level one.
+        // Which field was set decides only how the answer is projected.
+        let (steps, levelled) = match (request.relation.as_ref(), request.path.is_empty()) {
+            (Some(_), false) => {
                 return Err(Status::new(
                     Code::InvalidArgument,
-                    "no direction given: CHILDREN reads the rows holding the foreign \
-                     key, PARENTS reads the rows it points at",
+                    "both `relation` and `path` are set; they are two ways to say what \
+                     to read and this request says two different things. Send one",
+                ));
+            }
+            (Some(relation), true) => (
+                vec![pb::RelatedStep {
+                    relation: Some(relation.clone()),
+                    schema: request.schema,
+                }],
+                false,
+            ),
+            (None, false) => (request.path.clone(), true),
+            (None, true) => {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    "no relation given: set `relation` for one level, or `path` for \
+                     several",
                 ));
             }
         };
-        let rows_from = self.authorized_table(&context, rows_from.name(), Action::Read)?;
-        fingerprint::check(rows_from, request.schema.as_ref())?;
 
-        let values = distinct_keys(&request.keys)?;
+        // Depth before anything else, because the work this bounds is the work
+        // done below. One step is one read, and the count arrives in the
+        // request rather than in the source, so an unbounded path is a caller
+        // choosing how many times this server goes to storage.
+        if let Some(limit) = self.limits.max_relation_depth
+            && steps.len() > limit
+        {
+            return Err(Status::new(
+                Code::InvalidArgument,
+                format!(
+                    "a relationship path of {} steps was asked for and the limit is \
+                     {limit}; each step is a read, so the depth is how many reads one \
+                     request performs. Shorten the path, or raise \
+                     `[limits] max_relation_depth`",
+                    steps.len()
+                ),
+            ));
+        }
+
+        // Resolve every step against the catalog before reading anything, so
+        // that a path which does not compose is refused without having done
+        // half of it. A partial answer to a malformed request is worse than a
+        // refusal: the caller cannot tell it from a complete one.
+        let mut resolved: Vec<ResolvedStep<'_>> = Vec::with_capacity(steps.len());
+        for (at, step) in steps.iter().enumerate() {
+            let Some(relation) = step.relation.as_ref() else {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    format!("step {at} of the path has no relation"),
+                ));
+            };
+            let this = self.resolve_relation(relation)?;
+            if let Some(previous) = resolved.last()
+                && previous.rows_from.id() != this.source.id()
+            {
+                return Err(Status::new(
+                    Code::InvalidArgument,
+                    format!(
+                        "step {at} of the path reads from `{}`, whose keys come from \
+                         `{}`, but step {} returned rows of `{}`. Each step's keys are \
+                         columns of the rows the step before it returned, so a path \
+                         has to compose",
+                        this.rows_from.name(),
+                        this.source.name(),
+                        at - 1,
+                        previous.rows_from.name(),
+                    ),
+                ));
+            }
+            resolved.push(this);
+        }
+
+        // Authorization and the schema claim, per step: every table this will
+        // read is checked before any of them is read. A path that is refused
+        // at step three must not have returned step one's rows.
+        let mut tables: Vec<&TableDef> = Vec::with_capacity(resolved.len());
+        for (step, plan) in steps.iter().zip(&resolved) {
+            let table = self.authorized_table(&context, plan.rows_from.name(), Action::Read)?;
+            fingerprint::check(table, step.schema.as_ref())?;
+            tables.push(table);
+        }
+
+        let mut keys = distinct_keys(&request.keys)?;
 
         // No keys, no read. An `IN ()` matches nothing and still pays for a
         // scan, and the caller with no parents wanted no rows.
@@ -1664,64 +1773,131 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         // the first version of this did — would be reporting a read that did
         // not happen to a caller who may be using that field to track a
         // watermark.
-        if values.is_empty() {
+        if keys.is_empty() {
             return Ok(Response::new(pb::RelatedResponse {
                 groups: Vec::new(),
                 served_by: None,
                 warnings: Vec::new(),
+                levels: if levelled {
+                    empty_levels(&resolved)
+                } else {
+                    Vec::new()
+                },
             }));
         }
 
-        let query = Query::all().filter(Expr::In {
-            column: match_on,
-            values,
-        });
-
-        let (rows, served_by) = if request.transaction.is_empty() {
+        // One view for every level.
+        //
+        // Taken once rather than per step, and that is a correctness decision
+        // rather than a saving: two levels read from two snapshots can show a
+        // child whose parent was deleted between them, which is a tree that
+        // never existed. Affinity is computed over every table the path
+        // touches, which is what `affinity_over` is for.
+        let (view, served_by) = if request.transaction.is_empty() {
             let freshness = freshness_from_proto(request.freshness.as_ref())?;
-            let affinity = Self::affinity(rows_from, &context);
-            let (view, served_by) = self.read_view(freshness, affinity.as_ref()).await?;
-            let mut cursor = view
-                .execute(&context, rows_from, &query)
-                .await
-                .map_err(|e| from_kernel(&e))?;
-            let mut rows = Vec::new();
-            while let Some(row) = cursor.next().await.map_err(|e| from_kernel(&e))? {
-                rows.push(row);
-            }
-            drop(cursor);
-            (rows, served_by)
+            let affinity = Self::affinity_over(&tables, &context);
+            let (view, by) = self.read_view(freshness, affinity.as_ref()).await?;
+            (Some(view), by)
         } else {
-            let rows = self
-                .sessions
-                .query(&request.transaction, &context, rows_from.id(), query)
-                .await?;
-            (rows, in_transaction())
+            (None, in_transaction())
         };
+        let served_by = Some(served_by);
 
-        // Grouped by the value that related them, so two parents sharing a key
-        // share one group rather than each carrying a copy.
-        let mut groups: BTreeMap<Value, Vec<pb::Row>> = BTreeMap::new();
-        for row in &rows {
-            let Some(key) = row.values().get(match_on.0) else {
+        let mut levels: Vec<pb::related_response::Level> = Vec::with_capacity(resolved.len());
+        for (at, (plan, table)) in resolved.iter().zip(&tables).enumerate() {
+            // A level with no keys left resolves to nothing, and the levels
+            // below it resolve to nothing too. Still emitted, empty, so that
+            // `levels` stays index-for-index with the request's `path`.
+            if keys.is_empty() {
+                levels.push(pb::related_response::Level {
+                    key_ordinal: plan.source_column.0 as u32,
+                    groups: Vec::new(),
+                });
                 continue;
+            }
+
+            let query = Query::all().filter(Expr::In {
+                column: plan.match_on,
+                values: keys,
+            });
+            let rows = if let Some(view) = view.as_ref() {
+                let mut cursor = view
+                    .execute(&context, table, &query)
+                    .await
+                    .map_err(|e| from_kernel(&e))?;
+                let mut rows = Vec::new();
+                while let Some(row) = cursor.next().await.map_err(|e| from_kernel(&e))? {
+                    rows.push(row);
+                }
+                drop(cursor);
+                rows
+            } else {
+                self.sessions
+                    .query(&request.transaction, &context, table.id(), query)
+                    .await?
             };
-            groups
-                .entry(key.clone())
-                .or_default()
-                .push(row_to_proto(row));
+
+            // The next level's keys, before the rows are converted: the column
+            // that relates *this* level's rows to the one below is the next
+            // step's `source_column`, which is a fact about that step rather
+            // than this one.
+            keys = match resolved.get(at + 1) {
+                Some(next) => {
+                    let mut values: Vec<Value> = rows
+                        .iter()
+                        .filter_map(|row| row.values().get(next.source_column.0).cloned())
+                        .collect();
+                    values.sort();
+                    values.dedup();
+                    values
+                }
+                None => Vec::new(),
+            };
+
+            // Grouped by the value that related them, so two parents sharing a
+            // key share one group rather than each carrying a copy.
+            let mut groups: BTreeMap<Value, Vec<pb::Row>> = BTreeMap::new();
+            for row in &rows {
+                let Some(key) = row.values().get(plan.match_on.0) else {
+                    continue;
+                };
+                groups
+                    .entry(key.clone())
+                    .or_default()
+                    .push(row_to_proto(row));
+            }
+            levels.push(pb::related_response::Level {
+                key_ordinal: plan.source_column.0 as u32,
+                groups: groups
+                    .into_iter()
+                    .map(|(key, rows)| pb::related_response::Group {
+                        key: Some(value_to_proto(&key)),
+                        rows,
+                    })
+                    .collect(),
+            });
         }
 
-        Ok(Response::new(pb::RelatedResponse {
-            groups: groups
+        // Projected back into the shape the request asked in. A `relation`
+        // request gets `groups` and no `levels`; a `path` request gets
+        // `levels` and no `groups`. Filling both would ship a one-step path's
+        // rows twice.
+        let (groups, levels) = if levelled {
+            (Vec::new(), levels)
+        } else {
+            let first = levels
                 .into_iter()
-                .map(|(key, rows)| pb::related_response::Group {
-                    key: Some(value_to_proto(&key)),
-                    rows,
-                })
-                .collect(),
-            served_by: Some(served_by),
+                .next()
+                .map(|l| l.groups)
+                .unwrap_or_default();
+            (first, Vec::new())
+        };
+
+        Ok(Response::new(pb::RelatedResponse {
+            groups,
+            served_by,
             warnings: Vec::new(),
+            levels,
         }))
     }
 
@@ -2615,6 +2791,44 @@ impl MultiScan {
 ///
 /// Sorted as well as deduplicated: `Expr::In` is turned into scan bounds, and
 /// an unsorted list costs the planner a sort it would have to do anyway.
+/// One step of a relationship path, resolved against the catalog.
+///
+/// See `RecordService::resolve_relation`, which is the only thing that builds
+/// one. The lifetime is the catalog's: these borrow table definitions rather
+/// than copying them, so a path of four steps holds four references and no
+/// schema.
+struct ResolvedStep<'a> {
+    /// The table this step's rows come from.
+    rows_from: &'a TableDef,
+    /// The ordinal, in *this* step's rows, whose value groups them.
+    match_on: Ordinal,
+    /// The table the keys handed to this step belong to.
+    ///
+    /// For the first step that is the caller's own parent table, which nothing
+    /// checks because the caller sent bare values rather than rows. For every
+    /// later step it must be the previous step's `rows_from`, and that is
+    /// checked: it is what makes a path compose.
+    source: &'a TableDef,
+    /// The ordinal, in the *previous* step's rows, whose value is this step's
+    /// key. Meaningless on the first step, whose keys are the request's own.
+    source_column: Ordinal,
+}
+
+/// A level per step, all empty, for a path with nothing to resolve.
+///
+/// The levels are emitted rather than left out so that `levels` and the
+/// request's `path` stay index-for-index: a client walking the two together
+/// should not have to special-case the empty answer.
+fn empty_levels(steps: &[ResolvedStep<'_>]) -> Vec<pb::related_response::Level> {
+    steps
+        .iter()
+        .map(|step| pb::related_response::Level {
+            key_ordinal: step.source_column.0 as u32,
+            groups: Vec::new(),
+        })
+        .collect()
+}
+
 fn distinct_keys(keys: &[pb::Value]) -> Result<Vec<Value>, Status> {
     let mut values = Vec::with_capacity(keys.len());
     for key in keys {

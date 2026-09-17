@@ -162,3 +162,237 @@ func (s *Session) related(
 	}
 	return out, nil
 }
+
+// Step is one level of a relationship path.
+//
+// The relationship, plus the table its rows come back as — On for Children and
+// the key's parent for Parents. The table is named per step rather than per
+// call because a path returns a *different* table at every level, which is
+// also why the schema claim the client sends is per step.
+type Step struct {
+	Relation
+	// Table is the table this step's rows come back as.
+	Table string
+}
+
+// RelatedNode is a row of one level with the rows of the next level below it.
+//
+// Related is empty on the last level of a path and on any row that related to
+// nothing. The two are the same to a caller walking the tree, and telling them
+// apart would mean promising something about the difference between "no
+// children" and "no more levels".
+type RelatedNode struct {
+	Row     []Value
+	Related []RelatedNode
+}
+
+// RelatedPath walks a path of relationships for many parents, in one request.
+//
+// Returns a slice the same length as keys: entry i is the first level's rows
+// for keys[i], each carrying its own next level, and so on down the path. A
+// key that related to nothing gets an empty slice.
+//
+// One read per level, whatever the number of parents. Each step's key set is
+// the previous step's rows, deduplicated by the server, so a hundred libraries
+// and a thousand shelves are still two reads. Resolving the path from the
+// client — one Related call per level, regrouped by hand — is the same shape as
+// the N+1 this layer exists to prevent, one level up.
+//
+// The depth is bounded by the server's max_relation_depth, because one step is
+// one read and the depth arrives in the request. A longer path is refused with
+// KindInvalidRequest naming the limit.
+func (s *Session) RelatedPath(
+	ctx context.Context,
+	path []Step,
+	keys ...[]Value,
+) ([][]RelatedNode, error) {
+	return s.relatedPath(ctx, "", s.freshness(), path, keys)
+}
+
+// RelatedPath walks the path inside the transaction, seeing its uncommitted
+// writes. Otherwise exactly [Session.RelatedPath].
+func (t *Transaction) RelatedPath(
+	ctx context.Context,
+	path []Step,
+	keys ...[]Value,
+) ([][]RelatedNode, error) {
+	return t.session.relatedPath(ctx, t.id, nil, path, keys)
+}
+
+// RelatedThrough is a path's far rows per parent, with the levels between
+// dropped — the many-to-many, where the join rows exist only to connect the
+// two ends.
+//
+// Exactly RelatedPath with the intermediate levels flattened away, and one
+// request either way, which is why it is written on top of it rather than
+// beside it: two regroupings of one shape is two places for an off-by-one to
+// live. `slate-orm`'s own LoadRelatedThrough is written on top of LoadNested
+// for the same reason.
+//
+// Duplicates are kept and are not an error: two join rows pointing at one far
+// row give it twice, because the caller is the one who knows whether that
+// means anything.
+func (s *Session) RelatedThrough(
+	ctx context.Context,
+	path []Step,
+	keys ...[]Value,
+) ([][][]Value, error) {
+	trees, err := s.RelatedPath(ctx, path, keys...)
+	if err != nil {
+		return nil, err
+	}
+	out := make([][][]Value, 0, len(trees))
+	for _, tree := range trees {
+		out = append(out, leaves(tree, len(path)-1))
+	}
+	return out, nil
+}
+
+// leaves is the rows depth levels down, in the order the levels give them.
+//
+// By depth rather than by "nodes with no children", which is how this was
+// first written in the Python client and which is wrong: a *middle* row that
+// related to nothing has no children either, so that version handed back a
+// shelf where the caller asked for copies. Caught by a fixture with a
+// deliberately empty middle row; without one the two readings agree on every
+// input.
+func leaves(tree []RelatedNode, depth int) [][]Value {
+	out := [][]Value{}
+	for _, node := range tree {
+		if depth == 0 {
+			out = append(out, node.Row)
+			continue
+		}
+		out = append(out, leaves(node.Related, depth-1)...)
+	}
+	return out
+}
+
+func (s *Session) relatedPath(
+	ctx context.Context,
+	transaction string,
+	freshness *pb.Freshness,
+	path []Step,
+	keys [][]Value,
+) ([][]RelatedNode, error) {
+	if len(path) == 0 {
+		return nil, &Error{
+			Kind:    KindInvalidRequest,
+			Code:    codes.InvalidArgument,
+			Message: "a path needs at least one step; use Related for one relationship",
+		}
+	}
+
+	steps := make([]*pb.RelatedStep, 0, len(path))
+	for _, step := range path {
+		way := pb.Relation_CHILDREN
+		if step.Way == Parents {
+			way = pb.Relation_PARENTS
+		}
+		steps = append(steps, &pb.RelatedStep{
+			Relation: &pb.Relation{
+				Table:      step.On,
+				ForeignKey: step.Through,
+				Direction:  way,
+			},
+			Schema: s.client.schemas.claimFor(step.Table),
+		})
+	}
+
+	// One value per parent, not one row: a relationship relates on a single
+	// column, and the server refuses a key that spans more than one besides
+	// the tenant.
+	wire := make([]*pb.Value, 0, len(keys))
+	for _, key := range keys {
+		if len(key) != 1 {
+			return nil, &Error{
+				Kind:    KindInvalidRequest,
+				Code:    codes.InvalidArgument,
+				Message: "a relating key is one value; a composite relationship is not supported",
+			}
+		}
+		wire = append(wire, key[0].toProto())
+	}
+
+	response, err := s.client.rpc.Related(s.ctx(ctx), &pb.RelatedRequest{
+		Transaction: transaction,
+		Keys:        wire,
+		Freshness:   freshness,
+		Path:        steps,
+	})
+	if err != nil {
+		return nil, fromRPC(err)
+	}
+	s.observeServedBy(response.ServedBy)
+
+	// Keyed by the serialised value rather than by a Go comparison, for the
+	// reason `related` gives: the server grouped on the kernel's own equality.
+	encoding := proto.MarshalOptions{Deterministic: true}
+	levels := make([]map[string][]*pb.Row, 0, len(response.Levels))
+	for _, level := range response.Levels {
+		grouped := make(map[string][]*pb.Row, len(level.Groups))
+		for _, group := range level.Groups {
+			encoded, err := encoding.Marshal(group.Key)
+			if err != nil {
+				return nil, err
+			}
+			grouped[string(encoded)] = group.Rows
+		}
+		levels = append(levels, grouped)
+	}
+
+	// The walk the server's key_ordinal makes possible: take a row from the
+	// level above, read the value at the next level's ordinal, look it up. No
+	// catalog and no schema knowledge, which is why all three SDKs do this the
+	// same way.
+	var below func(int, string) ([]RelatedNode, error)
+	below = func(level int, key string) ([]RelatedNode, error) {
+		if level >= len(levels) {
+			return []RelatedNode{}, nil
+		}
+		rows := levels[level][key]
+		out := make([]RelatedNode, 0, len(rows))
+		for _, row := range rows {
+			decoded, err := rowFromProto(row)
+			if err != nil {
+				return nil, err
+			}
+			children := []RelatedNode{}
+			if level+1 < len(response.Levels) {
+				ordinal := int(response.Levels[level+1].KeyOrdinal)
+				if ordinal >= len(row.Values) {
+					return nil, &Error{
+						Kind: KindInternal,
+						Code: codes.Internal,
+						Message: "the server named a key ordinal past the end of a row; " +
+							"the client and the catalog disagree about this table",
+					}
+				}
+				encoded, err := encoding.Marshal(row.Values[ordinal])
+				if err != nil {
+					return nil, err
+				}
+				children, err = below(level+1, string(encoded))
+				if err != nil {
+					return nil, err
+				}
+			}
+			out = append(out, RelatedNode{Row: decoded, Related: children})
+		}
+		return out, nil
+	}
+
+	out := make([][]RelatedNode, 0, len(wire))
+	for _, key := range wire {
+		encoded, err := encoding.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		tree, err := below(0, string(encoded))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tree)
+	}
+	return out, nil
+}

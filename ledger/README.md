@@ -93,21 +93,32 @@ looks exactly like broken code.
 ```sh
 cd target/debug/deps && python3 -c "
 import os, re, collections
+pat = re.compile(r'^(.*)-[0-9a-f]{16}(\.[A-Za-z0-9.]+)?\$')
 g = collections.defaultdict(list)
 for n in os.listdir('.'):
-    if '.' in n or not re.search(r'-[0-9a-f]{16}\$', n): continue
-    st = os.stat(n)
-    g[n.rsplit('-', 1)[0]].append((st.st_mtime, st.st_size, n))
+    m = pat.match(n)
+    if not m: continue
+    try: st = os.stat(n)
+    except OSError: continue
+    g[(m.group(1), m.group(2) or '')].append((st.st_mtime, st.st_size, n))
 freed = 0
 for f in g.values():
     f.sort(reverse=True)
     for _, size, n in f[1:]:
-        os.remove(n); freed += size
-print('freed %.1f GB' % (freed / 1024 ** 3))
+        try: os.remove(n); freed += size
+        except OSError: pass
+print('freed %.2f GB' % (freed / 1024 ** 3))
 "
 ```
 
 That keeps the newest build of each target and drops the superseded copies.
+
+**It used to skip any filename with a dot in it**, which meant it dedupped the
+test binaries and left every `.rlib` and `.rmeta` behind — and those are most
+of what is on disk. On a tree that the old snippet had just "cleaned" down to
+0.1 GB of savings, grouping by name *and extension* freed **6.5 GB** more. If
+this is not freeing gigabytes on a full disk, check that you are running this
+version.
 **Do not delete `target/debug/build`** — it holds build-script outputs, and
 removing it produces hundreds of convincing, fictional compile errors in
 dependencies that were fine. If that has already happened,

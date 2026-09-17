@@ -30,6 +30,7 @@ from slate import (
     JoinQuery,
     JoinType,
     Query,
+    Step,
     UpdateWhere,
     SlateError,
     Metric,
@@ -53,7 +54,7 @@ from slate import (
     year,
 )
 
-from .schema import AUTHORS, BOOKS, BY_NAME, SALES
+from .schema import AUTHORS, BOOKS, BY_NAME, EDITIONS, SALES
 from .values import decode, encode, encode_row, format_float
 
 # The demo's three personas, mapped onto head-node identities.
@@ -179,6 +180,46 @@ class Adapter:
         # empty ones -- the shape all three clients promise.
         return {
             "groups": [[encode_row(list(row)) for row in group] for group in groups]
+        }
+
+    def path(self, session, body):
+        """A relationship *path*, resolved level by level in one request.
+
+        `sales -> books -> editions`: up to the book a sale sold, then down to
+        that book's editions. Two steps in opposite directions, which is the
+        case worth comparing across three SDKs — a path that only ever went one
+        way would agree even with the two directions confused.
+
+        The keys are `book_id` values read off sale rows, because that is where
+        a path starts: at the column of the caller's own rows that relates them
+        to the first step.
+
+        Both shapes in one answer. `trees` keeps the middle level, which is
+        `load_nested`; `through` drops it, which is `load_related_through`. They
+        are one request and one regrouping, and the difference between them is
+        exactly one line in each SDK — the line that reads "the rows at the
+        bottom" rather than "the rows with nothing below them", and that is
+        worth pinning in all three.
+        """
+        keys = [decode(raw) for raw in body.get("keys", [])]
+        steps = [
+            Step(on=SALES, through="sale_book", table=BOOKS, children=False),
+            Step(on=EDITIONS, through="edition_book", table=EDITIONS),
+        ]
+        trees = session.related_path(keys, steps)
+        through = session.related_through(keys, steps)
+        return {
+            "trees": [
+                [
+                    {
+                        "row": encode_row(list(node.row)),
+                        "related": [encode_row(list(leaf.row)) for leaf in node.related],
+                    }
+                    for node in tree
+                ]
+                for tree in trees
+            ],
+            "through": [[encode_row(list(row)) for row in rows] for rows in through],
         }
 
     #: The embedding every `/api/nearest` request measures against.
@@ -641,6 +682,7 @@ ROUTES = {
     "/api/page": "page",
     "/api/related": "related",
     "/api/batch": "batch",
+    "/api/path": "path",
     "/api/predicate-write": "predicate_write",
     "/api/transaction": "transaction",
 }
