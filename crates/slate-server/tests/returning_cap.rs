@@ -346,10 +346,12 @@ async fn a_batched_write_inside_a_transaction_is_bounded() {
             transaction: transaction.clone(),
             atomicity: pb::Atomicity::AllOrNothing as i32,
             operations: vec![pb::BatchOperation {
-                of: Some(pb::batch_operation::Of::DeleteWhere(pb::DeleteWhereRequest {
-                    transaction: String::new(),
-                    ..delete_where(true)
-                })),
+                of: Some(pb::batch_operation::Of::DeleteWhere(
+                    pb::DeleteWhereRequest {
+                        transaction: String::new(),
+                        ..delete_where(true)
+                    },
+                )),
             }],
         }))
         .await
