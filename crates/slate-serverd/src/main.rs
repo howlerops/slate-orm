@@ -545,6 +545,14 @@ fn limits(settings: &config::LimitSettings) -> Started<Limits> {
         }
         limits.max_batch_operations = Some(operations);
     }
+    if let Some(rows) = settings.max_returned_rows {
+        if rows == 0 {
+            return Err(Fault::new(
+                "`[limits] max_returned_rows = 0` would refuse every RETURNING; leave it unset for the default of 10000",
+            ));
+        }
+        limits.max_returned_rows = Some(rows);
+    }
     Ok(limits)
 }
 
@@ -773,6 +781,23 @@ mod tests {
         // an uncapped batch arrived at by saying nothing.
         let empty: config::LimitSettings = toml::from_str("").unwrap();
         assert_eq!(limits(&empty).unwrap().max_batch_operations, Some(1_000));
+    }
+
+    #[test]
+    fn the_returning_cap_is_read_refuses_zero_and_defaults() {
+        let settings: config::LimitSettings = toml::from_str("max_returned_rows = 0").unwrap();
+        assert!(
+            limits(&settings)
+                .unwrap_err()
+                .to_string()
+                .contains("refuse every RETURNING")
+        );
+
+        let settings: config::LimitSettings = toml::from_str("max_returned_rows = 25").unwrap();
+        assert_eq!(limits(&settings).unwrap().max_returned_rows, Some(25));
+
+        let empty: config::LimitSettings = toml::from_str("").unwrap();
+        assert_eq!(limits(&empty).unwrap().max_returned_rows, Some(10_000));
     }
 
     #[test]

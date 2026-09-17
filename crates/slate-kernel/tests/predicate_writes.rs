@@ -172,6 +172,7 @@ async fn delete_where_removes_exactly_the_matching_rows() {
             &root(),
             &table(),
             Expr::compare(OWNER, CmpOp::Eq, Value::U64(7)),
+            None,
         )
         .await
         .unwrap();
@@ -193,6 +194,7 @@ async fn delete_where_matching_nothing_removes_nothing() {
             &root(),
             &table(),
             Expr::compare(OWNER, CmpOp::Eq, Value::U64(999)),
+            None,
         )
         .await
         .unwrap();
@@ -221,6 +223,7 @@ async fn delete_where_maintains_the_secondary_index() {
         &root(),
         &indexed,
         Expr::compare(OWNER, CmpOp::Eq, Value::U64(7)),
+        None,
     )
     .await
     .unwrap();
@@ -265,6 +268,7 @@ async fn update_where_assigns_over_the_rows_own_values() {
                     Box::new(Scalar::literal(Value::I64(5))),
                 ),
             )],
+            None,
         )
         .await
         .unwrap();
@@ -291,6 +295,7 @@ async fn update_where_assigns_over_the_rows_own_values() {
                 Scalar::literal(Value::Str("!".to_owned())),
             ]),
         )],
+        None,
     )
     .await
     .unwrap();
@@ -315,6 +320,7 @@ async fn assignments_are_simultaneous_not_sequential() {
         &table(),
         Expr::compare(ID, CmpOp::Eq, Value::U64(1)),
         &[(N, Scalar::column(M)), (M, Scalar::column(N))],
+        None,
     )
     .await
     .unwrap();
@@ -340,6 +346,7 @@ async fn assigning_the_same_column_twice_is_refused() {
                 (N, Scalar::literal(Value::I64(1))),
                 (N, Scalar::literal(Value::I64(2))),
             ],
+            None,
         )
         .await
         .unwrap_err();
@@ -365,6 +372,7 @@ async fn assigning_a_column_the_table_does_not_have_is_refused() {
             &table(),
             Expr::True,
             &[(Ordinal(9), Scalar::literal(Value::I64(1)))],
+            None,
         )
         .await
         .unwrap_err();
@@ -400,7 +408,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
 
     let txn = store.begin().await.unwrap();
     let removed = txn
-        .delete_where(&seven, &table(), Expr::True)
+        .delete_where(&seven, &table(), Expr::True, None)
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -414,7 +422,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
     let store = seeded(mine.clone(), &rows).await;
     let txn = store.begin().await.unwrap();
     let removed = txn
-        .delete_where(&root(), &table(), Expr::True)
+        .delete_where(&root(), &table(), Expr::True, None)
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -430,6 +438,7 @@ async fn a_predicate_write_cannot_reach_a_row_the_policy_hides() {
             &table(),
             Expr::True,
             &[(N, Scalar::literal(Value::I64(0)))],
+            None,
         )
         .await
         .unwrap();
@@ -463,6 +472,7 @@ async fn a_predicate_update_cannot_write_a_row_the_policy_would_hide() {
             &table(),
             Expr::True,
             &[(OWNER, Scalar::literal(Value::U64(8)))],
+            None,
         )
         .await
         .unwrap_err();
@@ -558,6 +568,7 @@ async fn two_increments_make_two() {
                     Box::new(Scalar::literal(Value::I64(1))),
                 ),
             )],
+            None,
         )
         .await
         .unwrap();
@@ -620,7 +631,7 @@ proptest! {
             ]);
 
             let txn = store.begin().await.unwrap();
-            let removed = txn.delete_where(&root(), &table(), predicate).await.unwrap();
+            let removed = txn.delete_where(&root(), &table(), predicate, None).await.unwrap();
             txn.commit().await.unwrap();
 
             let mut expected: Vec<u64> = rows
@@ -663,6 +674,7 @@ proptest! {
                         Box::new(Scalar::column(N)),
                         Box::new(Scalar::literal(Value::I64(2))),
                     ))],
+                    None,
                 )
                 .await
                 .unwrap();
@@ -709,7 +721,7 @@ async fn a_predicate_write_needs_the_grant() {
 
     let txn = store.begin().await.unwrap();
     let err = txn
-        .delete_where(&guest, &table(), Expr::True)
+        .delete_where(&guest, &table(), Expr::True, None)
         .await
         .unwrap_err();
     assert!(
@@ -726,6 +738,7 @@ async fn a_predicate_write_needs_the_grant() {
             &table(),
             Expr::True,
             &[(N, Scalar::literal(Value::I64(0)))],
+            None,
         )
         .await
         .unwrap_err();
@@ -772,6 +785,7 @@ async fn update_where_moves_the_row_between_index_entries() {
         &indexed,
         Expr::compare(ID, CmpOp::Eq, Value::U64(1)),
         &[(OWNER, Scalar::literal(Value::U64(8)))],
+        None,
     )
     .await
     .unwrap();
@@ -887,6 +901,7 @@ async fn a_predicate_delete_obeys_foreign_keys() {
         &root(),
         &table(),
         Expr::compare(OWNER, CmpOp::Eq, Value::U64(7)),
+        None,
     )
     .await
     .unwrap();
@@ -926,6 +941,7 @@ async fn a_predicate_delete_obeys_foreign_keys() {
             &root(),
             &table(),
             Expr::compare(OWNER, CmpOp::Eq, Value::U64(7)),
+            None,
         )
         .await
         .unwrap_err();

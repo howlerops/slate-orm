@@ -91,6 +91,27 @@ pub struct Limits {
     /// one. `None` is allowed and is not the default: an uncapped batch is a
     /// client deciding how long the server's next unit of work is.
     pub max_batch_operations: Option<usize>,
+    /// How many rows a predicate write may hand back, or `None` for no cap.
+    ///
+    /// A cap on the *answer*, not on the write: a `DELETE … WHERE` over a
+    /// million rows is a legitimate delete and is uncapped, and only asking
+    /// for those million rows back is refused. `WriteResponse` is one message,
+    /// so a large enough set of rows makes it undeliverable — and the refusal
+    /// has to land before the write, because otherwise the rows are gone and
+    /// the caller has an error instead of the only record of them.
+    ///
+    /// That is not hypothetical: at 8,000 rows of about a kilobyte each the
+    /// response was 8,423,749 bytes against a client decode limit of
+    /// 4,194,304, and the delete had committed. See
+    /// `crates/slate-server/tests/returning_cap.rs`.
+    ///
+    /// The number is a row count because rows are what the scan counts, and it
+    /// is a proxy for what actually matters, which is bytes: one row holding a
+    /// large enough blob passes a count cap and fails to encode anyway. A
+    /// byte-exact bound needs the rows encoded before the write is allowed to
+    /// commit, which is a bigger change than this and is written up in
+    /// `docs/orm-comparison.md`.
+    pub max_returned_rows: Option<usize>,
 }
 
 impl Default for Limits {
@@ -104,6 +125,12 @@ impl Default for Limits {
             // rather than on purpose. Not measured: it is a guard against a
             // request nobody should send, not a tuning knob.
             max_batch_operations: Some(1_000),
+            // 10,000 rows of the 256-byte row this node was measured on is
+            // about 2.6 MB, comfortably inside the 4 MiB a default gRPC
+            // client will decode, and far more rows than a caller reads.
+            // Derived from that limit rather than measured, which is why it
+            // is round.
+            max_returned_rows: Some(10_000),
         }
     }
 }
@@ -240,6 +267,10 @@ enum Command {
         context: Box<SecurityContext>,
         table: TableId,
         predicate: Expr,
+        /// The ceiling on the match, or `None`. Resolved by the caller rather
+        /// than read from `Limits` here, because it depends on whether the
+        /// request asked for its rows back and this task cannot see that.
+        at_most: Option<usize>,
         reply: oneshot::Sender<Result<Vec<Row>, KernelError>>,
     },
     UpdateWhere {
@@ -247,6 +278,7 @@ enum Command {
         table: TableId,
         predicate: Expr,
         assignments: Vec<(Ordinal, Scalar)>,
+        at_most: Option<usize>,
         reply: oneshot::Sender<Result<Vec<Row>, KernelError>>,
     },
     Get {
@@ -494,11 +526,13 @@ impl Sessions {
         context: &SecurityContext,
         table: TableId,
         predicate: Expr,
+        at_most: Option<usize>,
     ) -> Result<Vec<Row>, Status> {
         self.dispatch(id, context, |reply| Command::DeleteWhere {
             context: Box::new(context.clone()),
             table,
             predicate,
+            at_most,
             reply,
         })
         .await?
@@ -514,12 +548,14 @@ impl Sessions {
         table: TableId,
         predicate: Expr,
         assignments: Vec<(Ordinal, Scalar)>,
+        at_most: Option<usize>,
     ) -> Result<Vec<Row>, Status> {
         self.dispatch(id, context, |reply| Command::UpdateWhere {
             context: Box::new(context.clone()),
             table,
             predicate,
             assignments,
+            at_most,
             reply,
         })
         .await?
@@ -838,11 +874,12 @@ async fn apply<S: KvStore>(
             context,
             table,
             predicate,
+            at_most,
             reply,
         } => {
             let definition = table!(table, reply);
             let outcome = transaction
-                .delete_where(&context, definition, predicate)
+                .delete_where(&context, definition, predicate, at_most)
                 .await;
             answer(reply, outcome)
         }
@@ -851,11 +888,12 @@ async fn apply<S: KvStore>(
             table,
             predicate,
             assignments,
+            at_most,
             reply,
         } => {
             let definition = table!(table, reply);
             let outcome = transaction
-                .update_where(&context, definition, predicate, &assignments)
+                .update_where(&context, definition, predicate, &assignments, at_most)
                 .await;
             answer(reply, outcome)
         }

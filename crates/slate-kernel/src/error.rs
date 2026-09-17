@@ -332,6 +332,27 @@ pub enum KernelError {
         /// The limit that was passed.
         limit: usize,
     },
+
+    /// A predicate write matched more rows than the caller allowed it to.
+    ///
+    /// Unlike the three limits above this one is not a memory guard, and it is
+    /// per call rather than per store: a caller passes it when it has to
+    /// *deliver* the matched rows and knows a ceiling on how many it can
+    /// carry. The head node passes it for a predicate write with `RETURNING`,
+    /// because a response is one message and a large enough set of rows makes
+    /// it undeliverable.
+    ///
+    /// The refusal happens before anything is written, which is the whole
+    /// point: without it the write commits and then the response fails to
+    /// arrive, so the caller sees an error for a delete that really happened.
+    #[error(
+        "a predicate write matched more than {limit} rows, and its rows were asked for; \
+         narrow the predicate, drop the request for the rows, or raise the limit"
+    )]
+    PredicateWriteTooLarge {
+        /// The limit that was passed.
+        limit: usize,
+    },
 }
 
 impl KernelError {

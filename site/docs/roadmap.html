@@ -344,10 +344,14 @@
         did without it. First for that reason rather than for its size.
       </li>
       <li>
-        <strong>A ceiling on <code>RETURNING</code>.</strong> Stated as a
-        hypothesis until it is reproduced: nothing bounds how many rows a
-        predicate write hands back, and a large enough match may commit and then
-        fail to deliver &mdash; a known outcome turned into an unknown one.
+        <strong>A ceiling on <code>RETURNING</code>. &mdash; done, and the
+        hypothesis was right.</strong> It reproduced at 8,000 rows of about a
+        kilobyte: the delete committed, every row was destroyed, and the caller
+        got <code>OutOfRange</code> naming a 4&nbsp;MiB decode limit &mdash; a
+        known outcome turned into an unknown one. There is a configurable cap
+        now, checked before anything is written, and it bounds the
+        <em>answer</em> rather than the write: deleting a million rows is still
+        a million rows deleted, and only asking to see them is refused.
       </li>
       <li>
         <strong>Keyset paging over a join or a chain.</strong> Single-table

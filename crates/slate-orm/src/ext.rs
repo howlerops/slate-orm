@@ -537,7 +537,11 @@ impl Records for RecordTransaction<'_> {
         // decode per row, and this one asked how many. The kernel method
         // returns them for a caller that does want them — including the wire
         // handler, which is where `RETURNING` lives.
-        self.delete_where(context, R::table(), predicate)
+        // `None` for the bound, because the answer is a count: there is
+        // nothing to carry anywhere, so there is nothing to refuse for being
+        // too large to carry. The wire handler passes its own ceiling, because
+        // it has a message to fit the rows into.
+        self.delete_where(context, R::table(), predicate, None)
             .await
             .map(|rows| rows.len())
             .map_err(OrmError::from)
@@ -549,7 +553,7 @@ impl Records for RecordTransaction<'_> {
         predicate: Expr,
         assignments: &[(Ordinal, Scalar)],
     ) -> Result<usize> {
-        self.update_where(context, R::table(), predicate, assignments)
+        self.update_where(context, R::table(), predicate, assignments, None)
             .await
             .map(|rows| rows.len())
             .map_err(OrmError::from)

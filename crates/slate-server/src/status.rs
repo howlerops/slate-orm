@@ -211,6 +211,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::CorruptIndexEntry { .. } => "CORRUPT_INDEX_ENTRY",
         KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
         KernelError::InvalidCursor { .. } => "INVALID_CURSOR",
+        KernelError::PredicateWriteTooLarge { .. } => "PREDICATE_WRITE_TOO_LARGE",
         KernelError::SortTooLarge { .. } => "SORT_TOO_LARGE",
         KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
         KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
@@ -305,10 +306,17 @@ pub fn code_for(error: &KernelError) -> Code {
         // server broke" and invites a retry that will exceed the same limit
         // again. They are reachable from any sorted or grouped query and have
         // been since those went on the wire.
+        //
+        // `PredicateWriteTooLarge` joins them, and is the only one of the five
+        // that is about the *answer* rather than the node's memory: it fires
+        // when a predicate write matched more rows than one response can
+        // carry. `ResourceExhausted` all the same, and for the same reason —
+        // the caller's remedy is a narrower request.
         KernelError::JoinBuildTooLarge { .. }
         | KernelError::SortTooLarge { .. }
         | KernelError::TooManyGroups { .. }
-        | KernelError::TooManyDistinctValues { .. } => Code::ResourceExhausted,
+        | KernelError::TooManyDistinctValues { .. }
+        | KernelError::PredicateWriteTooLarge { .. } => Code::ResourceExhausted,
 
         // The caller's own request, malformed against this schema.
         // `DuplicateAssignment` and `NoSuchColumn` became reachable when

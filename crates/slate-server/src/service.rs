@@ -626,6 +626,8 @@ impl<S: KvStore + KvReadStore> Head<S> {
             // `&TableDef` from the catalog. Reusing the five methods keeps a
             // batched write and a lone write on one path through the actor.
             for operation in decoded {
+                // Read before the match, which consumes the operation.
+                let at_most = operation.at_most(self.limits.max_returned_rows);
                 match operation {
                     Decoded::Insert {
                         table,
@@ -650,7 +652,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
                         table, predicate, ..
                     } => {
                         self.sessions
-                            .delete_where(transaction, context, table.id(), predicate)
+                            .delete_where(transaction, context, table.id(), predicate, at_most)
                             .await?;
                     }
                     Decoded::UpdateWhere {
@@ -660,7 +662,14 @@ impl<S: KvStore + KvReadStore> Head<S> {
                         ..
                     } => {
                         self.sessions
-                            .update_where(transaction, context, table.id(), predicate, assignments)
+                            .update_where(
+                                transaction,
+                                context,
+                                table.id(),
+                                predicate,
+                                assignments,
+                                at_most,
+                            )
                             .await?;
                     }
                 }
@@ -673,11 +682,12 @@ impl<S: KvStore + KvReadStore> Head<S> {
 
         let writer = self.leader()?;
         let decoded = &decoded;
+        let returnable = self.limits.max_returned_rows;
         let outcome = writer
             .transact_boxed_tracked(move |txn| {
                 Box::pin(async move {
                     for operation in decoded {
-                        operation.apply(txn, context).await?;
+                        operation.apply(txn, context, returnable).await?;
                     }
                     Ok(())
                 })
@@ -709,7 +719,10 @@ impl<S: KvStore + KvReadStore> Head<S> {
         let mut results = Vec::with_capacity(decoded.len());
         let mut sequence = None;
         for operation in &decoded {
-            match self.autocommit(context, operation.as_write()).await {
+            match self
+                .autocommit(context, operation.as_write(self.limits.max_returned_rows))
+                .await
+            {
                 Ok((written, token)) => {
                     if let Some(token) = token {
                         // The last one that committed, so a caller can read
@@ -785,6 +798,16 @@ impl<S: KvStore + KvReadStore> Head<S> {
         }
     }
 
+    /// The ceiling a predicate write's match is held to.
+    ///
+    /// `None` when the caller did not ask for its rows back, whatever the
+    /// configured limit is: the limit is on the *answer*, and a caller that
+    /// wants a million rows gone and does not want to see them is asking for
+    /// something this node can deliver.
+    fn returnable(&self, returning: bool) -> Option<usize> {
+        returning.then_some(self.limits.max_returned_rows).flatten()
+    }
+
     async fn autocommit(
         &self,
         context: &SecurityContext,
@@ -836,12 +859,17 @@ enum Write<'a> {
     DeleteWhere {
         table: &'a TableDef,
         predicate: &'a Expr,
+        /// The ceiling on the match, or `None`. Set only when the caller asked
+        /// for the rows back: the write itself is not what is being bounded,
+        /// the response is.
+        at_most: Option<usize>,
     },
     /// Assign to columns of every row a predicate selects.
     UpdateWhere {
         table: &'a TableDef,
         predicate: &'a Expr,
         assignments: &'a [(Ordinal, Scalar)],
+        at_most: Option<usize>,
     },
 }
 
@@ -917,16 +945,21 @@ impl Write<'_> {
                 }
                 Ok(counted(affected))
             }
-            Self::DeleteWhere { table, predicate } => transaction
-                .delete_where(context, table, (*predicate).clone())
+            Self::DeleteWhere {
+                table,
+                predicate,
+                at_most,
+            } => transaction
+                .delete_where(context, table, (*predicate).clone(), *at_most)
                 .await
                 .map(touched),
             Self::UpdateWhere {
                 table,
                 predicate,
                 assignments,
+                at_most,
             } => transaction
-                .update_where(context, table, (*predicate).clone(), assignments)
+                .update_where(context, table, (*predicate).clone(), assignments, *at_most)
                 .await
                 .map(touched),
         }
@@ -974,7 +1007,7 @@ impl<'a> Decoded<'a> {
     /// code a lone RPC runs. A second `apply` for batches is the way a batched
     /// insert and a lone one come to disagree about, say, whether `upsert`
     /// replaces.
-    fn as_write(&'a self) -> Write<'a> {
+    fn as_write(&'a self, at_most: Option<usize>) -> Write<'a> {
         match self {
             Self::Insert {
                 table,
@@ -989,7 +1022,11 @@ impl<'a> Decoded<'a> {
             Self::Delete { table, keys } => Write::Delete { table, keys },
             Self::DeleteWhere {
                 table, predicate, ..
-            } => Write::DeleteWhere { table, predicate },
+            } => Write::DeleteWhere {
+                table,
+                predicate,
+                at_most: self.at_most(at_most),
+            },
             Self::UpdateWhere {
                 table,
                 predicate,
@@ -999,6 +1036,7 @@ impl<'a> Decoded<'a> {
                 table,
                 predicate,
                 assignments,
+                at_most: self.at_most(at_most),
             },
         }
     }
@@ -1008,11 +1046,20 @@ impl<'a> Decoded<'a> {
         &self,
         transaction: &RecordTransaction<'_>,
         context: &SecurityContext,
+        at_most: Option<usize>,
     ) -> Result<(), KernelError> {
-        self.as_write()
+        self.as_write(at_most)
             .apply(transaction, context)
             .await
             .map(|_| ())
+    }
+
+    /// The ceiling this operation's match is held to, given the node's.
+    ///
+    /// `None` unless the operation asked for its rows back: a batched write
+    /// that did not is bounded by nothing here, the same as a lone one.
+    fn at_most(&self, configured: Option<usize>) -> Option<usize> {
+        self.returning().then_some(configured).flatten()
     }
 
     fn table(&self) -> &'a TableDef {
@@ -1306,6 +1353,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                     Write::DeleteWhere {
                         table,
                         predicate: &predicate,
+                        at_most: self.returnable(request.returning),
                     },
                 )
                 .await?;
@@ -1317,7 +1365,13 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             )));
         } else {
             self.sessions
-                .delete_where(&request.transaction, &context, table.id(), predicate)
+                .delete_where(
+                    &request.transaction,
+                    &context,
+                    table.id(),
+                    predicate,
+                    self.returnable(request.returning),
+                )
                 .await?
         };
         Ok(Response::new(returning(
@@ -1360,6 +1414,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                         table,
                         predicate: &predicate,
                         assignments: &assignments,
+                        at_most: self.returnable(request.returning),
                     },
                 )
                 .await?;
@@ -1377,6 +1432,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                     table.id(),
                     predicate,
                     assignments,
+                    self.returnable(request.returning),
                 )
                 .await?
         };

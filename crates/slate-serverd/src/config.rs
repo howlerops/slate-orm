@@ -376,6 +376,15 @@ pub(crate) struct LimitSettings {
     /// limit in this table — a zero here is a typo far more often than an
     /// intention, and the way to mean "no limit" is to say so.
     pub(crate) max_batch_operations: Option<usize>,
+    /// How many rows a predicate write may hand back when `RETURNING` is asked
+    /// for.
+    ///
+    /// `0` is refused, the same as the others. Raising it past what a client
+    /// will decode trades one failure for another: the write is then allowed
+    /// and the response is refused at the client, which is the defect this
+    /// limit exists to prevent.
+    #[serde(default)]
+    pub(crate) max_returned_rows: Option<usize>,
     /// How many requests may be in flight at once across all connections.
     ///
     /// Unset means unbounded, which is what shipped: a caller could open as

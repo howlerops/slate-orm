@@ -446,7 +446,36 @@ today.
 level, no ordering or limit per level — both are real and both want the level
 to be a `Query` rather than a `Relation`, which is a bigger message than this.
 
-### N2 — A ceiling on `returning`
+### N2 — A ceiling on `returning` — **built**
+
+> **The hypothesis reproduced, exactly as written below**, at 8,000 rows of
+> about a kilobyte each: `OutOfRange`, *"decoded message length too large:
+> found 8423749 bytes, the limit is: 4194304 bytes"*, and **zero rows left in
+> the table**. The delete committed and destroyed all 8,000; the caller got an
+> error naming a decode limit, which says nothing about the write.
+>
+> Fixed as `Limits.max_returned_rows`, default 10,000, checked in the kernel's
+> `matching_rows` — the one place both predicate writes decide which rows they
+> touch, and upstream of every write on every path. The cap is on the
+> *answer*: a `DELETE … WHERE` over a million rows is still a million rows
+> deleted, and only asking for them back is refused.
+>
+> Two corrections to the item as written. The refusal is a `KernelError`
+> rather than a server check, because it has to be inside the transaction and
+> that is the error type the transaction closure returns — and putting it in
+> `matching_rows` made it one mechanism across the lone, batched and
+> in-transaction paths instead of three. And "refusing after the scan but
+> before the commit is the only ordering that keeps the caller's world
+> consistent" was *too weak*: for a lone write a rollback saves it either way,
+> but inside a caller's open transaction there is no rollback to lean on, and
+> the write stays in their buffer. A mutation moving the check after the write
+> loop is caught by exactly one test — the in-transaction one — which is why
+> that test earns its place.
+>
+> Ten mutations, one survivor, and the survivor was an equivalent mutant: it
+> *added* a post-write check while the real one still stood, so the code was
+> unreachable. Established by building the non-equivalent version — pre-check
+> removed, post-check in its place — and watching it fail by name.
 
 **Hypothesis, not a finding.** `WriteResponse` is unary and `returning` puts
 every matched row in it. Nothing in `Limits` bounds the count — `grep` for
@@ -474,6 +503,21 @@ ordering matters more than the limit and is the thing to mutate.
 
 *Stops at.* One number, on the server. Streaming a predicate write's rows back
 the way `Query` streams is the general answer and is a different RPC shape.
+
+> **Where it actually stopped**, beyond the above: the cap is a row count, and
+> what makes a response undeliverable is bytes. One row holding a large enough
+> blob passes a count cap of 10,000 and fails to encode anyway. A byte-exact
+> bound means encoding the rows before the write is allowed to commit, which is
+> a different and larger change.
+>
+> And the memory cost the count cap does *not* address: `matching_rows`
+> collects every matched row whether or not `returning` was asked for, so a
+> `DELETE … WHERE` over ten million rows still materialises ten million rows.
+> That predates this item and is untouched by it. It belongs in
+> `ExecutionLimits` beside `max_sort_rows`, as a per-store memory guard rather
+> than a per-request answer cap — the two are different limits with different
+> defaults, and merging them would either refuse legitimate large deletes or
+> leave the wire defect open.
 
 ### N3 — Keyset paging over a join or a chain
 

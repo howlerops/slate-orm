@@ -1636,21 +1636,30 @@ impl<'a> RecordTransaction<'a> {
     /// through would otherwise leave a half-applied delete behind. The same
     /// argument applies with more force here, where there are many rows.
     ///
-    /// The cost is that the matched rows are held in memory at once. That is a
-    /// real limit and it is the caller's to bound — `Expr` is the knob, and the
-    /// daemon already caps per-request work above this layer.
+    /// The cost is that the matched rows are held in memory at once. `at_most`
+    /// is the bound on that, and on the size of the answer: `Some(n)` refuses
+    /// before writing anything if more than `n` rows match, `None` accepts
+    /// whatever the predicate selects. A caller that must carry the rows
+    /// somewhere — over a wire, into one message — passes its own ceiling;
+    /// a caller that only wants the rows gone passes `None`, because a delete
+    /// of a million rows is a legitimate delete.
     ///
     /// # Errors
-    /// Everything [`RecordTransaction::delete`] can raise, for any matched row.
+    /// [`KernelError::PredicateWriteTooLarge`] if `at_most` is passed and
+    /// exceeded, before any row is removed. Otherwise everything
+    /// [`RecordTransaction::delete`] can raise, for any matched row.
     pub async fn delete_where(
         &self,
         context: &SecurityContext,
         table: &TableDef,
         predicate: Expr,
+        at_most: Option<usize>,
     ) -> Result<Vec<Row>> {
         self.security.authorize(context, table, Action::Delete)?;
 
-        let matched = self.matching_rows(context, table, predicate).await?;
+        let matched = self
+            .matching_rows(context, table, predicate, at_most)
+            .await?;
         let mut removed = Vec::with_capacity(matched.len());
         for row in matched {
             // Per row, the identical path the keyed delete takes: the cascade
@@ -1687,7 +1696,14 @@ impl<'a> RecordTransaction<'a> {
     /// to `b`. Left-to-right application is the other reading and it is the one
     /// that surprises people; SQL takes this one and so does this.
     ///
+    /// `at_most` bounds the match the same way [`Self::delete_where`]'s does,
+    /// and for the same reason: a caller that has to carry the rows back says
+    /// how many it can carry, and the refusal lands before anything is
+    /// written.
+    ///
     /// # Errors
+    /// [`KernelError::PredicateWriteTooLarge`] if `at_most` is passed and
+    /// exceeded, before any row is updated.
     /// [`KernelError::DuplicateAssignment`] if a column is assigned twice —
     /// refused rather than resolved, because either resolution is a guess at
     /// which the caller meant. Otherwise everything
@@ -1701,6 +1717,7 @@ impl<'a> RecordTransaction<'a> {
         table: &TableDef,
         predicate: Expr,
         assignments: &[(Ordinal, Scalar)],
+        at_most: Option<usize>,
     ) -> Result<Vec<Row>> {
         self.security.authorize(context, table, Action::Update)?;
 
@@ -1723,7 +1740,9 @@ impl<'a> RecordTransaction<'a> {
             return Ok(Vec::new());
         }
 
-        let matched = self.matching_rows(context, table, predicate).await?;
+        let matched = self
+            .matching_rows(context, table, predicate, at_most)
+            .await?;
         let mut written = Vec::with_capacity(matched.len());
         for existing in matched {
             let mut values = existing.values().to_vec();
@@ -1755,18 +1774,31 @@ impl<'a> RecordTransaction<'a> {
     ///
     /// Shared by the two predicate writes so that there is exactly one place
     /// where "which rows does this touch" is decided, and it is the same place
-    /// a read decides it.
+    /// a read decides it. It is also the only place either write can be
+    /// refused *before* it has written anything, which is why `at_most` is
+    /// checked here rather than by the callers.
+    ///
+    /// The scan stops at `at_most + 1` rather than counting the whole match:
+    /// one row over the line is all the evidence the refusal needs, and
+    /// materialising the rest to report a number nobody can act on would be
+    /// paying the cost the limit exists to avoid.
     async fn matching_rows(
         &self,
         context: &SecurityContext,
         table: &TableDef,
         predicate: Expr,
+        at_most: Option<usize>,
     ) -> Result<Vec<Row>> {
         let mut cursor = self
             .execute(context, table, &Query::all().filter(predicate))
             .await?;
         let mut rows = Vec::new();
         while let Some(row) = cursor.next().await? {
+            if let Some(limit) = at_most
+                && rows.len() >= limit
+            {
+                return Err(KernelError::PredicateWriteTooLarge { limit });
+            }
             rows.push(row);
         }
         Ok(rows)
