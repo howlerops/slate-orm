@@ -656,6 +656,30 @@ SUM over the same as f64:   9.99999999999998
 The cost is that a value cannot print itself — rendering needs the column, and
 `Units::to_string_with_scale` takes the scale rather than guessing.
 
+Arithmetic follows the same rule: **an expression is expressible when its
+answer is still a count of the same unit its operands were counts of.**
+
+```rust
+price * quantity        // cents times a plain count is cents          ✓
+price - discount        // both at scale 2                             ✓
+price - Decimal(50)     // a literal takes the column's scale: 50¢     ✓
+total / parts           // truncating toward zero — no scale to round  ✓
+
+price * discount        // cents times cents is hundredths of a cent   ✗
+price + quantity        // money plus a count of nothing               ✗
+round(price)            // to the unit, or to the whole? neither       ✗
+```
+
+The refusals arrive at plan time, before a row is read, naming the operation
+and what to write instead — rather than as a column of nulls at the far end,
+which is indistinguishable from a column that is legitimately null. And SQL
+reads a number with a point in it at the column's scale, so `19.99` against a
+scale-2 column is 1999 units and compares exactly:
+
+```sql
+SELECT id, price FROM books WHERE price > 19.99   -- and 19.830 = 19.83
+```
+
 ### The schema on disk, and the index that returns nothing
 
 Adding an index to a table that already holds rows does not make queries
@@ -1091,6 +1115,15 @@ Built and tested:
       their own, which caught two defects on the first two runs — a missing
       comparison arm that made every decimal compare equal, and a `skip` path
       that did not know the new type code
+- [x] Arithmetic over a decimal, and a decimal literal in SQL. The four shapes
+      whose answer is still a count of the operands' unit are exact; everything
+      else is refused at plan time rather than returning a column of nulls.
+      Two defects came out of building it: the check first lived in
+      `Reads::execute`, so `EXPLAIN` returned a plan for a query that could not
+      run, and `Mul`/`Div` asked only whether a side *had* a scale — so
+      `price * Decimal(3)` planned cleanly and evaluated to null on every row.
+      The SQL half reads `19.99` by splitting on the point, because the obvious
+      `parse::<f64>() * 100.0` reads `"8.20"` as 819 cents
 - [x] A per-call deadline in every client. Python and TypeScript passed none on
       any RPC, so a head node that accepted a connection and then stopped
       answering blocked the caller **for ever** — a failure no error-code
@@ -1196,11 +1229,12 @@ Not built:
       mean of exact decimals is generally not representable at the same scale,
       so something has to give, and consistency was chosen over refusing. It is
       the one place in that feature where exactness stops
-- [ ] Arithmetic on decimals in `Scalar` — `price * quantity` is not
-      expressible, because the product of two scale-2 values is scale-4 and
-      nothing in the expression layer tracks that
-- [ ] A decimal literal in the SQL front end: `WHERE total > 19.99` parses as a
-      float and will not match a decimal column
+- [ ] Nothing checks a client's declared scale against the server's. The
+      schema fingerprint deliberately does not hash a scale, because a scale
+      addresses no column — so a client that believes `price` is scale 4 where
+      the schema says 2 reaches the right column and renders every value a
+      hundred times wrong, for ever, with no error anywhere. The sharpest edge
+      in the decimal feature, and the one thing about it still open
 - [ ] Milliseconds. `Timestamp` is seconds because every calendar function
       reads seconds; a millisecond column would need either a second type or a
       scale on the column, the way a decimal has one, and neither is built

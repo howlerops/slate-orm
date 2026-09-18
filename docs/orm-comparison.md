@@ -916,8 +916,7 @@ server's; the fingerprint deliberately does not hash it, because a scale
 addresses no column, so a client with it wrong reaches the right column and
 renders every value off by a power of ten, for ever, with no error anywhere.
 That is the price of a protocol that publishes no schema and it is the sharpest
-edge in the feature. `Scalar` still has no decimal arithmetic, the SQL front
-end still has no decimal literal.
+edge in the feature, and W4 below did not close it either.
 
 ### W3 — `delete_if_unchanged`, kernel to clients — **built**
 
@@ -948,6 +947,67 @@ a code no other endpoint produces.
 remove children the caller never saw, and there is no version of the field that
 could cover them: the caller does not know what the deletion closure contains,
 and the closure is deliberately computed without the row policy.
+
+### W4 — decimal arithmetic in `Scalar`, and a decimal literal in SQL — **built**
+
+> Two README lines, and they read as unrelated: "`price * quantity` is not
+> expressible" and "`WHERE total > 19.99` parses as a float". They are the same
+> item, because they are the same fact — a decimal is a count of a unit the
+> *column* names, and neither the expression layer nor the parser knew that.
+
+**The rule, in one sentence: an expression is expressible when its answer is
+still a count of the same unit its operands were counts of.** `price *
+quantity` is (cents times a plain count is cents), `price ± discount` is when
+both are at one scale, `price / parts` is (truncating toward zero, because
+there is no scale to round to). `price * discount` is not — cents times cents
+is hundredths of a cent, at a scale no column has and nothing on the wire could
+carry. Everything in the second set is refused at plan time by
+`Scalar::decimal_scale`, before a row is read, with a message naming what to
+write instead.
+
+The refusals are the design content. The alternative — a `Value::Decimal {
+units, scale }` that makes everything expressible — was rejected because the
+scale would then live in two places and the order-preserving key encoding
+depends on it living in one. Writing that down is what makes the refusals
+defensible rather than arbitrary.
+
+**Where the check lives, and the third thing this found.** It started in
+`Reads::execute`, which every read passes through — and `explain` does not, so
+a query planned cleanly, `EXPLAIN` returned a plan, and the read then failed.
+A plan for a query that cannot run is worse than an error, because it looks
+like an answer. Moving it into `Reads::plan` fixed that and made the join-side
+and chain-step cases fall out for free: two explicit calls had been added for
+those, on the belief that a side is planned rather than executed, and removing
+them changed no test — which is what said they were dead. Mutation testing
+found that; reading did not.
+
+**And a defect found by reading.** `Mul` and `Div` asked only whether each side
+*had* a scale. A decimal literal has none, so `price * Decimal(3)` read as
+"money times a plain number" — the expressible case — while the evaluator saw
+units times units, which has no arm, and returned `Null` on every row. Plan
+time yes, run time null: the exact shape the plan-time check exists to
+prevent, in the one place it was not asked. `Add` never had it because it
+consults `mentions_decimal`; `Mul` and `Div` now do too.
+
+The SQL half is `Value::decimal_from_str`/`decimal_to_string` in `slate-tuple`,
+which split on the point rather than parsing an `f64` and multiplying: the
+shortcut reads `"8.20"` as **819** cents, and that is a test in the tree rather
+than a claim in a comment. Three silent wrong answers went with it — `WHERE
+price > 19.99` returned nothing (the literal became a string, which sorts below
+every decimal), `HAVING sum(price) > 60.00` admitted nothing (the aggregate's
+type table said "integer or float"), and `UPDATE` failed on any table with a
+decimal in it (the read-modify-write renders a row to text and reparses it, and
+a decimal rendered as `Decimal(895)`). All three were found by giving the
+workbench fixture a `price` column, which is the argument for doing that rather
+than testing the literal against a purpose-built schema.
+
+**What it does not do.** `AVG` over a decimal is still a float, deliberately.
+Nothing checks a client's declared scale against the server's — still the
+sharpest edge, still open. And the three SDKs can build a decimal expression
+but know nothing about scale, so each adapter writes `Units(50)` having read
+the schema by eye; the conformance corpus compares them on three such
+expressions and one refusal, which catches a client that sent the *integer* 50,
+but nothing catches a client that believes the column is scale 4.
 
 ## What neither plan does
 

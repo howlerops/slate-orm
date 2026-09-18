@@ -439,6 +439,43 @@
         was only ever tested on the happy path, which an unconditional update
         satisfies identically.
       </li>
+      <li>
+        <strong>Deleting a row somebody else just edited. &mdash; done.</strong>
+        <code>delete_if_unchanged</code> in the kernel,
+        <code>DeleteRequest.expected</code> on the wire, and a conditional
+        delete in all three clients &mdash; the same shape the conditional
+        update has, because the argument is the same one. Where it stops being
+        that update&rsquo;s twin is the design content: a plain delete reports
+        an absent key as zero affected, because &ldquo;make sure this is
+        gone&rdquo; is idempotent; a conditional one refuses it, and refuses it
+        as <code>NOT_FOUND</code> rather than <code>ABORTED</code>. A row that
+        moved can be re-read and the decision remade; a row that is gone
+        cannot, so a caller retrying on <code>ABORTED</code> would spin. The
+        three-SDK corpus compares that distinction, which is the one place the
+        three clients&rsquo; error taxonomies meet on a code no other endpoint
+        produces.
+      </li>
+      <li>
+        <strong>Arithmetic over money, and a decimal literal in SQL. &mdash;
+        done.</strong> Two roadmap lines that read as unrelated &mdash;
+        <code>price * quantity</code> was not expressible, and
+        <code>WHERE total &gt; 19.99</code> parsed as a float &mdash; and are
+        the same fact: a decimal is a count of a unit the <em>column</em>
+        names, and neither the expression layer nor the parser knew that. The
+        rule is now one sentence: an expression is expressible when its answer
+        is still a count of the same unit its operands were counts of, and
+        everything else is refused at plan time rather than returning a column
+        of nulls. Three things came out of building it. The check first lived
+        in <code>Reads::execute</code>, which <code>EXPLAIN</code> does not go
+        through &mdash; so a plan came back for a query that could not run,
+        which is worse than an error because it looks like an answer.
+        <code>Mul</code> and <code>Div</code> asked only whether a side
+        <em>had</em> a scale, so <code>price * Decimal(3)</code> planned
+        cleanly and evaluated to null on every row. And the SQL half reads
+        <code>19.99</code> by splitting on the point, because the obvious
+        <code>parse::&lt;f64&gt;() * 100.0</code> reads <code>"8.20"</code> as
+        819 cents &mdash; a test in the tree rather than a claim in a comment.
+      </li>
     </ol>
 
     <h2>What neither plan does</h2>

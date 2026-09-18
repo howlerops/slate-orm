@@ -281,6 +281,30 @@
         feature and the price of a protocol that publishes no schema.
       </p>
 
+      <p>
+        Arithmetic follows from the same fact. An expression over a decimal is
+        expressible when its answer is still a count of the <em>same</em> unit
+        its operands were counts of: <code>price * quantity</code> is (cents
+        times a plain count is cents), <code>price - discount</code> is when
+        both are at one scale, <code>total / parts</code> is (truncating toward
+        zero, because there is no scale to round to), and a decimal literal has
+        no scale of its own so <code>price - 0.50</code> takes the column's.
+        <code>price * discount</code> is not: cents times cents is hundredths
+        of a cent, at a scale no column has and nothing on the wire could
+        carry. Nor is <code>price + quantity</code>, which is money plus a
+        count of nothing.
+      </p>
+      <p>
+        The refusals arrive at <em>plan</em> time, naming the operation and
+        what to write instead, rather than as a column of nulls at the far end
+        &mdash; which is indistinguishable from a column that is legitimately
+        null. SQL reads a number with a point in it at the column's scale, so
+        <code>WHERE price &gt; 19.99</code> against a scale-2 column compares
+        1999 units exactly, and <code>19.830</code> finds the same row as
+        <code>19.83</code>. You can type that into the
+        <a href="../workbench.html">workbench</a>.
+      </p>
+
     <h3>No date type, and an enum is its own name</h3>
       <p>
         The value model is closed &mdash; nine types, each one the tuple codec
