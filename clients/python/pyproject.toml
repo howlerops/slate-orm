@@ -136,6 +136,12 @@ exclude = ["src/slate/_proto"]
 # the `mypy-protobuf` stubs — which is the boundary that matters.
 extend-exclude = ["src/slate/_proto"]
 line-length = 100
+# `ruff format` is not run here either. The decision and its measurement are in
+# the root `pyproject.toml`, beside the other tree's ruff config — this package
+# would survive it (its test files are already formatted), but a formatter that
+# is authority in one directory and not the next is worse than one that is
+# neither, because a contributor moving between them cannot tell which they are
+# in.
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF"]
