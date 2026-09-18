@@ -509,3 +509,51 @@ async fn a_conditional_update_works_inside_a_batch() {
         Some(pb::value::Kind::DecimalValue(260))
     );
 }
+
+/// An expression the kernel refuses reaches the caller as `INVALID_ARGUMENT`,
+/// not as `INTERNAL`.
+///
+/// `amount + id` is money plus a count of nothing — a scale-2 decimal beside a
+/// `u64` — and the kernel refuses it at plan time. The classification is the
+/// point rather than the refusal: `KernelError::DecimalScale` was added without
+/// an arm in `code_for`, so it fell to the wildcard and came back
+/// `INTERNAL`/`UNCLASSIFIED`, which reads as "the server broke" and invites a
+/// retry that will fail identically forever. `every_error_is_classified` is the
+/// guard for that and did catch it; this is the arm itself, which that guard
+/// cannot check because it reads the file as text.
+#[tokio::test]
+async fn an_inexpressible_decimal_is_the_callers_fault() {
+    let serving = seeded().await;
+    let mut client = serving.client().await;
+    let column = |ordinal: u32| pb::Scalar {
+        node: Some(pb::scalar::Node::Column(pb::ColumnRef {
+            input: 0,
+            of: Some(pb::column_ref::Of::Column(ordinal)),
+        })),
+    };
+    let mut query = common::plain_query("prices");
+    query.compute = vec![pb::Scalar {
+        node: Some(pb::scalar::Node::Add(Box::new(pb::ScalarPair {
+            left: Some(Box::new(column(2))),
+            right: Some(Box::new(column(0))),
+        }))),
+    }];
+    let status = client
+        .query(app(pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(query),
+            freshness: None,
+        }))
+        .await
+        .expect_err("a decimal plus a u64 has no unit");
+    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+    assert!(
+        String::from_utf8_lossy(status.details()).contains("DECIMAL_SCALE"),
+        "{status:?}"
+    );
+    assert!(
+        status.message().contains("decimal"),
+        "and the message says what to write instead: {}",
+        status.message()
+    );
+}

@@ -127,6 +127,18 @@ since an input's computed value has no slot in a joined row at all.
 | `releasedMonth` | `month_start(books.released)` | a calendar truncation |
 | `releasedHourNY` | `hour(books.released` in `America/New_York)` | a named timezone |
 | `label` | `authors.country ‖ '/' ‖ books.title ‖ '/' ‖ books.year` | concatenation, across both inputs and over an integer |
+| `discounted` | `books.price - 0.50` | a decimal literal, which takes the column's scale |
+| `doubled` | `books.price * 2` | money times a whole number, which is still money |
+| `badPrice` | `books.price + books.year` | **refused** by the server: money plus a count of nothing |
+
+The three decimal rows are the newest and are there for a reason the others
+are not: a decimal literal has **no scale of its own** and takes the column's,
+so `0.50` beside a scale-2 price has to be sent as `Decimal(50)` — the count of
+cents — and not as the integer 50 that each of the three languages reaches for
+first. An adapter that sent the integer is refused by the server rather than
+answering differently, which is a failure a three-way *answer* comparison
+cannot see. `badPrice` is that refusal made deliberate: all three must surface
+the same one.
 
 Only `decade` existed for a while, and that was weaker evidence than it looked:
 integer division is the one operation every language spells identically, so

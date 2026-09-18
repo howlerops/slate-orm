@@ -189,7 +189,24 @@ CASES: list[tuple[str, str, Any, str]] = [
           ("calendar month boundary", "releasedMonth"),
           ("local hour in New York", "releasedHourNY"),
           ("concatenation across both tables", "label"),
+          # Money. `discounted` is the case worth the most here: a decimal
+          # literal has no scale of its own and takes the column's, so all
+          # three clients have to send `Decimal(50)` rather than the integer
+          # 50 that each of their languages would reach for first — and an
+          # adapter that sent the integer is refused by the server rather than
+          # answering differently, which is a failure the three-way comparison
+          # would otherwise never see.
+          ("discounted price", "discounted"),
+          ("doubled price", "doubled"),
       )],
+
+    # The refusal half, which is the claim the positive cases cannot make:
+    # `books.price + books.year` is money plus a count of nothing, refused by
+    # the *server* at plan time. All three clients must surface the same
+    # refusal, so an adapter that validated locally — or one that let the
+    # expression through and rendered a column of nulls — fails here.
+    ("a grouped join by a decimal added to a plain number", "/api/aggregate",
+     {"groupBy": "badPrice", "sort": "key", "direction": "asc"}, "app"),
 
     # Ordered by count rather than by key for two of them, because the
     # tie-break is what a client can silently drop — and a computed string key
@@ -466,6 +483,7 @@ EXPECTED_REFUSALS = {
     "no such table",
     "no such filter operator",
     "no such grouping",
+    "a grouped join by a decimal added to a plain number",
     "no such foreign key",
     "a stranger may not load a relationship",
     "a page with no limit",

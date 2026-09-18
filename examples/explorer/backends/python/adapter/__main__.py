@@ -442,6 +442,30 @@ class Adapter:
                 extract(TimeUnit.HOUR, in_zone(books.c.released, "America/New_York"))
             )
             key = join.computed(0)
+        elif by == "discounted":
+            # Money, and the one arithmetic rule that is not arithmetic: a
+            # decimal literal has no scale of its own and takes the column's,
+            # so `Units(50)` beside a scale-2 price is fifty *cents*. A client
+            # that sent `i64(50)` instead would be refused by the server —
+            # a decimal beside a plain number has no unit — which is the
+            # difference this case exists to catch, in three languages that
+            # each have their own idea of what an integer literal is.
+            join.compute(as_scalar(books.c.price) - lit(Units(50)))
+            key = join.computed(0)
+        elif by == "doubled":
+            # The other expressible shape: money times a whole number is still
+            # money, at the same scale. `year` is the only integer column on
+            # this side and doubling a price is the thing an invoice does, so
+            # the multiplier is a literal rather than a column.
+            join.compute(as_scalar(books.c.price) * i64(2))
+            key = join.computed(0)
+        elif by == "badPrice":
+            # Refused by the *server*, at plan time: a decimal added to a plain
+            # integer would be a count of nothing. Sent rather than caught here
+            # on purpose — the claim is that all three clients surface the same
+            # refusal, which an adapter that validated locally would not test.
+            join.compute(as_scalar(books.c.price) + as_scalar(books.c.year))
+            key = join.computed(0)
         elif by == "label":
             # Concatenation across *both* inputs, which no input's own compute
             # could express.

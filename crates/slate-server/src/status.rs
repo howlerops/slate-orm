@@ -207,6 +207,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::NotSummable { .. } => "NOT_SUMMABLE",
         KernelError::ComparisonTypeMismatch { .. } => "COMPARISON_TYPE_MISMATCH",
         KernelError::JoinNotSupported { .. } => "JOIN_NOT_SUPPORTED",
+        KernelError::DecimalScale { .. } => "DECIMAL_SCALE",
         KernelError::KeyDecode(_) => "KEY_DECODE",
         KernelError::CorruptIndexEntry { .. } => "CORRUPT_INDEX_ENTRY",
         KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
@@ -278,7 +279,14 @@ pub fn code_for(error: &KernelError) -> Code {
         KernelError::Schema(_)
         | KernelError::NotSummable { .. }
         | KernelError::ComparisonTypeMismatch { .. }
-        | KernelError::JoinNotSupported { .. } => Code::InvalidArgument,
+        | KernelError::JoinNotSupported { .. }
+        // A computed expression over a decimal whose answer would be at no
+        // scale. The caller's expression, not the server's problem — and it
+        // reached the wire as `INTERNAL`/`UNCLASSIFIED` until the conformance
+        // corpus grew a case that provoked it, which is the same way
+        // `InvalidCursor` above was found. A retry on `INTERNAL` fails
+        // identically forever, so the classification is the whole fix.
+        | KernelError::DecimalScale { .. } => Code::InvalidArgument,
 
         // A cursor that is not a whole primary key, or one on a read that
         // cannot be resumed from a key — an index scan, a sort the key does

@@ -55,6 +55,7 @@ import {
   ref,
   regexpReplace,
   str,
+  sub,
   units,
   unitsToString,
   upper,
@@ -470,6 +471,31 @@ class Adapter {
       // were ever compared on, and division is the one operation every
       // language spells identically — so agreement on it proved much less
       // than it looked.
+      case "discounted":
+        // Money, and the one arithmetic rule that is not arithmetic: a decimal
+        // literal has no scale of its own and takes the column's, so
+        // `units(50)` beside a scale-2 price is fifty *cents*. A client that
+        // sent `int(50)` instead would be refused by the server — a decimal
+        // beside a plain number has no unit — which is the difference this
+        // case exists to catch, in three languages that each have their own
+        // idea of what an integer literal is.
+        compute = [sub(ref(at(books, 7)), lit(units(50)))];
+        key = joinComputed(0);
+        break;
+      case "doubled":
+        // The other expressible shape: money times a whole number is still
+        // money, at the same scale.
+        compute = [mul(ref(at(books, 7)), lit(int(2)))];
+        key = joinComputed(0);
+        break;
+      case "badPrice":
+        // Refused by the *server*, at plan time: a decimal added to a plain
+        // integer would be a count of nothing. Sent rather than caught here on
+        // purpose — the claim is that all three clients surface the same
+        // refusal, which an adapter that validated locally would not test.
+        compute = [add(ref(at(books, 7)), ref(at(books, 3)))];
+        key = joinComputed(0);
+        break;
       case "shout":
         // A string function, on the *left* input. The author's *name* rather
         // than the country, because every country here is already upper case
