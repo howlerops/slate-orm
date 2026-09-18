@@ -280,3 +280,45 @@ actions = ["everything"]
 		t.Errorf("a name the table never had was accepted: %v", err)
 	}
 }
+
+// A decimal's scale is part of the fingerprint, and it is the one property in
+// there that addresses no column.
+//
+// Every other excluded property — nullability, DEFAULT, CHECK, an index — is
+// excluded because getting it wrong does not make a client read the wrong
+// column. A scale fails that test too, and is included anyway, because the
+// failure it prevents is worse than the one the test is about: a wrong ordinal
+// reads the wrong column and usually shows, a wrong scale reads the *right*
+// column and renders every value a power of ten out, for ever, with nothing
+// anywhere reporting it. The wire carries units and never the scale, so this
+// hash is the only place it can be caught.
+//
+// Pinned against the Python client's output, as the DOCS value above is.
+func TestADecimalsScaleIsPartOfTheFingerprint(t *testing.T) {
+	priced := func(scale int) slate.TableDef {
+		return slate.TableDef{
+			Name: "prices",
+			Columns: []slate.ColumnDef{
+				{Name: "id", Type: slate.TypeUint},
+				{Name: "label", Type: slate.TypeString},
+				{Name: "amount", Type: slate.TypeDecimal, Scale: scale},
+			},
+			PrimaryKey: []string{"id"},
+		}
+	}
+	//	>>> hex(fingerprint_of(PRICES))    # amount at scale 2
+	//	'0xdab8856481bc4a6d'
+	//	>>> hex(fingerprint_of(WRONG))     # the same table at scale 4
+	//	'0xdaba08fbb666133f'
+	const atTwo uint64 = 0xdab8_8564_81bc_4a6d
+	const atFour uint64 = 0xdaba_08fb_b666_133f
+	if got := priced(2).Fingerprint(); got != atTwo {
+		t.Errorf("scale 2 = %#016x, the canonical form is %#016x", got, atTwo)
+	}
+	if got := priced(4).Fingerprint(); got != atFour {
+		t.Errorf("scale 4 = %#016x, the canonical form is %#016x", got, atFour)
+	}
+	if priced(2).Fingerprint() == priced(4).Fingerprint() {
+		t.Error("two scales hashed alike, which is the whole point")
+	}
+}

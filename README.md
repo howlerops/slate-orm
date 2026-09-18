@@ -1229,12 +1229,16 @@ Not built:
       mean of exact decimals is generally not representable at the same scale,
       so something has to give, and consistency was chosen over refusing. It is
       the one place in that feature where exactness stops
-- [ ] Nothing checks a client's declared scale against the server's. The
-      schema fingerprint deliberately does not hash a scale, because a scale
-      addresses no column — so a client that believes `price` is scale 4 where
-      the schema says 2 reaches the right column and renders every value a
-      hundred times wrong, for ever, with no error anywhere. The sharpest edge
-      in the decimal feature, and the one thing about it still open
+- [x] A client's declared scale is checked against the server's. The schema
+      fingerprint now hashes a decimal's scale — the one property in it that
+      addresses no column, and there because the failure it prevents is worse
+      than the one that rule is about: a wrong ordinal reads the wrong column
+      and shows, a wrong scale reads the *right* column and renders every value
+      a hundred times wrong, for ever, with no error anywhere. Safe to hash for
+      a reason specific to a scale: changing one is already a refused
+      migration, so it cannot invalidate a fleet the way hashing a `CHECK`
+      would. Hashed only for a decimal column, so a table without one is
+      unaffected, and pinned as the same two constants in all four ports
 - [ ] Milliseconds. `Timestamp` is seconds because every calendar function
       reads seconds; a millisecond column would need either a second type or a
       scale on the column, the way a decimal has one, and neither is built

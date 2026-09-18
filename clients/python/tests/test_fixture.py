@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from slate import Client, InvalidRequest, PermissionDenied, Query, Table
+from slate import Client, Column, InvalidRequest, PermissionDenied, Query, Table, ValueType
+from slate.schema import fingerprint_of
 
 from .fixture import AUTHORS, BOOKS, DOCS, SALES, SECRETS, USERS
 
@@ -95,3 +96,74 @@ def test_a_renamed_column_is_refused_rather_than_silently_answered(
         primary_key=["id"],
     )
     assert list(oracle_client.query(Query(correct).limit(1)))
+
+
+def test_a_decimals_scale_is_part_of_the_fingerprint() -> None:
+    """The one property in the hash that addresses no column.
+
+    Every other excluded property -- nullability, `DEFAULT`, `CHECK`, an index
+    -- is excluded because getting it wrong does not make a client read the
+    wrong column. A scale fails that test too and is included anyway, because
+    the failure it prevents is worse: a wrong ordinal reads the wrong column
+    and usually shows, a wrong scale reads the *right* column and renders every
+    value a power of ten out, for ever, with nothing anywhere reporting it. The
+    wire carries units and never the scale, so this hash is the only place it
+    can be caught.
+
+    Hashing it is safe in the one way that matters: a scale cannot change under
+    a running client, because changing one is a refused migration. So it cannot
+    do what hashing a `CHECK` would -- invalidate a fleet on an unrelated
+    schema change -- since there is no such change to make.
+    """
+
+    def priced(scale: int) -> Table:
+        return Table(
+            name="prices",
+            columns=[
+                Column("id", ValueType.U64),
+                Column("label", ValueType.STR),
+                Column("amount", ValueType.DECIMAL, scale=scale),
+            ],
+            primary_key=["id"],
+        )
+
+    # This client is the port the other three pin against, so these are its own
+    # numbers -- and the agreement is asserted by `review_fingerprint.rs`,
+    # `schema_test.go` and `schema.test.ts` writing them down independently.
+    assert fingerprint_of(priced(2)) == 0xDAB8856481BC4A6D
+    assert fingerprint_of(priced(4)) == 0xDABA08FBB666133F
+    assert fingerprint_of(priced(2)) != fingerprint_of(priced(4))
+
+
+def test_only_a_decimal_contributes_a_scale() -> None:
+    """A table with no decimal hashes exactly as it did.
+
+    Which is why the scale is hashed where it exists rather than as a zero on
+    every column: no client of a table without one needs rebuilding. The `DOCS`
+    constant pinned in the Go and TypeScript suites is that claim, and it is
+    unchanged.
+    """
+    plain = Table(
+        name="prices",
+        columns=[
+            Column("id", ValueType.U64),
+            Column("label", ValueType.STR),
+            # `scale` is set and meaningless on a non-decimal column, and must
+            # not reach the hash. `Column.__post_init__` refuses a non-zero one
+            # on a non-decimal, so the only way to write this case is zero --
+            # which is also the value a decimal at scale 0 has, and those two
+            # must still hash apart because their *types* differ.
+            Column("amount", ValueType.I64),
+        ],
+        primary_key=["id"],
+    )
+    at_zero = Table(
+        name="prices",
+        columns=[
+            Column("id", ValueType.U64),
+            Column("label", ValueType.STR),
+            Column("amount", ValueType.DECIMAL, scale=0),
+        ],
+        primary_key=["id"],
+    )
+    assert fingerprint_of(plain) != fingerprint_of(at_zero)

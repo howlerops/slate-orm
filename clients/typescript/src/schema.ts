@@ -32,10 +32,12 @@ export interface ColumnDef {
    * Digits after the decimal point, for a `"decimal"` column. Absent and
    * meaningless for every other type.
    *
-   * Deliberately *not* part of the fingerprint, because the server does not
-   * hash it either: a scale addresses no column, so a client that has it wrong
-   * still reaches the right one. It is here for rendering — see
-   * `unitsToString` — and for nothing else.
+   * Part of the fingerprint, and the one property in it that addresses no
+   * column. A client that has an ordinal wrong reads the wrong column and
+   * usually notices; one that has a scale wrong reads the *right* column and
+   * renders every value a power of ten out, for ever, with nothing anywhere
+   * reporting it — the wire carries units and never the scale, so the
+   * fingerprint is the only place this can be caught.
    */
   readonly scale?: number;
 }
@@ -120,6 +122,15 @@ export function fingerprint(table: TableDef): bigint {
     hash.number(ordinal);
     hash.text(column.name);
     hash.text(column.type);
+    // A decimal's scale, and only a decimal's. It addresses no column -- the
+    // test every other excluded property fails -- and is hashed anyway because
+    // the failure it prevents is worse: a wrong ordinal reads the wrong column
+    // and usually shows, a wrong scale reads the right column and renders
+    // every value a power of ten out, for ever, with nothing anywhere
+    // reporting it. The wire carries units and never the scale.
+    if (column.type === "decimal") {
+      hash.number(column.scale ?? 0);
+    }
   });
   hash.ascii("key");
   hash.number(table.primaryKey.length);

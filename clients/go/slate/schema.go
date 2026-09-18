@@ -34,7 +34,11 @@ type ColumnDef struct {
 	// Deliberately not part of the fingerprint, because the server does not
 	// hash it either: a scale addresses no column, so a client that has it
 	// wrong still reaches the right one. It is here for rendering — see
-	// [Units.StringWithScale] — and for nothing else.
+	// [Units.StringWithScale], and it is part of the fingerprint: the one
+	// property in it that addresses no column. A client with an ordinal wrong
+	// reads the wrong column and usually notices; one with a scale wrong reads
+	// the *right* column and renders every value a power of ten out, for ever,
+	// with nothing anywhere reporting it.
 	Scale int
 }
 
@@ -114,6 +118,15 @@ func (t TableDef) Fingerprint() uint64 {
 		h.number(ordinal)
 		h.text(column.Name)
 		h.text(string(column.Type))
+		// A decimal's scale, and only a decimal's. It addresses no column --
+		// the test every other excluded property fails -- and is hashed anyway
+		// because the failure it prevents is worse: a wrong ordinal reads the
+		// wrong column and usually shows, a wrong scale reads the right column
+		// and renders every value a power of ten out, for ever, with nothing
+		// anywhere reporting it. The wire carries units and never the scale.
+		if column.Type == TypeDecimal {
+			h.number(column.Scale)
+		}
 	}
 	h.bytes([]byte("key"))
 	h.number(len(t.PrimaryKey))

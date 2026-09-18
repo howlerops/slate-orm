@@ -271,3 +271,37 @@ actions = ["everything"]
     "a name the table never had was accepted",
   );
 });
+
+/**
+ * A decimal's scale is in the fingerprint, and it is the one property in there
+ * that addresses no column.
+ *
+ * Every other excluded property — nullability, `DEFAULT`, `CHECK`, an index —
+ * is excluded because getting it wrong does not make a client read the wrong
+ * column. A scale is excluded by that test too, and included anyway, because
+ * the failure it prevents is worse than the one the test is about: a wrong
+ * ordinal reads the wrong column and usually shows, a wrong scale reads the
+ * *right* column and renders every value a power of ten out, for ever, with
+ * nothing anywhere reporting it. The wire carries units and never the scale,
+ * so this hash is the only place it can be caught.
+ *
+ * Pinned against the Python client's output, as the `DOCS` value above is.
+ */
+test("a decimal's scale is part of the fingerprint", () => {
+  const priced = (scale: number): TableDef => ({
+    name: "prices",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "label", type: "string" },
+      { name: "amount", type: "decimal", scale },
+    ],
+    primaryKey: ["id"],
+  });
+  //	>>> hex(fingerprint_of(PRICES))    # amount at scale 2
+  //	'0xdab8856481bc4a6d'
+  //	>>> hex(fingerprint_of(WRONG))     # the same table at scale 4
+  //	'0xdaba08fbb666133f'
+  assert.equal(fingerprint(priced(2)), 0xdab8856481bc4a6dn);
+  assert.equal(fingerprint(priced(4)), 0xdaba08fbb666133fn);
+  assert.notEqual(fingerprint(priced(2)), fingerprint(priced(4)));
+});

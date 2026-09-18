@@ -37,6 +37,7 @@ use slate_server::proto as pb;
 use slate_tuple::{Value, ValueType};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tonic::Code;
 
 const DOCS: TableId = TableId(1);
 
@@ -260,4 +261,69 @@ async fn a_short_declaration_leaves_later_ordinals_unchecked() {
     );
     // And the ordinal it filtered on is one the declaration never covered.
     assert!(Ordinal(2).0 >= 1);
+}
+
+/// A decimal's scale is in the fingerprint, and a client with it wrong is
+/// refused.
+///
+/// The one property in the hash that addresses no column, and the only place
+/// in the system where a wrong scale can be caught: the wire carries units and
+/// never the scale, so a client that believes `amount` is scale 4 where the
+/// schema says 2 reaches the right column and renders every value a hundred
+/// times wrong, consistently, for ever.
+///
+/// Hashing it is safe in the one way that matters: a scale cannot change under
+/// a running client, because changing one is a refused migration. So this
+/// cannot do what hashing a `CHECK` would — invalidate a fleet on an unrelated
+/// schema change — since there is no such change to make.
+///
+/// The pinned value is the Python client's, computed independently:
+///
+/// ```text
+/// >>> hex(fingerprint_of(PRICES))    # amount at scale 2
+/// '0xdab8856481bc4a6d'
+/// >>> hex(fingerprint_of(WRONG))     # the same table at scale 4
+/// '0xdaba08fbb666133f'
+/// ```
+#[test]
+fn a_decimals_scale_is_hashed_and_a_wrong_one_is_refused() {
+    let at = |scale: u8| {
+        TableDef::builder("prices", TableId(1))
+            .column("id", ValueType::U64)
+            .column("label", ValueType::Str)
+            .decimal_column("amount", scale)
+            .primary_key(["id"])
+            .build()
+            .expect("valid schema")
+    };
+    let two = at(2);
+    let four = at(4);
+
+    assert_eq!(
+        fingerprint::of_table(&two),
+        0xdab8_8564_81bc_4a6d,
+        "the canonical form moved; the three clients compute this too"
+    );
+    assert_eq!(fingerprint::of_table(&four), 0xdaba_08fb_b666_133f);
+    assert_ne!(
+        fingerprint::of_table(&two),
+        fingerprint::of_table(&four),
+        "two scales must not hash alike — the whole point"
+    );
+
+    // And the server refuses the wrong one, which is what the hash is for.
+    let claim = pb::SchemaCheck {
+        columns: 3,
+        fingerprint: fingerprint::of_table(&four),
+    };
+    let status = fingerprint::check(&two, Some(&claim)).expect_err("scale 4 against scale 2");
+    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+
+    // That a table *without* a decimal hashes exactly as it did — so no client
+    // using one needs rebuilding — is not asserted here with a number of its
+    // own. It is already pinned in three places that predate this change and
+    // are still green: `schema_check.rs`'s constants, and the
+    // `0x97c3c1256af4cfdb` for `DOCS` written down independently in the Go and
+    // TypeScript suites. A fourth copy of that claim would be a fourth thing
+    // to update and no more evidence.
 }

@@ -920,12 +920,22 @@ unconditional update of an unchanged row and a conditional one do exactly the
 same thing, so only a stale row tells them apart. The three-SDK corpus now has
 both cases for that reason.
 
-**What it does not do.** Nothing checks a client's declared scale against the
-server's; the fingerprint deliberately does not hash it, because a scale
-addresses no column, so a client with it wrong reaches the right column and
-renders every value off by a power of ten, for ever, with no error anywhere.
-That is the price of a protocol that publishes no schema and it is the sharpest
-edge in the feature, and W4 below did not close it either.
+**What it did not do, and what closed it.** Nothing checked a client's declared
+scale against the server's: the fingerprint did not hash it, because a scale
+addresses no column, so a client with it wrong reached the right column and
+rendered every value off by a power of ten, for ever, with no error anywhere.
+That was called the sharpest edge in the feature, and it was.
+
+It is closed, by making a decimal's scale the one thing in the fingerprint
+that addresses no column. The rule it breaks is real and the reason to break it
+is that the failure this prevents is *worse* than the failure the rule is
+about — a wrong ordinal reads the wrong column and shows, a wrong scale reads
+the right one and does not. What makes the exception affordable rather than
+merely tempting is specific to a scale: changing one is already a refused
+migration, so hashing it cannot invalidate a fleet the way hashing a `CHECK`
+would, because there is no such change to make. It is hashed only for a decimal
+column, so a table without one hashes as it did and no client of such a table
+needs rebuilding.
 
 ### W3 — `delete_if_unchanged`, kernel to clients — **built**
 
@@ -1011,12 +1021,12 @@ workbench fixture a `price` column, which is the argument for doing that rather
 than testing the literal against a purpose-built schema.
 
 **What it does not do.** `AVG` over a decimal is still a float, deliberately.
-Nothing checks a client's declared scale against the server's — still the
-sharpest edge, still open. And the three SDKs can build a decimal expression
-but know nothing about scale, so each adapter writes `Units(50)` having read
-the schema by eye; the conformance corpus compares them on three such
-expressions and one refusal, which catches a client that sent the *integer* 50,
-but nothing catches a client that believes the column is scale 4.
+The three SDKs can build a decimal expression but know nothing about scale, so
+each adapter writes `Units(50)` having read the schema by eye; the conformance
+corpus compares them on three such expressions and one refusal, which catches a
+client that sent the *integer* 50. A client that believes the column is scale 4
+is caught by the fingerprint instead — see W1 above, where that hole is closed
+rather than merely named.
 
 ## What neither plan does
 

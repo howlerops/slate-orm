@@ -286,8 +286,12 @@
         got 0 stores every value a hundred times too large, is internally
         consistent, and is discovered by an accountant. The wire carries the
         units and never the scale, so a client restates it locally &mdash; and
-        nothing checks that the two agree, which is the sharpest edge in the
-        feature and the price of a protocol that publishes no schema.
+        the schema fingerprint is what checks that the two agree. A scale is
+        the one property in that hash which addresses no column, and it is
+        there because the failure it prevents is worse than the one the hash's
+        usual rule is about: a wrong ordinal reads the wrong column and shows,
+        a wrong scale reads the <em>right</em> column and renders every value a
+        power of ten out, for ever, with nothing anywhere reporting it.
       </p>
 
       <p>

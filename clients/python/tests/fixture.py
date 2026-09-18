@@ -128,10 +128,14 @@ COPIES = Table(
 # is indistinguishable from an `i64` in every assertion, which is the one scale
 # a test of decimals must not use. `1250` here is 12.50.
 #
-# The scale is declared and is *not* part of the fingerprint, because the
-# server does not hash it: a scale addresses no column, so a client that has it
-# wrong still reaches the right one and renders the wrong number. That is a
-# real hole and this declaration is where it would start.
+# The scale is declared and *is* part of the fingerprint, which is what makes
+# this suite an end-to-end check of that: the testserver declares `amount` at
+# scale 2 too, so every request here that carries a schema check is one the
+# server accepts only because the two agree. Change this 2 and the whole file
+# is refused — which was the point of hashing it. It is the one property in
+# the fingerprint that addresses no column, and it is there because a wrong
+# scale reaches the *right* column and renders every value a power of ten out,
+# with the wire carrying units and never the scale to notice by.
 PRICES = Table(
     "prices",
     [

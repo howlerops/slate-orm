@@ -216,6 +216,14 @@ def fingerprint_of(table: Table) -> int:
     out = b"slate.v1.schema/1" + _length_prefixed(table.name)
     for ordinal, column in enumerate(table.columns):
         out += _digits(ordinal) + _length_prefixed(column.name) + _length_prefixed(column.type.value)
+        # A decimal's scale, and only a decimal's. It addresses no column --
+        # the test every other excluded property fails -- and is hashed anyway
+        # because the failure it prevents is worse: a wrong ordinal reads the
+        # wrong column and usually shows, a wrong scale reads the right column
+        # and renders every value a power of ten out, for ever, with nothing
+        # anywhere reporting it. The wire carries units and never the scale.
+        if column.type is ValueType.DECIMAL:
+            out += _digits(column.scale)
     key_ordinals = [
         next(i for i, c in enumerate(table.columns) if c.name == name)
         for name in table.primary_key

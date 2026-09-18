@@ -21,7 +21,23 @@
 //!
 //! Only what a client must restate in order to *address* a column, and only
 //! what it can state: the table's name, each ordinal's column name and type in
-//! order, and which ordinals form the primary key.
+//! order, a decimal's scale, and which ordinals form the primary key.
+//!
+//! **The scale is the one exception to that rule and it is deliberate.** It
+//! addresses no column, so by the test below it does not belong — and the
+//! failure it prevents is worse than the failure the test is about. A client
+//! with an ordinal wrong reads the wrong column, which usually shows up as
+//! nonsense. A client with a scale wrong reads the *right* column and renders
+//! every value a power of ten out, consistently, for ever: the wire carries a
+//! count of units and never the scale, so nothing downstream can notice. This
+//! is the only place in the system where that can be caught.
+//!
+//! Hashing it is safe in the way that matters here, and that is what makes the
+//! exception affordable rather than merely tempting: a scale cannot change
+//! under a running client, because changing one is a refused migration. So it
+//! cannot do what hashing a `CHECK` would — invalidate a fleet on an unrelated
+//! schema change — since no such change exists to make. It is hashed only for
+//! a decimal column, so a table without one hashes exactly as it did.
 //!
 //! Nullability, defaults, `CHECK`s and foreign keys are left out because none
 //! of them addresses a column — a write that violates one is refused by name
@@ -158,6 +174,30 @@ fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
                 state.number(ordinal);
                 state.text(name);
                 state.text(column.value_type().name());
+                // A decimal's scale, and only a decimal's.
+                //
+                // It addresses no column, which is the test every other
+                // excluded property fails — and it is here anyway, because the
+                // failure it prevents is worse than the one the test is about.
+                // A client that has an ordinal wrong reads the wrong column
+                // and usually notices; a client that has a scale wrong reads
+                // the *right* column and renders every value a power of ten
+                // out, consistently, for ever, with no error at any layer. The
+                // wire carries units and never the scale, so nothing else in
+                // the system can catch it.
+                //
+                // Hashing it is safe in the one way that matters here: a scale
+                // cannot change under a running client, because changing one
+                // is a refused migration (`changing_a_scale_is_a_migration
+                // _refusal`). So this cannot do what hashing a `CHECK` would —
+                // invalidate a fleet on an unrelated schema change — since
+                // there is no such change to make.
+                //
+                // Only for a decimal, so a table without one hashes exactly as
+                // it did and no client using such a table needs rebuilding.
+                if let Some(scale) = column.scale() {
+                    state.number(scale as usize);
+                }
                 next.push(state);
             }
         }
