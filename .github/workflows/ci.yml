@@ -271,6 +271,12 @@ jobs:
       # which one failed without anybody reading it.
       - run: ty check
       - run: ruff check .
+      # The generator's own tests, on synthetic catalogs. The real check on it
+      # is the conformance job, which regenerates and diffs and then runs three
+      # SDKs against the result — but that can only exercise the shapes the
+      # demo's schema has, and the cases most worth getting right (a dropped
+      # column, an unknown type) are ones it does not.
+      - run: python3 scripts/test_codegen.py
 
   quickstarts:
     name: the landing page's code
@@ -415,6 +421,22 @@ jobs:
         working-directory: examples/explorer/web
       - run: npx playwright install --with-deps chromium
         working-directory: examples/explorer/web
+      # Before the suite, not after: a declaration that has drifted from the
+      # catalog makes every request naming that table fail the schema check,
+      # so the conformance run below would go red with a hundred confusing
+      # failures instead of one line saying which file is stale.
+      #
+      # This job rather than the `scripts` one because it needs a built
+      # `slate-serverd` to resolve the catalog, and this is the job that has
+      # one.
+      - name: The generated declarations match the catalog
+        run: |
+          python3 scripts/codegen.py --check \
+            --config examples/explorer/head.toml \
+            --serverd "${{ github.workspace }}/bin/slate-serverd" \
+            --python examples/explorer/backends/python/adapter/schema.py \
+            --go examples/explorer/backends/go/schema/schema.go \
+            --typescript examples/explorer/backends/node/src/schema.ts
       # The only thing anywhere that compares the three clients to *each
       # other*. Each client's own suite compares it to the server, which
       # catches one client being wrong and cannot catch two being wrong the

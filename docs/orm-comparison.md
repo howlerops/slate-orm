@@ -108,7 +108,7 @@ then did not ship it to the three audiences most likely to need it.
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
-| Client codegen from the catalog | Drizzle, Prisma | every client hand-declares its schema; `SchemaCheck` catches drift at run time instead of compile time |
+| Generated *types* from the catalog | Drizzle, Prisma | `scripts/codegen.py` generates the schema declaration for all three clients from `slate-serverd --print-schema`, and CI diffs it; what it does **not** generate is a typed row — a query still returns `Value`s, not a `Book` — see below |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `grep -rcn "validate\|before_save\|Changeset" crates/slate-orm/src/` → nothing |
 | Automatic `created_at` / `updated_at` | ActiveRecord, Ecto, Prisma | nothing in the derive macro or the kernel |
 | Soft delete as a first-class concept | ActiveRecord (gems), Prisma (pattern) | partial indexes support `WHERE deleted_at IS NULL` well; no convention on top |
@@ -119,6 +119,33 @@ then did not ship it to the three audiences most likely to need it.
 | Array / list column type | Drizzle, SQLAlchemy, Ecto | `ValueType` has no `Array` |
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
 | Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | `slate-serverd --seed` loads a static TOML fixture; nothing *generates* rows, and no client or the Rust library can seed at all — see below |
+
+> **Built, and narrower than the row it replaces: client codegen.** The row
+> used to read "every client hand-declares its schema". That is no longer true:
+> `scripts/codegen.py` reads `slate-serverd --config <file> --print-schema` —
+> the *resolved* catalog, not the TOML, so it cannot reimplement the schema
+> layer's resolution and disagree with it — and writes the declaration for the
+> Python, Go and TypeScript clients. The explorer's three adapters use it, and
+> a CI step regenerates and diffs before the conformance suite runs, so a
+> schema change that nobody propagates is one red line rather than ninety-two
+> refused cases.
+>
+> Two things came out of building it, and both are worth more than the feature.
+> `--print-schema` was **not emitting a decimal column's scale** — the one
+> property that never crosses the wire and is in the schema fingerprint, so a
+> declaration built from that output was refused against any table with a
+> decimal in it. The flag whose whole purpose is "what a client in another
+> language has to restate by hand" omitted the only field nothing else could
+> supply. And the Go and TypeScript adapters were sending **no schema check at
+> all** — the clients had supported one since the SchemaCheck item, and the two
+> adapters had never been given a declaration to send. Both now do.
+>
+> What this is not is what Drizzle and Prisma are actually known for. There is
+> no generated *row type*: a query still answers a list of `Value`, and turning
+> that into a `Book` is still the caller's loop. The generated declaration
+> makes the ordinals right; it does not make them disappear. That is the
+> remaining half of this row and it is a larger change, because it needs a
+> decoder per table in three languages rather than a data literal.
 
 > **Half-built: seeding.** This row said "none" and that was wrong.
 > `slate-serverd --seed fixtures.toml` loads rows by column *name* under a

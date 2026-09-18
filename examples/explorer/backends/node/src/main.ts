@@ -78,6 +78,7 @@ import {
   type Value,
 } from "@slate-orm/client";
 
+import { TABLES as CATALOG } from "./schema.js";
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
 /**
@@ -190,7 +191,12 @@ class Adapter {
 
   constructor(head: string) {
     for (const [name, identity] of Object.entries(IDENTITIES)) {
-      this.clients[name] = Client.connect(head, identity);
+      // Every request from this adapter now carries a schema check. The
+      // declaration is generated from the node's own catalog by
+      // `scripts/codegen.py`, so the check cannot be satisfied by a
+      // declaration that merely agrees with itself — which is what a
+      // hand-typed one would be.
+      this.clients[name] = Client.connect(head, identity).declaring(CATALOG);
     }
   }
 

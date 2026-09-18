@@ -677,6 +677,22 @@ fn describe(catalog: &Catalog) -> String {
                         "ordinal": ordinal,
                         "name": column.name(),
                         "type": column.value_type().name(),
+                        // `null` for every type but `decimal`, which is what
+                        // `ColumnDef::scale` answers and what a reader needs:
+                        // 0 would be a real scale, and a client cannot tell a
+                        // declared `scale = 0` from a column that has none.
+                        //
+                        // Missing until a generator tried to read this and
+                        // could not. The scale is the one property of a column
+                        // that never crosses the wire — `Units` is a count of
+                        // the smallest unit and carries no exponent — and it
+                        // is in the schema fingerprint, so a declaration built
+                        // from this output without it is *refused* against any
+                        // table with a decimal in it. The one flag whose whole
+                        // job is "what a client in another language has to
+                        // restate by hand" was omitting the one field nothing
+                        // else could supply.
+                        "scale": column.scale(),
                         "nullable": column.is_nullable(),
                         "added_in": column.added_in(),
                         "dropped_in": column.dropped_in(),

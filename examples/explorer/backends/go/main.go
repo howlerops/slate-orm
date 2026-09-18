@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
+
+	"github.com/howlerops/slate-orm/examples/explorer/backends/go/schema"
 )
 
 const (
@@ -47,7 +49,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("dialling %s: %v", *head, err)
 		}
-		s.clients[name] = client
+		// Every request from this adapter now carries a schema check. The
+		// declaration is generated from the node's own catalog by
+		// `scripts/codegen.py`, so the check cannot be satisfied by a
+		// declaration that merely agrees with itself — which is what a
+		// hand-typed one would be.
+		s.clients[name] = client.Declaring(schema.Tables)
 	}
 	defer func() {
 		for _, c := range s.clients {
