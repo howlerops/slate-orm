@@ -651,6 +651,7 @@ fn a_chains_header_names_every_table_and_a_chain_row_is_that_wide() {
             "books.author_id",
             "books.title",
             "books.year",
+            "books.price",
             "zones.id",
             "zones.borough",
             "zones.zone",
@@ -728,10 +729,10 @@ fn a_chains_computed_value_sits_past_every_table() {
     assert_eq!(chain.compute[0].function, "year");
     // Named on the table it reads, which is `books` -- input 1.
     assert_eq!((chain.compute[0].input, chain.compute[0].column), (1, 1));
-    // 4 + 4 + 4 columns, so the first computed value is ordinal 12. Written
+    // 4 + 5 + 4 columns, so the first computed value is ordinal 13. Written
     // out rather than derived, because deriving it here from the same widths
     // the parser used would be the parser checking its own arithmetic.
-    assert_eq!(chain.group_by, vec![12]);
+    assert_eq!(chain.group_by, vec![13]);
     // And the same call written twice is one computed column, not two: the
     // select list and the GROUP BY find-or-add into the same list.
     assert_eq!(chain.compute.len(), 1);
@@ -994,7 +995,7 @@ fn an_inserted_row_is_reachable_through_the_index_without_reading_it() {
 
     let written = one(
         &playground,
-        "INSERT INTO books VALUES (9001, 3, 'Something New', 2024)",
+        "INSERT INTO books VALUES (9001, 3, 'Something New', 2024, 21.50)",
     );
     assert_eq!(written["kind"], "write");
     assert_eq!(written["message"], "inserted");
@@ -1082,10 +1083,10 @@ fn several_statements_run_in_order_and_stop_at_the_first_refusal() {
     let playground = Playground::new();
     let results = sql(
         &playground,
-        "INSERT INTO books VALUES (9100, 1, 'One', 2001);\n\
+        "INSERT INTO books VALUES (9100, 1, 'One', 2001, 10.00);\n\
          SELECT * FROM books WHERE id = 9100;\n\
          SELECT * FROM nosuch;\n\
-         INSERT INTO books VALUES (9101, 1, 'Two', 2002)",
+         INSERT INTO books VALUES (9101, 1, 'Two', 2002, 11.00)",
     );
     assert_eq!(
         results.len(),
@@ -1148,7 +1149,7 @@ fn refusals_name_what_was_wrong() {
             "primary key only",
         ),
         ("DELETE FROM books WHERE author_id = 1", "primary key only"),
-        ("INSERT INTO books VALUES (1, 2)", "takes 4 values"),
+        ("INSERT INTO books VALUES (1, 2)", "takes 5 values"),
         ("INSERT INTO books (id) VALUES (1)", "no column list"),
         // `SELECT count(*) FROM books` used to be here. It is not a refusal
         // any more: a grouping with no keys is one group over every row, which
@@ -1454,7 +1455,7 @@ fn grouping_narrows_what_the_plan_reads() {
     // Grouping is not a filter over a result set here: the planner narrows the
     // projection to the group key and the aggregates' columns, so the two
     // queries decode different things.
-    assert_eq!(ungrouped["plan"]["decodes"], json!([0, 1, 2, 3]));
+    assert_eq!(ungrouped["plan"]["decodes"], json!([0, 1, 2, 3, 4]));
     assert_eq!(grouped["plan"]["decodes"], json!([1]));
 }
 
@@ -1542,4 +1543,154 @@ fn grouping_by_two_columns_keys_on_the_pair() {
         decodes.contains(&json!(1)) && decodes.contains(&json!(3)),
         "the plan should read both group keys, got {decodes:?}"
     );
+}
+
+// ------------------------------------------------------------------ decimals
+
+/// `WHERE price > 19.99` compares a decimal to a decimal, at the column's scale.
+///
+/// Before this the literal fell through to `Value::Str("19.99")`, which sorts
+/// below every decimal in the cross-type order — so the query returned *no
+/// rows*, with nothing anywhere saying why. A query that silently answers
+/// nothing is the worst outcome available, and it is the one this had.
+///
+/// The seeded prices for ids 1..24 run 8.95 up to 24.70 in 68-cent steps, so
+/// the answer is checkable by hand: the first price over 19.99 is id 17 at
+/// 19.83… no — 8.95 + 16 × 0.68 = 19.83, and id 18 is 20.51. So `> 19.99`
+/// starts at id 18.
+#[test]
+fn a_decimal_literal_is_read_at_the_columns_scale() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT id, price FROM books WHERE id <= 24 AND price > 19.99 ORDER BY id",
+    );
+    let rows = answer["rows"].as_array().expect("rows");
+    assert_eq!(
+        rows.first().and_then(|r| r[0].as_str()),
+        Some("18"),
+        "8.95 + 17 * 0.68 = 20.51 is the first over 19.99: {answer}"
+    );
+    assert_eq!(rows.len(), 7, "ids 18..=24: {answer}");
+    // And the value comes back written the way it was typed, not as its units
+    // and not as `Decimal(2051)`. Ordinal 4, because the binding returns the
+    // whole row with the unprojected columns as `null` and `columns` as the
+    // full header — a `SELECT` list narrows what is *decoded*, not the width.
+    assert_eq!(rows[0][4].as_str(), Some("20.51"), "{answer}");
+}
+
+/// The boundary, which is what says the comparison is exact rather than
+/// approximately right.
+#[test]
+fn a_decimal_compares_at_the_boundary_not_near_it() {
+    let playground = Playground::new();
+    // id 17 is 8.95 + 16 * 0.68 = 19.83.
+    let exact = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND price = 19.83",
+    );
+    assert_eq!(exact["rows"].as_array().map(Vec::len), Some(1), "{exact}");
+    // The same number with a trailing zero is the same number, so it matches
+    // the same row: `19.830` at scale 2 is 1983 units and loses nothing.
+    let padded = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND price = 19.830",
+    );
+    assert_eq!(padded["rows"].as_array().map(Vec::len), Some(1), "{padded}");
+
+    // A cent either side of it matches nothing, which a float comparison
+    // could not promise.
+    for near in ["19.82", "19.84"] {
+        let miss = one(
+            &playground,
+            &format!("SELECT id FROM books WHERE id <= 24 AND price = {near}"),
+        );
+        assert_eq!(
+            miss["rows"].as_array().map(Vec::len),
+            Some(0),
+            "{near} matched something: {miss}"
+        );
+    }
+}
+
+/// A number with more places than the column holds is refused, not rounded.
+#[test]
+fn more_decimal_places_than_the_column_has_is_refused() {
+    let playground = Playground::new();
+    let message = refusal(&playground, "SELECT id FROM books WHERE price = 19.999");
+    assert!(message.contains("places after the point"), "{message}");
+}
+
+/// `INSERT` takes the same literal, so a price written once reads back the same.
+#[test]
+fn a_decimal_round_trips_through_insert_and_select() {
+    let playground = Playground::new();
+    let _ = one(
+        &playground,
+        "INSERT INTO books VALUES (9300, 1, 'Priced', 2020, 7.05)",
+    );
+    let back = one(&playground, "SELECT price FROM books WHERE id = 9300");
+    assert_eq!(
+        back["rows"][0][4].as_str(),
+        Some("7.05"),
+        "written as 7.05 and read back as something else: {back}"
+    );
+}
+
+/// `UPDATE` reads the row, renders it, edits one cell and writes it back — so
+/// a decimal in *another* column has to survive that round trip.
+///
+/// It did not: `text` rendered a decimal as `Decimal(705)`, which the parser
+/// then refused, so every `UPDATE` on a table with a decimal column failed
+/// whatever it set. The fixture had no decimal column, so nothing caught it
+/// until one was added.
+#[test]
+fn updating_another_column_leaves_the_price_alone() {
+    let playground = Playground::new();
+    let _ = one(
+        &playground,
+        "INSERT INTO books VALUES (9301, 1, 'Before', 2020, 3.25)",
+    );
+    let _ = one(
+        &playground,
+        "UPDATE books SET title = 'After' WHERE id = 9301",
+    );
+    let back = one(
+        &playground,
+        "SELECT title, price FROM books WHERE id = 9301",
+    );
+    assert_eq!(back["rows"][0][2].as_str(), Some("After"), "{back}");
+    assert_eq!(back["rows"][0][4].as_str(), Some("3.25"), "{back}");
+}
+
+/// `HAVING sum(price) > ...` reads its literal at the aggregate's scale.
+///
+/// `Total::sum` over a decimal returns a decimal, and the front end was typing
+/// the `HAVING` literal from a table of "integer or float" — so the comparison
+/// was `I64` against `Decimal`, which differ by class rank and admit nothing.
+/// Same failure as `WHERE`, one level up, and it needed the same fix in the
+/// one function that decides a group column's type.
+#[test]
+fn having_over_a_summed_decimal_compares_as_a_decimal() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT author_id, sum(price) FROM books WHERE id <= 24 \
+         GROUP BY author_id HAVING sum(price) > 60.00 ORDER BY author_id",
+    );
+    let rows = answer["rows"].as_array().expect("rows");
+    assert!(
+        !rows.is_empty(),
+        "admitted nothing, which is the old bug: {answer}"
+    );
+    // Every admitted group's total is over sixty, read as a number rather than
+    // as a count of cents.
+    for row in rows {
+        let total: f64 = row[1]
+            .as_str()
+            .expect("a rendered total")
+            .parse()
+            .expect("a number");
+        assert!(total > 60.0, "{row:?} in {answer}");
+    }
 }

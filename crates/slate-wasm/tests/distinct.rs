@@ -194,10 +194,10 @@ fn distinct_over_a_computed_column_registers_it_once() {
     let answer = first(&playground, "SELECT DISTINCT year(year) FROM books");
     let compute = answer["spec"]["compute"].as_array().expect("compute");
     assert_eq!(compute.len(), 1, "{answer}");
-    // Ordinal 4 is the first computed column: books has four columns.
+    // Ordinal 5 is the first computed column: books has five columns.
     assert_eq!(
         answer["spec"]["groupBy"],
-        serde_json::json!([4]),
+        serde_json::json!([5]),
         "{answer}"
     );
 }

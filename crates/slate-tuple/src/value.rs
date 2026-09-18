@@ -160,6 +160,119 @@ impl Value {
         matches!(self, Self::Null)
     }
 
+    /// Read `text` as a decimal at `scale`, as a count of the smallest unit.
+    ///
+    /// `"19.99"` at scale 2 is `Decimal(1999)`; `"19.9"` at scale 2 is
+    /// `Decimal(1990)`, because a written number shorter than the scale is
+    /// padded, not reinterpreted. `"19"` is `Decimal(1900)`.
+    ///
+    /// # Why this is not `f64::parse` followed by a multiply
+    ///
+    /// Because that is the bug this type exists to avoid, and it is not
+    /// theoretical: `("8.20".parse::<f64>() * 100.0) as i64` is **819**, since
+    /// 8.2 has no exact double and the product lands just below 820.
+    /// Splitting on the point and reading two integers has no such step, and
+    /// is also the only version that can tell `"19.999"` at scale 2 from
+    /// `"19.99"` — the first is refused rather than quietly rounded, because
+    /// a caller who wrote three places meant three.
+    ///
+    /// # Errors
+    /// A message naming what is wrong with `text`, suitable for showing to
+    /// whoever typed it: a bad character, more places than the scale, or a
+    /// magnitude past `i64`.
+    pub fn decimal_from_str(text: &str, scale: u8) -> Result<Self, String> {
+        let text = text.trim();
+        let (negative, digits) = match text.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, text.strip_prefix('+').unwrap_or(text)),
+        };
+        let (whole, fraction) = match digits.split_once('.') {
+            Some((w, f)) => (w, f),
+            None => (digits, ""),
+        };
+        // An empty whole part is how `".50"` arrives and it means zero — but
+        // only when there are digits *somewhere*. `"."` and `""` and `"-"`
+        // each leave both halves empty, and none of them is a number. The
+        // first version substituted the zero first and then checked, which
+        // read `"."` as zero; `what_is_not_a_decimal` caught it.
+        if whole.is_empty() && fraction.is_empty() {
+            return Err(format!("{text:?} is not a decimal number"));
+        }
+        let whole = if whole.is_empty() { "0" } else { whole };
+        if !whole.bytes().all(|b| b.is_ascii_digit())
+            || !fraction.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(format!("{text:?} is not a decimal number"));
+        }
+        let places = usize::from(scale);
+        // More places than the column has is refused only when the extra
+        // digits carry something. `19.830` at scale 2 is exactly 1983 units
+        // and refusing it would be pedantry — a trailing zero is how people
+        // write a price, and a number that loses nothing has not lost
+        // anything. `19.999` is a different matter: two of those digits cannot
+        // be held, and dropping them silently is the whole failure mode.
+        let (fraction, dropped) = fraction.split_at(fraction.len().min(places));
+        if !dropped.bytes().all(|b| b == b'0') {
+            return Err(format!(
+                "{text:?} has {} places after the point and this column has {places} — \
+                 the last {} would be dropped and {dropped:?} is not zero, so write \
+                 the number this column can hold or change the column's scale",
+                fraction.len() + dropped.len(),
+                dropped.len()
+            ));
+        }
+        // Pad rather than scale by a power of ten: `"19.9"` at scale 2 is
+        // 1990 units, and the padding is what makes that obvious rather than
+        // a multiplication whose exponent has to be derived.
+        let mut units = String::with_capacity(whole.len() + places);
+        units.push_str(whole);
+        units.push_str(fraction);
+        for _ in fraction.len()..places {
+            units.push('0');
+        }
+        let magnitude = units
+            .parse::<i128>()
+            .map_err(|_| format!("{text:?} does not fit in a decimal column"))?;
+        let signed = if negative { -magnitude } else { magnitude };
+        i64::try_from(signed)
+            .map(Self::Decimal)
+            .map_err(|_| format!("{text:?} does not fit in a decimal column"))
+    }
+
+    /// Write `units` at `scale` the way the number was written down.
+    ///
+    /// The inverse of [`Value::decimal_from_str`] wherever both can represent
+    /// the value, which `decimal_text_round_trips` checks by sampling the
+    /// whole `i64` range.
+    ///
+    /// Takes the units rather than `&self` because the only value it can
+    /// render is a [`Value::Decimal`], and a method that silently did
+    /// something else for the other eight variants would be a worse API than
+    /// one the caller has to unwrap for.
+    #[must_use]
+    pub fn decimal_to_string(units: i64, scale: u8) -> String {
+        let places = usize::from(scale);
+        if places == 0 {
+            return units.to_string();
+        }
+        // Through `unsigned_abs` rather than `-units`, because `i64::MIN` has
+        // no positive counterpart and negating it panics in debug and wraps in
+        // release. The sign is carried separately and put back at the end.
+        let magnitude = units.unsigned_abs().to_string();
+        let padded = if magnitude.len() <= places {
+            format!("{}{magnitude}", "0".repeat(places - magnitude.len() + 1))
+        } else {
+            magnitude
+        };
+        let split = padded.len() - places;
+        format!(
+            "{}{}.{}",
+            if units < 0 { "-" } else { "" },
+            &padded[..split],
+            &padded[split..]
+        )
+    }
+
     /// Rank of the value's *class* in the cross-type order.
     ///
     /// Mirrors the ordering of the type codes emitted by the codec:

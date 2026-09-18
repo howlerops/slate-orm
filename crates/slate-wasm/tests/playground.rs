@@ -228,7 +228,7 @@ fn the_schema_comes_from_the_catalog() {
         .iter()
         .find(|t| t["name"] == json!("books"))
         .expect("books");
-    assert_eq!(books["columns"].as_array().expect("columns").len(), 4);
+    assert_eq!(books["columns"].as_array().expect("columns").len(), 5);
     // The UI marks indexed columns from this, so it has to be the real one.
     assert_eq!(
         books["indexed"],
@@ -290,7 +290,7 @@ fn an_inserted_row_is_reachable_through_the_index_without_reading_it() {
 
     let inserted: Json = serde_json::from_str(&playground.insert(
         "books",
-        &json!(["9001", "2", "Numbers in the Dark", "1993"]).to_string(),
+        &json!(["9001", "2", "Numbers in the Dark", "1993", "14.95"]).to_string(),
     ))
     .expect("JSON");
     assert_eq!(inserted["ok"], json!("inserted"), "got {inserted}");
@@ -353,7 +353,7 @@ fn an_update_moves_the_index_entry_rather_than_duplicating_it() {
     // Book 1 belongs to author 1; give it to author 2.
     let moved: Json = serde_json::from_str(&playground.update(
         "books",
-        &json!(["1", "2", "A Wizard of Earthsea", "1968"]).to_string(),
+        &json!(["1", "2", "A Wizard of Earthsea", "1968", "8.95"]).to_string(),
     ))
     .expect("JSON");
     assert_eq!(moved["ok"], json!("updated"), "got {moved}");
@@ -379,7 +379,7 @@ fn a_duplicate_primary_key_is_refused_and_leaves_nothing_behind() {
     let playground = Playground::new();
     let clash: Json = serde_json::from_str(&playground.insert(
         "books",
-        &json!(["1", "3", "Another Earthsea", "1970"]).to_string(),
+        &json!(["1", "3", "Another Earthsea", "1970", "8.95"]).to_string(),
     ))
     .expect("JSON");
     assert!(
@@ -408,7 +408,7 @@ fn a_write_with_a_wrong_typed_value_is_refused_by_column_name() {
     let playground = Playground::new();
     let bad: Json = serde_json::from_str(&playground.insert(
         "books",
-        &json!(["9002", "not-an-author", "A Title", "1999"]).to_string(),
+        &json!(["9002", "not-an-author", "A Title", "1999", "9.99"]).to_string(),
     ))
     .expect("JSON");
     let message = bad["error"].as_str().expect("a refusal");

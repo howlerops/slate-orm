@@ -231,14 +231,24 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Row>, String> {
 /// typed value, including for a nullable column where the empty string and the
 /// word `null` both mean "no value".
 ///
+/// `scale` is `ColumnDef::scale`, which is `None` for every column `trips`
+/// actually has. It is a parameter rather than a hard-coded `None` because a
+/// hard-coded one would be right today and silently wrong the day a decimal
+/// column is added — the fare columns are `f64` and are the obvious candidates.
+///
 /// # Errors
 ///
 /// Whatever [`crate::literal`] refuses.
-pub fn trip_literal(text: &str, kind: ValueType, nullable: bool) -> Result<Value, String> {
+pub fn trip_literal(
+    text: &str,
+    kind: ValueType,
+    scale: Option<u8>,
+    nullable: bool,
+) -> Result<Value, String> {
     if nullable && (text.trim().is_empty() || text.trim().eq_ignore_ascii_case("null")) {
         return Ok(Value::Null);
     }
-    literal(text, kind)
+    literal(text, kind, scale)
 }
 
 /// A stable summary of the two tables, for the committed bucket listing.

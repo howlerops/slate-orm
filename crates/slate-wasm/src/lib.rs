@@ -1022,7 +1022,7 @@ impl Playground {
         let mut row = Vec::with_capacity(raw.len());
         for (text, column) in raw.iter().zip(table.columns()) {
             row.push(
-                literal(text, column.value_type())
+                literal(text, column.value_type(), column.scale())
                     .map_err(|e| format!("{}: {e}", column.name()))?,
             );
         }
@@ -1067,7 +1067,7 @@ impl Playground {
                 .column(*ordinal)
                 .ok_or_else(|| "the primary key names a column that is not there".to_owned())?;
             values.push(
-                literal(text, column.value_type())
+                literal(text, column.value_type(), column.scale())
                     .map_err(|e| format!("{}: {e}", column.name()))?,
             );
         }
@@ -1261,7 +1261,7 @@ impl Playground {
                     // correct now, while the reason is in front of someone.
                     for (side, table) in [(&row.left, &authors), (&row.right, &books)] {
                         match side {
-                            Some(values) => line.extend(render(values)),
+                            Some(values) => line.extend(render(values, &column_scales(&[table]))),
                             // An outer join's missing side. Inner joins never
                             // produce one, but rendering it as text rather than
                             // skipping keeps the columns aligned with the header.
@@ -1273,14 +1273,21 @@ impl Playground {
                 })
                 .collect();
 
-        let rendered_groups: Vec<Vec<String>> = groups
-            .iter()
-            .map(|group| {
-                let mut line: Vec<String> = group.key.iter().map(text).collect();
-                line.extend(group.values.iter().map(text));
-                line
-            })
-            .collect();
+        let rendered_groups: Vec<Vec<String>> = {
+            let scales = grouping.map_or_else(Vec::new, |g| {
+                group_scales(&g.group, &g.aggregates, &[&authors, &books])
+            });
+            groups
+                .iter()
+                .map(|group| {
+                    let mut line: Vec<String> = Vec::with_capacity(scales.len());
+                    for (at, value) in group.key.iter().chain(&group.values).enumerate() {
+                        line.push(text(value, scales.get(at).copied().flatten()));
+                    }
+                    line
+                })
+                .collect()
+        };
 
         // `JoinExplanation` names its sides `left` and `right` rather than
         // holding a list, and the algorithm belongs to the join as a whole
@@ -1486,24 +1493,36 @@ impl Playground {
                     // `None` — the same case, from the other direction.
                     for (at, table) in refs.iter().enumerate() {
                         match row.at(at) {
-                            Some(values) => line.extend(render(values)),
+                            Some(values) => line.extend(render(values, &column_scales(&[table]))),
                             None => line
                                 .extend(std::iter::repeat_n("—".to_owned(), table.columns().len())),
                         }
                     }
-                    line.extend(row.computed().iter().map(text));
+                    // A chain's computed values carry no column, so no
+                    // scale: a computed decimal renders as its units. The
+                    // kernel refuses a computed decimal whose scale is not the
+                    // one a column already declares, so the units are the only
+                    // thing the display path can honestly show without
+                    // re-deriving that answer here.
+                    line.extend(row.computed().iter().map(|v| text(v, None)));
                     line
                 })
                 .collect();
 
-        let rendered_groups: Vec<Vec<String>> = groups
-            .iter()
-            .map(|group| {
-                let mut line: Vec<String> = group.key.iter().map(text).collect();
-                line.extend(group.values.iter().map(text));
-                line
-            })
-            .collect();
+        let rendered_groups: Vec<Vec<String>> = {
+            let scales =
+                grouping.map_or_else(Vec::new, |g| group_scales(&g.group, &g.aggregates, &refs));
+            groups
+                .iter()
+                .map(|group| {
+                    let mut line: Vec<String> = Vec::with_capacity(scales.len());
+                    for (at, value) in group.key.iter().chain(&group.values).enumerate() {
+                        line.push(text(value, scales.get(at).copied().flatten()));
+                    }
+                    line
+                })
+                .collect()
+        };
 
         // One `InputPlan` per table, with each step's algorithm on the table
         // that step reads — the first table has none, because nothing is
@@ -1928,11 +1947,14 @@ impl Playground {
         .map_err(|e| e.to_string())?;
         let elapsed = now_ms() - started;
 
+        let scales = group_scales(&grouping.group, &grouping.aggregates, &[table]);
         let rows: Vec<Vec<String>> = groups
             .iter()
             .map(|group| {
-                let mut line: Vec<String> = group.key.iter().map(text).collect();
-                line.extend(group.values.iter().map(text));
+                let mut line: Vec<String> = Vec::with_capacity(scales.len());
+                for (at, value) in group.key.iter().chain(&group.values).enumerate() {
+                    line.push(text(value, scales.get(at).copied().flatten()));
+                }
                 line
             })
             .collect();
@@ -2101,11 +2123,20 @@ impl Playground {
             // changes.
             let rows = self.rows_of(&inner)?;
             let column = inner.columns.first().copied().unwrap_or(0) as usize;
+            // The subquery's own table, because the scale of the value it
+            // produced is that column's. Rendered and reparsed against the
+            // *outer* column below, which is how a subquery over a scale-2
+            // column filtering a scale-4 one is caught: the text says `12.50`
+            // and the outer column reads it as 125000 units, which is 12.5000
+            // — the same number, correctly rescaled. A units-to-units hand-off
+            // would have been off by a hundred.
+            let inner_scales = column_scales(&[&self.table(&inner.table)?]);
+            let scale = inner_scales.get(column).copied().flatten();
             let mut values = Vec::with_capacity(rows.len());
             for row in &rows {
                 match row.values().get(column) {
                     Some(Value::Null) | None => {}
-                    Some(value) => values.push(text(value)),
+                    Some(value) => values.push(text(value, scale)),
                 }
             }
             filter.values = values;
@@ -2192,7 +2223,8 @@ impl Playground {
         .map_err(|e| e.to_string())?;
         let elapsed = now_ms() - started;
 
-        let rows: Vec<Vec<String>> = raw.iter().map(render).collect();
+        let scales = column_scales(&[&table]);
+        let rows: Vec<Vec<String>> = raw.iter().map(|row| render(row, &scales)).collect();
 
         Ok(Answer {
             returned: rows.len(),
@@ -2285,7 +2317,7 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
         // its rows rendered into `values`; by here the two are the same thing.
         let mut values = Vec::with_capacity(filter.values.len());
         for text in &filter.values {
-            values.push(literal(text, def.value_type()).map_err(|why| {
+            values.push(literal(text, def.value_type(), def.scale()).map_err(|why| {
                 if filter.subquery.is_some() {
                     // Without this the message is about a value the reader
                     // never typed, and points at the outer column rather than
@@ -2313,7 +2345,7 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
         _ => {}
     }
 
-    let value = literal(&filter.value, def.value_type())?;
+    let value = literal(&filter.value, def.value_type(), def.scale())?;
     // `Expr::compare` rather than the `eq`/`lt` shorthands: those names exist
     // on `Expr` as *combinators over expressions*, not comparison
     // constructors, and reaching for them here compiled into something else
@@ -2330,9 +2362,28 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
     Ok(Expr::compare(column, op, value))
 }
 
-fn literal(text: &str, kind: slate_tuple::ValueType) -> Result<Value, String> {
+fn literal(text: &str, kind: slate_tuple::ValueType, scale: Option<u8>) -> Result<Value, String> {
     use slate_tuple::ValueType as T;
     match kind {
+        // `WHERE price > 19.99` used to fall through to the catch-all and
+        // become `Value::Str("19.99")`, which compares below every decimal in
+        // the cross-type order and so matched *nothing*, silently. A query
+        // that returns no rows for a reason nobody can see is the worst answer
+        // available, and it was the one this gave.
+        //
+        // The scale comes from the column, because it is the only thing that
+        // knows: `19.99` is 1999 units at scale 2 and 199900 at scale 4. A
+        // decimal column with no scale is impossible — `ColumnDef::scale`
+        // returns `Some` for every `Decimal` — so `None` here means the caller
+        // passed the wrong column, which is a bug rather than a bad query.
+        T::Decimal => {
+            let scale = scale.ok_or_else(|| {
+                "a decimal column with no scale — this is a bug in the front end, not in \
+                 the query"
+                    .to_owned()
+            })?;
+            Value::decimal_from_str(text, scale)
+        }
         T::U64 => text
             .trim()
             .parse::<u64>()
@@ -2466,7 +2517,15 @@ fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
                         let name = table
                             .column(*ordinal)
                             .map_or_else(|| ordinal.0.to_string(), |c| c.name().to_owned());
-                        format!("{name}={}", text(value))
+                        format!(
+                            "{name}={}",
+                            text(
+                                value,
+                                table
+                                    .column(*ordinal)
+                                    .and_then(slate_schema::ColumnDef::scale)
+                            )
+                        )
                     })
                     .collect();
                 format!("{} row  {}", table.name(), named.join(", "))
@@ -2478,8 +2537,26 @@ fn decode_key(space: u8, key: &[u8], table: Option<&TableDef>) -> String {
         if let Ok((indexed, primary_key)) =
             slate_kernel::keys::decode_index_entry(table, index, key, &[])
         {
-            let indexed: Vec<String> = indexed.iter().map(text).collect();
-            let key_values: Vec<String> = primary_key.iter().map(text).collect();
+            // Each indexed column's own scale, then each primary-key
+            // column's, so a decimal in an index entry reads as the number
+            // rather than as its units.
+            let at = |ordinal: &Ordinal| {
+                table
+                    .column(*ordinal)
+                    .and_then(slate_schema::ColumnDef::scale)
+            };
+            let indexed: Vec<String> = index
+                .columns()
+                .iter()
+                .zip(&indexed)
+                .map(|(column, value)| text(value, at(&column.ordinal)))
+                .collect();
+            let key_values: Vec<String> = table
+                .primary_key()
+                .iter()
+                .zip(&primary_key)
+                .map(|(ordinal, value)| text(value, at(ordinal)))
+                .collect();
             return format!(
                 "{} = {}  ->  row {}",
                 index.name(),
@@ -2967,7 +3044,7 @@ fn group_value_type(
     keys: &[Ordinal],
     aggregates: &[Aggregate],
     inputs: &[&TableDef],
-) -> Result<slate_tuple::ValueType, String> {
+) -> Result<(slate_tuple::ValueType, Option<u8>), String> {
     use slate_tuple::ValueType as T;
     let index = ordinal as usize;
     // A slice of tables rather than one, so a *joined* key resolves: a group
@@ -2981,9 +3058,15 @@ fn group_value_type(
         for table in inputs {
             let width = table.columns().len();
             if at < width {
+                // The scale travels with the type, because a decimal literal
+                // in `HAVING` has to be read at the scale of whatever the
+                // aggregate produced — `having sum(price) > 100.00` is a
+                // count of the *column's* cents. `HAVING` over a decimal was
+                // comparing `I64(100)` to a `Decimal` before this, which
+                // admits nothing and says nothing.
                 return table
                     .column(Ordinal(at))
-                    .map(|d| d.value_type())
+                    .map(|d| (d.value_type(), d.scale()))
                     .ok_or_else(|| format!("{} has no column {}", table.name(), at));
             }
             at -= width;
@@ -3005,7 +3088,7 @@ fn group_value_type(
         // hazard). Written down rather than deleted, and written down rather
         // than covered by a test that does not exist.
         if key.0 >= width {
-            return Ok(T::I64);
+            return Ok((T::I64, None));
         }
         return column_type(*key);
     }
@@ -3017,17 +3100,26 @@ fn group_value_type(
     })?;
     Ok(match aggregate {
         // A count is a cardinality: unsigned, whatever it counted.
-        Aggregate::Count | Aggregate::CountColumn(_) | Aggregate::CountDistinct(_) => T::U64,
+        Aggregate::Count | Aggregate::CountColumn(_) | Aggregate::CountDistinct(_) => {
+            (T::U64, None)
+        }
+        // A minimum is one of the values, so it is whatever they are — scale
+        // included.
         Aggregate::Min(c) | Aggregate::Max(c) => column_type(*c)?,
         // `Total::sum` returns `I64` for any integer column and `F64` for a
         // real one, so a `U64` column's sum is compared as `I64` — same rank,
-        // so that is a distinction without a difference here.
+        // so that is a distinction without a difference here. Over a decimal
+        // it returns a `Decimal` at the column's scale, which is the whole
+        // point of summing money, and is why this arm cannot just be "integer
+        // or float".
         Aggregate::Sum(c) => match column_type(*c)? {
-            T::F64 => T::F64,
-            _ => T::I64,
+            (T::F64, _) => (T::F64, None),
+            (T::Decimal, scale) => (T::Decimal, scale),
+            _ => (T::I64, None),
         },
-        // Always a double, even over integers: `Total::average` divides.
-        Aggregate::Avg(_) => T::F64,
+        // Always a double, even over integers and decimals: `Total::average`
+        // divides, and an average of cents is not cents.
+        Aggregate::Avg(_) => (T::F64, None),
     })
 }
 
@@ -3040,7 +3132,7 @@ fn having(
 ) -> Result<Expr, String> {
     let mut out = Expr::True;
     for spec in specs {
-        let kind = group_value_type(spec.column, keys, aggregates, inputs)?;
+        let (kind, scale) = group_value_type(spec.column, keys, aggregates, inputs)?;
         let column = Ordinal(spec.column as usize);
         let expr = match spec.op.as_str() {
             "like" => Expr::like(column, spec.value.clone()),
@@ -3062,7 +3154,7 @@ fn having(
                     "ge" => CmpOp::Ge,
                     _ => return Err(format!("no such operator: {other}")),
                 };
-                Expr::compare(column, op, literal(&spec.value, kind)?)
+                Expr::compare(column, op, literal(&spec.value, kind, scale)?)
             }
         };
         out = match out {
@@ -3120,7 +3212,7 @@ fn conditions(specs: &[FilterSpec], table: &TableDef) -> Result<Query, String> {
 }
 
 /// One value as text.
-fn text(value: &Value) -> String {
+fn text(value: &Value, scale: Option<u8>) -> String {
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(b) => b.to_string(),
@@ -3128,11 +3220,63 @@ fn text(value: &Value) -> String {
         Value::I64(n) => n.to_string(),
         Value::F64(n) => n.to_string(),
         Value::Str(s) => s.clone(),
+        // The scale is the column's, so it has to be handed in: a decimal
+        // value does not know what it is a count of. Rendering one without it
+        // used to fall through to the `{other:?}` arm and show `Decimal(895)`
+        // in the results grid — and, worse, the SQL `UPDATE` path reads a row,
+        // renders it, edits one cell and writes the strings back, so that text
+        // was fed to the parser. `Decimal(895)` is not a number, so an
+        // `UPDATE` of any other column on a table with a decimal in it failed.
+        // `update_changes_the_named_columns_and_leaves_the_rest` caught it the
+        // moment the fixture grew a price.
+        //
+        // `unwrap_or(0)` is the whole-units reading, which is the honest
+        // answer for a caller who has no scale to give: it is what a scale-0
+        // decimal column means, and it is a number rather than a debug string.
+        Value::Decimal(units) => Value::decimal_to_string(*units, scale.unwrap_or(0)),
         other => format!("{other:?}"),
     }
 }
 
 /// Values as text, for a table in a browser.
-fn render(row: &Row) -> Vec<String> {
-    row.values().iter().map(text).collect()
+///
+/// `scales` is positional and may be shorter than the row — a position past
+/// its end renders with no scale, which is what a computed value or an
+/// aggregate that is not a decimal wants.
+fn render(row: &Row, scales: &[Option<u8>]) -> Vec<String> {
+    row.values()
+        .iter()
+        .enumerate()
+        .map(|(at, value)| text(value, scales.get(at).copied().flatten()))
+        .collect()
+}
+
+/// Each column's scale, in order, for [`render`].
+fn column_scales(tables: &[&TableDef]) -> Vec<Option<u8>> {
+    tables
+        .iter()
+        .flat_map(|t| t.columns().iter().map(slate_schema::ColumnDef::scale))
+        .collect()
+}
+
+/// The scale of each column a *group* returns: its keys, then its aggregates.
+///
+/// Answered by [`group_value_type`], which `HAVING` already uses, so the
+/// rendering and the comparison cannot disagree about what a group column is.
+/// A position it cannot resolve renders with no scale rather than failing —
+/// this is the display path, and a grid that refuses to draw is worse than one
+/// that shows a count of units.
+fn group_scales(
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    inputs: &[&TableDef],
+) -> Vec<Option<u8>> {
+    (0..keys.len() + aggregates.len())
+        .map(|at| {
+            u32::try_from(at)
+                .ok()
+                .and_then(|at| group_value_type(at, keys, aggregates, inputs).ok())
+                .and_then(|(_, scale)| scale)
+        })
+        .collect()
 }

@@ -119,7 +119,7 @@ fn a_write_shows_up_in_the_keyspace() {
 
     let written = playground.insert(
         "books",
-        &json!(["9001", "2", "Something", "2024"]).to_string(),
+        &json!(["9001", "2", "Something", "2024", "12.50"]).to_string(),
     );
     assert!(written.contains("inserted"), "{written}");
 

@@ -1037,12 +1037,7 @@ pub(crate) fn check_decimal_scales(table: &TableDef, compute: &[Scalar]) -> Resu
             .get(ordinal.0)
             .and_then(slate_schema::ColumnDef::scale)
     };
-    Ok(crate::scalar::check_scales(
-        table.name(),
-        table.columns().len(),
-        &column_scale,
-        compute,
-    )?)
+    crate::scalar::check_scales(table.name(), table.columns().len(), &column_scale, compute)
 }
 
 /// Scan rows of `table` over `range`, with no policy applied.

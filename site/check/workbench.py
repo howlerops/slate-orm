@@ -145,6 +145,19 @@ out.grouped = await type(
   "SELECT count(*), max(year) FROM authors JOIN books ON authors.id = books.author_id GROUP BY country",
 );
 
+// 7b. A decimal literal, compared exactly against a decimal column.
+//
+// The one value type that is not the number it looks like: `books.price` holds
+// a count of cents and `19.99` is 1999 of them, at the scale the schema
+// declares. Checked in the browser because this is where the reader will type
+// it, and because the failure it replaced was silent — the literal used to
+// become a string, which sorts below every decimal and returned no rows with
+// no error.
+out.priced = await type(
+  "SELECT id, price FROM books WHERE id <= 24 AND price > 19.99 ORDER BY id",
+);
+out.pricedFirstRow = await page.locator('[data-app="grid"] tbody tr').first().innerText();
+
 // 8. A write, and the index answering for it in the same breath.
 const before = await type("SELECT pickup_zone FROM trips WHERE pickup_zone = 7");
 out.beforeWrite = before;
@@ -673,6 +686,16 @@ def main() -> int:
         seen["grouped"]["rows"] > 0
         and seen["grouped"]["headers"] == ["COUNTRY", "COUNT(*)", "MAX(YEAR)"],
         f"{seen['grouped']}",
+    )
+    check(
+        "a decimal literal compares against a decimal column, at its scale",
+        seen["priced"]["rows"] == 7,
+        f"{seen['priced']} — ids 18..=24 are the prices over 19.99",
+    )
+    check(
+        "and a price renders as the number, not as its count of cents",
+        "20.51" in seen["pricedFirstRow"],
+        f"{seen['pricedFirstRow']!r}",
     )
     check(
         "an inserted row appears, and the index answers for it",

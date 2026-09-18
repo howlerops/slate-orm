@@ -15,7 +15,7 @@ use slate_tuple::{Value, ValueType};
 
 /// `authors`: id, name, country, born.
 pub const AUTHORS: TableId = TableId(1);
-/// `books`: id, author_id, title, year.
+/// `books`: id, author_id, title, year, price.
 pub const BOOKS: TableId = TableId(2);
 
 #[must_use]
@@ -37,6 +37,17 @@ pub fn books() -> TableDef {
         .column("author_id", ValueType::U64)
         .column("title", ValueType::Str)
         .column("year", ValueType::I64)
+        // In cents, at scale 2, so the workbench has a column where `19.99`
+        // means what it says. Appended rather than inserted, so every ordinal
+        // above it stays where the docs and the plan snapshots already say it
+        // is.
+        //
+        // It is here because a SQL front end that reads `19.99` as an `f64`
+        // and compares it to a decimal matches nothing and reports nothing,
+        // and a fixture with no decimal column is a fixture that cannot show
+        // the difference. The explorer's `books` grew the same column for the
+        // same reason, one layer out.
+        .decimal_column("price", 2)
         .primary_key(["id"])
         // The point of the whole exercise: with this, `author_id = 2` is an
         // index scan; without it, a table scan. The plan panel shows which.
@@ -142,6 +153,11 @@ pub fn book_rows() -> Vec<Row> {
             Value::U64(author),
             Value::Str(title.to_owned()),
             Value::I64(year),
+            // Prices that straddle the round numbers a reader is likely to
+            // type: ids 1..24 run 8.95 up to 24.70 in 68-cent steps, so
+            // `price > 19.99` and `price >= 20.00` select different rows and a
+            // query that quietly matched nothing would be obvious.
+            Value::Decimal(895 + (id as i64 - 1) * 68),
         ])
     })
     .chain((0..GENERATED_AUTHORS * BOOKS_EACH).map(|n| {
@@ -152,6 +168,7 @@ pub fn book_rows() -> Vec<Row> {
             Value::U64(author),
             Value::Str(format!("Book {id}")),
             Value::I64(1950 + (n as i64 % 70)),
+            Value::Decimal(500 + (n as i64 % 3_000)),
         ])
     }))
     .collect()
