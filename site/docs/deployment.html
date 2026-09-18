@@ -120,6 +120,43 @@
         <a href="security.html">security</a>.
       </li>
     </ul>
+    <h2>What the node tells you</h2>
+
+    <p>
+      By default: its startup, its warnings, and nothing per request. Two settings
+      open that up, and both are off unless you say otherwise — a node that starts
+      logging differently because it was upgraded is a surprise, and a line per
+      request on a node serving ten thousand a second is a hundred megabytes an
+      hour of stderr nobody asked for.
+    </p>
+
+    <pre><code>[observability]
+request_log = true          # one line per request
+summary_interval = "60s"    # per-method counters, this often</code></pre>
+
+    <ul>
+      <li>
+        <code>request_log</code> writes
+        <code>slate-serverd: /slate.v1.Records/Query status=0 head=1.4ms</code> per
+        call. A debugging tool rather than something to leave on.
+      </li>
+      <li>
+        <code>summary_interval</code> writes one line per method that has been
+        called — calls, failures, mean and slowest — on that cadence, and once more
+        on the way out so the last interval is not lost. Cheap at any request rate,
+        and the one a production node should have on.
+      </li>
+    </ul>
+
+    <p>
+      Both times are to the <strong>response head</strong>, not to the last row: a
+      streaming read returns its head immediately and then streams for as long as
+      the client keeps reading, so timing to the end would measure the client's
+      appetite rather than the server's work. The log line says
+      <code>head=</code> for that reason. A failure raised in a trailer, after the
+      head was already sent, is invisible to this and counts as a success.
+    </p>
+
     <nav class="doc-pager" data-docs="pager"></nav>
   </article>
 

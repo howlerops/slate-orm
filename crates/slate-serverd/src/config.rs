@@ -106,6 +106,9 @@ pub(crate) struct Document {
     /// How long a shutdown may take.
     #[serde(default)]
     pub(crate) shutdown: Shutdown,
+    /// What the node says about the requests it serves.
+    #[serde(default)]
+    pub(crate) observability: Observability,
     /// The tables this node serves.
     #[serde(default)]
     pub(crate) tables: Vec<Table>,
@@ -450,6 +453,27 @@ impl Default for Schema {
 
 const fn yes() -> bool {
     true
+}
+
+/// What the node says about the requests it serves.
+///
+/// Both off by default. A node that starts logging differently because it was
+/// upgraded is a surprise, and a line per request on a busy node is a hundred
+/// megabytes an hour of stderr nobody asked for — the failure mode of logging
+/// by default is a full disk, not a missing log.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Observability {
+    /// One line per request: method, gRPC status, and time to the response
+    /// head. A debugging tool rather than something to leave on.
+    #[serde(default)]
+    pub(crate) request_log: bool,
+    /// How often to print per-method counters, as a duration like `"60s"`.
+    ///
+    /// Separate from `request_log` because it is cheap at any request rate,
+    /// and is the one a production node should have on.
+    #[serde(default)]
+    pub(crate) summary_interval: Option<String>,
 }
 
 /// How long a shutdown may take.

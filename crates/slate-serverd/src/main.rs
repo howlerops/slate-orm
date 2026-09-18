@@ -49,6 +49,7 @@ mod config;
 mod error;
 mod filelease;
 mod lang;
+mod observe;
 mod schema;
 mod security;
 mod seed;
@@ -124,6 +125,24 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         document.limits.request_timeout.as_ref(),
         "limits.request_timeout",
     )?;
+    let summary = config::optional_duration(
+        document.observability.summary_interval.as_ref(),
+        "observability.summary_interval",
+    )?;
+    // Refused here rather than clamped. `tokio::time::interval` *panics* on a
+    // zero period, and it is spawned, so the panic would land in a detached
+    // task: the node would keep serving with no summary and no explanation.
+    // A refusal at startup names the field while somebody is still reading.
+    if summary == Some(Duration::ZERO) {
+        return Err(Fault::new(
+            "`[observability] summary_interval = \"0s\"` would print without pausing; \
+             leave it unset for no summary",
+        ));
+    }
+    let observing = observe::Observing {
+        request_log: document.observability.request_log,
+        summary,
+    };
     let routing = routing(&document.routing)?;
     // Checked here rather than where the replicas are opened, because a
     // warning has to reach `warnings` and the replicas are opened after those
@@ -288,13 +307,16 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 
     let common = Common {
         execution,
-        concurrency,
-        request_timeout,
+        serving: serve::Serving {
+            grace,
+            concurrency,
+            request_timeout,
+            observing,
+        },
         catalog,
         security,
         limits,
         routing,
-        grace,
         fixture,
         analyze: document.planner.analyze_on_start,
         replicas,
@@ -329,12 +351,9 @@ struct Common {
     limits: Limits,
     /// The kernel's per-request ceilings. See [`ExecutionLimits`].
     execution: ExecutionLimits,
-    /// Requests in flight per connection, unset for unbounded.
-    concurrency: Option<usize>,
-    /// How long one request may run, unset for no timeout.
-    request_timeout: Option<Duration>,
+    /// How the node serves, rather than what. See [`serve::Serving`].
+    serving: serve::Serving,
     routing: RoutingPolicy,
-    grace: Duration,
     fixture: Option<seed::Fixture>,
     analyze: bool,
     replicas: Vec<Arc<dyn KvReadStore>>,
@@ -351,13 +370,11 @@ async fn start<S: KvStore + KvReadStore>(
 ) -> Started<()> {
     let Common {
         execution,
-        concurrency,
-        request_timeout,
+        serving,
         catalog,
         security,
         limits,
         routing,
-        grace,
         fixture,
         analyze,
         replicas,
@@ -394,16 +411,7 @@ async fn start<S: KvStore + KvReadStore>(
         authenticator,
     );
 
-    announce_and_serve(
-        head,
-        listener,
-        bound,
-        leadership,
-        grace,
-        concurrency,
-        request_timeout,
-    )
-    .await?;
+    announce_and_serve(head, listener, bound, leadership, serving).await?;
 
     if let Some(store) = closing {
         store
@@ -434,13 +442,11 @@ async fn start<S: KvStore + KvReadStore>(
 async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()> {
     let Common {
         execution,
-        concurrency,
-        request_timeout,
+        serving,
         catalog,
         security,
         limits,
         routing,
-        grace,
         fixture,
         analyze,
         replicas,
@@ -469,16 +475,7 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
         authenticator,
     );
 
-    announce_and_serve(
-        head,
-        listener,
-        bound,
-        leadership,
-        grace,
-        concurrency,
-        request_timeout,
-    )
-    .await
+    announce_and_serve(head, listener, bound, leadership, serving).await
 }
 
 /// The handshake, then serving.
@@ -493,9 +490,7 @@ async fn announce_and_serve<S: KvStore + KvReadStore>(
     listener: tokio::net::TcpListener,
     bound: SocketAddr,
     leadership: Arc<Leadership>,
-    grace: Duration,
-    concurrency: Option<usize>,
-    request_timeout: Option<Duration>,
+    serving: serve::Serving,
 ) -> Started<()> {
     println!("LISTENING {bound}");
     use std::io::Write;
@@ -503,15 +498,7 @@ async fn announce_and_serve<S: KvStore + KvReadStore>(
         .flush()
         .map_err(|why| Fault::new(format!("cannot write the banner: {why}")))?;
 
-    serve::run(
-        head,
-        listener,
-        leadership,
-        grace,
-        concurrency,
-        request_timeout,
-    )
-    .await
+    serve::run(head, listener, leadership, serving).await
 }
 
 fn limits(settings: &config::LimitSettings) -> Started<Limits> {

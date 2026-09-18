@@ -50,6 +50,26 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt as _;
 
+/// How the node serves, as distinct from what it serves.
+///
+/// One struct rather than four arguments because these four travel together
+/// from the config document, through both start paths and the banner, to the
+/// accept loop, and not one of the intermediate functions looks inside them.
+/// Passed separately they pushed `announce_and_serve` over clippy's
+/// seven-argument limit, and the honest reading of that lint is that a
+/// function taking eight positional arguments of which four are `Option`s and
+/// `Duration`s is one a caller can silently transpose.
+pub(crate) struct Serving {
+    /// How long in-flight requests are given after a stop signal.
+    pub(crate) grace: Duration,
+    /// Requests in flight per connection, unset for unbounded.
+    pub(crate) concurrency: Option<usize>,
+    /// How long one request may run, unset for no timeout.
+    pub(crate) request_timeout: Option<Duration>,
+    /// What the node says about the requests it serves. See [`crate::observe`].
+    pub(crate) observing: crate::observe::Observing,
+}
+
 /// Turn Nagle off on an accepted connection.
 ///
 /// A failure is swallowed rather than dropping the connection: the socket
@@ -70,18 +90,54 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     head: Head<S>,
     listener: TcpListener,
     leadership: Arc<Leadership>,
-    grace: Duration,
-    concurrency: Option<usize>,
-    request_timeout: Option<Duration>,
+    serving: Serving,
 ) -> Started<()> {
+    let Serving {
+        grace,
+        concurrency,
+        request_timeout,
+        observing,
+    } = serving;
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
         .map(|accepted| accepted.map(without_nagle));
     let (stop, stopped) = oneshot::channel::<()>();
+    let counters = Arc::new(crate::observe::Counters::default());
+
+    // The summary ticker, if one was asked for. Spawned rather than folded
+    // into the accept loop so it keeps its cadence while the node is idle —
+    // a summary that only prints when a request arrives is least useful
+    // exactly when a node has gone quiet and somebody wants to know why.
+    let ticker = observing.summary.map(|interval| {
+        let counters = Arc::clone(&counters);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            // `interval` fires its first tick immediately. Consumed so the
+            // first summary lands one interval in rather than at startup.
+            //
+            // Nearly a no-op, and worth saying why it stays: `summary()`
+            // returns `None` for a node that has served nothing, so the
+            // immediate tick would print nothing anyway — removing this line
+            // is a mutation that survives the suite, and it was checked. What
+            // it buys is the narrow case where a request lands between the
+            // server starting and that first tick, which would otherwise
+            // print a one-request summary a few microseconds into the run and
+            // then nothing for an interval. Keeping it makes every summary
+            // cover a full interval.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                if let Some(text) = counters.summary() {
+                    eprint!("{text}");
+                }
+            }
+        })
+    });
 
     // Spawned rather than awaited inline so the drain can be bounded: the
     // shutdown future is inside `serve_with_incoming_shutdown`, and a timeout
     // wrapped around the whole call would cut the *serving* short rather than
     // the draining.
+    let serving_counters = Arc::clone(&counters);
     let server = tokio::spawn(async move {
         let mut builder = tonic::transport::Server::builder();
         // Applied to the builder rather than per handler: these bound the node
@@ -98,7 +154,16 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         if let Some(timeout) = request_timeout {
             builder = builder.timeout(timeout);
         }
+        // Always layered, whatever the settings say. The counters cost an
+        // atomic add and a map lookup per request and are what makes the
+        // summary possible; the *log line* is what the setting gates, inside
+        // the layer. Adding the layer conditionally would mean two builder
+        // types and a branch that has to construct the server twice.
         builder
+            .layer(crate::observe::ObserveLayer::new(
+                serving_counters,
+                observing.request_log,
+            ))
             .add_service(head.into_service())
             .serve_with_incoming_shutdown(incoming, async {
                 // A sender dropped without sending means the process is
@@ -131,6 +196,18 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
             eprintln!(
                 "slate-serverd: requests were still in flight after {grace:?}; stopping anyway"
             );
+        }
+    }
+
+    // Aborted rather than left to the runtime, and only after the drain: a
+    // summary task outliving the server it summarises would keep printing
+    // rows for a node that has stopped serving. The last interval's requests
+    // would otherwise go unreported, so they are printed here — a node that
+    // is stopping is exactly when the counts matter.
+    if let Some(ticker) = ticker {
+        ticker.abort();
+        if let Some(text) = counters.summary() {
+            eprint!("{text}");
         }
     }
 

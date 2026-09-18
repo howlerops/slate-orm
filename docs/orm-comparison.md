@@ -119,7 +119,14 @@ then did not ship it to the three audiences most likely to need it.
 | Array / list column type | Drizzle, SQLAlchemy, Ecto | `ValueType` has no `Array` |
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
 | Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
-| Per-request logging and metrics | all | already recorded in the README: `slate-serverd` logs startup and warnings, nothing per request |
+
+> **Built: "Per-request logging and metrics".** `[observability] request_log`
+> writes a line per call — method, gRPC status, time to the response head — and
+> `summary_interval` writes per-method counters on a cadence. Both off by
+> default. The row is removed rather than annotated because what the other
+> seven offer here is a log line and a counter, and this is a log line and a
+> counter; what it is not is `tracing`, a metrics endpoint or a histogram, and
+> that gap is recorded below rather than in a row that reads as absent.
 
 > **Built: "Batch" and "`RETURNING` on a write".** Both rows are removed rather
 > than annotated, on the same grounds as keyset pagination: both were correct
@@ -825,8 +832,21 @@ Not plan items; things a session should pick up when it is already in the file.
   Both retry a conflict and nothing else, with the same defaults as Python —
   five attempts, 5 ms doubling to 500 ms, full jitter — because three clients
   disagreeing about how hard they try is its own bug.
-- **No per-request logging or metrics in `slate-serverd`.** Recorded in the
-  README and still true.
+- ~~**No per-request logging or metrics in `slate-serverd`.**~~ **Built.**
+  `[observability] request_log` is a line per request and `summary_interval` is
+  per-method counters on a cadence, both off by default, both written to stderr
+  in the shape every other line the process emits already has. A `tower` layer
+  rather than a `tonic` interceptor, because an interceptor sees the request
+  and not the response, so it can log that a call arrived and not how it ended.
+  What it still is not: `tracing` with a subscriber, a `/metrics` endpoint, or
+  a latency histogram — it reports a mean and a slowest, which is enough to
+  notice a problem and not enough to characterise one. It also times to the
+  response *head*, so a streamed read's rows are not in the number, and a
+  failure raised in a trailer counts as a success.
+- **No request id to correlate a client call with a server log line.** The
+  README recorded this as blocked on there being no server log at all. That
+  half is now built, so the item is unblocked and not done: nothing in the
+  protocol or any of the three clients carries an id today.
 
 ## What neither plan does
 

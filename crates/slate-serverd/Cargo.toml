@@ -34,6 +34,13 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sig
 # accepting. Handing tonic an address instead would leave a race no client can
 # avoid, and `address = "…:0"` — which the tests need — could not report a port.
 tokio-stream = { version = "0.1", features = ["net"] }
+# `tower` and `http` for the per-request layer in `observe.rs`.
+#
+# Both arrive through tonic already — this names them so the layer does not
+# depend on a transitive version tonic could change under it, which is the
+# usual way a build breaks on a patch release of something nobody declared.
+tower = "0.5"
+http = "1"
 tonic = "0.14"
 
 # Pinned to the version `slate-server` and SlateDB use. `Arc<dyn ObjectStore>`

@@ -3872,6 +3872,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "clap",
+ "http",
  "object_store",
  "serde",
  "serde_json",
@@ -3887,6 +3888,7 @@ dependencies = [
  "tokio-stream",
  "toml",
  "tonic",
+ "tower",
  "uuid",
 ]
 
