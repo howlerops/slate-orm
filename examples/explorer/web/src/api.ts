@@ -118,6 +118,52 @@ export interface GroupRow {
   count?: Tagged;
 }
 
+/** What a predicate write reports. */
+export interface PredicateWrite {
+  /** How many rows the predicate matched and the write touched. */
+  affected: number;
+  /** The rows themselves, when `returning` asked for them. Empty otherwise. */
+  rows: Tagged[][];
+  /** How many of the handler's four rows survive, so a delete's *effect* is
+   *  visible and not only its report. */
+  left: number;
+}
+
+/** One operation's outcome inside an independent batch. */
+export type BatchOne = { ok: number } | { kind: string; reason: string };
+
+/** What a batch reports under one atomicity. */
+export interface BatchOutcome {
+  /** The error kind when the whole call failed, which only `all-or-nothing`
+   *  can do. Null when the request itself succeeded. */
+  failed: string | null;
+  /** One entry per operation — empty under `all-or-nothing`, which has no
+   *  per-operation outcome to report because they all landed or none did. */
+  outcomes: BatchOne[];
+  /** Rows surviving afterwards: the difference the two atomicities make. */
+  left: number;
+}
+
+/** One node of a relationship path: a row, and the rows below it. */
+export interface PathNode {
+  row: Tagged[];
+  related: Tagged[][];
+}
+
+/**
+ * Both shapes a path can be read as, from one request.
+ *
+ * Both are indexed **by key**: the outer array has one entry per key the
+ * caller passed, in the order it passed them. That is what makes a path
+ * batched rather than a loop — one request, a grouped answer.
+ */
+export interface PathAnswer {
+  /** Every level kept, which is `load_nested`. */
+  trees: PathNode[][];
+  /** The far rows only, which is `load_related_through`. */
+  through: Tagged[][][];
+}
+
 async function call<T>(
   sdk: Sdk,
   path: string,
@@ -172,6 +218,18 @@ export const api = {
       limit?: number;
     },
   ) => call<GroupedPlan>(sdk, "/api/explain-aggregate", spec, persona),
+
+  predicateWrite: (
+    sdk: Sdk,
+    persona: Persona,
+    spec: { kind: "delete" | "update"; returning: boolean },
+  ) => call<PredicateWrite>(sdk, "/api/predicate-write", spec, persona),
+
+  batch: (sdk: Sdk, persona: Persona, atomicity: "independent" | "all-or-nothing") =>
+    call<BatchOutcome>(sdk, "/api/batch", { atomicity }, persona),
+
+  path: (sdk: Sdk, persona: Persona, keys: Tagged[]) =>
+    call<PathAnswer>(sdk, "/api/path", { keys }, persona),
 
   transaction: (sdk: Sdk, persona: Persona, commit: boolean) =>
     call<{ visibleInside: boolean; visibleAfter: boolean }>(

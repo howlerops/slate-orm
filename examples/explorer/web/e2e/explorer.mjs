@@ -432,6 +432,88 @@ try {
     if (seen.rollback) throw new Error("a rolled-back write was visible afterwards");
   });
 
+  // The three panels N5 added, each asserting the thing its panel exists to
+  // show rather than that it rendered. A panel that renders and teaches the
+  // wrong thing is the failure worth catching here.
+  await check("a predicate write hands back the rows it destroyed", async () => {
+    await at(page, { panel: "writes" });
+    const panel = page.locator('.panel:has(h2:text-is("Predicate writes"))');
+    await panel.locator('[data-test="predicate-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="predicate-summary"]').innerText();
+    // Two of the four seeded books are 2002 or later.
+    if (!summary.includes("affected 2")) throw new Error(`affected: ${summary}`);
+    if (!summary.includes("rows returned 2")) throw new Error(`returned: ${summary}`);
+    if (!summary.includes("left 2")) throw new Error(`left: ${summary}`);
+    const rows = await panel.locator("tbody tr").count();
+    if (rows !== 2) throw new Error(`the panel rendered ${rows} returned rows, not 2`);
+  });
+
+  await check("without `returning` there is a count and no rows", async () => {
+    await at(page, { panel: "writes" });
+    const panel = page.locator('.panel:has(h2:text-is("Predicate writes"))');
+    await panel.locator('select').nth(1).selectOption("no");
+    await panel.locator('[data-test="predicate-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="predicate-summary"]').innerText();
+    if (!summary.includes("affected 2")) throw new Error(`affected: ${summary}`);
+    if (!summary.includes("rows returned 0")) throw new Error(`returned: ${summary}`);
+    const rows = await panel.locator("tbody tr").count();
+    if (rows !== 0) throw new Error(`rows were rendered without \`returning\`: ${rows}`);
+  });
+
+  await check("the two atomicities leave different numbers of rows", async () => {
+    await at(page, { panel: "batches" });
+    const panel = page.locator('.panel:has(h2:text-is("Batches"))');
+    await panel.locator('[data-test="batch-run"]').click();
+    // Wait for a badge in *each* side, not for `settled` and not for the first
+    // badge anywhere. Two queries start on this click: `settled` only waits
+    // for spinners that have already mounted, so it can return between the
+    // click and the first render; and the first badge is whichever query won,
+    // which leaves the other still empty. Both of those failed here in turn.
+    // Waiting for exactly what each assertion reads has no such window.
+    await panel.locator('[data-test="batch-independent"] .badge').first().waitFor();
+    await panel.locator('[data-test="batch-all-or-nothing"] .badge').first().waitFor();
+    await settled(page);
+    // Named, not positional. `.split > div` picked something that was not the
+    // side it looked like: Solid's `For` puts markers between children, so an
+    // index is not the reading order. A name cannot be off by one.
+    const independent = await panel.locator('[data-test="batch-independent"]').innerText();
+    const atomic = await panel.locator('[data-test="batch-all-or-nothing"]').innerText();
+    // The counts are read off the adapter rather than assumed: independent
+    // leaves three rows, all-or-nothing leaves one. Guessing them produced a
+    // failing test that looked like a broken panel.
+    //
+    // Independent: the call succeeds, the collision is one outcome, and the
+    // two writes that worked are still there.
+    if (!independent.includes("succeeded")) throw new Error(`independent: ${independent}`);
+    if (!independent.includes("rows left 3")) throw new Error(`independent left: ${independent}`);
+    // All-or-nothing: the call fails and nothing landed. If these two ever
+    // report the same count, the panel is showing a difference that is not
+    // there — which is the only thing it exists to show.
+    if (atomic.includes("succeeded")) throw new Error(`atomic should have failed: ${atomic}`);
+    if (!atomic.includes("rows left 1")) throw new Error(`atomic left: ${atomic}`);
+  });
+
+  await check("a path keeps its middle level, and dropping it is a choice", async () => {
+    await at(page, { panel: "relationships" });
+    const panel = page.locator('.panel:has(h2:text-is("Relationships"))');
+    // Trees: three books, and book 12 has no editions — the level is there
+    // and empty, which is the case a hand-written regroup gets wrong.
+    const trees = await panel.locator('[data-test="path-trees"]').innerText();
+    if (!trees.includes("book 10")) throw new Error(`no book 10 in the tree: ${trees}`);
+    if (!trees.includes("no editions")) {
+      throw new Error(`book 12's empty level is not shown: ${trees}`);
+    }
+    // Through: the same request, the far rows only. The middle books must be
+    // gone, or "through" is showing what "trees" shows.
+    await panel.locator('.seg button:text-is("through")').click();
+    await settled(page);
+    const through = await panel.locator('[data-test="path-through"]').innerText();
+    if (!through.includes("edition")) throw new Error(`no editions through: ${through}`);
+    if (through.includes("Predicate")) throw new Error(`a book row leaked into through: ${through}`);
+  });
+
   await check("the agreement panel says the three are identical", async () => {
     await at(page, { panel: "agreement" });
     const badge = await page.locator('.panel:has(h2:text-is("Do the three agree?")) .badge').first().innerText();

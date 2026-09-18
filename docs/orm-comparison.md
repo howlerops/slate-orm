@@ -687,7 +687,42 @@ Mutation: drop the decode, in each, and a named case must fail.
 
 *Stops at.* The token. Not the rest of the details message.
 
-### N5 — The demo shows none of the last three features
+### N5 — The demo shows none of the last three features — **built**
+
+> **Done.** Three panels, and each shows the thing its feature is *for* rather
+> than that the feature exists:
+>
+> - **Predicate writes** runs `DELETE … WHERE` or `UPDATE … SET … WHERE` and
+>   lets a visitor turn `returning` off. With it: the rows as they were. Without
+>   it: a count, and a note saying that is all that is left of them — which is
+>   the argument for `returning` made by its absence, as the item asked.
+> - **Batches** runs the same three writes, one of which collides, under *both*
+>   atomicities and shows them side by side. `independent` succeeds with the
+>   failure as one of its outcomes and leaves three rows; `all-or-nothing`
+>   fails the call, has no per-operation outcomes to report, and leaves one.
+>   The difference is the only thing a batch has to teach.
+> - **Relationships** walks `sales → books → editions` — two steps in opposite
+>   directions, one request — and toggles between the tree and the far rows.
+>   Book 12 has no editions, so the tree shows a level that is present and
+>   empty where `through` shows nothing at all.
+>
+> Four new e2e checks, in the suite that already ran in CI. 22 pass.
+>
+> **Two bugs in the panels, both found by the e2e rather than by looking.** The
+> two atomicities were two concurrent queries against one database, and the
+> handler clears and re-seeds the same rows — so they raced, and whichever
+> arrived second saw the other's half-finished state and came back a refusal.
+> They run in sequence now, which is also the only way the numbers they report
+> mean anything. And a `<For>` over a freshly built tuple array gave every item
+> a new reference each render, so one of the two columns rendered its heading
+> and nothing else; two columns are now written out rather than looped.
+>
+> **The expected counts were guessed and wrong** — 2 and 0 against the actual 3
+> and 1. Read off the adapter in the end, which is what the test should have
+> done first.
+>
+> *Stops at* the demo, as the item said. No new server surface: every endpoint
+> these panels call already existed and was already compared by the corpus.
 
 The frontend has no UI for predicate writes, for batch, or for relationships
 beyond one level. The adapters serve `/api/batch` and the corpus compares it; a

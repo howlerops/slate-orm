@@ -396,14 +396,27 @@
         three-SDK runner compares the token on every refusal it already tested.
       </li>
       <li>
-        <strong>The demo shows the last three features.</strong> Predicate
-        writes, batch and relationships past one level are all invisible on the
-        page that exists to show the surface.
+        <strong>The demo shows the last three features. &mdash; done.</strong>
+        Predicate writes, batch and relationships past one level were all
+        invisible on the page that exists to show the surface. Three panels
+        now, each showing what its feature is <em>for</em> rather than that it
+        exists: a predicate write with <code>returning</code> turned off, so
+        the count is all that is left of the rows it destroyed; both
+        atomicities side by side, because the difference between them is the
+        only thing a batch has to teach; and a two-step relationship path read
+        as a tree and as its far rows, where a book with no editions is a level
+        that is present and empty in one and absent in the other.
       </li>
       <li>
-        <strong>Measure batching from a client.</strong> The 9.4&times; above
-        did not go through one, and the clients do per-request work that
-        batching does not save.
+        <strong>Measure batching from a client. &mdash; done, and the
+        prediction was backwards.</strong> The wire number did not go through a
+        client, and the guess was that a client&rsquo;s per-request work would
+        eat into the saving. Measured, it is the reverse: <strong>21&ndash;34&times;</strong>
+        from Python, Go and TypeScript against the wire&rsquo;s 15&times;. That
+        work is paid per <em>request</em>, so it multiplies the
+        one-at-a-time arm by a hundred and the batched arm by one &mdash; a
+        client pays more per round trip, which is why saving them is worth more
+        to a client and not less.
       </li>
     </ol>
 

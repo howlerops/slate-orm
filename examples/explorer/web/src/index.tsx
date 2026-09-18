@@ -5,10 +5,28 @@ import { QueryClient, QueryClientProvider, createQuery } from "@tanstack/solid-q
 
 import { api, type Persona, type Sdk } from "./api";
 import { Segmented } from "./parts";
-import { Agreement, Explore, Groups, Joins, Transactions } from "./panels";
+import {
+  Agreement,
+  Batches,
+  Explore,
+  Groups,
+  Joins,
+  PredicateWrites,
+  Relationships,
+  Transactions,
+} from "./panels";
 import "./styles.css";
 
-const TABS = ["rows", "joins", "groups", "transactions", "agreement"] as const;
+const TABS = [
+  "rows",
+  "joins",
+  "groups",
+  "relationships",
+  "writes",
+  "batches",
+  "transactions",
+  "agreement",
+] as const;
 type Tab = (typeof TABS)[number];
 
 function App(): JSX.Element {
@@ -79,6 +97,15 @@ function App(): JSX.Element {
         </Match>
         <Match when={tab() === "groups"}>
           <Groups {...context} />
+        </Match>
+        <Match when={tab() === "relationships"}>
+          <Relationships {...context} />
+        </Match>
+        <Match when={tab() === "writes"}>
+          <PredicateWrites {...context} />
+        </Match>
+        <Match when={tab() === "batches"}>
+          <Batches {...context} />
         </Match>
         <Match when={tab() === "transactions"}>
           <Transactions {...context} />

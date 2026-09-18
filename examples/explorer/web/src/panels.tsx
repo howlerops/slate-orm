@@ -1,4 +1,4 @@
-/** The demo's five panels. Each is one thing the database does. */
+/** The demo's eight panels. Each is one thing the database does. */
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { createQuery } from "@tanstack/solid-query";
 
@@ -8,9 +8,12 @@ import {
   TABLES,
   type Persona,
   type QuerySpec,
+  type Answer,
+  type BatchOutcome,
   type Sdk,
+  type Tagged,
 } from "./api";
-import { Bars, Result, ValueTable } from "./parts";
+import { Bars, Result, Segmented, ValueTable } from "./parts";
 
 interface Context {
   sdk: () => Sdk;
@@ -516,6 +519,337 @@ export function Agreement(props: Context): JSX.Element {
           );
         }}
       </Show>
+    </div>
+  );
+}
+
+/** A write that names rows by predicate, and hands them back. */
+export function PredicateWrites(props: Context): JSX.Element {
+  const [kind, setKind] = createSignal<"delete" | "update">("delete");
+  const [returning, setReturning] = createSignal(true);
+  const [ran, setRan] = createSignal(0);
+
+  const outcome = createQuery(() => ({
+    queryKey: ["predicate-write", props.sdk(), props.persona(), kind(), returning(), ran()],
+    queryFn: () =>
+      api.predicateWrite(props.sdk(), props.persona(), {
+        kind: kind(),
+        returning: returning(),
+      }),
+    enabled: ran() > 0,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Predicate writes</h2>
+      <p class="why">
+        <code>DELETE … WHERE</code> and <code>UPDATE … SET … WHERE</code>: one
+        statement that names its rows by a condition rather than by key. It
+        seeds four books, writes over the two whose year is 2002 or later, and
+        reports what happened.
+      </p>
+      <p class="why">
+        <b>Ask for the rows back and the difference is the point.</b> Without{" "}
+        <code>returning</code> you get a count, which a delete-by-key would
+        also give you. With it you get the rows as they were — the only record
+        of what a delete destroyed, and the only way to know which rows an
+        update touched without reading them again and racing.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>write</span>
+          <select
+            value={kind()}
+            onChange={(event) =>
+              setKind(event.currentTarget.value === "update" ? "update" : "delete")
+            }
+          >
+            <option value="delete">delete where</option>
+            <option value="update">update where</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>returning</span>
+          <select
+            value={returning() ? "yes" : "no"}
+            onChange={(event) => setReturning(event.currentTarget.value === "yes")}
+          >
+            <option value="yes">the rows</option>
+            <option value="no">a count only</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+          data-test="predicate-run"
+        >
+          run it
+        </button>
+      </div>
+      <Show when={ran() > 0} fallback={<div class="note">not run yet</div>}>
+        <Result answer={outcome.data} pending={outcome.isPending}>
+          {(value) => (
+            <>
+              <div class="badges" data-test="predicate-summary">
+                <span class="badge" data-tone="good">
+                  affected <b>{value.affected}</b>
+                </span>
+                <span class="badge">
+                  of four left <b>{value.left}</b>
+                </span>
+                <span class="badge" data-tone={value.rows.length > 0 ? "good" : "warn"}>
+                  rows returned <b>{value.rows.length}</b>
+                </span>
+              </div>
+              <Show
+                when={value.rows.length > 0}
+                fallback={
+                  <div class="note">
+                    A count and nothing else. The rows are gone and this is all
+                    that is left of them — which is the argument for{" "}
+                    <code>returning</code>, made by its absence.
+                  </div>
+                }
+              >
+                <ValueTable columns={TABLES["books"] ?? []} rows={value.rows} />
+              </Show>
+            </>
+          )}
+        </Result>
+      </Show>
+    </div>
+  );
+}
+
+/** Several writes in one request, under each of the two atomicities. */
+export function Batches(props: Context): JSX.Element {
+  const [ran, setRan] = createSignal(0);
+
+  // Both atomicities, side by side, from **one** query that runs them in
+  // sequence. The difference between them is the only thing a batch has to
+  // teach that a loop of writes does not, and a control that ran one at a time
+  // would leave the visitor holding the other one's answer in their head.
+  //
+  // Sequential, and that is not a style choice. As two concurrent queries they
+  // raced: the handler clears and re-seeds the same four rows, so whichever
+  // arrived second saw the other's half-finished state and came back a
+  // refusal — the panel then showed one column and a timeout in the e2e. Two
+  // runs that mutate the same rows have to be ordered, and the number each
+  // reports is only meaningful if they are.
+  const both = createQuery(() => ({
+    queryKey: ["batch", props.sdk(), props.persona(), ran()],
+    queryFn: async () => ({
+      independent: await api.batch(props.sdk(), props.persona(), "independent"),
+      atomic: await api.batch(props.sdk(), props.persona(), "all-or-nothing"),
+    }),
+    enabled: ran() > 0,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Batches</h2>
+      <p class="why">
+        Three writes in one request, the second of which collides with a key
+        that is already taken. Both atomicities run, because the{" "}
+        <b>difference between them is the whole feature</b> — a batch that
+        never failed would be a round-trip saving and nothing more.
+      </p>
+      <p class="why">
+        <code>independent</code> applies each on its own: the request succeeds,
+        and the failure is <em>one of the outcomes</em> rather than an
+        exception. <code>all-or-nothing</code> puts them in a transaction: the
+        call fails, there are no per-operation outcomes to report, and the two
+        writes that would have worked did not happen either. Watch the{" "}
+        <b>rows left</b> counts.
+      </p>
+      <div class="controls">
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+          data-test="batch-run"
+        >
+          run both
+        </button>
+      </div>
+      <Show when={ran() > 0} fallback={<div class="note">not run yet</div>}>
+        <Show when={both.data} keyed fallback={<div class="spinner">asking…</div>}>
+          {(ran) => (
+            <div class="split" data-test="batch-outcomes">
+              <Side name="independent" answer={ran.independent} />
+              <Side name="all-or-nothing" answer={ran.atomic} />
+            </div>
+          )}
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * One atomicity's column in the batch panel.
+ *
+ * Written out twice rather than looped. A `<For>` over a freshly built tuple
+ * array gives every item a new reference on each render, so the row is
+ * recreated rather than updated — which left one of the two columns showing
+ * its heading and nothing else. Two columns are not worth a loop whose
+ * reactivity has to be reasoned about.
+ */
+function Side(props: { name: string; answer: Answer<BatchOutcome> }): JSX.Element {
+  return (
+    <div data-test={`batch-${props.name}`}>
+      <h3>{props.name}</h3>
+      <Result answer={props.answer} pending={false}>
+        {(value) => (
+          <>
+            <div class="badges">
+              {/* `||`, not `??`: the adapters report "nothing failed" as an
+                  empty string rather than as null, and `??` would leave the
+                  interesting word blank. */}
+              <span class="badge" data-tone={value.failed ? "bad" : "good"}>
+                the call <b>{value.failed || "succeeded"}</b>
+              </span>
+              <span class="badge">
+                rows left <b>{value.left}</b>
+              </span>
+            </div>
+            <Show
+              when={value.outcomes.length > 0}
+              fallback={
+                <div class="note">
+                  No per-operation outcomes, which is not missing information:
+                  they all landed or none did, so there is nothing to report
+                  per operation.
+                </div>
+              }
+            >
+              <ol class="outcomes">
+                <For each={value.outcomes}>
+                  {(one) => (
+                    <li>
+                      {"ok" in one ? (
+                        <span class="badge" data-tone="good">
+                          wrote <b>{one.ok}</b>
+                        </span>
+                      ) : (
+                        <span class="badge" data-tone="bad">
+                          <b>{one.kind}</b> {one.reason}
+                        </span>
+                      )}
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
+          </>
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** A relationship path: two steps, one request. */
+export function Relationships(props: Context): JSX.Element {
+  const [shape, setShape] = createSignal<"trees" | "through">("trees");
+
+  // Books 10, 11 and 12: two editions, one, and none. A uniform fixture would
+  // let a wrong regrouping produce a plausible answer.
+  const keys: Tagged[] = [{ u64: "10" }, { u64: "11" }, { u64: "12" }];
+
+  const answer = createQuery(() => ({
+    queryKey: ["path", props.sdk(), props.persona()],
+    queryFn: () => api.path(props.sdk(), props.persona(), keys),
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Relationships</h2>
+      <p class="why">
+        <code>sales → books → editions</code>: up to the book a sale sold, then
+        down to that book's editions. Two steps in opposite directions, in{" "}
+        <b>one request and two reads</b> — not two reads per key, which is the
+        N+1 this whole layer exists to prevent.
+      </p>
+      <p class="why">
+        The same request, read two ways. <b>tree</b> keeps every level, so a
+        book with no editions is a node with nothing under it. <b>through</b>{" "}
+        drops the middles and hands back the far rows only. The difference is
+        one line in each SDK — and it is the line that reads "the rows at the
+        bottom" rather than "the rows with nothing below them", which are the
+        same answer on every input except this one.
+      </p>
+      <div class="controls">
+        <Segmented
+          label="read it as"
+          value={shape()}
+          options={["trees", "through"] as const}
+          onChange={setShape}
+        />
+      </div>
+      <Result answer={answer.data} pending={answer.isPending}>
+        {(value) => (
+          <Show
+            when={shape() === "trees"}
+            fallback={
+              <div data-test="path-through">
+                <For each={value.through}>
+                  {(rows, at) => (
+                    <div class="level">
+                      <h3>
+                        book {render(keys[at()])} — {rows.length} edition
+                        {rows.length === 1 ? "" : "s"}
+                      </h3>
+                      <ValueTable
+                        columns={["id", "book_id", "label"]}
+                        rows={rows}
+                        empty="no editions, and the book itself is not here — that is what dropping the middle means"
+                      />
+                    </div>
+                  )}
+                </For>
+              </div>
+            }
+          >
+            <div data-test="path-trees">
+              <For each={value.trees}>
+                {(tree, at) => (
+                  <div class="level">
+                    <h3>book {render(keys[at()])}</h3>
+                    <Show
+                      when={tree.length > 0}
+                      fallback={
+                        <div class="note">
+                          no book at all — an empty tree, which is not the same
+                          as a book with no editions
+                        </div>
+                      }
+                    >
+                      <For each={tree}>
+                        {(node) => (
+                          <>
+                            <ValueTable
+                              columns={TABLES["books"] ?? []}
+                              rows={[node.row]}
+                            />
+                            <ValueTable
+                              columns={["id", "book_id", "label"]}
+                              rows={node.related}
+                              empty="this book has no editions — the level is kept and empty"
+                            />
+                          </>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        )}
+      </Result>
     </div>
   );
 }
