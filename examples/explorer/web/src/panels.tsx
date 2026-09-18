@@ -803,7 +803,7 @@ export function Relationships(props: Context): JSX.Element {
                         {rows.length === 1 ? "" : "s"}
                       </h3>
                       <ValueTable
-                        columns={["id", "book_id", "label"]}
+                        columns={TABLES["editions"] ?? []}
                         rows={rows}
                         empty="no editions, and the book itself is not here — that is what dropping the middle means"
                       />
@@ -835,7 +835,7 @@ export function Relationships(props: Context): JSX.Element {
                               rows={[node.row]}
                             />
                             <ValueTable
-                              columns={["id", "book_id", "label"]}
+                              columns={TABLES["editions"] ?? []}
                               rows={node.related}
                               empty="this book has no editions — the level is kept and empty"
                             />

@@ -91,5 +91,13 @@ printf 'client\trows\tsingle µs/row\tmin\tmax\tbatch µs/row\tmin\tmax\tratio\n
 
 (cd "$here/go" && go run . --address "$addr" --rows "$rows" --runs "$runs")
 
+# The node arm resolves `@slate-orm/client` to a symlink into
+# `clients/typescript` and imports its *built* `dist/`. Nothing rebuilds that
+# on its own — `npm ci` in the client does not — so without this the arm fails
+# to resolve the module at all on a clean checkout, which is exactly how it
+# failed in CI while passing here on a tree that happened to have a `dist/`
+# lying around. `examples/explorer/run.sh` does the same thing for the same
+# reason and says so at length.
+(cd "$root/clients/typescript" && npm run build --silent)
 (cd "$here/node" && npm install --silent >/dev/null 2>&1 && npm run --silent bench -- \
   --address "$addr" --rows "$rows" --runs "$runs")
