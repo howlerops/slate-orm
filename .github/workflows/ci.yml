@@ -244,6 +244,34 @@ jobs:
       # unnoticed. This is the guard the fix asked for.
       - run: python3 scripts/check_workspace.py
 
+  scripts:
+    name: the Python that is not the client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # ty needs the `slate` package to resolve, because half of what it checks
+      # here imports it: the deployed harness, the batch benchmark and the
+      # explorer's Python adapter are all clients. Installed from the tree
+      # rather than from an index, so the checker sees the same package the
+      # rest of CI tests.
+      - run: pip install uv==0.8.17
+      - run: uv pip install --system -e './clients/python[dev]'
+      # About five thousand lines that neither tool had ever seen: two code
+      # generators, four harnesses, three site checks, the conformance runner,
+      # the explorer's adapter and the workspace guard. `clients/python` has
+      # had both for months and the code that *runs twelve of the jobs beside
+      # this one* had neither — so a harness could carry a name error in a
+      # branch nobody takes and the first anyone would know is a red job with a
+      # traceback in it.
+      #
+      # Separate steps for the reason the Python client's are: the log names
+      # which one failed without anybody reading it.
+      - run: ty check
+      - run: ruff check .
+
   quickstarts:
     name: the landing page's code
     runs-on: ubuntu-latest

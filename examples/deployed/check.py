@@ -23,9 +23,10 @@ from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import taxi  # noqa: E402
-
-from slate import (  # noqa: E402
+import taxi
+from load import TRIPS, ZONES
+from narrow import as_float, as_int, as_str
+from slate import (
     Agg,
     AggregateQuery,
     Client,
@@ -40,9 +41,7 @@ from slate import (  # noqa: E402
     i64,
     u64,
 )
-from slate.scalar import CalendarPart, TimeUnit  # noqa: E402
-
-from load import TRIPS, ZONES  # noqa: E402
+from slate.scalar import CalendarPart, TimeUnit
 
 failures: list[str] = []
 
@@ -115,7 +114,7 @@ def main() -> int:
     counted = client.aggregate(
         AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=Freshness.latest()
     )
-    total = next((int(group.aggregates[0]) for group in counted), 0)
+    total = next((as_int(group.aggregates[0]) for group in counted), 0)
     check(
         "every trip survived the wire, the WAL and the bucket",
         total == len(trips),
@@ -209,7 +208,7 @@ def main() -> int:
     for group in client.aggregate(grouped, freshness=pinned):
         key = group.key[0]
         count, average = group.aggregates
-        joined[int(key)] = (int(count), float(average))
+        joined[as_int(key)] = (as_int(count), as_float(average))
 
     want_joined: dict[int, list[float]] = defaultdict(list)
     for trip in trips:
@@ -235,8 +234,12 @@ def main() -> int:
     by_borough.group_by(zones_b.c.borough)
     by_borough.aggregate(Agg.count())
 
-    got_borough = {
-        str(group.key[0]): int(group.aggregates[0])
+    # Annotated, and that is load-bearing rather than decoration: without the
+    # annotation a checker infers whatever the comprehension produces, the
+    # narrowing helpers become optional, and dropping them changes nothing it
+    # can see. Mutating them away survived until this line existed.
+    got_borough: dict[str, int] = {
+        as_str(group.key[0]): as_int(group.aggregates[0])
         for group in client.aggregate(by_borough, freshness=pinned)
     }
     want_borough: dict[str, int] = defaultdict(int)
@@ -316,12 +319,12 @@ def main() -> int:
         stream = client.aggregate(
             AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=pinned
         )
-        counts.update(int(group.aggregates[0]) for group in stream)
+        counts.update(as_int(group.aggregates[0]) for group in stream)
         if stream.served_by is not None:
             seen.add(stream.served_by.replica)
     check(
         "every read names the view that served it, and they are this config's",
-        seen and seen <= replica_names,
+        bool(seen) and seen <= replica_names,
         f"{sorted(seen)}",
     )
     check(
@@ -342,7 +345,7 @@ def main() -> int:
     fresh = client.aggregate(
         AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=Freshness.latest()
     )
-    latest = [int(group.aggregates[0]) for group in fresh]
+    latest = [as_int(group.aggregates[0]) for group in fresh]
     check(
         "a read demanding the latest snapshot is served, and is right",
         latest == [len(trips)],
@@ -403,7 +406,7 @@ def groups(
     client: Client, query: AggregateQuery, freshness: Freshness | None = None
 ) -> list[tuple[int, int]]:
     return [
-        (int(group.key[0]), int(group.aggregates[0]))
+        (as_int(group.key[0]), as_int(group.aggregates[0]))
         for group in client.aggregate(query, freshness=freshness)
     ]
 
@@ -412,7 +415,7 @@ def one_group(
     client: Client, query: AggregateQuery, freshness: Freshness | None = None
 ) -> int:
     for group in client.aggregate(query, freshness=freshness):
-        return int(group.aggregates[0])
+        return as_int(group.aggregates[0])
     return 0
 
 

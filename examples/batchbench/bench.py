@@ -13,7 +13,17 @@ import argparse
 import statistics
 import time
 
-from slate import Atomicity, Batch, Client, Column, Identity, Table, ValueType, u64
+from slate import (
+    Atomicity,
+    Batch,
+    Client,
+    Column,
+    Identity,
+    Session,
+    Table,
+    ValueType,
+    u64,
+)
 
 BENCH = Table(
     "bench",
@@ -22,18 +32,22 @@ BENCH = Table(
 )
 
 
-def singles(session: object, base: int, rows: int) -> float:
+# `Session`, not `object`. It was `object` with two
+# `# type: ignore[attr-defined]` comments, which is a mypy spelling that ty
+# does not read — so the annotation was wrong, the suppressions were inert, and
+# neither checker had ever seen these two calls.
+def singles(session: Session, base: int, rows: int) -> float:
     start = time.perf_counter()
     for n in range(rows):
-        session.insert(BENCH, [[u64(base + n), f"row-{n}"]])  # type: ignore[attr-defined]
+        session.insert(BENCH, [[u64(base + n), f"row-{n}"]])
     return time.perf_counter() - start
 
 
-def batched(session: object, base: int, rows: int) -> float:
+def batched(session: Session, base: int, rows: int) -> float:
     batch = Batch(Atomicity.ALL_OR_NOTHING)
     batch.insert(BENCH, [[u64(base + n), f"row-{n}"] for n in range(rows)])
     start = time.perf_counter()
-    session.batch(batch)  # type: ignore[attr-defined]
+    session.batch(batch)
     return time.perf_counter() - start
 
 

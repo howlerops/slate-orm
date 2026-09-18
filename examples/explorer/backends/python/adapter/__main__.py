@@ -12,6 +12,7 @@ to install before they can see anything work.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import threading
@@ -20,22 +21,21 @@ from typing import Any
 
 from slate import (
     Agg,
-    AggregateQuery,
     Atomicity,
     Batch,
-    DeleteWhere,
     Client,
+    DeleteWhere,
     GroupedJoinQuery,
     Identity,
     JoinQuery,
     JoinType,
-    Query,
-    Step,
-    UpdateWhere,
-    SlateError,
     Metric,
+    Query,
+    SlateError,
+    Step,
     TimeUnit,
     Units,
+    UpdateWhere,
     Vector,
     as_scalar,
     asc,
@@ -611,7 +611,13 @@ class Adapter:
         failed = ""
         outcomes = []
         try:
-            result = b and session.batch(b)
+            # `session.batch(b)`, not `b and session.batch(b)`. The `and` was
+            # dead weight that a type checker found: `Batch` has no `__bool__`
+            # a reader can predict, and on the branch where it is falsy
+            # `result` would be the *batch* and `result.outcomes` an
+            # `AttributeError` from inside a request handler. Three operations
+            # are always queued above, so the branch has never been taken.
+            result = session.batch(b)
             for one in result.outcomes:
                 if one.ok:
                     outcomes.append({"ok": one.written.affected})
@@ -703,10 +709,10 @@ class Adapter:
         from slate import NotFound
 
         probe = 9001
-        try:
+        # `suppress` rather than a bare `pass`: the probe row is absent on the
+        # first run and present on a re-run, and both are fine.
+        with contextlib.suppress(NotFound):
             session.delete(BOOKS, [[u64(probe)]])
-        except NotFound:
-            pass
 
         with session.transaction() as tx:
             # Every column, in ordinal order, including the two `books` grew
@@ -756,7 +762,12 @@ def handler_for(adapter: Adapter):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, *_args):  # noqa: D102 - quiet by default
+        def log_message(self, format: str, *args: Any) -> None:
+            # Silence, on purpose: `run.sh` captures each adapter's output and
+            # a line per request would bury the ones that matter. The signature
+            # matches `BaseHTTPRequestHandler`'s exactly — `*_args` alone
+            # dropped the positional `format` and made this an override the
+            # base class could not call.
             pass
 
         def _send(self, status: int, body: dict[str, Any]) -> None:
@@ -769,13 +780,13 @@ def handler_for(adapter: Adapter):
             self.end_headers()
             self.wfile.write(payload)
 
-        def do_OPTIONS(self) -> None:  # noqa: N802 - the http.server spelling
+        def do_OPTIONS(self) -> None:
             self._send(204, {})
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self._dispatch()
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             self._dispatch()
 
         def _dispatch(self) -> None:
@@ -818,7 +829,13 @@ def handler_for(adapter: Adapter):
                     "reason": error.reason,
                 }})
                 return
-            except Exception as error:  # noqa: BLE001 - the adapter's own fault
+            except Exception as error:  # noqa: BLE001
+                # Blind on purpose, and the directive is live: this is the
+                # outermost handler of an HTTP request, so anything it does not
+                # catch takes the adapter's connection down and the conformance
+                # runner sees a transport error rather than an answer it can
+                # compare.
+                #
                 # No `reason`: this one never reached the server, so there is no
                 # token to report and an empty one would be a claim about a
                 # failure the server never saw.

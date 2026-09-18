@@ -126,7 +126,11 @@ def noscript_sections(page: Path) -> list[tuple[str, list[tuple[str, str]]]]:
     out: list[tuple[str, list[tuple[str, str]]]] = []
     # Split on the section headings, keeping each heading with what follows it.
     parts = re.split(r'<h2 class="nav-section">([^<]+)</h2>', block.group(1))
-    for title, chunk in zip(parts[1::2], parts[2::2]):
+    # `strict=True`: `re.split` with one capture group yields a heading and
+    # the chunk after it in strict alternation, so the two slices are always
+    # the same length. If they ever are not, the pattern has changed and a
+    # silently truncated navigation is the worst way to find out.
+    for title, chunk in zip(parts[1::2], parts[2::2], strict=True):
         pages = re.findall(r'<a href="([^"]+)">([^<]+)</a>', chunk)
         out.append((title, pages))
     return out

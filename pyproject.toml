@@ -1,0 +1,64 @@
+# Lint and type-check configuration for the Python that is *not* the client.
+#
+# `clients/python` is a package with its own `pyproject.toml`, and ruff and ty
+# both resolve the nearest one, so nothing here reaches it.
+#
+# Everything else is scripts: two code generators, four harnesses under
+# `examples/`, three site checks, the three-SDK conformance runner, the
+# explorer's Python adapter and the workspace guard. About five thousand lines
+# that neither tool had ever seen — which is the shape of problem this
+# repository keeps finding. `clients/python` has had ruff and a checker for
+# months; the code that *runs CI's other twelve jobs* had neither, so a
+# harness could break on a name error in a branch nobody takes and the first
+# anyone would know is a red job with a traceback.
+#
+# Deliberately no `[project]` table. This is not a package, nothing installs
+# it, and adding one would make `pip install -e .` at the repository root do
+# something — which is a thing somebody would then do by accident.
+
+[tool.ruff]
+line-length = 100
+# `target/` and `node_modules/` are excluded by ruff's defaults via
+# `.gitignore`; these are the ones that are checked in and are not ours.
+extend-exclude = [
+  "clients/python",
+  "examples/explorer/backends/node",
+]
+
+[tool.ruff.lint]
+# The families `clients/python` selects, so a contributor moving between the two
+# meets one set of rules rather than two — plus `BLE`, which is here and not
+# there because this is *scripts*. A harness that swallows an exception reports
+# a pass, and "a skip is green" is the failure this repository keeps finding;
+# `except Exception` in a checker is the same shape. Three sites here already
+# carried `# noqa: BLE001` with a reason beside it, written against a
+# configuration that never enabled the rule — so the directives were inert and
+# the rule had never run. Enabling it makes those three deliberate and finds
+# any fourth.
+select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF", "BLE"]
+ignore = [
+  # Long lines are almost all prose in comments, where wrapping to 100 makes
+  # the argument harder to follow than the length does.
+  "E501",
+]
+
+[tool.ty.environment]
+# Matches `clients/python`'s floor. Independent of the interpreter that runs
+# ty, so CI and a contributor reach the same answer.
+python-version = "3.11"
+
+[tool.ty.src]
+# Named rather than defaulted, because ty's default is the whole project
+# directory and that sweeps in `clients/python` — which has its own
+# configuration, its own exclusions and its own `# ty: ignore` spellings.
+include = [
+  "clients/go/scripts",
+  "crates/slate-kernel/scripts",
+  "examples/batchbench",
+  "examples/deployed",
+  "examples/explorer/backends/python",
+  "examples/explorer/conformance",
+  "scripts",
+  "site/check",
+  "site/data",
+]

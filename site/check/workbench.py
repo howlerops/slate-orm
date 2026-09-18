@@ -26,6 +26,7 @@ table in the tree puts rows on screen cannot be, and that is this file's job.
 from __future__ import annotations
 
 import http.server
+import itertools
 import json
 import re
 import socket
@@ -699,8 +700,12 @@ def main() -> int:
     check(
         "the whole database is there: every table and every index",
         len(storage["leaves"]) == 6
-        and any("trips/" in l and "100,000 keys" in l for l in storage["leaves"])
-        and any("zones/" in l and "265 keys" in l for l in storage["leaves"]),
+        and any(
+            "trips/" in line and "100,000 keys" in line for line in storage["leaves"]
+        )
+        and any(
+            "zones/" in line and "265 keys" in line for line in storage["leaves"]
+        ),
         f"{storage['leaves']}",
     )
     check(
@@ -713,8 +718,10 @@ def main() -> int:
     check(
         "an index entry is one key per row, and carries no value",
         any(
-            "by_pickup_zone/" in l and "100,000 keys" in l and "0 B values" in l
-            for l in storage["leaves"]
+            "by_pickup_zone/" in line
+            and "100,000 keys" in line
+            and "0 B values" in line
+            for line in storage["leaves"]
         ),
         f"{storage['leaves']}",
     )
@@ -828,7 +835,7 @@ def main() -> int:
     check(
         "and one that did not run is not",
         seen["failedLog"]
-        and not any(re.search(r"\u00b7 [0-9.]+ ms", l) for l in seen["failedLog"]),
+        and not any(re.search(r"\u00b7 [0-9.]+ ms", line) for line in seen["failedLog"]),
         f"{seen['failedLog']}",
     )
     # A single write cannot be asserted non-zero — see the driver's step 13 —
@@ -844,7 +851,10 @@ def main() -> int:
     check(
         "200 writes report what the index maintenance cost",
         seen["batchLogged"] == seen["badBefore"]
-        and batch
+        # `batch is not None`, not a bare `batch`: `re.search` returns `None`
+        # on no match, and `a and None and b` is `None` — which `check` would
+        # have read as a failure by luck rather than by saying so.
+        and batch is not None
         and float(batch.group(1)) > 0,
         f"{seen['batchStatus']!r}, "
         f"{seen['batchLogged'] - seen['badBefore']} of the 200 failed",
@@ -962,7 +972,11 @@ def main() -> int:
         "a grouped join's groups can be ordered, by an aggregate, in the browser",
         seen["joinOrdered"]["refusal"] == 0
         and len(ordered) == 3
-        and all(a >= b for a, b in zip(ordered, ordered[1:])),
+        # `pairwise` rather than `zip(xs, xs[1:])`: it says "successive
+        # pairs" and needs no opinion about what to do when the two lengths
+        # differ, which they cannot here and which `zip` still makes you
+        # state.
+        and all(a >= b for a, b in itertools.pairwise(ordered)),
         f"{seen['joinOrdered']['status']!r} {ordered}",
     )
     check(

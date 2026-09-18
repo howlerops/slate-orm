@@ -92,7 +92,11 @@ def require_tzdata() -> None:
     """
     try:
         zoneinfo.ZoneInfo("America/New_York")
-    except Exception as error:  # noqa: BLE001 - any failure here means the same thing
+    # Blind on purpose: a missing tzdata, a broken one and an unreadable one
+    # all mean the same thing to a caller and have the same fix. No
+    # suppression needed — the handler re-raises, which is the case the
+    # blind-except rule already allows.
+    except Exception as error:
         raise SystemExit(
             f"no IANA timezone database on this system ({error}). Install one "
             f"(`apt-get install tzdata`, or `pip install tzdata`) — this script "
@@ -344,7 +348,13 @@ def check() -> int:
         # the instant tells them apart at a glance.
         pairs = [
             (a, b)
-            for a, b in zip(have[name], fresh[name] + [(0, 0)] * len(have[name]))
+            # `strict=False` on purpose: the right side is padded to at least
+            # the left's length precisely so a *shorter* fresh table shows up
+            # as a differing pair rather than as an exception. Lengths that
+            # differ is the finding, not the error.
+            for a, b in zip(
+                have[name], fresh[name] + [(0, 0)] * len(have[name]), strict=False
+            )
             if a != b
         ]
         where = f"first at {pairs[0][0]} in the file against {pairs[0][1]} fresh" if pairs else \

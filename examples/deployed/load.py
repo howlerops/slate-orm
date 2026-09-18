@@ -18,10 +18,8 @@ import sys
 import time
 
 import taxi
-
 from slate import Client, Column, Identity, Table, i64, u64
 from slate.types import ValueType
-
 
 #: The tables, declared exactly as `head.toml` declares them.
 #:

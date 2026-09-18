@@ -26,14 +26,15 @@ injector rather than a `kill -9` and a stopwatch.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from slate import Client, Identity, NotFound, Query, i64, u64  # noqa: E402
-
-from load import TRIPS  # noqa: E402
+from load import TRIPS
+from narrow import as_int
+from slate import Client, Identity, NotFound, Query, i64, u64
 
 #: Outside the sample's ids, which run from 1, so the probe cannot collide
 #: with a loaded row and cannot be mistaken for one in a count.
@@ -69,7 +70,7 @@ def main() -> int:
         query = Query(TRIPS)
         query.where(query.c.id.eq(u64(PROBE_ID)))
         rows = list(session.query(query))
-        ok = len(rows) == 1 and int(rows[0].get("id")) == PROBE_ID
+        ok = len(rows) == 1 and as_int(rows[0].get("id")) == PROBE_ID
         print(
             f"{'ok   ' if ok else 'FAIL '} an acknowledged write survived "
             f"`kill -9` and is in the bucket"
@@ -78,10 +79,10 @@ def main() -> int:
         # And it is gone again, so a second run of `run.sh` against a fresh
         # bucket and this one against a kept one behave the same.
         if ok:
-            try:
+            # `suppress` rather than a bare `pass`: the probe row may already be
+            # gone if a previous run got this far, and that is not a failure.
+            with contextlib.suppress(NotFound):
                 session.delete(TRIPS, [[u64(PROBE_ID)]])
-            except NotFound:
-                pass
         client.close()
         return 0 if ok else 1
 
