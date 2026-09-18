@@ -84,6 +84,9 @@ pub fn value_to_proto(value: &Value) -> pb::Value {
         Value::I64(n) => Kind::Int64Value(*n),
         Value::U64(n) => Kind::Uint64Value(*n),
         Value::F64(x) => Kind::DoubleValue(*x),
+        // The units, without the scale — which is the column's and stays in
+        // the catalog. See `Value.decimal_value` in the proto.
+        Value::Decimal(units) => Kind::DecimalValue(*units),
         Value::Uuid(id) => Kind::UuidValue(id.as_bytes().to_vec()),
         Value::Vector(elements) => Kind::VectorValue(pb::Vector {
             elements: elements.clone(),
@@ -117,6 +120,7 @@ pub fn value_from_proto(value: &pb::Value) -> Result<Value, Status> {
         Kind::Int64Value(n) => Value::I64(*n),
         Kind::Uint64Value(n) => Value::U64(*n),
         Kind::DoubleValue(x) => Value::F64(*x),
+        Kind::DecimalValue(units) => Value::Decimal(*units),
         Kind::UuidValue(bytes) => {
             let octets: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
                 bad(format!(

@@ -458,6 +458,7 @@ class Value(_message.Message):
     DOUBLE_VALUE_FIELD_NUMBER: _builtins.int
     UUID_VALUE_FIELD_NUMBER: _builtins.int
     VECTOR_VALUE_FIELD_NUMBER: _builtins.int
+    DECIMAL_VALUE_FIELD_NUMBER: _builtins.int
     null_value: Global___NullValue.ValueType
     bool_value: _builtins.bool
     bytes_value: _builtins.bytes
@@ -467,6 +468,22 @@ class Value(_message.Message):
     double_value: _builtins.float
     uuid_value: _builtins.bytes
     """Exactly sixteen bytes, big-endian, as `Uuid::as_bytes` gives them."""
+    decimal_value: _builtins.int
+    """An exact decimal, as a count of the column's smallest unit.
+
+    **The scale is not here.** It lives in the schema, so `1250` in a column
+    declared `scale = 2` is 12.50 and the same value in a `scale = 0` column
+    is 1250. That is the kernel's design and the wire keeps it: sending the
+    scale per value would let a client and the catalog disagree about what a
+    stored number means, which is the one thing a decimal type exists to
+    prevent. A client that wants to render one reads the scale off the
+    column it declared.
+
+    `int64` rather than `sint64`, matching `int64_value`. Zigzag would win on
+    negative units and lose on positive ones, and the values this carries —
+    prices, balances, quantities — are mostly positive. Consistency with the
+    arm beside it is worth more than the varint either way.
+    """
     @_builtins.property
     def vector_value(self) -> Global___Vector: ...
     def __init__(
@@ -481,12 +498,13 @@ class Value(_message.Message):
         double_value: _builtins.float = ...,
         uuid_value: _builtins.bytes = ...,
         vector_value: Global___Vector | None = ...,
+        decimal_value: _builtins.int = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_kind: _TypeAlias = _typing.Literal["null_value", "bool_value", "bytes_value", "string_value", "int64_value", "uint64_value", "double_value", "uuid_value", "vector_value"]  # noqa: Y015
+    _WhichOneofReturnType_kind: _TypeAlias = _typing.Literal["null_value", "bool_value", "bytes_value", "string_value", "int64_value", "uint64_value", "double_value", "uuid_value", "vector_value", "decimal_value"]  # noqa: Y015
     _WhichOneofArgType_kind: _TypeAlias = _typing.Literal["kind", b"kind"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_kind) -> _WhichOneofReturnType_kind | None: ...
 
@@ -2356,6 +2374,7 @@ class UpdateRequest(_message.Message):
     TABLE_FIELD_NUMBER: _builtins.int
     ROWS_FIELD_NUMBER: _builtins.int
     SCHEMA_FIELD_NUMBER: _builtins.int
+    EXPECTED_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     @_builtins.property
@@ -2370,6 +2389,28 @@ class UpdateRequest(_message.Message):
         more than a read does.
         """
 
+    @_builtins.property
+    def expected(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+        """The rows as the caller last saw them, for a conditional update.
+
+        Empty for an ordinary update. Otherwise exactly as many rows as `rows`,
+        in the same order, and each must carry the same primary key as the row it
+        guards — the server refuses a mismatch rather than checking one row and
+        writing another.
+
+        The server compares the *whole stored row* against this and refuses with
+        `ROW_CHANGED` if they differ. Whole-row rather than a version column,
+        which is the usual answer and is cheaper to compare: a version column only
+        detects changes made by writers who remembered to bump it, so it is a
+        convention every call site has to keep rather than a property of the data.
+        Comparing the row detects every change and needs no schema support. It
+        costs nothing extra in round trips because `update` reads the row anyway
+        to enforce the row policy.
+
+        This is the wire form of the kernel's `update_if_unchanged`, which existed
+        before this field and was reachable only from Rust.
+        """
+
     def __init__(
         self,
         *,
@@ -2377,10 +2418,11 @@ class UpdateRequest(_message.Message):
         table: _builtins.str = ...,
         rows: _abc.Iterable[Global___Row] | None = ...,
         schema: Global___SchemaCheck | None = ...,
+        expected: _abc.Iterable[Global___Row] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["expected", b"expected", "rows", b"rows", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

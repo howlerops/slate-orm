@@ -678,13 +678,12 @@ impl<S: KvStore + KvReadStore> Head<S> {
                     .authorized_table(context, &r.table, Action::Update)
                     .map_err(named)?;
                 fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
-                let rows = r
-                    .rows
-                    .iter()
-                    .map(row_from_proto)
-                    .collect::<Result<Vec<Row>, Status>>()
-                    .map_err(named)?;
-                Ok(Decoded::Update { table, rows })
+                let (rows, expected) = update_rows(&r.rows, &r.expected).map_err(named)?;
+                Ok(Decoded::Update {
+                    table,
+                    rows,
+                    expected,
+                })
             }
             Of::Delete(r) => {
                 let table = self
@@ -764,9 +763,13 @@ impl<S: KvStore + KvReadStore> Head<S> {
                             .insert(transaction, context, table.id(), rows, upsert)
                             .await?;
                     }
-                    Decoded::Update { table, rows } => {
+                    Decoded::Update {
+                        table,
+                        rows,
+                        expected,
+                    } => {
                         self.sessions
-                            .update(transaction, context, table.id(), rows)
+                            .update(transaction, context, table.id(), rows, expected)
                             .await?;
                     }
                     Decoded::Delete { table, keys } => {
@@ -975,6 +978,11 @@ enum Write<'a> {
     Update {
         table: &'a TableDef,
         rows: &'a [Row],
+        /// The rows as the caller last saw them, or empty for an unconditional
+        /// update. Checked to be either empty or exactly as long as `rows`
+        /// before this is built, so the apply below can zip without a length
+        /// check it would have no sensible error for.
+        expected: &'a [Row],
     },
     Delete {
         table: &'a TableDef,
@@ -1049,10 +1057,32 @@ impl Write<'_> {
             // `update_many` reads whether each row exists in one wave, the
             // same as `insert_many`, and refuses the whole batch if any of
             // them is missing rather than applying a prefix.
-            Self::Update { table, rows } => transaction
-                .update_many(context, table, rows)
-                .await
-                .map(|()| counted(rows.len() as u64)),
+            Self::Update {
+                table,
+                rows,
+                expected,
+            } => {
+                if expected.is_empty() {
+                    transaction.update_many(context, table, rows).await?;
+                } else {
+                    // A conditional update is a row at a time, and there is no
+                    // `update_many_if_unchanged` to reach for. Batching it
+                    // would mean `update_many` taking a parallel slice of
+                    // expected rows and deciding what to do when one of them
+                    // fails half way through the wave — and the answer is
+                    // "refuse the statement", which is what the `?` here
+                    // already does, one round trip per row later. The caller
+                    // who wants the wave sends an unconditional update; the
+                    // caller who wants the check pays for it. Recorded rather
+                    // than assumed away.
+                    for (row, was) in rows.iter().zip(expected.iter()) {
+                        transaction
+                            .update_if_unchanged(context, table, row, was)
+                            .await?;
+                    }
+                }
+                Ok(counted(rows.len() as u64))
+            }
             Self::Delete { table, keys } => {
                 let mut affected = 0;
                 // No `delete_many`, and not for want of noticing: a
@@ -1108,6 +1138,7 @@ enum Decoded<'a> {
     Update {
         table: &'a TableDef,
         rows: Vec<Row>,
+        expected: Vec<Row>,
     },
     Delete {
         table: &'a TableDef,
@@ -1144,7 +1175,15 @@ impl<'a> Decoded<'a> {
                 rows,
                 upsert: *upsert,
             },
-            Self::Update { table, rows } => Write::Update { table, rows },
+            Self::Update {
+                table,
+                rows,
+                expected,
+            } => Write::Update {
+                table,
+                rows,
+                expected,
+            },
             Self::Delete { table, keys } => Write::Delete { table, keys },
             Self::DeleteWhere {
                 table, predicate, ..
@@ -1260,6 +1299,38 @@ fn predicate_from_proto(filter: Option<&pb::Expr>, table: &TableDef) -> Result<E
             expr_named(&space, filter, "the filter")
         }
     }
+}
+
+/// An update's rows and the rows it is conditional on.
+///
+/// `expected` is empty for an ordinary update and otherwise exactly as long as
+/// `rows`. The arity is checked *here*, before anything is written, for the
+/// same reason the rest of the decoding is: a batch whose third operation is
+/// malformed must apply none of the first two.
+///
+/// The alternative — pairing them up in the apply and stopping at the shorter
+/// — turns a caller's mistake into a silent partial condition: send five rows
+/// and three expectations and two rows are written unguarded, which is exactly
+/// the lost update the field exists to catch. `InvalidArgument` says so
+/// instead.
+fn update_rows(rows: &[pb::Row], expected: &[pb::Row]) -> Result<(Vec<Row>, Vec<Row>), Status> {
+    let rows = rows
+        .iter()
+        .map(row_from_proto)
+        .collect::<Result<Vec<Row>, Status>>()?;
+    if !expected.is_empty() && expected.len() != rows.len() {
+        return Err(Status::invalid_argument(format!(
+            "`expected` must be empty or name one row per update; \
+             got {} row(s) and {} expected",
+            rows.len(),
+            expected.len()
+        )));
+    }
+    let expected = expected
+        .iter()
+        .map(row_from_proto)
+        .collect::<Result<Vec<Row>, Status>>()?;
+    Ok((rows, expected))
 }
 
 /// The rows of a query, in batches.
@@ -1385,15 +1456,18 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let request = request.into_inner();
         let table = self.authorized_table(&context, &request.table, Action::Update)?;
         fingerprint::check(table, request.schema.as_ref())?;
-        let rows = request
-            .rows
-            .iter()
-            .map(row_from_proto)
-            .collect::<Result<Vec<Row>, Status>>()?;
+        let (rows, expected) = update_rows(&request.rows, &request.expected)?;
 
         if request.transaction.is_empty() {
             let (affected, token) = self
-                .autocommit(&context, Write::Update { table, rows: &rows })
+                .autocommit(
+                    &context,
+                    Write::Update {
+                        table,
+                        rows: &rows,
+                        expected: &expected,
+                    },
+                )
                 .await?;
             return Ok(Response::new(pb::WriteResponse {
                 sequence: token.map(ReadToken::sequence),
@@ -1404,7 +1478,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
         let affected = self
             .sessions
-            .update(&request.transaction, &context, table.id(), rows)
+            .update(&request.transaction, &context, table.id(), rows, expected)
             .await?;
         Ok(Response::new(pb::WriteResponse {
             sequence: None,

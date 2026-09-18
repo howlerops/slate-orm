@@ -79,6 +79,7 @@ const SECRETS: TableId = TableId(6);
 const LIBRARIES: TableId = TableId(7);
 const SHELVES: TableId = TableId(8);
 const COPIES: TableId = TableId(9);
+const PRICES: TableId = TableId(10);
 
 fn docs() -> TableDef {
     TableDef::builder("docs", DOCS)
@@ -233,6 +234,30 @@ fn secrets() -> TableDef {
         .expect("valid schema")
 }
 
+/// A table with a decimal column, so a client can be tested against the one
+/// value type that is a count of units rather than a number.
+///
+/// Its own table rather than a column appended to an existing one, for the
+/// reason `libraries` gives above: appending to a table the tests already
+/// write turns every one of their width assertions into a test of this change.
+///
+/// Scale 2, so `1250` is `12.50` and a test can check the rendering by eye. A
+/// scale of 0 is the one scale a decimal test must not use, because at 0 a
+/// decimal is indistinguishable from an `i64` in every assertion.
+///
+/// No tenant column and no policy: this exists to exercise an encoding and a
+/// conditional update, and a row policy would add a reason for a row to be
+/// missing that has nothing to do with either.
+fn prices() -> TableDef {
+    TableDef::builder("prices", PRICES)
+        .column("id", ValueType::U64)
+        .column("label", ValueType::Str)
+        .decimal_column("amount", 2)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema")
+}
+
 fn catalog() -> Catalog {
     Catalog::from_tables([
         docs(),
@@ -244,6 +269,7 @@ fn catalog() -> Catalog {
         libraries(),
         shelves(),
         copies(),
+        prices(),
     ])
     .expect("valid catalog")
 }
@@ -271,6 +297,7 @@ fn security() -> SecurityCatalog {
         .grant(Grant::new("app", LIBRARIES, Action::EVERYTHING))
         .grant(Grant::new("app", SHELVES, Action::EVERYTHING))
         .grant(Grant::new("app", COPIES, Action::EVERYTHING))
+        .grant(Grant::new("app", PRICES, Action::EVERYTHING))
         .grant(Grant::new("reader", DOCS, Action::ALL))
         // Deliberately no grant on `secrets`.
         .policy(Policy::new(

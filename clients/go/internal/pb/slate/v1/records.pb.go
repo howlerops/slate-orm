@@ -943,6 +943,7 @@ type Value struct {
 	//	*Value_DoubleValue
 	//	*Value_UuidValue
 	//	*Value_VectorValue
+	//	*Value_DecimalValue
 	Kind          isValue_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1066,6 +1067,15 @@ func (x *Value) GetVectorValue() *Vector {
 	return nil
 }
 
+func (x *Value) GetDecimalValue() int64 {
+	if x != nil {
+		if x, ok := x.Kind.(*Value_DecimalValue); ok {
+			return x.DecimalValue
+		}
+	}
+	return 0
+}
+
 type isValue_Kind interface {
 	isValue_Kind()
 }
@@ -1107,6 +1117,24 @@ type Value_VectorValue struct {
 	VectorValue *Vector `protobuf:"bytes,9,opt,name=vector_value,json=vectorValue,proto3,oneof"`
 }
 
+type Value_DecimalValue struct {
+	// An exact decimal, as a count of the column's smallest unit.
+	//
+	// **The scale is not here.** It lives in the schema, so `1250` in a column
+	// declared `scale = 2` is 12.50 and the same value in a `scale = 0` column
+	// is 1250. That is the kernel's design and the wire keeps it: sending the
+	// scale per value would let a client and the catalog disagree about what a
+	// stored number means, which is the one thing a decimal type exists to
+	// prevent. A client that wants to render one reads the scale off the
+	// column it declared.
+	//
+	// `int64` rather than `sint64`, matching `int64_value`. Zigzag would win on
+	// negative units and lose on positive ones, and the values this carries —
+	// prices, balances, quantities — are mostly positive. Consistency with the
+	// arm beside it is worth more than the varint either way.
+	DecimalValue int64 `protobuf:"varint,10,opt,name=decimal_value,json=decimalValue,proto3,oneof"`
+}
+
 func (*Value_NullValue) isValue_Kind() {}
 
 func (*Value_BoolValue) isValue_Kind() {}
@@ -1124,6 +1152,8 @@ func (*Value_DoubleValue) isValue_Kind() {}
 func (*Value_UuidValue) isValue_Kind() {}
 
 func (*Value_VectorValue) isValue_Kind() {}
+
+func (*Value_DecimalValue) isValue_Kind() {}
 
 // A dense f32 vector, for embeddings.
 type Vector struct {
@@ -4777,7 +4807,26 @@ type UpdateRequest struct {
 	Rows []*Row `protobuf:"bytes,3,rep,name=rows,proto3" json:"rows,omitempty"`
 	// See `SchemaCheck`, and `InsertRequest.schema` for why a write wants one
 	// more than a read does.
-	Schema        *SchemaCheck `protobuf:"bytes,4,opt,name=schema,proto3" json:"schema,omitempty"`
+	Schema *SchemaCheck `protobuf:"bytes,4,opt,name=schema,proto3" json:"schema,omitempty"`
+	// The rows as the caller last saw them, for a conditional update.
+	//
+	// Empty for an ordinary update. Otherwise exactly as many rows as `rows`,
+	// in the same order, and each must carry the same primary key as the row it
+	// guards — the server refuses a mismatch rather than checking one row and
+	// writing another.
+	//
+	// The server compares the *whole stored row* against this and refuses with
+	// `ROW_CHANGED` if they differ. Whole-row rather than a version column,
+	// which is the usual answer and is cheaper to compare: a version column only
+	// detects changes made by writers who remembered to bump it, so it is a
+	// convention every call site has to keep rather than a property of the data.
+	// Comparing the row detects every change and needs no schema support. It
+	// costs nothing extra in round trips because `update` reads the row anyway
+	// to enforce the row policy.
+	//
+	// This is the wire form of the kernel's `update_if_unchanged`, which existed
+	// before this field and was reachable only from Rust.
+	Expected      []*Row `protobuf:"bytes,5,rep,name=expected,proto3" json:"expected,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4836,6 +4885,13 @@ func (x *UpdateRequest) GetRows() []*Row {
 func (x *UpdateRequest) GetSchema() *SchemaCheck {
 	if x != nil {
 		return x.Schema
+	}
+	return nil
+}
+
+func (x *UpdateRequest) GetExpected() []*Row {
+	if x != nil {
+		return x.Expected
 	}
 	return nil
 }
@@ -7643,7 +7699,7 @@ var File_slate_v1_records_proto protoreflect.FileDescriptor
 
 const file_slate_v1_records_proto_rawDesc = "" +
 	"\n" +
-	"\x16slate/v1/records.proto\x12\bslate.v1\"\xf3\x02\n" +
+	"\x16slate/v1/records.proto\x12\bslate.v1\"\x9a\x03\n" +
 	"\x05Value\x124\n" +
 	"\n" +
 	"null_value\x18\x01 \x01(\x0e2\x13.slate.v1.NullValueH\x00R\tnullValue\x12\x1f\n" +
@@ -7658,7 +7714,9 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\fdouble_value\x18\a \x01(\x01H\x00R\vdoubleValue\x12\x1f\n" +
 	"\n" +
 	"uuid_value\x18\b \x01(\fH\x00R\tuuidValue\x125\n" +
-	"\fvector_value\x18\t \x01(\v2\x10.slate.v1.VectorH\x00R\vvectorValueB\x06\n" +
+	"\fvector_value\x18\t \x01(\v2\x10.slate.v1.VectorH\x00R\vvectorValue\x12%\n" +
+	"\rdecimal_value\x18\n" +
+	" \x01(\x03H\x00R\fdecimalValueB\x06\n" +
 	"\x04kind\"$\n" +
 	"\x06Vector\x12\x1a\n" +
 	"\belements\x18\x01 \x03(\x02R\belements\"[\n" +
@@ -7867,12 +7925,13 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x05table\x18\x02 \x01(\tR\x05table\x12!\n" +
 	"\x04rows\x18\x03 \x03(\v2\r.slate.v1.RowR\x04rows\x12\x16\n" +
 	"\x06upsert\x18\x04 \x01(\bR\x06upsert\x12-\n" +
-	"\x06schema\x18\x05 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\x99\x01\n" +
+	"\x06schema\x18\x05 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\xc4\x01\n" +
 	"\rUpdateRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12\x14\n" +
 	"\x05table\x18\x02 \x01(\tR\x05table\x12!\n" +
 	"\x04rows\x18\x03 \x03(\v2\r.slate.v1.RowR\x04rows\x12-\n" +
-	"\x06schema\x18\x04 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\"\xa8\x01\n" +
+	"\x06schema\x18\x04 \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\x12)\n" +
+	"\bexpected\x18\x05 \x03(\v2\r.slate.v1.RowR\bexpected\"\xa8\x01\n" +
 	"\rDeleteRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12\x14\n" +
 	"\x05table\x18\x02 \x01(\tR\x05table\x120\n" +
@@ -8377,122 +8436,123 @@ var file_slate_v1_records_proto_depIdxs = []int32{
 	19,  // 98: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
 	18,  // 99: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
 	19,  // 100: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
-	18,  // 101: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
-	19,  // 102: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
-	18,  // 103: slate.v1.WriteResponse.rows:type_name -> slate.v1.Row
-	20,  // 104: slate.v1.Assignment.column:type_name -> slate.v1.ColumnRef
-	29,  // 105: slate.v1.Assignment.value:type_name -> slate.v1.Scalar
-	21,  // 106: slate.v1.DeleteWhereRequest.filter:type_name -> slate.v1.Expr
-	19,  // 107: slate.v1.DeleteWhereRequest.schema:type_name -> slate.v1.SchemaCheck
-	21,  // 108: slate.v1.UpdateWhereRequest.filter:type_name -> slate.v1.Expr
-	64,  // 109: slate.v1.UpdateWhereRequest.assignments:type_name -> slate.v1.Assignment
-	19,  // 110: slate.v1.UpdateWhereRequest.schema:type_name -> slate.v1.SchemaCheck
-	60,  // 111: slate.v1.BatchOperation.insert:type_name -> slate.v1.InsertRequest
-	61,  // 112: slate.v1.BatchOperation.update:type_name -> slate.v1.UpdateRequest
-	62,  // 113: slate.v1.BatchOperation.delete:type_name -> slate.v1.DeleteRequest
-	65,  // 114: slate.v1.BatchOperation.delete_where:type_name -> slate.v1.DeleteWhereRequest
-	66,  // 115: slate.v1.BatchOperation.update_where:type_name -> slate.v1.UpdateWhereRequest
-	67,  // 116: slate.v1.BatchRequest.operations:type_name -> slate.v1.BatchOperation
-	13,  // 117: slate.v1.BatchRequest.atomicity:type_name -> slate.v1.Atomicity
-	70,  // 118: slate.v1.BatchResponse.results:type_name -> slate.v1.BatchResult
-	63,  // 119: slate.v1.BatchResult.ok:type_name -> slate.v1.WriteResponse
-	71,  // 120: slate.v1.BatchResult.error:type_name -> slate.v1.BatchError
-	18,  // 121: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
-	52,  // 122: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
-	19,  // 123: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
-	18,  // 124: slate.v1.GetResponse.row:type_name -> slate.v1.Row
-	53,  // 125: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
-	45,  // 126: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
-	52,  // 127: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
-	18,  // 128: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
-	53,  // 129: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
-	16,  // 130: slate.v1.QueryResponse.next_cursor:type_name -> slate.v1.Value
-	49,  // 131: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
-	52,  // 132: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
-	50,  // 133: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
-	53,  // 134: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
-	16,  // 135: slate.v1.JoinResponse.next_cursor:type_name -> slate.v1.Value
-	45,  // 136: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
-	20,  // 137: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
-	40,  // 138: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
-	21,  // 139: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
-	49,  // 140: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
-	42,  // 141: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
-	78,  // 142: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	52,  // 143: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
-	41,  // 144: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
-	53,  // 145: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
-	45,  // 146: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
-	52,  // 147: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
-	53,  // 148: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	49,  // 149: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
-	52,  // 150: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
-	78,  // 151: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	52,  // 152: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
-	82,  // 153: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
-	86,  // 154: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
-	53,  // 155: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	87,  // 156: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
-	53,  // 157: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	82,  // 158: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
-	11,  // 159: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
-	46,  // 160: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
-	14,  // 161: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
-	15,  // 162: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
-	90,  // 163: slate.v1.RelatedStep.relation:type_name -> slate.v1.Relation
-	19,  // 164: slate.v1.RelatedStep.schema:type_name -> slate.v1.SchemaCheck
-	90,  // 165: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
-	16,  // 166: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
-	52,  // 167: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
-	19,  // 168: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
-	91,  // 169: slate.v1.RelatedRequest.path:type_name -> slate.v1.RelatedStep
-	94,  // 170: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
-	53,  // 171: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
-	95,  // 172: slate.v1.RelatedResponse.levels:type_name -> slate.v1.RelatedResponse.Level
-	16,  // 173: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
-	18,  // 174: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
-	94,  // 175: slate.v1.RelatedResponse.Level.groups:type_name -> slate.v1.RelatedResponse.Group
-	54,  // 176: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	56,  // 177: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	58,  // 178: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	60,  // 179: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	61,  // 180: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	62,  // 181: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	65,  // 182: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
-	66,  // 183: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
-	68,  // 184: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
-	72,  // 185: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	74,  // 186: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	76,  // 187: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	79,  // 188: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	92,  // 189: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
-	81,  // 190: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	83,  // 191: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	84,  // 192: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
-	88,  // 193: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	55,  // 194: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	57,  // 195: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	59,  // 196: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	63,  // 197: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	63,  // 198: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	63,  // 199: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	63,  // 200: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
-	63,  // 201: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
-	69,  // 202: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
-	73,  // 203: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	75,  // 204: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	77,  // 205: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	80,  // 206: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	93,  // 207: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
-	82,  // 208: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	86,  // 209: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	85,  // 210: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
-	89,  // 211: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	194, // [194:212] is the sub-list for method output_type
-	176, // [176:194] is the sub-list for method input_type
-	176, // [176:176] is the sub-list for extension type_name
-	176, // [176:176] is the sub-list for extension extendee
-	0,   // [0:176] is the sub-list for field type_name
+	18,  // 101: slate.v1.UpdateRequest.expected:type_name -> slate.v1.Row
+	18,  // 102: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
+	19,  // 103: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
+	18,  // 104: slate.v1.WriteResponse.rows:type_name -> slate.v1.Row
+	20,  // 105: slate.v1.Assignment.column:type_name -> slate.v1.ColumnRef
+	29,  // 106: slate.v1.Assignment.value:type_name -> slate.v1.Scalar
+	21,  // 107: slate.v1.DeleteWhereRequest.filter:type_name -> slate.v1.Expr
+	19,  // 108: slate.v1.DeleteWhereRequest.schema:type_name -> slate.v1.SchemaCheck
+	21,  // 109: slate.v1.UpdateWhereRequest.filter:type_name -> slate.v1.Expr
+	64,  // 110: slate.v1.UpdateWhereRequest.assignments:type_name -> slate.v1.Assignment
+	19,  // 111: slate.v1.UpdateWhereRequest.schema:type_name -> slate.v1.SchemaCheck
+	60,  // 112: slate.v1.BatchOperation.insert:type_name -> slate.v1.InsertRequest
+	61,  // 113: slate.v1.BatchOperation.update:type_name -> slate.v1.UpdateRequest
+	62,  // 114: slate.v1.BatchOperation.delete:type_name -> slate.v1.DeleteRequest
+	65,  // 115: slate.v1.BatchOperation.delete_where:type_name -> slate.v1.DeleteWhereRequest
+	66,  // 116: slate.v1.BatchOperation.update_where:type_name -> slate.v1.UpdateWhereRequest
+	67,  // 117: slate.v1.BatchRequest.operations:type_name -> slate.v1.BatchOperation
+	13,  // 118: slate.v1.BatchRequest.atomicity:type_name -> slate.v1.Atomicity
+	70,  // 119: slate.v1.BatchResponse.results:type_name -> slate.v1.BatchResult
+	63,  // 120: slate.v1.BatchResult.ok:type_name -> slate.v1.WriteResponse
+	71,  // 121: slate.v1.BatchResult.error:type_name -> slate.v1.BatchError
+	18,  // 122: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
+	52,  // 123: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
+	19,  // 124: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
+	18,  // 125: slate.v1.GetResponse.row:type_name -> slate.v1.Row
+	53,  // 126: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
+	45,  // 127: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
+	52,  // 128: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
+	18,  // 129: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
+	53,  // 130: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
+	16,  // 131: slate.v1.QueryResponse.next_cursor:type_name -> slate.v1.Value
+	49,  // 132: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
+	52,  // 133: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
+	50,  // 134: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
+	53,  // 135: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
+	16,  // 136: slate.v1.JoinResponse.next_cursor:type_name -> slate.v1.Value
+	45,  // 137: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
+	20,  // 138: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
+	40,  // 139: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
+	21,  // 140: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
+	49,  // 141: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
+	42,  // 142: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
+	78,  // 143: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	52,  // 144: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
+	41,  // 145: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
+	53,  // 146: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
+	45,  // 147: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
+	52,  // 148: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
+	53,  // 149: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	49,  // 150: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
+	52,  // 151: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
+	78,  // 152: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	52,  // 153: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
+	82,  // 154: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
+	86,  // 155: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
+	53,  // 156: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	87,  // 157: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
+	53,  // 158: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	82,  // 159: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
+	11,  // 160: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
+	46,  // 161: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
+	14,  // 162: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
+	15,  // 163: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
+	90,  // 164: slate.v1.RelatedStep.relation:type_name -> slate.v1.Relation
+	19,  // 165: slate.v1.RelatedStep.schema:type_name -> slate.v1.SchemaCheck
+	90,  // 166: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
+	16,  // 167: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
+	52,  // 168: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
+	19,  // 169: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
+	91,  // 170: slate.v1.RelatedRequest.path:type_name -> slate.v1.RelatedStep
+	94,  // 171: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
+	53,  // 172: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
+	95,  // 173: slate.v1.RelatedResponse.levels:type_name -> slate.v1.RelatedResponse.Level
+	16,  // 174: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
+	18,  // 175: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
+	94,  // 176: slate.v1.RelatedResponse.Level.groups:type_name -> slate.v1.RelatedResponse.Group
+	54,  // 177: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	56,  // 178: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	58,  // 179: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	60,  // 180: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	61,  // 181: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	62,  // 182: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	65,  // 183: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
+	66,  // 184: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
+	68,  // 185: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
+	72,  // 186: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	74,  // 187: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	76,  // 188: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	79,  // 189: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	92,  // 190: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
+	81,  // 191: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	83,  // 192: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	84,  // 193: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	88,  // 194: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	55,  // 195: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	57,  // 196: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	59,  // 197: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	63,  // 198: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	63,  // 199: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	63,  // 200: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	63,  // 201: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
+	63,  // 202: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
+	69,  // 203: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
+	73,  // 204: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	75,  // 205: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	77,  // 206: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	80,  // 207: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	93,  // 208: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
+	82,  // 209: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	86,  // 210: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	85,  // 211: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	89,  // 212: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	195, // [195:213] is the sub-list for method output_type
+	177, // [177:195] is the sub-list for method input_type
+	177, // [177:177] is the sub-list for extension type_name
+	177, // [177:177] is the sub-list for extension extendee
+	0,   // [0:177] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }
@@ -8510,6 +8570,7 @@ func file_slate_v1_records_proto_init() {
 		(*Value_DoubleValue)(nil),
 		(*Value_UuidValue)(nil),
 		(*Value_VectorValue)(nil),
+		(*Value_DecimalValue)(nil),
 	}
 	file_slate_v1_records_proto_msgTypes[4].OneofWrappers = []any{
 		(*ColumnRef_Column)(nil),

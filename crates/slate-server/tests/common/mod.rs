@@ -42,6 +42,7 @@ pub const USERS: TableId = TableId(2);
 pub const AUTHORS: TableId = TableId(3);
 pub const BOOKS: TableId = TableId(4);
 pub const SALES: TableId = TableId(5);
+pub const PRICES: TableId = TableId(6);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
@@ -136,8 +137,29 @@ pub fn sales() -> TableDef {
         .expect("valid schema")
 }
 
+/// A table with a decimal column.
+///
+/// Its own table rather than a column appended to `docs`, following the
+/// precedent the relationship fixtures set: appending to a table six test files
+/// already write means those files are now testing a schema change, and the
+/// failure shows up as their width assertions rather than as anything about
+/// decimals.
+///
+/// Scale 2, so the rendering is the one everybody can check by eye: `1250` is
+/// `12.50`. A scale of 0 would make a decimal indistinguishable from an `i64`
+/// in every assertion, which is the one scale a test of decimals must not use.
+pub fn prices() -> TableDef {
+    TableDef::builder("prices", PRICES)
+        .column("id", ValueType::U64)
+        .column("label", ValueType::Str)
+        .decimal_column("amount", 2)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema")
+}
+
 pub fn catalog() -> Catalog {
-    Catalog::from_tables([docs(), users(), authors(), books(), sales()]).expect("catalog")
+    Catalog::from_tables([docs(), users(), authors(), books(), sales(), prices()]).expect("catalog")
 }
 
 /// The ordinal of a column of one of the fixture tables, by name.
@@ -173,6 +195,7 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("app", AUTHORS, Action::EVERYTHING))
         .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
         .grant(Grant::new("app", SALES, Action::EVERYTHING))
+        .grant(Grant::new("app", PRICES, Action::EVERYTHING))
         // The four data actions and *not* `Explain`, which is its own. Only an
         // identity that can run a read but cannot ask for its plan can tell a
         // present authorization check from a missing one; `app` holds
@@ -203,6 +226,16 @@ pub fn security() -> SecurityCatalog {
             Action::EVERYTHING,
             |_: &SecurityContext| Expr::compare(at(&sales(), "units"), CmpOp::Gt, Value::I64(0)),
         ))
+}
+
+/// One row of `prices`. `units` is a count of the column's smallest unit, so
+/// at its declared scale of 2 a `1250` is 12.50.
+pub fn price(id: u64, label: &str, units: i64) -> Row {
+    Row::new(vec![
+        Value::U64(id),
+        Value::Str(label.to_owned()),
+        Value::Decimal(units),
+    ])
 }
 
 pub fn doc(id: u64, kind: &str, size: i64, note: Option<&str>) -> Row {

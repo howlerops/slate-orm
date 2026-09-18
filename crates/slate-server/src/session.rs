@@ -323,6 +323,9 @@ enum Command {
         context: Box<SecurityContext>,
         table: TableId,
         rows: Vec<Row>,
+        /// Empty for an ordinary update; otherwise one row per row in `rows`,
+        /// already checked for arity by the handler that decoded it.
+        expected: Vec<Row>,
         reply: oneshot::Sender<Result<u64, KernelError>>,
     },
     Delete {
@@ -562,11 +565,13 @@ impl Sessions {
         context: &SecurityContext,
         table: TableId,
         rows: Vec<Row>,
+        expected: Vec<Row>,
     ) -> Result<u64, Status> {
         self.dispatch(id, context, |reply| Command::Update {
             context: Box::new(context.clone()),
             table,
             rows,
+            expected,
             reply,
         })
         .await?
@@ -904,16 +909,34 @@ async fn apply<S: KvStore>(
             context,
             table,
             rows,
+            expected,
             reply,
         } => {
             let definition = table!(table, reply);
             let affected = rows.len() as u64;
-            // `update_many` overlaps the reads that decide whether each row is
-            // there, the same as `insert_many`. It is also all-or-nothing,
-            // where the loop this replaces applied a prefix and then reported
-            // the error — a count the caller could not act on, since the
-            // transaction rolls back anyway.
-            let outcome = transaction.update_many(&context, definition, &rows).await;
+            let outcome = if expected.is_empty() {
+                // `update_many` overlaps the reads that decide whether each row
+                // is there, the same as `insert_many`. It is also
+                // all-or-nothing, where the loop this replaces applied a prefix
+                // and then reported the error — a count the caller could not
+                // act on, since the transaction rolls back anyway.
+                transaction.update_many(&context, definition, &rows).await
+            } else {
+                // A row at a time; see the same branch in `Write::apply` for
+                // why there is no batched form. All-or-nothing holds here for a
+                // different reason: the first refusal returns, and the
+                // transaction this ran inside rolls back whatever came before.
+                let mut outcome = Ok(());
+                for (row, was) in rows.iter().zip(expected.iter()) {
+                    outcome = transaction
+                        .update_if_unchanged(&context, definition, row, was)
+                        .await;
+                    if outcome.is_err() {
+                        break;
+                    }
+                }
+                outcome
+            };
             answer(reply, outcome.map(|()| affected))
         }
         Command::Delete {

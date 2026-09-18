@@ -81,6 +81,21 @@ message Value {
     // Exactly sixteen bytes, big-endian, as `Uuid::as_bytes` gives them.
     bytes uuid_value = 8;
     Vector vector_value = 9;
+    // An exact decimal, as a count of the column's smallest unit.
+    //
+    // **The scale is not here.** It lives in the schema, so `1250` in a column
+    // declared `scale = 2` is 12.50 and the same value in a `scale = 0` column
+    // is 1250. That is the kernel's design and the wire keeps it: sending the
+    // scale per value would let a client and the catalog disagree about what a
+    // stored number means, which is the one thing a decimal type exists to
+    // prevent. A client that wants to render one reads the scale off the
+    // column it declared.
+    //
+    // `int64` rather than `sint64`, matching `int64_value`. Zigzag would win on
+    // negative units and lose on positive ones, and the values this carries —
+    // prices, balances, quantities — are mostly positive. Consistency with the
+    // arm beside it is worth more than the varint either way.
+    int64 decimal_value = 10;
   }
 }
 
@@ -1073,6 +1088,25 @@ message UpdateRequest {
   // See `SchemaCheck`, and `InsertRequest.schema` for why a write wants one
   // more than a read does.
   SchemaCheck schema = 4;
+  // The rows as the caller last saw them, for a conditional update.
+  //
+  // Empty for an ordinary update. Otherwise exactly as many rows as `rows`,
+  // in the same order, and each must carry the same primary key as the row it
+  // guards — the server refuses a mismatch rather than checking one row and
+  // writing another.
+  //
+  // The server compares the *whole stored row* against this and refuses with
+  // `ROW_CHANGED` if they differ. Whole-row rather than a version column,
+  // which is the usual answer and is cheaper to compare: a version column only
+  // detects changes made by writers who remembered to bump it, so it is a
+  // convention every call site has to keep rather than a property of the data.
+  // Comparing the row detects every change and needs no schema support. It
+  // costs nothing extra in round trips because `update` reads the row anyway
+  // to enforce the row policy.
+  //
+  // This is the wire form of the kernel's `update_if_unchanged`, which existed
+  // before this field and was reachable only from Rust.
+  repeated Row expected = 5;
 }
 
 message DeleteRequest {
