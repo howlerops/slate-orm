@@ -37,9 +37,9 @@ use slate_kernel::{
 };
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
-    Input, Space, aggregate_from_proto, aggregate_to_proto, column_ref, computed_ref,
-    expr_from_proto, expr_to_proto, query_from_proto, query_to_proto, row_from_proto, row_to_proto,
-    scalar_from_proto, scalar_to_proto, value_from_proto, value_to_proto,
+    Input, MAX_EXPRESSION_DEPTH, Space, aggregate_from_proto, aggregate_to_proto, column_ref,
+    computed_ref, expr_from_proto, expr_to_proto, query_from_proto, query_to_proto, row_from_proto,
+    row_to_proto, scalar_from_proto, scalar_to_proto, value_from_proto, value_to_proto,
 };
 use slate_server::proto as pb;
 use slate_tuple::{Direction, Value};
@@ -974,4 +974,160 @@ fn a_zone_the_server_does_not_have_is_refused_by_name() {
         }))),
     };
     scalar_from_proto(&space, &wire).expect("a zone the table has must be accepted");
+}
+
+// --- how deep a caller may nest -------------------------------------------
+
+/// How an expression can wrap another, which is every way it can get deeper.
+#[derive(Debug, Clone, Copy)]
+enum Wrap {
+    Not,
+    And,
+    Or,
+}
+
+/// A chain of `wrap`s exactly `n` deep around a literal.
+///
+/// All three, rather than the `Not` this was written with: a mutation making a
+/// *conjunction's* children not count as deeper survived a `Not`-only test,
+/// because `And` and `Or` recurse through a different arm and nothing reached
+/// it. An `And` chain is also the shape a query builder actually produces, so
+/// it is the one a pathological request would use.
+fn nested(wrap: Wrap, n: usize) -> pb::Expr {
+    let mut expr = pb::Expr {
+        node: Some(pb::expr::Node::Literal(true)),
+    };
+    for _ in 0..n {
+        let node = match wrap {
+            Wrap::Not => pb::expr::Node::Negation(Box::new(expr)),
+            Wrap::And => pb::expr::Node::Conjunction(pb::ExprList { exprs: vec![expr] }),
+            Wrap::Or => pb::expr::Node::Disjunction(pb::ExprList { exprs: vec![expr] }),
+        };
+        expr = pb::Expr { node: Some(node) };
+    }
+    expr
+}
+
+/// The `Not` chain, kept as its own name because two tests read better for it.
+fn nested_not(n: usize) -> pb::Expr {
+    nested(Wrap::Not, n)
+}
+
+/// A chain of `Length`s exactly `n` deep around a column.
+fn nested_length(n: usize) -> pb::Scalar {
+    let mut scalar = pb::Scalar {
+        node: Some(pb::scalar::Node::Column(column_ref(0, 0))),
+    };
+    for _ in 0..n {
+        scalar = pb::Scalar {
+            node: Some(pb::scalar::Node::Length(Box::new(scalar))),
+        };
+    }
+    scalar
+}
+
+/// The limit is this server's, stated, and it fires.
+///
+/// It used to be prost's: a message nested past 100 is refused while decoding,
+/// so the conversion below never saw a pathological one and its recursion was
+/// safe by inheritance. Inheritance is a bad place to leave a limit — it is a
+/// dependency's default, so an upgrade that raises it changes this server's
+/// contract without anybody reading this file, and a caller who hits it gets a
+/// decode error rather than a message naming what was too deep.
+///
+/// The pair of assertions is the case: at the limit it converts, one past it
+/// it does not. Only the second would pass against a limit of zero, and only
+/// the first against no limit at all.
+#[test]
+fn an_expression_may_nest_to_the_limit_and_no_further() {
+    let table = docs();
+    let space = Space::table(&table);
+
+    // Every way an expression can wrap another. Written with `Not` alone
+    // first, which left the `And`/`Or` arm untested — a mutation dropping the
+    // increment there survived, and an `And` chain is the shape a query
+    // builder produces, so it was the likelier attack of the two.
+    for wrap in [Wrap::Not, Wrap::And, Wrap::Or] {
+        expr_from_proto(&space, &nested(wrap, MAX_EXPRESSION_DEPTH))
+            .unwrap_or_else(|e| panic!("{wrap:?} at the limit should convert: {e:?}"));
+
+        let error = expr_from_proto(&space, &nested(wrap, MAX_EXPRESSION_DEPTH + 1)).unwrap_err();
+        assert_eq!(
+            error.code(),
+            tonic::Code::InvalidArgument,
+            "{wrap:?}: {error:?}"
+        );
+        assert!(
+            error.message().contains("nests more than"),
+            "{wrap:?}: the refusal should say what was wrong: {}",
+            error.message()
+        );
+    }
+}
+
+/// The same budget on a computed value, because a limit on one of the two is a
+/// limit on neither: `Scalar` nests through `Length`, `Add`, `Case` and the
+/// rest exactly as `Expr` nests through `And` and `Not`.
+#[test]
+fn a_computed_value_may_nest_to_the_limit_and_no_further() {
+    let table = docs();
+    let space = Space::table(&table);
+
+    scalar_from_proto(&space, &nested_length(MAX_EXPRESSION_DEPTH))
+        .expect("a computed value at the limit converts");
+
+    let error = scalar_from_proto(&space, &nested_length(MAX_EXPRESSION_DEPTH + 1))
+        .expect_err("one deeper must be refused");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument, "{error:?}");
+    assert!(error.message().contains("nests more than"), "{error:?}");
+}
+
+/// A `CASE` condition carries the same budget rather than starting a new one.
+///
+/// The one place the two recursions meet: a `Scalar::Case` holds an `Expr` in
+/// each branch's `when`. They cannot compose into unbounded depth, because an
+/// `Expr` has no node that holds a `Scalar` and so the crossing goes only one
+/// way — but a `when` that restarted at zero would let a chain of `CASE`s each
+/// carry a full-depth condition, and a limit whose real ceiling is the product
+/// of two limits is not the limit it says it is.
+#[test]
+fn a_case_condition_shares_the_expressions_budget() {
+    let table = docs();
+    let space = Space::table(&table);
+
+    // A `CASE` one level in, whose condition is a chain that would be legal on
+    // its own and is one too many from inside.
+    let case = pb::Scalar {
+        node: Some(pb::scalar::Node::Case(Box::new(pb::Case {
+            branches: vec![pb::CaseBranch {
+                when: Some(nested_not(MAX_EXPRESSION_DEPTH)),
+                then: Some(pb::Scalar {
+                    node: Some(pb::scalar::Node::Column(column_ref(0, 0))),
+                }),
+            }],
+            otherwise: Some(Box::new(pb::Scalar {
+                node: Some(pb::scalar::Node::Column(column_ref(0, 0))),
+            })),
+        }))),
+    };
+    let error = scalar_from_proto(&space, &case)
+        .expect_err("the condition starts one deep, so a full-depth chain is one too many");
+    assert!(error.message().contains("nests more than"), "{error:?}");
+
+    // And one shallower converts, which is what says the budget is shared
+    // rather than simply absent inside a `CASE`.
+    let ok = pb::Scalar {
+        node: Some(pb::scalar::Node::Case(Box::new(pb::Case {
+            branches: vec![pb::CaseBranch {
+                when: Some(nested_not(MAX_EXPRESSION_DEPTH - 1)),
+                then: Some(pb::Scalar {
+                    node: Some(pb::scalar::Node::Column(column_ref(0, 0))),
+                }),
+            }],
+            otherwise: Some(Box::new(pb::Scalar {
+                node: Some(pb::scalar::Node::Column(column_ref(0, 0))),
+            })),
+        }))),
+    };
+    scalar_from_proto(&space, &ok).expect("one shallower fits");
 }

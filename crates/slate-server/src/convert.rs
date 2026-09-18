@@ -776,6 +776,47 @@ pub fn expr_to_proto(space: &Space<'_>, expr: &Expr) -> pb::Expr {
     pb::Expr { node: Some(node) }
 }
 
+/// How deeply a caller's expression may nest before this server refuses it.
+///
+/// # Why an explicit one, when prost already has a limit
+///
+/// It does — prost refuses a message nested past **100** while decoding, so a
+/// pathological request never reached these functions and the recursion below
+/// was safe by inheritance. That is a bad place to leave it for two reasons.
+/// It is a dependency's default, so an upgrade that raises or removes it is a
+/// change to this server's contract made by somebody who has never read this
+/// file. And it is not a stated limit: a caller hitting it gets prost's decode
+/// error rather than a message naming the part of the request that was too
+/// deep.
+///
+/// So this is deliberately **well below** prost's, which is what makes it the
+/// limit that actually fires. A limit above the inherited one is a check that
+/// never runs, and this repository has a written-down history of those.
+///
+/// # Why 32
+///
+/// A predicate a person writes nests two or three deep; the deepest this
+/// server generates for itself is the security compiler's, which wraps a
+/// caller's filter in one `And` beside a policy's. Thirty-two is an order of
+/// magnitude above anything real and still far under 100, so it refuses only
+/// requests that are trying to be deep.
+pub const MAX_EXPRESSION_DEPTH: usize = 32;
+
+/// The limit has to stay *below* prost's or it never fires.
+///
+/// A compile-time assertion rather than a test, because this is a property of
+/// the constant rather than of any behaviour: a test would let somebody raise
+/// the number and find out from a red suite, and this stops the build with the
+/// reason attached. It was a test first, and clippy was right to call the
+/// assertion constant — the answer to which is to make it a constant
+/// assertion rather than to silence it.
+const _: () = assert!(
+    MAX_EXPRESSION_DEPTH < 100,
+    "MAX_EXPRESSION_DEPTH is at or past prost's decode recursion limit of 100, so a request \
+     deep enough to hit it is refused while decoding and this limit never runs — the shape of \
+     check this repository keeps finding"
+);
+
 /// A wire predicate as the kernel's, resolved against `space`.
 pub fn expr_from_proto(space: &Space<'_>, expr: &pb::Expr) -> Result<Expr, Status> {
     expr_named(space, expr, "the predicate")
@@ -783,7 +824,28 @@ pub fn expr_from_proto(space: &Space<'_>, expr: &pb::Expr) -> Result<Expr, Statu
 
 /// [`expr_from_proto`], with a name for the part of the request it came from.
 pub fn expr_named(space: &Space<'_>, expr: &pb::Expr, what: &str) -> Result<Expr, Status> {
+    expr_at_depth(space, expr, what, 0)
+}
+
+/// [`expr_named`], carrying how far in it already is.
+///
+/// The depth is a parameter rather than a field on `Space` because `Space` is
+/// shared across the whole request and this counts one expression tree: two
+/// sibling predicates each get their own budget, which is the reading a caller
+/// would expect, and a shared counter would make the second one's limit depend
+/// on the first one's shape.
+fn expr_at_depth(
+    space: &Space<'_>,
+    expr: &pb::Expr,
+    what: &str,
+    depth: usize,
+) -> Result<Expr, Status> {
     use pb::expr::Node;
+    if depth > MAX_EXPRESSION_DEPTH {
+        return Err(bad(format!(
+            "{what} nests more than {MAX_EXPRESSION_DEPTH} deep, which is past what this              server will convert; a predicate that deep is a generated one, and flattening              the `and`/`or` chains it came from usually removes most of it"
+        )));
+    }
     let Some(node) = &expr.node else {
         return Err(bad(format!("{what} has an expression with no node set")));
     };
@@ -830,16 +892,16 @@ pub fn expr_named(space: &Space<'_>, expr: &pb::Expr, what: &str) -> Result<Expr
         Node::Conjunction(list) => Expr::And(
             list.exprs
                 .iter()
-                .map(|e| expr_named(space, e, what))
+                .map(|e| expr_at_depth(space, e, what, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
         Node::Disjunction(list) => Expr::Or(
             list.exprs
                 .iter()
-                .map(|e| expr_named(space, e, what))
+                .map(|e| expr_at_depth(space, e, what, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
-        Node::Negation(inner) => Expr::Not(Box::new(expr_named(space, inner, what)?)),
+        Node::Negation(inner) => Expr::Not(Box::new(expr_at_depth(space, inner, what, depth + 1)?)),
     })
 }
 
@@ -1060,13 +1122,34 @@ pub(crate) fn scalar_named(
     scalar: &pb::Scalar,
     what: &str,
 ) -> Result<Scalar, Status> {
+    scalar_at_depth(space, scalar, what, 0)
+}
+
+/// [`scalar_named`], carrying how far in it already is.
+///
+/// Same counter and same budget as [`expr_at_depth`], for the same reason: a
+/// `Scalar` nests through `Add`, `Case`, `Coalesce` and the rest exactly as an
+/// `Expr` does, and a limit on one of the two is a limit on neither.
+fn scalar_at_depth(
+    space: &Space<'_>,
+    scalar: &pb::Scalar,
+    what: &str,
+    depth: usize,
+) -> Result<Scalar, Status> {
     use pb::scalar::Node;
+    if depth > MAX_EXPRESSION_DEPTH {
+        return Err(bad(format!(
+            "{what} nests more than {MAX_EXPRESSION_DEPTH} deep, which is past what this \
+             server will convert"
+        )));
+    }
     let Some(node) = &scalar.node else {
         return Err(bad(format!("{what} arrived with no node set")));
     };
+    let deeper = |inner: &pb::Scalar| scalar_at_depth(space, inner, what, depth + 1);
     let one = |inner: &Option<Box<pb::Scalar>>| -> Result<Box<Scalar>, Status> {
         match inner {
-            Some(inner) => Ok(Box::new(scalar_named(space, inner, what)?)),
+            Some(inner) => Ok(Box::new(deeper(inner)?)),
             None => Err(bad(format!("{what} is missing an operand"))),
         }
     };
@@ -1092,15 +1175,12 @@ pub(crate) fn scalar_named(
             let (a, b) = pair(p)?;
             Scalar::Div(a, b)
         }
-        Node::Length(inner) => Scalar::Length(Box::new(scalar_named(space, inner, what)?)),
-        Node::Concat(list) => Scalar::Concat(
-            list.scalars
-                .iter()
-                .map(|s| scalar_named(space, s, what))
-                .collect::<Result<_, _>>()?,
-        ),
-        Node::Lower(inner) => Scalar::Lower(Box::new(scalar_named(space, inner, what)?)),
-        Node::Upper(inner) => Scalar::Upper(Box::new(scalar_named(space, inner, what)?)),
+        Node::Length(inner) => Scalar::Length(Box::new(deeper(inner)?)),
+        Node::Concat(list) => {
+            Scalar::Concat(list.scalars.iter().map(&deeper).collect::<Result<_, _>>()?)
+        }
+        Node::Lower(inner) => Scalar::Lower(Box::new(deeper(inner)?)),
+        Node::Upper(inner) => Scalar::Upper(Box::new(deeper(inner)?)),
         Node::Extract(part) => Scalar::Extract {
             unit: unit_from_proto(part.unit)?,
             value: one(&part.value)?,
@@ -1121,16 +1201,24 @@ pub(crate) fn scalar_named(
             zone: zone_from_proto(&shift.zone, what)?,
             value: one(&shift.value)?,
         },
-        Node::Round(inner) => Scalar::Round(Box::new(scalar_named(space, inner, what)?)),
+        Node::Round(inner) => Scalar::Round(Box::new(deeper(inner)?)),
         Node::Case(case) => {
             let mut branches = Vec::with_capacity(case.branches.len());
             for branch in &case.branches {
                 let when = match &branch.when {
-                    Some(when) => expr_named(space, when, what)?,
+                    // The *expression* budget, carried down rather than
+                    // restarted. The two cannot compose into unbounded depth —
+                    // an `Expr` has no node that holds a `Scalar`, so this is
+                    // the one crossing between them and it only goes one way —
+                    // but restarting at zero would let a 32-deep chain of
+                    // `CASE`s each carry a 32-deep condition, and a limit whose
+                    // real ceiling is the product of two limits is not the
+                    // limit it says it is.
+                    Some(when) => expr_at_depth(space, when, what, depth + 1)?,
                     None => return Err(bad(format!("{what} has a CASE branch with no condition"))),
                 };
                 let then = match &branch.then {
-                    Some(then) => scalar_named(space, then, what)?,
+                    Some(then) => deeper(then)?,
                     None => return Err(bad(format!("{what} has a CASE branch with no result"))),
                 };
                 branches.push((when, then));
@@ -1144,12 +1232,9 @@ pub(crate) fn scalar_named(
                 otherwise: one(&case.otherwise)?,
             }
         }
-        Node::Coalesce(list) => Scalar::Coalesce(
-            list.scalars
-                .iter()
-                .map(|s| scalar_named(space, s, what))
-                .collect::<Result<_, _>>()?,
-        ),
+        Node::Coalesce(list) => {
+            Scalar::Coalesce(list.scalars.iter().map(&deeper).collect::<Result<_, _>>()?)
+        }
         Node::Distance(distance) => Scalar::Distance {
             left: one(&distance.left)?,
             right: one(&distance.right)?,

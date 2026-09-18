@@ -1285,10 +1285,15 @@ Not built:
       database and may only be opened once the lease is won, so promotion is a
       restart — every request handler currently assumes the store it has is the
       store it started with. Specified in [`docs/topology.md`](docs/topology.md)
-- [ ] The wire's deep-nesting refusal is inherited rather than written: a
-      pathologically nested expression is stopped by prost's decode recursion
-      limit, and the conversion functions themselves recurse without a depth
-      counter of their own
+- [x] The wire's deep-nesting refusal is this server's rather than inherited.
+      It used to be prost's — a message nested past 100 is refused while
+      decoding, so the conversion never saw a pathological one and its
+      recursion was safe by accident. `convert::MAX_EXPRESSION_DEPTH` is 32,
+      deliberately well under prost's so that it is the limit that fires, and a
+      `const` assertion stops the build if anybody raises it past 100. The same
+      budget covers an `Expr` and a `Scalar`, and a `CASE` condition carries it
+      down rather than restarting — a limit whose real ceiling is the product
+      of two limits is not the limit it says it is
 - [ ] The cost model above 200,000 rows. The 200k calibration reproduces
       (1,223 GETs against 1,217 recorded) and is not an artefact of a warm
       cache, but the loader stops being linear somewhere between 500,000 and
