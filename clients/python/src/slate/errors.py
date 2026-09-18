@@ -56,7 +56,7 @@ at length why it does not import `google.rpc` to do so.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Protocol, runtime_checkable
 
 import grpc
 
@@ -75,6 +75,7 @@ __all__ = [
     "PermissionDenied",
     "ResourceLimit",
     "Retryable",
+    "RpcCall",
     "SlateError",
     "Unauthenticated",
     "Unavailable",
@@ -322,7 +323,7 @@ _BY_CODE: Final[dict[grpc.StatusCode, type[SlateError]]] = {
 }
 
 
-def _trailers(error: grpc.RpcError) -> dict[str, str]:
+def _trailers(error: grpc.RpcError | RpcCall) -> dict[str, str]:
     """The call's trailing metadata, as a dict of the text-valued entries.
 
     Binary metadata (a `-bin` key) is dropped rather than decoded: a `bytes`
@@ -382,7 +383,36 @@ _BY_VALUE: Final[dict[int, grpc.StatusCode]] = {
 }
 
 
-def from_rpc_error(error: grpc.RpcError, request_id: str = "") -> SlateError:
+@runtime_checkable
+class RpcCall(Protocol):
+    """What this client reads off a failed gRPC call.
+
+    gRPC raises an object that is *both* a `grpc.RpcError` and a `grpc.Call`,
+    and Python's type system has no way to say "both" — so `grpc.RpcError`
+    alone, which is what the raise site is annotated with, declares none of
+    `code`, `details` or `trailing_metadata`. Every client reading a failure
+    therefore reads attributes its declared type does not have.
+
+    mypy never said so, because `grpc.*` is under `ignore_missing_imports` and
+    everything from it was `Any`. `ty` resolves the package and says it out
+    loud, which is how this came to be written down.
+
+    `runtime_checkable` on purpose: `isinstance` against such a Protocol checks
+    that the *attributes exist* and nothing about their signatures, which is
+    exactly what the two `hasattr` calls this replaced were doing. The
+    duck-typing is deliberate — `tests/test_details.py` passes a hand-rolled
+    fake that is not a `grpc.Call` — so the behaviour is unchanged and only the
+    declaration is new. `isinstance(error, grpc.Call)` would have been the
+    tempting fix and is a different one: a bare `grpc.RpcError` is not a
+    `grpc.Call`, and neither is that fake.
+    """
+
+    def code(self) -> grpc.StatusCode: ...
+
+    def details(self) -> str: ...
+
+
+def from_rpc_error(error: grpc.RpcError | RpcCall, request_id: str = "") -> SlateError:
     """The exception a gRPC failure becomes.
 
     `request_id` is the id this client sent for the failed call. It is passed
@@ -392,9 +422,22 @@ def from_rpc_error(error: grpc.RpcError, request_id: str = "") -> SlateError:
     site that generated it.
     """
     # `code()` and `details()` come from `grpc.Call`, which every RpcError
-    # raised by a call also implements.
-    code = error.code() if hasattr(error, "code") else grpc.StatusCode.UNKNOWN
-    message = error.details() if hasattr(error, "details") else str(error)
+    # raised by a call also implements. See `RpcCall` for why this is an
+    # `isinstance` against a Protocol rather than two `hasattr` calls or an
+    # `isinstance` against `grpc.Call` itself.
+    #
+    # One deliberate difference from the two `hasattr` calls this replaced:
+    # they were independent, so an object carrying `code` and not `details`
+    # got its code and a `str(error)` message. This takes them together,
+    # because `grpc.Call` provides them together and an object with one and
+    # not the other is not a thing gRPC produces. Said out loud because it is
+    # a behaviour change, however narrow.
+    if isinstance(error, RpcCall):
+        code = error.code()
+        message = error.details()
+    else:
+        code = grpc.StatusCode.UNKNOWN
+        message = str(error)
     trailers = _trailers(error)
 
     kind: type[SlateError] = _BY_CODE.get(code, InternalError)
@@ -416,7 +459,7 @@ def from_rpc_error(error: grpc.RpcError, request_id: str = "") -> SlateError:
     )
 
 
-def _reason(error: grpc.RpcError) -> str:
+def _reason(error: grpc.RpcError | RpcCall) -> str:
     """The stable token in the call's `grpc-status-details-bin`, or `""`.
 
     Goes to the trailing metadata directly because `_trailers` drops binary

@@ -118,3 +118,28 @@ def test_an_ordinal_past_the_end_of_a_table_is_refused(client: Client) -> None:
     q = Query(DOCS)
     with pytest.raises(InvalidRequest, match="which has 4 columns"):
         list(client.query(q.where(q.c.at(99).eq(u64(1)))))
+
+
+def test_a_row_slices_like_the_sequence_it_declares(client: Client) -> None:
+    """`Row`, `JoinedRow` and `Group` are `Sequence`s, so slicing is theirs.
+
+    Declared `__getitem__(int)` and suppressed the resulting override error
+    until the checker swap, which is a promise narrower than the class they
+    inherit from. Slicing always worked — the backing store is a tuple — so the
+    overloads changed a declaration and this test is what stops the *capability*
+    regressing along with it.
+    """
+    # 9_200: `DOCS` is shared across the suite and ids are how tests stay out
+    # of each other's way. 9_100 and 9_101 belong to `test_deadlines`, and
+    # taking 9_100 here made that file fail on a full run and pass alone —
+    # which is what a "flake" usually is.
+    client.insert(DOCS, [(u64(9_200), "sliceable", i64(3), None)])
+    q = Query(DOCS)
+    row = next(iter(client.query(q.where(q.c.id.eq(u64(9_200))))))
+
+    assert list(row[:2]) == [row[0], row[1]]
+    assert list(row[1:]) == list(row)[1:]
+    assert list(row[:]) == list(row)
+    # A slice of a Sequence is a Sequence, not a scalar: indexing one column is
+    # the other overload and still gives a value.
+    assert row[1] == "sliceable"

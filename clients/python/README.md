@@ -209,9 +209,10 @@ scripts/
 ## Running the tests
 
 ```
-pip install -e '.[dev]'
+uv pip install -e '.[dev]'  # or pip; uv is what CI uses
 pytest                      # builds the head node with cargo and drives it
-mypy                        # strict, over src/ and tests/
+ty check                    # over src/slate and tests/
+ruff check .                # a finding here is a failure, not a suggestion
 python scripts/mutate.py    # the mutation table
 ```
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterator, Sequence
+from typing import overload
 
 from ._proto.slate.v1 import records_pb2 as pb
 from .schema import Table
@@ -71,7 +72,18 @@ class Row(Sequence[PyValue]):
     def __len__(self) -> int:
         return len(self._values)
 
-    def __getitem__(self, index: int) -> PyValue:  # type: ignore[override]
+    @overload
+    def __getitem__(self, index: int) -> PyValue: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[PyValue]: ...
+
+    def __getitem__(self, index: int | slice) -> PyValue | Sequence[PyValue]:
+        # Declared with both arms rather than `int` and a suppressed override.
+        # `Sequence.__getitem__` has to accept a slice, slicing has always
+        # worked here because the backing store is a tuple, and the old
+        # annotation was a promise narrower than the class it inherits from —
+        # which `# type: ignore[override]` recorded rather than fixed.
         return self._values[index]
 
     def __iter__(self) -> Iterator[PyValue]:
@@ -206,7 +218,15 @@ class JoinedRow(Sequence["Row | None"]):
     def __len__(self) -> int:
         return len(self._inputs)
 
-    def __getitem__(self, index: int) -> Row | None:  # type: ignore[override]
+    @overload
+    def __getitem__(self, index: int) -> Row | None: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[Row | None]: ...
+
+    def __getitem__(self, index: int | slice) -> Row | Sequence[Row | None] | None:
+        # See `Row.__getitem__`: both arms, because `Sequence` requires the
+        # slice one and it has always worked.
         return self._inputs[index]
 
     def __iter__(self) -> Iterator[Row | None]:
@@ -258,7 +278,18 @@ class Group(Sequence[PyValue]):
     def __len__(self) -> int:
         return len(self._values)
 
-    def __getitem__(self, index: int) -> PyValue:  # type: ignore[override]
+    @overload
+    def __getitem__(self, index: int) -> PyValue: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[PyValue]: ...
+
+    def __getitem__(self, index: int | slice) -> PyValue | Sequence[PyValue]:
+        # Declared with both arms rather than `int` and a suppressed override.
+        # `Sequence.__getitem__` has to accept a slice, slicing has always
+        # worked here because the backing store is a tuple, and the old
+        # annotation was a promise narrower than the class it inherits from —
+        # which `# type: ignore[override]` recorded rather than fixed.
         return self._values[index]
 
     def __iter__(self) -> Iterator[PyValue]:

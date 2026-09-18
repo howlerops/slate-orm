@@ -16,7 +16,7 @@ import grpc
 import pytest
 
 from slate._details import ERROR_INFO_URL, reason_of
-from slate.errors import _DETAILS_KEY, ResourceLimit, from_rpc_error
+from slate.errors import _DETAILS_KEY, ResourceLimit, RpcCall, from_rpc_error
 
 #: A real `grpc-status-details-bin`, captured from a `delete_where` with
 #: `returning` that matched more rows than `max_returned_rows` allowed.
@@ -157,3 +157,35 @@ def test_from_rpc_error_carries_the_token_onto_the_exception() -> None:
 def test_a_failure_with_no_details_has_the_empty_token() -> None:
     error = from_rpc_error(_FakeCall(b""))
     assert error.reason == ""
+
+
+class _CodeOnly(Exception):
+    """A failure carrying `code` and not `details`.
+
+    The one behaviour difference between the `RpcCall` Protocol and the two
+    independent `hasattr` calls it replaced. gRPC does not produce this — the
+    two methods come together off `grpc.Call` — so the test pins the choice
+    rather than a requirement: both or neither.
+    """
+
+    def code(self) -> grpc.StatusCode:
+        return grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+def test_a_half_shaped_failure_is_taken_as_neither() -> None:
+    # Suppressed because the excluded case *is* the test: `_CodeOnly` is
+    # neither an `RpcError` nor an `RpcCall` — it has `code` and not `details`
+    # — and what is being pinned is what `from_rpc_error` does when handed one.
+    error = from_rpc_error(_CodeOnly("half a call"))  # ty: ignore[invalid-argument-type]
+    assert error.code is grpc.StatusCode.UNKNOWN, (
+        "code and details are taken together; one without the other is not a call"
+    )
+    assert error.message == "half a call"
+
+
+def test_the_protocol_matches_what_a_real_failure_carries() -> None:
+    # `runtime_checkable` checks attribute presence only, which is what makes
+    # it a drop-in for `hasattr` — and what makes the hand-rolled fake below,
+    # which is not a `grpc.Call`, still count as one.
+    assert isinstance(_FakeCall(b""), RpcCall)
+    assert not isinstance(_CodeOnly("x"), RpcCall)

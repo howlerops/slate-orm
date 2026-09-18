@@ -75,7 +75,7 @@ def _row(n: int) -> tuple[PyValue, ...]:
 def test_an_atomicity_is_required(client: Client) -> None:
     """Not defaulted, and not accepted as a bare string either."""
     with pytest.raises(TypeError, match="Atomicity"):
-        Batch("independent")  # type: ignore[arg-type]
+        Batch("independent")  # ty: ignore[invalid-argument-type]
 
 
 def test_an_empty_batch_is_refused_before_it_is_sent(client: Client) -> None:

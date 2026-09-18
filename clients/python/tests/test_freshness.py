@@ -26,7 +26,7 @@ FIRST = 300
 
 def _rows(client: Client, key: int, **kwargs: object) -> list[object]:
     q = Query(DOCS)
-    return list(client.query(q.where(q.c.id.eq(u64(key))), **kwargs))  # type: ignore[arg-type]
+    return list(client.query(q.where(q.c.id.eq(u64(key))), **kwargs))  # ty: ignore[invalid-argument-type]
 
 
 def test_a_session_reads_its_own_write_without_the_caller_naming_a_token(

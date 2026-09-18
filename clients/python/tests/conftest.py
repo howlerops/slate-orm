@@ -48,9 +48,11 @@ import threading
 from collections.abc import Iterator
 from typing import Any
 
+import grpc
 import pytest
 
 from slate import Client, Identity
+from slate.errors import RpcCall
 from slate.values import PyValue
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -314,7 +316,7 @@ def as_int(value: PyValue) -> int:
     compared or put in a `list[int]`, and every test in this package that reads
     an `id` back wants exactly that.
 
-    A `cast` would satisfy mypy and check nothing. This asserts, so a column
+    A `cast` would satisfy the checker and check nothing. This asserts, so a column
     that comes back as the wrong type — the decoder bug these tests exist to
     find — fails here with the value in the message, instead of surfacing as a
     confusing comparison further down. `bool` is excluded on purpose: it is an
@@ -338,3 +340,20 @@ def as_str(value: PyValue) -> str:
     """
     assert isinstance(value, str), f"expected a text column, got {value!r}"
     return value
+
+
+def rpc_call(error: grpc.RpcError) -> RpcCall:
+    """A failed call's `code()` and `details()`, narrowed.
+
+    gRPC raises an object that is both a `grpc.RpcError` and a `grpc.Call`,
+    and no annotation can say "both" — so the raise site declares `RpcError`,
+    which has neither method. See `slate.errors.RpcCall`, which is the Protocol
+    this narrows to and carries the argument.
+
+    Asserting rather than casting: a failure that genuinely arrived without
+    them fails here naming the object, instead of at the call one line later.
+    mypy never asked for this, because `grpc.*` was under
+    `ignore_missing_imports`; `ty` resolves the package and does.
+    """
+    assert isinstance(error, RpcCall), f"not a gRPC call failure: {error!r}"
+    return error

@@ -25,9 +25,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Everything needed to regenerate the stubs and to run the suite. `mypy` is
-# here rather than in a separate group because a type error in this package is
-# a test failure, not a lint.
+# Everything needed to regenerate the stubs and to run the suite. The checker
+# and the linter are here rather than in a separate group because a type error
+# or a lint finding in this package is a test failure, not an optional extra.
 dev = [
   # The two code generators are pinned *exactly*, and everything else is not.
   #
@@ -44,17 +44,19 @@ dev = [
   # same change so the diff shows what the new version did.
   "grpcio-tools==1.83.1",
   "mypy-protobuf==5.1.0",
-  # Pinned for the same reason, arrived at the same way. `strict` turns on
-  # `warn_unused_ignores`, so a `# type: ignore` is an error when it is missing
-  # *and* an error when it is no longer needed — and which ignores are needed
-  # is a property of the checker's version, not of this code. Four of them in
-  # `tests/` were required when written and became "unused" on a later mypy,
-  # with nothing in this repository changed. A floating `>=` therefore fails
-  # this package on upstream's release calendar in both directions.
+  # The type checker, from the same house as ruff below.
   #
-  # Raising it is a deliberate act: bump the pin, run `python -m mypy`, and
-  # fix or remove whatever the new version says in the same change.
-  "mypy==2.3.1",
+  # Pinned *hard*, and more than the others need to be: ty is 0.0.x and says
+  # so. Its rule names are what `# ty: ignore[...]` comments in this package
+  # spell, so a release that renames one turns a suppression into an error and
+  # a checked line into an unchecked one. Bumping is a deliberate act: raise
+  # the pin, run `ty check`, and fix what the new version says in the same
+  # change.
+  #
+  # `mypy-protobuf` above is unrelated despite the name — it is a protoc
+  # plugin that emits the `.pyi` stubs, and those stubs are what any checker
+  # reads. Removing mypy does not remove it.
+  "ty==0.0.82",
   # `test_packaging` builds a wheel and an sdist from a clean copy of the tree
   # and reads what came out. It guards that with `pytest.skip` when `build` is
   # missing — and `build` was not in this list, so those four tests **skipped
@@ -64,8 +66,8 @@ dev = [
   # `packages.find` narrowed to one package, or `py.typed` dropped from
   # `package-data`, which is what makes this package typed for anybody else.
   #
-  # Found by putting mypy in CI, which failed on the import it could not
-  # resolve rather than on the skip nobody was reading.
+  # Found by putting a type checker in CI, which failed on the import it could
+  # not resolve rather than on the skip nobody was reading.
   "build>=1",
   "pytest>=8",
   # A hanging stream is worse than a failing one: it stalls the suite and
@@ -104,29 +106,34 @@ testpaths = ["tests"]
 timeout = 120
 filterwarnings = ["error"]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-files = ["src/slate", "tests"]
-# The generated tree is not this package's code and is not held to its
-# standards; `mypy-protobuf` produces stubs that are checked where they are
-# *used*, which is the boundary that matters.
-exclude = "src/slate/_proto/"
+# ty is Astral's type checker, the same house as ruff below. Pre-1.0 and
+# pinned for it: see the dependency note above.
+#
+# `respect-ignore-files` is left at its default (true) so ty honours
+# `.gitignore`, which is how the build trees stay out of a check that would
+# otherwise walk into `dist/`.
+[tool.ty.environment]
+# Matches `requires-python`. Independent of the interpreter that runs ty, so
+# CI's 3.12 and a contributor's 3.11 reach the same answer.
+python-version = "3.11"
 
-[[tool.mypy.overrides]]
-module = "slate._proto.*"
-ignore_errors = true
-follow_imports = "skip"
-
-[[tool.mypy.overrides]]
-# `grpc` ships no stubs of its own.
-module = "grpc.*"
-ignore_missing_imports = true
+[tool.ty.src]
+# What to check: this package and its suite, which is what `files` said under
+# mypy. `include` rather than a bare invocation because ty defaults to the
+# whole project directory, and that sweeps in `testserver/` and the build
+# output.
+include = ["src/slate", "tests"]
+# The generated tree is protoc's output, not this package's code, and it is
+# checked where it is *used* — every call into it goes through the checker
+# against the `mypy-protobuf` stubs. Excluded here for the same reason it was
+# excluded from mypy: 37 of the 57 diagnostics on the first run were in it,
+# all of them about generated code nobody here writes.
+exclude = ["src/slate/_proto"]
 
 [tool.ruff]
 # The generated tree is protoc's output, not this package's code. It is checked
-# where it is *used* — every call into it goes through mypy against the
-# `mypy-protobuf` stubs — which is the boundary that matters.
+# where it is *used* — every call into it goes through the type checker against
+# the `mypy-protobuf` stubs — which is the boundary that matters.
 extend-exclude = ["src/slate/_proto"]
 line-length = 100
 

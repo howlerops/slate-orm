@@ -58,7 +58,7 @@ def test_a_table_produces_no_references_at_all() -> None:
     first input of a join and silently wrong for every other.
     """
     with pytest.raises(AttributeError):
-        BOOKS.title  # type: ignore[attr-defined]  # noqa: B018 - the lookup is the assertion
+        BOOKS.title  # ty: ignore[unresolved-attribute]  # noqa: B018 - the lookup is the assertion
 
 
 def test_a_self_join_gives_the_two_inputs_different_positions() -> None:

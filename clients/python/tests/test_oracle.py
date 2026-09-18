@@ -40,6 +40,7 @@ from slate import (
     upper,
 )
 
+from .conftest import as_str
 from .fixture import AUTHORS, BOOKS, DOCS, SALES, USERS
 from .oracle import Oracle, multiset, tag, tag_group, tag_joined, tag_row
 
@@ -103,7 +104,7 @@ def test_docs_computed(client: Client, oracle: Oracle) -> None:
 
     # And no width is involved in reaching one any more. This used to be the
     # single place in the package that added `table.width + index`.
-    assert rows[0].computed(1) == rows[0].get("kind").upper()  # type: ignore[union-attr]
+    assert rows[0].computed(1) == as_str(rows[0].get("kind")).upper()
     assert tag_row(rows[0]) == oracle.rows("docs_computed")[0][: DOCS.width], (
         "the columns half of the split is not the table's own columns"
     )

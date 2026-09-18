@@ -150,21 +150,31 @@ jobs:
           name: head-node
           path: bin
       - run: chmod +x bin/slate-testserver
-      - run: pip install -e '.[dev]'
+      # uv from pip rather than `astral-sh/setup-uv`, deliberately: the action
+      # is the idiomatic route and pinning it means pinning two things whose
+      # versions I cannot check from here, and a fabricated tag is a red build
+      # that teaches nothing. One `pip install` of a small wheel costs a second
+      # and is verifiable. Worth revisiting once somebody confirms the action's
+      # current major.
+      - run: pip install uv==0.8.17
+      # `uv pip install --system` rather than `pip install`: the same
+      # resolution into the same interpreter `setup-python` put on the PATH,
+      # and fast enough that installing stops being the slowest step here.
+      - run: uv pip install --system -e '.[dev]'
         working-directory: clients/python
       # Before the suite, and as separate steps, on purpose. `pyproject.toml`
-      # has said since this package was written that "a type error in this
-      # package is a test failure, not a lint" and that a ruff finding is
-      # treated the same way — and nothing ran either, for months. Both tools
-      # were in `[dev]` and therefore installed by the line above and then
-      # never invoked, which is the most expensive way to not have a check.
+      # has said since this package was written that a type error here is a
+      # test failure rather than a lint, and the same of a ruff finding — and
+      # nothing ran either, for months. Both tools were in `[dev]` and
+      # therefore installed and then never invoked, which is the most
+      # expensive way to not have a check.
       #
       # Separate steps rather than one `&&` so the log names which one failed
       # without anybody reading it, and *before* the suite because they take
       # seconds and the suite takes minutes.
-      - run: python -m mypy
+      - run: ty check
         working-directory: clients/python
-      - run: python -m ruff check .
+      - run: ruff check .
         working-directory: clients/python
       - run: python -m pytest -q
         working-directory: clients/python

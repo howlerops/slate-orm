@@ -120,7 +120,7 @@ def reason_of(blob: bytes) -> str:
     # `message_factory` types them as the base `Message`: the field names below
     # exist at runtime and are invisible to a type checker, which is the price
     # of not importing `google.rpc`. The field names are pinned by the tests
-    # rather than by mypy, which is the weaker of the two guarantees and is
+    # rather than by the type checker, which is the weaker of the two guarantees and is
     # said here rather than left for a reader to discover.
     try:
         status: Any = _Status()

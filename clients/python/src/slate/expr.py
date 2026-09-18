@@ -243,7 +243,7 @@ def _arith(op: PairOp, left: object, right: object) -> Scalar:
     def coerce(side: object) -> Scalar:
         # `cast` rather than a runtime check: `as_scalar` refuses anything it
         # cannot encode, with a better message than one written here would be.
-        return as_scalar(side)  # type: ignore[arg-type]
+        return as_scalar(side)  # ty: ignore[invalid-argument-type]
 
     return _Pair(op, coerce(left), coerce(right))
 

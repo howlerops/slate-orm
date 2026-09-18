@@ -78,10 +78,14 @@ def test_unknown_is_not_retryable() -> None:
 def test_a_redirect_becomes_not_leader_and_carries_the_leader() -> None:
     """The one structural refinement available: metadata, not prose."""
 
-    # `grpc` ships no stubs, so `RpcError` is `Any` and mypy refuses to see a
-    # subclass of it. The alternative is not testing the one refinement this
-    # client makes on top of the status code.
-    class Fake(grpc.RpcError):  # type: ignore[misc]
+    # Subclassing the exception the library raises, which is the only way to
+    # test the one refinement this client makes on top of the status code.
+    #
+    # This carried `# type: ignore[misc]` and a comment saying `grpc` ships no
+    # stubs so `RpcError` was `Any`. That was true of mypy, which had `grpc.*`
+    # under `ignore_missing_imports`; `ty` resolves the package and the
+    # subclass is unremarkable to it. The suppression is gone with the claim.
+    class Fake(grpc.RpcError):
         def code(self) -> grpc.StatusCode:
             return grpc.StatusCode.UNAVAILABLE
 

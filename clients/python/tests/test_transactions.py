@@ -36,7 +36,7 @@ from slate import (
 from slate._proto.slate.v1 import records_pb2 as pb
 from slate._proto.slate.v1 import records_pb2_grpc as pb_grpc
 
-from .conftest import APP, Serving, connect
+from .conftest import APP, Serving, connect, rpc_call
 from .fixture import DOCS
 
 
@@ -79,7 +79,7 @@ def test_a_transaction_rolls_back_on_an_exception(server: Serving, client: Clien
         stub = pb_grpc.RecordsStub(channel)
         with pytest.raises(grpc.RpcError) as caught:
             stub.Rollback(pb.RollbackRequest(transaction=tx.id), metadata=APP.metadata)
-        assert caught.value.code() is grpc.StatusCode.NOT_FOUND, (
+        assert rpc_call(caught.value).code() is grpc.StatusCode.NOT_FOUND, (
             "the transaction is still open on the server, so it was abandoned "
             "rather than rolled back"
         )

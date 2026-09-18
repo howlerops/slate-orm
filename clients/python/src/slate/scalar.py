@@ -195,8 +195,9 @@ class _Literal(Scalar):
 
 
 # Each variant is set by name rather than through `pb.Scalar(**{op: value})`.
-# The keyword-splat version is four lines shorter and is unchecked: mypy cannot
-# see which field is being set, so a typo in the operator name would be a
+# The keyword-splat version is four lines shorter and is unchecked: a type
+# checker cannot see which field is being set, so a typo in the operator name
+# would be a
 # `Scalar` with no node set — which the server refuses at runtime, in a message
 # about a client built against a newer schema. Spelling the branches out is
 # what makes the operator name a type error instead.

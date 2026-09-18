@@ -18,7 +18,7 @@ import pytest
 from slate._proto.slate.v1 import records_pb2 as pb
 from slate._proto.slate.v1 import records_pb2_grpc as pb_grpc
 
-from .conftest import APP, Serving
+from .conftest import APP, Serving, rpc_call
 
 
 def U(n: int) -> pb.Value:
@@ -139,8 +139,8 @@ def test_the_write_path_refuses_the_wrong_integer_width(stub: Stub) -> None:
             ),
             metadata=APP.metadata,
         )
-    assert caught.value.code() is grpc.StatusCode.INVALID_ARGUMENT
-    assert "expects u64, got i64" in caught.value.details()
+    assert rpc_call(caught.value).code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert "expects u64, got i64" in rpc_call(caught.value).details()
 
 
 # --- primary keys -----------------------------------------------------------
@@ -168,7 +168,7 @@ def test_a_primary_key_of_the_wrong_arity_is_refused(
         stub.Get(
             pb.GetRequest(table="docs", primary_key=pb.Row(values=key)), metadata=APP.metadata
         )
-    assert caught.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert rpc_call(caught.value).code() is grpc.StatusCode.INVALID_ARGUMENT
 
     # The control, and the half that must NOT change: a well-formed key for a
     # row that is not there is still an ordinary miss, because that is what
@@ -197,7 +197,7 @@ def test_a_freshness_arm_cannot_be_spelled_as_selected_meaning_no(stub: Stub) ->
     there is nothing else to send. `False` no longer even encodes.
     """
     with pytest.raises(TypeError):
-        pb.Freshness(any=False)  # type: ignore[arg-type]
+        pb.Freshness(any=False)  # ty: ignore[invalid-argument-type]
 
     # Absent freshness still means ANY, which is the behaviour the old spelling
     # was accidentally reachable through and is now the only way to say it.
@@ -239,7 +239,7 @@ def test_a_join_input_with_a_sort_is_refused(stub: Stub) -> None:
     )
     with pytest.raises(grpc.RpcError) as caught:
         list(stub.Join(pb.JoinRequest(join=join), metadata=APP.metadata))
-    assert "would not order the result" in caught.value.details()
+    assert "would not order the result" in rpc_call(caught.value).details()
 
 
 def test_a_value_with_no_kind_is_refused(stub: Stub) -> None:
@@ -252,7 +252,7 @@ def test_a_value_with_no_kind_is_refused(stub: Stub) -> None:
     query = _compare(0, pb.CMP_OP_EQ, pb.Value())
     with pytest.raises(grpc.RpcError) as caught:
         _rows(stub, query)
-    assert "no kind set" in caught.value.details()
+    assert "no kind set" in rpc_call(caught.value).details()
 
 
 def test_a_column_reference_with_no_kind_is_refused(stub: Stub) -> None:
@@ -267,7 +267,7 @@ def test_a_column_reference_with_no_kind_is_refused(stub: Stub) -> None:
     )
     with pytest.raises(grpc.RpcError) as caught:
         _rows(stub, query)
-    assert "column reference with no kind set" in caught.value.details()
+    assert "column reference with no kind set" in rpc_call(caught.value).details()
 
 
 # --- affected ---------------------------------------------------------------
