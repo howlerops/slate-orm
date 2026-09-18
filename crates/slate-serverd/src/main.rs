@@ -49,6 +49,7 @@ mod config;
 mod error;
 mod filelease;
 mod lang;
+mod metrics;
 mod observe;
 mod schema;
 mod security;
@@ -139,10 +140,41 @@ async fn run(arguments: cli::Cli) -> Started<()> {
              leave it unset for no summary",
         ));
     }
-    let observing = observe::Observing {
-        request_log: document.observability.request_log,
-        summary,
-    };
+    // Parsed and warned about here, and *bound* further down, after `--check`
+    // has had its say and returned. Binding here instead was the first version
+    // and was wrong: `--check` would hold the metrics port for the length of
+    // the check, so two checks at once refused each other and a check run
+    // against a node's own configuration file while that node was up failed
+    // with "address already in use" on a configuration that was perfectly
+    // valid. A validator that needs the resources free is not a validator.
+    let metrics_address: Option<SocketAddr> =
+        match document.observability.metrics_address.as_deref() {
+            None => None,
+            Some(requested) => {
+                let parsed: SocketAddr = requested.parse().map_err(|why| {
+                    Fault::new(format!(
+                        "`[observability] metrics_address = \"{requested}\"` is not a socket \
+                     address ({why}); write it as `127.0.0.1:9090`"
+                    ))
+                })?;
+                // Warned, not refused. Unlike `trusted-header` on a public
+                // address — which is an open door and *is* refused — a scraper on
+                // another host is an ordinary deployment, and a node that would
+                // not serve metrics to one would be a node nobody could monitor.
+                // What is not ordinary is doing it without a firewall in front,
+                // and the warning is where that gets written down.
+                if !parsed.ip().is_loopback() {
+                    warnings.push(format!(
+                        "`[observability] metrics_address = \"{requested}\"` is not loopback, and \
+                     this endpoint has no authentication: it hands anyone who can reach it \
+                     every method this node serves, with call counts and latencies. Put it \
+                     behind a firewall, or bind it to loopback and let the scraper reach it \
+                     through something that authenticates."
+                    ));
+                }
+                Some(parsed)
+            }
+        };
     let routing = routing(&document.routing)?;
     // Checked here rather than where the replicas are opened, because a
     // warning has to reach `warnings` and the replicas are opened after those
@@ -171,6 +203,21 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         );
         return Ok(());
     }
+
+    // Bound here, past `--check`, so a validator does not hold a port. Before
+    // the object store and the lease campaign, because a metrics address that
+    // cannot bind should stop the start *before* this node fences another
+    // node's writer — failing after the campaign would mean a leader that
+    // exits and a cluster that has to notice.
+    let metrics = match metrics_address {
+        None => None,
+        Some(address) => Some(metrics::bind(address).await.map_err(Fault::new)?),
+    };
+    let observing = observe::Observing {
+        request_log: document.observability.request_log,
+        summary,
+        metrics,
+    };
 
     // The object store, but not the database. Opening a SlateDB writer fences
     // whatever writer was there, so a node has to know it holds the lease
@@ -493,6 +540,21 @@ async fn announce_and_serve<S: KvStore + KvReadStore>(
     serving: serve::Serving,
 ) -> Started<()> {
     println!("LISTENING {bound}");
+    // A second line, and only when there is one. The argument is the same as
+    // for `LISTENING`: with `metrics_address = "127.0.0.1:0"` there is no
+    // other way to learn the port, and operationally it is the line that says
+    // where to point the scraper. Printed *after* `LISTENING` so a harness
+    // waiting on that one is unaffected by whether this exists.
+    if let Some(listener) = serving.observing.metrics.as_ref() {
+        match listener.local_addr() {
+            Ok(address) => println!("METRICS {address}"),
+            // A bound listener whose address cannot be read is a thing no
+            // platform does; not worth failing a start over, and worth saying
+            // rather than printing nothing, because the absent line would
+            // otherwise read as "metrics are off".
+            Err(why) => println!("METRICS unknown ({why})"),
+        }
+    }
     use std::io::Write;
     std::io::stdout()
         .flush()

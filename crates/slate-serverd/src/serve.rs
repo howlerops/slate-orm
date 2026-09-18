@@ -133,6 +133,20 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         })
     });
 
+    // The metrics endpoint, if one was asked for. Its own stop channel rather
+    // than the server's, because the two want different orders: the gRPC
+    // server drains first and the scrape endpoint stays up through that drain,
+    // so the last scrape a monitoring system takes covers the shutdown rather
+    // than timing out during it.
+    let (stop_metrics, metrics_stopped) = oneshot::channel::<()>();
+    let scraping = observing.metrics.map(|listener| {
+        tokio::spawn(crate::metrics::serve(
+            listener,
+            Arc::clone(&counters),
+            metrics_stopped,
+        ))
+    });
+
     // Spawned rather than awaited inline so the drain can be bounded: the
     // shutdown future is inside `serve_with_incoming_shutdown`, and a timeout
     // wrapped around the whole call would cut the *serving* short rather than
@@ -210,6 +224,15 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
             eprint!("{text}");
         }
     }
+
+    // After the drain and after that last summary, so a scraper polling
+    // through a shutdown gets the final numbers rather than a refused
+    // connection. Signalled rather than aborted: `serve` returns from its
+    // accept loop, which lets an in-flight scrape finish writing. The join is
+    // not awaited — a scraper holding a connection open should not be able to
+    // delay a shutdown, and the process is about to exit regardless.
+    let _ = stop_metrics.send(());
+    drop(scraping);
 
     leadership.resign().await;
     Ok(())

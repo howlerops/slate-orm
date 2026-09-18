@@ -109,6 +109,112 @@ async fn serve_two_requests(serving: Serving) -> String {
     finished.stderr
 }
 
+/// One HTTP/1.1 `GET`, returning the whole response including the head.
+///
+/// Hand-written for the reason the unit test's is: the request is one line,
+/// the server closes the connection so the body ends at end-of-stream, and an
+/// HTTP client dependency in a test suite that has none would be a build cost
+/// for seventy bytes.
+async fn scrape(address: &str, path: &str) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("the metrics port should accept a connection");
+    socket
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: m\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+        .await
+        .expect("a request should be writable");
+    let mut answered = String::new();
+    // Bounded, and the bound is the point. A listener that is *bound* but
+    // never accepted still completes the TCP handshake out of the kernel's
+    // backlog, so `connect` and `write` both succeed and only the read hangs —
+    // which is exactly what happens if nothing spawns the server. Without this
+    // timeout that case is a test that never finishes rather than one that
+    // fails, and a hanging test in CI is a six-hour job rather than a red
+    // cross. Found by a mutation that removed the spawn: the suite stopped
+    // reporting anything at all instead of reporting a failure.
+    tokio::time::timeout(
+        core::time::Duration::from_secs(20),
+        socket.read_to_string(&mut answered),
+    )
+    .await
+    .expect("the metrics endpoint should answer, not hang: nothing is serving the port")
+    .expect("a response should be readable");
+    answered
+}
+
+#[tokio::test]
+async fn a_scrape_reports_what_the_node_served() {
+    // Through the real binary and a real socket. The unit tests beside
+    // `metrics.rs` cover the routing and the exposition text and would all
+    // still pass if the listener were never spawned from `serve.rs` — which is
+    // the wiring this is here for, and the same gap the summary's integration
+    // test was written against.
+    let files = Files::new();
+    let mut serving = serving(
+        &files,
+        &talking("summary_interval = \"60s\"\nmetrics_address = \"127.0.0.1:0\""),
+    );
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+    rows(&mut client, &APP, query("docs"))
+        .await
+        .expect("a query the node will answer");
+    let refused = rows(&mut client, &Identity::nobody(), query("docs"))
+        .await
+        .expect_err("a request with no identity must be refused");
+    assert_eq!(refused.code(), tonic::Code::Unauthenticated);
+    drop(client);
+
+    let answered = scrape(&address, "/metrics").await;
+    assert!(answered.starts_with("HTTP/1.1 200 OK"), "{answered}");
+    // The content type is asserted here as well as in the unit test, because
+    // this is the one that would catch the wrong handler being wired up.
+    assert!(answered.contains("text/plain; version=0.0.4"), "{answered}");
+
+    let query_method = "/slate.v1.Records/Query";
+    assert!(
+        answered.contains(&format!(
+            "slate_requests_total{{method=\"{query_method}\"}} 2"
+        )),
+        "both calls should be counted:\n{answered}"
+    );
+    assert!(
+        answered.contains(&format!(
+            "slate_request_failures_total{{method=\"{query_method}\"}} 1"
+        )),
+        "the refusal should be counted as a failure:\n{answered}"
+    );
+    // `le="+Inf"` equals the call count, which is the invariant that says the
+    // histogram and the counter beside it describe the same requests.
+    assert!(
+        answered.contains(&format!(
+            "slate_request_head_seconds_bucket{{method=\"{query_method}\",le=\"+Inf\"}} 2"
+        )),
+        "{answered}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_node_with_no_metrics_address_serves_no_metrics_port() {
+    // The default. Asserted because "off unless configured" is the whole
+    // security argument for an endpoint with no authentication on it, and an
+    // argument nothing checks is an argument that can stop being true.
+    let files = Files::new();
+    let mut serving = serving(&files, QUIET);
+    assert_eq!(serving.metrics_address(), None);
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
 #[tokio::test]
 async fn a_request_log_names_the_method_and_how_it_ended() {
     let files = Files::new();

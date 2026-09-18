@@ -527,3 +527,49 @@ fn the_ceilings_and_the_timeout_are_accepted_when_they_are_sensible() {
 fn omitting_them_entirely_is_still_a_valid_configuration() {
     accepted(GOOD);
 }
+
+// ── the metrics endpoint ────────────────────────────────────────────────────
+
+#[test]
+fn a_metrics_address_that_is_not_an_address_is_refused_by_name() {
+    let output = refused(&format!(
+        "{GOOD}\n[observability]\nmetrics_address = \"9090\"\n"
+    ));
+    assert!(
+        output.contains("metrics_address") && output.contains("127.0.0.1:9090"),
+        "the refusal should name the setting and show the shape: {output}"
+    );
+}
+
+#[test]
+fn a_metrics_address_off_loopback_is_a_warning_and_not_a_refusal() {
+    // Warned rather than refused, unlike `trusted-header` on a public address:
+    // a scraper on another host is an ordinary deployment, and a node that
+    // would not serve metrics to one is a node nobody can monitor. What is not
+    // ordinary is doing it with no firewall, which is what the warning says.
+    let output = accepted(&format!(
+        "{GOOD}\n[observability]\nmetrics_address = \"0.0.0.0:9090\"\n"
+    ));
+    assert!(
+        output.contains("no authentication"),
+        "an off-loopback metrics port should warn: {output}"
+    );
+}
+
+#[test]
+fn checking_a_configuration_does_not_need_its_metrics_port_free() {
+    // A regression, and it shipped in the first draft of this feature: the
+    // bind happened before `--check` returned, so validating a configuration
+    // held the metrics port. Two checks at once refused each other, and a
+    // check run against a live node's own file — which is the single most
+    // likely way anybody runs `--check` — failed with "address already in use"
+    // on a file that was perfectly valid. A validator that needs the resources
+    // free is not a validator.
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let address = taken.local_addr().expect("a bound listener");
+    let output = accepted(&format!(
+        "{GOOD}\n[observability]\nmetrics_address = \"{address}\"\n"
+    ));
+    assert!(output.contains("is valid"), "{output}");
+    drop(taken);
+}

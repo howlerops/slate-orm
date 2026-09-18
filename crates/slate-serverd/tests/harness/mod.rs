@@ -193,6 +193,37 @@ impl Serving {
         format!("http://{}", self.address)
     }
 
+    /// The address the metrics endpoint bound, if the node was asked for one.
+    ///
+    /// Read from the `METRICS` banner rather than from the configuration,
+    /// which is the only way a test can use `:0` — and using `:0` is the only
+    /// way several of these can run at once on one machine, which they do.
+    pub fn metrics_address(&mut self) -> Option<String> {
+        // The line is printed immediately after `LISTENING`, so it is either
+        // already in `seen` or one `recv` away. Bounded rather than looping on
+        // the channel: a node with no metrics endpoint prints nothing here,
+        // and a test asking a node that has none should get `None` quickly
+        // rather than after the full patience.
+        if let Some(found) = self.banner("METRICS ") {
+            return Some(found);
+        }
+        match self.lines.recv_timeout(core::time::Duration::from_secs(2)) {
+            Ok(line) => {
+                self.seen.push(line);
+                self.banner("METRICS ")
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// The first banner line with this prefix, if it has been seen.
+    fn banner(&self, prefix: &str) -> Option<String> {
+        self.seen
+            .iter()
+            .find_map(|line| line.strip_prefix(prefix))
+            .map(|rest| rest.trim().to_owned())
+    }
+
     /// Send `SIGTERM` and wait for the process to exit.
     ///
     /// Through `kill(1)` rather than `Child::kill`, which sends `SIGKILL` and

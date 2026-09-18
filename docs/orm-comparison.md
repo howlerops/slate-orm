@@ -171,8 +171,10 @@ then did not ship it to the three audiences most likely to need it.
 > `summary_interval` writes per-method counters on a cadence. Both off by
 > default. The row is removed rather than annotated because what the other
 > seven offer here is a log line and a counter, and this is a log line and a
-> counter; what it is not is `tracing` or a metrics endpoint, and that gap is
-> recorded below rather than in a row that reads as absent.
+> counter. There is a metrics endpoint too now — `metrics_address`, Prometheus
+> text format on a port of its own — so what remains absent is `tracing` with a
+> subscriber, and that gap is recorded below rather than in a row that reads as
+> absent.
 
 > **Built: "Batch" and "`RETURNING` on a write".** Both rows are removed rather
 > than annotated, on the same grounds as keyset pagination: both were correct
@@ -904,8 +906,20 @@ Not plan items; things a session should pick up when it is already in the file.
   in the shape every other line the process emits already has. A `tower` layer
   rather than a `tonic` interceptor, because an interceptor sees the request
   and not the response, so it can log that a call arrived and not how it ended.
-  What it still is not: `tracing` with a subscriber, or a `/metrics` endpoint
-  something scrapes. It **does** report latency quantiles now — a p50, p90 and
+  What it still is not: `tracing` with a subscriber. There **is** a
+  `/metrics` endpoint now — `[observability] metrics_address`, off unless set,
+  Prometheus text format on a port of its own, announced as `METRICS <address>`
+  beside the `LISTENING` line. It exports the counters and the head latency as
+  a *histogram* rather than as the summary line's three quantiles, and that is
+  the whole reason it exists: everything on that line is cumulative over the
+  process's life, and a cumulative quantile cannot be subtracted to get the
+  last five minutes or added to get three nodes. Bucket counts can. The `le`
+  boundaries are each the exact ceiling of an internal bucket — 2ⁿ−1
+  microseconds, so `le="0.001023"` rather than `le="0.001"` — because a round
+  boundary falls inside a bucket and the count at it would be an interpolation
+  labelled as a measurement. It has no authentication, which the docs page says
+  plainly rather than papering over with a token in the same config file.
+  It **does** report latency quantiles now — a p50, p90 and
   p99 beside the mean, from a per-method log-linear histogram eight buckets to
   the octave, which is what turns "something is slow" into "the slow thing is
   one call in a hundred". They are printed `p99_head<=` because a bucketed

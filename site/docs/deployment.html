@@ -131,8 +131,9 @@
     </p>
 
     <pre><code>[observability]
-request_log = true          # one line per request
-summary_interval = "60s"    # per-method counters, this often</code></pre>
+request_log = true                     # one line per request
+summary_interval = "60s"               # per-method counters, this often
+metrics_address = "127.0.0.1:9090"     # GET /metrics, for a scraper</code></pre>
 
     <ul>
       <li>
@@ -167,6 +168,62 @@ summary_interval = "60s"    # per-method counters, this often</code></pre>
         not resolve — the counters are keyed on the path, and the cap is what
         stops a stranger growing them without bound. Nothing is lost: the
         calls are counted, just not named.
+      </li>
+    </ul>
+
+    <h3 id="metrics">Scraping it</h3>
+
+    <p>
+      Everything on the summary line is cumulative over the process's life. A
+      mean over a week is not a mean over now, and a p99 over a week is whatever
+      the worst hour was. There is no better number to print — the fix is a
+      <em>second</em> read, subtracted from the first, which needs something to
+      read. <code>metrics_address</code> is that: an HTTP listener serving
+      <code>GET /metrics</code> in the Prometheus text format, off unless you set
+      it, and announced on standard output as <code>METRICS &lt;address&gt;</code>
+      beside the <code>LISTENING</code> line.
+    </p>
+
+    <pre><code>slate_requests_total{method="/slate.v1.Records/Query"} 128
+slate_request_failures_total{method="/slate.v1.Records/Query"} 2
+slate_request_late_failures_total{method="/slate.v1.Records/Query"} 1
+slate_request_head_seconds_bucket{method="/slate.v1.Records/Query",le="0.001023"} 119
+slate_request_head_seconds_bucket{method="/slate.v1.Records/Query",le="+Inf"} 128
+slate_request_head_seconds_sum{method="/slate.v1.Records/Query"} 0.184320
+slate_request_head_seconds_count{method="/slate.v1.Records/Query"} 128</code></pre>
+
+    <ul>
+      <li>
+        A <strong>histogram</strong>, not the three quantiles the summary line
+        prints, and that is the whole point. A Prometheus summary's quantiles
+        cannot be subtracted or added: a p99 over the last five minutes is not
+        derivable from two cumulative p99s, and a p99 across three nodes is not
+        derivable from theirs. Bucket counts are, so
+        <code>histogram_quantile(0.99, rate(slate_request_head_seconds_bucket[5m]))</code>
+        gives you the thing the summary line cannot.
+      </li>
+      <li>
+        The <code>le</code> boundaries look odd — <code>0.001023</code> rather
+        than <code>0.001</code> — because each one is the <em>exact ceiling</em>
+        of a bucket in the internal histogram, 2<sup>n</sup>−1 microseconds. A
+        round boundary would fall inside a bucket, and the count at it would have
+        to interpolate: a guess about how a bucket's contents are distributed,
+        labelled as if it were a measurement. There are 23 of them, from 15&nbsp;µs
+        to about 67&nbsp;s.
+      </li>
+      <li>
+        <strong>No authentication.</strong> The body is every method this node
+        serves with call counts and latencies, which is traffic analysis handed
+        over on request. That is why it is off by default, why the examples bind
+        loopback, and why the node warns at startup when the address is not
+        loopback. A shared secret checked by string comparison over an
+        unencrypted port would be a thing that looks like authentication; put a
+        firewall in front instead.
+      </li>
+      <li>
+        A node that has served nothing answers <code>200</code> with an empty
+        body. Not a 404 and not an error: a monitoring system has to be able to
+        tell an idle node from a broken one.
       </li>
     </ul>
 

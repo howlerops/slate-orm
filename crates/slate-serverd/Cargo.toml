@@ -50,6 +50,14 @@ tonic = "0.14"
 # `tonic::body::Body` rather than from `bytes` and `tonic::Status` directly, so
 # there is no fourth crate to keep in step.
 http-body = "1"
+# `hyper` and `hyper-util` for the metrics listener in `metrics.rs`, and
+# `http-body-util` for the one fixed-size body it answers with. All three
+# arrive through tonic; declared here for the reason the three above are, and
+# with the same versions tonic resolves so there is one hyper in the binary and
+# not two.
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 
 # Pinned to the version `slate-server` and SlateDB use. `Arc<dyn ObjectStore>`
 # from a different copy of the crate is a different type, and the lease and the

@@ -51,7 +51,11 @@ use std::time::{Duration, Instant};
 /// on a node serving ten thousand a second is a hundred megabytes an hour of
 /// stderr nobody asked for. The failure mode of logging by default is a full
 /// disk rather than a missing log.
-#[derive(Debug, Clone, Copy)]
+// No longer `Copy` or `Clone`: `metrics` holds a bound listener, which is a
+// resource and not a setting. That is the right constraint rather than an
+// inconvenience — two copies of this struct would be two owners of one socket,
+// and the compiler saying so is cheaper than finding out at runtime.
+#[derive(Debug)]
 pub(crate) struct Observing {
     /// Emit a line per request: method, gRPC status, time to the head.
     pub(crate) request_log: bool,
@@ -61,6 +65,14 @@ pub(crate) struct Observing {
     /// request rate and is what a node should have on in production, where the
     /// per-request line is a debugging tool.
     pub(crate) summary: Option<Duration>,
+    /// A bound listener for `/metrics`, or `None` when none was asked for.
+    ///
+    /// The *listener* rather than the address, for the reason the gRPC one is
+    /// bound before the banner prints: a scraper that reads the banner and
+    /// connects immediately finds a socket already accepting, and a failure to
+    /// bind is a startup failure rather than a dashboard that is empty for a
+    /// reason nobody can see.
+    pub(crate) metrics: Option<tokio::net::TcpListener>,
 }
 
 /// How many sub-buckets each octave of the latency histogram is cut into.
@@ -134,8 +146,12 @@ fn bucket_ceiling(index: usize) -> u64 {
 }
 
 /// Counters for one method.
+///
+/// `pub(crate)` only because `Counters::record` hands one back and `metrics.rs`
+/// records a call to check the endpoint serves the right counters. Nothing
+/// outside `observe` reads a field.
 #[derive(Debug)]
-struct Method {
+pub(crate) struct Method {
     /// Calls that reached a response head, whatever its status.
     calls: AtomicU64,
     /// Of those, the ones that failed — at the head or in a trailer.
@@ -264,7 +280,7 @@ impl Counters {
     /// finding the row by name a second time — has to answer "what if it is
     /// not there", "what if the cap sent this call to [`OVERFLOW`]" and "what
     /// if a name arrived twice". Holding the `Arc` makes all three unaskable.
-    fn record(&self, method: &str, elapsed: Duration, failed: bool) -> Arc<Method> {
+    pub(crate) fn record(&self, method: &str, elapsed: Duration, failed: bool) -> Arc<Method> {
         let entry = {
             let mut methods = self.methods.lock().unwrap_or_else(|poisoned| {
                 // A poisoned lock means a panic while holding it, which can
@@ -343,6 +359,175 @@ impl Counters {
         }
         (!out.is_empty()).then_some(out)
     }
+
+    /// The same counters in the Prometheus text exposition format.
+    ///
+    /// Always a `String`, never `None`: a scrape of a node that has served
+    /// nothing is a successful scrape of zero series, and answering 404 or an
+    /// error there would make "this node is idle" indistinguishable from "this
+    /// node is broken" to the one tool whose job is telling them apart.
+    ///
+    /// # Why this exists beside `summary`
+    ///
+    /// Everything on the summary line is cumulative over the process's life,
+    /// which the ledger recorded as its limitation twice. A mean over a week
+    /// is not a mean over now, and a p99 over a week is whatever the worst
+    /// hour was. The fix is not a better number here — it is a *second* read,
+    /// subtracted from the first, which needs something to read.
+    ///
+    /// That is also why the histogram is exported as buckets rather than as
+    /// the three quantiles the summary prints. A Prometheus summary's
+    /// quantiles cannot be subtracted or added: `p99` over five minutes is not
+    /// derivable from two cumulative `p99`s, and `p99` across three nodes is
+    /// not derivable from theirs. Bucket counts are, which is the whole point
+    /// of the endpoint and the reason a nine-line summary was not just wrapped
+    /// in HTTP.
+    pub(crate) fn prometheus(&self) -> String {
+        // Snapshotted under one lock rather than read family by family: the
+        // exposition format groups every series of a family together, so the
+        // alternative is four passes over the map and four chances for a
+        // method to appear in one family and not the next. A scrape holding
+        // the lock for the length of a clone of at most `MAX_METHODS` `Arc`s
+        // is cheaper than a reader having to reason about that.
+        let rows: Vec<(String, Arc<Method>)> = {
+            let methods = self
+                .methods
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            methods
+                .iter()
+                .filter(|(_, counters)| counters.calls.load(Ordering::Relaxed) != 0)
+                .map(|(name, counters)| (escape_label(name), Arc::clone(counters)))
+                .collect()
+        };
+
+        // Not even the `# HELP` lines. A family header with no series under
+        // it creates no series, so it is exactly as informative as silence and
+        // longer — and an empty body is what says "this node is up and has
+        // served nothing", which is a thing a scraper needs to be able to
+        // read.
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::new();
+        let mut family = |help: &str, kind: &str, name: &str, read: &dyn Fn(&Method) -> u64| {
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} {kind}");
+            for (method, counters) in &rows {
+                let _ = writeln!(out, "{name}{{method=\"{method}\"}} {}", read(counters));
+            }
+        };
+        family(
+            "Requests that reached a response head, by method.",
+            "counter",
+            "slate_requests_total",
+            &|method| method.calls.load(Ordering::Relaxed),
+        );
+        family(
+            "Requests that failed, at the response head or in a trailer.",
+            "counter",
+            "slate_request_failures_total",
+            &|method| method.failures.load(Ordering::Relaxed),
+        );
+        family(
+            "Failures raised after the head; a subset of the failures total.",
+            "counter",
+            "slate_request_late_failures_total",
+            &|method| method.late.load(Ordering::Relaxed),
+        );
+
+        let _ = writeln!(out, "# HELP {HEAD} Seconds to the response head.");
+        let _ = writeln!(out, "# TYPE {HEAD} histogram");
+        for (method, counters) in &rows {
+            let mut running = 0u64;
+            let mut at = 0usize;
+            for edge in EXPORTED {
+                // The internal buckets below this boundary, summed. `edge` is
+                // a bucket *index*, not a duration, which is what makes this
+                // exact: every exported `le` is some internal bucket's exact
+                // ceiling, so no sample is ever counted on the wrong side of a
+                // boundary. Choosing round numbers like 5 ms instead would
+                // have meant interpolating inside a bucket and labelling the
+                // guess as if it were a measurement.
+                while at <= *edge {
+                    running += counters
+                        .heads
+                        .get(at)
+                        .map_or(0, |bucket| bucket.load(Ordering::Relaxed));
+                    at += 1;
+                }
+                let _ = writeln!(
+                    out,
+                    "{HEAD}_bucket{{method=\"{method}\",le=\"{:.6}\"}} {running}",
+                    bucket_ceiling(*edge) as f64 / 1e6,
+                );
+            }
+            let calls = counters.calls.load(Ordering::Relaxed);
+            let _ = writeln!(
+                out,
+                "{HEAD}_bucket{{method=\"{method}\",le=\"+Inf\"}} {calls}"
+            );
+            let _ = writeln!(
+                out,
+                "{HEAD}_sum{{method=\"{method}\"}} {:.6}",
+                counters.micros.load(Ordering::Relaxed) as f64 / 1e6,
+            );
+            let _ = writeln!(out, "{HEAD}_count{{method=\"{method}\"}} {calls}");
+        }
+        out
+    }
+}
+
+/// The histogram family's name, used in five places in one loop.
+const HEAD: &str = "slate_request_head_seconds";
+
+/// Which internal buckets are exported as Prometheus boundaries.
+///
+/// The internal histogram has 496 buckets. Exporting all of them would be 496
+/// series per method and 31,744 for a node at the [`MAX_METHODS`] cap —
+/// cardinality that makes a scrape a denial of service against the thing
+/// scraping it. These are the last bucket of each octave, so every exported
+/// boundary is exactly `2^n - 1` microseconds and exactly some bucket's
+/// ceiling; the counts are sums of whole buckets, never interpolations.
+///
+/// The range is 15 µs to 67.1 s. The bottom sits inside the 10–23 µs that this
+/// node's own measurements put its fastest requests at, so the fastest calls
+/// separate into the first two boundaries instead of piling into one; the top
+/// is past any timeout anyone would configure, so `+Inf` stays empty and the
+/// last real boundary is informative rather than a wall.
+///
+/// Twenty-three boundaries is 26 histogram series a method — the boundaries,
+/// `+Inf`, `_sum` and `_count` — plus the three counters, so 29 in all and
+/// 1,856 at the cap.
+const EXPORTED: &[usize] = &[
+    15, 23, 31, 39, 47, 55, 63, 71, 79, 87, 95, 103, 111, 119, 127, 135, 143, 151, 159, 167, 175,
+    183, 191,
+];
+
+/// A method name, safe to put inside a Prometheus label value.
+///
+/// The name is `request.uri().path()`, which a caller chooses — the same
+/// untrusted string the request log sanitises, and the same argument applies
+/// with a different alphabet. A raw `"` would end the label and let a caller
+/// forge one of their own; a `\` would escape the quote that ends it; a
+/// newline would end the *series*. The exposition format names exactly these
+/// three, so this escapes exactly these three.
+///
+/// Escaped rather than rejected because a label that cannot be forged is
+/// enough — dropping the series would lose the count of the very requests
+/// somebody was trying to hide.
+fn escape_label(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for character in name.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Wraps a service so every call is timed and counted.
@@ -964,6 +1149,162 @@ mod tests {
         // reach — otherwise a caller could merge their own calls into the
         // overflow row, or worse, have real methods land in one they control.
         assert!(!OVERFLOW.starts_with('/'), "{OVERFLOW}");
+    }
+
+    #[test]
+    fn every_exported_boundary_is_an_exact_bucket_ceiling() {
+        // The whole claim the histogram export rests on. If a boundary fell
+        // *inside* an internal bucket, the count at that boundary would have
+        // to interpolate — and a number labelled `le="0.001023"` that is
+        // actually a guess about how a bucket's contents are distributed is
+        // worse than no number, because nothing downstream can tell.
+        //
+        // Checked by round-tripping: the boundary's own bucket must be the
+        // bucket it came from, and the *next* microsecond must not be.
+        for &index in EXPORTED {
+            let ceiling = bucket_ceiling(index);
+            assert_eq!(
+                bucket_of(ceiling),
+                index,
+                "boundary {ceiling}us should be the ceiling of bucket {index}"
+            );
+            assert_eq!(
+                bucket_of(ceiling + 1),
+                index + 1,
+                "one microsecond past {ceiling}us should be the next bucket"
+            );
+            // 2^n - 1, which is what makes the exported labels readable.
+            assert_eq!(
+                (ceiling + 1).count_ones(),
+                1,
+                "{ceiling} is not a power of two minus one"
+            );
+        }
+    }
+
+    #[test]
+    fn the_exported_boundaries_rise_and_span_the_range_that_matters() {
+        let edges: Vec<u64> = EXPORTED.iter().map(|&at| bucket_ceiling(at)).collect();
+        assert!(
+            edges.windows(2).all(|pair| match pair {
+                [lower, higher] => lower < higher,
+                _ => true,
+            }),
+            "{edges:?}"
+        );
+        // Inside the 10-23us this node's own measurements put its fastest
+        // requests at, so the fastest calls separate across the first two
+        // boundaries rather than piling into one; past any timeout anybody
+        // configures, so `+Inf` stays empty.
+        assert_eq!(edges.first().copied(), Some(15), "{edges:?}");
+        assert!(
+            edges.last().copied().unwrap_or_default() > 60_000_000,
+            "{edges:?}"
+        );
+    }
+
+    #[test]
+    fn a_scrape_of_a_node_that_served_nothing_is_empty_and_not_an_error() {
+        // Zero series, not an error and not a 404: a monitoring system has to
+        // be able to tell an idle node from a broken one, and that is the
+        // whole job of the thing doing the scraping.
+        let counters = Counters::default();
+        assert_eq!(counters.prometheus(), "");
+        assert!(counters.summary().is_none());
+    }
+
+    #[test]
+    fn the_histogram_counts_every_call_and_rises_to_the_total() {
+        let counters = Counters::default();
+        // One under the first boundary, one over the last, and one in the
+        // middle — so the assertions below are about the shape and not about
+        // three samples landing in one place.
+        for micros in [1u64, 2_000, 90_000_000] {
+            counters.record("/x", Duration::from_micros(micros), false);
+        }
+        let text = counters.prometheus();
+
+        // Series lines only. Matching on `contains` found the `# HELP` line
+        // first and read the last word of the prose as a count, which is a
+        // test that passes on a comment — caught by writing it wrong once.
+        let counted = |needle: &str| -> u64 {
+            text.lines()
+                .filter(|line| !line.starts_with('#'))
+                .find(|line| line.contains(needle))
+                .and_then(|line| line.rsplit(' ').next())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| panic!("no series line matching {needle} in\n{text}"))
+        };
+        // The `+Inf` bucket is `calls`, which is what makes the histogram
+        // agree with the counter family beside it.
+        assert_eq!(counted("le=\"+Inf\""), 3, "{text}");
+        assert_eq!(counted("slate_request_head_seconds_count"), 3, "{text}");
+        assert_eq!(counted("slate_requests_total"), 3, "{text}");
+        // 15us holds the 1us sample and neither of the others.
+        assert_eq!(counted("le=\"0.000015\""), 1, "{text}");
+
+        // The *labels* are the boundaries' ceilings, not their bucket indices.
+        // Checked at the top of the range and not only the bottom, because
+        // bucket 15's ceiling happens to be 15 — so an implementation printing
+        // the index instead of the ceiling is indistinguishable there, and a
+        // mutation doing exactly that survived a version of this test that
+        // only looked at the first boundary. Bucket 191's ceiling is
+        // 67,108,863 µs, which no index could be mistaken for.
+        assert!(
+            text.contains("le=\"67.108863\""),
+            "the last boundary should be its bucket's ceiling:\n{text}"
+        );
+        assert!(
+            !text.contains("le=\"0.000191\""),
+            "a boundary label should never be a bucket index:\n{text}"
+        );
+
+        // Cumulative, which is what `le` means and is the property a scraper
+        // subtracting two reads depends on.
+        let buckets: Vec<u64> = text
+            .lines()
+            .filter(|line| line.contains("_bucket{"))
+            .filter_map(|line| line.rsplit(' ').next()?.parse().ok())
+            .collect();
+        assert!(
+            buckets.windows(2).all(|pair| match pair {
+                [lower, higher] => lower <= higher,
+                _ => true,
+            }),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_caller_cannot_forge_a_series_in_a_scrape() {
+        // The method name is the request path, which a caller picks, and the
+        // layer wraps the router — so a request for a method that does not
+        // exist is still counted under whatever it asked for. Unescaped, a
+        // name holding a quote closes the label and everything after it is
+        // read as more labels; one holding a newline ends the series and the
+        // rest is read as another one entirely.
+        let counters = Counters::default();
+        let forged = "/x\" } 99\nslate_requests_total{method=\"/fake";
+        counters.record(forged, Duration::from_millis(1), false);
+        let text = counters.prometheus();
+
+        // One series in the family, not two, and its count is the real one.
+        let real: Vec<&str> = text
+            .lines()
+            .filter(|line| line.starts_with("slate_requests_total{"))
+            .collect();
+        let only = match real.as_slice() {
+            [one] => *one,
+            other => panic!("expected one series, got {}:\n{text}", other.len()),
+        };
+        assert!(only.ends_with(" 1"), "{only}");
+        // The newline is escaped, so the forged text cannot be on a line of
+        // its own however it is spelled.
+        assert!(!text.contains("\n slate_requests_total"), "{text}");
+        assert!(
+            text.contains("\\n"),
+            "the newline should be escaped:\n{text}"
+        );
     }
 
     #[test]

@@ -474,6 +474,15 @@ pub(crate) struct Observability {
     /// and is the one a production node should have on.
     #[serde(default)]
     pub(crate) summary_interval: Option<String>,
+    /// Where to serve `/metrics` over HTTP, or nowhere when unset.
+    ///
+    /// A second address rather than a path on the gRPC one: the two want
+    /// different firewall rules, because one carries the data and the other
+    /// carries the shape of the traffic. Unauthenticated — see `metrics.rs`
+    /// for why a token was left out rather than added — so a value that is not
+    /// loopback is warned about at startup.
+    #[serde(default)]
+    pub(crate) metrics_address: Option<String>,
 }
 
 /// How long a shutdown may take.
