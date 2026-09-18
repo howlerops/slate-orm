@@ -125,8 +125,8 @@ then did not ship it to the three audiences most likely to need it.
 > `summary_interval` writes per-method counters on a cadence. Both off by
 > default. The row is removed rather than annotated because what the other
 > seven offer here is a log line and a counter, and this is a log line and a
-> counter; what it is not is `tracing`, a metrics endpoint or a histogram, and
-> that gap is recorded below rather than in a row that reads as absent.
+> counter; what it is not is `tracing` or a metrics endpoint, and that gap is
+> recorded below rather than in a row that reads as absent.
 
 > **Built: "Batch" and "`RETURNING` on a write".** Both rows are removed rather
 > than annotated, on the same grounds as keyset pagination: both were correct
@@ -858,11 +858,16 @@ Not plan items; things a session should pick up when it is already in the file.
   in the shape every other line the process emits already has. A `tower` layer
   rather than a `tonic` interceptor, because an interceptor sees the request
   and not the response, so it can log that a call arrived and not how it ended.
-  What it still is not: `tracing` with a subscriber, a `/metrics` endpoint, or
-  a latency histogram — it reports a mean and a slowest, which is enough to
-  notice a problem and not enough to characterise one. It also times to the
-  response *head*, so a streamed read's rows are not in the number, and a
-  failure raised in a trailer counts as a success.
+  What it still is not: `tracing` with a subscriber, or a `/metrics` endpoint
+  something scrapes. It **does** report latency quantiles now — a p50, p90 and
+  p99 beside the mean, from a per-method log-linear histogram eight buckets to
+  the octave, which is what turns "something is slow" into "the slow thing is
+  one call in a hundred". They are printed `p99_head<=` because a bucketed
+  answer is an upper bound: within an eighth of the truth, never under it, and
+  clamped to the exact `slowest_head` so a quantile cannot print above a
+  maximum on its own line. It still times to the response *head*, so a streamed
+  read's rows are not in the number, and a failure raised in a trailer counts
+  as a success.
 - ~~**No request id to correlate a client call with a server log line.**~~
   **Built.** A `slate-request-id` header, not a proto field: it belongs to the
   call rather than to the query, and adding it to nineteen request messages to

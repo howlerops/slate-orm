@@ -202,6 +202,22 @@ async fn a_summary_counts_what_the_node_served() {
         summary[0].contains("/slate.v1.Records/Query calls=2 failed=1"),
         "both calls counted and the refusal marked failed:\n{stderr}"
     );
+    // The quantiles reach the log line, which the unit tests cannot say: they
+    // call `summary()` directly, so a `summary` that was never wired to what
+    // the node prints would pass every one of them. The numbers themselves
+    // are two local RPCs and are not asserted — what is asserted is that the
+    // fields exist, in order, with a `<=` that says they are an upper bound.
+    for field in ["p50_head<=", "p90_head<=", "p99_head<="] {
+        assert!(summary[0].contains(field), "no `{field}` on:\n{stderr}");
+    }
+    let mean = summary[0].find("mean_head=").expect("a mean");
+    let p50 = summary[0].find("p50_head<=").expect("a p50");
+    let p99 = summary[0].find("p99_head<=").expect("a p99");
+    let slowest = summary[0].find("slowest_head=").expect("a slowest");
+    assert!(
+        mean < p50 && p50 < p99 && p99 < slowest,
+        "the fields should read low to high:\n{stderr}"
+    );
     // A summary without `request_log` is the production shape: counters, no
     // line per request. Asserted so the two settings cannot silently merge.
     assert!(

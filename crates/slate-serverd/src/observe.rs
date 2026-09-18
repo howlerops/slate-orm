@@ -62,8 +62,78 @@ pub(crate) struct Observing {
     pub(crate) summary: Option<Duration>,
 }
 
+/// How many sub-buckets each octave of the latency histogram is cut into.
+///
+/// Three bits is eight sub-buckets, so a bucket is at most an eighth wider
+/// than its own floor and a reported quantile is within +12.5% of the true
+/// one, never below it. Two bits (25%) cannot tell 80 ms from 100 ms, which is
+/// the distinction somebody reading a p99 is usually making; four (6.25%)
+/// doubles the array to report a precision the sample counts on a quiet node
+/// do not support.
+const SUB_BITS: u32 = 3;
+
+/// Sub-buckets per octave.
+const SUB: u64 = 1 << SUB_BITS;
+
+/// Enough buckets for every `u64` microsecond value, so nothing is clamped.
+///
+/// The largest index [`bucket_of`] can return, plus one. Clamping the top
+/// instead would save 8 bytes a method and put a silent ceiling on what the
+/// histogram can say — and the number it would put a ceiling on is exactly the
+/// pathological latency somebody turned the summary on to find.
+const BUCKETS: usize = 496;
+
+/// Which bucket a duration falls in.
+///
+/// Log-linear: below [`SUB`] microseconds each value is its own bucket and the
+/// answer is exact; above it, the index is the octave and the top [`SUB_BITS`]
+/// bits below it. Monotone and gap-free across the boundary, which
+/// `the_buckets_are_monotone_and_gapless` checks rather than asserts.
+fn bucket_of(micros: u64) -> usize {
+    if micros < SUB {
+        // Exact, and the arm that makes the boundary work: index 7 is the
+        // value 7, and index 8 is the first value of the first octave.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "micros < SUB = 8, so this fits"
+        )]
+        return micros as usize;
+    }
+    let octave = u64::from(63 - micros.leading_zeros());
+    let shift = octave - u64::from(SUB_BITS);
+    let sub = (micros >> shift) & (SUB - 1);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "octave <= 63, so the index is at most 495"
+    )]
+    let index = ((octave - u64::from(SUB_BITS) + 1) * SUB + sub) as usize;
+    index
+}
+
+/// The largest duration a bucket holds.
+///
+/// A quantile is reported as this rather than as the bucket's floor, so the
+/// number is an *upper* bound on the true one. A latency that is reported too
+/// low is the failure mode worth avoiding: it is the one that reads as "this
+/// is fine".
+fn bucket_ceiling(index: usize) -> u64 {
+    let index = index as u64;
+    if index < SUB {
+        return index;
+    }
+    let octave = index / SUB + u64::from(SUB_BITS) - 1;
+    let sub = index % SUB;
+    let shift = octave - u64::from(SUB_BITS);
+    let floor = (SUB + sub) << shift;
+    // `saturating` rather than a wider type: the top bucket's ceiling is 2^64,
+    // which is not a `u64`, and it is a bucket no request head will ever
+    // reach. Saturating there is a better answer than a panic in a logging
+    // path.
+    floor.saturating_add(1 << shift).saturating_sub(1)
+}
+
 /// Counters for one method.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Method {
     /// Calls that reached a response head, whatever its status.
     calls: AtomicU64,
@@ -73,6 +143,60 @@ struct Method {
     micros: AtomicU64,
     /// The slowest head, in microseconds.
     slowest: AtomicU64,
+    /// Every head's duration, bucketed, for the quantiles.
+    ///
+    /// A `Box<[AtomicU64]>` rather than a `Mutex<Vec<u64>>` of every sample:
+    /// keeping the samples would give exact quantiles and unbounded memory on
+    /// a node that serves for a week, and would put a lock on the path every
+    /// request already takes. Bucketed counts are a fixed 4 KiB a method and
+    /// two relaxed atomic operations.
+    heads: Box<[AtomicU64]>,
+}
+
+impl Default for Method {
+    fn default() -> Self {
+        Self {
+            calls: AtomicU64::new(0),
+            failures: AtomicU64::new(0),
+            micros: AtomicU64::new(0),
+            slowest: AtomicU64::new(0),
+            heads: (0..BUCKETS).map(|_| AtomicU64::new(0)).collect(),
+        }
+    }
+}
+
+impl Method {
+    /// The `numerator`/`denominator` quantile of the recorded heads, in
+    /// microseconds, or `None` when nothing has been recorded.
+    ///
+    /// Nearest-rank: the value of the `ceil(q * n)`-th sample in order, which
+    /// is the definition that needs no interpolation between two buckets whose
+    /// contents it cannot see. Clamped to the exact `slowest`, because a
+    /// bucket's ceiling can sit above every sample in it and a p99 printed
+    /// above the observed maximum reads as a bug in the summary rather than as
+    /// the rounding it is.
+    fn quantile(&self, numerator: u64, denominator: u64) -> Option<u64> {
+        let total = self.calls.load(Ordering::Relaxed);
+        if total == 0 {
+            return None;
+        }
+        // Saturating: `total * numerator` is a request count times 99, which
+        // needs 2^57 requests to overflow, but a logging path that can panic
+        // on a busy node is not worth the two characters saved.
+        let rank = total.saturating_mul(numerator).div_ceil(denominator).max(1);
+        let mut seen = 0u64;
+        for (index, bucket) in self.heads.iter().enumerate() {
+            seen = seen.saturating_add(bucket.load(Ordering::Relaxed));
+            if seen >= rank {
+                return Some(bucket_ceiling(index).min(self.slowest.load(Ordering::Relaxed)));
+            }
+        }
+        // Only reachable if a concurrent `record` landed between the `calls`
+        // read and the sweep, so the buckets hold fewer samples than `total`
+        // claimed. The slowest is the honest answer to "the largest sample" in
+        // that case, and it is never wrong by more than one request's worth.
+        Some(self.slowest.load(Ordering::Relaxed))
+    }
 }
 
 /// Every method's counters.
@@ -106,6 +230,11 @@ impl Counters {
         }
         entry.micros.fetch_add(micros, Ordering::Relaxed);
         entry.slowest.fetch_max(micros, Ordering::Relaxed);
+        // `get` rather than an index: `bucket_of` cannot exceed `BUCKETS`, and
+        // a panic here would take down a node over a log line if it ever did.
+        if let Some(bucket) = entry.heads.get(bucket_of(micros)) {
+            bucket.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// One line per method that has been called, or `None` when none has.
@@ -132,11 +261,19 @@ impl Counters {
             let slowest = counters.slowest.load(Ordering::Relaxed);
             // `write!` to a String cannot fail; the result is discarded rather
             // than unwrapped so this cannot be the thing that kills a node.
+            // Every quantile is `Some` here, because `calls` is non-zero;
+            // `unwrap_or(slowest)` rather than an `expect` so a logging path
+            // has no way to panic at all.
+            let at = |numerator| counters.quantile(numerator, 100).unwrap_or(slowest);
             let _ = writeln!(
                 out,
                 "slate-serverd: {name} calls={calls} failed={failures} \
-                 mean_head={:.1}ms slowest_head={:.1}ms",
+                 mean_head={:.1}ms p50_head<={:.1}ms p90_head<={:.1}ms \
+                 p99_head<={:.1}ms slowest_head={:.1}ms",
                 total as f64 / calls as f64 / 1000.0,
+                at(50) as f64 / 1000.0,
+                at(90) as f64 / 1000.0,
+                at(99) as f64 / 1000.0,
                 slowest as f64 / 1000.0,
             );
         }
@@ -313,6 +450,173 @@ mod tests {
         // look plausible.
         assert!(summary.contains("mean_head=3.0ms"), "{summary}");
         assert!(summary.contains("slowest_head=4.0ms"), "{summary}");
+    }
+
+    /// The bucket boundaries are checked rather than trusted: a log-linear
+    /// index that skips a value or goes backwards at an octave boundary is the
+    /// classic defect in this shape, and it is invisible in a quantile because
+    /// the answer still looks like a latency.
+    #[test]
+    fn the_buckets_are_monotone_and_gapless() {
+        let mut previous = bucket_of(0);
+        assert_eq!(previous, 0);
+        // Exhaustive over the first four octaves and then over every value
+        // within eight either side of every power of two, which is where a
+        // boundary can be. Exhaustive to 2^63 is not a test, it is a job.
+        let mut probes: Vec<u64> = (0..256).collect();
+        for power in 8..64u32 {
+            let at = 1u64 << power;
+            probes.extend((at - 8)..=(at + 8));
+        }
+        probes.sort_unstable();
+        probes.dedup();
+        for micros in probes {
+            let index = bucket_of(micros);
+            assert!(index < BUCKETS, "{micros} fell outside the array: {index}");
+            // Monotone. Gapless is the pair of ceiling checks below, which
+            // say exactly "this is the one bucket whose range holds this
+            // value" — a stronger statement than any step rule, and one the
+            // sparse probes above 256 cannot break.
+            assert!(index >= previous, "{micros} went backwards to {index}");
+            // The bucket a value falls in must be able to hold it.
+            assert!(
+                bucket_ceiling(index) >= micros,
+                "bucket {index} holds {micros} but its ceiling is {}",
+                bucket_ceiling(index)
+            );
+            // And the bucket below it must not.
+            if index > 0 {
+                assert!(
+                    bucket_ceiling(index - 1) < micros,
+                    "{micros} belongs one bucket lower"
+                );
+            }
+            previous = previous.max(index);
+        }
+        assert_eq!(
+            bucket_of(u64::MAX),
+            BUCKETS - 1,
+            "the array is exactly big enough and no bigger"
+        );
+    }
+
+    /// The width claim in `SUB_BITS`'s own doc comment, checked.
+    ///
+    /// Written because "within +12.5%" is the sentence an operator reads a p99
+    /// through, and a number in a comment that nothing checks is a number that
+    /// drifts when somebody changes `SUB_BITS`.
+    #[test]
+    fn a_bucket_is_never_more_than_an_eighth_wider_than_its_floor() {
+        // From `SUB` up: below it every bucket holds exactly one value, so
+        // the error there is zero and the ratio below is not what says so.
+        for index in (SUB as usize)..BUCKETS {
+            let floor = bucket_ceiling(index - 1) + 1;
+            let ceiling = bucket_ceiling(index);
+            if ceiling == u64::MAX - 1 {
+                continue; // The saturating top bucket, which has no true width.
+            }
+            let width = ceiling - floor + 1;
+            assert!(
+                width * SUB <= floor,
+                "bucket {index} spans {floor}..={ceiling}, wider than an eighth of its floor"
+            );
+        }
+    }
+
+    /// One field's milliseconds, read back out of a summary line.
+    ///
+    /// The tests below go through `record` and `summary` rather than calling
+    /// `Method::quantile` and filling buckets by hand. That is not fussiness:
+    /// the first version of them wrote buckets directly, and a mutation
+    /// removing the bucket increment from `record` altogether **survived** —
+    /// every quantile fell through to the `slowest` fallback, which on those
+    /// samples was a plausible number. A test that builds the state it then
+    /// measures is testing arithmetic, not a feature.
+    fn field(summary: &str, name: &str) -> f64 {
+        let rest = summary
+            .split_once(name)
+            .unwrap_or_else(|| panic!("no `{name}` in:\n{summary}"))
+            .1;
+        let millis = rest
+            .split_once("ms")
+            .unwrap_or_else(|| panic!("`{name}` has no unit in:\n{summary}"))
+            .0;
+        millis
+            .parse()
+            .unwrap_or_else(|_| panic!("`{name}` is not a number: {millis:?}"))
+    }
+
+    #[test]
+    fn a_quantile_is_the_nearest_rank_and_never_under_the_truth() {
+        let counters = Counters::default();
+        // A hundred samples at 1..=100 ms, so every quantile has a known
+        // answer and the bucketing is the only thing that can move it.
+        for millis in 1..=100u64 {
+            counters.record("/x", Duration::from_millis(millis), false);
+        }
+        let summary = counters.summary().expect("a method was called");
+        for (name, truth) in [
+            ("p50_head<=", 50.0f64),
+            ("p90_head<=", 90.0),
+            ("p99_head<=", 99.0),
+        ] {
+            let reported = field(&summary, name);
+            assert!(
+                reported >= truth,
+                "{name} reported {reported}ms, under the true {truth}ms:\n{summary}"
+            );
+            assert!(
+                reported <= truth * 1.125,
+                "{name} reported {reported}ms, more than an eighth over {truth}ms:\n{summary}"
+            );
+        }
+    }
+
+    /// The rank is the `ceil(q * n)`-th sample and not the one after it.
+    ///
+    /// Written because a mutation flipping `>=` to `>` in the sweep survived
+    /// the even spread above: one sample either way is well inside the 12.5%
+    /// the bucketing already costs, so the spread cannot see the difference.
+    /// A distribution with a cliff in it can. Ninety-nine samples at 1 ms and
+    /// one at a second: the true p99 is the 99th sample, which is 1 ms, and an
+    /// answer one sample later is a *thousand* times bigger.
+    #[test]
+    fn a_quantile_falls_on_the_rank_and_not_one_past_it() {
+        let counters = Counters::default();
+        for _ in 0..99 {
+            counters.record("/x", Duration::from_millis(1), false);
+        }
+        counters.record("/x", Duration::from_secs(1), false);
+        let summary = counters.summary().expect("a method was called");
+        assert!(
+            field(&summary, "p99_head<=") <= 1.2,
+            "the p99 of these is the 99th sample, which is 1ms:\n{summary}"
+        );
+        // And the outlier is not lost — it is what `slowest` is for, and a p99
+        // that reported it would be the mutation this test exists for.
+        assert!(
+            (field(&summary, "slowest_head=") - 1000.0).abs() < 0.1,
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn a_quantile_never_exceeds_the_observed_slowest() {
+        // The clamp, and the reason for it: 4 ms lands in a bucket whose
+        // ceiling is 4.095 ms, so an unclamped p99 of these two samples would
+        // print above a `slowest_head` computed exactly — which reads as a bug
+        // in the summary rather than as the rounding it is.
+        let counters = Counters::default();
+        counters.record("/x", Duration::from_millis(2), false);
+        counters.record("/x", Duration::from_millis(4), false);
+        let summary = counters.summary().expect("a method was called");
+        assert!(summary.contains("p99_head<=4.0ms"), "{summary}");
+        assert!(summary.contains("slowest_head=4.0ms"), "{summary}");
+    }
+
+    #[test]
+    fn a_method_with_no_calls_has_no_quantile() {
+        assert_eq!(Method::default().quantile(50, 100), None);
     }
 
     #[test]
