@@ -480,6 +480,7 @@ impl Join {
         }
         validate_compute(
             &schema,
+            &[left, right],
             &self.compute,
             &format!("`{}` joined to `{}`", left.name(), right.name()),
         )?;
@@ -550,7 +551,12 @@ pub(crate) fn computed_values(flat: &Row, compute: &[Scalar]) -> Vec<Value> {
 /// message, because the fixes are different: one past everything is a typo, and
 /// one naming a *later* computed value is an ordering mistake the caller can
 /// fix by reordering the list.
-pub(crate) fn validate_compute(schema: &JoinSchema, compute: &[Scalar], at: &str) -> Result<()> {
+pub(crate) fn validate_compute(
+    schema: &JoinSchema,
+    tables: &[&TableDef],
+    compute: &[Scalar],
+    at: &str,
+) -> Result<()> {
     let columns = schema.columns();
     for (index, scalar) in compute.iter().enumerate() {
         let available = columns + index;
@@ -576,6 +582,16 @@ pub(crate) fn validate_compute(schema: &JoinSchema, compute: &[Scalar], at: &str
             return Err(KernelError::JoinNotSupported { reason });
         }
     }
+    // Same function, same rules, in the joined ordinal space. It lives inside
+    // `validate_compute` rather than beside its two call sites so that a third
+    // path — a fourth `Scalar` attachment point, whatever it turns out to be —
+    // cannot get the ordinal check and miss the scale check. The single-table
+    // path calls `check_scales` directly because it has no `JoinSchema`.
+    let column_scale = |ordinal: Ordinal| {
+        let (position, at) = schema.locate(ordinal)?;
+        tables.get(position)?.column(at).and_then(ColumnDef::scale)
+    };
+    crate::scalar::check_scales(at, columns, &column_scale, compute)?;
     Ok(())
 }
 

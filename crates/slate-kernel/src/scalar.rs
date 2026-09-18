@@ -25,6 +25,7 @@
 //! predicate language already uses: a computed null compared to anything is
 //! [`Truth::Unknown`](crate::Truth), which admits nothing.
 
+use crate::error::KernelError;
 use crate::expr::{Columns, Expr};
 use slate_schema::Ordinal;
 use slate_tuple::Value;
@@ -487,10 +488,81 @@ arithmetic_op!(Sub, sub, Sub);
 arithmetic_op!(Mul, mul, Mul);
 arithmetic_op!(Div, div, Div);
 
+/// The one scale a list of operands agrees on, or `None` if they disagree.
+///
+/// `Some(None)` is "none of them is a decimal", `Some(Some(s))` is "all the
+/// decimals among them are at scale `s`", and `None` is a disagreement. The
+/// nesting is ugly and the alternative — a three-state enum used in two
+/// places — was uglier.
+fn agree(scales: &[Option<u8>]) -> Option<Option<u8>> {
+    let mut seen: Option<u8> = None;
+    for scale in scales.iter().flatten() {
+        match seen {
+            None => seen = Some(*scale),
+            Some(first) if first == *scale => {}
+            Some(_) => return None,
+        }
+    }
+    Some(seen)
+}
+
+/// Refuse every computed expression in `compute` whose decimal result has no
+/// scale to be at.
+///
+/// # Why a list rather than one expression at a time
+///
+/// Because a computed value may read an *earlier* computed value, and the
+/// scale of that one is not in any schema — it is whatever
+/// [`Scalar::decimal_scale`] said about the expression that produced it. So
+/// the scales are worked out left to right and each expression is checked
+/// against the columns plus the answers already given.
+///
+/// Doing this one expression at a time, with a `scale_of` that knows only the
+/// table, would report `price + computed_price` as "a decimal added to a plain
+/// number" — a refusal of something that is perfectly well defined. That was
+/// the first version and the test that caught it is
+/// `compute_reading_an_earlier_computed_decimal`.
+///
+/// `columns` is where the table's own ordinals stop and the computed ones
+/// begin; `column_scale` answers for the ordinals below it.
+///
+/// # Errors
+/// [`KernelError::DecimalScale`], from the first expression that has no scale.
+pub(crate) fn check_scales(
+    at: &str,
+    columns: usize,
+    column_scale: &dyn Fn(Ordinal) -> Option<u8>,
+    compute: &[Scalar],
+) -> Result<(), KernelError> {
+    if compute.is_empty() {
+        return Ok(());
+    }
+    let mut computed: Vec<Option<u8>> = Vec::with_capacity(compute.len());
+    for expression in compute {
+        let scale_of = |ordinal: Ordinal| {
+            if ordinal.0 < columns {
+                column_scale(ordinal)
+            } else {
+                // An ordinal past the computed values this far is out of range
+                // and has its own refusal elsewhere; here it is simply not a
+                // decimal, which is what an unreadable ordinal evaluates to.
+                computed.get(ordinal.0 - columns).copied().flatten()
+            }
+        };
+        let scale = expression.decimal_scale(at, &scale_of)?;
+        computed.push(scale);
+    }
+    Ok(())
+}
+
 /// One side of an arithmetic operation, once it is known to be a number.
 enum Number {
     Int(i64),
     Real(f64),
+    /// A count of a decimal column's smallest unit. The scale is not here —
+    /// it is the column's — which is exactly why the rules in [`decimal_op`]
+    /// are what they are.
+    Units(i64),
 }
 
 fn number(value: &Value) -> Option<Number> {
@@ -498,7 +570,81 @@ fn number(value: &Value) -> Option<Number> {
         Value::I64(v) => Some(Number::Int(*v)),
         Value::U64(v) => i64::try_from(*v).ok().map(Number::Int),
         Value::F64(v) => Some(Number::Real(*v)),
+        Value::Decimal(v) => Some(Number::Units(*v)),
         _ => None,
+    }
+}
+
+/// Which arithmetic operation is being applied, for the decimal rules.
+///
+/// The four ops share [`arithmetic`] because on integers and reals they differ
+/// only by the closure. Decimals are the case where they do not: multiplying
+/// two decimals changes the scale and adding them does not, so the operation
+/// has to be nameable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// Arithmetic where at least one side is a decimal.
+///
+/// # Why this is not just "convert to the widest type"
+///
+/// A [`Value::Decimal`] is a count of the column's smallest unit and carries no
+/// scale. So the question for every operation is not "what type comes out" but
+/// **"is the answer still a count of the same unit?"** — because if it is not,
+/// there is nowhere to put the new scale. Nothing on the wire carries one,
+/// nothing in a `Row` carries one, and a computed column that silently changed
+/// scale would be a number a hundred times wrong with no error anywhere.
+///
+/// That question has a clean answer per operation:
+///
+/// - **`units ± units` keeps the unit.** 1250 + 250 cents is 1500 cents.
+/// - **`units × n` keeps the unit** for a whole number `n`. Twelve items at
+///   1250 cents is 15000 cents — which is `price * quantity`, the example the
+///   README has carried as a gap since decimals were built.
+/// - **`units ÷ n` keeps the unit**, truncating toward zero. See below.
+/// - **`units × units` does not.** Scale 2 times scale 2 is scale 4, and there
+///   is no scale 4 to write it into.
+/// - **anything with a float does not**, because the whole point of the type
+///   is that it is not a float.
+///
+/// The refusals are enforced at plan time by [`Scalar::decimal_scale`], which
+/// can see the schema. This function is the evaluator, which cannot, so it
+/// returns `Null` for the cases that check refuses rather than inventing an
+/// answer — belt and braces, not the real guard.
+///
+/// # Truncation, stated rather than assumed
+///
+/// `units ÷ n` truncates *toward zero*, which is `i64`'s `/`. A 999-cent total
+/// split three ways is 333 each and a cent unaccounted for. Rounding half away
+/// from zero was considered and rejected: it makes the parts sum to more than
+/// the whole as often as not, and a caller splitting money wants to see the
+/// remainder rather than have it invented. `Scalar::round` exists for callers
+/// who want the other behaviour on a float.
+fn decimal_op(op: Op, a: &Number, b: &Number) -> Value {
+    match (op, a, b) {
+        (Op::Add, Number::Units(x), Number::Units(y)) => {
+            x.checked_add(*y).map_or(Value::Null, Value::Decimal)
+        }
+        (Op::Sub, Number::Units(x), Number::Units(y)) => {
+            x.checked_sub(*y).map_or(Value::Null, Value::Decimal)
+        }
+        (Op::Mul, Number::Units(x), Number::Int(y))
+        | (Op::Mul, Number::Int(x), Number::Units(y)) => {
+            x.checked_mul(*y).map_or(Value::Null, Value::Decimal)
+        }
+        (Op::Div, Number::Units(x), Number::Int(y)) => {
+            x.checked_div(*y).map_or(Value::Null, Value::Decimal)
+        }
+        // Every remaining shape is one `decimal_scale` refuses: two decimals
+        // multiplied or divided, a decimal against a float, an integer divided
+        // by a decimal. `Null` rather than a panic because this is a per-row
+        // path and the real refusal happened before the scan started.
+        _ => Value::Null,
     }
 }
 
@@ -509,6 +655,7 @@ fn number(value: &Value) -> Option<Number> {
 /// saturates rather than wrapping: a sum that is too large is better reported
 /// as the largest thing than as a small negative one.
 fn arithmetic(
+    which: Op,
     a: &Value,
     b: &Value,
     op: fn(i64, i64) -> Option<i64>,
@@ -516,10 +663,20 @@ fn arithmetic(
 ) -> Value {
     match (number(a), number(b)) {
         (Some(Number::Int(x)), Some(Number::Int(y))) => op(x, y).map_or(Value::Null, Value::I64),
+        // Before the widening arm below, and that order is the whole point: a
+        // decimal widened to `f64` would come back as a float, which is the
+        // silent loss the type exists to prevent.
+        (Some(x), Some(y)) if matches!(x, Number::Units(_)) || matches!(y, Number::Units(_)) => {
+            decimal_op(which, &x, &y)
+        }
         (Some(x), Some(y)) => {
             let to_f = |n: Number| match n {
                 Number::Int(v) => v as f64,
                 Number::Real(v) => v,
+                // Unreachable: the arm above catches every pair with a
+                // decimal in it. Mapped rather than panicked so a future
+                // variant cannot turn a query into a crash.
+                Number::Units(v) => v as f64,
             };
             Value::F64(real(to_f(x), to_f(y)))
         }
@@ -622,6 +779,309 @@ impl Scalar {
         }
     }
 
+    /// The scale this expression's value is at, if it is a decimal at all.
+    ///
+    /// `Ok(None)` means "not a decimal" — an integer, a string, a timestamp,
+    /// anything the scale question does not apply to. `Ok(Some(s))` means a
+    /// count of a unit at scale `s`. An error means the expression *is* about
+    /// decimals and its result has no scale to be at; see
+    /// [`KernelError::DecimalScale`] for why that is a refusal rather than an
+    /// answer.
+    ///
+    /// # Why this exists, and why it is here and not in the evaluator
+    ///
+    /// The evaluator sees a [`Row`](slate_schema::Row) and no schema, so it
+    /// cannot know that ordinal 3 is scale 2. The schema is what knows, and
+    /// the schema is available exactly once — when a query is planned against
+    /// a table. So the refusals happen there, before a row is read, and
+    /// `decimal_op` in the evaluator is belt and braces.
+    ///
+    /// # The rule, in one sentence
+    ///
+    /// An expression is expressible when its answer is still a count of the
+    /// *same* unit its operands were counts of.
+    ///
+    /// # `scale_of`
+    ///
+    /// Maps an ordinal to its scale, or `None` for a column that is not a
+    /// decimal. A closure rather than a `&TableDef` because the ordinals a
+    /// joined query computes over span two tables, and the caller is the only
+    /// thing that knows which side an ordinal fell on.
+    ///
+    /// # Errors
+    /// [`KernelError::DecimalScale`], naming the operation and what to write
+    /// instead.
+    pub fn decimal_scale(
+        &self,
+        at: &str,
+        scale_of: &dyn Fn(Ordinal) -> Option<u8>,
+    ) -> Result<Option<u8>, KernelError> {
+        let refuse = |what: &str, why: &str| {
+            Err(KernelError::DecimalScale {
+                at: at.to_owned(),
+                what: what.to_owned(),
+                why: why.to_owned(),
+            })
+        };
+        match self {
+            Self::Column(ordinal) => Ok(scale_of(*ordinal)),
+            // Every literal, a decimal one included, is *scale-agnostic* —
+            // which is the same thing a numeric literal is in SQL.
+            // `Value::Decimal(100)` is a hundred units, and which number that
+            // stands for is the column's business, so `price + Decimal(100)`
+            // is scale 2 because `price` is.
+            //
+            // A separate `Literal(Value::Decimal(_))` arm was here first,
+            // returning the same `Ok(None)` so that the comment had somewhere
+            // to sit. Deleting it changed no test, because the catch-all
+            // already answered identically — an equivalent mutation, and a
+            // second arm nobody could break is a second arm that can drift.
+            // What actually makes a decimal literal special is
+            // `mentions_decimal`, which is how `Decimal(1) + Decimal(2)` —
+            // a decimal at a scale nobody stated — is told apart from `1 + 2`.
+            Self::Literal(_) => Ok(None),
+
+            Self::Add(a, b) | Self::Sub(a, b) => {
+                let (x, y) = (
+                    a.decimal_scale(at, scale_of)?,
+                    b.decimal_scale(at, scale_of)?,
+                );
+                match (x, y, self.mentions_decimal(scale_of)) {
+                    // Neither side is a decimal: ordinary arithmetic, and the
+                    // scale question does not arise.
+                    (None, None, false) => Ok(None),
+                    (Some(p), Some(q), _) if p == q => Ok(Some(p)),
+                    (Some(p), Some(q), _) => refuse(
+                        "adding or subtracting decimals at different scales",
+                        &format!(
+                            "one side is at scale {p} and the other at scale {q}, and the \
+                             result would be a count of neither unit; rescale one of them \
+                             in the caller, where the intended scale is known"
+                        ),
+                    ),
+                    // One side is a decimal column and the other is a bare
+                    // literal or another decimal-agnostic term: it adopts the
+                    // column's scale.
+                    (Some(p), None, _) | (None, Some(p), _) if self.other_side_is_agnostic() => {
+                        Ok(Some(p))
+                    }
+                    (Some(_), None, _) | (None, Some(_), _) => refuse(
+                        "adding or subtracting a decimal and a number that is not one",
+                        "an integer or a float beside a decimal has no unit, so the sum \
+                         would be a count of nothing; write the other side as a decimal, \
+                         whose value is a count of the column's smallest unit",
+                    ),
+                    (None, None, true) => refuse(
+                        "adding or subtracting decimals with no column to take a scale from",
+                        "both sides are literals, so there is no column to say what unit \
+                         they count; compare or combine against a decimal column",
+                    ),
+                }
+            }
+
+            Self::Mul(a, b) => {
+                let (x, y) = (
+                    a.decimal_scale(at, scale_of)?,
+                    b.decimal_scale(at, scale_of)?,
+                );
+                // Which side *mentions* a decimal, separately from which side
+                // has a scale. A decimal literal has no scale of its own and
+                // is still money, and `Add` has always asked this — `Mul` and
+                // `Div` did not, which is how `price * Decimal(3)` came to
+                // plan cleanly and evaluate to null on every row. See
+                // `money_times_a_decimal_literal_is_refused_not_nulled`.
+                let (ma, mb) = (a.mentions_decimal(scale_of), b.mentions_decimal(scale_of));
+                let literal_units = "one side is a decimal literal, which counts the other \
+                     side's smallest unit rather than whole things — so this is units times \
+                     units, at a scale nothing carries. Multiply by a whole number instead";
+                match (x, y) {
+                    (Some(p), Some(q)) => refuse(
+                        "multiplying two decimals",
+                        &format!(
+                            "scale {p} times scale {q} is scale {}, and nothing in a row, \
+                             an index entry or the protocol carries a scale — so the \
+                             answer would be a number {} times wrong with no error \
+                             anywhere. Multiply by a whole number instead",
+                            u32::from(p) + u32::from(q),
+                            10u64.saturating_pow(u32::from(q.min(18)))
+                        ),
+                    ),
+                    // `price * quantity`: a whole number of things at a price
+                    // is still a count of the same unit.
+                    (Some(p), None) if !mb => Ok(Some(p)),
+                    (None, Some(p)) if !ma => Ok(Some(p)),
+                    (Some(_), None) | (None, Some(_)) => {
+                        refuse("multiplying two decimals", literal_units)
+                    }
+                    (None, None) if !ma && !mb => Ok(None),
+                    (None, None) => refuse("multiplying two decimals", literal_units),
+                }
+            }
+
+            Self::Div(a, b) => {
+                let (x, y) = (
+                    a.decimal_scale(at, scale_of)?,
+                    b.decimal_scale(at, scale_of)?,
+                );
+                // The same two questions `Mul` asks, for the same reason:
+                // `price / Decimal(4)` divides by four *hundredths*, not by
+                // four, and used to plan as the second one.
+                let (ma, mb) = (a.mentions_decimal(scale_of), b.mentions_decimal(scale_of));
+                let literal_units = "the denominator is a decimal literal, which counts the \
+                     numerator's smallest unit rather than whole parts — so the answer is a \
+                     ratio, not a count of anything. Divide by a whole number instead";
+                match (x, y) {
+                    (Some(p), Some(q)) => refuse(
+                        "dividing one decimal by another",
+                        &format!(
+                            "scale {p} over scale {q} is a ratio, which is not a count of \
+                             any unit; divide by a whole number instead"
+                        ),
+                    ),
+                    (None, Some(_)) => refuse(
+                        "dividing by a decimal",
+                        "a count of units in the denominator gives an answer in no unit \
+                         at all; divide by a whole number instead",
+                    ),
+                    // `total / parts`, truncating toward zero. See `decimal_op`.
+                    (Some(p), None) if !mb => Ok(Some(p)),
+                    (Some(_), None) => refuse("dividing by a decimal", literal_units),
+                    (None, None) if !ma && !mb => Ok(None),
+                    (None, None) => refuse("dividing by a decimal", literal_units),
+                }
+            }
+
+            // Rounding a decimal means rounding *to its scale*, and `round`
+            // returns an `i64` — so the answer would be either the units
+            // unchanged (a no-op dressed as a rounding) or a number this
+            // function cannot compute. Refused rather than given one of those.
+            Self::Round(value) => match value.decimal_scale(at, scale_of)? {
+                None => Ok(None),
+                Some(_) => refuse(
+                    "rounding a decimal",
+                    "`round` yields an integer, and rounding a decimal to a whole number \
+                     means dividing by its scale — which this expression cannot see. \
+                     Divide by the scale explicitly if that is what was meant",
+                ),
+            },
+
+            // A decimal has no characters, no case and no calendar. These
+            // already evaluate to null for one; the refusal says so at plan
+            // time instead, which is the difference between "no rows" and "you
+            // wrote something that cannot mean anything".
+            Self::Length(inner) | Self::Lower(inner) | Self::Upper(inner) => {
+                match inner.decimal_scale(at, scale_of)? {
+                    None => Ok(None),
+                    Some(_) => refuse(
+                        "a string function over a decimal",
+                        "a decimal is a number, not text",
+                    ),
+                }
+            }
+            Self::Extract { value, .. }
+            | Self::CalendarPart { value, .. }
+            | Self::CalendarTrunc { value, .. }
+            | Self::DateTrunc { value, .. }
+            | Self::ZoneShift { value, .. } => match value.decimal_scale(at, scale_of)? {
+                None => Ok(None),
+                Some(_) => refuse(
+                    "a calendar function over a decimal",
+                    "a timestamp here is seconds since the epoch, as an `i64`; a decimal \
+                     is a count of a currency-like unit and is not one",
+                ),
+            },
+
+            // Every branch has to agree, for the reason two sides of an `Add`
+            // do: the column that results has one scale, and a `CASE` that
+            // produced scale 2 for some rows and scale 4 for others would be a
+            // column whose meaning varied by row.
+            Self::Case {
+                branches,
+                otherwise,
+            } => {
+                let mut scales = Vec::with_capacity(branches.len() + 1);
+                for (_, then) in branches {
+                    scales.push(then.decimal_scale(at, scale_of)?);
+                }
+                scales.push(otherwise.decimal_scale(at, scale_of)?);
+                agree(&scales).map_or_else(
+                    || {
+                        refuse(
+                            "a `case` whose branches are decimals at different scales",
+                            "the column it produces has one scale, so its meaning would \
+                             vary by row",
+                        )
+                    },
+                    Ok,
+                )
+            }
+            Self::Coalesce(parts) => {
+                let mut scales = Vec::with_capacity(parts.len());
+                for part in parts {
+                    scales.push(part.decimal_scale(at, scale_of)?);
+                }
+                agree(&scales).map_or_else(
+                    || {
+                        refuse(
+                            "a `coalesce` of decimals at different scales",
+                            "the column it produces has one scale, so its meaning would \
+                             vary by row",
+                        )
+                    },
+                    Ok,
+                )
+            }
+
+            // Not decimals, and their arguments cannot usefully be: a distance
+            // is between vectors and a replacement is over text. Left to the
+            // evaluator's existing nulls rather than given a refusal apiece,
+            // because neither has a form where a decimal is plausible enough
+            // for a caller to have meant it.
+            Self::Concat(_) | Self::Distance { .. } | Self::RegexpReplace { .. } => Ok(None),
+        }
+    }
+
+    /// Whether either side of a two-sided operator mentions a decimal at all,
+    /// including a bare literal one.
+    ///
+    /// `decimal_scale` returns `None` for a literal decimal because a literal
+    /// adopts the scale beside it. That makes "neither side is a decimal" and
+    /// "both sides are scale-agnostic decimal literals" indistinguishable from
+    /// its return value alone, and the second is a refusal.
+    fn mentions_decimal(&self, scale_of: &dyn Fn(Ordinal) -> Option<u8>) -> bool {
+        match self {
+            Self::Literal(Value::Decimal(_)) => true,
+            Self::Column(ordinal) => scale_of(*ordinal).is_some(),
+            Self::Add(a, b) | Self::Sub(a, b) | Self::Mul(a, b) | Self::Div(a, b) => {
+                a.mentions_decimal(scale_of) || b.mentions_decimal(scale_of)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether one side of a sum is a bare decimal literal, which takes its
+    /// scale from the other side.
+    ///
+    /// This was written recursively, so that an expression built only from
+    /// decimal literals counted too — `price + (Decimal(1) + Decimal(2))`.
+    /// The recursion is unreachable: `decimal_scale` works bottom up, so the
+    /// inner sum is asked first, has two scale-agnostic sides and no column,
+    /// and is refused there. A mutation flipping the recursive `&&` to `||`
+    /// changed no test, which is what said the arm was dead; it is gone rather
+    /// than left for someone to maintain.
+    ///
+    /// Anything more structured than a literal — a `case` whose branches are
+    /// all decimal literals, say — is *not* agnostic here, and a sum with one
+    /// is refused. Conservative on purpose: the refusal says to write the
+    /// other side as a decimal, and a caller can always hoist the literal.
+    fn other_side_is_agnostic(&self) -> bool {
+        let agnostic = |side: &Self| matches!(side, Self::Literal(Value::Decimal(_)));
+        match self {
+            Self::Add(a, b) | Self::Sub(a, b) => agnostic(a) || agnostic(b),
+            _ => false,
+        }
+    }
+
     /// Compute this over a row.
     #[must_use]
     pub fn evaluate<C: Columns + ?Sized>(&self, row: &C) -> Value {
@@ -629,18 +1089,21 @@ impl Scalar {
             Self::Column(ordinal) => row.value(*ordinal).cloned().unwrap_or(Value::Null),
             Self::Literal(value) => value.clone(),
             Self::Add(a, b) => arithmetic(
+                Op::Add,
                 &a.evaluate(row),
                 &b.evaluate(row),
                 i64::checked_add,
                 |x, y| x + y,
             ),
             Self::Sub(a, b) => arithmetic(
+                Op::Sub,
                 &a.evaluate(row),
                 &b.evaluate(row),
                 i64::checked_sub,
                 |x, y| x - y,
             ),
             Self::Mul(a, b) => arithmetic(
+                Op::Mul,
                 &a.evaluate(row),
                 &b.evaluate(row),
                 i64::checked_mul,
@@ -650,6 +1113,7 @@ impl Scalar {
             // over a million rows should not fail because one of them held a
             // zero.
             Self::Div(a, b) => arithmetic(
+                Op::Div,
                 &a.evaluate(row),
                 &b.evaluate(row),
                 i64::checked_div,
@@ -696,6 +1160,16 @@ impl Scalar {
                 // An integer is already rounded. Going through `f64` would
                 // lose precision above 2^53, silently, for a no-op.
                 Some(Number::Int(n)) => Value::I64(n),
+                // Null rather than the units, and rather than a guess at the
+                // number they stand for. `round` returns an `i64` so that a
+                // group key does not depend on float equality; rounding a
+                // decimal means rounding *to its scale*, which this function
+                // cannot see — `Decimal(1250)` at scale 2 rounds to 13 and at
+                // scale 0 to 1250, and answering one of those would be wrong
+                // half the time. `Scalar::decimal_scale` refuses it at plan
+                // time and says so; this arm is what the evaluator does with
+                // one that got past a caller who built the expression by hand.
+                Some(Number::Units(_)) => Value::Null,
                 Some(Number::Real(x)) => {
                     // `f64::round` is halves-away-from-zero, which is what SQL
                     // and ClickHouse's `round` do at the default precision.

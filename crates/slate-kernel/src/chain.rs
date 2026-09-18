@@ -521,6 +521,7 @@ impl Chain {
         let names: Vec<&str> = tables.iter().map(|t| t.name()).collect();
         validate_compute(
             schema,
+            tables,
             &self.compute,
             &format!("the chain `{}`", names.join("` ⋈ `")),
         )?;

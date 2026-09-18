@@ -15,6 +15,7 @@ use crate::keys;
 use crate::limits::ExecutionLimits;
 use crate::plan::{Plan, Projection, plan_hinted};
 use crate::query::{AccessHint, Query};
+use crate::scalar::Scalar;
 use crate::security::{Action, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
@@ -486,6 +487,14 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<Plan> {
         self.security.authorize(context, table, Action::Read)?;
+        // In `plan` rather than in `execute`, because the answer is "this
+        // expression has no scale to be at" and that is a fact about the
+        // query, not about any row — so `explain` should refuse it too. A plan
+        // that explains cleanly and then fails on the first row is the gap
+        // this repository keeps finding, and putting the check here is also
+        // what makes a join's and a chain's *per-table* queries checked: both
+        // plan each side through this function.
+        check_decimal_scales(table, &query.compute)?;
         // A comparison between two columns of different types would order by
         // type rather than by value and answer the same way for every row.
         // Only the new variant can trip this, so no query that planned before
@@ -1008,6 +1017,32 @@ impl<'a> SecuredReads<'a> {
         .await?;
         Ok(cursor.with_window(query.limit, query.offset))
     }
+}
+
+/// Refuse a computed expression whose decimal result has no scale.
+///
+/// The ordinals a computed expression names are the table's own, because this
+/// is called per *table*: once for a single-table read, once per side of a
+/// join, once per step of a chain — every one of which is planned through
+/// [`SecuredReads::plan`], which is the only call site.
+///
+/// A join's and a chain's own `compute` is in the joined space instead and is
+/// checked by `join::validate_compute`, beside the ordinal check it already
+/// did. Two call sites, five attachment points, and neither can be reached
+/// without passing one of them.
+pub(crate) fn check_decimal_scales(table: &TableDef, compute: &[Scalar]) -> Result<()> {
+    let column_scale = |ordinal: Ordinal| {
+        table
+            .columns()
+            .get(ordinal.0)
+            .and_then(slate_schema::ColumnDef::scale)
+    };
+    Ok(crate::scalar::check_scales(
+        table.name(),
+        table.columns().len(),
+        &column_scale,
+        compute,
+    )?)
 }
 
 /// Scan rows of `table` over `range`, with no policy applied.

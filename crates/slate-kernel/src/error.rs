@@ -289,6 +289,33 @@ pub enum KernelError {
         right: slate_schema::Ordinal,
     },
 
+    /// An expression over a decimal column whose result has no scale to be at.
+    ///
+    /// A [`Value::Decimal`](slate_tuple::Value::Decimal) is a count of the
+    /// column's smallest unit and carries no scale of its own — the scale is
+    /// the column's. So an expression is only expressible when its answer is
+    /// still a count of *the same* unit: `units ± units` at one scale,
+    /// `units × n` and `units ÷ n` for a whole number `n`.
+    ///
+    /// Everything else is refused here rather than answered. Multiplying two
+    /// scale-2 values gives scale 4, and there is nowhere to write a 4 —
+    /// nothing in a row, an index entry or the protocol carries a scale, so
+    /// the answer would be a number a hundred times wrong with no error
+    /// anywhere. Mixing a decimal with a float is the same loss by another
+    /// route.
+    ///
+    /// Refused at plan time, before a row is read, because the schema is what
+    /// knows the scales and the evaluator does not.
+    #[error("{what} on `{at}`: {why}")]
+    DecimalScale {
+        /// Where the expression was written: a table, or a join of two.
+        at: String,
+        /// The operation, as a caller would recognise it.
+        what: String,
+        /// Why its result has no scale, and what to write instead.
+        why: String,
+    },
+
     /// A hash join's build side outgrew the memory it was allowed.
     ///
     /// Almost always a join condition that does not relate the two tables.
