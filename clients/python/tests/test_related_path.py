@@ -119,19 +119,19 @@ def test_a_whole_path_is_one_request_however_many_parents(client: Client) -> Non
     session = client.session()
 
     calls = 0
-    original = client._conn.stub.Related  # noqa: SLF001
+    original = client._conn.stub.Related
 
     def counting(*args: object, **kwargs: object) -> object:
         nonlocal calls
         calls += 1
         return original(*args, **kwargs)
 
-    client._conn.stub.Related = counting  # type: ignore[method-assign]  # noqa: SLF001
+    client._conn.stub.Related = counting
     try:
         many = [u64(210 + (n % 2)) for n in range(50)]
         trees = session.related_path(many, path())
     finally:
-        client._conn.stub.Related = original  # type: ignore[method-assign]  # noqa: SLF001
+        client._conn.stub.Related = original
 
     assert calls == 1, f"{len(many)} parents over two levels cost {calls} requests"
     assert len(trees) == len(many)

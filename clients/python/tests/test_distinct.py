@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from slate import Agg, AggregateQuery, Client, Query
 
+from .conftest import as_int
 from .fixture import DOCS
 
 
@@ -50,7 +51,7 @@ def test_asking_for_an_aggregate_still_gets_one(oracle_client: Client) -> None:
 
     groups = list(oracle_client.aggregate(a))
     assert all(len(g) == 1 for g in groups), [list(g) for g in groups]
-    assert sum(int(g.aggregate(0)) for g in groups) == len(
+    assert sum(as_int(g.aggregate(0)) for g in groups) == len(
         list(oracle_client.query(Query(DOCS)))
     )
 
@@ -62,9 +63,9 @@ def test_neither_keys_nor_aggregates_is_still_refused(oracle_client: Client) -> 
     and the client must not paper over it — a caller who meant `Query` should
     find out here rather than get an empty group back.
     """
-    from slate import InvalidRequest
-
     import pytest
+
+    from slate import InvalidRequest
 
     a = AggregateQuery(DOCS)
     with pytest.raises(InvalidRequest) as caught:

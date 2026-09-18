@@ -31,8 +31,8 @@ call site, and populates `served_by` before the first row.
 
 from __future__ import annotations
 
-import dataclasses
 import contextlib
+import dataclasses
 import random
 import time
 import types
@@ -47,7 +47,6 @@ from .errors import Conflict, InvalidRequest, SlateError, from_batch_error, from
 from .freshness import Freshness, ReadToken, ServedBy, Watermark
 from .query import (
     AggregateQuery,
-    Atomicity,
     Batch,
     DeleteWhere,
     GroupedJoinQuery,

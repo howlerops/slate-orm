@@ -92,9 +92,11 @@ def test_a_silent_server_is_a_deadline_rather_than_a_hang(silent_port: int) -> N
 def test_the_deadline_reaches_a_streaming_call_too(silent_port: int) -> None:
     """`query` streams and `get` does not, and they are separate lines in
     `_Ops` — one of them carrying the timeout is not both."""
-    with Client(f"127.0.0.1:{silent_port}", timeout=GRACE) as client:
-        with pytest.raises(DeadlineExceeded):
-            list(client.query(Query(DOCS)))
+    with (
+        Client(f"127.0.0.1:{silent_port}", timeout=GRACE) as client,
+        pytest.raises(DeadlineExceeded),
+    ):
+        list(client.query(Query(DOCS)))
 
 
 def test_a_call_with_no_deadline_does_not_return(silent_port: int) -> None:
@@ -110,7 +112,7 @@ def test_a_call_with_no_deadline_does_not_return(silent_port: int) -> None:
     def call() -> None:
         try:
             client.get(DOCS, [1])
-        except BaseException:  # noqa: BLE001 - see below
+        except BaseException:
             # Swallowed, and it matters. The thread outlives the test: when the
             # module fixture closes the listener, the blocked call finally
             # fails, and an exception escaping a thread pytest is watching is

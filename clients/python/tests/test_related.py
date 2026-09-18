@@ -27,6 +27,7 @@ import pytest
 
 from slate import Client, Identity, Query, u64
 from slate.errors import PermissionDenied
+from slate.rows import Row
 
 from .conftest import Serving, connect
 from .fixture import LIBRARIES, SHELVES
@@ -58,7 +59,7 @@ def _seeded(server: Serving) -> None:
         )
 
 
-def _labels(groups: list[list]) -> list[list[str]]:
+def _labels(groups: list[list[Row]]) -> list[list[str]]:
     return [[str(row.get("label")) for row in group] for group in groups]
 
 
@@ -129,19 +130,19 @@ def test_it_is_one_request_however_many_parents(client: Client) -> None:
     session = client.session()
 
     calls = 0
-    original = client._conn.stub.Related  # noqa: SLF001
+    original = client._conn.stub.Related
 
     def counting(*args: object, **kwargs: object) -> object:
         nonlocal calls
         calls += 1
         return original(*args, **kwargs)
 
-    client._conn.stub.Related = counting  # type: ignore[method-assign]  # noqa: SLF001
+    client._conn.stub.Related = counting
     try:
         many = [u64(10 + (n % 2)) for n in range(50)]
         got = session.related(SHELVES, many, through="shelf_library", on=SHELVES)
     finally:
-        client._conn.stub.Related = original  # type: ignore[method-assign]  # noqa: SLF001
+        client._conn.stub.Related = original
 
     assert calls == 1, f"{len(many)} parents cost {calls} requests"
     assert len(got) == len(many)

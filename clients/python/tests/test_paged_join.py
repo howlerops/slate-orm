@@ -22,15 +22,39 @@ rows would not move — and the caller would ask for the same page forever.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+
 import pytest
 
-from slate import Client, JoinQuery, JoinType, u64
+from slate import JoinQuery, JoinType, Session, u64
 from slate.errors import InvalidRequest
+from slate.rows import JoinedRow
+from slate.values import PyValue
 
-from .conftest import Serving, connect
+from .conftest import Serving, as_int, connect
 from .fixture import AUTHORS, BOOKS
 
-def ids(row: object, inputs: int) -> tuple[int, ...]:
+
+def pair(row: JoinedRow) -> tuple[int, int]:
+    """`ids` for a two-input join, at a fixed arity.
+
+    `ids` is the general one and returns `tuple[int, ...]`, which is exactly
+    right and is not assignable to the `tuple[int, int]` these sets and dicts
+    are keyed on. Unpacking here rather than widening the containers, because
+    the arity is a property of the fixture and saying it out loud is what makes
+    a row of the wrong width a failure instead of a key that never matches.
+    """
+    left, right = ids(row, 2)
+    return (left, right)
+
+
+def triple(row: JoinedRow) -> tuple[int, int, int]:
+    """`pair`, for the three-input chain."""
+    one, two, three = ids(row, 3)
+    return (one, two, three)
+
+
+def ids(row: JoinedRow, inputs: int) -> tuple[int, ...]:
     """Each input's `id`, which is column 1 of a tenant-scoped key.
 
     A `JoinedRow` is a sequence of its inputs' rows, so `row[n]` is input n —
@@ -38,11 +62,11 @@ def ids(row: object, inputs: int) -> tuple[int, ...]:
     These fixtures are inner joins, so a `None` here is a bug rather than a
     case, and it is asserted rather than silently indexed.
     """
-    out = []
+    out: list[int] = []
     for at in range(inputs):
-        inner = row[at]  # type: ignore[index]
+        inner = row[at]
         assert inner is not None, f"input {at} was absent from an inner join"
-        out.append(inner[1])
+        out.append(as_int(inner[1]))
     return tuple(out)
 
 
@@ -78,7 +102,7 @@ def _seeded(server: Serving) -> None:
     client.close()
 
 
-def paged(cursor: list[object] | None, size: int) -> JoinQuery:
+def paged(cursor: Sequence[PyValue] | None, size: int) -> JoinQuery:
     """Authors joined to their books, restricted to this test's authors."""
     join = JoinQuery()
     authors = join.add(AUTHORS)
@@ -90,14 +114,18 @@ def paged(cursor: list[object] | None, size: int) -> JoinQuery:
     return join.limit(size).after(cursor)
 
 
-def walk(session: object, size: int, between: object = None) -> list[tuple[int, int]]:
+def walk(
+    session: Session,
+    size: int,
+    between: Callable[[int], None] | None = None,
+) -> list[tuple[int, int]]:
     """Every page, start to finish, as (author id, book id) pairs."""
     seen: list[tuple[int, int]] = []
-    cursor: list[object] | None = None
+    cursor: Sequence[PyValue] | None = None
     for round_ in range(100):
-        page = session.page_join(paged(cursor, size))  # type: ignore[attr-defined]
+        page = session.page_join(paged(cursor, size))
         for row in page.rows:
-            seen.append(ids(row, 2))
+            seen.append(pair(row))
         if page.is_last:
             break
         cursor = page.cursor
@@ -152,7 +180,7 @@ def test_paging_under_concurrent_inserts_visits_each_row_once(
     client = connect(server)
     session = client.session()
     before = {
-        ids(row, 2)
+        pair(row)
         for row in session.join(paged(None, 10_000).limit(None).after(None))
     }
 
@@ -190,7 +218,7 @@ def test_a_page_whose_authors_have_no_books_still_advances(server: Serving) -> N
     """
     client = connect(server)
     session = client.session()
-    cursor: list[object] | None = [u64(TENANT), u64(LAST - 1)]
+    cursor: Sequence[PyValue] | None = [u64(TENANT), u64(LAST - 1)]
     pages = 0
     for _ in range(20):
         page = session.page_join(paged(cursor, 1))
@@ -255,7 +283,7 @@ def test_paging_a_chain_reproduces_the_whole_chain(server: Serving) -> None:
     client = connect(server)
     session = client.session()
 
-    def chain(cursor: list[object] | None, size: int | None) -> JoinQuery:
+    def chain(cursor: Sequence[PyValue] | None, size: int | None) -> JoinQuery:
         join = JoinQuery()
         authors = join.add(AUTHORS)
         books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
@@ -265,18 +293,13 @@ def test_paging_a_chain_reproduces_the_whole_chain(server: Serving) -> None:
         authors.where((authors.c.id >= u64(FIRST)) & (authors.c.id <= u64(LAST)))
         return join.limit(size).after(cursor)
 
-    whole = sorted(
-        (ids(row, 3))
-        for row in session.join(chain(None, None))
-    )
+    whole = sorted(triple(row) for row in session.join(chain(None, None)))
 
     seen: list[tuple[int, int, int]] = []
-    cursor: list[object] | None = None
+    cursor: Sequence[PyValue] | None = None
     for _ in range(100):
         page = session.page_join(chain(cursor, 2))
-        seen.extend(
-            (ids(row, 3)) for row in page.rows
-        )
+        seen.extend(triple(row) for row in page.rows)
         if page.is_last:
             break
         cursor = page.cursor

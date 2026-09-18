@@ -40,10 +40,10 @@ from .values import PyValue, to_value
 __all__ = [
     "CalendarPart",
     "CalendarUnit",
-    "as_scalar",
     "Metric",
     "Scalar",
     "TimeUnit",
+    "as_scalar",
     "calendar_part",
     "calendar_trunc",
     "case",

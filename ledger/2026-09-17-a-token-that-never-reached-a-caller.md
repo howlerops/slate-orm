@@ -135,6 +135,11 @@ reading that block rather than by trusting the dry run, then proved by deleting
 stashing. It is also not run anywhere in CI, which is why nobody has seen them.
 Not fixed here: it is a separate change and pretending otherwise would bury it.
 
+> **Since closed**, in `2026-09-18-the-python-checks-that-were-installed-and-
+> never-run.md`. `client.py`'s five are gone and CI runs `mypy` and
+> `ruff check` on this package before its suite. The count under `tests/` was
+> 53 rather than the 43 estimated here.
+
 **Ten mutations, two survivors, both now killed.**
 
 | mutation | result |

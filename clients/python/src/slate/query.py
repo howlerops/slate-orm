@@ -50,7 +50,6 @@ __all__ = [
     "Atomicity",
     "Batch",
     "DeleteWhere",
-    "UpdateWhere",
     "GroupedJoinQuery",
     "JoinAlgorithm",
     "JoinInput",
@@ -60,6 +59,7 @@ __all__ = [
     "Query",
     "ScanOrder",
     "SortKey",
+    "UpdateWhere",
     "asc",
     "desc",
 ]

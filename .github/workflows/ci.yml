@@ -152,6 +152,20 @@ jobs:
       - run: chmod +x bin/slate-testserver
       - run: pip install -e '.[dev]'
         working-directory: clients/python
+      # Before the suite, and as separate steps, on purpose. `pyproject.toml`
+      # has said since this package was written that "a type error in this
+      # package is a test failure, not a lint" and that a ruff finding is
+      # treated the same way — and nothing ran either, for months. Both tools
+      # were in `[dev]` and therefore installed by the line above and then
+      # never invoked, which is the most expensive way to not have a check.
+      #
+      # Separate steps rather than one `&&` so the log names which one failed
+      # without anybody reading it, and *before* the suite because they take
+      # seconds and the suite takes minutes.
+      - run: python -m mypy
+        working-directory: clients/python
+      - run: python -m ruff check .
+        working-directory: clients/python
       - run: python -m pytest -q
         working-directory: clients/python
         env:

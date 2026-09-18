@@ -18,17 +18,18 @@ from slate import Agg, AggregateQuery, Client, Query, asc
 from slate.scalar import (
     CalendarPart,
     calendar_part,
-    month_start,
     day_of_month,
     day_of_week,
     lit,
     month,
+    month_start,
     round_,
     year,
     year_start,
 )
 from slate.values import i64
 
+from .conftest import as_int
 from .fixture import DOCS
 
 #: Turns `size` (5, 15, ... 65) into instants from 1977 to 2072, which spans
@@ -45,7 +46,7 @@ def _instants() -> list[int]:
 
 
 def _utc(seconds: int) -> datetime.datetime:
-    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+    return datetime.datetime.fromtimestamp(seconds, datetime.UTC)
 
 
 def test_calendar_parts_agree_with_pythons_own_calendar(client: Client) -> None:
@@ -87,7 +88,7 @@ def test_day_of_month_is_not_the_day_of_the_epoch(client: Client) -> None:
     q = Query(DOCS)
     q.compute(day_of_month(q.c.size * i64(SPREAD)))
     q.sort(asc(q.c.id))
-    days = [row.computed(0) for row in client.query(q)]
+    days = [as_int(row.computed(0)) for row in client.query(q)]
     assert all(1 <= day <= 31 for day in days), days
     assert days == [_utc(s).day for s in _instants()]
 
@@ -121,8 +122,10 @@ def test_a_calendar_part_can_be_a_group_key(client: Client) -> None:
     a.group_by(a.computed(0))
     a.aggregate(Agg.count())
     groups = list(client.aggregate(a))
-    assert sorted(g.key[0] for g in groups) == sorted({_utc(s).year for s in _instants()})
-    assert sum(g.aggregate(0) for g in groups) == len(SIZES)
+    assert sorted(as_int(g.key[0]) for g in groups) == sorted(
+        {_utc(s).year for s in _instants()}
+    )
+    assert sum(as_int(g.aggregate(0)) for g in groups) == len(SIZES)
 
 
 def test_a_fixed_offset_is_addition_and_needs_no_new_builder(client: Client) -> None:
@@ -182,7 +185,7 @@ def test_calendar_truncation_agrees_with_pythons_own_calendar(client: Client) ->
     q.group_by(q.computed(0), q.computed(1))
     q.aggregate(Agg.count())
 
-    got = {(int(g.key[0]), int(g.key[1])) for g in client.aggregate(q)}
+    got = {(as_int(g.key[0]), as_int(g.key[1])) for g in client.aggregate(q)}
     want = set()
     for seconds in _instants():
         when = _utc(seconds)
@@ -219,7 +222,7 @@ def test_truncation_floors_rather_than_rounding(client: Client) -> None:
     q.group_by(q.computed(0), q.computed(1))
     q.aggregate(Agg.count())
     for group in client.aggregate(q):
-        instant, boundary = int(group.key[0]), int(group.key[1])
+        instant, boundary = as_int(group.key[0]), as_int(group.key[1])
         assert boundary <= instant, f"{boundary} is after {instant}"
         # And within 31 days of it, which says it is *this* month's boundary
         # rather than some earlier one.

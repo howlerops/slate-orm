@@ -19,17 +19,20 @@ from slate import (
     AlreadyExists,
     Atomicity,
     Batch,
+    BatchOutcome,
     Client,
     DeleteWhere,
     InvalidRequest,
     Query,
     Table,
     UpdateWhere,
+    WriteResult,
     i64,
     u64,
 )
+from slate.values import PyValue
 
-from .conftest import Serving, connect
+from .conftest import Serving, as_int, connect
 from .fixture import DOCS
 
 #: Ids well clear of every other module's.
@@ -47,10 +50,25 @@ def _clean(server: Serving) -> None:
 
 def _mine(client: Client) -> list[int]:
     q = Query(DOCS)
-    return sorted(row.get("id") for row in client.query(q.where(q.c.kind.eq(KIND))))
+    return sorted(
+        as_int(row.get("id")) for row in client.query(q.where(q.c.kind.eq(KIND)))
+    )
 
 
-def _row(n: int) -> tuple:
+def _written(outcome: BatchOutcome) -> WriteResult:
+    """The `WriteResult` of an outcome that must have succeeded.
+
+    `BatchOutcome.written` is `None` on a failed operation and `ok` is a
+    separate property, so a checker cannot see that asserting one narrows the
+    other. This says it once, and says it by *asserting* rather than casting:
+    a test that expected a success and got a failure fails here naming the
+    error, instead of on an attribute of `None` three lines later.
+    """
+    assert outcome.written is not None, f"the operation failed: {outcome.error!r}"
+    return outcome.written
+
+
+def _row(n: int) -> tuple[PyValue, ...]:
     return (u64(FIRST + n), KIND, i64(n), None)
 
 
@@ -78,7 +96,7 @@ def test_an_independent_batch_applies_every_operation(client: Client) -> None:
 
     assert len(result) == 5, "one outcome per operation"
     assert all(one.ok for one in result.outcomes)
-    assert [one.written.affected for one in result.outcomes] == [1] * 5
+    assert [_written(one).affected for one in result.outcomes] == [1] * 5
     assert result.sequence is not None
     assert _mine(client) == [FIRST + n for n in range(5)]
 
@@ -147,11 +165,14 @@ def test_a_batch_carries_every_kind_of_write(client: Client) -> None:
 
     assert [one.ok for one in result.outcomes] == [True] * 5
     # The delete_where asked for its rows and got them; ids 5 and 6.
-    removed = result.outcomes[3].written
+    removed = _written(result.outcomes[3])
     assert removed.affected == 2
-    assert sorted(row.get("id") for row in removed.rows) == [FIRST + 5, FIRST + 6]
+    assert sorted(as_int(row.get("id")) for row in removed.rows) == [
+        FIRST + 5,
+        FIRST + 6,
+    ]
     # The update_where touched what was left and returned it.
-    touched = result.outcomes[4].written
+    touched = _written(result.outcomes[4])
     assert touched.affected == 4
     assert all(row.get("note") == "touched" for row in touched.rows)
     assert _mine(client) == [FIRST + n for n in (1, 2, 3, 4)]
@@ -180,8 +201,8 @@ def test_a_batch_may_span_tables(client: Client) -> None:
     result = client.batch(b)
 
     assert [one.ok for one in result.outcomes] == [True, True]
-    assert result.outcomes[0].written.affected == 1
-    removed = result.outcomes[1].written
+    assert _written(result.outcomes[0]).affected == 1
+    removed = _written(result.outcomes[1])
     assert removed.affected == 1
     # `email` exists on `users` and not on `docs`. A row decoded against the
     # wrong table reads a different column here, or none.
@@ -217,8 +238,10 @@ def test_the_schema_claim_rides_on_a_batched_write(client: Client) -> None:
 
 
 def test_an_atomic_batch_joins_an_open_transaction(client: Client) -> None:
-    with pytest.raises(RuntimeError, match="rolled back on purpose"):
-        with client.transaction() as txn:
+    with (
+        pytest.raises(RuntimeError, match="rolled back on purpose"),
+        client.transaction() as txn,
+    ):
             b = Batch(Atomicity.ALL_OR_NOTHING)
             for n in range(3):
                 b.insert(DOCS, [_row(n)])

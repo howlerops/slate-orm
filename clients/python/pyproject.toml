@@ -44,14 +44,31 @@ dev = [
   # same change so the diff shows what the new version did.
   "grpcio-tools==1.83.1",
   "mypy-protobuf==5.1.0",
-  "mypy>=1.10",
+  # Pinned for the same reason, arrived at the same way. `strict` turns on
+  # `warn_unused_ignores`, so a `# type: ignore` is an error when it is missing
+  # *and* an error when it is no longer needed — and which ignores are needed
+  # is a property of the checker's version, not of this code. Four of them in
+  # `tests/` were required when written and became "unused" on a later mypy,
+  # with nothing in this repository changed. A floating `>=` therefore fails
+  # this package on upstream's release calendar in both directions.
+  #
+  # Raising it is a deliberate act: bump the pin, run `python -m mypy`, and
+  # fix or remove whatever the new version says in the same change.
+  "mypy==2.3.1",
   "pytest>=8",
   # A hanging stream is worse than a failing one: it stalls the suite and
   # says nothing. Every RPC here is loopback against an in-memory store.
   "pytest-timeout>=2",
   # Lint. In this package a lint finding is treated the same way a type error
-  # is: the suite is not green until both are.
-  "ruff>=0.6",
+  # is: the suite is not green until both are — which became true rather than
+  # aspirational when CI started running them.
+  #
+  # Pinned, for the reason the two above are. `select` names rule *families*
+  # (`RUF`, `B`, `SIM`, …), so a new ruff release adds rules to this package's
+  # configuration without anybody editing it, and the first anyone knows is a
+  # red build on a commit that touched nothing. Bump it deliberately and fix
+  # what the new rules say in the same change.
+  "ruff==0.16.7",
 ]
 
 [tool.setuptools]

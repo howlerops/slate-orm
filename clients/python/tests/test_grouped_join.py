@@ -31,6 +31,7 @@ from slate import (
     upper,
 )
 
+from .conftest import as_int, as_str
 from .fixture import AUTHORS, BOOKS, SALES
 from .oracle import tag_group
 
@@ -299,11 +300,13 @@ def test_both_kinds_of_computed_value_come_back_on_a_join(client: Client) -> Non
 
         # The join's, on the joined row, because they may read every input.
         assert len(row.computed_values) == 1, row
-        assert row.computed(0) == f"{left.get('name')}/{right.get('title')}"
+        assert row.computed(0) == (
+            f"{as_str(left.get('name'))}/{as_str(right.get('title'))}"
+        )
 
         # Each input's own, on that input's row, because they read only it.
         assert left.computed_values == (str(left.get("name")).upper(),), left
-        assert right.computed_values == (int(right.get("year")) // 10 * 10,), right
+        assert right.computed_values == (as_int(right.get("year")) // 10 * 10,), right
 
     # And asking for one the join did not compute says so, rather than
     # returning an input's value or an empty tuple's worth of nothing.
@@ -345,7 +348,8 @@ def test_a_chains_computed_value_reads_every_input(client: Client) -> None:
         assert left is not None and middle is not None and right is not None
         assert len(row.computed_values) == 1, row
         assert row.computed(0) == (
-            f"{left.get('name')}/{middle.get('title')}/{right.get('book_id')}"
+            f"{as_str(left.get('name'))}/{as_str(middle.get('title'))}"
+            f"/{as_int(right.get('book_id'))}"
         )
 
 
@@ -384,7 +388,7 @@ def test_grouping_a_chain_by_a_value_the_chain_computes(client: Client) -> None:
     for row in client.join(rows_join):
         books_row = row[1]
         assert books_row is not None
-        decade = int(books_row.get("year")) // 10 * 10
+        decade = as_int(books_row.get("year")) // 10 * 10
         wanted[decade] = wanted.get(decade, 0) + 1
 
     got = {int(g["key"][0][1]): int(g["values"][0][1]) for g in groups}

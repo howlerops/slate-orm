@@ -18,11 +18,14 @@ refusal the caller has to understand, and
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
-from slate import Client, Query, SlateError, i64, u64
+from slate import Client, Page, Query, SlateError, i64, u64
+from slate.values import PyValue
 
-from .conftest import Serving, connect
+from .conftest import Serving, as_int, connect
 from .fixture import DOCS
 
 #: A hard stop on every paging loop below.
@@ -55,13 +58,13 @@ def _seeded(server: Serving) -> None:
     )
 
 
-def _page_query(limit: int, cursor: list | None = None) -> Query:
+def _page_query(limit: int, cursor: Sequence[PyValue] | None = None) -> Query:
     q = Query(DOCS)
     return q.where(q.c.kind.eq("page")).limit(limit).after(cursor)
 
 
-def _ids(page) -> list[int]:
-    return [row.get("id") for row in page.rows]
+def _ids(page: Page) -> list[int]:
+    return [as_int(row.get("id")) for row in page.rows]
 
 
 def test_a_full_page_carries_a_cursor(client: Client) -> None:

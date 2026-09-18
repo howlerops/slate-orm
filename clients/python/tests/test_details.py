@@ -147,7 +147,7 @@ def test_from_rpc_error_carries_the_token_onto_the_exception() -> None:
     decoder test and was caught only by the conformance runner, which is a slow
     and indirect way to learn that one client stopped filling one field.
     """
-    error = from_rpc_error(_FakeCall(BLOB))  # type: ignore[arg-type]
+    error = from_rpc_error(_FakeCall(BLOB))
     assert error.reason == "PREDICATE_WRITE_TOO_LARGE"
     # Unchanged by carrying a token: the class, and the text trailers.
     assert isinstance(error, ResourceLimit)
@@ -155,5 +155,5 @@ def test_from_rpc_error_carries_the_token_onto_the_exception() -> None:
 
 
 def test_a_failure_with_no_details_has_the_empty_token() -> None:
-    error = from_rpc_error(_FakeCall(b""))  # type: ignore[arg-type]
+    error = from_rpc_error(_FakeCall(b""))
     assert error.reason == ""

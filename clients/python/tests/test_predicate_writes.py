@@ -21,9 +21,20 @@ from __future__ import annotations
 
 import pytest
 
-from slate import Client, DeleteWhere, Query, SlateError, Table, UpdateWhere, i64, u64
+from slate import (
+    Client,
+    DeleteWhere,
+    Query,
+    SlateError,
+    Table,
+    UpdateWhere,
+    WriteResult,
+    i64,
+    u64,
+)
+from slate.expr import Expr
 
-from .conftest import Serving, connect
+from .conftest import Serving, as_int, connect
 from .fixture import DOCS
 
 #: Ids well clear of every other module's, so these tests see exactly their own
@@ -60,14 +71,14 @@ def _mine(client: Client) -> list[int]:
     """The ids this module seeded that are still there."""
     q = Query(DOCS)
     rows = list(client.query(q.where(q.c.kind.eq(MINE))))
-    return sorted(row.get("id") for row in rows)
+    return sorted(as_int(row.get("id")) for row in rows)
 
 
-def _ids(result) -> list[int]:
-    return [row.get("id") for row in result.rows]
+def _ids(result: WriteResult) -> list[int]:
+    return [as_int(row.get("id")) for row in result.rows]
 
 
-def _where(predicate) -> DeleteWhere:
+def _where(predicate: Expr) -> DeleteWhere:
     return DeleteWhere(DOCS).where(predicate)
 
 
@@ -183,8 +194,10 @@ def test_a_column_assigned_twice_is_refused(client: Client) -> None:
 
 
 def test_a_predicate_write_rolls_back_with_its_transaction(client: Client) -> None:
-    with pytest.raises(RuntimeError, match="rolled back on purpose"):
-        with client.transaction() as txn:
+    with (
+        pytest.raises(RuntimeError, match="rolled back on purpose"),
+        client.transaction() as txn,
+    ):
             w = DeleteWhere(DOCS)
             result = txn.delete_where(w.where(w.c.kind.eq(MINE)).returning())
             assert result.affected == COUNT

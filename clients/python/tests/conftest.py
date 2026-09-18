@@ -51,6 +51,7 @@ from typing import Any
 import pytest
 
 from slate import Client, Identity
+from slate.values import PyValue
 
 HERE = pathlib.Path(__file__).resolve().parent
 PYTHON_ROOT = HERE.parent
@@ -302,3 +303,38 @@ def oracle_client(oracle_server: Serving) -> Iterator[Client]:
 def stale_client(stale_server: Serving) -> Iterator[Client]:
     with connect(stale_server) as connected:
         yield connected
+
+
+def as_int(value: PyValue) -> int:
+    """Narrow a read-back column to `int`, asserting rather than casting.
+
+    `Row.get` returns the whole `PyValue` union, because a column outside a
+    projection comes back as `None` and the column's declared type is not
+    something the row carries. Under `strict` that union cannot be sorted,
+    compared or put in a `list[int]`, and every test in this package that reads
+    an `id` back wants exactly that.
+
+    A `cast` would satisfy mypy and check nothing. This asserts, so a column
+    that comes back as the wrong type — the decoder bug these tests exist to
+    find — fails here with the value in the message, instead of surfacing as a
+    confusing comparison further down. `bool` is excluded on purpose: it is an
+    `int` to Python and never the answer to "what is this row's id".
+    """
+    assert isinstance(value, int) and not isinstance(value, bool), (
+        f"expected an integer column, got {value!r}"
+    )
+    return value
+
+
+def as_str(value: PyValue) -> str:
+    """Narrow a read-back column to `str`, asserting rather than casting.
+
+    The `as_int` argument, for the other type these tests interpolate. This one
+    is not only about the checker: `f"{value}"` on a `bytes` column produces
+    `b'...'` rather than the text, so a test comparing an interpolated column
+    against a server-computed string would fail with a message that looks like
+    a computation bug and is really a decoding one. Asserting here names the
+    actual problem.
+    """
+    assert isinstance(value, str), f"expected a text column, got {value!r}"
+    return value

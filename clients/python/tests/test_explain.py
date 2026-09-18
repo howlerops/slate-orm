@@ -168,7 +168,7 @@ def test_explaining_a_grouped_join_is_not_explaining_the_join(
     assert grouped.input is None, "the one-table field stays unset for a join"
     assert len(grouped.join.inputs) == len(plain.inputs)
 
-    widths = [(p.plan.decodes, g.plan.decodes) for p, g in zip(plain.inputs, grouped.join.inputs)]
+    widths = [(p.plan.decodes, g.plan.decodes) for p, g in zip(plain.inputs, grouped.join.inputs, strict=True)]
     for at, (wide, narrow) in enumerate(widths):
         assert len(narrow) <= len(wide), f"grouping widened input {at}: {wide} -> {narrow}"
     assert any(len(narrow) < len(wide) for wide, narrow in widths), (
