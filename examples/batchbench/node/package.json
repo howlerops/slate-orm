@@ -1,0 +1,9 @@
+{
+  "name": "batchbench",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": { "bench": "tsc -p . && node dist/bench.js" },
+  "dependencies": { "@slate-orm/client": "file:../../../clients/typescript" },
+  "devDependencies": { "@types/node": "^22.10.0", "typescript": "^5.7.0" }
+}

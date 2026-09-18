@@ -704,7 +704,32 @@ difference, because the difference is the only thing a batch has to teach.
 *Stops at.* The demo. No new server surface comes out of this item; if one is
 needed, that is a finding and belongs in its own entry.
 
-### N6 — The numbers nothing here measures
+### N6 — The numbers nothing here measures — **built**
+
+> **Done**, and the first claim came back the *opposite* way round.
+> `examples/batchbench` runs 100 single inserts against one batch of 100, five
+> runs, once per client, against one head node. Python **31.6×**, Go **21.4×**,
+> TypeScript **34.0×** — against the Rust wire test's 15×.
+>
+> **The prediction below is withdrawn.** It said a client's multiplier would be
+> *smaller* than the wire's because clients add per-request work a batch does
+> not save. The arithmetic was backwards: that work is per *request*, so it
+> multiplies the one-at-a-time arm by a hundred and the batched arm by one, and
+> widens the gap. A client pays more per round trip than `tonic` does, which is
+> why saving round trips is worth more to a client and not less.
+>
+> **The cap question, decided from the number rather than guessed.** The
+> default cap is 1,000 operations; a batch that size is ~30 ms of the measured
+> work, and the refused round trip that a client-side check would save is one
+> RPC — about 1 ms, or 3% of it. Three percent does not buy a client-side copy
+> of a server-configurable limit: two numbers that can disagree is a client
+> refusing a batch a differently configured server would have taken, which is a
+> worse failure than a wasted millisecond. Left server-side, as this item
+> allowed.
+>
+> *Stops at* writes on a loopback. Reads are not measured, and the absolute
+> numbers are the conservative end because a loopback makes the round trip a
+> batch saves as cheap as it ever gets.
 
 Two claims currently rest on inference:
 

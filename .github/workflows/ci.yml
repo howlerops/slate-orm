@@ -377,6 +377,47 @@ jobs:
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
+  # The batch benchmark, run rather than asserted.
+  #
+  # It reports numbers and checks none of them: a wall-clock threshold on a
+  # shared runner is a flake waiting for a slow morning, which is why the Rust
+  # benchmark reports rather than asserts and why this does too. What CI is for
+  # here is the other half — a benchmark nobody runs stops building, and then
+  # its numbers are quietly from whatever the code looked like last time
+  # somebody tried. This proves it still runs against the current tree.
+  #
+  # A small N, because the shape is what is being kept alive and not the
+  # number. The recorded figures in `docs/performance.md` are from a hundred
+  # rows on a quiet machine, and say so.
+  batchbench:
+    name: batching, from a client
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: examples/batchbench/go/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-node
+          path: bin
+      - run: chmod +x bin/slate-serverd
+      - run: pip install -e clients/python
+      - run: npm ci
+        working-directory: clients/typescript
+      - run: ./run.sh --rows 20 --runs 2
+        working-directory: examples/batchbench
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
   # The release build, called rather than copied.
   #
   # Compiles `slate-serverd` for both release targets, installs the aarch64

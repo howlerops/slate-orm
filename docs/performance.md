@@ -925,6 +925,51 @@ or of the record layer. It is `flush_interval`, and a deployment that writes
 row-at-a-time durably should be looking at that setting before anything in this
 repository.
 
+### 3b. The same question from a client, where the answer is *bigger*
+
+Section 3 is a Rust wire test: it goes through `tonic` and nothing else. Every
+README sentence saying "a batch is a round trip" was a claim about the three
+SDKs resting on a measurement that had never gone through one.
+`examples/batchbench` is that measurement — 100 single inserts against one
+batch of 100, five runs, against one head node on memory storage.
+
+| client | one row at a time | in one batch | ratio |
+|---|---:|---:|---:|
+| Python | 969.6 µs [925.9 – 1038.4] | 30.7 µs [29.7 – 31.8] | **31.6×** |
+| Go | 763.4 µs [733.9 – 772.3] | 35.7 µs [33.8 – 36.1] | **21.4×** |
+| TypeScript | 1155.8 µs [1114.7 – 1768.2] | 34.0 µs [33.5 – 64.6] | **34.0×** |
+
+**The hypothesis this was built to test was wrong, and in the direction that
+matters.** `docs/orm-comparison.md` predicted a *smaller* multiplier from a
+client than from the wire:
+
+> The clients add per-request work batching does not save — schema claims,
+> value encoding, per-operation table resolution — so their multiplier is
+> smaller by an unknown amount.
+
+Measured, it is larger: 21–34× against section 3's 15×. The reasoning had the
+arithmetic backwards. That per-request work is *per request*, so it multiplies
+the one-at-a-time arm by a hundred and the batched arm by one — it widens the
+gap rather than narrowing it. A client pays more per round trip than `tonic`
+does, which is exactly why saving round trips is worth more to a client, not
+less. **The prediction is withdrawn.**
+
+The absolute numbers are the loopback's, so they are the conservative end: the
+round trip a batch saves is cheapest here and costs more over a network.
+
+**The cap question, decided from the number.** The item asked whether a client
+should check `max_batch_operations` before sending, and said to decide from the
+measurement rather than guess. The default cap is 1,000 operations. A batch of
+1,000 costs about 30 ms of the numbers above; a refused round trip costs one
+RPC, which is the single-insert column — about 1 ms. So the refusal is **about
+3% of the work the batch would have done**, paid once, at the moment a caller
+discovers their batch is too big.
+
+Three percent does not buy a client-side copy of a server-configurable limit.
+Two numbers that can disagree is a client refusing a batch a differently
+configured server would have taken, which is a worse failure than a wasted
+millisecond. **Left server-side**, as the item allowed for.
+
 ### 4. Routing is free; the freshness wait is the manifest poll
 
 Three following replicas over the same object store, `manifest_poll_interval`

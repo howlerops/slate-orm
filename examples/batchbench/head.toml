@@ -1,0 +1,29 @@
+# A head node with one table, for the batch benchmark and nothing else.
+#
+# Its own config rather than the demo's: the demo's tables carry foreign keys
+# and RLS policies, and a write benchmark measuring those would be measuring
+# them rather than the round trip it is about. One table, one index, no
+# constraints — so the difference between the two arms is the request count.
+
+[listen]
+address = "127.0.0.1:7451"
+
+[auth]
+mode = "trusted-header"
+
+[storage]
+backend = "memory"
+
+[[tables]]
+name = "bench"
+id = 1
+columns = [
+  { name = "id",   type = "u64" },
+  { name = "name", type = "str" },
+]
+primary_key = ["id"]
+
+[[security.grants]]
+role = "app"
+tables = ["bench"]
+actions = ["everything"]
