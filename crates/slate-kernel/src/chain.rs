@@ -314,6 +314,10 @@ pub struct Chain {
     pub offset: usize,
     /// Rows an accumulated result may hold at any step.
     pub build_limit: usize,
+    /// Resume after this first-table primary key. See [`Chain::after`].
+    pub after: Option<Vec<Value>>,
+    /// Whether this chain will be resumed from a cursor. See [`Chain::paging`].
+    pub paging: bool,
     /// Extra values computed per chain row, appended after *every* table's
     /// columns.
     ///
@@ -347,6 +351,8 @@ impl Chain {
             offset: 0,
             build_limit: DEFAULT_BUILD_LIMIT,
             compute: Vec::new(),
+            after: None,
+            paging: false,
         }
     }
 
@@ -374,6 +380,38 @@ impl Chain {
     #[must_use]
     pub const fn offset(mut self, offset: usize) -> Self {
         self.offset = offset;
+        self
+    }
+
+    /// Resume after the first table's row with this primary key.
+    ///
+    /// The same design [`Join::after`](crate::Join::after) uses, and simpler
+    /// here: a chain already materialises each step from the first table's
+    /// rows, so the first step *is* the driving scan. The cursor is the first
+    /// table's primary key, [`Chain::limit`] counts first-table rows, and
+    /// every chain row those rows produce comes back with them.
+    ///
+    /// Applying the limit to the first read rather than to the finished chain
+    /// is also the only version that makes paging a chain *cheaper*: truncating
+    /// at the end still walks every step over every row.
+    ///
+    /// Refuses a right- or full-outer step, whose preserved rows have no first
+    /// table and so belong to no page; an `offset` alongside the cursor; and a
+    /// page with no limit. See `docs/paging-a-join.md`.
+    #[must_use]
+    pub fn after(mut self, first_key: impl Into<Vec<Value>>) -> Self {
+        self.after = Some(first_key.into());
+        self.paging = true;
+        self
+    }
+
+    /// Declare that this chain will be resumed, without resuming one yet.
+    ///
+    /// So the first page raises the refusals the second one would, rather than
+    /// the caller learning on page two that page one was never resumable.
+    #[must_use]
+    pub const fn paging(mut self) -> Self {
+        self.paging = true;
         self
     }
 
@@ -604,6 +642,9 @@ pub struct ChainCursor {
     /// What each step actually accumulated, alongside what it was expected to.
     counts: Vec<usize>,
     yielded: usize,
+    /// The primary key of the last row the *first* step read — the page's
+    /// boundary. See [`Chain::after`].
+    page_end: Option<Vec<Value>>,
 }
 
 impl core::fmt::Debug for ChainCursor {
@@ -649,6 +690,73 @@ impl ChainCursor {
     pub fn schema(&self) -> &JoinSchema {
         &self.schema
     }
+
+    /// The primary key of the last row the first step read, if paging.
+    ///
+    /// A chain materialises, so unlike a join's this is known before any row
+    /// is handed out — there is no lookahead to converge.
+    #[must_use]
+    pub fn page_end(&self) -> Option<&[Value]> {
+        self.page_end.as_deref()
+    }
+
+    /// How many rows the first step read.
+    ///
+    /// The page size is the first step's limit, so a caller tells a full page
+    /// from a short one by comparing against it. `counts[0]` is the same
+    /// number; this names it for the one caller that means *the page*.
+    #[must_use]
+    pub fn driving_rows(&self) -> usize {
+        self.counts.first().copied().unwrap_or(0)
+    }
+}
+
+/// Turn a paged chain into the chain that actually runs, or say why it cannot.
+///
+/// The same rewrite [`crate::read::paged_join`] performs, one level up and
+/// with less to do: a chain's first step is already the driving scan, so the
+/// window moves from the finished chain onto `first` and nothing else changes.
+fn paged_chain(chain: &Chain, first_table: &TableDef) -> Result<Chain> {
+    if !chain.paging {
+        return Ok(chain.clone());
+    }
+    let refuse = |reason: &str| {
+        Err(KernelError::InvalidCursor {
+            table: first_table.name().to_owned(),
+            reason: reason.to_owned(),
+        })
+    };
+    // A step preserving its own side invents a chain row with no first-table
+    // row, which is in no first-table page.
+    if let Some(at) = chain
+        .steps
+        .iter()
+        .position(|step| step.join_type.preserves(crate::join::Side::Right))
+    {
+        return refuse(&format!(
+            "step {} is a right or full outer join, which keeps rows that match nothing earlier              in the chain — and a page of a chain is a page of its first table, so those rows              belong to no page",
+            at + 1,
+        ));
+    }
+    if chain.offset != 0 {
+        return refuse(
+            "counting and keying are the two ways to say where a page starts, and this request              carries both. Drop the offset",
+        );
+    }
+    let Some(limit) = chain.limit else {
+        return refuse("a page needs a size, and a chain with no limit is the whole chain");
+    };
+
+    let mut paged = chain.clone();
+    paged.first.limit = Some(limit);
+    paged.first.after = chain.after.clone();
+    paged.first.paging = true;
+    // Truncating the finished chain to the same number would cut the last
+    // first-table row's matches in half, which is the fan-out bug this exists
+    // to avoid — and would also walk every step over every row first, which is
+    // the cost it exists to avoid.
+    paged.limit = None;
+    Ok(paged)
 }
 
 /// Run a chain. Called through [`crate::read::SecuredReads`], which is what
@@ -662,15 +770,27 @@ pub(crate) async fn run<'a>(
     schema: Arc<JoinSchema>,
 ) -> Result<ChainCursor> {
     let first = *table_at(tables, 0)?;
+    let chain = &paged_chain(chain, first)?;
+    let started = reads
+        .execute(context, first, &chain.first)
+        .await?
+        .collect()
+        .await?;
+    // The boundary is taken from the rows the first step *read*, before any
+    // step can drop one: under an inner step a first-table row that matches
+    // nothing produces no chain row, and a page whose rows all matched nothing
+    // would otherwise come back empty and with no advanced cursor — a caller
+    // looping forever.
+    let page_end = chain
+        .paging
+        .then(|| {
+            started
+                .last()
+                .map(|row| row.primary_key_values(first).to_vec())
+        })
+        .flatten();
     let mut accumulated = Accumulated {
-        rows: reads
-            .execute(context, first, &chain.first)
-            .await?
-            .collect()
-            .await?
-            .into_iter()
-            .map(ChainRow::start)
-            .collect(),
+        rows: started.into_iter().map(ChainRow::start).collect(),
     };
     let mut counts = vec![accumulated.rows.len()];
     check_size(&accumulated, chain.build_limit, first)?;
@@ -719,6 +839,7 @@ pub(crate) async fn run<'a>(
         schema,
         counts,
         yielded: 0,
+        page_end,
     })
 }
 

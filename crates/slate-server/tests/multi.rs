@@ -1230,6 +1230,8 @@ async fn a_build_limit_the_client_lowers_is_honoured() {
 /// Build a two-input join request by hand, so a test can damage one field.
 fn handmade_join(left: &str, right: &str, on: Vec<pb::JoinOn>) -> pb::JoinQuery {
     pb::JoinQuery {
+        after: Vec::new(),
+        paged: false,
         compute: Vec::new(),
         inputs: vec![
             pb::JoinInput {
@@ -1431,6 +1433,8 @@ async fn a_join_of_one_table_is_refused() {
     let (serving, _backing) = seeded().await;
     let mut client = serving.client().await;
     let wire = pb::JoinQuery {
+        after: Vec::new(),
+        paged: false,
         compute: Vec::new(),
         inputs: vec![pb::JoinInput {
             query: Some(common::plain_query("authors")),

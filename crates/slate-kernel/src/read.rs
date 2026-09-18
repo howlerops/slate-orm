@@ -73,6 +73,71 @@ fn no_cursor_on_groups(table: &TableDef, query: &Query) -> Result<()> {
     })
 }
 
+/// Turn a paged join into the join that actually runs, or say why it cannot.
+///
+/// **A page of a join is a page of its driving table**, so this is a rewrite
+/// rather than a new execution mode: the left input is given the cursor, the
+/// page size and `paging`, and the join is run exactly as it always was. Every
+/// joined row derives from exactly one left row, so "every left row is read by
+/// exactly one page" — which is the property [`Query::after`] already holds on
+/// the left table's own key range — gives "every joined row is returned by
+/// exactly one page".
+///
+/// Building it as a rewrite is the point. A page is *which left rows were
+/// read*, which is a key range, rather than a position in the output — and the
+/// output's order is algorithm-dependent, so a cursor that depended on it
+/// would page differently depending on what the cost model chose that day. The
+/// measurements are in `docs/paging-a-join.md`; the one this rests on is that
+/// the three algorithms disagree about order and agree exactly about which
+/// rows a windowed side yields.
+fn paged_join(join: &Join, left_table: &TableDef) -> Result<Join> {
+    if !join.paging {
+        return Ok(join.clone());
+    }
+    let refuse = |reason: &str| {
+        Err(KernelError::InvalidCursor {
+            table: left_table.name().to_owned(),
+            reason: reason.to_owned(),
+        })
+    };
+    // Its preserved right rows belong to no left row, so they are in no left
+    // page: served on every page they repeat, served on none they vanish.
+    if join.join_type.preserves(Side::Right) {
+        return refuse(
+            "a right or full outer join keeps rows from the right that match no left row, and a              page of a join is a page of its left table — so those rows belong to no page. Page              an inner or left join, or swap the sides",
+        );
+    }
+    // The boundary is the last left row *read*, and a built side is consumed
+    // into buckets. Refusing here leaves both streaming algorithms available.
+    if matches!(join.force, Some(JoinAlgorithm::Hash { build: Side::Left })) {
+        return refuse(
+            "this join is forced to build a hash table on the left, which consumes the side the              page is defined by. Force `Hash { build: Right }` or a nested loop, or let the cost              model choose",
+        );
+    }
+    if join.offset != 0 {
+        return refuse(
+            "counting and keying are the two ways to say where a page starts, and this request              carries both. Drop the offset",
+        );
+    }
+    let Some(limit) = join.limit else {
+        return refuse("a page needs a size, and a join with no limit is the whole join");
+    };
+
+    let mut paged = join.clone();
+    // The whole mechanism: the left side's own window, which it already
+    // honours identically on every algorithm, and its own `paging` so that the
+    // left's refusals — an index access path, a sort the key does not give —
+    // fire in the kernel's own words rather than being restated here.
+    paged.left.limit = Some(limit);
+    paged.left.after = join.after.clone();
+    paged.left.paging = true;
+    // The join's own window is now the left's. Leaving it here too would
+    // truncate the *joined* rows at the same number, which is the fan-out bug
+    // this design exists to avoid.
+    paged.limit = None;
+    Ok(paged)
+}
+
 /// The join to run for a grouped read: the same join, with each side reading
 /// only the columns the grouping and the join itself actually need.
 ///
@@ -88,7 +153,8 @@ fn no_cursor_on_groups(table: &TableDef, query: &Query) -> Result<()> {
 /// - the join keys, which are already in each side's own ordinals and are what
 ///   the hash build and the probe compare.
 ///
-/// A side's `sort`, `limit` and `offset` are already ignored by the join, and
+/// A side's `sort`, `limit` and `offset` are the join's to set rather than the
+/// caller's — they are honoured where they reach a read, not ignored, and
 /// the grouping's own `sort` names a *group*, not a row, so neither adds
 /// anything here.
 fn narrowed_join(join: &Join, schema: &JoinSchema, grouping: &Grouping) -> Join {
@@ -751,7 +817,16 @@ impl<'a> SecuredReads<'a> {
         // join type does not constrain it, because an unmatched built row is
         // drained once the probe side runs out rather than needing to have
         // been the streaming side.
-        let build = if left.estimated_rows <= right.estimated_rows {
+        let build = if join.paging {
+            // A page is defined by which left rows were *read*, and building
+            // the left consumes it into buckets — so a paged join builds the
+            // right whatever the estimates say. `paged_join` refuses the
+            // forced spelling of the same thing; this is the costed one, and
+            // it is a pin rather than a refusal because both remaining
+            // algorithms still stream the left and the cost model still picks
+            // between them.
+            Side::Right
+        } else if left.estimated_rows <= right.estimated_rows {
             Side::Right
         } else {
             Side::Left
@@ -908,6 +983,7 @@ impl<'a> SecuredReads<'a> {
         right_table: &'a TableDef,
         join: &Join,
     ) -> Result<JoinCursor<'a>> {
+        let join = &paged_join(join, left_table)?;
         let plan = self.plan_join(context, left_table, right_table, join)?;
         JoinCursor::open(self, context, left_table, right_table, join, &plan).await
     }

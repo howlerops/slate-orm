@@ -506,6 +506,30 @@ class Page:
         return self.cursor is None
 
 
+@dataclasses.dataclass(frozen=True)
+class JoinPage:
+    """One page of a keyset-paged join or chain, and where to resume.
+
+    `cursor` is a primary key of the **first input's** table, because a page of
+    a join is a page of its driving table. `rows` holds every joined row those
+    input-0 rows produced, so it is usually longer than the page size — a page
+    of 20 with a fan-out of 3 is about 60 rows, and 20 is how far the cursor
+    advanced.
+
+    `cursor` is `None` when the page was short and there is provably nothing
+    after it, where "short" is measured in input-0 rows for the same reason.
+    """
+
+    rows: list[JoinedRow]
+    cursor: list[PyValue] | None
+    served_by: ServedBy | None
+
+    @property
+    def is_last(self) -> bool:
+        """Whether there is provably nothing after this page."""
+        return self.cursor is None
+
+
 class RowStream(_Stream[Row]):
     """The rows of a query."""
 
@@ -1184,6 +1208,63 @@ class _Ops:
         stream = JoinStream(self._stream(self._conn.stub.Join, request), tables)
         self._observe_read(stream.served_by)
         return stream
+
+    def page_join(
+        self, join: JoinQuery, *, freshness: Freshness | None = None
+    ) -> JoinPage:
+        """One page of a keyset-paged join or chain, with the cursor for the next.
+
+        `join.limit` must be set, and it counts **input-0 rows**: a page of a
+        join is a page of its driving table, and every joined row those rows
+        produce comes back with them.
+
+        ```python
+        cursor = None
+        while True:
+            page = session.page_join(q.limit(100).after(cursor))
+            for row in page.rows:
+                ...
+            if page.is_last:
+                break
+            cursor = page.cursor
+        ```
+
+        Every joined row derives from exactly one input-0 row, so this visits
+        every joined row exactly once even while rows are being inserted and
+        deleted — which `offset` does not, because it counts.
+
+        The page is read whole before this returns, as `page` does and for the
+        same reason: the cursor arrives at the end, so a caller would have to
+        drain a stream before it could ask for the next page anyway. Note that
+        the page is bounded in input-0 rows, not in returned rows.
+        """
+        wire = join.to_proto()
+        wire.paged = True
+        request = pb.JoinRequest(transaction=self._transaction_id(), join=wire)
+        wire_freshness = self._freshness(freshness)
+        if wire_freshness is not None:
+            request.freshness.CopyFrom(wire_freshness)
+
+        tables = [i.table for i in join.inputs]
+        rows: list[JoinedRow] = []
+        cursor: list[PyValue] | None = None
+        served_by: ServedBy | None = None
+        # Wrapped as `page` wraps it: the server's refusals are half of what
+        # paging is — a right outer join, an offset alongside a cursor — and an
+        # unwrapped one reaches the caller as a `grpc.RpcError` that
+        # `except SlateError` cannot catch.
+        try:
+            for message in self._stream(self._conn.stub.Join, request):
+                response = cast(pb.JoinResponse, message)
+                if served_by is None:
+                    served_by = ServedBy.from_proto(response.served_by)
+                rows.extend(JoinedRow.from_proto(r, tables) for r in response.rows)
+                if response.next_cursor:
+                    cursor = [from_value(v) for v in response.next_cursor]
+        except grpc.RpcError as error:
+            raise from_rpc_error(error) from error
+        self._observe_read(served_by)
+        return JoinPage(rows=rows, cursor=cursor, served_by=served_by)
 
     def aggregate(
         self,

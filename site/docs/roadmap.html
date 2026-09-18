@@ -202,7 +202,6 @@
           <tr><th>Gap</th><th>Who has it</th></tr>
         </thead>
         <tbody>
-          <tr><td>Keyset paging over a join or a chain</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Migrations generated from a schema diff</td><td>Drizzle Kit, Prisma Migrate, Alembic</td></tr>
           <tr><td>Client code generated from the catalog</td><td>Drizzle, Prisma</td></tr>
           <tr><td>Validations, changesets, lifecycle hooks</td><td>Ecto, ActiveRecord, SQLAlchemy</td></tr>
@@ -360,10 +359,31 @@
         a million rows deleted, and only asking to see them is refused.
       </li>
       <li>
-        <strong>Keyset paging over a join or a chain.</strong> Single-table
-        reads got a cursor; a join still has an offset. What a join&rsquo;s
-        cursor even <em>is</em> needs a design note first, because the driving
-        side&rsquo;s key is not unique after a fan-out.
+        <strong>Keyset paging over a join or a chain. &mdash; done.</strong>
+        Single-table reads had a cursor and a join still had an offset, which
+        is the thing a cursor exists to replace: a row inserted between pages
+        shifts every later page by one, and a caller walking a join sees a row
+        twice or not at all.
+        <br />
+        The design note came first, because what a join&rsquo;s cursor
+        <em>is</em> was the hard part &mdash; the driving side&rsquo;s key is
+        not unique once the join fans out. The answer: <strong>a page of a join
+        is a page of its driving table.</strong> The cursor is the first
+        input&rsquo;s primary key, the limit counts <em>its</em> rows, and every
+        joined row they produce comes back attached. Every joined row belongs
+        to exactly one driving row, so reading each driving row once returns
+        each joined row once &mdash; which is the guarantee the single-table
+        cursor already had, reused rather than restated.
+        <br />
+        The cursor deliberately is <em>not</em> a position in the result.
+        Measured: only two of the three join algorithms return rows in the
+        driving side&rsquo;s order, and none does for a right or full outer
+        join &mdash; so a cursor built on the output&rsquo;s order would page
+        differently depending on which plan the cost model happened to pick.
+        A page is a range of keys instead, which every algorithm agrees about.
+        The measurements are in
+        <code>docs/paging-a-join.md</code>, and two of them corrected comments
+        in the code that had been wrong since they were written.
       </li>
       <li>
         <strong>The stable reason token on the lone path. &mdash; done.</strong>

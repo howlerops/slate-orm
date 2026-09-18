@@ -216,6 +216,22 @@ pub enum GroupedExplanation {
     Chain(Box<Chain>, Box<ChainPlan>),
 }
 
+/// A join or chain read inside a transaction: its rows, and where it ended.
+///
+/// The two travel together because they cannot be derived from one another. A
+/// page of a join is a page of its *first input's* table, and under an inner
+/// join a first-input row that matched nothing is read and produces no row —
+/// so the returned rows do not say where the page ended, and a cursor taken
+/// from them would not advance past such a page.
+#[derive(Debug)]
+pub struct MultiPage {
+    /// The rows, already flattened and padded.
+    pub rows: Vec<MultiRow>,
+    /// Where to resume, and how many first-input rows were read. The second is
+    /// compared against the page size to tell a full page from a short one.
+    pub page: (Option<Vec<Value>>, usize),
+}
+
 /// A cursor over either kernel shape, handing out [`MultiRow`]s.
 ///
 /// The padding matters and is easy to miss: a right outer step of a chain
@@ -251,11 +267,42 @@ impl MultiCursor<'_> {
 
     /// Drain into a vector.
     pub async fn collect(mut self) -> Result<Vec<MultiRow>, KernelError> {
+        self.collect_rows().await
+    }
+
+    /// Drain into a vector, leaving the cursor to be asked where the page
+    /// ended. `collect` consumes, and `page_end` has to be read afterwards.
+    pub async fn collect_rows(&mut self) -> Result<Vec<MultiRow>, KernelError> {
         let mut out = Vec::new();
         while let Some(row) = self.next().await? {
             out.push(row);
         }
         Ok(out)
+    }
+
+    /// Where a paged read should resume, and whether the page was a full one.
+    ///
+    /// A page of a join or a chain is a page of its **first input's** table,
+    /// so this is that table's primary key — which is why the first definition
+    /// is what it is asked against and the others are not needed.
+    ///
+    /// Returns the boundary and how many first-input rows were read. A caller
+    /// compares the second against the page size: a short page proves there is
+    /// nothing after it and gets no cursor, exactly as a single-table scan
+    /// decides it.
+    ///
+    /// Meaningful once the cursor is drained. A join keeps probes in flight,
+    /// so before then the boundary runs ahead of the rows handed out; both
+    /// converge when the first input's scan ends, which its own limit makes
+    /// certain.
+    pub fn page_end(&self, first: &TableDef) -> (Option<Vec<Value>>, usize) {
+        match self {
+            Self::Join(cursor) => (cursor.page_end(first), cursor.driving_rows()),
+            Self::Chain(cursor, _) => (
+                cursor.page_end().map(<[Value]>::to_vec),
+                cursor.driving_rows(),
+            ),
+        }
     }
 }
 
@@ -328,7 +375,7 @@ enum Command {
         context: Box<SecurityContext>,
         tables: Vec<TableId>,
         read: Box<MultiRead>,
-        reply: oneshot::Sender<Result<Vec<MultiRow>, KernelError>>,
+        reply: oneshot::Sender<Result<MultiPage, KernelError>>,
     },
     ExplainMulti {
         context: Box<SecurityContext>,
@@ -658,7 +705,7 @@ impl Sessions {
         context: &SecurityContext,
         tables: Vec<TableId>,
         read: MultiRead,
-    ) -> Result<Vec<MultiRow>, Status> {
+    ) -> Result<MultiPage, Status> {
         self.dispatch(id, context, |reply| Command::MultiRead {
             context: Box::new(context.clone()),
             tables,
@@ -968,8 +1015,19 @@ async fn apply<S: KvStore>(
                     return None;
                 }
             };
+            // The boundary comes back with the rows rather than being derived
+            // from them: a page of a join is a page of its first input's
+            // table, and a first-input row that matched nothing is read and
+            // returns nothing — so the rows do not know where the page ended.
             let outcome = match open_multi(transaction, &context, &definitions, &read).await {
-                Ok(cursor) => cursor.collect().await,
+                Ok(mut cursor) => match cursor.collect_rows().await {
+                    Ok(rows) => {
+                        let first = definitions.first().copied();
+                        let page = first.map_or((None, 0), |first| cursor.page_end(first));
+                        Ok(MultiPage { rows, page })
+                    }
+                    Err(error) => Err(error),
+                },
                 Err(error) => Err(error),
             };
             answer(reply, outcome)

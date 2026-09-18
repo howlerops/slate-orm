@@ -21,6 +21,7 @@ export {
   type Relation,
   type Step,
   type Way,
+  type JoinPage,
   type Page,
 } from "./client.js";
 export { SlateError, isKind, LEADER_KEY, type Kind } from "./errors.js";

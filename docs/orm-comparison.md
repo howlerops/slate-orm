@@ -562,7 +562,52 @@ the way `Query` streams is the general answer and is a different RPC shape.
 > defaults, and merging them would either refuse legitimate large deletes or
 > leave the wire defect open.
 
-### N3 — Keyset paging over a join or a chain
+### N3 — Keyset paging over a join or a chain — **built**
+
+> **Done**, and not as a refusal. The design note the item demanded is
+> `docs/paging-a-join.md`, written before the code; the one line it concludes
+> with is **a page of a join is a page of its driving table**. The cursor is
+> input 0's primary key, `limit` counts input-0 rows, and every joined row
+> those rows produce comes back with them.
+>
+> **The property is one line because the design was chosen so it would be.**
+> Every joined row derives from exactly one input-0 row — that is what
+> left-deep means — so "every input-0 row is read by exactly one page" gives
+> "every joined row is returned by exactly one page", and the first is what
+> `Query::after` already holds on that table's own key range. Paging is
+> implemented as giving input 0 the window it already honours; there is no new
+> execution mode.
+>
+> **Three measurements chose it, and two contradicted the code's own comments.**
+>
+> 1. Only two of three algorithms keep the driving side's key order, and none
+>    does for a right or full outer join. So the cursor is *not* a position in
+>    the output — one that was would page differently depending on what the
+>    cost model picked that day.
+> 2. A side's `limit` and `offset` are **honoured, not ignored**, and the three
+>    algorithms agree exactly on which rows a windowed side yields. Both
+>    `Join`'s doc comment and `JoinInput.query`'s field comment said the
+>    kernel ignored them. Nothing was user-visibly broken — the wire refuses
+>    those fields — but the stated reason was false, and this design rests on
+>    the true behaviour. Both are corrected.
+> 3. A side's `sort` is honoured where that side streams and silently dropped
+>    where it is hashed. Worse than either, and the real reason the wire
+>    refuses it.
+>
+> Sixteen mutations, two survivors, both closed. The survivors were missing
+> tests rather than bugs, and both were the same shape as N1's: a fixture where
+> the cost model always picked the hash join left the nested loop's boundary
+> tracking untested, and a test comparing the *union* over pages said nothing
+> about where the pages divided, so a chain that ignored its page size passed.
+>
+> **A mutation also found a defect in the test suite itself.** Dropping the
+> cursor made one test **hang** rather than fail: it walked pages in an
+> unbounded loop and the cursor came back non-empty forever. A test that hangs
+> under a mutation hangs CI, which is strictly worse than one that fails. Every
+> walk in the file is bounded now, and the bound is an assertion.
+>
+> *Stops at* what the note says: no per-level predicate or ordering, and the
+> page's *fan-out* is unbounded even though its depth in driving rows is not.
 
 `Query` has `after` and `paged`; `JoinQuery` has `offset = 3` and no cursor.
 Paging a join is therefore offset paging, which is the thing P3's cursor exists

@@ -643,6 +643,7 @@ class JoinQuery:
         self._offset = 0
         self._build_limit: int | None = None
         self._compute: list[Scalar] = []
+        self._after: list[PyValue] | None = None
 
     def add(
         self,
@@ -665,8 +666,33 @@ class JoinQuery:
         return wire_input
 
     def limit(self, limit: int | None) -> JoinQuery:
-        """Maximum joined rows to return."""
+        """Maximum joined rows to return.
+
+        Counts **input-0 rows** once the query is paged, because a page of a
+        join is a page of its driving table. See `after`.
+        """
         self._limit = limit
+        return self
+
+    def after(self, cursor: Sequence[PyValue] | None) -> JoinQuery:
+        """Resume after this row of the **first input's** table.
+
+        A page of a join is a page of its driving table: the cursor is input
+        0's primary key, `limit` counts input-0 rows, and every joined row
+        those rows produce comes back with them. So a page of 20 with a fan-out
+        of 3 returns about 60 rows, and 20 is the number of *left* rows it
+        advanced by.
+
+        Every joined row derives from exactly one input-0 row, so paging this
+        way visits every joined row exactly once — which is the property
+        `offset` does not have and is the reason this exists. Pass
+        `page.cursor` from `Session.page_join`, and `None` for the first page.
+
+        Refused rather than served wrongly: a right or full outer join (its
+        preserved rows belong to no input-0 row), an `offset` alongside it, and
+        anything input 0's own cursor refuses.
+        """
+        self._after = list(cursor) if cursor is not None else None
         return self
 
     def offset(self, offset: int) -> JoinQuery:
@@ -728,6 +754,32 @@ class JoinQuery:
             query.limit = self._limit
         if self._build_limit is not None:
             query.build_limit = self._build_limit
+        # Typed against **input 0's** primary key, for the reason the
+        # single-table cursor is typed against its table's: a cursor is a key,
+        # its column types are declared, and an `int` with no hint is refused
+        # because the wire has both `int64_value` and `uint64_value`. Input 0
+        # and not the joined space, because a page of a join is a page of its
+        # driving table and that is the only table a cursor names.
+        #
+        # `paged` is not set here, as on `Query`: it asks for a cursor on the
+        # *response*, and one only comes back through `Session.page_join`. The
+        # server derives paging from a cursor being present, so a resumed page
+        # is paged either way; a first page needs the flag, and `page_join`
+        # sends it.
+        if self._after is not None:
+            if not self._inputs:
+                raise ValueError("a cursor needs an input to name a key of")
+            key_types = self._inputs[0].table.key_types()
+            if len(self._after) != len(key_types):
+                raise ValueError(
+                    f"a join's cursor is a whole primary key of its first input: "
+                    f"`{self._inputs[0].table.name}` has {len(key_types)} key "
+                    f"column(s), and this one has {len(self._after)}"
+                )
+            query.after.extend(
+                to_value(v, hint)
+                for v, hint in zip(self._after, key_types, strict=True)
+            )
         return query
 
 

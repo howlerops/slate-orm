@@ -164,9 +164,26 @@ impl JoinKey {
 /// A request to join two tables.
 ///
 /// Each side carries its own [`Query`]: its filter, its projection, its scan
-/// direction. A side's `limit`, `offset` and `sort` are ignored — limiting a
-/// side before joining it changes the answer, and ordering one does not order
-/// the join. Use [`Join::limit`] for the result.
+/// direction. Use [`Join::limit`] for the result rather than a side's own
+/// window, because limiting a side before joining it changes the answer and
+/// ordering one does not order the join.
+///
+/// This used to say a side's `limit`, `offset` and `sort` were *ignored*, and
+/// they are not: [`crate::read::SecuredReads::execute`] ends in
+/// `with_window`, the same windowing a single-table read gets. Measured, on a
+/// join of 8 authors to 20 books returning 18 rows (`tests/paged_join.rs`):
+///
+/// - `left.limit(3)` gives 8 rows over authors {0,1,2}, and `left.offset(5)`
+///   gives 6 rows over authors {5,6,7} — on **all three** algorithms, which
+///   agree exactly on which rows come back.
+/// - `left.sort_by(desc(id))` is honoured by the nested loop and by
+///   hash-build-right, and silently dropped by hash-build-left, whose left
+///   rows come back out of buckets.
+///
+/// So a side's window is honoured and a side's *sort* is algorithm-dependent,
+/// which is why the wire refuses all three on an input. [`Join::after`] is
+/// built on the first of those: paging gives the left side the window it
+/// already honours. See `docs/paging-a-join.md`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Join {
     /// What to read from the left table.
@@ -223,6 +240,10 @@ pub struct Join {
     /// the wire splits them per input — so there a side's `Query::compute` is
     /// a supported feature and stays one.
     pub compute: Vec<Scalar>,
+    /// Resume after this left-table primary key. See [`Join::after`].
+    pub after: Option<Vec<Value>>,
+    /// Whether this join will be resumed from a cursor. See [`Join::paging`].
+    pub paging: bool,
 }
 
 impl Join {
@@ -240,6 +261,8 @@ impl Join {
             having: Expr::True,
             force: None,
             compute: Vec::new(),
+            after: None,
+            paging: false,
         }
     }
 
@@ -302,6 +325,64 @@ impl Join {
     #[must_use]
     pub const fn offset(mut self, offset: usize) -> Self {
         self.offset = offset;
+        self
+    }
+
+    /// Resume after the left row with this primary key — keyset pagination.
+    ///
+    /// **A page of a join is a page of its driving table.** The cursor is the
+    /// *left* input's primary key, [`Join::limit`] counts left rows rather
+    /// than joined rows, and every joined row those left rows produce comes
+    /// back with them.
+    ///
+    /// # Why that is the cursor
+    ///
+    /// Every joined row derives from exactly one left row — that is what
+    /// left-deep means — so "every left row is read by exactly one page"
+    /// gives "every joined row is returned by exactly one page". The first is
+    /// the property [`Query::after`] already holds, on the left table's own
+    /// key range, and this reuses it rather than restating it: the left input
+    /// is given the cursor, the limit and `paging`, and nothing else happens.
+    ///
+    /// A page is therefore *which left rows were read*, which is a key range,
+    /// and not a position in the output — which matters because a join's
+    /// output order is algorithm-dependent and a cursor that depended on it
+    /// would page differently depending on what the cost model chose. See
+    /// `docs/paging-a-join.md` for the measurements, including the one that
+    /// says only two of the three algorithms keep the left side's order.
+    ///
+    /// # What it refuses
+    ///
+    /// A right or full outer join, because its preserved right rows belong to
+    /// no left row and so are in no left page; hash with the left as the
+    /// build side, because a built side is consumed into buckets and the page
+    /// boundary is the last left row *read*; an `offset` alongside the cursor;
+    /// and a page with no `limit`. Everything [`Query::after`] refuses on the
+    /// left input — an index access path, a sort the key does not give —
+    /// fires from the left's own planning in the kernel's own words.
+    ///
+    /// # What it costs
+    ///
+    /// A page's row count is not bounded by `limit`: ten left rows with a
+    /// hundred matches each is a thousand-row page. A read is streamed, so
+    /// that is slower rather than undeliverable — unlike a predicate write's
+    /// `returning`, which is one message and therefore has a cap.
+    #[must_use]
+    pub fn after(mut self, left_key: impl Into<Vec<Value>>) -> Self {
+        self.after = Some(left_key.into());
+        self.paging = true;
+        self
+    }
+
+    /// Declare that this join will be resumed, without resuming one yet.
+    ///
+    /// The first page has no cursor to carry and must still raise every
+    /// refusal the second one would, or the caller learns on page two that
+    /// page one was never resumable. [`Query::paging`] exists for the same
+    /// reason and this is the same move one level up.
+    #[must_use]
+    pub const fn paging(mut self) -> Self {
+        self.paging = true;
         self
     }
 
@@ -1322,6 +1403,22 @@ pub struct JoinCursor<'a> {
     offset: usize,
     skipped: usize,
     yielded: usize,
+    /// Whether to track the page boundary at all. See [`Join::after`].
+    ///
+    /// A guard rather than an `Option` on the two fields below because it is
+    /// read once per *left* row on every join, paged or not: tracking costs a
+    /// row clone, and an unpaged join should not pay it.
+    paging: bool,
+    /// The last row read from the left scan, which is the page's boundary.
+    ///
+    /// The last row *read*, not the last emitted: under an inner join a left
+    /// row that matched nothing is consumed and emits nothing, and a page
+    /// whose left rows all matched nothing would otherwise return no rows and
+    /// no advanced cursor — which is a caller looping forever.
+    page_end: Option<Row>,
+    /// How many rows the left scan yielded, to tell a full page from a short
+    /// one. The left's own `limit` is the page size, so `== limit` means full.
+    left_rows: usize,
 }
 
 /// Whether a formed pair survives the cross-side condition.
@@ -1413,7 +1510,33 @@ impl<'a> JoinCursor<'a> {
             offset: join.offset,
             skipped: 0,
             yielded: 0,
+            paging: join.paging,
+            page_end: None,
+            left_rows: 0,
         })
+    }
+
+    /// The primary key of the last left row this page read, if any.
+    ///
+    /// Meaningful once the cursor is exhausted: the nested loop keeps probes
+    /// in flight, so before then this is the last left row *pulled*, which
+    /// runs ahead of the last one emitted. Both converge when the left scan
+    /// ends, which its own `limit` guarantees happens.
+    #[must_use]
+    pub fn page_end(&self, left: &TableDef) -> Option<Vec<Value>> {
+        self.page_end
+            .as_ref()
+            .map(|row| row.primary_key_values(left).to_vec())
+    }
+
+    /// How many rows the left scan yielded.
+    ///
+    /// The page size is the left's limit, so a caller tells a full page from a
+    /// short one by comparing against it — and a short page proves there is
+    /// nothing after it, so it gets no cursor.
+    #[must_use]
+    pub const fn driving_rows(&self) -> usize {
+        self.left_rows
     }
 
     /// The next joined row.
@@ -1442,6 +1565,9 @@ impl<'a> JoinCursor<'a> {
         let join_type = self.join_type;
         let having = Arc::clone(&self.having);
         let schema = Arc::clone(&self.schema);
+        let paging = self.paging;
+        let page_end = &mut self.page_end;
+        let left_rows = &mut self.left_rows;
         match &mut self.state {
             State::Hash {
                 probe,
@@ -1505,6 +1631,13 @@ impl<'a> JoinCursor<'a> {
 
                 match probe.next().await? {
                     Some(row) => {
+                        // The probe is the left side exactly when the right
+                        // was built — which is the only hash shape a paged
+                        // join is allowed to run, so this is the boundary.
+                        if paging && *build_side == Side::Right {
+                            *left_rows += 1;
+                            *page_end = Some(row.clone());
+                        }
                         let key = join_values(&row, probe_columns);
                         *current = Some((row, key, 0, false));
                     }
@@ -1538,7 +1671,14 @@ impl<'a> JoinCursor<'a> {
                 // time the join's latency would be their sum.
                 while !*exhausted && inflight.len() < PROBE_CONCURRENCY {
                     match outer.next().await? {
-                        Some(row) => inflight.push_back(probe.matches(row)),
+                        Some(row) => {
+                            // The outer side of a loop is always the left.
+                            if paging {
+                                *left_rows += 1;
+                                *page_end = Some(row.clone());
+                            }
+                            inflight.push_back(probe.matches(row));
+                        }
                         None => *exhausted = true,
                     }
                 }

@@ -203,6 +203,29 @@ export interface JoinQuery {
    * exposes them to `groupBy` and the aggregates.
    */
   readonly compute?: Scalar[];
+  /**
+   * Resume after this row of **input 0's** table — keyset paging.
+   *
+   * A page of a join is a page of its driving table: the cursor is input 0's
+   * primary key, `limit` counts input-0 rows, and every joined row those rows
+   * produce comes back with them. So a page of 20 over a fan-out of 3 is about
+   * 60 rows, and 20 is how far the cursor moved.
+   *
+   * Every joined row derives from exactly one input-0 row, so paging this way
+   * visits every joined row exactly once even while rows are inserted and
+   * deleted — which `offset` does not, because it counts. Use
+   * `Session.pageJoin`, and feed its `cursor` back in here.
+   *
+   * Refused rather than served wrongly: a right or full outer join, an `offset`
+   * alongside it, and anything input 0's own cursor refuses.
+   */
+  readonly after?: Value[] | undefined;
+  /**
+   * Asks for a cursor on the response. `Session.pageJoin` sets it; sending a
+   * cursor implies it, so only a *first* page needs it — which is the point,
+   * because a join that can never be paged should be refused on page one.
+   */
+  readonly paged?: boolean;
 }
 
 /**
@@ -277,6 +300,12 @@ export function joinToWire(
   if (join.compute && join.compute.length > 0) {
     out["compute"] = scalarsToWire(join.compute);
   }
+  // Input 0's key, not a key in the joined space: a page of a join is a page
+  // of its driving table, and that is the only table a cursor names.
+  if (join.after && join.after.length > 0) {
+    out["after"] = join.after.map(valueToWire);
+  }
+  if (join.paged) out["paged"] = true;
   return out;
 }
 

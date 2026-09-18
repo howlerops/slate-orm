@@ -1809,11 +1809,18 @@ class JoinInput(_message.Message):
         """What to read from this table: its filter, projection, scan direction and
         computed values, in its own ordinals.
 
-        Its `sort`, `limit` and `offset` are refused rather than ignored. Limiting
-        a side before joining it changes the answer, ordering one does not order
-        the join, and the kernel documents all three as ignored — so a client that
-        set one would be relying on an accident. `JoinQuery` carries the limit and
-        offset that do apply.
+        Its `sort`, `limit` and `offset` are refused rather than ignored, and
+        `JoinQuery` carries the limit and offset that do apply.
+
+        The reason used to be "the kernel documents all three as ignored", which
+        was false — the kernel honours a side's window, and measurably: a side's
+        `limit` or `offset` gives the same rows on all three algorithms. The real
+        reason is per field. Limiting a side before joining it changes the answer
+        and is the caller asking for something other than what they wrote, except
+        when it is `paged`, which is exactly that rewrite and is the server's to
+        make. A side's *sort* is worse than either: honoured where that side
+        streams and silently dropped where it is hashed, so what it does depends
+        on a costing decision. `docs/paging-a-join.md` has the measurements.
         """
 
     @_builtins.property
@@ -1889,6 +1896,8 @@ class JoinQuery(_message.Message):
     LIMIT_FIELD_NUMBER: _builtins.int
     OFFSET_FIELD_NUMBER: _builtins.int
     BUILD_LIMIT_FIELD_NUMBER: _builtins.int
+    AFTER_FIELD_NUMBER: _builtins.int
+    PAGED_FIELD_NUMBER: _builtins.int
     COMPUTE_FIELD_NUMBER: _builtins.int
     limit: _builtins.int
     """Maximum joined rows to return."""
@@ -1909,12 +1918,54 @@ class JoinQuery(_message.Message):
     a client can raise is not a limit. Raising it is clamped and reported in
     `warnings`, not refused.
     """
+    paged: _builtins.bool
+    """Ask for `JoinResponse.next_cursor`, for the reason `Query.paged` gives:
+    `LIMIT 10` and "the first page of ten" are the same request and different
+    intentions, and the difference decides what the server must refuse.
+
+    With it, `limit` is required, and a join that cannot be paged is refused
+    on its *first* page rather than its second. What cannot be paged: a right
+    or full outer join, whose preserved rows from a later input belong to no
+    input-0 row and so to no page; an `offset` alongside the cursor; and
+    everything input 0's own `Query.after` refuses — an index access path, a
+    sort its key does not give — which arrive in the kernel's own words.
+    """
     @_builtins.property
     def inputs(self) -> _containers.RepeatedCompositeFieldContainer[Global___JoinInput]:
         """Two or more tables. The first is read on its own; each of the rest joins
         onto everything before it. Every `ColumnRef.input` in this request is a
         position in this list, so the same table twice is two inputs and a
         self-join needs no other machinery.
+        """
+
+    @_builtins.property
+    def after(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """Resume after the row with this primary key **in the first input's table**
+        — keyset pagination over a join or a chain.
+
+        A page of a join is a page of its *driving table*. The cursor is input 0's
+        primary key, `limit` counts input-0 rows rather than joined rows, and
+        every joined row those rows produce comes back with them.
+
+        That is the design and not an approximation of one. Every joined row
+        derives from exactly one input-0 row, because the join is left-deep — so
+        "every input-0 row is read by exactly one page" gives "every joined row is
+        returned by exactly one page", and the first is the property `Query.after`
+        already holds on that table's own key range. Paging is implemented as
+        giving input 0 the window it already honours, which is why it needs no new
+        execution mode and why every algorithm agrees about what a page contains.
+
+        The alternative — a cursor that names a position in the *output* — was
+        rejected because a join's output order is algorithm-dependent: measured,
+        only two of three algorithms keep input 0's key order and none does for a
+        right or full outer join. A cursor built on that would page differently
+        depending on what the cost model chose. `docs/paging-a-join.md` has the
+        measurements and the alternatives.
+
+        **A page's row count is not bounded by `limit`.** Ten input-0 rows with a
+        hundred matches each is a thousand-row page. A read is streamed, so that
+        is slower rather than undeliverable — unlike `returning` on a predicate
+        write, which is one message and therefore has `max_returned_rows`.
         """
 
     @_builtins.property
@@ -1949,11 +2000,13 @@ class JoinQuery(_message.Message):
         limit: _builtins.int | None = ...,
         offset: _builtins.int = ...,
         build_limit: _builtins.int | None = ...,
+        after: _abc.Iterable[Global___Value] | None = ...,
+        paged: _builtins.bool = ...,
         compute: _abc.Iterable[Global___Scalar] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "build_limit", b"build_limit", "limit", b"limit"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "build_limit", b"build_limit", "compute", b"compute", "inputs", b"inputs", "limit", b"limit", "offset", b"offset"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit", "_limit", b"_limit", "after", b"after", "build_limit", b"build_limit", "compute", b"compute", "inputs", b"inputs", "limit", b"limit", "offset", b"offset", "paged", b"paged"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__build_limit: _TypeAlias = _typing.Literal["build_limit"]  # noqa: Y015
     _WhichOneofArgType__build_limit: _TypeAlias = _typing.Literal["_build_limit", b"_build_limit"]  # noqa: Y015
@@ -3030,6 +3083,7 @@ class JoinResponse(_message.Message):
     ROWS_FIELD_NUMBER: _builtins.int
     SERVED_BY_FIELD_NUMBER: _builtins.int
     WARNINGS_FIELD_NUMBER: _builtins.int
+    NEXT_CURSOR_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def rows(self) -> _containers.RepeatedCompositeFieldContainer[Global___JoinedRow]: ...
     @_builtins.property
@@ -3040,16 +3094,32 @@ class JoinResponse(_message.Message):
         limit. First message only.
         """
 
+    @_builtins.property
+    def next_cursor(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """Where to resume, when `JoinQuery.paged` asked for it: the primary key of
+        the last row read from the **first input's** table.
+
+        The last row *read*, not the last returned. Under an inner join an input-0
+        row that matches nothing is read and produces nothing, so a cursor taken
+        from the returned rows would not move when a whole page matched nothing —
+        and the caller would ask for the same page forever.
+
+        Empty when the page was short, which proves there is nothing after it;
+        "short" is measured in input-0 rows, because that is what `limit` counts.
+        Last message only, as on `QueryResponse`.
+        """
+
     def __init__(
         self,
         *,
         rows: _abc.Iterable[Global___JoinedRow] | None = ...,
         served_by: Global___ServedBy | None = ...,
         warnings: _abc.Iterable[_builtins.str] | None = ...,
+        next_cursor: _abc.Iterable[Global___Value] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["served_by", b"served_by"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["next_cursor", b"next_cursor", "rows", b"rows", "served_by", b"served_by", "warnings", b"warnings"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

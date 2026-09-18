@@ -2073,17 +2073,31 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             .collect();
         let batch_size = self.limits.rows_per_message.max(1);
 
+        // The page size is in **first-input rows**, which is what `limit`
+        // counts once `paged` is set. Read off the request rather than off the
+        // converted `read`, because paging moves that limit onto the first
+        // input and the join stops carrying it.
+        let paged = wire.paged;
+        let page_size = wire.limit.map(|limit| limit as usize);
+
         if !request.transaction.is_empty() {
-            let rows = self
+            let page = self
                 .sessions
                 .multi_read(&request.transaction, &context, tables, read)
                 .await?;
+            let cursor = match (paged, page_size, page.page) {
+                (true, Some(size), (Some(key), read)) if read >= size => {
+                    key.iter().map(value_to_proto).collect()
+                }
+                _ => Vec::new(),
+            };
             return Ok(Response::new(replay_joined(
-                rows,
+                page.rows,
                 &stored,
                 in_transaction(),
                 warnings,
                 batch_size,
+                cursor,
             )));
         }
 
@@ -2100,6 +2114,8 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             batch_size,
             freshness,
             affinity,
+            paged,
+            page_size,
         };
 
         // Same shape as `Scan`, and for the same reasons: the cursor borrows
@@ -2575,11 +2591,13 @@ fn replay_joined(
     served_by: pb::ServedBy,
     warnings: Vec<String>,
     batch_size: usize,
+    cursor: Vec<pb::Value>,
 ) -> JoinedStream {
     let mut messages = vec![Ok(pb::JoinResponse {
         rows: Vec::new(),
         served_by: Some(served_by),
         warnings,
+        next_cursor: Vec::new(),
     })];
     for batch in rows.chunks(batch_size) {
         messages.push(Ok(pb::JoinResponse {
@@ -2589,7 +2607,21 @@ fn replay_joined(
                 .collect(),
             served_by: None,
             warnings: Vec::new(),
+            next_cursor: Vec::new(),
         }));
+    }
+    // Same placement as `replay`: the cursor rides the last message, and gets
+    // one of its own when the rows divided evenly into batches.
+    if !cursor.is_empty() {
+        match messages.last_mut() {
+            Some(Ok(last)) if !last.rows.is_empty() => last.next_cursor = cursor,
+            _ => messages.push(Ok(pb::JoinResponse {
+                rows: Vec::new(),
+                served_by: None,
+                warnings: Vec::new(),
+                next_cursor: cursor,
+            })),
+        }
     }
     Box::pin(futures::stream::iter(messages))
 }
@@ -2658,6 +2690,14 @@ struct MultiScan {
     batch_size: usize,
     freshness: Freshness,
     affinity: Option<Value>,
+    /// Whether the caller asked for `next_cursor`. See `JoinQuery.paged`.
+    paged: bool,
+    /// The page size, in **first-input rows**, which is what `JoinQuery.limit`
+    /// counts once `paged` is set. Kept beside `read` rather than read back
+    /// out of it because the kernel moves that limit onto the first input as
+    /// part of paging, so by the time a cursor is wanted the join no longer
+    /// carries it.
+    page_size: Option<usize>,
 }
 
 impl MultiScan {
@@ -2734,6 +2774,7 @@ impl MultiScan {
                 rows: Vec::new(),
                 served_by: Some(served_by),
                 warnings: self.warnings.clone(),
+                next_cursor: Vec::new(),
             }))
             .await
             .is_err()
@@ -2758,6 +2799,7 @@ impl MultiScan {
                         rows,
                         served_by: None,
                         warnings: Vec::new(),
+                        next_cursor: Vec::new(),
                     }))
                     .await
                     .is_err()
@@ -2768,12 +2810,26 @@ impl MultiScan {
                 }
             }
         }
-        if !batch.is_empty() {
+        // A page of a join is a page of its *first input's* table, so the
+        // cursor is that table's key and "full page" is counted in its rows —
+        // not in joined rows, which fan out. `Scan` makes the same trade about
+        // the last page: a short page proves there is nothing after it, and a
+        // full one gets a cursor rather than being read one row further to
+        // find out.
+        let next_cursor = match (self.paged, self.page_size, definitions.first()) {
+            (true, Some(size), Some(first)) => match cursor.page_end(first) {
+                (Some(key), read) if read >= size => key.iter().map(value_to_proto).collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if !batch.is_empty() || !next_cursor.is_empty() {
             let _ = sender
                 .send(Ok(pb::JoinResponse {
                     rows: batch,
                     served_by: None,
                     warnings: Vec::new(),
+                    next_cursor,
                 }))
                 .await;
         }

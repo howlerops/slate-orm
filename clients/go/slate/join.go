@@ -202,10 +202,14 @@ type JoinInput struct {
 
 // JoinQuery joins two or more tables.
 //
-// No `Sort` on an input: the kernel documents input-level sorting as ignored
-// and the server refuses it, so there is nowhere here to set one and the
-// refusal is unreachable rather than a runtime surprise. The limit and offset
-// that do apply are on the query.
+// No `Sort` on an input: the server refuses it, so there is nowhere here to
+// set one and the refusal is unreachable rather than a runtime surprise. The
+// limit and offset that do apply are on the query.
+//
+// This used to say the kernel documents input-level sorting as ignored. It
+// does not and did not — a side's sort is honoured where that side streams and
+// silently dropped where it is hashed, which is worse than either and is the
+// real reason it is refused. See docs/paging-a-join.md.
 type JoinQuery struct {
 	// Inputs in the order they are read. The first has no `On`.
 	Inputs []JoinInput
@@ -216,6 +220,27 @@ type JoinQuery struct {
 	// BuildLimit caps rows held in a hash build side. The server clamps a
 	// value above its own ceiling and says so in a warning.
 	BuildLimit *uint64
+	// After resumes after this row of **input 0's** table — keyset paging.
+	//
+	// A page of a join is a page of its driving table: the cursor is input 0's
+	// primary key, Limit counts input-0 rows, and every joined row those rows
+	// produce comes back with them. So a page of 20 over a fan-out of 3 is
+	// about 60 rows, and 20 is how far the cursor moved.
+	//
+	// Every joined row derives from exactly one input-0 row, so paging this way
+	// visits every joined row exactly once even while rows are inserted and
+	// deleted — which Offset does not, because it counts. Use [Session.PageJoin],
+	// and feed its Cursor back in here.
+	//
+	// Refused rather than served wrongly: a right or full outer join, an Offset
+	// alongside it, and anything input 0's own cursor refuses.
+	After []Value
+	// Paged asks for a cursor on the response. [Session.PageJoin] sets it;
+	// sending a cursor implies it, so only a first page needs it.
+	//
+	// Separate from After for the reason [Query.Paged] is: the first page has
+	// no cursor to carry and must still be refused if it can never be resumed.
+	Paged bool
 	// Compute is values computed per *joined* row, appended after every
 	// input's columns and named with [JoinComputed].
 	//
@@ -265,6 +290,12 @@ func (q JoinQuery) toProto(schemas Schemas) *pb.JoinQuery {
 		Limit:      q.Limit,
 		BuildLimit: q.BuildLimit,
 		Compute:    scalarsToProto(q.Compute),
+		Paged:      q.Paged,
+	}
+	// Input 0's key, not a key in the joined space: a page of a join is a page
+	// of its driving table, and that is the only table a cursor names.
+	for _, value := range q.After {
+		out.After = append(out.After, value.toProto())
 	}
 	for _, input := range q.Inputs {
 		query := Query{

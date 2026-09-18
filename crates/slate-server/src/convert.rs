@@ -1413,15 +1413,7 @@ pub fn query_from_proto_at(
     // repeated field from an empty one and "resume after no columns" is not a
     // thing a caller can mean.
     let after_is_set = !query.after.is_empty();
-    let after = if query.after.is_empty() {
-        None
-    } else {
-        let mut key = Vec::with_capacity(query.after.len());
-        for value in &query.after {
-            key.push(value_from_proto(value)?);
-        }
-        Some(key)
-    };
+    let after = cursor_from_proto(&query.after)?;
 
     let hint = match query.hint.as_ref().and_then(|hint| hint.path.as_ref()) {
         None => None,
@@ -1539,6 +1531,23 @@ pub fn assignments_from_proto(
 /// aggregates read. Ignoring a field a client set is how a request comes to
 /// mean something other than what was written, so each is refused and the
 /// message says where the setting does belong.
+/// A cursor on the wire as the kernel's key, or `None` for the first page.
+///
+/// Empty means the first page rather than an empty key: proto3 cannot tell an
+/// unset repeated field from an empty one, and "resume after no columns" is
+/// not something a caller can mean. Shared by the single-table path and the
+/// join path so the two cannot disagree about that.
+fn cursor_from_proto(values: &[pb::Value]) -> Result<Option<Vec<Value>>, Status> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut key = Vec::with_capacity(values.len());
+    for value in values {
+        key.push(value_from_proto(value)?);
+    }
+    Ok(Some(key))
+}
+
 fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Status> {
     if !query.sort.is_empty() {
         return Err(bad(format!(
@@ -1556,10 +1565,14 @@ fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Sta
         )));
     }
     // A cursor names a row of the *result*, and a join input's rows are not
-    // the result. The kernel refuses one on a grouped read for the same
-    // reason and says so in `no_cursor_on_groups`; it has no equivalent for a
-    // join side, because a join side's `Query` never carried one until this
-    // field existed. Refused rather than dropped.
+    // the result. The kernel refuses one on a grouped read for the same reason
+    // and says so in `no_cursor_on_groups`.
+    //
+    // `JoinQuery.after` is where a join's cursor goes, and it is not this
+    // field moved up: it names input 0's primary key, because a page of a join
+    // is a page of its driving table. So "put it on the join itself" is now an
+    // instruction that works rather than a redirection to nothing — which it
+    // was when this refusal was written.
     if !query.after.is_empty() {
         return Err(bad(format!(
             "{what} has a cursor, which names a row of the result rather than one of its \
@@ -1710,6 +1723,16 @@ pub fn join_from_proto(
     let offset = wire.offset as usize;
     let build_limit = build_limit_from_proto(wire.build_limit, &mut warnings);
 
+    // The cursor is input 0's primary key, so it is converted against input
+    // 0's table rather than the joined space: a page of a join is a page of
+    // its driving table, and that table is the only one a cursor names.
+    let after = cursor_from_proto(&wire.after)?;
+    // A request carrying a cursor is self-evidently paging, so a client only
+    // has to set `paged` for the *first* page. The single-table path derives
+    // it the same way, and the two must agree or a cursor sent without the
+    // flag would be accepted and then ignored.
+    let paging = wire.paged || after.is_some();
+
     let read = if shapes.len() == 2 {
         let step = steps.remove(0);
         let mut join = Join::on(step.on)
@@ -1722,6 +1745,8 @@ pub fn join_from_proto(
         join.offset = offset;
         join.force = step.force;
         join.compute = compute;
+        join.after = after;
+        join.paging = paging;
         MultiRead::Join(Box::new(join))
     } else {
         let mut chain = Chain::from(queries.remove(0))
@@ -1729,6 +1754,8 @@ pub fn join_from_proto(
             .build_limit(build_limit);
         chain.limit = limit;
         chain.compute = compute;
+        chain.after = after;
+        chain.paging = paging;
         for step in steps {
             let mut next = JoinStep::on(step.on).query(step.query).having(step.having);
             next.join_type = step.join_type;
@@ -1881,6 +1908,15 @@ pub fn join_to_proto(left: &TableDef, right: &TableDef, join: &Join) -> pb::Join
         })
         .collect();
     pb::JoinQuery {
+        // As on `Query`: `after` implies `paged` on the way back in, so only a
+        // first page needs `paged` stated — but a round trip must preserve
+        // both, or a first page of an unpageable read stops being refused.
+        after: join
+            .after
+            .as_ref()
+            .map(|key| key.iter().map(value_to_proto).collect())
+            .unwrap_or_default(),
+        paged: join.paging,
         compute,
         inputs: vec![
             pb::JoinInput {
@@ -1961,6 +1997,15 @@ pub fn chain_to_proto(tables: &[&TableDef], chain: &Chain) -> pb::JoinQuery {
 
     let computing = shapes.len();
     pb::JoinQuery {
+        // As on `Query`: `after` implies `paged` on the way back in, so only a
+        // first page needs `paged` stated — but a round trip must preserve
+        // both, or a first page of an unpageable read stops being refused.
+        after: chain
+            .after
+            .as_ref()
+            .map(|key| key.iter().map(value_to_proto).collect())
+            .unwrap_or_default(),
+        paged: chain.paging,
         inputs,
         limit: chain.limit.map(|limit| limit as u64),
         offset: chain.offset as u64,

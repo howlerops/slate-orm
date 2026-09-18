@@ -573,6 +573,52 @@ function leavesOf(tree: RelatedNode[], depth: number): Value[][] {
 }
 
 /**
+ * One joined row off the wire: each input's values, what the join computed for
+ * it, and what each input computed for itself.
+ *
+ * Shared by `JoinStream.withComputed` and `Session.pageJoin` rather than
+ * written twice — a second copy is how the two come to disagree about the part
+ * that is easy to get wrong, which is `undefined` meaning "this input did not
+ * match" rather than "a row of nulls".
+ */
+function joinedRowFromWire(joined: { inputs?: unknown[]; computed?: unknown[] }): ComputedJoinedRow {
+  const inputs = joined.inputs ?? [];
+  return {
+    inputs: inputs.map((input) => {
+      const row = (input as { row?: unknown }).row;
+      return row ? rowFromWire(row) : undefined;
+    }),
+    computed: (joined.computed ?? []).map(valueFromWire),
+    inputComputed: inputs.map((input) => {
+      const row = (input as { row?: unknown }).row;
+      return row ? computedFromWire(row) : undefined;
+    }),
+  };
+}
+
+/**
+ * One page of a keyset-paged join or chain, and where to resume.
+ *
+ * `cursor` is a primary key of **input 0's** table, because a page of a join
+ * is a page of its driving table. `rows` holds every joined row those input-0
+ * rows produced, so it is usually longer than the page size: a page of 20 over
+ * a fan-out of 3 is about 60 rows, and 20 is how far the cursor moved.
+ *
+ * `cursor` is absent when the page was short and there is provably nothing
+ * after it, where "short" is counted in input-0 rows for the same reason.
+ */
+export interface JoinPage {
+  /** The rows, as `JoinStream.withComputed` hands them out. */
+  readonly rows: ComputedJoinedRow[];
+  /** The cursor for the next page, absent when this one ended the sequence. */
+  readonly cursor?: Value[];
+  /** Whether there is provably nothing after this page. */
+  readonly isLast: boolean;
+  /** Which store answered. */
+  readonly servedBy?: ServedBy;
+}
+
+/**
  * One page of a keyset-paged read, and where to resume.
  *
  * `cursor` is `undefined` when this page was short and there is provably
@@ -1016,6 +1062,80 @@ export class Session {
       freshness: this.#freshness(),
     });
     return new JoinStream(stream, (sb) => this.#observeServedBy(sb));
+  }
+
+  /**
+   * One page of a keyset-paged join or chain, with the cursor for the next.
+   *
+   * `join.limit` must be set, and it counts **input-0 rows**: a page of a join
+   * is a page of its driving table, and every joined row those rows produce
+   * comes back with them.
+   *
+   * ```ts
+   * let cursor: Value[] | undefined;
+   * for (;;) {
+   *   const page = await session.pageJoin({ ...q, limit: 100, after: cursor });
+   *   for (const row of page.rows) { ... }
+   *   if (page.isLast) break;
+   *   cursor = page.cursor;
+   * }
+   * ```
+   *
+   * Every joined row derives from exactly one input-0 row, so this visits every
+   * joined row exactly once even while rows are inserted and deleted — which
+   * `offset` does not, because it counts.
+   *
+   * The page is read whole before this resolves, as `page` is and for the same
+   * reason: the cursor arrives at the end. Note the page is bounded in input-0
+   * rows, not in returned rows.
+   */
+  async pageJoin(join: JoinQuery): Promise<JoinPage> {
+    const stream = this.#client.stream("Join", {
+      join: joinToWire({ ...join, paged: true }, (table) => this.#client.claim(table)),
+      freshness: this.#freshness(),
+    });
+
+    const rows: ComputedJoinedRow[] = [];
+    let cursor: Value[] | undefined;
+    let servedBy: ServedBy | undefined;
+    // Wrapped as `page` wraps it: the server's refusals are half of what
+    // paging is — a right outer join, an offset alongside a cursor — and an
+    // unwrapped one reaches the caller as a raw `ServiceError` that `isKind`
+    // cannot read.
+    try {
+      for await (const message of stream as AsyncIterable<Record<string, unknown>>) {
+        if (servedBy === undefined) {
+          const wire = message["servedBy"];
+          if (wire && typeof wire === "object") {
+            const { replica, sequence } = wire as { replica?: string; sequence?: string };
+            if (sequence !== undefined && sequence !== null) {
+              servedBy = { replica: replica ?? "", sequence: BigInt(sequence) };
+            }
+          }
+          this.#observeServedBy(message["servedBy"]);
+        }
+        const batch = (message["rows"] as { inputs?: unknown[]; computed?: unknown[] }[]) ?? [];
+        for (const joined of batch) rows.push(joinedRowFromWire(joined));
+        // On whichever message carries it, for the reason `page` gives.
+        const next = message["nextCursor"] as unknown[] | undefined;
+        if (next && next.length > 0) cursor = next.map(valueFromWire);
+      }
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error);
+      throw error;
+    }
+    // Built by parts, as `page` is: `exactOptionalPropertyTypes` distinguishes
+    // absent from present-and-undefined, and the second would read as a page
+    // that has a cursor.
+    const page: {
+      rows: ComputedJoinedRow[];
+      isLast: boolean;
+      cursor?: Value[];
+      servedBy?: ServedBy;
+    } = { rows, isLast: cursor === undefined };
+    if (cursor !== undefined) page.cursor = cursor;
+    if (servedBy !== undefined) page.servedBy = servedBy;
+    return page;
   }
 
   /** Group one table. */
@@ -1548,20 +1668,7 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
       for await (const message of this.#stream as AsyncIterable<Record<string, unknown>>) {
         this.#note(message);
         const rows = (message["rows"] as { inputs?: unknown[]; computed?: unknown[] }[]) ?? [];
-        for (const joined of rows) {
-          const inputs = joined.inputs ?? [];
-          yield {
-            inputs: inputs.map((input) => {
-              const row = (input as { row?: unknown }).row;
-              return row ? rowFromWire(row) : undefined;
-            }),
-            computed: (joined.computed ?? []).map(valueFromWire),
-            inputComputed: inputs.map((input) => {
-              const row = (input as { row?: unknown }).row;
-              return row ? computedFromWire(row) : undefined;
-            }),
-          };
-        }
+        for (const joined of rows) yield joinedRowFromWire(joined);
       }
     } catch (error) {
       if (isServiceError(error)) throw fromServiceError(error);

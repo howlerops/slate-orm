@@ -386,6 +386,8 @@ async fn a_cursor_on_a_join_input_is_refused() {
         .join(app(pb::JoinRequest {
             transaction: String::new(),
             join: Some(pb::JoinQuery {
+                after: Vec::new(),
+                paged: false,
                 inputs: vec![
                     pb::JoinInput {
                         query: Some(pb::Query {

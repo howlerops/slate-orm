@@ -829,34 +829,7 @@ func (j *JoinStream) Next() bool {
 		j.inputComputed = j.inputComputed[:0]
 		j.at = 0
 		for _, joined := range message.Rows {
-			inputs := make([][]Value, 0, len(joined.Inputs))
-			perInput := make([][]Value, 0, len(joined.Inputs))
-			for _, input := range joined.Inputs {
-				// A nil `Row` is an unmatched side of an outer join, and stays
-				// nil here so a caller can tell it from a row of nulls. Its
-				// computed values are nil for the same reason: the input
-				// produced no row, so it computed nothing for this one.
-				if input.Row == nil {
-					inputs = append(inputs, nil)
-					perInput = append(perInput, nil)
-					continue
-				}
-				row, err := rowFromProto(input.Row)
-				if err != nil {
-					j.err = err
-					j.done = true
-					return false
-				}
-				own, err := computedFromProto(input.Row)
-				if err != nil {
-					j.err = err
-					j.done = true
-					return false
-				}
-				inputs = append(inputs, row)
-				perInput = append(perInput, own)
-			}
-			extra, err := valuesFromProto(joined.Computed, "the join's computed value")
+			inputs, extra, perInput, err := joinedRowFromProto(joined)
 			if err != nil {
 				j.err = err
 				j.done = true
@@ -868,6 +841,44 @@ func (j *JoinStream) Next() bool {
 		}
 	}
 	return true
+}
+
+// joinedRowFromProto decodes one joined row: each input's values, the join's
+// own computed values, and each input's own.
+//
+// Extracted rather than written twice. [Session.PageJoin] needs the same
+// decode, and a second copy is how the two come to disagree about the one part
+// that is easy to get wrong — a nil input meaning "unmatched" rather than "a
+// row of nulls".
+func joinedRowFromProto(joined *pb.JoinedRow) ([][]Value, []Value, [][]Value, error) {
+	inputs := make([][]Value, 0, len(joined.Inputs))
+	perInput := make([][]Value, 0, len(joined.Inputs))
+	for _, input := range joined.Inputs {
+		// A nil `Row` is an unmatched side of an outer join, and stays nil
+		// here so a caller can tell it from a row of nulls. Its computed
+		// values are nil for the same reason: the input produced no row, so it
+		// computed nothing for this one.
+		if input.Row == nil {
+			inputs = append(inputs, nil)
+			perInput = append(perInput, nil)
+			continue
+		}
+		row, err := rowFromProto(input.Row)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		own, err := computedFromProto(input.Row)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		inputs = append(inputs, row)
+		perInput = append(perInput, own)
+	}
+	extra, err := valuesFromProto(joined.Computed, "the join's computed value")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return inputs, extra, perInput, nil
 }
 
 // Computed is what [JoinQuery.Compute] produced for the row [JoinStream.Row]
