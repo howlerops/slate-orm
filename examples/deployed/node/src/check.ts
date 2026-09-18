@@ -45,6 +45,8 @@ interface Expected {
   readonly joinedHours: Record<string, [number, number]>;
   readonly zone132: number;
   readonly replicas: string[];
+  /** The sequence the Python arm pinned its reads to. */
+  readonly pinnedSequence: number;
 }
 
 // The ordinals `head.toml` declares. Written out rather than fetched, which is
@@ -101,6 +103,27 @@ async function main(): Promise<number> {
   };
   const client = Client.connect(values.address, identity);
   const session = client.session();
+
+  // --- pin to the snapshot the Python arm pinned to ----------------------
+  //
+  // This process starts with an empty watermark, so without this every read
+  // below asks for nothing in particular and may be served by a replica that
+  // has not finished polling the load — and then the check reports a
+  // disagreement with the fold that is really a disagreement in time. It is
+  // the same defect the Python arm had, and it hides better here: this runs
+  // last, so the replicas have had longest and the luck holds most often.
+  //
+  // `observe` rather than a per-read argument because this client does not
+  // have one — Python's `Client.query(freshness=…)` has no counterpart in
+  // TypeScript or Go, where the session watermark is the whole mechanism.
+  // `observe` is documented for carrying a position between sessions, which
+  // is precisely what `pinnedSequence` is.
+  check(
+    "the Python arm named a sequence to pin to",
+    want.pinnedSequence > 0,
+    `pinnedSequence ${want.pinnedSequence}`,
+  );
+  session.observe(BigInt(want.pinnedSequence));
 
   // --- every row is there ------------------------------------------------
   const total = await aggregateOne(session, "trips", { aggregates: [count()] });

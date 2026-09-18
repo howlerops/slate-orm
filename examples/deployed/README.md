@@ -88,6 +88,31 @@ filesystem bucket that nothing here observes stale data, so the catch-up path
 is exercised in the sense that a read asking for a sequence is served, and not
 in the sense that it had to wait.
 
+This was pushed on, and the result is a **null result worth recording**. Every
+read in all three arms is now pinned to the sequence the load reached, because
+until recently only one of them was and the rest were correct-by-luck in the
+same way — one unpinned read did report 18,000 trips against 20,000 in CI on
+2026-09-16, which is a replica one chunk behind, not data loss. Trying to
+reproduce that on demand *failed*: with `[[replicas]] poll_interval = "55s"`
+and `[routing] catch_up = "60s"` — a poll 27× longer than the configured one —
+both replicas still reported the writer's sequence and the full count on every
+one of eight unpinned reads, at 20,000 trips and again at the full 100,000.
+
+So the pin is defence against a failure that has been observed once and cannot
+be summoned here. What *is* demonstrated is that it is wired rather than
+decorative: pinning to `loaded + 1_000_000` fails every read with
+`unavailable: replica 'writer' is at sequence 12, behind the required 1000012`,
+so the sequence really does travel and really is enforced.
+
+The discrepancy is the interesting part and is left open: `storage.rs` records
+a measurement where a 10-second poll made 64 of 64 read-your-writes reads fall
+through to the writer, which is lag, and is why `poll_interval` derives from
+`catch_up` and why a poll at or above it is refused. A 55-second poll producing
+no observable lag at all does not fit that. Either the window is much narrower
+than the configuration suggests, or `manifest_poll_interval` no longer governs
+what a `DbReader` sees. Worth an experiment against SlateDB directly; not one
+this example can run.
+
 **Anything about how fast it is.** The loader prints a rate because watching
 100,000 rows go by in silence is unpleasant, not because the number means
 something: it is one machine, one process, a filesystem pretending to be S3.

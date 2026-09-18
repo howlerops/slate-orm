@@ -822,10 +822,21 @@ asserts.
 
 Not plan items; things a session should pick up when it is already in the file.
 
-- **The deployed harness reads without demanding a snapshot.** One read was
-  fixed because it made a durability claim and failed CI on a stale replica.
-  The others are correct-by-luck in the same way and would be better served by
-  pinning the whole run to one snapshot.
+- ~~**The deployed harness reads without demanding a snapshot.**~~ **Built.**
+  `check.py` takes the sequence the writer reports for its first count and pins
+  every later read to it with `Freshness.at_least`, then passes it through
+  `expected.json` so the Go and TypeScript arms fold it into their session
+  watermark with `Observe` / `observe` — which is what those two clients have
+  instead of a per-read `freshness`, an asymmetry with Python that this
+  recorded rather than worked around. `at_least` and not `latest`, because
+  `latest` is the writer alone and would have sent every read to the writer,
+  leaving the three replica checks passing by asking a replica nothing.
+  Honestly: the staleness this defends against was observed once in CI and
+  **could not be reproduced** — a replica poll 27× longer than the configured
+  one produced no stale read at either scale. What is demonstrated is that the
+  pin is enforced, not that it was needed on any run since. The failed
+  reproduction also contradicts a measurement in `storage.rs` and that is
+  written up as an open question in the example's README.
 - ~~**No retrying `transact` in Go or TypeScript.**~~ **Built.** Go has
   `slate.Transact`, a generic free function because Go has no generic methods
   and a method would have to return `any`; TypeScript has `session.transact`.

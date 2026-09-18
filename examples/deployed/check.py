@@ -86,7 +86,7 @@ def main() -> int:
     )
     client.wait_for_ready(timeout=30.0)
 
-    # --- the rows arrived, all of them ------------------------------------
+    # --- the rows arrived, all of them, and the run pins to that point ----
     #
     # `Freshness.latest()`, and it is load-bearing rather than tidy. This
     # deployment declares two replicas that poll on an interval, so a count
@@ -99,16 +99,42 @@ def main() -> int:
     # The name of this check is a durability claim, and a stale read cannot
     # disprove durability. Asking for the latest snapshot is the question the
     # name was always making.
-    total = one_group(
-        client,
-        AggregateQuery(TRIPS).aggregate(Agg.count()),
-        freshness=Freshness.latest(),
+    #
+    # Fixing *this* read left every other one correct-by-luck in the same way:
+    # nothing else demanded freshness, and each compares against a fold of the
+    # whole file, so any of them would have reported the same phantom data loss
+    # on a slow poll. So the sequence that read was served at becomes the pin
+    # for the rest of the run: `Freshness.at_least(loaded)` on every read.
+    #
+    # `at_least` rather than `latest`, deliberately. `latest` is the writer and
+    # only the writer, so pinning with it would send every read in this file to
+    # the writer and quietly gut the replica checks below — they would still
+    # pass, by never asking a replica anything. `at_least` is satisfied by any
+    # view that has polled past the load, which is the actual requirement, and
+    # `[routing] catch_up` is the budget the pool waits for one to get there.
+    counted = client.aggregate(
+        AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=Freshness.latest()
     )
+    total = next((int(group.aggregates[0]) for group in counted), 0)
     check(
         "every trip survived the wire, the WAL and the bucket",
         total == len(trips),
         f"{total} against {len(trips)}",
     )
+
+    loaded = counted.served_by.sequence if counted.served_by is not None else 0
+    # Asserted rather than assumed, because a pin of zero is a pin of nothing:
+    # `at_least(0)` is satisfied by every view including one that has read
+    # none of the load, so the rest of this file would silently go back to
+    # being correct-by-luck while every line still printed `ok`. That is the
+    # repository's own "a skip is green" failure, one level down.
+    check(
+        "the writer named the sequence the load reached, so the run can pin to it",
+        loaded > 0,
+        f"served_by {counted.served_by!r}",
+    )
+    pinned = Freshness.at_least(loaded)
+    print(f"       pinned every read below to sequence {loaded}")
 
     # --- a computed column, on one table ----------------------------------
     #
@@ -117,7 +143,7 @@ def main() -> int:
     hours.compute(extract(TimeUnit.HOUR, hours.c.pickup_time))
     hours.group_by(hours.computed(0))
     hours.aggregate(Agg.count())
-    got = {key: count for key, count in groups(client, hours)}
+    got = {key: count for key, count in groups(client, hours, pinned)}
 
     want: dict[int, int] = defaultdict(int)
     for trip in trips:
@@ -152,7 +178,7 @@ def main() -> int:
     days.compute(calendar_part(CalendarPart.DAY_OF_WEEK, days.c.pickup_time))
     days.group_by(days.computed(0))
     days.aggregate(Agg.count())
-    by_day = {key: count for key, count in groups(client, days)}
+    by_day = {key: count for key, count in groups(client, days, pinned)}
     want_day: dict[int, int] = defaultdict(int)
     for trip in trips:
         # Python's weekday() is Monday=0; the kernel's is Sunday=0, matching
@@ -180,7 +206,7 @@ def main() -> int:
     grouped.aggregate(Agg.count(), Agg.avg(trips_in.c.fare))
 
     joined: dict[int, tuple[int, float]] = {}
-    for group in client.aggregate(grouped):
+    for group in client.aggregate(grouped, freshness=pinned):
         key = group.key[0]
         count, average = group.aggregates
         joined[int(key)] = (int(count), float(average))
@@ -211,7 +237,7 @@ def main() -> int:
 
     got_borough = {
         str(group.key[0]): int(group.aggregates[0])
-        for group in client.aggregate(by_borough)
+        for group in client.aggregate(by_borough, freshness=pinned)
     }
     want_borough: dict[str, int] = defaultdict(int)
     for trip in trips:
@@ -227,7 +253,7 @@ def main() -> int:
     covering = Query(TRIPS)
     covering.where(covering.c.pickup_zone.eq(u64(132)))
     covering.select(covering.c.pickup_zone)
-    plan = client.explain(covering)
+    plan = client.explain(covering, freshness=pinned)
     check(
         "an index answers the covering query without touching a row",
         "by_pickup_zone" in plan.display and plan.index_only,
@@ -239,11 +265,11 @@ def main() -> int:
     in_zone_query = AggregateQuery(TRIPS)
     in_zone_query.where(in_zone_query.c.pickup_zone.eq(u64(132)))
     in_zone_query.aggregate(Agg.count())
-    counted = one_group(client, in_zone_query)
+    in_zone_count = one_group(client, in_zone_query, pinned)
     check(
         "the indexed count is the fold's count",
-        counted == in_zone,
-        f"{counted} against {in_zone}",
+        in_zone_count == in_zone,
+        f"{in_zone_count} against {in_zone}",
     )
 
     # --- a fixed timezone offset is arithmetic ----------------------------
@@ -253,7 +279,7 @@ def main() -> int:
     )
     shifted.group_by(shifted.computed(0))
     shifted.aggregate(Agg.count())
-    got_shift = {key: count for key, count in groups(client, shifted)}
+    got_shift = {key: count for key, count in groups(client, shifted, pinned)}
     want_shift: dict[int, int] = defaultdict(int)
     for trip in trips:
         want_shift[(trip.pickup_time - 5 * 3600) // 3600 % 24] += 1
@@ -277,10 +303,19 @@ def main() -> int:
     # replicas from two declared and never used — which is what a pool that
     # quietly fell back to the writer on every read would look like, and is
     # indistinguishable from the answers alone.
+    #
+    # Pinned like every other read, and the pin is what makes the third check
+    # below ("the count is the one the writer has") mean anything: unpinned, a
+    # replica one poll behind answers with a short count and that check reports
+    # a disagreement between views that is really a disagreement in time. It is
+    # also the strongest evidence here that `[routing] catch_up` works — these
+    # eight reads demand a sequence *and* land on a replica.
     seen: set[str] = set()
     counts: set[int] = set()
     for _ in range(8):
-        stream = client.aggregate(AggregateQuery(TRIPS).aggregate(Agg.count()))
+        stream = client.aggregate(
+            AggregateQuery(TRIPS).aggregate(Agg.count()), freshness=pinned
+        )
         counts.update(int(group.aggregates[0]) for group in stream)
         if stream.served_by is not None:
             seen.add(stream.served_by.replica)
@@ -332,6 +367,21 @@ def main() -> int:
                     },
                     "zone132": in_zone,
                     "replicas": sorted(replica_names),
+                    # The sequence this run pinned to, so the Go and
+                    # TypeScript arms can pin to the same one. They run after
+                    # this file and against the same bucket, so every read they
+                    # make is correct-by-luck in exactly the way the reads
+                    # above were until this change — more so, because by then
+                    # the replicas have had another few seconds to catch up and
+                    # the luck holds more often.
+                    #
+                    # Neither client takes a per-read `freshness` the way
+                    # Python's does; what they have is `Session.Observe` /
+                    # `session.observe`, documented for carrying a position
+                    # between processes, which is exactly this. That asymmetry
+                    # between the three SDKs is real and is recorded in the
+                    # example's README rather than worked around here.
+                    "pinnedSequence": loaded,
                 },
                 indent=1,
             )
@@ -349,10 +399,12 @@ def main() -> int:
     return 0
 
 
-def groups(client: Client, query: AggregateQuery) -> list[tuple[int, int]]:
+def groups(
+    client: Client, query: AggregateQuery, freshness: Freshness | None = None
+) -> list[tuple[int, int]]:
     return [
         (int(group.key[0]), int(group.aggregates[0]))
-        for group in client.aggregate(query)
+        for group in client.aggregate(query, freshness=freshness)
     ]
 
 

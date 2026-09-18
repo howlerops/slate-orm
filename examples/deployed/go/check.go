@@ -50,6 +50,9 @@ type expected struct {
 	JoinedHours map[string][]float64 `json:"joinedHours"`
 	Zone132     int                  `json:"zone132"`
 	Replicas    []string             `json:"replicas"`
+	// The sequence the Python arm pinned its reads to. See the note where it
+	// is folded into this session's watermark.
+	PinnedSequence uint64 `json:"pinnedSequence"`
 }
 
 var failures []string
@@ -94,6 +97,26 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	session := client.Session()
+
+	// --- pin to the snapshot the Python arm pinned to ----------------------
+	//
+	// This process starts with an empty watermark, so without this every read
+	// below asks for nothing in particular and may be served by a replica that
+	// has not finished polling the load — and then the check reports a
+	// disagreement with the fold that is really a disagreement in time. It is
+	// the same defect the Python arm had, and it hides better here: this runs
+	// after that one, so the replicas have had longer and the luck holds more
+	// often.
+	//
+	// `Observe` rather than a per-read argument because this client does not
+	// have a per-read argument — Python's `Client.query(freshness=…)` has no
+	// counterpart in Go or TypeScript, where the session watermark is the
+	// whole mechanism. `Observe` is documented for carrying a position between
+	// processes, which is precisely what `pinnedSequence` is.
+	check("the Python arm named a sequence to pin to",
+		want.PinnedSequence > 0,
+		fmt.Sprintf("pinnedSequence %d", want.PinnedSequence))
+	session.Observe(slate.ReadToken(want.PinnedSequence))
 
 	// --- every row is there ------------------------------------------------
 	total, served, err := countAll(ctx, session)
