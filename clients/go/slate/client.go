@@ -469,6 +469,47 @@ func (s *Session) Update(ctx context.Context, table string, rows ...[]Value) (Wr
 	})
 }
 
+// RowDelete is one row of a conditional delete.
+//
+// Key is the primary key to remove; Was is that row exactly as this caller
+// last read it. Deleting a row somebody else just edited is the same class of
+// mistake as overwriting it, and the server refuses it with codes.Aborted.
+//
+// It changes what an absent row means. A plain delete counts it in
+// WriteResult.Affected, because "make sure this is gone" is idempotent; a
+// conditional one is refused with codes.NotFound (ROW_NOT_FOUND), because a
+// caller that said what it expected to find wants to hear that it was already
+// gone. NotFound and not Aborted: a row that moved can be re-read and the
+// decision remade, and a row that is gone cannot, so retrying would loop.
+type RowDelete struct {
+	Key []Value
+	Was []Value
+}
+
+func splitDeletes(deletes []RowDelete) (keys, was [][]Value) {
+	keys = make([][]Value, len(deletes))
+	was = make([][]Value, len(deletes))
+	for at, one := range deletes {
+		keys[at] = one.Key
+		was[at] = one.Was
+	}
+	return keys, was
+}
+
+// DeleteIfUnchanged removes rows only if each still looks as the caller last
+// read it. See [RowDelete].
+func (s *Session) DeleteIfUnchanged(
+	ctx context.Context, table string, deletes ...RowDelete,
+) (WriteResult, error) {
+	keys, was := splitDeletes(deletes)
+	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return s.client.rpc.Delete(ctx, &pb.DeleteRequest{
+			Table: table, PrimaryKeys: rowsToProto(keys), Expected: rowsToProto(was),
+			Schema: s.client.schemas.claimFor(table),
+		})
+	})
+}
+
 // Delete removes rows by primary key.
 func (s *Session) Delete(ctx context.Context, table string, keys ...[]Value) (WriteResult, error) {
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
@@ -770,6 +811,21 @@ func (t *Transaction) Delete(ctx context.Context, table string, keys ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Delete(ctx, &pb.DeleteRequest{
 			Transaction: t.id, Table: table, PrimaryKeys: rowsToProto(keys),
+			Schema: t.session.client.schemas.claimFor(table),
+		})
+	})
+}
+
+// DeleteIfUnchanged removes rows inside the transaction, only if each still
+// looks as the caller last read it. See [RowDelete].
+func (t *Transaction) DeleteIfUnchanged(
+	ctx context.Context, table string, deletes ...RowDelete,
+) (WriteResult, error) {
+	keys, was := splitDeletes(deletes)
+	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return t.session.client.rpc.Delete(ctx, &pb.DeleteRequest{
+			Transaction: t.id, Table: table,
+			PrimaryKeys: rowsToProto(keys), Expected: rowsToProto(was),
 			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})

@@ -779,6 +779,7 @@ async fn deleting_reports_how_many_rows_were_there() {
             // One that exists, one that never did.
             primary_keys: vec![key(3), key(9999)],
             schema: Some(common::claim("docs")),
+            expected: Vec::new(),
         }))
         .await
         .unwrap()
@@ -1078,6 +1079,7 @@ async fn a_primary_key_of_the_wrong_shape_is_refused_rather_than_read_as_absent(
                 table: "docs".to_owned(),
                 primary_keys: vec![common::wire_row(key.iter().map(value_to_proto).collect())],
                 schema: Some(common::claim("docs")),
+                expected: Vec::new(),
             }))
             .await
             .expect_err(&format!("`{what}` should be refused by Delete too"));

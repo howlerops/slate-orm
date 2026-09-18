@@ -917,8 +917,37 @@ addresses no column, so a client with it wrong reaches the right column and
 renders every value off by a power of ten, for ever, with no error anywhere.
 That is the price of a protocol that publishes no schema and it is the sharpest
 edge in the feature. `Scalar` still has no decimal arithmetic, the SQL front
-end still has no decimal literal, and `delete_if_unchanged` still does not
-exist.
+end still has no decimal literal.
+
+### W3 — `delete_if_unchanged`, kernel to clients — **built**
+
+> The last row of the README's optimistic-concurrency list, and one sentence
+> long there: "Deleting a row somebody else just edited is the same class of
+> mistake as overwriting it, and the same argument applies."
+
+`RecordTransaction::delete_if_unchanged` in the kernel, `Records::remove_record`
+over it, `DeleteRequest.expected` on the wire dispatching on all three write
+paths, and `delete(..., expected=...)` / `DeleteIfUnchanged` in the three
+clients — the same shape W1 gave the update, because the argument is the same
+one.
+
+**Where it stops being the update's twin**, which is the whole design content
+of this item. A plain delete reports an absent key as `affected: 0`, because
+"make sure this is gone" is idempotent and a caller asking that wants no error.
+A conditional delete refuses it. The caller named what it expected to find, so
+"somebody got there first" is an answer it wants rather than a count it will
+read as success — which means `affected` for a conditional delete is always the
+number of keys sent, since anything less would report a state the call already
+refused. And the refusal is `NOT_FOUND` rather than `ABORTED`: a row that moved
+can be re-read and the decision remade, a row that is gone cannot, so a caller
+with a retry loop on `ABORTED` would spin. The three-SDK corpus compares that
+distinction, which is the one place the three clients' error taxonomies meet on
+a code no other endpoint produces.
+
+**What it does not guard.** The named row and nothing else. A cascade may still
+remove children the caller never saw, and there is no version of the field that
+could cover them: the caller does not know what the deletion closure contains,
+and the closure is deliberately computed without the row policy.
 
 ## What neither plan does
 

@@ -180,6 +180,7 @@ async fn paging_visits_every_row_exactly_once_under_concurrent_writes() {
                     computed: Vec::new(),
                 }],
                 schema: Some(common::claim("docs")),
+                expected: Vec::new(),
             }))
             .await
             .expect("deleting behind the cursor");

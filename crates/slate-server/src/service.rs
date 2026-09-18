@@ -690,13 +690,13 @@ impl<S: KvStore + KvReadStore> Head<S> {
                     .authorized_table(context, &r.table, Action::Delete)
                     .map_err(named)?;
                 fingerprint::check(table, r.schema.as_ref()).map_err(named)?;
-                let keys = r
-                    .primary_keys
-                    .iter()
-                    .map(|key| primary_key_from_proto(key, table))
-                    .collect::<Result<Vec<Vec<Value>>, Status>>()
-                    .map_err(named)?;
-                Ok(Decoded::Delete { table, keys })
+                let (keys, expected) =
+                    delete_keys(&r.primary_keys, &r.expected, table).map_err(named)?;
+                Ok(Decoded::Delete {
+                    table,
+                    keys,
+                    expected,
+                })
             }
             Of::DeleteWhere(r) => {
                 let table = self
@@ -772,9 +772,13 @@ impl<S: KvStore + KvReadStore> Head<S> {
                             .update(transaction, context, table.id(), rows, expected)
                             .await?;
                     }
-                    Decoded::Delete { table, keys } => {
+                    Decoded::Delete {
+                        table,
+                        keys,
+                        expected,
+                    } => {
                         self.sessions
-                            .delete(transaction, context, table.id(), keys)
+                            .delete(transaction, context, table.id(), keys, expected)
                             .await?;
                     }
                     Decoded::DeleteWhere {
@@ -987,6 +991,10 @@ enum Write<'a> {
     Delete {
         table: &'a TableDef,
         keys: &'a [Vec<Value>],
+        /// The rows as the caller last saw them, or empty for an unconditional
+        /// delete. Checked to be either empty or exactly as long as `keys`
+        /// before this is built.
+        expected: &'a [Row],
     },
     /// Delete every row a predicate selects. One statement, not a query and a
     /// round trip per key.
@@ -1083,7 +1091,25 @@ impl Write<'_> {
                 }
                 Ok(counted(rows.len() as u64))
             }
-            Self::Delete { table, keys } => {
+            Self::Delete {
+                table,
+                keys,
+                expected,
+            } if !expected.is_empty() => {
+                // A conditional delete is not counted the way a plain one is.
+                // `delete` returns `false` for an absent row and the count
+                // below skips it; `delete_if_unchanged` refuses instead, so
+                // every key that got this far was there and `affected` is the
+                // arity. Reporting a count that could be less than the keys
+                // sent would be reporting a state this call already refused.
+                for (key, was) in keys.iter().zip(expected.iter()) {
+                    transaction
+                        .delete_if_unchanged(context, table, key, was)
+                        .await?;
+                }
+                Ok(counted(keys.len() as u64))
+            }
+            Self::Delete { table, keys, .. } => {
                 let mut affected = 0;
                 // No `delete_many`, and not for want of noticing: a
                 // delete walks a foreign-key closure, and two keys in one
@@ -1143,6 +1169,7 @@ enum Decoded<'a> {
     Delete {
         table: &'a TableDef,
         keys: Vec<Vec<Value>>,
+        expected: Vec<Row>,
     },
     DeleteWhere {
         table: &'a TableDef,
@@ -1184,7 +1211,15 @@ impl<'a> Decoded<'a> {
                 rows,
                 expected,
             },
-            Self::Delete { table, keys } => Write::Delete { table, keys },
+            Self::Delete {
+                table,
+                keys,
+                expected,
+            } => Write::Delete {
+                table,
+                keys,
+                expected,
+            },
             Self::DeleteWhere {
                 table, predicate, ..
             } => Write::DeleteWhere {
@@ -1331,6 +1366,40 @@ fn update_rows(rows: &[pb::Row], expected: &[pb::Row]) -> Result<(Vec<Row>, Vec<
         .map(row_from_proto)
         .collect::<Result<Vec<Row>, Status>>()?;
     Ok((rows, expected))
+}
+
+/// A delete's keys and the rows it is conditional on.
+///
+/// `expected` is empty for an ordinary delete and otherwise exactly as long as
+/// `primary_keys`. Checked here, before anything is written, for the reason
+/// [`update_rows`] gives: a short `expected` would leave the keys past its end
+/// deleted unconditionally, which is the mistake the field exists to catch.
+fn delete_keys(
+    primary_keys: &[pb::Row],
+    expected: &[pb::Row],
+    table: &TableDef,
+) -> Result<(Vec<Vec<Value>>, Vec<Row>), Status> {
+    // Checked against the table's key rather than encoded and looked up: a key
+    // of the wrong arity or the wrong integer width used to delete nothing and
+    // report `affected: 0`, which is also what a key that was never there
+    // reports, and what a key the caller's policy hides reports.
+    let keys = primary_keys
+        .iter()
+        .map(|key| primary_key_from_proto(key, table))
+        .collect::<Result<Vec<Vec<Value>>, Status>>()?;
+    if !expected.is_empty() && expected.len() != keys.len() {
+        return Err(Status::invalid_argument(format!(
+            "`expected` must be empty or name one row per key; \
+             got {} key(s) and {} expected",
+            keys.len(),
+            expected.len()
+        )));
+    }
+    let expected = expected
+        .iter()
+        .map(row_from_proto)
+        .collect::<Result<Vec<Row>, Status>>()?;
+    Ok((keys, expected))
 }
 
 /// The rows of a query, in batches.
@@ -1500,15 +1569,18 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         // nothing and report `affected: 0`, which is also what a key that was
         // never there reports, and what a key the caller's policy hides
         // reports.
-        let keys = request
-            .primary_keys
-            .iter()
-            .map(|key| primary_key_from_proto(key, table))
-            .collect::<Result<Vec<Vec<Value>>, Status>>()?;
+        let (keys, expected) = delete_keys(&request.primary_keys, &request.expected, table)?;
 
         if request.transaction.is_empty() {
             let (affected, token) = self
-                .autocommit(&context, Write::Delete { table, keys: &keys })
+                .autocommit(
+                    &context,
+                    Write::Delete {
+                        table,
+                        keys: &keys,
+                        expected: &expected,
+                    },
+                )
                 .await?;
             return Ok(Response::new(pb::WriteResponse {
                 sequence: token.map(ReadToken::sequence),
@@ -1519,7 +1591,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
         let affected = self
             .sessions
-            .delete(&request.transaction, &context, table.id(), keys)
+            .delete(&request.transaction, &context, table.id(), keys, expected)
             .await?;
         Ok(Response::new(pb::WriteResponse {
             sequence: None,

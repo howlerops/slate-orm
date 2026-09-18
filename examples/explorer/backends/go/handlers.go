@@ -873,6 +873,75 @@ func (s *server) conditionalUpdate(
 	}, nil
 }
 
+// The id the conditional-delete handler owns.
+const conditionalDeleteID = 9301
+
+// conditionalDelete shows the delete half of optimistic concurrency, and the
+// one place it is not simply the update's twin.
+//
+// `stale` lets somebody else edit the row first; `gone` removes it first.
+// Applied, refused-because-moved and refused-because-absent are three
+// different answers, and the third is the interesting one: a *plain* delete
+// reports an absent key as `affected: 0`, and a conditional one refuses it.
+func (s *server) conditionalDelete(
+	ctx context.Context, session *slate.Session, body json.RawMessage,
+) (any, error) {
+	var spec struct {
+		Stale bool `json:"stale"`
+		Gone  bool `json:"gone"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+
+	key := []slate.Value{slate.Uint(conditionalDeleteID)}
+	if _, err := session.Upsert(ctx, "books", book(conditionalDeleteID, "Doomed")); err != nil {
+		return nil, err
+	}
+	was, found, err := session.Get(ctx, "books", key)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded row is not there")
+	}
+
+	if spec.Stale {
+		moved := append([]slate.Value(nil), was...)
+		moved[7] = slate.Units(1100)
+		if _, err := session.Update(ctx, "books", moved); err != nil {
+			return nil, err
+		}
+	}
+	if spec.Gone {
+		if _, err := session.Delete(ctx, "books", key); err != nil {
+			return nil, err
+		}
+	}
+
+	refused := ""
+	affected := uint64(0)
+	result, err := session.DeleteIfUnchanged(ctx, "books", slate.RowDelete{Key: key, Was: was})
+	if err != nil {
+		var e *slate.Error
+		if !errors.As(err, &e) {
+			return nil, err
+		}
+		refused = kindName(e.Kind)
+	} else {
+		affected = result.Affected
+	}
+
+	_, present, err := session.Get(ctx, "books", key)
+	if err != nil {
+		return nil, err
+	}
+	// `left` is what the table says, beside `affected` and `refused`, which
+	// are what the server said it did. A refusal that removed the row anyway
+	// would agree across three clients on a claim none of them checked.
+	return map[string]any{"refused": refused, "affected": affected, "left": present}, nil
+}
+
 // The id range the batch handler owns, clear of the fixture, of the
 // transaction probe at 9001 and of the predicate-write range at 9100.
 const batchFirst = 9200

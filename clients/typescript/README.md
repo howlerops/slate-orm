@@ -233,6 +233,14 @@ A method of its own rather than an argument to `update`, because `update` is
 variadic over its rows. The Python client spells the same thing
 `update(..., expected=...)`.
 
+`deleteIfUnchanged` takes {@link RowDelete} pairs and is the same argument for
+a delete — with one difference worth knowing. A plain `delete` reports a key
+that is not there in `affected`, because "make sure this is gone" is
+idempotent; a conditional one is refused with `NOT_FOUND`, because a caller
+that said what it expected to find wants to hear that somebody got there first.
+`NOT_FOUND` and not `ABORTED`: a row that moved can be re-read and the decision
+remade, and a row that is gone cannot, so a retry loop would spin.
+
 ## What is not here
 
 No vector similarity search, and no computed values in a query or a join

@@ -274,6 +274,7 @@ async fn each_handler_authorizes_the_action_it_performs() {
                 table: "users".to_owned(),
                 primary_keys: vec![key()],
                 schema: Some(claim("users")),
+                expected: Vec::new(),
             },
             "deleter_only",
         ))
@@ -338,6 +339,7 @@ async fn the_early_authorization_does_not_refuse_a_permitted_caller() {
                     slate_tuple::Value::U64(1),
                 ]))],
                 schema: Some(claim("users")),
+                expected: Vec::new(),
             },
             1,
             1,

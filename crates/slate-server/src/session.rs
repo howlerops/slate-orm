@@ -332,6 +332,9 @@ enum Command {
         context: Box<SecurityContext>,
         table: TableId,
         keys: Vec<Vec<Value>>,
+        /// Empty for an ordinary delete; otherwise one row per key, already
+        /// checked for arity by the handler that decoded it.
+        expected: Vec<Row>,
         reply: oneshot::Sender<Result<u64, KernelError>>,
     },
     /// Both predicate writes reply with the rows rather than a count. The
@@ -585,11 +588,13 @@ impl Sessions {
         context: &SecurityContext,
         table: TableId,
         keys: Vec<Vec<Value>>,
+        expected: Vec<Row>,
     ) -> Result<u64, Status> {
         self.dispatch(id, context, |reply| Command::Delete {
             context: Box::new(context.clone()),
             table,
             keys,
+            expected,
             reply,
         })
         .await?
@@ -943,9 +948,26 @@ async fn apply<S: KvStore>(
             context,
             table,
             keys,
+            expected,
             reply,
         } => {
             let definition = table!(table, reply);
+            if !expected.is_empty() {
+                // A conditional delete is counted differently from a plain one,
+                // for the reason `Write::apply`'s twin of this arm gives:
+                // `delete_if_unchanged` refuses an absent row rather than
+                // returning `false`, so every key that got through was there.
+                let mut outcome = Ok(());
+                for (key, was) in keys.iter().zip(expected.iter()) {
+                    outcome = transaction
+                        .delete_if_unchanged(&context, definition, key, was)
+                        .await;
+                    if outcome.is_err() {
+                        break;
+                    }
+                }
+                return answer(reply, outcome.map(|()| keys.len() as u64));
+            }
             let mut affected = 0;
             let mut outcome = Ok(());
             // Still a round trip per key: batching a delete means unioning

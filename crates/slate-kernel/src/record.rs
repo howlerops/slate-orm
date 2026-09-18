@@ -1599,6 +1599,79 @@ impl<'a> RecordTransaction<'a> {
         Ok(true)
     }
 
+    /// Delete a row only if it still looks exactly as it did when it was read.
+    ///
+    /// Optimistic concurrency for a delete, and the argument is
+    /// [`RecordTransaction::update_if_unchanged`]'s: deleting a row somebody
+    /// else just edited is the same class of mistake as overwriting it. A
+    /// caller reads a row, decides from what it says that the row should go,
+    /// and by the time the delete lands the row says something else. The
+    /// decision was made about data that no longer exists, and nothing anywhere
+    /// reports it.
+    ///
+    /// # What `expected` guards, and what it does not
+    ///
+    /// It guards the *named* row and only that row. A cascade may still remove
+    /// children the caller never saw, and `expected` says nothing about them —
+    /// there is no version of this that could, because the caller does not know
+    /// what the closure contains and the closure is deliberately computed
+    /// without the row policy. So this narrows the window on the row a caller
+    /// decided about; it does not make a cascade conditional.
+    ///
+    /// # Errors
+    /// [`KernelError::RowChanged`] if the stored row differs from `expected`,
+    /// [`KernelError::RowNotFound`] if it is gone — which is *not* what
+    /// [`RecordTransaction::delete`] does, and the difference is the point.
+    /// `delete` returns `false` for an absent row because "make sure this is
+    /// gone" is idempotent. A caller that named what it expected to find is
+    /// asking a different question, and "it was already gone" is an answer it
+    /// wants rather than a `false` it will read as success.
+    pub async fn delete_if_unchanged(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        primary_key: &[Value],
+        expected: &Row,
+    ) -> Result<()> {
+        self.security.authorize(context, table, Action::Delete)?;
+        expected.validate(table)?;
+
+        // Refused before the read, for the reason the update's twin gives: a
+        // caller whose `expected` names a different row than `primary_key` has
+        // made a mistake no outcome of the read can make sensible, and the
+        // outcome it would otherwise have is "checked one row, deleted
+        // another".
+        if expected.primary_key_values(table) != primary_key {
+            return Err(KernelError::RowChanged {
+                table: table.name().to_owned(),
+            });
+        }
+
+        let Some(existing) = self
+            .visible_row(context, table, Action::Delete, primary_key)
+            .await?
+        else {
+            return Err(KernelError::RowNotFound {
+                table: table.name().to_owned(),
+            });
+        };
+        if &existing != expected {
+            return Err(KernelError::RowChanged {
+                table: table.name().to_owned(),
+            });
+        }
+
+        // Then exactly `delete`'s body. Not a call to it: `delete` would read
+        // the row a second time, and between the two reads inside one
+        // transaction nothing can change — so the second read is pure cost and
+        // the duplication is three lines.
+        let doomed = self.deletion_closure(context, table, existing).await?;
+        for (owner, row) in &doomed {
+            self.remove_row(owner, row)?;
+        }
+        Ok(())
+    }
+
     /// Delete every row the predicate selects.
     ///
     /// `DELETE FROM sessions WHERE expires_at < :t`, which until now had to be

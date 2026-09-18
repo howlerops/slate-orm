@@ -223,6 +223,15 @@ variadic over its rows and Go has no optional parameters. The Python client
 spells the same thing `update(..., expected=...)`; the difference is Go's, not
 the protocol's.
 
+`DeleteIfUnchanged` takes [RowDelete] pairs and is the same argument for a
+delete — with one difference worth knowing. A plain `Delete` reports a key that
+is not there in `WriteResult.Affected`, because "make sure this is gone" is
+idempotent; a conditional one is refused with `codes.NotFound`, because a
+caller that said what it expected to find wants to hear that somebody got there
+first. `NotFound` and not `Aborted`: a row that moved can be re-read and the
+decision remade, and a row that is gone cannot, so a retry loop on `Aborted`
+would spin.
+
 ## What is not here
 
 No vector similarity search surface, and no computed values in a `Query` or a

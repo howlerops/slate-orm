@@ -693,6 +693,45 @@ class Adapter:
             "rendered": price.to_string_with_scale(2),
         }
 
+    #: The id the conditional-delete handler owns.
+    CONDITIONAL_DELETE_ID = 9301
+
+    def conditional_delete(self, session, body):
+        """The delete half of optimistic concurrency.
+
+        `stale` lets somebody else edit the row first; `gone` removes it first.
+        Applied, refused-because-moved and refused-because-absent are three
+        different answers, and the third is the interesting one: a *plain*
+        delete reports an absent key as `affected: 0`, and a conditional one
+        refuses it.
+        """
+        id_ = self.CONDITIONAL_DELETE_ID
+        session.insert(BOOKS, [self._book(id_, "Doomed")], upsert=True)
+        row = session.get(BOOKS, (u64(id_),))
+        if row is None:
+            raise RuntimeError("the seeded row is not there")
+        was = list(row)
+
+        if bool(body.get("stale")):
+            moved = list(was)
+            moved[7] = Units(1100)
+            session.update(BOOKS, [moved])
+        if bool(body.get("gone")):
+            session.delete(BOOKS, [(u64(id_),)])
+
+        refused = ""
+        affected = 0
+        try:
+            result = session.delete(BOOKS, [(u64(id_),)], expected=[was])
+            affected = result.affected
+        except SlateError as error:
+            refused = kind_name(error)
+
+        # `left` is what the table says, beside `affected` and `refused`, which
+        # are what the server said it did.
+        left = session.get(BOOKS, (u64(id_),)) is not None
+        return {"refused": refused, "affected": affected, "left": left}
+
     @staticmethod
     def _book(id_: int, title: str) -> list:
         """A whole `books` row, every column in ordinal order."""
@@ -754,6 +793,7 @@ ROUTES = {
     "/api/path": "path",
     "/api/predicate-write": "predicate_write",
     "/api/conditional-update": "conditional_update",
+    "/api/conditional-delete": "conditional_delete",
     "/api/transaction": "transaction",
 }
 

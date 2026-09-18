@@ -12,6 +12,7 @@ export {
   type ServedBy,
   type BatchOutcome,
   type BatchResult,
+  type RowDelete,
   type RowUpdate,
   type WriteResult,
   type Explanation,

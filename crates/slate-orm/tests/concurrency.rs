@@ -298,3 +298,178 @@ async fn a_previous_naming_a_different_row_is_refused() {
     );
     txn.rollback();
 }
+
+// --- the same argument, for a delete ----------------------------------------
+//
+// `remove_record` is `replace_record`'s twin: deciding from a row that it
+// should go is the same decision as deciding what to write into it, and it
+// goes stale the same way. Each test below shows both halves too.
+
+#[tokio::test]
+async fn a_plain_delete_removes_a_row_the_caller_never_saw() {
+    let store = seeded().await;
+    // The caller reads, and decides on what it says that this row should go.
+    let post = read(&store).await;
+    assert_eq!(post.views, 0);
+
+    // Somebody else edits it in between. The row this caller decided about no
+    // longer exists.
+    let txn = store.begin().await.unwrap();
+    txn.update_record(
+        &context(),
+        &Post {
+            views: 5_000,
+            ..post.clone()
+        },
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    // `delete_record` removes it anyway, and reports `true` — a caller who
+    // deletes a spam post because it had no views has now deleted one with
+    // five thousand, and nothing anywhere says so.
+    let txn = store.begin().await.unwrap();
+    assert!(
+        txn.delete_record::<Post>(&context(), &[Value::U64(1)])
+            .await
+            .unwrap()
+    );
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    assert!(
+        txn.get_record::<Post>(&context(), &[Value::U64(1)])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    txn.rollback();
+}
+
+#[tokio::test]
+async fn remove_record_refuses_rather_than_deleting_it() {
+    let store = seeded().await;
+    let post = read(&store).await;
+
+    let txn = store.begin().await.unwrap();
+    txn.update_record(
+        &context(),
+        &Post {
+            views: 5_000,
+            ..post.clone()
+        },
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .remove_record(&context(), &post)
+        .await
+        .expect_err("the row moved");
+    assert!(
+        matches!(refused, OrmError::Kernel(KernelError::RowChanged { .. })),
+        "{refused}"
+    );
+    txn.rollback();
+
+    // And the row is still there, with the other writer's edit intact.
+    assert_eq!(read(&store).await.views, 5_000);
+}
+
+#[tokio::test]
+async fn an_unchanged_row_is_removed_normally() {
+    let store = seeded().await;
+    let post = read(&store).await;
+    let txn = store.begin().await.unwrap();
+    txn.remove_record(&context(), &post).await.unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    assert!(
+        txn.get_record::<Post>(&context(), &[Value::U64(1)])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    txn.rollback();
+}
+
+#[tokio::test]
+async fn a_row_already_gone_is_refused_rather_than_reported_as_removed() {
+    // The difference from `delete_record`, and the reason `remove_record`
+    // returns no `bool`. "Make sure this is gone" is idempotent and `false` is
+    // the right answer for it. "Delete the row I read" is not: an absent row
+    // means somebody else got there first, and a caller reading `false` as
+    // success would never find out.
+    let store = seeded().await;
+    let post = read(&store).await;
+
+    let txn = store.begin().await.unwrap();
+    txn.delete_record::<Post>(&context(), &[Value::U64(1)])
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .remove_record(&context(), &post)
+        .await
+        .expect_err("the row is gone");
+    assert!(
+        matches!(refused, OrmError::Kernel(KernelError::RowNotFound { .. })),
+        "{refused}"
+    );
+    txn.rollback();
+
+    // Where the plain delete says `false` and carries on.
+    let txn = store.begin().await.unwrap();
+    assert!(
+        !txn.delete_record::<Post>(&context(), &[Value::U64(1)])
+            .await
+            .unwrap()
+    );
+    txn.rollback();
+}
+
+#[tokio::test]
+async fn a_record_naming_a_row_that_is_not_its_own_key_is_refused() {
+    // The delete's version of `a_previous_naming_a_different_row_is_refused`.
+    // `remove_record` derives the key from the record, so the two cannot
+    // disagree through this surface — the kernel's check is what a caller
+    // reaching `delete_if_unchanged` directly runs into, and it is checked
+    // there rather than here.
+    //
+    // What this pins instead is the surface's own promise: the key used is the
+    // record's, so removing a record read from row 1 cannot touch row 2.
+    let store = seeded().await;
+    let txn = store.begin().await.unwrap();
+    txn.insert_record(
+        &context(),
+        &Post {
+            id: 2,
+            title: "second".to_owned(),
+            views: 0,
+        },
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let one = read(&store).await;
+    let txn = store.begin().await.unwrap();
+    txn.remove_record(&context(), &one).await.unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = store.begin().await.unwrap();
+    assert!(
+        txn.get_record::<Post>(&context(), &[Value::U64(2)])
+            .await
+            .unwrap()
+            .is_some(),
+        "removing row 1 removed row 2"
+    );
+    txn.rollback();
+}

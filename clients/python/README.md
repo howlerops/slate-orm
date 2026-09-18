@@ -229,6 +229,14 @@ The whole row rather than a version column, for the reason the kernel gives: a
 version column only catches writers who remembered to bump it, which makes it a
 convention every call site has to keep rather than a property of the data.
 
+`delete(..., expected=...)` is the same argument for a delete — with one
+difference worth knowing. A plain delete reports a key that is not there in
+`affected`, because "make sure this is gone" is idempotent; a conditional one
+raises `NotFound`, because a caller that said what it expected to find wants to
+hear that somebody got there first. `NotFound` and not `Conflict`: a row that
+moved can be re-read and the decision remade, and a row that is gone cannot, so
+a retry loop on a conflict would spin.
+
 ## Layout
 
 ```

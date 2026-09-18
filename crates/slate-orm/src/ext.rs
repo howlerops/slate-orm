@@ -138,6 +138,39 @@ pub trait Records {
         primary_key: &[Value],
     ) -> Result<bool>;
 
+    /// Delete a record only if it still looks exactly as it was read.
+    ///
+    /// [`replace_record`](Records::replace_record)'s argument, for the other
+    /// half of a read-modify-write: deciding from a row that this record should
+    /// go is the same decision as deciding what to write into it, and it goes
+    /// stale the same way.
+    ///
+    /// ```text
+    /// let post: Post = txn.find_record(&ctx, &[Value::U64(1)]).await?;
+    /// if post.is_spam() {
+    ///     txn.remove_record(&ctx, &post).await?;  // refuses if it moved
+    /// }
+    /// ```
+    ///
+    /// Unlike [`delete_record`](Records::delete_record) this returns no
+    /// `bool`, and that is deliberate. `delete_record` answers "make sure this
+    /// is gone", which is idempotent and where `false` means it already was. A
+    /// caller that says what it expected to find is asking a different
+    /// question, and an absent row is a
+    /// [`KernelError::RowNotFound`] rather than a `false` that reads as
+    /// success.
+    ///
+    /// # Errors
+    /// [`KernelError::RowChanged`] if the stored row has moved,
+    /// [`KernelError::RowNotFound`] if it is gone, and everything
+    /// [`Records::delete_record`] can raise — including a `RESTRICT` foreign
+    /// key.
+    async fn remove_record<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        record: &R,
+    ) -> Result<()>;
+
     /// Run a query and decode the results.
     async fn find_records<R: Record>(
         &self,
@@ -349,6 +382,18 @@ impl Records for RecordTransaction<'_> {
         record: &R,
     ) -> Result<()> {
         self.upsert(context, R::table(), &record.to_row())
+            .await
+            .map_err(OrmError::from)
+    }
+
+    async fn remove_record<R: Record + Sync>(
+        &self,
+        context: &SecurityContext,
+        record: &R,
+    ) -> Result<()> {
+        let row = record.to_row();
+        let key = row.primary_key_values(R::table());
+        self.delete_if_unchanged(context, R::table(), &key, &row)
             .await
             .map_err(OrmError::from)
     }

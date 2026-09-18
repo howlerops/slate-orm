@@ -792,18 +792,50 @@ class _Ops:
         return self._write_result(response)
 
     def delete(
-        self, table: Table, primary_keys: Iterable[Sequence[PyValue]]
+        self,
+        table: Table,
+        primary_keys: Iterable[Sequence[PyValue]],
+        expected: Iterable[Sequence[PyValue] | Row] | None = None,
     ) -> WriteResult:
-        """Delete by primary key. `affected` is how many existed."""
-        response = self._unary(
-            self._conn.stub.Delete,
-            pb.DeleteRequest(
-                transaction=self._transaction_id(),
-                table=table.name,
-                primary_keys=[self._key_proto(table, k) for k in primary_keys],
-                schema=self._schema_check(table),
-            ),
+        """Delete by primary key. `affected` is how many existed.
+
+        `expected` makes it a *conditional* delete: one row per key, in the
+        same order, each the row as this caller last read it. Deleting a row
+        somebody else just edited is the same class of mistake as overwriting
+        it — the decision to remove it was made from data that has moved.
+
+        It changes what an absent row means. A plain delete reports it in
+        `affected`, because "make sure this is gone" is idempotent; a
+        conditional one raises `NotFound` (`ROW_NOT_FOUND`), because a caller
+        that said what it expected to find wants to hear that it was already
+        gone rather than read a smaller count as success. So `affected` here is
+        always the number of keys sent.
+
+        `NotFound` rather than `Conflict`: a row that moved can be re-read and
+        the decision remade, and a row that is gone cannot, so retrying the
+        second would loop.
+
+        It guards the named rows and nothing else: a cascade may still remove
+        children this caller never saw.
+        """
+        request = pb.DeleteRequest(
+            transaction=self._transaction_id(),
+            table=table.name,
+            primary_keys=[self._key_proto(table, k) for k in primary_keys],
+            schema=self._schema_check(table),
         )
+        if expected is not None:
+            # Refused here as well as at the server, for the reason
+            # `update`'s twin gives: a short `expected` leaves the keys past
+            # its end deleted unconditionally.
+            witnesses = self._rows_proto(table, expected)
+            if len(witnesses) != len(request.primary_keys):
+                raise ValueError(
+                    f"`expected` must name one row per key: "
+                    f"{len(request.primary_keys)} key(s) and {len(witnesses)} expected"
+                )
+            request.expected.extend(witnesses)
+        response = self._unary(self._conn.stub.Delete, request)
         return self._write_result(response)
 
     def _write_result(

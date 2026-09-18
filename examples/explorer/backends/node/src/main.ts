@@ -818,6 +818,49 @@ class Adapter {
       rendered: unitsToString(price.value, 2),
     };
   }
+
+  /**
+   * The delete half of optimistic concurrency.
+   *
+   * `stale` lets somebody else edit the row first; `gone` removes it first.
+   * Applied, refused-because-moved and refused-because-absent are three
+   * different answers, and the third is the interesting one: a *plain* delete
+   * reports an absent key as `affected: 0`, and a conditional one refuses it.
+   */
+  async conditionalDelete(
+    session: Session,
+    body: { stale?: boolean; gone?: boolean },
+  ): Promise<unknown> {
+    const id = 9301n;
+    const key = [uint(id)];
+    await session.upsert("books", bookRow(id, "Doomed"));
+    const was = await session.get("books", key);
+    if (!was) throw new Error("the seeded row is not there");
+
+    if (body.stale) {
+      const moved = [...was];
+      moved[7] = units(1100n);
+      await session.update("books", moved);
+    }
+    if (body.gone) {
+      await session.delete("books", key);
+    }
+
+    let refused = "";
+    let affected = 0n;
+    try {
+      const result = await session.deleteIfUnchanged("books", { key, was });
+      affected = result.affected;
+    } catch (error) {
+      if (!(error instanceof SlateError)) throw error;
+      refused = kindName(error);
+    }
+
+    // `left` is what the table says, beside `affected` and `refused`, which
+    // are what the server said it did.
+    const left = (await session.get("books", key)) !== undefined;
+    return { refused, affected: Number(affected), left };
+  }
 }
 
 /** The contract's spelling of an error kind. */
@@ -868,6 +911,7 @@ async function main(): Promise<void> {
     "/api/batch": (s, b) => adapter.batch(s, b),
     "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
     "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
+    "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

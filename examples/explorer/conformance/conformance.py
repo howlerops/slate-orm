@@ -414,6 +414,20 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a conditional update over a row that moved", "/api/conditional-update",
      {"stale": True}, "app"),
 
+    # The delete half, in its three states. The third is the case that is not
+    # the update's twin: a plain delete of an absent key reports zero and no
+    # error, and a conditional one refuses. Three clients agreeing that it is
+    # *not-found* rather than *conflict* is the claim — each maps the server's
+    # code through its own error taxonomy, so this is the one place those three
+    # taxonomies are compared on a code neither of the other endpoints
+    # produces.
+    ("a conditional delete over the row the caller read", "/api/conditional-delete",
+     {}, "app"),
+    ("a conditional delete over a row that moved", "/api/conditional-delete",
+     {"stale": True}, "app"),
+    ("a conditional delete of a row somebody else removed", "/api/conditional-delete",
+     {"gone": True}, "app"),
+
     # A batch, under each atomicity, with the same three operations — one of
     # which collides. That collision is the whole comparison: independent
     # reports it and keeps going, atomic fails the call and undoes the rest,

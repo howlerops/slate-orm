@@ -1120,6 +1120,31 @@ message DeleteRequest {
   // See `SchemaCheck`. The key columns are part of the fingerprint, so this
   // also checks the shape of the keys above.
   SchemaCheck schema = 4;
+  // The rows as the caller last saw them, for a conditional delete.
+  //
+  // Empty for an ordinary delete. Otherwise exactly as many rows as
+  // `primary_keys`, in the same order, and each must carry the key it guards —
+  // the server refuses a mismatch rather than checking one row and deleting
+  // another.
+  //
+  // Deleting a row somebody else just edited is the same class of mistake as
+  // overwriting it: the caller read the row, decided from what it said that it
+  // should go, and by the time the delete lands it says something else.
+  //
+  // **A conditional delete answers a different question from a plain one, and
+  // not only a narrower one.** A plain delete reports `affected = 0` for a key
+  // that is not there, because "make sure this is gone" is idempotent. This
+  // refuses with `ROW_NOT_FOUND`, because a caller that named what it expected
+  // to find wants to hear that it was already gone rather than read it as
+  // success.
+  //
+  // It guards the named row and nothing else: a cascade may still remove
+  // children the caller never saw. There is no version of this field that
+  // could cover them — the caller does not know what the closure contains, and
+  // the closure is computed without the row policy on purpose.
+  //
+  // This is the wire form of the kernel's `delete_if_unchanged`.
+  repeated Row expected = 5;
 }
 
 message WriteResponse {

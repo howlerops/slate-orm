@@ -1141,6 +1141,24 @@ Built and tested:
       so it would have returned zero rows and looked like a fact about the
       data. Mixed integer widths are allowed: they round-trip, and refusing
       them would refuse a query that works
+- [x] `delete_if_unchanged`, and `Records::remove_record` over it. Deleting a
+      row somebody else just edited is the same class of mistake as
+      overwriting it, and the same argument applies. On the wire as
+      `DeleteRequest.expected`, and in all three clients.
+
+      One place it is *not* the update's twin, and it is the part worth
+      knowing. A plain delete reports an absent key as `affected: 0`, because
+      "make sure this is gone" is idempotent. A conditional one refuses with
+      `ROW_NOT_FOUND` — the caller said what it expected to find, so "somebody
+      got there first" is an answer it wants rather than a smaller count it
+      will read as success. `NOT_FOUND` and not `ABORTED`, because a row that
+      moved can be re-read and the decision remade and a row that is gone
+      cannot, so a caller retrying an `ABORTED` would loop.
+
+      It guards the named row and nothing else: a cascade may still remove
+      children the caller never saw, and no version of this field could cover
+      them — the caller does not know what the closure contains, and the
+      closure is computed without the row policy on purpose
 - [x] **All four features cross the wire.** `Value` carries a `decimal_value`
       — an `int64` count of the column's smallest unit, with the scale staying
       in the catalog — and `UpdateRequest` carries `expected`, the rows as the
@@ -1221,8 +1239,6 @@ Not built:
       deduplication. A correlated subquery needs no refusal of its own — the
       inner query is parsed against the inner table, so a column of the outer
       one is already "no such column" there
-- [ ] `delete_if_unchanged`. Deleting a row somebody else just edited is the
-      same class of mistake as overwriting it, and the same argument applies
 
 - [ ] In-place promotion of a read-only node. A writer store is an opened
       database and may only be opened once the lease is won, so promotion is a

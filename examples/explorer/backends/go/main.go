@@ -78,6 +78,7 @@ func main() {
 	mux.HandleFunc("/api/batch", s.handle(s.batchWrite))
 	mux.HandleFunc("/api/predicate-write", s.handle(s.predicateWrite))
 	mux.HandleFunc("/api/conditional-update", s.handle(s.conditionalUpdate))
+	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)

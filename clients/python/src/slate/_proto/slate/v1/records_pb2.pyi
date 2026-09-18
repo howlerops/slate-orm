@@ -2436,6 +2436,7 @@ class DeleteRequest(_message.Message):
     TABLE_FIELD_NUMBER: _builtins.int
     PRIMARY_KEYS_FIELD_NUMBER: _builtins.int
     SCHEMA_FIELD_NUMBER: _builtins.int
+    EXPECTED_FIELD_NUMBER: _builtins.int
     transaction: _builtins.str
     table: _builtins.str
     @_builtins.property
@@ -2452,6 +2453,34 @@ class DeleteRequest(_message.Message):
         also checks the shape of the keys above.
         """
 
+    @_builtins.property
+    def expected(self) -> _containers.RepeatedCompositeFieldContainer[Global___Row]:
+        """The rows as the caller last saw them, for a conditional delete.
+
+        Empty for an ordinary delete. Otherwise exactly as many rows as
+        `primary_keys`, in the same order, and each must carry the key it guards —
+        the server refuses a mismatch rather than checking one row and deleting
+        another.
+
+        Deleting a row somebody else just edited is the same class of mistake as
+        overwriting it: the caller read the row, decided from what it said that it
+        should go, and by the time the delete lands it says something else.
+
+        **A conditional delete answers a different question from a plain one, and
+        not only a narrower one.** A plain delete reports `affected = 0` for a key
+        that is not there, because "make sure this is gone" is idempotent. This
+        refuses with `ROW_NOT_FOUND`, because a caller that named what it expected
+        to find wants to hear that it was already gone rather than read it as
+        success.
+
+        It guards the named row and nothing else: a cascade may still remove
+        children the caller never saw. There is no version of this field that
+        could cover them — the caller does not know what the closure contains, and
+        the closure is computed without the row policy on purpose.
+
+        This is the wire form of the kernel's `delete_if_unchanged`.
+        """
+
     def __init__(
         self,
         *,
@@ -2459,10 +2488,11 @@ class DeleteRequest(_message.Message):
         table: _builtins.str = ...,
         primary_keys: _abc.Iterable[Global___Row] | None = ...,
         schema: Global___SchemaCheck | None = ...,
+        expected: _abc.Iterable[Global___Row] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["primary_keys", b"primary_keys", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["expected", b"expected", "primary_keys", b"primary_keys", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

@@ -321,6 +321,35 @@ scale — the scale is the column's and never travels — so each adapter render
 against the 2 it declares locally, and three renderers that disagree about
 `-0.75` or about where the point goes show up here.
 
+### `POST /api/conditional-delete`
+
+```json
+{ "stale": false, "gone": false }
+```
+
+Seeds one `books` row at 9301, reads it back, and then — depending on the two
+flags — lets somebody else edit it (`stale`) or remove it (`gone`) before
+trying a conditional delete guarded by the row as it was read.
+
+```json
+{ "refused": "", "affected": 1, "left": false }
+```
+
+Three answers, and the third is why this endpoint is not the update's twin:
+
+- unflagged, the delete lands: `refused` empty, `affected` 1, `left` false;
+- `stale`, it is refused as a conflict and the row is still there;
+- `gone`, it is refused as **not-found** — where a *plain* delete of an absent
+  key reports `affected: 0` and no error. A caller that said what it expected
+  to find wants to hear that somebody got there first, and `not-found` rather
+  than `conflict` because a row that moved can be re-read and the decision
+  remade, while a row that is gone cannot, so retrying a conflict would loop.
+
+`left` is what the table says afterwards, beside `affected` and `refused`,
+which are what the server said it did — for the reason the predicate-write
+endpoint gives: a refusal that removed the row anyway would agree across three
+clients on a claim none of them checked.
+
 ### `POST /api/batch`
 
 ```json

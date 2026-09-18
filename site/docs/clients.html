@@ -141,6 +141,20 @@
     </p>
 
     <p>
+      A delete takes the same argument, because deleting a row somebody else
+      just edited is the same class of mistake as overwriting it. It differs
+      in one place worth knowing: a <em>plain</em> delete reports a key that is
+      not there as <code>affected: 0</code>, because &ldquo;make sure this is
+      gone&rdquo; is idempotent, and a <em>conditional</em> one refuses it with
+      <code>NOT_FOUND</code> &mdash; a caller that said what it expected to
+      find wants to hear that somebody got there first. <code>NOT_FOUND</code>
+      and not <code>ABORTED</code>, because a row that moved can be re-read and
+      the decision remade, and a row that is gone cannot, so a retry loop on
+      <code>ABORTED</code> would spin. It guards the named row and nothing
+      else: a cascade may still remove children the caller never saw.
+    </p>
+
+    <p>
       Both used to be on the list of things the clients could not reach, along
       with relationships and keyset pagination, and none of the four is now.
       The three-SDK conformance runner compares all three clients on every one

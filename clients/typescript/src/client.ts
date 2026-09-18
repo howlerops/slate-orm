@@ -92,6 +92,25 @@ export interface RowUpdate {
   readonly was: Value[];
 }
 
+/**
+ * One row of a conditional delete.
+ *
+ * `key` is the primary key to remove; `was` is that row exactly as this caller
+ * last read it. Deleting a row somebody else just edited is the same class of
+ * mistake as overwriting it, and the server refuses it with `ABORTED`.
+ *
+ * It changes what an absent row means. A plain delete counts it in
+ * `affected`, because "make sure this is gone" is idempotent; a conditional
+ * one is refused with `NOT_FOUND` (`ROW_NOT_FOUND`), because a caller that
+ * said what it expected to find wants to hear that it was already gone.
+ * `NOT_FOUND` and not `ABORTED`: a row that moved can be re-read and the
+ * decision remade, and a row that is gone cannot, so retrying would loop.
+ */
+export interface RowDelete {
+  readonly key: Value[];
+  readonly was: Value[];
+}
+
 /** What a write reports. */
 export interface WriteResult {
   /** The writer's position after this write, if it said. */
@@ -894,6 +913,20 @@ export class Session {
   }
 
   /**
+   * Remove rows only if each still looks as the caller last read it.
+   *
+   * See {@link RowDelete}.
+   */
+  deleteIfUnchanged(table: string, ...deletes: RowDelete[]): Promise<WriteResult> {
+    return this.#write("Delete", {
+      table,
+      primaryKeys: deletes.map((d) => rowToWire(d.key)),
+      expected: deletes.map((d) => rowToWire(d.was)),
+      schema: this.#client.claim(table),
+    });
+  }
+
+  /**
    * Read one row by primary key.
    *
    * `undefined` for a row that is not there rather than an error: checking
@@ -1576,6 +1609,20 @@ export class Transaction {
       transaction: this.#id,
       table,
       primaryKeys: keys.map(rowToWire),
+      schema: this.#client.claim(table),
+    });
+  }
+
+  /**
+   * Remove rows inside the transaction, only if each still looks as the caller
+   * last read it. See {@link RowDelete}.
+   */
+  deleteIfUnchanged(table: string, ...deletes: RowDelete[]): Promise<WriteResult> {
+    return this.#session.writeThrough("Delete", {
+      transaction: this.#id,
+      table,
+      primaryKeys: deletes.map((d) => rowToWire(d.key)),
+      expected: deletes.map((d) => rowToWire(d.was)),
       schema: this.#client.claim(table),
     });
   }
