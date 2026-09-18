@@ -41,6 +41,20 @@ examples/explorer/web/node_modules/
 examples/explorer/web/dist/
 examples/explorer/web/dist-test/
 
+# The batch benchmark, same three shapes as the two examples above.
+#
+# Named after committing all three by accident: 253 files and half a million
+# lines of `node_modules` went in with the benchmark itself, because the rules
+# above are per-directory and a new directory matches none of them. The
+# per-directory style is deliberate — a blanket `**/node_modules/` would also
+# hide one that someone genuinely meant to vendor — but the cost is that every
+# new example must add its own line, and nothing enforces that. If this happens
+# a third time, the answer is a check rather than another comment.
+examples/batchbench/node/node_modules/
+examples/batchbench/node/dist/
+# `go build` with no -o writes the binary here, named for the module.
+examples/batchbench/go/batchbench
+
 # Built by site/build-wasm.sh, never committed: a checked-in binary
 # drifts from the kernel it claims to be.
 site/slate_wasm.js
