@@ -427,3 +427,75 @@ async fn point_gets_agree_with_a_scan() {
         assert_eq!(seen(&planned), seen(&scanned), "disagreed on {filter:?}");
     }
 }
+
+/// A negated `IN` is not a point-get set, and must never be turned into one.
+///
+/// The complement of a set of points is not a range and not a set of points,
+/// so the only correct access path for `NOT (id IN [...])` is a scan with the
+/// negation as a residual. The mechanism is that `Expr::conjuncts` stops at a
+/// `Not` — it treats one as an opaque leaf — so `collect_constraints` never
+/// sees the `In` inside and derives nothing from it.
+///
+/// That mechanism is load-bearing and was checked before the SQL front end
+/// started emitting `NOT IN`, which had been refused on the belief that the
+/// kernel had no negation of `Expr::In`. It has `Expr::Not`, which composes
+/// over anything; what it did not have was a test saying the planner looks
+/// right through it. A build that did look through would plan point gets for
+/// the very rows the query excludes — the worst possible answer, since it
+/// would return exactly the complement of what was asked.
+#[tokio::test]
+async fn a_negated_in_is_not_a_point_get_set() {
+    let (store, counters) = store(open()).await;
+    let table = notes();
+    let txn = store.begin().await.unwrap();
+
+    // The control, on the same store and the same four ids: this *is* a
+    // point-get set, which is what makes the negative case below a contrast
+    // rather than an assertion about a planner that never uses point gets.
+    let positive = txn
+        .explain(
+            &reader(0),
+            &table,
+            &Query::all().filter(ids([3, 17, 42, 99])),
+        )
+        .unwrap();
+    assert_eq!(
+        positive.access,
+        AccessSummary::PointGets { keys: 4 },
+        "got {positive}"
+    );
+
+    let negated = Query::all().filter(Expr::Not(Box::new(ids([3, 17, 42, 99]))));
+    let plan = txn.explain(&reader(0), &table, &negated).unwrap();
+    assert!(
+        !matches!(plan.access, AccessSummary::PointGets { .. }),
+        "a negated `IN` planned as point gets, which would return the excluded \
+         rows and nothing else: {plan}"
+    );
+
+    // And the rows agree with the plan: everything except those four.
+    counters.reset();
+    let rows = txn
+        .execute(&reader(0), &table, &negated)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    let got = seen(&rows);
+    for excluded in [3_u64, 17, 42, 99] {
+        assert!(!got.contains(&excluded), "{excluded} was not excluded");
+    }
+    let all = txn
+        .execute(&reader(0), &table, &Query::all())
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(
+        got.len(),
+        all.len() - 4,
+        "the negation kept the wrong number of rows"
+    );
+}

@@ -1810,13 +1810,14 @@ impl Parser<'_> {
         ) {
             return Err(SqlError {
                 message: if negated {
-                    // An anti-join, and unlike `EXISTS` it has no `IN` form to
-                    // point at: the rewrite would be `NOT IN`, which is refused
-                    // one screen down for a reason that is not about this.
-                    "NOT EXISTS is not supported: it asks for the rows with no match, \
-                     which is an anti-join, and the only shape this front end has for a \
-                     subquery is a candidate list to compare against. Its rewrite would \
-                     be `NOT IN`, which is refused here too"
+                    // Correlated for the same reason `EXISTS` is, and now it
+                    // has the same kind of answer to point at: `NOT IN` used to
+                    // be refused a screen down, and is not any more.
+                    "NOT EXISTS is not supported: it is correlated — the inner query \
+                     asks something about each outer row — and a subquery here runs \
+                     once, before the outer query, to build a candidate list. Written \
+                     as `key NOT IN (SELECT other_key FROM other WHERE …)` the same \
+                     question works, and that is the form this compiles"
                         .to_owned()
                 } else {
                     "EXISTS is not supported: it is correlated — the inner query asks \
@@ -1831,23 +1832,41 @@ impl Parser<'_> {
         }
 
         let column = self.column(table)?;
-        if self.peek_word().as_deref() == Some("not") {
-            // `NOT IN` is not `IN` negated. `Expr::In` is three-valued — a null
-            // candidate makes the answer Unknown rather than False — so the
-            // negation a reader expects and the one the kernel would give
-            // differ exactly where nulls are involved, which is the case
-            // nobody tests. Refused rather than lowered onto something close.
-            return Err(SqlError {
-                message: "NOT IN is not supported: `IN` is three-valued here — a null in \
-                          the list makes the answer unknown rather than false — so negating \
-                          it does not mean what it looks like. Filter the other way, or use \
-                          `!=` against a single value"
-                    .to_owned(),
-                at: self.at(),
-            });
+        // `NOT IN` lowers to `Expr::not(Expr::In { .. })`, and that is exactly
+        // right rather than approximately right.
+        //
+        // **This was refused**, on the reasoning that `IN` is three-valued here
+        // — a null candidate makes the answer unknown rather than false — so
+        // "the negation a reader expects and the one the kernel would give
+        // differ exactly where nulls are involved". The first half is true and
+        // the conclusion does not follow: standard SQL's `NOT IN` is three-
+        // valued in precisely the same way, `Truth::negate` maps unknown to
+        // unknown, and `Expr::Not` over `Expr::In` therefore gives the answer
+        // the standard specifies, surprise and all. The surprise belongs to
+        // SQL, not to this implementation, and refusing a construct because
+        // users find the standard counter-intuitive is a different decision
+        // from the one that comment was making.
+        //
+        // The README said the blocker was that "the kernel has `Expr::In` and
+        // no negation of it". It has `Expr::Not`, which composes over anything.
+        //
+        // The planner is the part that had to be checked rather than assumed:
+        // `Expr::conjuncts` stops at a `Not`, so `collect_constraints` never
+        // sees the `In` inside one and derives no range from it. A `NOT IN`
+        // is a residual filter over whatever access path the rest of the
+        // predicate chooses, which is both correct and the only thing it could
+        // be — the complement of a set of points is not a range.
+        if self.peek_word().as_deref() == Some("not")
+            && matches!(
+                self.toks.get(self.i + 1),
+                Some(Spanned { tok: Tok::Word(w), .. }) if w.eq_ignore_ascii_case("in")
+            )
+        {
+            self.i += 2;
+            return self.in_tail(column, at, table, true);
         }
         if self.eat("in") {
-            return self.in_tail(column, at, table);
+            return self.in_tail(column, at, table, false);
         }
         let (op, value) = self.comparison_tail()?;
         Ok(FilterSpec {
@@ -1875,7 +1894,9 @@ impl Parser<'_> {
         column: u32,
         at: usize,
         table: &TableDef,
+        negated: bool,
     ) -> Result<FilterSpec, SqlError> {
+        let op = if negated { "notIn" } else { "in" };
         self.expect_symbol("(")?;
 
         if self.peek_word().as_deref() == Some("select") {
@@ -1904,7 +1925,7 @@ impl Parser<'_> {
             }
             return Ok(FilterSpec {
                 column,
-                op: "in".to_owned(),
+                op: op.to_owned(),
                 subquery: Some(Box::new(subquery)),
                 ..FilterSpec::default()
             });
@@ -1917,7 +1938,7 @@ impl Parser<'_> {
         self.expect_symbol(")")?;
         Ok(FilterSpec {
             column,
-            op: "in".to_owned(),
+            op: op.to_owned(),
             values,
             ..FilterSpec::default()
         })

@@ -1694,3 +1694,161 @@ fn having_over_a_summed_decimal_compares_as_a_decimal() {
         assert!(total > 60.0, "{row:?} in {answer}");
     }
 }
+
+// -------------------------------------------------------------------- NOT IN
+
+/// `NOT IN` is the complement of `IN` over the same list.
+///
+/// It was refused, on the reasoning that `IN` is three-valued so "negating it
+/// does not mean what it looks like". Standard SQL's `NOT IN` is three-valued
+/// in exactly the same way, `Truth::negate` maps unknown to unknown, and
+/// `Expr::Not` over `Expr::In` therefore gives the answer the standard
+/// specifies. The surprise belongs to SQL rather than to this implementation.
+///
+/// The partition is the assertion worth having: with no null candidate the two
+/// sides are complements and must add to the whole table, which a lowering
+/// that got the polarity or the null handling wrong would not satisfy.
+#[test]
+fn not_in_is_the_complement_of_in() {
+    let playground = Playground::new();
+    let all = one(&playground, "SELECT id FROM books WHERE id <= 24");
+    let inside = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND author_id IN (1, 2)",
+    );
+    let outside = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND author_id NOT IN (1, 2)",
+    );
+
+    let count = |answer: &Json| answer["rows"].as_array().expect("rows").len();
+    assert!(
+        count(&inside) > 0 && count(&outside) > 0,
+        "both sides are non-empty"
+    );
+    assert_eq!(
+        count(&inside) + count(&outside),
+        count(&all),
+        "`author_id` is not null on any book, so the two partition the table: \
+         {inside}\n{outside}"
+    );
+
+    // And no row is on both sides.
+    let ids = |answer: &Json| -> Vec<String> {
+        answer["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|r| r[0].as_str().expect("an id").to_owned())
+            .collect()
+    };
+    let (a, b) = (ids(&inside), ids(&outside));
+    assert!(
+        a.iter().all(|id| !b.contains(id)),
+        "{a:?} and {b:?} overlap"
+    );
+}
+
+/// The spec carries `notIn`, so a reader of the spec tab sees which it was.
+#[test]
+fn not_in_compiles_to_its_own_operator() {
+    let playground = Playground::new();
+    let answer = one(
+        &playground,
+        "SELECT id FROM books WHERE author_id NOT IN (1, 2)",
+    );
+    assert_eq!(
+        answer["spec"]["filters"][0]["op"],
+        json!("notIn"),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["spec"]["filters"][0]["values"],
+        json!(["1", "2"]),
+        "{answer}"
+    );
+}
+
+/// A `NOT IN` stays a residual filter and never becomes an access path.
+///
+/// **The contrast this wanted cannot be shown on this fixture**, and that is
+/// worth stating rather than working around. It was written first against
+/// `author_id` (a secondary index) and then against `id` (the primary key),
+/// expecting the positive form to plan an index scan or point gets; both
+/// planned a `Table Scan`, because on a 4,824-row `MemoryStore` a scan costs
+/// 1.603 and two point gets cost 3.00. The planner is right and the control is
+/// useless — a test whose two arms agree proves nothing about the difference
+/// between them.
+///
+/// So the *plan* half of the claim is tested in the kernel, where a fixture
+/// exists on which `IN` does become point gets:
+/// `point_gets::a_negated_in_is_not_a_point_get_set`. What is left here is the
+/// half this layer owns: the negation reaches the kernel as a `Not`, which is
+/// what keeps `Expr::conjuncts` from ever seeing the `In` inside it.
+#[test]
+fn not_in_arrives_as_a_negation_and_not_as_a_range() {
+    let playground = Playground::new();
+    let negative = one(&playground, "SELECT id FROM books WHERE id NOT IN (1, 2)");
+    assert!(
+        negative["plan"]["residual"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("Not(")),
+        "the exclusion is a `Not` in the residual: {negative}"
+    );
+    assert_eq!(
+        negative["plan"]["access"],
+        json!("Table Scan"),
+        "and no access path was derived from it: {negative}"
+    );
+    // The answer, so this is about behaviour and not only about a plan's name:
+    // 24 named books plus the generated tail, less the two excluded.
+    let kept = negative["rows"].as_array().expect("rows").len();
+    let all = one(&playground, "SELECT id FROM books");
+    assert_eq!(
+        kept,
+        all["rows"].as_array().expect("rows").len() - 2,
+        "{negative}"
+    );
+}
+
+/// `NOT IN (SELECT …)` too, which is what `NOT EXISTS` is pointed at.
+#[test]
+fn not_in_takes_a_subquery() {
+    let playground = Playground::new();
+    let inside = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND author_id IN \
+         (SELECT id FROM authors WHERE country = 'US')",
+    );
+    let outside = one(
+        &playground,
+        "SELECT id FROM books WHERE id <= 24 AND author_id NOT IN \
+         (SELECT id FROM authors WHERE country = 'US')",
+    );
+    let count = |answer: &Json| answer["rows"].as_array().expect("rows").len();
+    assert!(
+        count(&inside) > 0 && count(&outside) > 0,
+        "both sides non-empty"
+    );
+    assert_eq!(count(&inside) + count(&outside), 24, "{inside}\n{outside}");
+    // The subquery is resolved into a candidate list either way — the same
+    // lowering, negated at the end rather than in the middle.
+    assert_eq!(
+        inside["spec"]["filters"][0]["values"], outside["spec"]["filters"][0]["values"],
+        "{inside}\n{outside}"
+    );
+}
+
+/// `NOT` followed by anything else is still the old refusal path.
+///
+/// `NOT IN` is matched as a two-token pair rather than by eating `NOT` and
+/// hoping: a lone `NOT` before a comparison is a syntax error this parser does
+/// not accept, and consuming the `NOT` would have turned that into a confusing
+/// message about the token after it.
+#[test]
+fn a_bare_not_before_a_comparison_is_still_a_syntax_error() {
+    let playground = Playground::new();
+    let why = refusal(&playground, "SELECT id FROM books WHERE author_id NOT 1");
+    assert!(!why.contains("notIn"), "{why}");
+    assert!(!why.is_empty(), "{why}");
+}

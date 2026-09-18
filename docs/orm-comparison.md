@@ -201,10 +201,19 @@ is the thing to attack if you disagree.
   Implicit flush ordering is the hardest thing in SQLAlchemy to reason about,
   and the whole point of this layer is that a write is a write. The explicit
   `transact` closure covers the cases people actually use it for.
-- **`NOT IN` and `NOT EXISTS`.** `Expr::In` is three-valued: a null in the list
-  makes the answer unknown rather than false, so the negation a reader expects
-  and the one the kernel would give differ exactly where nulls are involved.
-  Written up in `crates/slate-wasm/src/sql.rs`.
+- **`NOT EXISTS`.** Correlated by nature, like `EXISTS`, and refused with the
+  `NOT IN (SELECT …)` form that asks the same question.
+
+  **`NOT IN` was on this list and is now built**, on a claim withdrawn: that
+  `Expr::In`'s three-valued rule made "the negation a reader expects and the
+  one the kernel would give differ exactly where nulls are involved". Standard
+  SQL's `NOT IN` is three-valued in exactly the same way — the surprise is
+  SQL's, not this implementation's — and `Truth::negate` maps unknown to
+  unknown, so `Expr::Not` over `Expr::In` is the standard's own answer. The
+  part that needed checking rather than asserting was the planner:
+  `Expr::conjuncts` stops at a `Not`, so no access path is derived from the
+  `In` inside one, which is the only correct answer since the complement of a
+  set of points is not a range.
 - **SQL on the wire.** The wire carries a spec. That is what makes the planner,
   `EXPLAIN` and the security compilation possible at all.
 

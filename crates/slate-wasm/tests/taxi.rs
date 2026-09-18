@@ -897,8 +897,14 @@ fn having_is_refused_where_it_cannot_mean_anything() {
 /// Both directions collapse to the same count, which is what makes the oracle
 /// simple: exactly the rows with a passenger count come back. A build that
 /// kept null candidates would still return this number — `Truth::Unknown`
-/// excludes as `False` does in a WHERE — which is the reason `NOT IN` is
-/// refused rather than lowered, and is written up beside `resolve_subqueries`.
+/// excludes as `False` does in a WHERE — so this test cannot tell the two
+/// apart, and the assertion on the rendered candidate list below is what does.
+///
+/// That dropping is also why `NOT IN (SELECT …)` cannot meet a null candidate
+/// here: the list it negates has had them removed, so the three-valued case
+/// arises only from a literal list, and the front end has no `NULL` literal to
+/// write one with. `NOT IN` used to be refused over that case; it is lowered
+/// now, and `sql.rs` says why.
 #[test]
 fn a_subquery_drops_its_null_candidates() {
     let playground = loaded();

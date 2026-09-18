@@ -233,11 +233,13 @@
         the point of this layer is that a write is a write.
       </li>
       <li>
-        <strong><code>NOT IN</code> and <code>NOT EXISTS</code>.</strong>
-        <code>IN</code> is three-valued here, so a null in the list makes the
-        answer unknown rather than false &mdash; the negation a reader expects
-        and the one the kernel would give differ exactly where nulls are
-        involved.
+        <strong><code>NOT EXISTS</code>.</strong> Correlated by nature, like
+        <code>EXISTS</code>, and refused with the
+        <code>NOT IN (SELECT …)</code> form that asks the same question.
+        <code>NOT IN</code> was on this list with it and is now built &mdash;
+        the claim that three-valued <code>IN</code> made its negation mean
+        something other than what a reader expects is withdrawn, since standard
+        SQL's <code>NOT IN</code> is three-valued in exactly the same way.
       </li>
       <li>
         <strong>SQL on the wire.</strong> The wire carries a spec, which is what

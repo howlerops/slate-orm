@@ -2311,7 +2311,7 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
         .column(column)
         .ok_or_else(|| format!("{} has no column {}", table.name(), filter.column))?;
 
-    if filter.op == "in" {
+    if filter.op == "in" || filter.op == "notIn" {
         // Typed one at a time against this column, like every other literal.
         // The subquery form has already been run by `resolve_subqueries` and
         // its rows rendered into `values`; by here the two are the same thing.
@@ -2328,7 +2328,18 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
                 }
             })?);
         }
-        return Ok(Expr::In { column, values });
+        let inside = Expr::In { column, values };
+        // `NOT IN` is the `IN` negated, and nothing more. `Truth::negate` maps
+        // unknown to unknown, so a null candidate makes this unknown exactly
+        // where the standard says it should — and `Expr::conjuncts` stops at a
+        // `Not`, so the planner never mistakes the complement of a point set
+        // for a range. See the long note in `sql.rs`, which is where this was
+        // refused until it was checked.
+        return Ok(if filter.op == "notIn" {
+            Expr::Not(Box::new(inside))
+        } else {
+            inside
+        });
     }
 
     // Patterns are strings whatever the column is.

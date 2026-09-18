@@ -1262,17 +1262,20 @@ Not built:
       conflict and nothing else, with Python's defaults
 - [ ] `EXISTS`, `UNION`, `INTERSECT`, `EXCEPT`, and a correlated subquery.
       Each refused by name with its reason rather than left to fail as a
-      syntax error, and the reasons differ. `EXISTS` is correlated by nature —
-      the inner query asks about each outer row, and a subquery here runs once
-      — so it is refused with the `IN (SELECT …)` form that expresses the same
-      question. `NOT EXISTS` is an anti-join, and so is the `NOT IN` it would
-      rewrite to; the kernel has `Expr::In` and no negation of it, and adding
-      one is not a parser change. The set operators have nowhere to go: a
-      statement compiles to one query spec, which names one table and one
-      plan, and two statements separated by `;` get everything but the
-      deduplication. A correlated subquery needs no refusal of its own — the
-      inner query is parsed against the inner table, so a column of the outer
-      one is already "no such column" there
+      syntax error, and the reasons differ. `EXISTS` and `NOT EXISTS` are
+      correlated by nature — the inner query asks about each outer row, and a
+      subquery here runs once — so each is refused with the `IN (SELECT …)` or
+      `NOT IN (SELECT …)` form that expresses the same question. **That second
+      form used to be refused too, on a claim now withdrawn:** this said the
+      kernel "has `Expr::In` and no negation of it". It has `Expr::Not`, which
+      composes over anything, and `Truth::negate` maps unknown to unknown — so
+      `NOT IN` is exactly standard SQL's, three-valued surprise included. It is
+      built. The set operators have nowhere to go: a statement compiles to one
+      query spec, which names one table and one plan, and two statements
+      separated by `;` get everything but the deduplication. A correlated
+      subquery needs no refusal of its own — the inner query is parsed against
+      the inner table, so a column of the outer one is already "no such
+      column" there
 
 - [ ] In-place promotion of a read-only node. A writer store is an opened
       database and may only be opened once the lease is won, so promotion is a

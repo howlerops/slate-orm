@@ -123,11 +123,20 @@
         it fails naturally, since a column of the outer table is simply not a
         column of the inner one. <code>EXISTS</code> is correlated by nature
         and is refused with the <code>IN</code> form that expresses the same
-        question. <code>NOT EXISTS</code> and <code>NOT IN</code> are both
-        anti-joins, and neither exists below: the kernel's <code>IN</code> is
-        three-valued, so a null in the list makes the answer unknown rather
-        than false, and negating it would not mean what a reader expects
-        exactly where nulls are involved.
+        question, and <code>NOT EXISTS</code> with the
+        <code>NOT IN (SELECT …)</code> form for the same reason.
+      </p>
+      <p>
+        <code>NOT IN</code> itself works, and used to be refused on a claim
+        since withdrawn: that the kernel's three-valued <code>IN</code> &mdash;
+        a null in the list makes the answer unknown rather than false &mdash;
+        meant its negation would not mean what a reader expects. Standard SQL's
+        <code>NOT IN</code> is three-valued in exactly the same way, so the
+        surprise belongs to SQL rather than to this implementation, and
+        negating unknown gives unknown. The planner was the part worth
+        checking: it derives no access path from an <code>IN</code> inside a
+        <code>NOT</code>, which is the only correct answer, since the
+        complement of a set of points is neither a range nor a set of points.
       </p>
       <p>
         A candidate whose type could never equal the outer column &mdash;

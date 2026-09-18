@@ -446,15 +446,22 @@ fn exists_is_refused_by_name_and_points_at_in() {
     assert!(!why.contains("no such column"), "{why}");
 }
 
+/// `NOT EXISTS` is refused for the reason `EXISTS` is — correlation — and now
+/// points at the form that works.
+///
+/// It used to be refused as an anti-join "which has no `IN` form to point at,
+/// because its rewrite would be `NOT IN`, which is refused here too". `NOT IN`
+/// is not refused any more, so the message names it.
 #[test]
-fn not_exists_is_refused_as_an_anti_join() {
+fn not_exists_is_refused_and_points_at_not_in() {
     let playground = Playground::new();
     let why = refusal(
         &playground,
         "SELECT title FROM books WHERE NOT EXISTS (SELECT id FROM authors)",
     );
     assert!(why.starts_with("NOT EXISTS is not supported"), "{why}");
-    assert!(why.contains("anti-join"), "{why}");
+    assert!(why.contains("correlated"), "{why}");
+    assert!(why.contains("NOT IN (SELECT"), "{why}");
 }
 
 /// The three set operators, each named in its own refusal.
