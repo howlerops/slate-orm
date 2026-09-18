@@ -38,6 +38,16 @@ func encode(v slate.Value) tagged {
 		return tagged{"u64": strconv.FormatUint(uint64(value), 10)}
 	case slate.Float:
 		return tagged{"f64": formatFloat(float64(value))}
+	case slate.Units:
+		// The units, as a string, exactly like the two integer arms — a
+		// decimal is 64 bits and a JSON number would round it above 2^53, and
+		// a currency total in cents is where that is reached first.
+		//
+		// *Not* the rendered "12.50": the scale is the column's and this
+		// function has only a value. `/api/conditional-update` renders one,
+		// against a scale it is given, which is where the three clients'
+		// renderers are compared.
+		return tagged{"decimal": strconv.FormatInt(int64(value), 10)}
 	case slate.Bytes:
 		return tagged{"bytes": fmt.Sprintf("%x", []byte(value))}
 	case slate.UUID:
@@ -119,6 +129,12 @@ func decode(raw json.RawMessage) (slate.Value, error) {
 				return nil, fmt.Errorf("f64 %q: %w", text, err)
 			}
 			return slate.Float(n), nil
+		case "decimal":
+			n, err := strconv.ParseInt(text, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("decimal %q: %w", text, err)
+			}
+			return slate.Units(n), nil
 		}
 	}
 	return nil, fmt.Errorf("a value carried no known kind")

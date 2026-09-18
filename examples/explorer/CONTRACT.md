@@ -23,6 +23,11 @@ repository that compares the clients to each other.
   `i64` and a `u64` of the same magnitude are different values to this database,
   so a bare `1` would be ambiguous and the three adapters would be free to
   disagree about what they sent.
+  `{"decimal":"1250"}` is the same rule a third time and the sharpest case: a
+  decimal is a count of the column's smallest unit, so `1250` is 12.50 at scale
+  2 and 1250 at scale 0, and the scale is never on the wire. The tag carries
+  the units; rendering is compared separately, at
+  `/api/conditional-update`.
 - **Errors are `{"error":{"kind":"...","message":"..."}}`** with the kind drawn
   from each client's own taxonomy. The kinds must match across adapters; the
   messages come from the server and match for free.
@@ -286,6 +291,35 @@ The handler seeds and cleans its own id range rather than touching the fixture.
 The conformance runner drives all three adapters against one database, so a
 case that deleted a fixture row would make every later case depend on which SDK
 happened to run first — and would not be idempotent, which the demo needs.
+
+### `POST /api/conditional-update`
+
+```json
+{ "stale": false }
+```
+
+Seeds one `books` row at 9300 priced 10.00, reads it back, and — when `stale`
+is set — lets somebody else move the price to 11.00 first. Then tries a
+conditional update to 12.50 guarded by the row as it was read.
+
+```json
+{ "refused": "", "price": {"decimal":"1250"}, "rendered": "12.50" }
+```
+
+With `stale: true` the server refuses it: `refused` is `"conflict"` and the
+price is 11.00, the other writer's.
+
+One endpoint rather than two because the *pair* is the point. An unconditional
+update and a conditional one over an unchanged row do exactly the same thing,
+so an adapter that dropped the `expected` rows would pass the happy case and
+only the stale one tells them apart. `refused` is a field rather than an
+adapter error for the same reason `failed` is in the batch endpoint.
+
+`rendered` is the only place the three clients' *decimal renderers* are
+compared. A `{"decimal": ...}` tag carries the units and says nothing about a
+scale — the scale is the column's and never travels — so each adapter renders
+against the 2 it declares locally, and three renderers that disagree about
+`-0.75` or about where the point goes show up here.
 
 ### `POST /api/batch`
 

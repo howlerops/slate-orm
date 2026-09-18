@@ -269,6 +269,17 @@
         the integer ordering, and <code>SUM</code> is exact. The cost is that
         a value cannot print itself &mdash; rendering needs the column.
       </p>
+      <p>
+        That cost is what every client's decimal surface is shaped around.
+        <code>[[tables]]</code> declares one as
+        <code>{ name = "price", type = "decimal", scale = 2 }</code>, with the
+        scale <em>required</em> there: a decimal column that meant scale 2 and
+        got 0 stores every value a hundred times too large, is internally
+        consistent, and is discovered by an accountant. The wire carries the
+        units and never the scale, so a client restates it locally &mdash; and
+        nothing checks that the two agree, which is the sharpest edge in the
+        feature and the price of a protocol that publishes no schema.
+      </p>
 
     <h3>No date type, and an enum is its own name</h3>
       <p>

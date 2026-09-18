@@ -76,9 +76,21 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("meta", "/api/meta", None, "app"),
 
     # Every value type, in one row, so an encoding difference shows up as a
-    # diff rather than as a rounding nobody notices.
+    # diff rather than as a rounding nobody notices. No projection on purpose:
+    # a column appended to `books` joins this case without anybody remembering
+    # to add it, which is how the missing vector arm was caught and how the
+    # decimal one would have been.
     ("all types", "/api/query",
      {"table": "books", "filter": {"op": "eq", "column": 0, "value": {"u64": "10"}}}, "app"),
+
+    # A decimal on the *filter* side, which is a different path from reading
+    # one back: the value has to be lowered into a predicate, and a client that
+    # sent it as an `i64` would match nothing rather than fail — this server
+    # orders values type first, so the comparison is a type mismatch and not a
+    # wrong answer, but "no rows" is what a caller sees either way.
+    ("a filter on a decimal column", "/api/query",
+     {"table": "books", "filter": {"op": "ge", "column": 7, "value": {"decimal": "1400"}},
+      "sort": [{"column": 0, "direction": "asc"}]}, "app"),
 
     ("ordered by a float", "/api/query",
      {"table": "books", "sort": [{"column": 4, "direction": "desc"},
@@ -384,6 +396,23 @@ CASES: list[tuple[str, str, Any, str]] = [
     # A reader may not write, and must be refused before anything is removed.
     ("a reader may not write by predicate", "/api/predicate-write",
      {"kind": "delete"}, "reader"),
+
+    # A conditional update, landing and refused. The pair is the case: an
+    # unconditional update and a conditional one over an *unchanged* row do
+    # exactly the same thing, so an adapter that built the expected rows and
+    # never sent them would pass the first of these and fail the second. That
+    # is not hypothetical — it is the mutation that survived in two of the
+    # three clients before their own suites grew a stale-row test.
+    #
+    # `rendered` is the only place in this corpus where the three clients'
+    # *decimal renderers* are compared: a `{"decimal": ...}` tag is the units
+    # and carries no scale, so each adapter renders against the 2 it declares
+    # locally and three implementations of "put the point two from the right"
+    # have to agree.
+    ("a conditional update over the row the caller read", "/api/conditional-update",
+     {"stale": False}, "app"),
+    ("a conditional update over a row that moved", "/api/conditional-update",
+     {"stale": True}, "app"),
 
     # A batch, under each atomicity, with the same three operations — one of
     # which collides. That collision is the whole comparison: independent

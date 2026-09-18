@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from slate import Vector, i64, u64
+from slate import Units, Vector, i64, u64
 
 
 def format_float(value: float) -> str:
@@ -43,6 +43,13 @@ def encode(value: Any) -> dict[str, Any]:
         return {"u64": str(int(value))}
     if isinstance(value, i64):
         return {"i64": str(int(value))}
+    # Before the plain `int` below, and this is not cosmetic: `Units` is an
+    # `int` subclass, so without this branch a decimal would tag as `i64` and
+    # the adapter would be *silently* reporting a different value type from the
+    # other two. A wrong tag is worse than the `unknown` a missing type gets,
+    # because `unknown` is visible.
+    if isinstance(value, Units):
+        return {"decimal": str(int(value))}
     if isinstance(value, int):
         # A plain `int` reached this without a wire type to remember. Tagged as
         # `i64` because that is what `to_value` would have sent it as.
@@ -89,4 +96,6 @@ def decode(tagged: dict[str, Any]) -> Any:
         return u64(int(tagged["u64"]))
     if "f64" in tagged:
         return float(tagged["f64"])
+    if "decimal" in tagged:
+        return Units(int(tagged["decimal"]))
     raise ValueError(f"a value carried no known kind: {sorted(tagged)}")

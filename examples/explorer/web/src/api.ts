@@ -272,7 +272,7 @@ export function kindOf(value: Tagged | undefined): string {
  */
 export const TABLES: Record<string, string[]> = {
   authors: ["id", "name", "country", "born"],
-  books: ["id", "author_id", "title", "year", "rating", "released", "embedding"],
+  books: ["id", "author_id", "title", "year", "rating", "released", "embedding", "price"],
   sales: ["id", "book_id", "units"],
   editions: ["id", "book_id", "format"],
 };

@@ -48,6 +48,13 @@ columns = [
   # on the *order* it produces, and a seed file nobody can read by eye makes
   # that harder to check rather than more convincing.
   { name = "embedding", type = "vector" },
+  # A price, in cents. Appended for the same reason as the two above, and for
+  # the same kind of reason: `Value` has a decimal arm that no adapter could
+  # reach, so the conformance corpus could not compare the three SDKs on the
+  # one value type that is *not* the number it looks like. `1250` here is
+  # 12.50, and a client that renders it against the wrong scale is off by a
+  # factor of a hundred with nothing anywhere reporting it.
+  { name = "price",     type = "decimal", scale = 2 },
 ]
 primary_key = ["id"]
 

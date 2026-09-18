@@ -114,19 +114,37 @@
       for the connection.
     </p>
 
-    <h2>What does not cross the wire yet</h2>
+    <h2>Decimals, and the conditional update</h2>
 
     <p>
-      Conditional writes and the decimal type are reachable from the Rust record
-      layer and not from the clients. Both want the same kind of protocol change
-      — an expected-row field, and a decimal case on <code>Value</code>.
-      <a href="limits.html">The full list is here.</a>
+      A decimal column holds a count of its own smallest unit, and the
+      <em>scale</em> stays in the catalog — so <code>1250</code> is 12.50 at
+      scale 2 and 1250 at scale 0, and nothing on the wire says which. Each
+      client therefore has a units type rather than a number:
+      <code>Units</code> in Python and Go, <code>units()</code> in TypeScript,
+      with a renderer that takes the scale as an argument. A
+      <code>decimal.Decimal</code>, a JavaScript <code>number</code> and a Go
+      float are refused rather than scaled: there is no schema on the wire to
+      reconcile their scale against the column's, and a client that guessed
+      would be off by a power of ten.
     </p>
 
     <p>
-      Relationships and keyset pagination used to be on that list and are not:
-      every client has <code>related</code> and <code>page</code> now, and the
-      three-SDK conformance runner compares all three on both.
+      The conditional update is optimistic concurrency, per row: send the row
+      you want written alongside the row as you last read it, and the server
+      compares the <em>whole stored row</em> and refuses with
+      <code>ABORTED</code> if anything about it moved. Python spells it
+      <code>update(…, expected=…)</code>; Go and TypeScript spell it
+      <code>UpdateIfUnchanged</code> / <code>updateIfUnchanged</code>, because
+      their <code>update</code> is variadic over its rows and cannot take an
+      optional argument.
+    </p>
+
+    <p>
+      Both used to be on the list of things the clients could not reach, along
+      with relationships and keyset pagination, and none of the four is now.
+      The three-SDK conformance runner compares all three clients on every one
+      of them. <a href="limits.html">What is still missing is here.</a>
     </p>
     <nav class="doc-pager" data-docs="pager"></nav>
   </article>

@@ -50,32 +50,38 @@ func (s *server) seed() error {
 	// a constant shift; and `The Player of Games` at 02:10 UTC is the previous
 	// day in New York, which is the case a caller who reads a UTC timestamp
 	// and calls it the local date gets wrong.
+	//
+	// `price` is in cents, which is what a decimal column at scale 2 holds:
+	// `1250` is 12.50. The prices differ per book rather than being a
+	// constant, so a `SUM` over them is a number a reader can check and an
+	// adapter that dropped the column would be visible rather than merely
+	// suspicious.
 	book := func(
 		id, author uint64, title string, year int64, rating float64,
-		released int64, embedding []float32,
+		released int64, embedding []float32, price int64,
 	) []slate.Value {
 		return []slate.Value{
 			slate.Uint(id), slate.Uint(author), slate.String(title),
 			slate.Int(year), slate.Float(rating),
-			slate.Int(released), slate.Vector(embedding),
+			slate.Int(released), slate.Vector(embedding), slate.Units(price),
 		}
 	}
 	books := [][]slate.Value{
-		book(10, 1, "A Wizard of Earthsea", 1968, 4.4, -36754200, []float32{0.9, 0.1, 0, 0}),
-		book(11, 1, "The Dispossessed", 1974, 4.6, 137840700, []float32{0.1, 0.9, 0, 0}),
-		book(12, 1, "The Left Hand of Darkness", 1969, 4.5, -26370900, []float32{0, 0.1, 0.9, 0}),
-		book(13, 2, "Consider Phlebas", 1987, 4.1, 545570400, []float32{0, 0, 0.1, 0.9}),
-		book(14, 2, "The Player of Games", 1988, 4.4, 584244600, []float32{0.5, 0.5, 0, 0}),
-		book(15, 3, "Kindred", 1979, 4.5, 297129300, []float32{0, 0.5, 0.5, 0}),
-		book(16, 3, "Parable of the Sower", 1993, 4.4, 726824400, []float32{0, 0, 0.5, 0.5}),
-		book(17, 4, "Solaris", 1961, 4.3, -260006400, []float32{0.25, 0.25, 0.25, 0.25}),
-		book(18, 4, "The Cyberiad", 1965, 4.4, -127248300, []float32{0.8, 0, 0.2, 0}),
+		book(10, 1, "A Wizard of Earthsea", 1968, 4.4, -36754200, []float32{0.9, 0.1, 0, 0}, 1295),
+		book(11, 1, "The Dispossessed", 1974, 4.6, 137840700, []float32{0.1, 0.9, 0, 0}, 1450),
+		book(12, 1, "The Left Hand of Darkness", 1969, 4.5, -26370900, []float32{0, 0.1, 0.9, 0}, 1399),
+		book(13, 2, "Consider Phlebas", 1987, 4.1, 545570400, []float32{0, 0, 0.1, 0.9}, 1599),
+		book(14, 2, "The Player of Games", 1988, 4.4, 584244600, []float32{0.5, 0.5, 0, 0}, 1650),
+		book(15, 3, "Kindred", 1979, 4.5, 297129300, []float32{0, 0.5, 0.5, 0}, 1250),
+		book(16, 3, "Parable of the Sower", 1993, 4.4, 726824400, []float32{0, 0, 0.5, 0.5}, 1375),
+		book(17, 4, "Solaris", 1961, 4.3, -260006400, []float32{0.25, 0.25, 0.25, 0.25}, 1100),
+		book(18, 4, "The Cyberiad", 1965, 4.4, -127248300, []float32{0.8, 0, 0.2, 0}, 1050),
 		// A book whose author id matches nobody, so a right or full join has
 		// an unmatched right side to show.
-		book(19, 99, "Author Unknown", 1955, 3.2, -452489700, []float32{0, 0.8, 0, 0.2}),
+		book(19, 99, "Author Unknown", 1955, 3.2, -452489700, []float32{0, 0.8, 0, 0.2}, 999),
 		// Published before 1960, so the `reader` role's row policy hides it
 		// and the identity switcher has something to demonstrate.
-		book(20, 4, "The Astronauts", 1951, 3.6, -596808000, []float32{0.2, 0, 0, 0.8}),
+		book(20, 4, "The Astronauts", 1951, 3.6, -596808000, []float32{0.2, 0, 0, 0.8}, 875),
 	}
 	if _, err := session.Upsert(ctx, "books", books...); err != nil {
 		return err

@@ -870,6 +870,56 @@ Not plan items; things a session should pick up when it is already in the file.
   so an unfiltered id of `x status=0` would give a reader two `status=` to
   choose between. Forged lines in a log are worse than none.
 
+### W1 — Decimals and conditional updates across the wire — **built**
+
+> The largest thing the first two plans left half-finished, and the only one
+> that was half-finished on *purpose*: `Value::Decimal` and
+> `update_if_unchanged` were both built in the kernel, exercised by the Rust
+> ORM, and reachable from none of the three clients. A test existed to pin the
+> absence — `value_to_proto` turned a decimal into the string
+> `<unrepresentable decimal>`, and the test's own doc comment said it should
+> fail when the field arrived and be rewritten rather than relaxed.
+
+`Value` gains `decimal_value`, an `int64` count of the column's smallest unit;
+the scale stays in the catalog, because a scale on the wire lets a client and
+the catalog disagree about what a stored number means, which is the one thing a
+decimal type exists to prevent. `UpdateRequest` gains `repeated Row expected`,
+dispatching to `update_if_unchanged` on all three write paths — autocommit,
+session actor, batch — and refusing an `expected` that is neither empty nor
+exactly as long as `rows`, because zipping and stopping at the shorter turns a
+caller's mistake into a silent partial condition.
+
+All three clients have both. `Units` (Python, Go) and `units()` (TypeScript)
+carry units and nothing else, with a renderer that takes the scale as an
+argument; a `decimal.Decimal`, a JS `number` and a Go float are refused rather
+than scaled, because there is no schema on the wire to reconcile their scale
+against the column's. The conditional update is `update(..., expected=...)` in
+Python and `UpdateIfUnchanged` in Go and TypeScript, where `update` is variadic
+and cannot take an optional argument — an asymmetry recorded in all three
+READMEs rather than smoothed over.
+
+`slate-serverd` could not declare a decimal column at all: its `value_type`
+listed eight types where `ValueType` has nine, so `type = "decimal"` was
+refused as "not a type". That is the part worth remembering — the feature
+existed in the library and was unreachable from the binary anybody runs, and it
+was found by trying to write a test fixture rather than by any check.
+
+Two mutations found missing tests, both the same shape and both about the
+*transaction* path: deleting the expected rows there left Go and TypeScript
+green, because each had a transaction test and each tested the happy path — an
+unconditional update of an unchanged row and a conditional one do exactly the
+same thing, so only a stale row tells them apart. The three-SDK corpus now has
+both cases for that reason.
+
+**What it does not do.** Nothing checks a client's declared scale against the
+server's; the fingerprint deliberately does not hash it, because a scale
+addresses no column, so a client with it wrong reaches the right column and
+renders every value off by a power of ten, for ever, with no error anywhere.
+That is the price of a protocol that publishes no schema and it is the sharpest
+edge in the feature. `Scalar` still has no decimal arithmetic, the SQL front
+end still has no decimal literal, and `delete_if_unchanged` still does not
+exist.
+
 ## What neither plan does
 
 Neither closes the whole table. Window functions, CTEs, views, arrays,

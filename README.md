@@ -1141,25 +1141,35 @@ Built and tested:
       so it would have returned zero rows and looked like a fact about the
       data. Mixed integer widths are allowed: they round-trip, and refusing
       them would refuse a query that works
+- [x] **All four features cross the wire.** `Value` carries a `decimal_value`
+      — an `int64` count of the column's smallest unit, with the scale staying
+      in the catalog — and `UpdateRequest` carries `expected`, the rows as the
+      caller last saw them. All three clients have both: `Units` in Python and
+      Go, `units()` in TypeScript, and the conditional update as
+      `update(..., expected=...)` or `UpdateIfUnchanged`. `slate-serverd` can
+      declare a decimal column too, which it could not: `type = "decimal"` was
+      refused as "not a type", so the feature existed in the library and not in
+      the binary anybody runs.
+
+      Nothing checks a client's declared *scale* against the server's. The
+      schema fingerprint deliberately does not hash it — a scale addresses no
+      column — so a client declaring `scale=2` against a `scale=4` column
+      reaches the right column and renders every value a hundred times too
+      small, for ever, with no error at any layer. That is the price of a
+      protocol that publishes no schema, and it is the sharpest edge in the
+      feature.
+
+      Relationships and pagination were on this list too. `Related` is an RPC
+      now and `Query` carries `after`, `paged` and a `next_cursor` on the way
+      back; all three clients have `related` and `page`, and the three-SDK
+      conformance runner compares them on both. The prediction that the cursor
+      "wants the same protocol change" as the other two was wrong in an
+      instructive way: it wanted *three* fields rather than one, because the
+      server has to be told a cursor is wanted before it can refuse a read it
+      cannot build one for
 
 Not built:
 
-- [ ] **Two of the four features above do not cross the wire.** The write path
-      carries no expected-row field and `Value` has no decimal case, so the
-      conditional update and the decimal type are reachable from the Rust ORM
-      and not from Python, Go or TypeScript. A decimal that reaches a client
-      today becomes a visible `<unrepresentable decimal>` marker rather than a
-      silent null — pinned by a test whose own doc comment says it is a pin and
-      not an endorsement.
-
-      Relationships and pagination were on this list and are not. `Related` is
-      an RPC now and `Query` carries `after`, `paged` and a `next_cursor` on
-      the way back; all three clients have `related` and `page`, and the
-      three-SDK conformance runner compares them on both. The prediction that
-      the cursor "wants the same protocol change" as the other two was wrong in
-      an instructive way: it wanted *three* fields rather than one, because the
-      server has to be told a cursor is wanted before it can refuse a read it
-      cannot build one for
 - [ ] A read-only node that starts while the leader has not yet migrated warns
       and serves. During that window a query through an unbuilt index returns
       no rows. Closing it means the follower waiting for the leader, which

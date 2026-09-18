@@ -398,6 +398,7 @@ func (s *server) transaction(ctx context.Context, session *slate.Session, body j
 		slate.Uint(probe), slate.Uint(1),
 		slate.String("A Book In Flight"), slate.Int(2026), slate.Float(5.0),
 		slate.Int(1767225600), slate.Vector([]float32{0.4, 0.3, 0.2, 0.1}),
+		slate.Units(1000),
 	}
 	if _, err := tx.Insert(ctx, "books", row); err != nil {
 		return nil, err
@@ -723,6 +724,7 @@ func (s *server) predicateWrite(ctx context.Context, session *slate.Session, bod
 			slate.String(fmt.Sprintf("Predicate %d", n)),
 			slate.Int(int64(2000 + n)), slate.Float(3.0),
 			slate.Int(1767225600), slate.Vector([]float32{0.1, 0.2, 0.3, 0.4}),
+			slate.Units(1000),
 		})
 	}
 	if _, err := session.Insert(ctx, "books", rows...); err != nil {
@@ -786,6 +788,88 @@ func (s *server) predicateWrite(ctx context.Context, session *slate.Session, bod
 		"affected": result.Affected,
 		"rows":     returned,
 		"left":     left,
+	}, nil
+}
+
+// The id the conditional-update handler owns, clear of every other range.
+const conditionalID = 9300
+
+// conditionalUpdate shows optimistic concurrency, and the decimal column it
+// exists to protect.
+//
+// Seeds one book at 9300 priced 10.00, reads it back, optionally lets somebody
+// else move the price, then tries a conditional update to 12.50 guarded by the
+// row as it was read. With `stale: false` it lands; with `stale: true` the
+// server refuses it and the price is whatever the other writer left.
+//
+// It is one endpoint rather than two because the *pair* is the point: an
+// unconditional update and a conditional one over an unchanged row do exactly
+// the same thing, so only the stale case tells them apart.
+func (s *server) conditionalUpdate(
+	ctx context.Context, session *slate.Session, body json.RawMessage,
+) (any, error) {
+	var spec struct {
+		Stale bool `json:"stale"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+
+	key := []slate.Value{slate.Uint(conditionalID)}
+	seeded := book(conditionalID, "Priced")
+	if _, err := session.Upsert(ctx, "books", seeded); err != nil {
+		return nil, err
+	}
+
+	// Read the row back rather than reusing what was written: a conditional
+	// update guards against what is *stored*, and a caller that guards with
+	// its own draft is testing its memory rather than the database.
+	was, found, err := session.Get(ctx, "books", key)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded row is not there")
+	}
+
+	if spec.Stale {
+		moved := append([]slate.Value(nil), was...)
+		moved[7] = slate.Units(1100)
+		if _, err := session.Update(ctx, "books", moved); err != nil {
+			return nil, err
+		}
+	}
+
+	next := append([]slate.Value(nil), was...)
+	next[7] = slate.Units(1250)
+	refused := ""
+	if _, err := session.UpdateIfUnchanged(ctx, "books", slate.RowUpdate{
+		Row: next, Was: was,
+	}); err != nil {
+		var e *slate.Error
+		if !errors.As(err, &e) {
+			return nil, err
+		}
+		// A field rather than an adapter error, so the corpus compares the two
+		// cases as ordinary answers instead of one being a refusal case.
+		refused = kindName(e.Kind)
+	}
+
+	after, _, err := session.Get(ctx, "books", key)
+	if err != nil {
+		return nil, err
+	}
+	price, ok := after[7].(slate.Units)
+	if !ok {
+		return nil, fmt.Errorf("a decimal came back as %T", after[7])
+	}
+	return map[string]any{
+		"refused": refused,
+		"price":   encode(price),
+		// The rendering, against the scale this adapter declares. The tagged
+		// value above is the units and says nothing about a scale, so this is
+		// the only place the three clients' renderers are compared.
+		"rendered": price.StringWithScale(2),
 	}, nil
 }
 
@@ -882,6 +966,8 @@ func book(id uint64, title string) []slate.Value {
 		slate.Uint(id), slate.Uint(1), slate.String(title),
 		slate.Int(2020), slate.Float(4.0),
 		slate.Int(1767225600), slate.Vector([]float32{0.5, 0.5, 0.5, 0.5}),
+		// 10.00, at the column's declared scale of 2.
+		slate.Units(1000),
 	}
 }
 

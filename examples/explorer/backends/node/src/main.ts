@@ -55,6 +55,8 @@ import {
   ref,
   regexpReplace,
   str,
+  units,
+  unitsToString,
   upper,
   vector,
   year,
@@ -636,6 +638,7 @@ class Adapter {
         { kind: "float", value: 3 },
         { kind: "int", value: 1767225600n },
         vector([0.1, 0.2, 0.3, 0.4]),
+        units(1000n),
       ]);
     }
     await session.insert("books", ...rows);
@@ -744,6 +747,7 @@ class Adapter {
         { kind: "float", value: 5 },
         { kind: "int", value: 1767225600n },
         vector([0.4, 0.3, 0.2, 0.1]),
+        units(1000n),
       ]);
       inside = (await tx.get("books", [uint(probe)])) !== undefined;
       if (body.commit) await tx.commit();
@@ -757,6 +761,62 @@ class Adapter {
     // same way and the demo is idempotent.
     if (after) await session.delete("books", [uint(probe)]);
     return { visibleInside: inside, visibleAfter: after };
+  }
+  /**
+   * Optimistic concurrency, and the decimal column it exists to protect.
+   *
+   * Seeds one book at 9300 priced 10.00, reads it back, optionally lets
+   * somebody else move the price, then tries a conditional update to 12.50
+   * guarded by the row as it was read. With `stale: false` it lands; with
+   * `stale: true` the server refuses it and the price is whatever the other
+   * writer left.
+   *
+   * One endpoint rather than two because the *pair* is the point: an
+   * unconditional update and a conditional one over an unchanged row do
+   * exactly the same thing, so only the stale case tells them apart.
+   */
+  async conditionalUpdate(session: Session, body: { stale?: boolean }): Promise<unknown> {
+    const id = 9300n;
+    await session.upsert("books", bookRow(id, "Priced"));
+
+    // Read the row back rather than reusing what was written: a conditional
+    // update guards against what is *stored*, and a caller that guards with
+    // its own draft is testing its memory rather than the database.
+    const was = await session.get("books", [uint(id)]);
+    if (!was) throw new Error("the seeded row is not there");
+
+    if (body.stale) {
+      const moved = [...was];
+      moved[7] = units(1100n);
+      await session.update("books", moved);
+    }
+
+    const next = [...was];
+    next[7] = units(1250n);
+    let refused = "";
+    try {
+      await session.updateIfUnchanged("books", { row: next, was });
+    } catch (error) {
+      if (!(error instanceof SlateError)) throw error;
+      // A field rather than an adapter error, so the corpus compares the two
+      // cases as ordinary answers instead of one being a refusal case.
+      refused = kindName(error);
+    }
+
+    const after = await session.get("books", [uint(id)]);
+    if (!after) throw new Error("the row vanished");
+    const price = after[7];
+    if (price?.kind !== "units") {
+      throw new Error(`a decimal came back as ${String(price?.kind)}`);
+    }
+    return {
+      refused,
+      price: encode(price),
+      // The rendering, against the scale this adapter declares. The tagged
+      // value above is the units and says nothing about a scale, so this is
+      // the only place the three clients' renderers are compared.
+      rendered: unitsToString(price.value, 2),
+    };
   }
 }
 
@@ -807,6 +867,7 @@ async function main(): Promise<void> {
     "/api/path": (s, b) => adapter.path(s, b),
     "/api/batch": (s, b) => adapter.batch(s, b),
     "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
+    "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 
@@ -881,5 +942,7 @@ function bookRow(id: bigint, title: string): Value[] {
     { kind: "float", value: 4 },
     { kind: "int", value: 1767225600n },
     vector([0.5, 0.5, 0.5, 0.5]),
+    // 10.00, at the column's declared scale of 2.
+    units(1000n),
   ];
 }

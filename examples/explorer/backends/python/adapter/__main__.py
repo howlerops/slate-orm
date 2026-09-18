@@ -35,6 +35,7 @@ from slate import (
     SlateError,
     Metric,
     TimeUnit,
+    Units,
     Vector,
     as_scalar,
     asc,
@@ -546,6 +547,7 @@ class Adapter:
                 [
                     u64(first + n), u64(1), f"Predicate {n}", i64(2000 + n),
                     3.0, i64(1767225600), Vector((0.1, 0.2, 0.3, 0.4)),
+                    Units(1000),
                 ]
                 for n in range(4)
             ],
@@ -627,12 +629,72 @@ class Adapter:
         left = len(list(session.query(q.where(q.c.id.ge(u64(first))))))
         return {"failed": failed, "outcomes": outcomes, "left": left}
 
+    #: The id the conditional-update handler owns, clear of every other range.
+    CONDITIONAL_ID = 9300
+
+    def conditional_update(self, session, body):
+        """Optimistic concurrency, and the decimal column it exists to protect.
+
+        Seeds one book at 9300 priced 10.00, reads it back, optionally lets
+        somebody else move the price, then tries a conditional update to 12.50
+        guarded by the row as it was read. With `stale: false` it lands; with
+        `stale: true` the server refuses it and the price is whatever the other
+        writer left.
+
+        One endpoint rather than two because the *pair* is the point: an
+        unconditional update and a conditional one over an unchanged row do
+        exactly the same thing, so only the stale case tells them apart.
+        """
+        id_ = self.CONDITIONAL_ID
+        session.insert(BOOKS, [self._book(id_, "Priced")], upsert=True)
+
+        # Read the row back rather than reusing what was written: a conditional
+        # update guards against what is *stored*, and a caller that guards with
+        # its own draft is testing its memory rather than the database.
+        row = session.get(BOOKS, (u64(id_),))
+        if row is None:
+            raise RuntimeError("the seeded row is not there")
+        was = list(row)
+
+        if bool(body.get("stale")):
+            moved = list(was)
+            moved[7] = Units(1100)
+            session.update(BOOKS, [moved])
+
+        nxt = list(was)
+        nxt[7] = Units(1250)
+        refused = ""
+        try:
+            session.update(BOOKS, [nxt], expected=[was])
+        except SlateError as error:
+            # A field rather than an adapter error, so the corpus compares the
+            # two cases as ordinary answers instead of one being a refusal.
+            refused = kind_name(error)
+
+        after = session.get(BOOKS, (u64(id_),))
+        if after is None:
+            raise RuntimeError("the row vanished")
+        price = after.get("price")
+        if not isinstance(price, Units):
+            raise RuntimeError(f"a decimal came back as {type(price).__name__}")
+        return {
+            "refused": refused,
+            "price": encode(price),
+            # The rendering, against the scale this adapter declares. The
+            # tagged value above is the units and says nothing about a scale,
+            # so this is the only place the three clients' renderers are
+            # compared.
+            "rendered": price.to_string_with_scale(2),
+        }
+
     @staticmethod
     def _book(id_: int, title: str) -> list:
         """A whole `books` row, every column in ordinal order."""
         return [
             u64(id_), u64(1), title, i64(2020), 4.0,
             i64(1767225600), Vector((0.5, 0.5, 0.5, 0.5)),
+            # 10.00, at the column's declared scale of 2.
+            Units(1000),
         ]
 
     def transaction(self, session, body):
@@ -656,6 +718,7 @@ class Adapter:
                 [[
                     u64(probe), u64(1), "A Book In Flight", i64(2026), 5.0,
                     i64(1767225600), Vector((0.4, 0.3, 0.2, 0.1)),
+                    Units(1000),
                 ]],
             )
             inside = tx.get(BOOKS, [u64(probe)]) is not None
@@ -684,6 +747,7 @@ ROUTES = {
     "/api/batch": "batch",
     "/api/path": "path",
     "/api/predicate-write": "predicate_write",
+    "/api/conditional-update": "conditional_update",
     "/api/transaction": "transaction",
 }
 

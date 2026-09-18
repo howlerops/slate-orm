@@ -17,6 +17,7 @@ I64 = ValueType.I64
 STR = ValueType.STR
 F64 = ValueType.F64
 VECTOR = ValueType.VECTOR
+DECIMAL = ValueType.DECIMAL
 
 AUTHORS = Table(
     "authors",
@@ -41,6 +42,9 @@ BOOKS = Table(
         # the row policy on `year` — stays where it was.
         Column("released", I64),
         Column("embedding", VECTOR),
+        # In cents: at scale 2, `1250` is 12.50. The scale is declared here and
+        # nowhere on the wire, which is the whole hazard a decimal column has.
+        Column("price", DECIMAL, scale=2),
     ],
     primary_key=["id"],
 )

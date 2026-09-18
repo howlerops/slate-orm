@@ -418,6 +418,27 @@
         client pays more per round trip, which is why saving them is worth more
         to a client and not less.
       </li>
+      <li>
+        <strong>Decimals and conditional updates across the wire. &mdash;
+        done.</strong> The fourth time a capability had existed in Rust and
+        reached no client, and the only one that had a test <em>pinning the
+        absence</em>: <code>value_to_proto</code> turned a decimal into the
+        string <code>&lt;unrepresentable decimal&gt;</code>, and the test&rsquo;s
+        own comment asked to be rewritten when the field arrived.
+        <code>Value</code> now carries a <code>decimal_value</code> &mdash; an
+        <code>int64</code> count of the column&rsquo;s smallest unit, the scale
+        staying in the catalog &mdash; and <code>UpdateRequest</code> carries
+        <code>expected</code>, dispatching to <code>update_if_unchanged</code>
+        on all three write paths. All three clients have both.
+        <code>slate-serverd</code> could not declare a decimal column at all
+        until this: <code>type = "decimal"</code> was refused as
+        &ldquo;not a type&rdquo;, so the feature existed in the library and not
+        in the binary anybody runs, and it was found by trying to write a test
+        fixture rather than by any check. Two mutations found the same missing
+        test in two clients &mdash; a conditional update inside a transaction
+        was only ever tested on the happy path, which an unconditional update
+        satisfies identically.
+      </li>
     </ol>
 
     <h2>What neither plan does</h2>

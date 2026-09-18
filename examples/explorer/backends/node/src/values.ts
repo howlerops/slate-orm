@@ -33,6 +33,16 @@ export function encode(value: Value): Record<string, unknown> {
       return { u64: value.value.toString() };
     case "float":
       return { f64: formatFloat(value.value) };
+    case "units":
+      // The units, as a string, exactly like the two integer arms — a decimal
+      // is 64 bits and a JSON number would round it above 2^53, and a currency
+      // total in cents is where that is reached first.
+      //
+      // *Not* the rendered "12.50": the scale is the column's and this
+      // function has only a value. `/api/conditional-update` renders one,
+      // against a scale it is given, which is where the three clients'
+      // renderers are compared.
+      return { decimal: value.value.toString() };
     case "bytes":
       return { bytes: Buffer.from(value.value).toString("hex") };
     case "uuid":
@@ -56,5 +66,6 @@ export function decode(tagged: Record<string, unknown>): Value {
   if ("i64" in tagged) return { kind: "int", value: BigInt(String(tagged["i64"])) };
   if ("u64" in tagged) return { kind: "uint", value: BigInt(String(tagged["u64"])) };
   if ("f64" in tagged) return { kind: "float", value: Number(tagged["f64"]) };
+  if ("decimal" in tagged) return { kind: "units", value: BigInt(String(tagged["decimal"])) };
   throw new TypeError(`a value carried no known kind: ${Object.keys(tagged).join(", ")}`);
 }
