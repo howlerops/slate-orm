@@ -36,6 +36,7 @@
 use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{Context, Poll};
+use http_body::Body as _;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -137,8 +138,18 @@ fn bucket_ceiling(index: usize) -> u64 {
 struct Method {
     /// Calls that reached a response head, whatever its status.
     calls: AtomicU64,
-    /// Of those, the ones whose head carried a non-`OK` gRPC status.
+    /// Of those, the ones that failed — at the head or in a trailer.
     failures: AtomicU64,
+    /// The subset of `failures` that arrived *after* the response head.
+    ///
+    /// Counted apart because the two are different operational problems and a
+    /// single number cannot tell them apart. A head failure is a call the
+    /// server refused: the caller got nothing and knows it. A late failure is
+    /// a read that started answering and then died — the caller got rows, and
+    /// whether it noticed depends on whether it checked the end of the stream.
+    /// A node whose `failed` is all `late` is failing in the middle of scans,
+    /// which points at storage rather than at the requests.
+    late: AtomicU64,
     /// Total microseconds to the response head, for a mean.
     micros: AtomicU64,
     /// The slowest head, in microseconds.
@@ -158,6 +169,7 @@ impl Default for Method {
         Self {
             calls: AtomicU64::new(0),
             failures: AtomicU64::new(0),
+            late: AtomicU64::new(0),
             micros: AtomicU64::new(0),
             slowest: AtomicU64::new(0),
             heads: (0..BUCKETS).map(|_| AtomicU64::new(0)).collect(),
@@ -166,6 +178,17 @@ impl Default for Method {
 }
 
 impl Method {
+    /// Record a failure that arrived after this call's response head.
+    ///
+    /// Counted in `failures` as well as `late`: `late` is a *subset*, so a
+    /// reader adding the two would double-count and one comparing them would
+    /// find `late` larger than `failed` on a node whose only failures were
+    /// late ones.
+    fn record_late_failure(&self) {
+        self.failures.fetch_add(1, Ordering::Relaxed);
+        self.late.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// The `numerator`/`denominator` quantile of the recorded heads, in
     /// microseconds, or `None` when nothing has been recorded.
     ///
@@ -199,20 +222,49 @@ impl Method {
     }
 }
 
+/// How many distinct method names the counters will hold.
+///
+/// **The key is the request path, and a caller chooses it.** The layer wraps
+/// the router, so a request for a method that does not exist still reaches
+/// here and is counted under whatever path it asked for — which means an
+/// unbounded map fed by anyone who can open a connection. That was true before
+/// the histogram and cheap (a name and four counters); with 4 KiB of buckets
+/// behind every entry it is 80 times worse, and a memory bound that only held
+/// because each entry was small is not a bound.
+///
+/// Nineteen RPCs exist, so 64 is headroom rather than a limit anybody reaches,
+/// and it caps the counters at about 256 KiB. Past it, calls go to
+/// [`OVERFLOW`] rather than being dropped: a node under this treatment has a
+/// summary that has stopped naming things, and a line that says so is better
+/// than a count that quietly stops moving.
+const MAX_METHODS: usize = 64;
+
+/// Where calls past [`MAX_METHODS`] distinct paths are counted.
+///
+/// Parenthesised because a real gRPC path begins with `/`, so this cannot
+/// collide with one however a caller spells it.
+const OVERFLOW: &str = "(other)";
+
 /// Every method's counters.
 ///
 /// A `Mutex<BTreeMap>` rather than a lock-free map: the map is only written
-/// when a *new method name* appears, which is at most eighteen times in a
-/// process's life, and every request after that takes the lock for the length
-/// of a lookup. Sorted so the summary reads the same way twice.
+/// when a *new method name* appears, which is at most [`MAX_METHODS`] times in
+/// a process's life, and every request after that takes the lock for the
+/// length of a lookup. Sorted so the summary reads the same way twice.
 #[derive(Debug, Default)]
 pub(crate) struct Counters {
     methods: Mutex<BTreeMap<String, Arc<Method>>>,
 }
 
 impl Counters {
-    /// Record one finished call.
-    fn record(&self, method: &str, elapsed: Duration, failed: bool) {
+    /// Record one finished call, and hand back the row it landed in.
+    ///
+    /// The row is returned rather than looked up again later because a
+    /// streamed call may still fail in its trailers, and the alternative —
+    /// finding the row by name a second time — has to answer "what if it is
+    /// not there", "what if the cap sent this call to [`OVERFLOW`]" and "what
+    /// if a name arrived twice". Holding the `Arc` makes all three unaskable.
+    fn record(&self, method: &str, elapsed: Duration, failed: bool) -> Arc<Method> {
         let entry = {
             let mut methods = self.methods.lock().unwrap_or_else(|poisoned| {
                 // A poisoned lock means a panic while holding it, which can
@@ -221,7 +273,17 @@ impl Counters {
                 // taking the process down for.
                 poisoned.into_inner()
             });
-            Arc::clone(methods.entry(method.to_owned()).or_default())
+            match methods.get(method) {
+                Some(entry) => Arc::clone(entry),
+                None => {
+                    let key = if methods.len() < MAX_METHODS {
+                        method
+                    } else {
+                        OVERFLOW
+                    };
+                    Arc::clone(methods.entry(key.to_owned()).or_default())
+                }
+            }
         };
         let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
         entry.calls.fetch_add(1, Ordering::Relaxed);
@@ -235,6 +297,7 @@ impl Counters {
         if let Some(bucket) = entry.heads.get(bucket_of(micros)) {
             bucket.fetch_add(1, Ordering::Relaxed);
         }
+        entry
     }
 
     /// One line per method that has been called, or `None` when none has.
@@ -257,6 +320,7 @@ impl Counters {
                 continue;
             }
             let failures = counters.failures.load(Ordering::Relaxed);
+            let late = counters.late.load(Ordering::Relaxed);
             let total = counters.micros.load(Ordering::Relaxed);
             let slowest = counters.slowest.load(Ordering::Relaxed);
             // `write!` to a String cannot fail; the result is discarded rather
@@ -268,7 +332,7 @@ impl Counters {
             let _ = writeln!(
                 out,
                 "slate-serverd: {name} calls={calls} failed={failures} \
-                 mean_head={:.1}ms p50_head<={:.1}ms p90_head<={:.1}ms \
+                 late={late} mean_head={:.1}ms p50_head<={:.1}ms p90_head<={:.1}ms \
                  p99_head<={:.1}ms slowest_head={:.1}ms",
                 total as f64 / calls as f64 / 1000.0,
                 at(50) as f64 / 1000.0,
@@ -308,13 +372,87 @@ impl<S> Observe<S> {
 ///
 /// A failure that appears only in a *trailer* — one raised after the head was
 /// sent, which for this server means a streamed read that died part way — is
-/// invisible here and counts as a success. Said out loud rather than left for
-/// somebody to discover from a `failed=` that looks too low. Catching those
-/// would mean wrapping the response body and inspecting its trailers, which is
-/// a per-row cost on the streaming path to correct a count; the client's own
-/// error is where that failure is visible today.
+/// invisible to this function. [`Trailing`] is what catches those, and the
+/// same reading applies there: a trailer's `grpc-status` that is present and
+/// not `"0"` is a failure.
 fn head_status(headers: &http::HeaderMap) -> Option<&str> {
     headers.get("grpc-status")?.to_str().ok()
+}
+
+/// A response body that notices a gRPC failure in the trailers.
+///
+/// Until this existed, `failed=` counted only what [`head_status`] could see,
+/// so a streamed read that answered a thousand rows and then died read as a
+/// success. That is the one failure a node most wants counted — it means the
+/// store broke under a scan, not that a caller sent something wrong — and it
+/// was the only one missing.
+///
+/// The comment this replaces called wrapping the body "a per-row cost on the
+/// streaming path", and that was asserted rather than measured. It is wrong
+/// twice. A frame is a *message*, not a row, so at `rows_per_message = 256`
+/// this is consulted once per 256 rows; and the cost of consulting it is
+/// **4.7 ns a frame** (median of 21 runs; 3.3 ns bare against 8.0 ns wrapped,
+/// with a run-to-run spread of about 1.3 ns either way). Against the measured
+/// 41.3 ms drain of a 20,000-row scan at that batch size — 80 frames — that is
+/// 375 ns, or 0.0009%, in a table whose own row-to-row spread is 3 ms. The
+/// measurement is written up in the ledger entry.
+struct Trailing {
+    inner: tonic::body::Body,
+    /// Where to report a late failure, taken when it is reported.
+    ///
+    /// An `Option` so a body cannot count the same call twice: gRPC sends one
+    /// trailers frame, but nothing in the `Body` contract says a wrapper will
+    /// be polled exactly once after it, and a counter that can double under a
+    /// polling pattern is a counter nobody can trust.
+    late: Option<Late>,
+}
+
+/// What a [`Trailing`] needs to report a late failure: the row itself.
+struct Late {
+    row: Arc<Method>,
+}
+
+impl http_body::Body for Trailing {
+    type Data = <tonic::body::Body as http_body::Body>::Data;
+    type Error = <tonic::body::Body as http_body::Body>::Error;
+
+    fn poll_frame(
+        mut self: core::pin::Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        // `Pin::new` rather than a projection crate: `tonic::body::Body` holds
+        // a `Pin<Box<..>>`, so it is `Unpin`, and so is everything else here.
+        // A `pin-project` dependency to move one field would be a build-time
+        // cost for a guarantee the types already give.
+        let polled = core::pin::Pin::new(&mut self.inner).poll_frame(context);
+        // One chain rather than four nested `if`s, which clippy refuses under
+        // CI's `-D warnings`. The order is the cheap test first: most frames
+        // carry data and never reach `trailers_ref`, and `take` runs only for
+        // the one frame that is a failing trailer.
+        if let Poll::Ready(Some(Ok(frame))) = &polled
+            && let Some(trailers) = frame.trailers_ref()
+            && head_status(trailers).is_some_and(|status| status != "0")
+            && let Some(late) = self.late.take()
+        {
+            late.row.record_late_failure();
+        }
+        polled
+    }
+
+    /// Delegated, not defaulted.
+    ///
+    /// The default says "cannot tell", which makes hyper poll a body it could
+    /// have skipped — and `tonic::body::Body::new` reads exactly this to
+    /// decide whether to keep a body at all. Answering for the wrapper rather
+    /// than for what it wraps would change how every response is framed, for
+    /// no reason connected to counting a failure.
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 /// How much of a caller's request id is kept.
@@ -392,7 +530,7 @@ where
                 Err(_) => "transport".to_owned(),
             };
             let failed = status != "0";
-            counters.record(&method, elapsed, failed);
+            let row = counters.record(&method, elapsed, failed);
             if request_log {
                 // `id=-` rather than omitting the field, so every line has the
                 // same shape and `awk`ing a column does not silently read the
@@ -403,7 +541,24 @@ where
                     elapsed.as_secs_f64() * 1000.0
                 );
             }
-            outcome
+            // Only a call that succeeded at the head can still fail, and only
+            // one with a body left to send can say so. A head failure carries
+            // an empty body and is already counted, so wrapping it would pay
+            // for a box to watch a stream with nothing in it.
+            match outcome {
+                Ok(response) if !failed && !response.body().is_end_stream() => {
+                    let (parts, body) = response.into_parts();
+                    let wrapped = Trailing {
+                        inner: body,
+                        late: Some(Late { row }),
+                    };
+                    Ok(http::Response::from_parts(
+                        parts,
+                        tonic::body::Body::new(wrapped),
+                    ))
+                }
+                outcome => outcome,
+            }
         })
     }
 }
@@ -612,6 +767,203 @@ mod tests {
         let summary = counters.summary().expect("a method was called");
         assert!(summary.contains("p99_head<=4.0ms"), "{summary}");
         assert!(summary.contains("slowest_head=4.0ms"), "{summary}");
+    }
+
+    /// A body of exactly the frames handed to it, in order.
+    ///
+    /// Built by hand because the alternative — a real streamed read that dies
+    /// part way — cannot be produced through this daemon's own surfaces: there
+    /// is no fault-injection knob below the store, and tonic's `grpc-timeout`
+    /// times the *service future* rather than the body, so a deadline cannot
+    /// expire mid-stream either. What this does not test is therefore named in
+    /// the ledger entry, and the framing assumption it rests on — that tonic
+    /// puts a streamed call's status in one trailers frame — is checked
+    /// against a real response by `a_summary_counts_what_the_node_served`,
+    /// which reads `late=0` off a successful streamed query and so goes red if
+    /// this comparison is inverted.
+    struct Frames(std::collections::VecDeque<http_body::Frame<BodyData>>);
+
+    type BodyData = <tonic::body::Body as http_body::Body>::Data;
+
+    impl http_body::Body for Frames {
+        type Data = BodyData;
+        type Error = <tonic::body::Body as http_body::Body>::Error;
+
+        fn poll_frame(
+            mut self: core::pin::Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(self.0.pop_front().map(Ok))
+        }
+
+        fn is_end_stream(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+
+    /// One data frame, then a trailers frame carrying `status`.
+    ///
+    /// The data frame is not decoration: a status in the *head* is a different
+    /// code path, and a body with nothing before the trailer would not
+    /// distinguish them.
+    fn streamed(status: &str) -> Frames {
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert(
+            "grpc-status",
+            http::HeaderValue::from_str(status).expect("a header value"),
+        );
+        Frames(
+            [
+                http_body::Frame::data(BodyData::from_static(b"a row")),
+                http_body::Frame::trailers(trailers),
+            ]
+            .into(),
+        )
+    }
+
+    /// Poll a body until it ends, discarding the frames.
+    async fn drain(mut body: Trailing) {
+        core::future::poll_fn(|context| {
+            loop {
+                match core::pin::Pin::new(&mut body).poll_frame(context) {
+                    Poll::Ready(Some(_)) => continue,
+                    Poll::Ready(None) => return Poll::Ready(()),
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+        })
+        .await;
+    }
+
+    /// A counted call whose body is `frames`, as the layer would build it.
+    fn watched(counters: &Counters, frames: Frames) -> Trailing {
+        let row = counters.record("/x", Duration::from_millis(1), false);
+        Trailing {
+            inner: tonic::body::Body::new(frames),
+            late: Some(Late { row }),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_wrapper_answers_is_end_stream_for_what_it_wraps() {
+        // Delegated rather than defaulted, and asserted directly because the
+        // difference is invisible in an answer: the default says "cannot tell",
+        // which makes hyper poll a body it could have skipped and makes
+        // `tonic::body::Body::new` keep one it could have dropped. Nothing
+        // about the counters changes, so only this says the delegation is
+        // there.
+        let live = Trailing {
+            inner: tonic::body::Body::new(streamed("0")),
+            late: None,
+        };
+        assert!(
+            !live.is_end_stream(),
+            "a body with frames left has not ended"
+        );
+
+        let empty = Trailing {
+            inner: tonic::body::Body::new(Frames(Default::default())),
+            late: None,
+        };
+        assert!(empty.is_end_stream(), "a body with no frames has ended");
+    }
+
+    #[tokio::test]
+    async fn a_failure_in_the_trailers_is_counted_after_the_head_said_nothing() {
+        let counters = Counters::default();
+        let body = watched(&counters, streamed("13"));
+        // The head has been recorded and the body not yet read, so the call is
+        // a success as far as anything could tell — which is the state the
+        // whole wrapper exists to correct, and is what `failed=` said for ever
+        // before it existed.
+        let before = counters.summary().expect("the head was recorded");
+        assert!(before.contains("failed=0 late=0"), "{before}");
+
+        drain(body).await;
+
+        let after = counters.summary().expect("the call was recorded");
+        assert!(
+            after.contains("calls=1 failed=1 late=1"),
+            "the trailer's failure should have been counted:\n{after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_streamed_success_is_not_a_late_failure() {
+        // Every successful streamed response carries a `grpc-status: 0`
+        // trailer, so this is the common case and a wrapper that counted it
+        // would report every read as a failure.
+        let counters = Counters::default();
+        drain(watched(&counters, streamed("0"))).await;
+        let summary = counters.summary().expect("the call was recorded");
+        assert!(summary.contains("failed=0 late=0"), "{summary}");
+    }
+
+    #[tokio::test]
+    async fn a_late_failure_is_counted_once_however_often_the_body_is_polled() {
+        // Two trailers frames is not something gRPC sends. It is what a body
+        // adapter, a retry, or a `poll_frame` called again after the end could
+        // produce, and a counter that doubles under any of those is a counter
+        // an operator cannot reason about.
+        let counters = Counters::default();
+        let mut frames = streamed("13");
+        let mut second = streamed("13");
+        second.0.pop_front();
+        frames.0.extend(second.0);
+        drain(watched(&counters, frames)).await;
+        let summary = counters.summary().expect("the call was recorded");
+        assert!(summary.contains("failed=1 late=1"), "{summary}");
+    }
+
+    #[test]
+    fn a_caller_cannot_grow_the_counters_without_bound() {
+        // The key is the request path, and a caller picks it. The layer wraps
+        // the router, so a request for a method that does not exist is counted
+        // under whatever it asked for — and with a 4 KiB histogram behind every
+        // row, an unbounded map is 256 MB per sixty-five thousand made-up
+        // paths rather than a few megabytes.
+        let counters = Counters::default();
+        for at in 0..MAX_METHODS * 10 {
+            counters.record(&format!("/made/up/{at}"), Duration::from_millis(1), false);
+        }
+        let rows = counters.methods.lock().expect("an uncontended lock").len();
+        assert!(
+            rows <= MAX_METHODS + 1,
+            "{rows} rows past a cap of {MAX_METHODS} plus the overflow"
+        );
+
+        // Nothing is dropped: everything past the cap is in one row, and the
+        // summary says so rather than quietly undercounting.
+        let summary = counters.summary().expect("calls were recorded");
+        assert!(
+            summary.contains(OVERFLOW),
+            "{}",
+            &summary[..200.min(summary.len())]
+        );
+        let counted: u64 = summary
+            .lines()
+            .filter_map(|line| {
+                line.split_once("calls=")?
+                    .1
+                    .split_once(' ')?
+                    .0
+                    .parse::<u64>()
+                    .ok()
+            })
+            .sum();
+        assert_eq!(
+            counted,
+            MAX_METHODS as u64 * 10,
+            "every call is counted somewhere"
+        );
+    }
+
+    #[test]
+    fn the_overflow_row_cannot_be_spelled_by_a_caller() {
+        // A path always begins with `/`, so the parenthesised name is out of
+        // reach — otherwise a caller could merge their own calls into the
+        // overflow row, or worse, have real methods land in one they control.
+        assert!(!OVERFLOW.starts_with('/'), "{OVERFLOW}");
     }
 
     #[test]

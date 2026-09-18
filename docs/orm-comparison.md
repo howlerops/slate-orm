@@ -118,7 +118,26 @@ then did not ship it to the three audiences most likely to need it.
 | Views | Drizzle, SQLAlchemy | none |
 | Array / list column type | Drizzle, SQLAlchemy, Ecto | `ValueType` has no `Array` |
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
-| Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
+| Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | `slate-serverd --seed` loads a static TOML fixture; nothing *generates* rows, and no client or the Rust library can seed at all — see below |
+
+> **Half-built: seeding.** This row said "none" and that was wrong.
+> `slate-serverd --seed fixtures.toml` loads rows by column *name* under a
+> superuser context, and `seed.rs` argues both choices at length: named rather
+> than positional because a column added to the middle of a table silently
+> re-points every positional value after it, and a command-line flag rather
+> than a configuration section because a file gets copied between environments
+> and one that quietly re-seeds a database as a superuser is a failure mode
+> worth designing out.
+>
+> What is genuinely absent is the half the named tools are actually known for.
+> There is no *factory*: nothing generates a plausible row, sequences an id, or
+> builds a graph of related records, so a fixture of a thousand rows is a
+> thousand lines of TOML somebody wrote. And it is reachable only from the
+> daemon's command line — the Rust library has no seeding helper and neither do
+> the Python, Go or TypeScript clients, so a test suite in any of them writes
+> its fixture with the ordinary write path, which is not wrong and is not a
+> feature either. The row is rewritten rather than removed: something exists,
+> and it is not what the comparison is about.
 
 > **Built: "Per-request logging and metrics".** `[observability] request_log`
 > writes a line per call — method, gRPC status, time to the response head — and
@@ -866,8 +885,18 @@ Not plan items; things a session should pick up when it is already in the file.
   answer is an upper bound: within an eighth of the truth, never under it, and
   clamped to the exact `slowest_head` so a quantile cannot print above a
   maximum on its own line. It still times to the response *head*, so a streamed
-  read's rows are not in the number, and a failure raised in a trailer counts
-  as a success.
+  read's rows are not in any of these numbers.
+
+  A failure raised in a **trailer** — a streamed read that answered rows and
+  then died — is counted now, and counted apart as `late=`. It used to read as
+  a success, on a comment claiming that catching it was "a per-row cost on the
+  streaming path". That was asserted rather than measured and was wrong twice:
+  a frame is a *message*, so at `rows_per_message = 256` the check runs once
+  per 256 rows, and it costs 4.7 ns a frame — 375 ns on a 20,000-row scan whose
+  measured drain is 41.3 ms, in a table whose own row-to-row spread is 3 ms.
+  `late` is reported separately from `failed` because the two are different
+  problems: a head failure is a request the server refused, and a late one is
+  a scan that broke under it.
 - ~~**No request id to correlate a client call with a server log line.**~~
   **Built.** A `slate-request-id` header, not a proto field: it belongs to the
   call rather than to the query, and adding it to nineteen request messages to

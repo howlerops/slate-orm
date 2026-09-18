@@ -31,14 +31,13 @@ type ColumnDef struct {
 	// Scale is the digits after the decimal point, for a [TypeDecimal] column.
 	// Zero and meaningless for every other type.
 	//
-	// Deliberately not part of the fingerprint, because the server does not
-	// hash it either: a scale addresses no column, so a client that has it
-	// wrong still reaches the right one. It is here for rendering — see
-	// [Units.StringWithScale], and it is part of the fingerprint: the one
-	// property in it that addresses no column. A client with an ordinal wrong
-	// reads the wrong column and usually notices; one with a scale wrong reads
-	// the *right* column and renders every value a power of ten out, for ever,
-	// with nothing anywhere reporting it.
+	// It is used for rendering — see [Units.StringWithScale] — and it is part
+	// of the fingerprint: the one property in it that addresses no column. A
+	// client with an ordinal wrong reads the wrong column and usually notices;
+	// one with a scale wrong reads the *right* column and renders every value
+	// a power of ten out, for ever, with nothing anywhere reporting it. The
+	// wire carries units and never the scale, so the fingerprint is the only
+	// place this can be caught.
 	Scale int
 }
 

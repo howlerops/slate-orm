@@ -142,8 +142,8 @@ summary_interval = "60s"    # per-method counters, this often</code></pre>
       </li>
       <li>
         <code>summary_interval</code> writes one line per method that has been
-        called — calls, failures, the mean, the p50, p90 and p99, and the slowest —
-        on that cadence, and once more on the way out so the last interval is not
+        called — calls, failures, late failures, the mean, the p50, p90 and p99,
+        and the slowest — on that cadence, and once more on the way out so the last interval is not
         lost. Cheap at any request rate, and the one a production node should have
         on.
       </li>
@@ -153,6 +153,20 @@ summary_interval = "60s"    # per-method counters, this often</code></pre>
         bound on the true one, never more than an eighth over it and never under.
         <code>slowest_head</code> is exact, and a quantile is clamped to it, so a
         p99 never prints above a maximum the same line reports.
+      </li>
+      <li>
+        <code>late</code> is the subset of <code>failed</code> that arrived after
+        the response head — a streamed read that answered rows and then died. It
+        is counted apart because it points somewhere else: a head failure is a
+        request the node refused, and a late one is a scan that broke under it.
+      </li>
+      <li>
+        A row named <code>(other)</code> means the node has seen more than 64
+        distinct request paths and is pooling the rest. Nineteen methods exist,
+        so in practice this only appears when somebody is sending paths that do
+        not resolve — the counters are keyed on the path, and the cap is what
+        stops a stranger growing them without bound. Nothing is lost: the
+        calls are counted, just not named.
       </li>
     </ul>
 

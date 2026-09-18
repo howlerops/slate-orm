@@ -199,9 +199,15 @@ async fn a_summary_counts_what_the_node_served() {
         "one line for the one method called:\n{stderr}"
     );
     assert!(
-        summary[0].contains("/slate.v1.Records/Query calls=2 failed=1"),
+        summary[0].contains("/slate.v1.Records/Query calls=2 failed=1 late=0"),
         "both calls counted and the refusal marked failed:\n{stderr}"
     );
+    // `late=0` is load-bearing and not a formality. The successful call here
+    // is a *streamed* read, so tonic ends it with a real `grpc-status: 0`
+    // trailer — the only place in the suite where the trailer-reading wrapper
+    // meets a trailer it did not build itself. Inverting its comparison turns
+    // this into `late=1`, which is what says the wrapper is installed on the
+    // real path and reads what tonic actually sends.
     // The quantiles reach the log line, which the unit tests cannot say: they
     // call `summary()` directly, so a `summary` that was never wired to what
     // the node prints would pass every one of them. The numbers themselves

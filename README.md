@@ -1202,13 +1202,12 @@ Built and tested:
       refused as "not a type", so the feature existed in the library and not in
       the binary anybody runs.
 
-      Nothing checks a client's declared *scale* against the server's. The
-      schema fingerprint deliberately does not hash it — a scale addresses no
-      column — so a client declaring `scale=2` against a `scale=4` column
-      reaches the right column and renders every value a hundred times too
-      small, for ever, with no error at any layer. That is the price of a
-      protocol that publishes no schema, and it is the sharpest edge in the
-      feature.
+      What shipped with it and was the sharpest edge in the feature: nothing
+      checked a client's declared *scale* against the server's, so a client
+      declaring `scale=2` against a `scale=4` column reached the right column
+      and rendered every value a hundred times too small, for ever, with no
+      error at any layer. That is closed — the fingerprint hashes a decimal's
+      scale now, and the item further down this list says on what grounds.
 
       Relationships and pagination were on this list too. `Related` is an RPC
       now and `Query` carries `after`, `paged` and a `next_cursor` on the way

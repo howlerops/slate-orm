@@ -56,10 +56,15 @@ class Column:
     #: Digits after the decimal point, for a `DECIMAL` column; zero and
     #: meaningless for every other type. Read it with `Table.scale_of`.
     #:
-    #: Deliberately **not** part of the fingerprint, because the server does not
-    #: hash it either: a scale addresses no column, so a client that has it
-    #: wrong still reaches the right one. It is here for rendering — `Units` to
-    #: a decimal string — and for nothing else.
+    #: Part of the fingerprint, and the one property in it that addresses no
+    #: column. It is hashed because a wrong scale is worse than the mistakes
+    #: that rule is about: a wrong ordinal reads the wrong column and shows,
+    #: and a wrong scale reads the *right* column and renders every value a
+    #: hundred times wrong, for ever, with no error at any layer. Safe to hash
+    #: for a reason particular to a scale — changing one is already a refused
+    #: migration, so it cannot invalidate a fleet the way hashing a `CHECK`
+    #: would. See `fingerprint_of`, which hashes it only for a decimal, so a
+    #: table without one is unaffected.
     scale: int = 0
 
     def __post_init__(self) -> None:
