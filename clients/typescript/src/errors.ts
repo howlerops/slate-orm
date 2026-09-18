@@ -6,6 +6,16 @@ import { DETAILS_KEY, reasonOf } from "./details.js";
 export const LEADER_KEY = "slate-leader";
 
 /**
+ * The metadata key carrying a caller's label for one call.
+ *
+ * Spelled the same way in `crates/slate-server/src/auth.rs`, which is the
+ * other half of the contract. Not an identity key: the server decides nothing
+ * from it and never authenticates it — it exists so a caller holding a failure
+ * can find the line the daemon logged.
+ */
+export const REQUEST_ID_KEY = "slate-request-id";
+
+/**
  * Which sort of failure a [SlateError] is.
  *
  * A closed set rather than the gRPC code, because two codes can mean the same
@@ -84,6 +94,20 @@ export class SlateError extends Error {
    * reaching the server.
    */
   readonly reason: string;
+  /**
+   * The id this client sent for the call that failed, or `""`.
+   *
+   * Not the server's — the server assigns none. This is what went out in
+   * `slate-request-id`, kept so a caller holding a failure can find the line
+   * the daemon logged for it when `[observability] request_log` is on.
+   *
+   * Present on failures that never reached the server too: an id with no
+   * matching log line says the call did not arrive, which is itself the answer
+   * to a question somebody would otherwise spend an hour on. `""` only for a
+   * failure raised before any call was made, such as a batch's per-operation
+   * error, which is data inside a response that did succeed.
+   */
+  readonly requestId: string;
 
   constructor(
     kind: Kind,
@@ -92,10 +116,12 @@ export class SlateError extends Error {
     trailers: Record<string, string>,
     leader?: string,
     reason = "",
+    requestId = "",
   ) {
     super(leader ? `${kind}: ${message} (leader ${leader})` : `${kind}: ${message}`);
     this.name = "SlateError";
     this.reason = reason;
+    this.requestId = requestId;
     this.kind = kind;
     this.code = code;
     this.trailers = trailers;
@@ -139,7 +165,16 @@ export function fromBatchError(failed: {
   return new SlateError(kind, failed.message ?? "", code, {}, undefined, failed.reason ?? "");
 }
 
-export function fromServiceError(error: ServiceError): SlateError {
+/**
+ * The `SlateError` a gRPC failure becomes.
+ *
+ * `requestId` is what this client sent for the failed call, passed in rather
+ * than read off the error: gRPC gives a client no way back to the metadata it
+ * *sent* — a `ServiceError` carries the trailers that came back and nothing of
+ * what went out — so the call site that generated it is the only place it
+ * still exists.
+ */
+export function fromServiceError(error: ServiceError, requestId = ""): SlateError {
   const trailers: Record<string, string> = {};
   const metadata = error.metadata?.getMap?.() ?? {};
   for (const [key, value] of Object.entries(metadata)) {
@@ -169,6 +204,7 @@ export function fromServiceError(error: ServiceError): SlateError {
     trailers,
     leader,
     reasonFromMetadata(error),
+    requestId,
   );
 }
 

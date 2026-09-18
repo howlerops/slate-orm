@@ -106,11 +106,23 @@ class SlateError(Exception):
         code: grpc.StatusCode,
         trailers: dict[str, str] | None = None,
         reason: str = "",
+        request_id: str = "",
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.trailers = trailers or {}
+        #: The id this client sent for the call that failed, or `""`.
+        #:
+        #: Not the server's — the server assigns none. This is the value this
+        #: client put in `slate-request-id`, kept so a caller holding a failure
+        #: can go and find the line the server logged for it. It is therefore
+        #: present on failures that never reached the server too: an id with no
+        #: matching log line says the call did not arrive, which is itself the
+        #: answer to a question somebody would otherwise spend an hour on.
+        #:
+        #: `""` only for a failure raised before a call was made at all.
+        self.request_id = request_id
         #: The server's stable token for this failure, or `""`.
         #:
         #: Populated on **every** failure the head node reports, batched or
@@ -176,13 +188,27 @@ class NotLeader(Unavailable):
         code: grpc.StatusCode,
         trailers: dict[str, str] | None = None,
         reason: str = "",
+        request_id: str = "",
     ) -> None:
-        # `reason` is accepted and forwarded rather than dropped: this is the
-        # one subclass with its own `__init__`, so a keyword added to the base
-        # is silently unsupported here until something passes it. Something now
-        # does, on every failure, and the suite caught it as a TypeError on a
-        # redirect rather than as a missing token.
-        super().__init__(message, code=code, trailers=trailers, reason=reason)
+        # Every keyword the base takes is accepted and forwarded rather than
+        # dropped: this is the one subclass with its own `__init__`, so a
+        # keyword added to the base is silently unsupported here until
+        # something passes it.
+        #
+        # That has now happened **twice**, which is the argument for either
+        # `**kwargs` or no override at all — and against both is that this
+        # class exists to set `leader`, and `**kwargs` would forward a typo as
+        # readily as a field. It stays explicit, and this comment is the
+        # reminder. Both times the suite caught it as a `TypeError` on a
+        # redirect rather than as a missing field, which is the good failure:
+        # loud, and on the path that uses it.
+        super().__init__(
+            message,
+            code=code,
+            trailers=trailers,
+            reason=reason,
+            request_id=request_id,
+        )
         self.leader: str | None = self.trailers.get(LEADER_KEY)
 
 
@@ -356,8 +382,15 @@ _BY_VALUE: Final[dict[int, grpc.StatusCode]] = {
 }
 
 
-def from_rpc_error(error: grpc.RpcError) -> SlateError:
-    """The exception a gRPC failure becomes."""
+def from_rpc_error(error: grpc.RpcError, request_id: str = "") -> SlateError:
+    """The exception a gRPC failure becomes.
+
+    `request_id` is the id this client sent for the failed call. It is passed
+    in rather than read off the error because gRPC gives a client no way back
+    to the metadata it *sent* — `RpcError` carries the trailers that came back
+    and nothing of what went out — so the only place it exists is the call
+    site that generated it.
+    """
     # `code()` and `details()` come from `grpc.Call`, which every RpcError
     # raised by a call also implements.
     code = error.code() if hasattr(error, "code") else grpc.StatusCode.UNKNOWN
@@ -375,7 +408,11 @@ def from_rpc_error(error: grpc.RpcError) -> SlateError:
         kind = NotLeader
 
     return kind(
-        message or code.name, code=code, trailers=trailers, reason=_reason(error)
+        message or code.name,
+        code=code,
+        trailers=trailers,
+        reason=_reason(error),
+        request_id=request_id,
     )
 
 

@@ -45,6 +45,14 @@ pub const PRINCIPAL_KEY: &str = "slate-principal";
 pub const TENANT_KEY: &str = "slate-tenant";
 /// The metadata key carrying the principal's roles, comma-separated.
 pub const ROLES_KEY: &str = "slate-roles";
+/// The metadata key carrying a caller's own id for this request.
+///
+/// Read only by the daemon's request log, never by anything that decides an
+/// answer: it is a label a caller chose, it is not authenticated, and two
+/// callers may send the same one. It is here beside the identity keys because
+/// this is where the `slate-` metadata vocabulary is written down, not because
+/// it has anything to do with who the caller is.
+pub const REQUEST_ID_KEY: &str = "slate-request-id";
 
 /// Takes the caller's identity from request metadata, unverified.
 ///

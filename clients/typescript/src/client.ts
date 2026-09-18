@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import * as grpc from "@grpc/grpc-js";
@@ -5,7 +6,13 @@ import * as protoLoader from "@grpc/proto-loader";
 
 import { directoryOf, findUpContaining } from "./paths.js";
 
-import { fromBatchError, fromServiceError, isKind, SlateError } from "./errors.js";
+import {
+  fromBatchError,
+  fromServiceError,
+  isKind,
+  REQUEST_ID_KEY,
+  SlateError,
+} from "./errors.js";
 import { claimFor, type Schemas } from "./schema.js";
 import {
   applyGrouping,
@@ -369,13 +376,32 @@ export class Client {
 
   /** @internal */
   metadata(): grpc.Metadata {
+    return this.sending().metadata;
+  }
+
+  /**
+   * An id for one call, and the metadata carrying it.
+   *
+   * A fresh id per *call*, not per session or per connection: it exists to
+   * name one line in the daemon's request log, and a session-wide id names
+   * every line the session wrote, which is what a caller already has.
+   *
+   * `randomUUID` with its dashes stripped, to keep the log column narrow and
+   * inside the `[A-Za-z0-9._:-]` the server's filter admits — an id the server
+   * would have to alter is an id the correlation cannot rely on.
+   *
+   * @internal
+   */
+  sending(): { metadata: grpc.Metadata; requestId: string } {
     const md = new grpc.Metadata();
     md.set("slate-principal", this.#identity.principal);
     if (this.#identity.tenant) md.set("slate-tenant", this.#identity.tenant);
     if (this.#identity.roles?.length) {
       md.set("slate-roles", this.#identity.roles.join(","));
     }
-    return md;
+    const requestId = randomUUID().replaceAll("-", "");
+    md.set(REQUEST_ID_KEY, requestId);
+    return { metadata: md, requestId };
   }
 
   /** @internal */
@@ -386,29 +412,46 @@ export class Client {
         reject(new Error(`slate: this server has no ${method} method`));
         return;
       }
+      const { metadata, requestId } = this.sending();
       fn.call(
         this.#raw,
         request,
-        this.metadata(),
+        metadata,
         this.#options(),
         (error: grpc.ServiceError | null, response: T) => {
-          if (error) reject(fromServiceError(error));
+          if (error) reject(fromServiceError(error, requestId));
           else resolve(response);
         },
       );
     });
   }
 
-  /** @internal */
-  stream(method: string, request: unknown): grpc.ClientReadableStream<unknown> {
+  /**
+   * Open a server stream, and say which id it went out under.
+   *
+   * The id comes back beside the stream rather than being read off it later,
+   * because a stream can fail on its tenth message as readily as its first and
+   * the caller's `catch` needs the same value either way — the daemon logged
+   * one line for this stream, at its head.
+   *
+   * @internal
+   */
+  stream(
+    method: string,
+    request: unknown,
+  ): { stream: grpc.ClientReadableStream<unknown>; requestId: string } {
     const fn = this.#raw[method];
     if (!fn) throw new Error(`slate: this server has no ${method} method`);
-    return fn.call(
-      this.#raw,
-      request,
-      this.metadata(),
-      this.#options(),
-    ) as grpc.ClientReadableStream<unknown>;
+    const { metadata, requestId } = this.sending();
+    return {
+      stream: fn.call(
+        this.#raw,
+        request,
+        metadata,
+        this.#options(),
+      ) as grpc.ClientReadableStream<unknown>,
+      requestId,
+    };
   }
 }
 
@@ -834,11 +877,11 @@ export class Session {
 
   /** Read rows. */
   query(query: Query): RowStream {
-    const stream = this.#client.stream("Query", {
+    const { stream, requestId } = this.#client.stream("Query", {
       query: queryToWire(query, this.#client.claim(query.table)),
       freshness: this.#freshness(),
     });
-    return new RowStream(stream, (sb) => this.#observeServedBy(sb));
+    return new RowStream(stream, requestId, (sb) => this.#observeServedBy(sb));
   }
 
   /**
@@ -1005,7 +1048,7 @@ export class Session {
    * stream before it could ask for the next page anyway.
    */
   async page(query: Query): Promise<Page> {
-    const stream = this.#client.stream("Query", {
+    const { stream, requestId } = this.#client.stream("Query", {
       query: queryToWire({ ...query, paged: true }, this.#client.claim(query.table)),
       freshness: this.#freshness(),
     });
@@ -1040,7 +1083,7 @@ export class Session {
         if (next && next.length > 0) cursor = next.map(valueFromWire);
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, requestId);
       throw error;
     }
     // Built by parts rather than as one literal: `exactOptionalPropertyTypes`
@@ -1057,11 +1100,11 @@ export class Session {
 
   /** Read joined rows. */
   join(join: JoinQuery): JoinStream {
-    const stream = this.#client.stream("Join", {
+    const { stream, requestId } = this.#client.stream("Join", {
       join: joinToWire(join, (table) => this.#client.claim(table)),
       freshness: this.#freshness(),
     });
-    return new JoinStream(stream, (sb) => this.#observeServedBy(sb));
+    return new JoinStream(stream, requestId, (sb) => this.#observeServedBy(sb));
   }
 
   /**
@@ -1090,7 +1133,7 @@ export class Session {
    * rows, not in returned rows.
    */
   async pageJoin(join: JoinQuery): Promise<JoinPage> {
-    const stream = this.#client.stream("Join", {
+    const { stream, requestId } = this.#client.stream("Join", {
       join: joinToWire({ ...join, paged: true }, (table) => this.#client.claim(table)),
       freshness: this.#freshness(),
     });
@@ -1121,7 +1164,7 @@ export class Session {
         if (next && next.length > 0) cursor = next.map(valueFromWire);
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, requestId);
       throw error;
     }
     // Built by parts, as `page` is: `exactOptionalPropertyTypes` distinguishes
@@ -1176,8 +1219,8 @@ export class Session {
     if (transaction !== undefined) request["transaction"] = transaction;
     // A transaction's reads go to the writer and need no freshness floor.
     else request["freshness"] = this.#freshness();
-    const stream = this.#client.stream("Aggregate", request);
-    return new GroupStream(stream, (sb) => this.#observeServedBy(sb));
+    const { stream, requestId } = this.#client.stream("Aggregate", request);
+    return new GroupStream(stream, requestId, (sb) => this.#observeServedBy(sb));
   }
 
   /**
@@ -1497,11 +1540,11 @@ export class Transaction {
 
   /** Read joined rows inside the transaction. */
   join(join: JoinQuery): JoinStream {
-    const stream = this.#client.stream("Join", {
+    const { stream, requestId } = this.#client.stream("Join", {
       transaction: this.#id,
       join: joinToWire(join, (table) => this.#client.claim(table)),
     });
-    return new JoinStream(stream, () => {});
+    return new JoinStream(stream, requestId, () => {});
   }
 
   /** Group one table inside the transaction. */
@@ -1544,11 +1587,11 @@ export class Transaction {
 
   /** Read rows inside the transaction. */
   query(query: Query): RowStream {
-    const stream = this.#client.stream("Query", {
+    const { stream, requestId } = this.#client.stream("Query", {
       transaction: this.#id,
       query: queryToWire(query, this.#client.claim(query.table)),
     });
-    return new RowStream(stream, () => {});
+    return new RowStream(stream, requestId, () => {});
   }
 
   /**
@@ -1568,6 +1611,14 @@ export class Transaction {
  */
 export class RowStream implements AsyncIterable<Value[]> {
   readonly #stream: grpc.ClientReadableStream<unknown>;
+  /**
+   * The id the call went out under.
+   *
+   * A stream can fail on its tenth message as readily as its first, and the
+   * id names the same call either way -- the daemon logged one line for this
+   * stream, at its head.
+   */
+  readonly #requestId: string;
   readonly #onServedBy: (servedBy: unknown) => void;
   #servedBy: ServedBy | undefined;
   #warnings: string[] = [];
@@ -1575,9 +1626,11 @@ export class RowStream implements AsyncIterable<Value[]> {
   /** @internal */
   constructor(
     stream: grpc.ClientReadableStream<unknown>,
+    requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {
     this.#stream = stream;
+    this.#requestId = requestId;
     this.#onServedBy = onServedBy;
   }
 
@@ -1615,7 +1668,7 @@ export class RowStream implements AsyncIterable<Value[]> {
         }
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, this.#requestId);
       throw error;
     }
   }
@@ -1647,7 +1700,7 @@ export class RowStream implements AsyncIterable<Value[]> {
         }
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, this.#requestId);
       throw error;
     }
   }
@@ -1674,6 +1727,14 @@ export class RowStream implements AsyncIterable<Value[]> {
  */
 export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
   readonly #stream: grpc.ClientReadableStream<unknown>;
+  /**
+   * The id the call went out under.
+   *
+   * A stream can fail on its tenth message as readily as its first, and the
+   * id names the same call either way -- the daemon logged one line for this
+   * stream, at its head.
+   */
+  readonly #requestId: string;
   readonly #onServedBy: (servedBy: unknown) => void;
   #servedBy: ServedBy | undefined;
   #warnings: string[] = [];
@@ -1681,9 +1742,11 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
   /** @internal */
   constructor(
     stream: grpc.ClientReadableStream<unknown>,
+    requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {
     this.#stream = stream;
+    this.#requestId = requestId;
     this.#onServedBy = onServedBy;
   }
 
@@ -1714,7 +1777,7 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
         }
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, this.#requestId);
       throw error;
     }
   }
@@ -1736,7 +1799,7 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
         for (const joined of rows) yield joinedRowFromWire(joined);
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, this.#requestId);
       throw error;
     }
   }
@@ -1763,6 +1826,14 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
 /** Groups arriving in batches. */
 export class GroupStream implements AsyncIterable<Group> {
   readonly #stream: grpc.ClientReadableStream<unknown>;
+  /**
+   * The id the call went out under.
+   *
+   * A stream can fail on its tenth message as readily as its first, and the
+   * id names the same call either way -- the daemon logged one line for this
+   * stream, at its head.
+   */
+  readonly #requestId: string;
   readonly #onServedBy: (servedBy: unknown) => void;
   #servedBy: ServedBy | undefined;
   #warnings: string[] = [];
@@ -1770,9 +1841,11 @@ export class GroupStream implements AsyncIterable<Group> {
   /** @internal */
   constructor(
     stream: grpc.ClientReadableStream<unknown>,
+    requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {
     this.#stream = stream;
+    this.#requestId = requestId;
     this.#onServedBy = onServedBy;
   }
 
@@ -1810,7 +1883,7 @@ export class GroupStream implements AsyncIterable<Group> {
         }
       }
     } catch (error) {
-      if (isServiceError(error)) throw fromServiceError(error);
+      if (isServiceError(error)) throw fromServiceError(error, this.#requestId);
       throw error;
     }
   }

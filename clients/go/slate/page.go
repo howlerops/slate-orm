@@ -69,7 +69,7 @@ func (s *Session) Page(ctx context.Context, query Query) (*Page, error) {
 		Freshness: s.freshness(),
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 
 	page := &Page{}
@@ -79,7 +79,7 @@ func (s *Session) Page(ctx context.Context, query Query) (*Page, error) {
 			break
 		}
 		if err != nil {
-			return nil, fromRPC(err)
+			return nil, fromRPC(ctx, err)
 		}
 		if message.ServedBy != nil && page.ServedBy == nil {
 			page.ServedBy = &ServedBy{
@@ -187,7 +187,7 @@ func (s *Session) PageJoin(ctx context.Context, join JoinQuery) (*JoinPage, erro
 		Freshness: s.freshness(),
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 
 	page := &JoinPage{}
@@ -197,7 +197,7 @@ func (s *Session) PageJoin(ctx context.Context, join JoinQuery) (*JoinPage, erro
 			break
 		}
 		if err != nil {
-			return nil, fromRPC(err)
+			return nil, fromRPC(ctx, err)
 		}
 		if message.ServedBy != nil && page.ServedBy == nil {
 			page.ServedBy = &ServedBy{

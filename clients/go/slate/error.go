@@ -1,6 +1,7 @@
 package slate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -129,6 +130,16 @@ type Error struct {
 	// "" when the server sent no ErrorInfo and for a failure raised without
 	// reaching the server.
 	Reason string
+	// RequestID is the id this client sent for the call that failed, or "".
+	//
+	// Not the server's — the server assigns none. This is what went out in
+	// slate-request-id, kept so a caller holding a failure can go and find the
+	// line the daemon logged for it when [observability] request_log is on.
+	//
+	// Present on failures that never reached the server too: an id with no
+	// matching log line says the call did not arrive, which is itself the
+	// answer to a question somebody would otherwise spend an hour on.
+	RequestID string
 }
 
 func (e *Error) Error() string {
@@ -180,20 +191,45 @@ var byCode = map[codes.Code]Kind{
 // fromRPC turns a gRPC failure into an [Error].
 //
 // Returns nil for a nil error so call sites can wrap unconditionally.
-func fromRPC(err error) error {
+// fromRPC turns a gRPC failure into an *Error.
+//
+// ctx is the one the call was made with, and is read for the request id the
+// session put there. gRPC gives a client no way back to the metadata it *sent*
+// — a status carries what came back and nothing of what went out — so the
+// context is the only place that value still exists at this point.
+func fromRPC(ctx context.Context, err error) error {
+	return fromRPCWithID(requestIDOf(ctx), err)
+}
+
+// fromRPCWithID is fromRPC for a caller holding the id but not the context.
+//
+// The streams: Next() reports a failure that arrives on the tenth message,
+// long after the context that opened the call has gone out of scope, so they
+// keep the id on the struct and hand it in here.
+func fromRPCWithID(id string, err error) error {
 	if err == nil {
 		return nil
 	}
 	st, ok := status.FromError(err)
 	if !ok {
-		return &Error{Kind: KindInternal, Message: err.Error(), Code: codes.Unknown}
+		return &Error{
+			Kind:      KindInternal,
+			Message:   err.Error(),
+			Code:      codes.Unknown,
+			RequestID: id,
+		}
 	}
 	kind, known := byCode[st.Code()]
 	if !known {
 		kind = KindInternal
 	}
-	out := &Error{Kind: kind, Message: st.Message(), Code: st.Code(), Reason: reasonOf(st)}
-	return out
+	return &Error{
+		Kind:      kind,
+		Message:   st.Message(),
+		Code:      st.Code(),
+		Reason:    reasonOf(st),
+		RequestID: id,
+	}
 }
 
 // reasonOf is the stable token in a status's details, or "".

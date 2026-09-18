@@ -137,8 +137,8 @@ summary_interval = "60s"    # per-method counters, this often</code></pre>
     <ul>
       <li>
         <code>request_log</code> writes
-        <code>slate-serverd: /slate.v1.Records/Query status=0 head=1.4ms</code> per
-        call. A debugging tool rather than something to leave on.
+        <code>slate-serverd: /slate.v1.Records/Query id=3f2504e04f89 status=0 head=1.4ms</code>
+        per call. A debugging tool rather than something to leave on.
       </li>
       <li>
         <code>summary_interval</code> writes one line per method that has been
@@ -147,6 +147,24 @@ summary_interval = "60s"    # per-method counters, this often</code></pre>
         and the one a production node should have on.
       </li>
     </ul>
+
+    <p>
+      The <code>id</code> is the caller's own: all three clients send a fresh one
+      per call in <code>slate-request-id</code>, and put it on every error they
+      raise, so a caller holding a failure can grep the log for its line. A call
+      that sent none logs <code>id=-</code>, and the field is always present so
+      the columns do not move.
+    </p>
+
+    <p>
+      The value is <strong>filtered before it reaches the line</strong>, to
+      <code>[A-Za-z0-9._:-]</code> and 64 characters. It is attacker-controlled
+      text on its way into an audit trail: gRPC itself refuses a newline in a
+      header, but not a space, a quote or an <code>=</code>, so an unfiltered id
+      of <code>x status=0</code> would give a reader two <code>status=</code> to
+      choose between. Forged lines in a log are worse than no log, because they
+      are believed.
+    </p>
 
     <p>
       Both times are to the <strong>response head</strong>, not to the last row: a

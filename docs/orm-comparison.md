@@ -854,10 +854,21 @@ Not plan items; things a session should pick up when it is already in the file.
   notice a problem and not enough to characterise one. It also times to the
   response *head*, so a streamed read's rows are not in the number, and a
   failure raised in a trailer counts as a success.
-- **No request id to correlate a client call with a server log line.** The
-  README recorded this as blocked on there being no server log at all. That
-  half is now built, so the item is unblocked and not done: nothing in the
-  protocol or any of the three clients carries an id today.
+- ~~**No request id to correlate a client call with a server log line.**~~
+  **Built.** A `slate-request-id` header, not a proto field: it belongs to the
+  call rather than to the query, and adding it to nineteen request messages to
+  say one thing would be the wrong shape. All three clients mint one per call
+  — a UUID's randomness in hex — send it, and put it on every error they raise,
+  so a caller holding a failure can grep the daemon's log for its line. A
+  failure that never reached the server carries one too, and an id with no
+  matching line is itself the answer: the call did not arrive.
+
+  The server **filters it** to `[A-Za-z0-9._:-]` and 64 characters before it
+  reaches a log line, which is the part worth knowing. It is
+  attacker-controlled text going into an audit trail. gRPC refuses a newline in
+  a header — measured, not assumed — but accepts a space, a quote and an `=`,
+  so an unfiltered id of `x status=0` would give a reader two `status=` to
+  choose between. Forged lines in a log are worse than none.
 
 ## What neither plan does
 

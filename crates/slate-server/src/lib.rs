@@ -200,7 +200,7 @@ pub mod service;
 pub mod session;
 pub mod status;
 
-pub use auth::{Authenticator, DenyEveryone, MetadataIdentity};
+pub use auth::{Authenticator, DenyEveryone, MetadataIdentity, REQUEST_ID_KEY};
 pub use fingerprint::of_table as schema_fingerprint;
 pub use leadership::{Cadence, Leadership, Standing, StepDown, follow, maintain};
 pub use lease::{Clock, Lease, LeaseError, ObjectStoreLease, SystemClock, Term};

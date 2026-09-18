@@ -36,6 +36,7 @@ import dataclasses
 import random
 import time
 import types
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, Final, TypeVar, cast
 
@@ -83,6 +84,13 @@ T = TypeVar("T")
 PRINCIPAL_KEY: Final = "slate-principal"
 TENANT_KEY: Final = "slate-tenant"
 ROLES_KEY: Final = "slate-roles"
+#: A caller's own label for one call, which the daemon's request log prints.
+#:
+#: Not an identity key and deliberately listed apart from the three above: the
+#: server never decides anything from it, and a caller who forged one would be
+#: forging a note to themselves. See `crates/slate-serverd/src/observe.rs`,
+#: which filters it before it reaches a log line.
+REQUEST_ID_KEY: Final = "slate-request-id"
 
 
 class Identity:
@@ -416,10 +424,14 @@ class _Stream(Iterator[T]):
     should not have to know it exists.
     """
 
-    __slots__ = ("_buffer", "_call", "_done", "_served_by")
+    __slots__ = ("_buffer", "_call", "_done", "_request_id", "_served_by")
 
-    def __init__(self, call: Iterator[object]) -> None:
+    def __init__(self, call: Iterator[object], request_id: str = "") -> None:
         self._call = call
+        # Kept for the whole stream, because a scan can fail on its tenth
+        # message as easily as its first and the id names the same call either
+        # way. The server logged one line for this stream, at its head.
+        self._request_id = request_id
         self._buffer: list[T] = []
         self._done = False
         self._served_by: ServedBy | None = None
@@ -438,7 +450,7 @@ class _Stream(Iterator[T]):
                 return
             except grpc.RpcError as error:
                 self._done = True
-                raise from_rpc_error(error) from error
+                raise from_rpc_error(error, self._request_id) from error
             items, served_by = self._decode(message)
             if self._served_by is None:
                 self._served_by = ServedBy.from_proto(served_by)
@@ -534,9 +546,11 @@ class RowStream(_Stream[Row]):
 
     __slots__ = ("_table",)
 
-    def __init__(self, call: Iterator[object], table: Table | None) -> None:
+    def __init__(
+        self, call: tuple[Iterator[object], str], table: Table | None
+    ) -> None:
         self._table = table
-        super().__init__(call)
+        super().__init__(*call)
 
     def _decode(self, message: object) -> tuple[list[Row], pb.ServedBy]:
         response = cast(pb.QueryResponse, message)
@@ -548,9 +562,11 @@ class JoinStream(_Stream[JoinedRow]):
 
     __slots__ = ("_tables",)
 
-    def __init__(self, call: Iterator[object], tables: Sequence[Table | None]) -> None:
+    def __init__(
+        self, call: tuple[Iterator[object], str], tables: Sequence[Table | None]
+    ) -> None:
         self._tables = tuple(tables)
-        super().__init__(call)
+        super().__init__(*call)
 
     def _decode(self, message: object) -> tuple[list[JoinedRow], pb.ServedBy]:
         response = cast(pb.JoinResponse, message)
@@ -622,17 +638,38 @@ class _Ops:
 
     # --- plumbing ---------------------------------------------------------
 
-    def _unary(self, method: Callable[..., T], request: object) -> T:
-        try:
-            return method(
-                request,
-                metadata=self._conn.identity.metadata,
-                timeout=self._timeout,
-            )
-        except grpc.RpcError as error:
-            raise from_rpc_error(error) from error
+    def _sending(self) -> tuple[str, tuple[tuple[str, str], ...]]:
+        """An id for one call, and the metadata carrying it.
 
-    def _stream(self, method: Callable[..., Iterator[object]], request: object) -> Iterator[object]:
+        A fresh id per *call*, not per session or per connection: the point of
+        it is to name one line in the server's log, and a session-wide id names
+        every line the session produced, which is the thing a caller already
+        has. A `uuid4` rather than a counter because two processes sharing a
+        counter's namespace would collide in exactly the log somebody is
+        reading to tell them apart, and `hex` rather than the dashed form to
+        keep the log column narrow.
+
+        The identity metadata is built once and cached; this appends to it,
+        which costs one tuple per call. That is the price of the id being
+        per-call and it is the right trade — an id that cost nothing and named
+        nothing would not be worth sending.
+        """
+        request_id = uuid.uuid4().hex
+        return request_id, (
+            *self._conn.identity.metadata,
+            (REQUEST_ID_KEY, request_id),
+        )
+
+    def _unary(self, method: Callable[..., T], request: object) -> T:
+        request_id, metadata = self._sending()
+        try:
+            return method(request, metadata=metadata, timeout=self._timeout)
+        except grpc.RpcError as error:
+            raise from_rpc_error(error, request_id) from error
+
+    def _stream(
+        self, method: Callable[..., Iterator[object]], request: object
+    ) -> tuple[Iterator[object], str]:
         # The call object is returned without a round trip; the failure arrives
         # when the first message is read, which `_Stream` does eagerly.
         #
@@ -641,11 +678,8 @@ class _Ops:
         # part-way. That is what gRPC deadlines mean, and it is the reason
         # `with_timeout` exists rather than one value for the connection: a
         # point get and a hundred-thousand-row scan do not want the same number.
-        return method(
-            request,
-            metadata=self._conn.identity.metadata,
-            timeout=self._timeout,
-        )
+        request_id, metadata = self._sending()
+        return method(request, metadata=metadata, timeout=self._timeout), request_id
 
     def _rows_proto(self, table: Table, rows: Iterable[Sequence[PyValue] | Row]) -> list[pb.Row]:
         types = table.column_types()
@@ -1173,8 +1207,12 @@ class _Ops:
         # refusals are half of what paging is -- a page it cannot build a
         # cursor for -- so a caller that could not catch them would have
         # nothing to handle.
+        # Set before the `try`, because `_stream` is inside it: if opening the
+        # call is what fails, there is no id to report and `""` says so.
+        request_id = ""
         try:
-            for message in self._stream(self._conn.stub.Query, request):
+            call, request_id = self._stream(self._conn.stub.Query, request)
+            for message in call:
                 response = cast(pb.QueryResponse, message)
                 if served_by is None:
                     served_by = ServedBy.from_proto(response.served_by)
@@ -1186,7 +1224,7 @@ class _Ops:
                 if response.next_cursor:
                     cursor = [from_value(v) for v in response.next_cursor]
         except grpc.RpcError as error:
-            raise from_rpc_error(error) from error
+            raise from_rpc_error(error, request_id) from error
         self._observe_read(served_by)
         return Page(rows=rows, cursor=cursor, served_by=served_by)
 
@@ -1252,8 +1290,12 @@ class _Ops:
         # paging is — a right outer join, an offset alongside a cursor — and an
         # unwrapped one reaches the caller as a `grpc.RpcError` that
         # `except SlateError` cannot catch.
+        # Set before the `try`, because `_stream` is inside it: if opening the
+        # call is what fails, there is no id to report and `""` says so.
+        request_id = ""
         try:
-            for message in self._stream(self._conn.stub.Join, request):
+            call, request_id = self._stream(self._conn.stub.Join, request)
+            for message in call:
                 response = cast(pb.JoinResponse, message)
                 if served_by is None:
                     served_by = ServedBy.from_proto(response.served_by)
@@ -1261,7 +1303,7 @@ class _Ops:
                 if response.next_cursor:
                     cursor = [from_value(v) for v in response.next_cursor]
         except grpc.RpcError as error:
-            raise from_rpc_error(error) from error
+            raise from_rpc_error(error, request_id) from error
         self._observe_read(served_by)
         return JoinPage(rows=rows, cursor=cursor, served_by=served_by)
 
@@ -1284,7 +1326,7 @@ class _Ops:
         wire_freshness = self._freshness(freshness)
         if wire_freshness is not None:
             request.freshness.CopyFrom(wire_freshness)
-        stream = GroupStream(self._stream(self._conn.stub.Aggregate, request))
+        stream = GroupStream(*self._stream(self._conn.stub.Aggregate, request))
         self._observe_read(stream.served_by)
         return stream
 

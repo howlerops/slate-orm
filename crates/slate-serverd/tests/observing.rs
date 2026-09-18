@@ -117,14 +117,14 @@ async fn a_request_log_names_the_method_and_how_it_ended() {
     // The method is the proto path, whole, so this is greppable for exactly
     // the string `records.proto` contains.
     assert!(
-        stderr.contains("/slate.v1.Records/Query status=0"),
-        "the answered query should be logged as a success:\n{stderr}"
+        stderr.contains("/slate.v1.Records/Query id=- status=0"),
+        "the answered query should be logged as a success, with the id field:\n{stderr}"
     );
     // 16 is `UNAUTHENTICATED`. The *number* matters: a layer that logged
     // "failed" without the code would be useless for telling an auth failure
     // from a timeout, which is most of what somebody reads this log for.
     assert!(
-        stderr.contains("/slate.v1.Records/Query status=16"),
+        stderr.contains("/slate.v1.Records/Query id=- status=16"),
         "the refused query should be logged with its gRPC code:\n{stderr}"
     );
     // Both lines carry a duration, and it says `head` rather than `total`.
@@ -136,6 +136,48 @@ async fn a_request_log_names_the_method_and_how_it_ended() {
     for line in &logged {
         assert!(line.contains("head="), "no duration on `{line}`");
         assert!(line.ends_with("ms"), "no unit on `{line}`");
+    }
+}
+
+#[tokio::test]
+async fn the_log_carries_the_id_the_caller_sent() {
+    // The point of the id: a caller holding a failure can find the line the
+    // server wrote for it. Asserted through a real socket rather than against
+    // the filter, because the filter is unit-tested beside itself and what is
+    // in doubt here is whether the header survives the transport, the
+    // authenticator and the layer to reach the line.
+    let files = Files::new();
+    let serving = serving(&files, &talking("request_log = true"));
+    let mut client = connect(&serving).await;
+
+    let mut request = APP.on(proto::QueryRequest {
+        transaction: String::new(),
+        query: Some(query("docs")),
+        ..Default::default()
+    });
+    request
+        .metadata_mut()
+        .insert("slate-request-id", "checkout-7f3a".parse().expect("ascii"));
+    let mut stream = client.query(request).await.expect("a query").into_inner();
+    while stream.message().await.expect("a message").is_some() {}
+    drop(client);
+
+    let stderr = serving.terminate().stderr;
+    assert!(
+        stderr.contains("/slate.v1.Records/Query id=checkout-7f3a status=0"),
+        "the caller's id should be on the line for its call:\n{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn a_caller_sending_no_id_gets_a_line_of_the_same_shape() {
+    // `id=-` rather than a missing field. A log where the columns move
+    // depending on what the caller sent is a log nothing can parse, and the
+    // dash is a value a reader can see rather than a gap they have to infer.
+    let files = Files::new();
+    let stderr = serve_two_requests(serving(&files, &talking("request_log = true"))).await;
+    for line in stderr.lines().filter(|line| line.contains("status=")) {
+        assert!(line.contains(" id=- "), "no id field on `{line}`");
     }
 }
 

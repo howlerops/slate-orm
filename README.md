@@ -1181,14 +1181,16 @@ Not built:
       code rather than a dependency in the record layer
 - [ ] Anything inside a `Json<T>`: no path expression, no index on a field, no
       partial update. Deliberate, and the reason is in the type's own docs
-- [ ] A request id a caller could correlate with a server log line. This was
+- [x] A request id a caller could correlate with a server log line. This was
       blocked on the other half — `slate-serverd` logged its startup and its
       warnings and nothing per request, so an id sent from a client would have
-      had nothing to be correlated against. That half is built:
-      `[observability] request_log` writes a line per call and
-      `summary_interval` writes per-method counters. So the blocker is gone and
-      the id is not, which is now the whole of what is missing: a header, and
-      three clients that send it
+      had nothing to be correlated against. Both halves are built now:
+      `[observability] request_log` writes a line per call, and all three
+      clients mint a `slate-request-id` per call, send it, and put it on every
+      error they raise. A header rather than a proto field, because it belongs
+      to the call and not to the query. The server filters it before logging
+      it — an id is attacker-controlled text on its way into an audit trail,
+      and gRPC blocks a newline in a header but not a space or an `=`
 - [x] A retrying `transact` in the Go and TypeScript clients. Python had one
       and the other two left every caller to write their own backoff — the
       divergence the conformance runner cannot see, because it compares answers

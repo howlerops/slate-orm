@@ -105,7 +105,8 @@ func (s *Session) related(
 		wire = append(wire, key[0].toProto())
 	}
 
-	response, err := s.client.rpc.Related(s.ctx(ctx), &pb.RelatedRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Related(ctx, &pb.RelatedRequest{
 		Transaction: transaction,
 		Relation: &pb.Relation{
 			Table:      relation.On,
@@ -117,7 +118,7 @@ func (s *Session) related(
 		Schema:    s.client.schemas.claimFor(table),
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 
@@ -314,14 +315,15 @@ func (s *Session) relatedPath(
 		wire = append(wire, key[0].toProto())
 	}
 
-	response, err := s.client.rpc.Related(s.ctx(ctx), &pb.RelatedRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Related(ctx, &pb.RelatedRequest{
 		Transaction: transaction,
 		Keys:        wire,
 		Freshness:   freshness,
 		Path:        steps,
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 

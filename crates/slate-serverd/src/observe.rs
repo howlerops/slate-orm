@@ -180,6 +180,42 @@ fn head_status(headers: &http::HeaderMap) -> Option<&str> {
     headers.get("grpc-status")?.to_str().ok()
 }
 
+/// How much of a caller's request id is kept.
+///
+/// A UUID is 36 characters and every client here sends one; 64 leaves room for
+/// a caller's own scheme without letting one line of log become a page of it.
+const REQUEST_ID_LIMIT: usize = 64;
+
+/// The caller's id for this request, fit to go in a log line.
+///
+/// **This is attacker-controlled text on its way into a log**, which is the
+/// whole of why it is not simply printed. Anyone who can reach this server can
+/// choose the value, and the log is a line-oriented file somebody greps and
+/// something else may parse. A value containing a newline would let a caller
+/// write log lines of their own — an entry claiming a different method, a
+/// different status, a different id — and forged lines in an audit trail are
+/// worse than no audit trail, because they are believed.
+///
+/// So the filter is an allowlist and not a blocklist: `[A-Za-z0-9._:-]`, which
+/// covers a UUID, a hex span id, a ULID and a `service/1234` style label, and
+/// admits no whitespace, no control character and no quote. Anything else is
+/// dropped rather than escaped, because an escape is a second encoding for a
+/// reader to get wrong and there is no value in round-tripping a label nobody
+/// but its sender chose.
+///
+/// `None` when the header is absent, unreadable as ASCII, or has nothing left
+/// after filtering — all three mean the same thing to a log line, which is
+/// that this call carries no usable id.
+fn request_id(headers: &http::HeaderMap) -> Option<String> {
+    let raw = headers.get(slate_server::REQUEST_ID_KEY)?.to_str().ok()?;
+    let kept: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+        .take(REQUEST_ID_LIMIT)
+        .collect();
+    (!kept.is_empty()).then_some(kept)
+}
+
 impl<S, B> tower::Service<http::Request<B>> for Observe<S>
 where
     S: tower::Service<http::Request<B>, Response = http::Response<tonic::body::Body>>,
@@ -197,13 +233,18 @@ where
     }
 
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        let request_log = self.request_log;
         // The gRPC method is the request path: `/slate.v1.Records/Query`. Kept
         // whole rather than split, so a log line can be grepped for the exact
         // string a proto file contains.
         let method = request.uri().path().to_owned();
+        // Taken before the call, because the request is moved into it. Only
+        // when `request_log` is on: this allocates and filters a caller's
+        // string, and doing that per request to then throw it away is the kind
+        // of cost that is invisible until somebody profiles.
+        let id = request_log.then(|| request_id(request.headers())).flatten();
         let started = Instant::now();
         let counters = Arc::clone(&self.counters);
-        let request_log = self.request_log;
         let call = self.inner.call(request);
         Box::pin(async move {
             let outcome = call.await;
@@ -216,8 +257,12 @@ where
             let failed = status != "0";
             counters.record(&method, elapsed, failed);
             if request_log {
+                // `id=-` rather than omitting the field, so every line has the
+                // same shape and `awk`ing a column does not silently read the
+                // next one on the calls that carried no id.
                 eprintln!(
-                    "slate-serverd: {method} status={status} head={:.1}ms",
+                    "slate-serverd: {method} id={} status={status} head={:.1}ms",
+                    id.as_deref().unwrap_or("-"),
                     elapsed.as_secs_f64() * 1000.0
                 );
             }
@@ -286,6 +331,99 @@ mod tests {
         assert_eq!(summary.lines().count(), 2, "{summary}");
         assert!(summary.contains("Query calls=1"), "{summary}");
         assert!(summary.contains("Insert calls=1"), "{summary}");
+    }
+
+    /// A header map carrying one request id, built from raw bytes.
+    ///
+    /// `from_bytes` rather than `from_static`, because half of what is being
+    /// tested is what happens to values a well-behaved client would never
+    /// send, and `HeaderValue` refuses some of those at construction — which
+    /// is itself part of the answer.
+    fn with_id(raw: &[u8]) -> Option<http::HeaderMap> {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            slate_server::REQUEST_ID_KEY,
+            http::HeaderValue::from_bytes(raw).ok()?,
+        );
+        Some(headers)
+    }
+
+    #[test]
+    fn an_ordinary_id_survives_whole() {
+        let headers = with_id(b"3f2504e0-4f89-11d3-9a0c-0305e82c3301").expect("a valid header");
+        assert_eq!(
+            request_id(&headers).as_deref(),
+            Some("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+        );
+        // And the other shapes the allowlist exists to admit.
+        for shape in ["01JB2Q", "checkout:1234", "web.api_7", "a-b.c:d_e"] {
+            let headers = with_id(shape.as_bytes()).expect("a valid header");
+            assert_eq!(request_id(&headers).as_deref(), Some(shape), "{shape}");
+        }
+    }
+
+    #[test]
+    fn a_caller_cannot_forge_fields_in_a_log_line() {
+        // The reason this filter exists, and the shape of the threat was
+        // measured rather than assumed. `HeaderValue::from_bytes` refuses
+        // CR, LF, FF, VT, NUL and DEL outright, so a caller cannot break the
+        // *line* — that much the transport already gives us, and it is
+        // asserted here so that a change to it is a failing test rather than a
+        // silent loss of the guarantee.
+        for line_break in [b"a\nb".as_slice(), b"a\rb", b"a\x0cb", b"a\x0bb", b"a\x00b"] {
+            assert!(
+                with_id(line_break).is_none(),
+                "the transport should refuse {line_break:?}"
+            );
+        }
+
+        // What it does *not* refuse is the interesting half, and it was a
+        // surprise: space, `=`, `"` and `'` all construct fine. So a caller
+        // can forge *fields* even though they cannot forge lines — an id of
+        // `x status=0 head=0.0ms` would give a reader, and anything splitting
+        // this line on whitespace, two `status=` to choose between. That is
+        // the attack this filter actually stops, and it is the one that would
+        // have survived a filter written against newlines alone.
+        let headers = with_id(b"x status=0 head=0.0ms").expect("the transport allows this");
+        assert_eq!(
+            request_id(&headers).as_deref(),
+            Some("xstatus0head0.0ms"),
+            "the separators must not survive"
+        );
+        for forged in ["\"", "'", " ", "="] {
+            assert!(
+                !request_id(&headers).expect("an id").contains(forged),
+                "{forged:?} survived the filter"
+            );
+        }
+
+        // A high byte constructs as a header and is not ASCII, so `to_str`
+        // rejects it before the filter is reached. Same outcome by a different
+        // route, and asserted so that route is known to be covered.
+        let headers = with_id(b"caf\xc3\xa9").expect("the transport allows this");
+        assert_eq!(request_id(&headers), None, "a non-ASCII value has no id");
+    }
+
+    #[test]
+    fn a_long_id_is_cut_rather_than_refused() {
+        // Cut and kept, not dropped: a caller with a verbose scheme still gets
+        // a correlatable prefix, and one line of log cannot become a page of
+        // it. Refusing outright would lose the correlation entirely over a
+        // formatting opinion.
+        let headers = with_id(&b"a".repeat(500)).expect("a valid header");
+        let id = request_id(&headers).expect("a long id is still an id");
+        assert_eq!(id.len(), REQUEST_ID_LIMIT);
+    }
+
+    #[test]
+    fn an_absent_or_unusable_id_is_none_rather_than_empty() {
+        // Three different causes, one meaning: this call carries no id. The
+        // log line prints `-` for all of them.
+        assert_eq!(request_id(&http::HeaderMap::new()), None, "absent");
+        let headers = with_id(b"!!!").expect("a valid header");
+        assert_eq!(request_id(&headers), None, "nothing survives the filter");
+        let headers = with_id(b"").expect("an empty header value is legal");
+        assert_eq!(request_id(&headers), None, "empty");
     }
 
     #[test]

@@ -212,13 +212,14 @@ func (s *Session) runBatch(ctx context.Context, batch *Batch, transaction string
 		operations = append(operations, s.claimed(operation, batch.tables[at]))
 	}
 
-	response, err := s.client.rpc.Batch(s.ctx(ctx), &pb.BatchRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Batch(ctx, &pb.BatchRequest{
 		Operations:  operations,
 		Atomicity:   pb.Atomicity(batch.atomicity),
 		Transaction: transaction,
 	})
 	if err != nil {
-		return BatchResult{}, fromRPC(err)
+		return BatchResult{}, fromRPC(ctx, err)
 	}
 
 	out := BatchResult{}

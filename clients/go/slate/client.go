@@ -2,6 +2,8 @@ package slate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +31,14 @@ type Identity struct {
 	// Roles are the roles the caller holds.
 	Roles []string
 }
+
+// RequestIDKey is the metadata key carrying a caller's label for one call.
+//
+// Exported because it is half of a contract with the server, spelled the same
+// way in crates/slate-server/src/auth.rs. Not an identity key: the server
+// decides nothing from it and never authenticates it — it exists so a caller
+// holding a failure can find the line the daemon logged.
+const RequestIDKey = "slate-request-id"
 
 func (id Identity) apply(ctx context.Context) context.Context {
 	pairs := make([]string, 0, 6)
@@ -205,8 +215,70 @@ func (s *Session) observeServedBy(sb *pb.ServedBy) {
 	s.observeLocked(&token)
 }
 
+// requestIDKey is the context key under which ctx stashes the id it generated.
+//
+// An unexported type so nothing outside this package can collide with it,
+// which is the standard rule for context keys and is not optional here: the
+// value is read back by fromRPC to name a failure, and a collision would make
+// it report somebody else's string.
+type requestIDKey struct{}
+
+// newRequestID is one call's label for the daemon's request log.
+//
+// A UUID's worth of randomness in hex. Per call rather than per session or per
+// connection: the point is to name one line in the log, and a session-wide id
+// names every line the session wrote, which is what a caller already has.
+//
+// crypto/rand rather than math/rand, not for secrecy — this value is a label
+// and the server trusts nothing about it — but because math/rand's global
+// source is seeded per process, and two processes started in the same instant
+// would generate the same ids and collide in exactly the log somebody is
+// reading to tell them apart.
+func newRequestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// Cannot happen on any supported platform, and if it somehow does,
+		// losing a log label is not worth failing a request over. An empty id
+		// is sent as no id at all, and the server logs `id=-`.
+		return ""
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// ctx attaches this session's identity and a fresh request id.
+//
+// Every call site must assign the result back over its own ctx — `ctx =
+// s.ctx(ctx)` — because fromRPC reads the id out of the context it is handed.
+// A site that passes s.ctx(ctx) inline to the RPC and then the *outer* ctx to
+// fromRPC would send an id and report none, which is the silent half of a
+// correlation being useless. TestEveryCallKindNamesItsRequestID exists to make
+// that a failure rather than a gap.
 func (s *Session) ctx(ctx context.Context) context.Context {
+	id := newRequestID()
+	ctx = context.WithValue(ctx, requestIDKey{}, id)
+	if id != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, RequestIDKey, id)
+	}
 	return s.client.identity.apply(ctx)
+}
+
+// OutgoingForTest is the metadata one call would carry, without making it.
+//
+// Exported for the suite alone, and named so. Go's test files for this package
+// are external (`package slate_test`), which is deliberate -- they exercise
+// what a caller can reach -- and the outgoing metadata is not otherwise
+// reachable from outside. The alternative was an internal test file duplicating
+// the harness, or trusting that a header nobody asserts is being sent, which is
+// exactly the thing this method exists to stop.
+func (s *Session) OutgoingForTest(ctx context.Context) metadata.MD {
+	out, _ := metadata.FromOutgoingContext(s.ctx(ctx))
+	return out
+}
+
+// requestIDOf is the id ctx put in this context, or "".
+func requestIDOf(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
 }
 
 func rowToProto(values []Value) *pb.Row {
@@ -291,9 +363,10 @@ func (s *Session) write(
 ) (WriteResult, error) {
 	var trailers metadata.MD
 	_ = trailers
-	response, err := call(s.ctx(ctx))
+	ctx = s.ctx(ctx)
+	response, err := call(ctx)
 	if err != nil {
-		return WriteResult{}, fromRPC(err)
+		return WriteResult{}, fromRPC(ctx, err)
 	}
 	out := WriteResult{Affected: response.Affected}
 	for _, row := range response.Rows {
@@ -359,14 +432,15 @@ func (s *Session) Delete(ctx context.Context, table string, keys ...[]Value) (Wr
 // so that "no such row" is not an error path: a caller checking existence
 // should not have to match on an error type to do it.
 func (s *Session) Get(ctx context.Context, table string, key []Value) ([]Value, bool, error) {
-	response, err := s.client.rpc.Get(s.ctx(ctx), &pb.GetRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Get(ctx, &pb.GetRequest{
 		Table:      table,
 		PrimaryKey: rowToProto(key),
 		Freshness:  s.freshness(),
 		Schema:     s.client.schemas.claimFor(table),
 	})
 	if err != nil {
-		return nil, false, fromRPC(err)
+		return nil, false, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 	if !response.Found {
@@ -384,16 +458,21 @@ func (s *Session) Get(ctx context.Context, table string, key []Value) ([]Value, 
 // Close it when finished, which cancels the call: a stream abandoned without
 // closing keeps the server producing rows nobody will read.
 type RowStream struct {
-	stream   grpc.ServerStreamingClient[pb.QueryResponse]
-	cancel   context.CancelFunc
-	session  *Session
-	batch    [][]Value
-	computed [][]Value
-	at       int
-	servedBy *ServedBy
-	warnings []string
-	done     bool
-	err      error
+	stream grpc.ServerStreamingClient[pb.QueryResponse]
+	// requestID is the id the call was opened with. A stream can fail
+	// on its tenth message as readily as its first, and the id names the
+	// same call either way -- the daemon logged one line for this stream,
+	// at its head. Kept here because Next() has no context in scope.
+	requestID string
+	cancel    context.CancelFunc
+	session   *Session
+	batch     [][]Value
+	computed  [][]Value
+	at        int
+	servedBy  *ServedBy
+	warnings  []string
+	done      bool
+	err       error
 }
 
 // Query reads rows.
@@ -405,9 +484,9 @@ func (s *Session) Query(ctx context.Context, query Query) (*RowStream, error) {
 	})
 	if err != nil {
 		cancel()
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
-	return &RowStream{stream: stream, cancel: cancel, session: s}, nil
+	return &RowStream{stream: stream, requestID: requestIDOf(ctx), cancel: cancel, session: s}, nil
 }
 
 // Next reports whether another row is available, fetching a batch if the
@@ -430,7 +509,7 @@ func (r *RowStream) Next() bool {
 			return false
 		}
 		if err != nil {
-			r.err = withTrailers(fromRPC(err), r.trailers())
+			r.err = withTrailers(fromRPCWithID(r.requestID, err), r.trailers())
 			r.done = true
 			return false
 		}
@@ -541,9 +620,10 @@ type Transaction struct {
 // uncommitted writes. Roll back or commit: an abandoned transaction holds a
 // slot until the node's idle timeout collects it.
 func (s *Session) Begin(ctx context.Context) (*Transaction, error) {
-	response, err := s.client.rpc.Begin(s.ctx(ctx), &pb.BeginRequest{})
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Begin(ctx, &pb.BeginRequest{})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	return &Transaction{session: s, id: response.Transaction}, nil
 }
@@ -557,10 +637,11 @@ func (t *Transaction) Commit(ctx context.Context) error {
 		return fmt.Errorf("slate: this transaction is already finished")
 	}
 	t.done = true
+	ctx = t.session.ctx(ctx)
 	response, err := t.session.client.rpc.Commit(
-		t.session.ctx(ctx), &pb.CommitRequest{Transaction: t.id})
+		ctx, &pb.CommitRequest{Transaction: t.id})
 	if err != nil {
-		return fromRPC(err)
+		return fromRPC(ctx, err)
 	}
 	if response.Sequence != nil {
 		token := ReadToken(*response.Sequence)
@@ -580,9 +661,10 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 		return nil
 	}
 	t.done = true
+	ctx = t.session.ctx(ctx)
 	_, err := t.session.client.rpc.Rollback(
-		t.session.ctx(ctx), &pb.RollbackRequest{Transaction: t.id})
-	return fromRPC(err)
+		ctx, &pb.RollbackRequest{Transaction: t.id})
+	return fromRPC(ctx, err)
 }
 
 // Insert adds rows inside the transaction.
@@ -627,12 +709,13 @@ func (t *Transaction) Delete(ctx context.Context, table string, keys ...[]Value)
 
 // Get reads one row inside the transaction, seeing its uncommitted writes.
 func (t *Transaction) Get(ctx context.Context, table string, key []Value) ([]Value, bool, error) {
-	response, err := t.session.client.rpc.Get(t.session.ctx(ctx), &pb.GetRequest{
+	ctx = t.session.ctx(ctx)
+	response, err := t.session.client.rpc.Get(ctx, &pb.GetRequest{
 		Transaction: t.id, Table: table, PrimaryKey: rowToProto(key),
 		Schema: t.session.client.schemas.claimFor(table),
 	})
 	if err != nil {
-		return nil, false, fromRPC(err)
+		return nil, false, fromRPC(ctx, err)
 	}
 	if !response.Found {
 		return nil, false, nil
@@ -653,9 +736,9 @@ func (t *Transaction) Query(ctx context.Context, query Query) (*RowStream, error
 	})
 	if err != nil {
 		cancel()
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
-	return &RowStream{stream: stream, cancel: cancel, session: t.session}, nil
+	return &RowStream{stream: stream, requestID: requestIDOf(ctx), cancel: cancel, session: t.session}, nil
 }
 
 // Explanation is the plan a query would run under.
@@ -708,12 +791,13 @@ func explanationFrom(wire *pb.ExplainResponse) Explanation {
 // does not carry: a plan is costed against statistics covering rows the
 // caller's policy may hide.
 func (s *Session) Explain(ctx context.Context, query Query) (*Explanation, error) {
-	response, err := s.client.rpc.Explain(s.ctx(ctx), &pb.ExplainRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.Explain(ctx, &pb.ExplainRequest{
 		Query:     query.toProto(s.client.schemas.claimFor(query.Table)),
 		Freshness: s.freshness(),
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 	plan := explanationFrom(response)
@@ -739,7 +823,7 @@ type Leadership struct {
 func (c *Client) Leadership(ctx context.Context) (*Leadership, error) {
 	response, err := c.rpc.Leadership(c.identity.apply(ctx), &pb.LeadershipRequest{})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	return &Leadership{
 		Leader:             response.Standing == pb.LeadershipStatus_STANDING_LEADER,
@@ -756,11 +840,16 @@ func (c *Client) Leadership(ctx context.Context) (*Leadership, error) {
 // row cannot tell "the right side had no match" from "the right side matched
 // and its columns are null".
 type JoinStream struct {
-	stream   grpc.ServerStreamingClient[pb.JoinResponse]
-	cancel   context.CancelFunc
-	session  *Session
-	batch    [][][]Value
-	computed [][]Value
+	stream grpc.ServerStreamingClient[pb.JoinResponse]
+	// requestID is the id the call was opened with. A stream can fail
+	// on its tenth message as readily as its first, and the id names the
+	// same call either way -- the daemon logged one line for this stream,
+	// at its head. Kept here because Next() has no context in scope.
+	requestID string
+	cancel    context.CancelFunc
+	session   *Session
+	batch     [][][]Value
+	computed  [][]Value
 	// One entry per row, then one per input: what that input's own
 	// `JoinInput.Compute` produced. Kept apart from `batch` rather than
 	// appended to each input's values, for the reason the wire keeps them
@@ -782,9 +871,9 @@ func (s *Session) Join(ctx context.Context, join JoinQuery) (*JoinStream, error)
 	})
 	if err != nil {
 		cancel()
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
-	return &JoinStream{stream: stream, cancel: cancel, session: s}, nil
+	return &JoinStream{stream: stream, requestID: requestIDOf(ctx), cancel: cancel, session: s}, nil
 }
 
 // Join reads joined rows inside the transaction.
@@ -795,9 +884,9 @@ func (t *Transaction) Join(ctx context.Context, join JoinQuery) (*JoinStream, er
 	})
 	if err != nil {
 		cancel()
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
-	return &JoinStream{stream: stream, cancel: cancel, session: t.session}, nil
+	return &JoinStream{stream: stream, requestID: requestIDOf(ctx), cancel: cancel, session: t.session}, nil
 }
 
 // Next advances to the next joined row.
@@ -812,7 +901,7 @@ func (j *JoinStream) Next() bool {
 			return false
 		}
 		if err != nil {
-			j.err = withTrailers(fromRPC(err), j.stream.Trailer())
+			j.err = withTrailers(fromRPCWithID(j.requestID, err), j.stream.Trailer())
 			j.done = true
 			return false
 		}
@@ -964,15 +1053,20 @@ func (j *JoinStream) Collect() ([][][]Value, error) {
 
 // GroupStream is groups arriving in batches.
 type GroupStream struct {
-	stream   grpc.ServerStreamingClient[pb.AggregateResponse]
-	cancel   context.CancelFunc
-	session  *Session
-	batch    []Group
-	at       int
-	servedBy *ServedBy
-	warnings []string
-	done     bool
-	err      error
+	stream grpc.ServerStreamingClient[pb.AggregateResponse]
+	// requestID is the id the call was opened with. A stream can fail
+	// on its tenth message as readily as its first, and the id names the
+	// same call either way -- the daemon logged one line for this stream,
+	// at its head. Kept here because Next() has no context in scope.
+	requestID string
+	cancel    context.CancelFunc
+	session   *Session
+	batch     []Group
+	at        int
+	servedBy  *ServedBy
+	warnings  []string
+	done      bool
+	err       error
 }
 
 // Aggregate groups one table.
@@ -1040,9 +1134,9 @@ func (s *Session) aggregate(
 	stream, err := s.client.rpc.Aggregate(ctx, request)
 	if err != nil {
 		cancel()
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
-	return &GroupStream{stream: stream, cancel: cancel, session: s}, nil
+	return &GroupStream{stream: stream, requestID: requestIDOf(ctx), cancel: cancel, session: s}, nil
 }
 
 // Next advances to the next group.
@@ -1057,7 +1151,7 @@ func (g *GroupStream) Next() bool {
 			return false
 		}
 		if err != nil {
-			g.err = withTrailers(fromRPC(err), g.stream.Trailer())
+			g.err = withTrailers(fromRPCWithID(g.requestID, err), g.stream.Trailer())
 			g.done = true
 			return false
 		}
@@ -1161,11 +1255,12 @@ type JoinExplanation struct {
 //
 // Needs the `explain` action on every table involved, not just one.
 func (s *Session) ExplainJoin(ctx context.Context, join JoinQuery) (*JoinExplanation, error) {
-	response, err := s.client.rpc.ExplainJoin(s.ctx(ctx), &pb.ExplainJoinRequest{
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.ExplainJoin(ctx, &pb.ExplainJoinRequest{
 		Join: join.toProto(s.client.schemas), Freshness: s.freshness(),
 	})
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 	return joinExplanationFrom(response), nil
@@ -1281,9 +1376,10 @@ func (s *Session) explainAggregate(
 	if transaction == "" {
 		request.Freshness = s.freshness()
 	}
-	response, err := s.client.rpc.ExplainAggregate(s.ctx(ctx), request)
+	ctx = s.ctx(ctx)
+	response, err := s.client.rpc.ExplainAggregate(ctx, request)
 	if err != nil {
-		return nil, fromRPC(err)
+		return nil, fromRPC(ctx, err)
 	}
 	s.observeServedBy(response.ServedBy)
 	out := &AggregateExplanation{Display: response.Display, Warnings: response.Warnings}

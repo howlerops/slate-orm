@@ -1,6 +1,7 @@
 package slate
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -122,7 +123,7 @@ func TestFromRPCCarriesTheTokenOntoTheError(t *testing.T) {
 		t.Fatalf("the fixture is not hex: %v", err)
 	}
 	var e *Error
-	if !errors.As(fromRPC(statusFrom(t, blob).Err()), &e) {
+	if !errors.As(fromRPC(context.Background(), statusFrom(t, blob).Err()), &e) {
 		t.Fatal("fromRPC did not produce a *slate.Error")
 	}
 	if e.Reason != "PREDICATE_WRITE_TOO_LARGE" {
