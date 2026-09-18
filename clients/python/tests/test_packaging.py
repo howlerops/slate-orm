@@ -44,10 +44,16 @@ def _build() -> tuple[pathlib.Path, pathlib.Path]:
     metadata answered for both. A test of the packaging that reads cached
     packaging output is not a test of anything.
     """
-    try:
-        import build  # noqa: F401
-    except ImportError:
-        pytest.skip("`build` is not installed; `pip install build` to run this")
+    # Imported for its side effect of failing loudly. `build` is in this
+    # package's `[dev]` extra, which is what `pytest` itself comes from, so a
+    # checkout that can run this suite at all has it — and its absence is a
+    # broken environment rather than a configuration somebody chose.
+    #
+    # This was a `pytest.skip`, and that is how these four tests came to skip
+    # in CI from the day they were written: `build` was not declared, so the
+    # skip fired on every run and read as a passing suite. The thing being
+    # skipped is the point.
+    import build  # noqa: F401
 
     clean = pathlib.Path(tempfile.mkdtemp()) / "package"
     shutil.copytree(

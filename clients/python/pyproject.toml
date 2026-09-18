@@ -55,6 +55,18 @@ dev = [
   # Raising it is a deliberate act: bump the pin, run `python -m mypy`, and
   # fix or remove whatever the new version says in the same change.
   "mypy==2.3.1",
+  # `test_packaging` builds a wheel and an sdist from a clean copy of the tree
+  # and reads what came out. It guards that with `pytest.skip` when `build` is
+  # missing — and `build` was not in this list, so those four tests **skipped
+  # in CI from the day they were written** while passing on any machine that
+  # happened to have it. That is the repository's own "a skip is green", and
+  # the thing being skipped is the point: it is the only test that would catch
+  # `packages.find` narrowed to one package, or `py.typed` dropped from
+  # `package-data`, which is what makes this package typed for anybody else.
+  #
+  # Found by putting mypy in CI, which failed on the import it could not
+  # resolve rather than on the skip nobody was reading.
+  "build>=1",
   "pytest>=8",
   # A hanging stream is worse than a failing one: it stalls the suite and
   # says nothing. Every RPC here is loopback against an in-memory store.

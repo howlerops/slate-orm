@@ -94,6 +94,24 @@ removed.
 **And everything still passes**: 238 tests, mypy clean over 40 source files at
 both `--python-version 3.11` (local) and `3.12` (CI's interpreter), ruff clean.
 
+**Then CI failed on the very step this change added**, and the failure was
+worth having. `tests/test_packaging.py` imports `build`, which is not declared
+in `[dev]` — mypy could not resolve it and said so. It resolved here because
+this container happens to have `build` installed, which is precisely the
+"passed locally for the worst possible reason" this repository keeps writing
+down.
+
+Chasing it turned up a **second defect underneath**: the test guarded that
+import with `pytest.skip`, so those four tests **skipped in CI from the day
+they were written**, reading as a passing suite. They are the only tests that
+would catch `packages.find` narrowed to one package or `py.typed` dropped from
+`package-data` — the thing that makes this package typed for anybody else.
+`build>=1` is declared now and the skip is gone: an absent `build` is a failure,
+because a checkout that can run this suite at all has `[dev]` installed.
+
+The cost is ~65 seconds on the Python job, which is what those four tests
+actually take when they run.
+
 The 53 mypy errors were in ten test modules and almost all one shape: `Row.get`
 returns the whole `PyValue` union, and a test that reads an `id` back wants an
 `int` to sort, compare or key a dict on. `as_int` closes all of those. The rest
