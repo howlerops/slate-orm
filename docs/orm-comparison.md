@@ -107,9 +107,6 @@ then did not ship it to the three audiences most likely to need it.
 
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
-| Many-to-many / `has_many through` **on the wire** | all | built in Rust (P4); `RelatedRequest` carries one `Relation` and `repeated Value keys`, so a client resolves a join table in two round trips by hand |
-| Nested eager loading **on the wire** | Ecto, SQLAlchemy, Prisma | built in Rust (P5) as `load_nested`; same evidence as the row above |
-| Keyset paging over a join or a chain | Drizzle, Prisma (cursor on a relation query) | `Query` has `after`/`paged`; `JoinQuery` has `offset = 3` and no cursor field |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
 | Client codegen from the catalog | Drizzle, Prisma | every client hand-declares its schema; `SchemaCheck` catches drift at run time instead of compile time |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `grep -rcn "validate\|before_save\|Changeset" crates/slate-orm/src/` → nothing |
@@ -123,7 +120,6 @@ then did not ship it to the three audiences most likely to need it.
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
 | Seeding / fixtures / factories | Drizzle, Prisma, ActiveRecord | none |
 | Per-request logging and metrics | all | already recorded in the README: `slate-serverd` logs startup and warnings, nothing per request |
-| Retrying `transact` in Go and TypeScript | — | already recorded in the README; Python has one |
 
 > **Built: "Batch" and "`RETURNING` on a write".** Both rows are removed rather
 > than annotated, on the same grounds as keyset pagination: both were correct
@@ -132,11 +128,36 @@ then did not ship it to the three audiences most likely to need it.
 > on the two *predicate* writes only — see P3, where the item turned out to be
 > a narrower feature than it was written as.
 
-> **Narrowed: the two relationship rows.** Many-to-many and nested loading are
-> built (P4, P5) and reachable only from Rust, so the rows now say *on the
-> wire* and their evidence is the proto rather than the derive macro. This is
-> the third time a capability has existed in Rust a release ahead of the three
-> clients, which is why N1 below is first.
+> **Built, and removed: the two relationship rows and the join-paging row.**
+> Many-to-many and nested loading were built in Rust (P4, P5) and reachable
+> only from there, so these rows were once narrowed to say *on the wire* with
+> the proto as their evidence. N1 closed that: a request carries a path of
+> relationships and the answer comes back one level per step, in all three
+> clients. N3 closed the third: `JoinQuery` carries `after` and `paged`, and a
+> page of a join is a page of its driving table.
+>
+> Removed rather than annotated, on the same grounds as keyset pagination and
+> `Batch` above: the evidence each row cited — "`RelatedRequest` carries one
+> `Relation`", "`JoinQuery` has `offset = 3` and no cursor field" — is now
+> false, and a table of gaps whose evidence is false is worse than no table.
+> The reasoning is not lost; it is in N1 and N3 below, and in
+> `docs/paging-a-join.md`.
+>
+> That was the third time a capability existed in Rust a release ahead of the
+> three clients, which is why N1 was first. **The relationship family is now
+> closed** — `load_related`, `load_one_related`, `load_related_through`,
+> `load_through` and `load_nested` all have a wire path, and every one of them
+> is exercised by the conformance corpus.
+>
+> Not the same as "nothing is Rust-only", which was the first thing written
+> here and is false. **Migrations are Rust-only**: `slate-kernel/src/migrate.rs`
+> plans and applies a schema diff and none of the eighteen RPCs carries one, so
+> a deployment that wants a migration runs Rust or runs nothing. That is a
+> deliberate shape rather than an oversight — a migration is a privileged
+> operation against a whole catalog, and putting it on the same wire as a
+> tenant's reads is a decision nobody has argued for yet — but it is a thing
+> the clients cannot do, and the row below about *generated* migrations is
+> about something else again.
 
 > **Built: "Keyset pagination on the wire".** `Query.after` carries the cursor,
 > `Query.paged` asks for the next one, and `QueryResponse.next_cursor` returns
@@ -798,8 +819,12 @@ Not plan items; things a session should pick up when it is already in the file.
   fixed because it made a durability claim and failed CI on a stale replica.
   The others are correct-by-luck in the same way and would be better served by
   pinning the whole run to one snapshot.
-- **No retrying `transact` in Go or TypeScript.** Python has one. Both others
-  have `retryable` on the error and nothing that uses it.
+- ~~**No retrying `transact` in Go or TypeScript.**~~ **Built.** Go has
+  `slate.Transact`, a generic free function because Go has no generic methods
+  and a method would have to return `any`; TypeScript has `session.transact`.
+  Both retry a conflict and nothing else, with the same defaults as Python —
+  five attempts, 5 ms doubling to 500 ms, full jitter — because three clients
+  disagreeing about how hard they try is its own bug.
 - **No per-request logging or metrics in `slate-serverd`.** Recorded in the
   README and still true.
 

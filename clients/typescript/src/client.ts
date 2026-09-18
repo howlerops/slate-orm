@@ -5,7 +5,7 @@ import * as protoLoader from "@grpc/proto-loader";
 
 import { directoryOf, findUpContaining } from "./paths.js";
 
-import { fromBatchError, fromServiceError, SlateError } from "./errors.js";
+import { fromBatchError, fromServiceError, isKind, SlateError } from "./errors.js";
 import { claimFor, type Schemas } from "./schema.js";
 import {
   applyGrouping,
@@ -1288,6 +1288,71 @@ export class Session {
   async begin(): Promise<Transaction> {
     const response = await this.#client.call<{ transaction: string }>("Begin", {});
     return new Transaction(this, this.#client, response.transaction);
+  }
+
+  /**
+   * Run `body` in a transaction, committing on success, rolling back on any
+   * error, and retrying a conflict.
+   *
+   * ```ts
+   * const written = await session.transact(async (tx) => {
+   *   await tx.insert("books", row);
+   *   return 1;
+   * });
+   * ```
+   *
+   * ## What is retried, and what is not
+   *
+   * `"conflict"` and nothing else, which is `RecordStore::transact`'s own rule:
+   * a unique violation, an access denial or a fenced writer fails identically
+   * forever, and retrying them turns a clear error into a hang.
+   *
+   * In particular `"unavailable"` is *not* retried even though `retryable`
+   * reports it as such, and neither is `"not-leader"`. Both are retryable
+   * somewhere — against a different node — and this method only has the one it
+   * was given, so retrying here spends the attempts on a node that will keep
+   * saying no.
+   *
+   * ## Why a callback and not a `using` block
+   *
+   * Retrying means running the body again, and a block cannot re-run itself.
+   * `begin()` is still there for the cases that must not be retried, or whose
+   * body is not safe to run twice.
+   */
+  async transact<T>(
+    body: (tx: Transaction) => Promise<T>,
+    options: { attempts?: number; baseDelayMs?: number; maxDelayMs?: number } = {},
+  ): Promise<T> {
+    // The same defaults as the Python and Go clients, which is the point: the
+    // three should not disagree about how hard they try.
+    const attempts = options.attempts ?? 5;
+    const baseDelayMs = options.baseDelayMs ?? 5;
+    const maxDelayMs = options.maxDelayMs ?? 500;
+    if (attempts < 1) throw new RangeError("attempts must be at least 1");
+
+    for (let attempt = 0; ; attempt += 1) {
+      const tx = await this.begin();
+      try {
+        const value = await body(tx);
+        await tx.commit();
+        return value;
+      } catch (error) {
+        // Best effort, and its own failure is swallowed: the transaction may
+        // already be gone — the server rolls one back on an idle timeout — and
+        // a second error out of the cleanup would hide the first, which is the
+        // one that says what went wrong. Quiet after a successful commit.
+        await tx.rollback().catch(() => {});
+        // The last attempt rethrows the conflict itself rather than a wrapper
+        // naming the count: a caller matching on the kind should not have to
+        // unwrap one to do it.
+        if (attempt === attempts - 1 || !isKind(error, "conflict")) throw error;
+        // Full jitter: uniform in [0, backoff] rather than backoff plus or
+        // minus something, which still leaves a mode for the colliding writers
+        // to land on together.
+        const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+        await new Promise((resume) => setTimeout(resume, Math.random() * backoff));
+      }
+    }
   }
 
   /** @internal */

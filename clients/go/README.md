@@ -59,6 +59,32 @@ a `KindNotLeader` is retryable **elsewhere** and carries `Leader`; a
 have landed and retrying is how one write becomes two; and a
 `KindDeadlineExceeded` has the same ambiguity.
 
+## Transactions, with a retry
+
+`Begin`/`Commit`/`Rollback` are there for a body that must not be retried.
+For everything else, `Transact` runs the body in a transaction and retries a
+conflict:
+
+```go
+written, err := slate.Transact(ctx, session, slate.DefaultRetry,
+    func(ctx context.Context, tx *slate.Transaction) (uint64, error) {
+        if _, err := tx.Insert(ctx, "books", row); err != nil {
+            return 0, err
+        }
+        return 1, nil
+    })
+```
+
+A **function** rather than a method on `*Session`, because Go has no generic
+methods and a method would have to return `any` — which is the version every
+caller then wraps to get their value back.
+
+It retries `KindConflict` and nothing else. A unique violation, an access
+denial or a fenced writer fails identically forever, and retrying those turns a
+clear error into a hang. `KindUnavailable` and `KindNotLeader` are *not*
+retried here even though `Retryable()` reports them as retryable: both are
+retryable against a **different node**, and this only has the one it was given.
+
 ## Joins and aggregates
 
 ```go

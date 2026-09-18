@@ -1185,11 +1185,13 @@ Not built:
       the other half: `slate-serverd` logs its startup and its warnings and
       **nothing per request**, so an id sent from a client would have nothing to
       be correlated against. The useful order is a request log first
-- [ ] A retrying `transact` in the Go and TypeScript clients. Python has one,
-      with full-jitter exponential backoff; the other two offer
-      `Begin`/`Commit`/`Rollback` and leave every caller to write their own
-      backoff, which is the divergence the conformance runner cannot see because
-      it compares answers rather than ergonomics
+- [x] A retrying `transact` in the Go and TypeScript clients. Python had one
+      and the other two left every caller to write their own backoff — the
+      divergence the conformance runner cannot see, because it compares answers
+      rather than ergonomics. Go has `slate.Transact`, a generic *function*
+      rather than a method because Go has no generic methods and a method would
+      have to return `any`; TypeScript has `session.transact`. Both retry a
+      conflict and nothing else, with Python's defaults
 - [ ] `EXISTS`, `UNION`, `INTERSECT`, `EXCEPT`, and a correlated subquery.
       Each refused by name with its reason rather than left to fail as a
       syntax error, and the reasons differ. `EXISTS` is correlated by nature —

@@ -65,6 +65,27 @@ Every failure is a `SlateError` with a `kind`. Use `isKind(error, "…")`.
 landed and retrying is how one write becomes two; and `"deadline-exceeded"` has
 the same ambiguity.
 
+## Transactions, with a retry
+
+`session.begin()` is there for a body that must not be retried. For everything
+else, `transact` runs the body in a transaction and retries a conflict:
+
+```ts
+const written = await session.transact(async (tx) => {
+  await tx.insert("books", row);
+  return 1;
+});
+```
+
+A callback rather than a block, because retrying means running the body again
+and a block cannot re-run itself.
+
+It retries `"conflict"` and nothing else. A unique violation, an access denial
+or a fenced writer fails identically forever, and retrying those turns a clear
+error into a hang. `"unavailable"` and `"not-leader"` are *not* retried here
+even though `retryable` reports them as such: both are retryable against a
+**different node**, and this only has the one it was given.
+
 ## Joins and aggregates
 
 ```ts
