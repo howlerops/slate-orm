@@ -453,3 +453,178 @@ async fn many_concurrent_readers_each_get_a_usable_snapshot() {
 
     backend.close().await.unwrap();
 }
+
+/// **Does `manifest_poll_interval` govern what a `DbReader` sees?** Yes, and
+/// this is the experiment `examples/deployed/README.md` asked for.
+///
+/// # The question
+///
+/// Two measurements disagreed. `slate-serverd`'s `process.rs` records a
+/// ten-second poll against a 250 ms `catch_up` making 64 of 64
+/// read-your-writes reads fall through to the writer — lag, exactly as the
+/// interval predicts. The deployed example then set a 55-second poll against a
+/// 60-second `catch_up` and observed **no** lag at all, on eight unpinned reads
+/// at two dataset sizes. The README left that open, with two candidate
+/// explanations: either the window is much narrower than the configuration
+/// suggests, or `manifest_poll_interval` no longer governs a `DbReader`.
+///
+/// # The experiment
+///
+/// The same write, two readers, differing in nothing but the interval. Both
+/// are opened *after* a first commit, so both start current and neither is
+/// racing its own startup. Then a second commit lands, and the two are asked
+/// what they can see.
+///
+/// # The answer
+///
+/// The interval governs. The eager reader, at a 20 ms poll, sees the second
+/// commit in **7.8-11.2 ms** across five runs; the lazy one, at 300 s, has not
+/// moved two seconds later. (Two seconds is the floor below; 100x the eager
+/// time would be about one second, so the floor is what actually runs.)
+/// So the deployed example's null result is a fact about *that* example rather
+/// than about SlateDB — its unpinned reads happen well after the load, and a
+/// 55-second interval has long since fired by then. The README's second
+/// candidate explanation is withdrawn; the first is the right one, and it is
+/// narrower still than "narrow": it is not a window at all, it is elapsed time
+/// since the reader's last poll.
+#[tokio::test]
+async fn the_manifest_poll_interval_is_what_a_replica_can_see() {
+    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = writer(Arc::clone(&object_store)).await;
+    let table = common::users();
+    let root = SecurityContext::superuser();
+
+    // A first commit, so both readers open against a manifest that exists and
+    // neither is answering about an empty database.
+    let txn = writer.begin().await.unwrap();
+    txn.insert(
+        &root,
+        &table,
+        &common::user(common::TENANT_A, 1, "first@x.com", None, 30),
+    )
+    .await
+    .unwrap();
+    let first = txn.commit().await.unwrap().expect("the first commit wrote");
+
+    let eager_reader = replica("eager", Arc::clone(&object_store)).await;
+    // Long enough that it cannot fire during this test, and *not* derived from
+    // the sleep below: a poll interval a test tuned to its own timing would
+    // prove only that the test was tuned.
+    let lazy_reader = Arc::new(
+        SlateReader::open_with(
+            "lazy",
+            PATH,
+            Arc::clone(&object_store),
+            ReplicaMode::Following,
+            DbReaderOptions {
+                manifest_poll_interval: Duration::from_secs(300),
+                // SlateDB refuses a lifetime under twice the interval, and
+                // reports the interval *doubled* when it does — `lifetime=900s,
+                // interval=1200s` for a 600-second interval, which is what
+                // makes the message confusing enough to be worth a line here.
+                // Four times over, so the margin is not the thing under test.
+                checkpoint_lifetime: Duration::from_secs(1200),
+                ..DbReaderOptions::default()
+            },
+        )
+        .await
+        .expect("open the lazy replica"),
+    );
+    for reader in [&eager_reader, &lazy_reader] {
+        reader
+            .wait_for_sequence(first.sequence(), Duration::from_secs(10))
+            .await
+            .expect("both readers start current");
+    }
+    // Where the lazy reader is *before* the second commit, so the assertion
+    // below is "it did not move" rather than a guess at what number that is:
+    // `visible_sequence` is only promised to be at or past a token's sequence,
+    // not equal to it.
+    let lazy_before = SlateReader::visible_sequence(lazy_reader.as_ref());
+
+    // The second commit, which is the one the two readers will disagree about.
+    let txn = writer.begin().await.unwrap();
+    txn.insert(
+        &root,
+        &table,
+        &common::user(common::TENANT_A, 2, "second@x.com", None, 31),
+    )
+    .await
+    .unwrap();
+    let second = txn
+        .commit()
+        .await
+        .unwrap()
+        .expect("the second commit wrote");
+    assert!(
+        second.sequence() > first.sequence(),
+        "the second commit must advance the sequence for this to test anything"
+    );
+
+    let started = std::time::Instant::now();
+    eager_reader
+        .wait_for_sequence(second.sequence(), Duration::from_secs(10))
+        .await
+        .expect("a 20 ms poll sees a commit quickly");
+    let eager_took = started.elapsed();
+
+    // The lazy reader is given the same budget the eager one just used, times
+    // a hundred, and still must not have moved. A bounded wait rather than the
+    // full 600 seconds: the claim is "the interval governs", and a reader that
+    // has not budged after 100x the time its eager twin needed establishes
+    // that without the test taking ten minutes.
+    let budget = (eager_took * 100).max(Duration::from_secs(2));
+    // The window has to be long enough for "it did not move" to mean anything.
+    // Without this line the test passes with a budget of *zero* — a mutation
+    // setting it to `Duration::ZERO` survived, because a reader that cannot
+    // advance also cannot advance in no time at all, and the assertion below
+    // was true for a reason that had nothing to do with the poll interval.
+    assert!(
+        budget >= eager_took * 50,
+        "the window is {budget:?} against an eager catch-up of {eager_took:?}, which is \
+         not enough for its absence to be evidence of anything"
+    );
+    tokio::time::sleep(budget).await;
+    let lazy_visible = SlateReader::visible_sequence(lazy_reader.as_ref());
+    assert!(
+        lazy_visible < second.sequence(),
+        "the lazy reader reached sequence {lazy_visible} after {budget:?}, so a \
+         600-second `manifest_poll_interval` did not hold it back — which is the \
+         hypothesis this test exists to falsify. The eager reader took {eager_took:?}"
+    );
+    assert_eq!(
+        lazy_visible, lazy_before,
+        "and it is exactly where it was, rather than somewhere in between"
+    );
+
+    // And the rows agree with the sequences: the lazy reader has the first
+    // user and not the second, which is what a stale replica *means*. Asserted
+    // because a sequence that stalls while the data arrives anyway would be a
+    // different and much worse bug.
+    let stale = RecordStore::new(
+        Arc::clone(&lazy_reader),
+        writer.catalog().clone(),
+        common::security(),
+    );
+    let snapshot = stale.snapshot().await.unwrap();
+    assert!(
+        snapshot
+            .get(&root, &table, &common::pk(common::TENANT_A, 1))
+            .await
+            .unwrap()
+            .is_some(),
+        "the first user, which the lazy reader was current for"
+    );
+    assert_eq!(
+        snapshot
+            .get(&root, &table, &common::pk(common::TENANT_A, 2))
+            .await
+            .unwrap(),
+        None,
+        "and not the second, which landed after its last poll"
+    );
+
+    eager_reader.close().await.unwrap();
+    lazy_reader.close().await.unwrap();
+    writer.backend().close().await.unwrap();
+}

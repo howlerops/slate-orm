@@ -104,14 +104,29 @@ decorative: pinning to `loaded + 1_000_000` fails every read with
 `unavailable: replica 'writer' is at sequence 12, behind the required 1000012`,
 so the sequence really does travel and really is enforced.
 
-The discrepancy is the interesting part and is left open: `storage.rs` records
-a measurement where a 10-second poll made 64 of 64 read-your-writes reads fall
-through to the writer, which is lag, and is why `poll_interval` derives from
-`catch_up` and why a poll at or above it is refused. A 55-second poll producing
-no observable lag at all does not fit that. Either the window is much narrower
-than the configuration suggests, or `manifest_poll_interval` no longer governs
-what a `DbReader` sees. Worth an experiment against SlateDB directly; not one
-this example can run.
+The discrepancy looked interesting and is **resolved, against the second of
+the two explanations it offered.** `storage.rs` records a measurement where a
+10-second poll made 64 of 64 read-your-writes reads fall through to the writer,
+which is lag, and is why `poll_interval` derives from `catch_up` and why a poll
+at or above it is refused. A 55-second poll producing no observable lag at all
+did not fit that, and the two candidates were: the window is much narrower than
+the configuration suggests, or `manifest_poll_interval` no longer governs what
+a `DbReader` sees.
+
+It governs. `slate-slatedb`'s
+`the_manifest_poll_interval_is_what_a_replica_can_see` is the experiment: two
+readers over one object store, differing in nothing but the interval, both
+opened after a first commit so neither is racing its own startup, then a second
+commit. At a 20 ms poll the reader sees it in 7.8–11.2 ms across five runs; at
+300 s it has not moved two seconds later, and reads the first row and not the
+second. **So the second explanation is withdrawn.**
+
+Which leaves the first, and it is narrower than "narrow": it is not a window at
+all, it is elapsed time since that reader's last poll. This example's unpinned
+reads happen after a load of tens of thousands of rows, by which point a
+55-second interval has fired many times. The experiment could not have been run
+here — it needs two readers configured differently against one store, which is
+a `slate-slatedb` shape rather than a deployment's.
 
 **Anything about how fast it is.** The loader prints a rate because watching
 100,000 rows go by in silence is unpleasant, not because the number means
