@@ -1051,3 +1051,149 @@ async fn the_lease_is_renewed_rather_than_lapsing() {
         .await
         .expect("commit");
 }
+
+/// The read-only migration window, demonstrated rather than described.
+///
+/// A follower that starts while the node holding the lease has not migrated
+/// **warns and serves**, and during that window a read through an unbuilt
+/// index returns no rows. The warning was written with the read-only path and
+/// its own ledger entry called it "the least-exercised branch in the change" —
+/// the two process tests covered the writer path, and this one is the branch
+/// they did not reach.
+///
+/// # How the window is constructed
+///
+/// Two configs over one directory. The leader's catalog has no `by_size`, so
+/// nothing ever writes its entries; the follower's has it, so the follower
+/// believes in an index the keyspace does not hold. That is exactly the shape
+/// of a deployment mid-rollout, with the new binary on the follower first.
+///
+/// # Why the read carries a hint
+///
+/// Without one the planner is free to table-scan this four-row fixture and
+/// return the right answer, which would make the test pass for a reason that
+/// has nothing to do with the window — the same trap that made an earlier
+/// plan assertion useless when both arms agreed. The hint names `by_size`, so
+/// the read goes through the index or not at all, and "not at all" is the
+/// failure being demonstrated.
+#[tokio::test]
+async fn a_follower_warns_and_serves_nothing_through_an_index_the_leader_never_built() {
+    let files = Files::new();
+    let directory = files.path().join("data");
+    let follower_config = local_with_a_replica(&directory);
+    // The same config with `by_size` cut out. A `str::replace` of the whole
+    // block rather than a line filter, so that a change to the fixture's
+    // indexes makes this stop compiling out rather than silently cut nothing.
+    let by_size = "\n[[tables.indexes]]\nname = \"by_size\"\nid = 2\ncolumns = [{ column = \"size\", direction = \"desc\" }]\n";
+    assert!(
+        follower_config.contains(by_size),
+        "the fixture's `by_size` block moved, so this test would cut nothing and \
+         both nodes would have the same catalog"
+    );
+    let leader_config = follower_config.replace(by_size, "\n");
+
+    let leader_path = files.write("leader.toml", &leader_config);
+    let follower_path = files.write("follower.toml", &follower_config);
+    let seed = files.write("seed.toml", SEED);
+
+    let leader = Serving::start(&[
+        "--config",
+        &leader_path.display().to_string(),
+        "--seed",
+        &seed.display().to_string(),
+    ]);
+    let mut on_leader = connect(&leader).await;
+
+    // A write of the leader's own, so every read below can name a sequence and
+    // wait for it. Without that these nodes read through a replica on a ten
+    // second `catch_up` and an unpinned read is a race — the first version of
+    // this test asserted the seeded rows unpinned and got an empty answer from
+    // the *leader*, which is the replica not having polled rather than
+    // anything about a migration.
+    let landed = on_leader
+        .insert(APP.on(proto::InsertRequest {
+            transaction: String::new(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![
+                u64_value(1),
+                u64_value(9),
+                str_value("kind-d"),
+                i64_value(30),
+                null_value(),
+            ])],
+            ..Default::default()
+        }))
+        .await
+        .expect("the leader writes")
+        .into_inner()
+        .sequence
+        .expect("a single-statement write commits, so it has a sequence");
+
+    assert_eq!(
+        ids(&rows_at_least(&mut on_leader, &APP, "docs", landed)
+            .await
+            .expect("query")),
+        vec![2, 3, 9],
+        "the leader serves the policy-visible rows"
+    );
+
+    let follower = Serving::start(&["--config", &follower_path.display().to_string()]);
+    let mut on_follower = connect(&follower).await;
+
+    // Unhinted, the follower agrees: the window is invisible to a query the
+    // planner can answer another way, which is what makes it a *window* rather
+    // than an outage and is why it went unnoticed.
+    assert_eq!(
+        ids(&rows_at_least(&mut on_follower, &APP, "docs", landed)
+            .await
+            .expect("query")),
+        vec![2, 3, 9],
+        "an unhinted read is served by a scan and is unaffected"
+    );
+
+    // Hinted at the index the keyspace does not hold, it returns nothing —
+    // with no error, which is the whole of the problem.
+    let hinted = proto::Query {
+        hint: Some(proto::AccessHint {
+            path: Some(proto::access_hint::Path::Index("by_size".to_owned())),
+        }),
+        ..query("docs")
+    };
+    let request = APP.on(proto::QueryRequest {
+        transaction: String::new(),
+        query: Some(hinted),
+        freshness: Some(proto::Freshness {
+            level: Some(proto::freshness::Level::AtLeast(landed)),
+        }),
+    });
+    let mut stream = on_follower
+        .query(request)
+        .await
+        .expect("no error: that is the finding")
+        .into_inner();
+    let mut through_the_index = Vec::new();
+    while let Some(message) = stream.message().await.expect("no error mid-stream") {
+        through_the_index.extend(message.rows);
+    }
+    assert!(
+        through_the_index.is_empty(),
+        "the window is supposed to be open here; if this now returns rows the \
+         behaviour changed and the warning below is what to re-read: {:?}",
+        ids(&through_the_index)
+    );
+
+    // And the node said so on the way up. Read after termination because the
+    // harness pipes stderr and hands it over at exit.
+    let finished = follower.terminate();
+    assert!(
+        finished.stderr.contains("is not migrated"),
+        "the follower must warn that it reads an unmigrated keyspace:\n{}",
+        finished.stderr
+    );
+    assert!(
+        finished.stderr.contains("return no rows"),
+        "and say what that means for a read:\n{}",
+        finished.stderr
+    );
+    let _ = leader.terminate();
+}
