@@ -525,9 +525,9 @@ async fn a_joined_compute_is_checked() {
     assert_eq!(rows.len(), 4);
     for row in &rows {
         assert!(
-            matches!(&row.computed.first(), Some(Value::Decimal(_))),
+            matches!(row.computed.first(), Some(Value::Decimal(_))),
             "{:?}",
-            &row.computed
+            row.computed
         );
     }
 }

@@ -137,12 +137,22 @@ that is set and missing is a hard error, never a silent fall back to building.
   `dtolnay/rust-toolchain@stable` tracks the current release; this container
   has whatever it was built with. That gap is not theoretical: three commits
   in a row went red on `chunks_exact_to_as_chunks` and `unnecessary_sort_by`,
-  two lints that **do not exist** in the local toolchain, so
+  and later a fourth on `useless_borrows_in_formatting` — three lints that **do
+  not exist** in the local toolchain (`cargo clippy -- -W
+  clippy::useless_borrows_in_formatting` here answers `unknown lint`), so
   `cargo clippy --workspace --all-targets` was clean here and failed there.
   Run the workspace command rather than `-p your-crate` before pushing — it
   catches the crates you forgot — and treat a green local clippy as necessary
   rather than sufficient. Installing a second toolchain to check is usually
   not possible here; the disk note above is why.
+
+  All three were in **test** code, which is only linted under `--all-targets`,
+  and the third arrived by a mechanical edit: a script rewriting `row.computed()`
+  to `&row.computed` put the `&` into a format argument as well as into the
+  `matches!`. Re-read a scripted edit's output the way you would re-read one you
+  typed; a replacement that is right in most positions is not right in all of
+  them, and that is a different failure from the toolchain gap even though it
+  surfaced through it.
 - **`ty` resolves imports against whatever `site-packages` you happen to have,
   and CI has almost none.** The `scripts` job installs `clients/python[dev]`
   and nothing else, so a script importing a module this container happens to
