@@ -57,6 +57,12 @@ OUT = ROOT / "site" / "data" / "trips.bin.gz"
 
 
 def main(parquet: str) -> int:
+    # Function-local, and this file is excluded from `ty` because of it: see
+    # the root `pyproject.toml`. `pyarrow` is deliberately not a dependency of
+    # anything CI installs — the docstring above is where that was decided —
+    # so a type checker cannot resolve this import there. It resolves fine on a
+    # machine that has pyarrow, which is what makes it the worst kind of
+    # difference: green locally, red in CI, for a reason neither run mentions.
     import pyarrow.parquet as pq
 
     columns = [

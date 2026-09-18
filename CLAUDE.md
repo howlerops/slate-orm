@@ -93,7 +93,7 @@ cargo fmt -p <the crates you touched>                   # CI checks --all; see b
 cargo test -p <the crates you touched> --no-fail-fast   # see the disk note below
 cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
 sh .githooks/test-pre-commit.sh                         # the hook's own suite
-ruff check . && ty check                                # the Python outside clients/
+ruff check . && ty check                                # the Python outside clients/; see below
 python3 scripts/check_workspace.py                      # every crate is a member
 python3 site/check/docs.py                              # the docs site holds together
 python3 site/check/quickstarts.py                       # the docs' code, run
@@ -143,6 +143,20 @@ that is set and missing is a hard error, never a silent fall back to building.
   catches the crates you forgot — and treat a green local clippy as necessary
   rather than sufficient. Installing a second toolchain to check is usually
   not possible here; the disk note above is why.
+- **`ty` resolves imports against whatever `site-packages` you happen to have,
+  and CI has almost none.** The `scripts` job installs `clients/python[dev]`
+  and nothing else, so a script importing a module this container happens to
+  carry passes here and fails there — which is how `site/data/make-trips.py`
+  and its `pyarrow` went red on a file nobody had touched. To run the check the
+  way CI does:
+
+  ```sh
+  python3 -m venv /tmp/ci-env && /tmp/ci-env/bin/pip install -e './clients/python[dev]'
+  /tmp/ci-env/bin/ty check --python /tmp/ci-env
+  ```
+
+  A bare `ty check` is necessary and not sufficient, the same way a green local
+  clippy is.
 - **Pin anything that generates committed code.** `grpcio-tools` was declared
   `>=`, so the test that regenerates the Python protobuf stubs and compares
   them byte for byte was pinned to upstream's release calendar. It went red

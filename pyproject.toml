@@ -62,3 +62,20 @@ include = [
   "site/check",
   "site/data",
 ]
+# `site/data/make-trips.py` imports `pyarrow.parquet`, which is deliberately not
+# a dependency of anything CI installs: the script's own docstring records the
+# decision to *commit* its output rather than rebuild it, precisely to keep a
+# 50 MB download and a pyarrow dependency out of every run. So `ty` cannot
+# resolve that import in the environment it runs in — and *can* on a machine
+# that happens to have pyarrow, which is how this arrived: green here, red in
+# CI, on a file nobody had changed.
+#
+# Excluded from `ty` rather than suppressed per line, because a
+# `# ty: ignore[unresolved-import]` is itself environment-dependent: it is used
+# in CI and *unused* locally, and ty reports an unused directive. A suppression
+# that is right in one environment and wrong in the other is worse than none.
+#
+# `ruff` still checks the file — it resolves no imports, so the name errors,
+# the unused imports and the style are all still caught, which is most of the
+# value. What is lost is type-checking the one function that reads the parquet.
+exclude = ["site/data/make-trips.py"]
