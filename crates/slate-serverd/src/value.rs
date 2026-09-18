@@ -70,6 +70,12 @@ pub(crate) fn from_toml(value: &toml::Value, declared: ValueType, field: &str) -
             .map(Value::U64)
             .map_err(|_| Fault::new(format!("`{field} = {n}` is negative and the column holds u64"))),
         (toml::Value::Integer(n), ValueType::F64) => Ok(Value::F64(*n as f64)),
+        // A count of the column's smallest unit, not a number: at `scale = 2`,
+        // `default = 1250` is 12.50. Written as an integer rather than as
+        // `12.50` on purpose — a float default for a decimal column would be
+        // parsed by TOML as a binary double and rounded before this code ever
+        // saw it, which is the exact loss the type exists to avoid.
+        (toml::Value::Integer(n), ValueType::Decimal) => Ok(Value::Decimal(*n)),
         (toml::Value::Float(x), ValueType::F64) => Ok(Value::F64(*x)),
         (toml::Value::String(s), ValueType::Uuid) => uuid::Uuid::parse_str(s)
             .map(Value::Uuid)
@@ -126,8 +132,9 @@ pub(crate) fn value_type(name: &str, field: &str) -> Started<ValueType> {
         "f64" => Ok(ValueType::F64),
         "uuid" => Ok(ValueType::Uuid),
         "vector" => Ok(ValueType::Vector),
+        "decimal" => Ok(ValueType::Decimal),
         other => Err(Fault::new(format!(
-            "`{field} = \"{other}\"` is not a type; there are bool, bytes, str, i64, u64, f64, uuid and vector"
+            "`{field} = \"{other}\"` is not a type; there are bool, bytes, str, i64, u64, f64, uuid, vector and decimal"
         ))),
     }
 }

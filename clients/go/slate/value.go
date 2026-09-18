@@ -9,6 +9,7 @@ package slate
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
 
 	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
 )
@@ -44,6 +45,17 @@ type Uint uint64
 // Float is a double.
 type Float float64
 
+// Units is a count of a decimal column's smallest unit.
+//
+// The same type the Rust surface has, and for the same reason: the *scale*
+// lives in the schema, not in the value. Units(1250) in a column declared
+// scale 2 is 12.50, and the identical value in a scale-0 column is 1250.
+// Nothing on the wire says which, because the protocol publishes no schema.
+//
+// So this is not a decimal number type and does no arithmetic. [Units.String]
+// takes the scale as an argument, because a value does not have one.
+type Units int64
+
 // UUID is a UUID, held as its sixteen bytes.
 type UUID [16]byte
 
@@ -71,6 +83,9 @@ func (v Uint) toProto() *pb.Value {
 func (v Float) toProto() *pb.Value {
 	return &pb.Value{Kind: &pb.Value_DoubleValue{DoubleValue: float64(v)}}
 }
+func (v Units) toProto() *pb.Value {
+	return &pb.Value{Kind: &pb.Value_DecimalValue{DecimalValue: int64(v)}}
+}
 func (v UUID) toProto() *pb.Value {
 	b := make([]byte, 16)
 	copy(b, v[:])
@@ -78,6 +93,37 @@ func (v UUID) toProto() *pb.Value {
 }
 func (v Vector) toProto() *pb.Value {
 	return &pb.Value{Kind: &pb.Value_VectorValue{VectorValue: &pb.Vector{Elements: []float32(v)}}}
+}
+
+// StringWithScale renders the units against a scale, as a decimal string.
+//
+// Mirrors slate_orm::Units::to_string_with_scale, and the conformance corpus
+// compares the two. A negative scale is treated as zero rather than panicking:
+// this is a rendering helper, and a caller who got a scale wrong wants a
+// number they can see is wrong, not a crash in a log line.
+func (v Units) StringWithScale(scale int) string {
+	if scale <= 0 {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	divisor := int64(1)
+	for range scale {
+		divisor *= 10
+	}
+	sign := ""
+	// The magnitude is a uint64 because math.MinInt64's does not fit in an
+	// int64 at all. Which side the conversion goes on does not matter —
+	// measured, and -uint64(v) and uint64(-v) produce identical bits for every
+	// int64, because Go defines signed negation as two's-complement wrapping.
+	// So this is not the clever spelling of the pair, it is the readable one,
+	// and mutating it to the other is an equivalent mutation.
+	magnitude := uint64(v)
+	if v < 0 {
+		sign = "-"
+		magnitude = -uint64(v)
+	}
+	whole := magnitude / uint64(divisor)
+	part := magnitude % uint64(divisor)
+	return fmt.Sprintf("%s%d.%0*d", sign, whole, scale, part)
 }
 
 // String renders a UUID in the usual hyphenated form.
@@ -110,6 +156,8 @@ func valueFromProto(v *pb.Value) (Value, error) {
 		return Uint(k.Uint64Value), nil
 	case *pb.Value_DoubleValue:
 		return Float(k.DoubleValue), nil
+	case *pb.Value_DecimalValue:
+		return Units(k.DecimalValue), nil
 	case *pb.Value_UuidValue:
 		if len(k.UuidValue) != 16 {
 			return nil, fmt.Errorf(

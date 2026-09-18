@@ -196,6 +196,43 @@ misdeclared table is refused before it can answer a transposed row.
 Per-table and opt-in: a table with no declaration sends no claim and behaves
 exactly as before.
 
+## Decimals, and the conditional update
+
+A decimal column holds a count of its own smallest unit. `units(1250n)` in a
+column declared `scale: 2` is 12.50, and the identical value in a `scale: 0`
+column is 1250 — the protocol publishes no schema, so nothing on the wire says
+which. `unitsToString` therefore takes the scale as an argument, and the scale
+itself lives in your `ColumnDef`:
+
+```ts
+await session.insert("prices", [uint(1), str("coffee"), units(1250n)]);
+
+const row = await session.get("prices", [uint(1)]);
+unitsToString((row![2] as { kind: "units"; value: bigint }).value, 2); // "12.50"
+```
+
+A `bigint`, like the other 64-bit integers: a currency total in the smallest
+unit is exactly where a `number`'s 2^53 is reached first, and it is reached
+silently. `int(...)` in a decimal column is refused rather than coerced,
+because this server orders values type first.
+
+`updateIfUnchanged` is optimistic concurrency, per row. Each {@link RowUpdate}
+pairs the row to write with the row as you last read it; the server compares
+the *whole stored row* and refuses with `ABORTED` if anything about it moved,
+so a read-modify-write that raced another writer is reported rather than
+silently overwriting their edit.
+
+```ts
+await session.updateIfUnchanged("prices", {
+  row: [uint(1), str("coffee"), units(1400n)],
+  was: [uint(1), str("coffee"), units(1250n)],
+});
+```
+
+A method of its own rather than an argument to `update`, because `update` is
+variadic over its rows. The Python client spells the same thing
+`update(..., expected=...)`.
+
 ## What is not here
 
 No vector similarity search, and no computed values in a query or a join

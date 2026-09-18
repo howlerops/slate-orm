@@ -185,6 +185,44 @@ misdeclared table is refused before it can answer a transposed row.
 Per-table and opt-in: a table with no declaration sends no claim and behaves
 exactly as before.
 
+## Decimals, and the conditional update
+
+A decimal column holds a count of its own smallest unit. `slate.Units(1250)` in
+a column declared `scale = 2` is 12.50, and the identical value in a `scale = 0`
+column is 1250 — the protocol publishes no schema, so nothing on the wire says
+which. `Units.StringWithScale` therefore takes the scale as an argument, and
+the scale itself lives in your `ColumnDef`:
+
+```go
+session.Insert(ctx, "prices",
+    []slate.Value{slate.Uint(1), slate.String("coffee"), slate.Units(1250)})
+
+row, _, _ := session.Get(ctx, "prices", []slate.Value{slate.Uint(1)})
+fmt.Println(row[2].(slate.Units).StringWithScale(2)) // 12.50
+```
+
+`slate.Int` in a decimal column is refused rather than coerced: this server
+orders values type first, so an `i64` stored there would not sort with its
+neighbours and a predicate built from a row read back would select nothing.
+
+`UpdateIfUnchanged` is optimistic concurrency, per row. Each [RowUpdate] pairs
+the row to write with the row as you last read it; the server compares the
+*whole stored row* and refuses with `codes.Aborted` if anything about it moved,
+so a read-modify-write that raced another writer is reported rather than
+silently overwriting their edit.
+
+```go
+_, err := session.UpdateIfUnchanged(ctx, "prices", slate.RowUpdate{
+    Row: []slate.Value{slate.Uint(1), slate.String("coffee"), slate.Units(1400)},
+    Was: []slate.Value{slate.Uint(1), slate.String("coffee"), slate.Units(1250)},
+})
+```
+
+A method of its own rather than an argument to `Update`, because `Update` is
+variadic over its rows and Go has no optional parameters. The Python client
+spells the same thing `update(..., expected=...)`; the difference is Go's, not
+the protocol's.
+
 ## What is not here
 
 No vector similarity search surface, and no computed values in a `Query` or a

@@ -19,12 +19,23 @@ const (
 	TypeFloat  ColumnType = "f64"
 	TypeUUID   ColumnType = "uuid"
 	TypeVector ColumnType = "vector"
+	// TypeDecimal is an exact decimal. The scale is not part of the type; see
+	// [ColumnDef.Scale].
+	TypeDecimal ColumnType = "decimal"
 )
 
 // ColumnDef is one column of a [TableDef].
 type ColumnDef struct {
 	Name string
 	Type ColumnType
+	// Scale is the digits after the decimal point, for a [TypeDecimal] column.
+	// Zero and meaningless for every other type.
+	//
+	// Deliberately not part of the fingerprint, because the server does not
+	// hash it either: a scale addresses no column, so a client that has it
+	// wrong still reaches the right one. It is here for rendering — see
+	// [Units.StringWithScale] — and for nothing else.
+	Scale int
 }
 
 // TableDef is this client's declaration of a table.

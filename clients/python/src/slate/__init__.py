@@ -120,7 +120,7 @@ from .scalar import (
 )
 from .schema import Column, Table
 from .types import ValueType
-from .values import NULL, Null, PyValue, Vector, i64, u64
+from .values import NULL, Null, PyValue, Units, Vector, i64, u64
 
 __version__ = "0.0.1"
 
@@ -191,6 +191,7 @@ __all__ = [
     "Transaction",
     "Unauthenticated",
     "Unavailable",
+    "Units",
     "UnknownOutcome",
     "UpdateWhere",
     "ValueType",

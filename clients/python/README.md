@@ -185,6 +185,50 @@ failure in every caller that upgraded without asking for it. The cost of that
 choice is that a head node which accepts a connection and then stops answering
 blocks a caller for ever, which `tests/test_deadlines.py` demonstrates.
 
+## Decimals, and the conditional update
+
+A decimal column holds a count of its own smallest unit. `Units(1250)` in a
+column declared `scale=2` is 12.50, and the identical value in a `scale=0`
+column is 1250 — the protocol publishes no schema, so nothing on the wire says
+which. `Units.to_string_with_scale` therefore takes the scale as an argument,
+and the scale itself is declared on the `Column`:
+
+```python
+PRICES = Table(
+    "prices",
+    [Column("id", U64), Column("label", STR), Column("amount", ValueType.DECIMAL, scale=2)],
+    primary_key=["id"],
+)
+
+client.insert(PRICES, [(u64(1), "coffee", Units(1250))])
+row = client.get(PRICES, (u64(1),))
+row.get("amount").to_string_with_scale(PRICES.scale_of("amount"))  # "12.50"
+```
+
+A `decimal.Decimal` is **refused** rather than scaled: it carries a scale of
+its own, there is nothing on the wire to reconcile it against, and a client
+that guessed would be off by a factor of ten on a column it guessed wrong
+about. A bare `int` against a column declared `DECIMAL` is taken as units,
+which is the same rule the `i64`/`u64` hint follows.
+
+`update(..., expected=...)` is optimistic concurrency, per row: one expected
+row per updated row, in the same order, each as this caller last read it. The
+server compares the *whole stored row* and raises `Aborted` (`ROW_CHANGED`) if
+anything about it moved, so a read-modify-write that raced another writer is
+reported rather than silently overwriting their edit.
+
+```python
+client.update(
+    PRICES,
+    [(u64(1), "coffee", Units(1400))],
+    expected=[(u64(1), "coffee", Units(1250))],
+)
+```
+
+The whole row rather than a version column, for the reason the kernel gives: a
+version column only catches writers who remembered to bump it, which makes it a
+convention every call site has to keep rather than a property of the data.
+
 ## Layout
 
 ```

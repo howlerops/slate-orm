@@ -24,3 +24,6 @@ class ValueType(enum.Enum):
     F64 = "f64"
     UUID = "uuid"
     VECTOR = "vector"
+    #: An exact decimal. The *scale* is not part of the type — see
+    #: `Column.scale`, and `values.Units` for what a decimal value is.
+    DECIMAL = "decimal"

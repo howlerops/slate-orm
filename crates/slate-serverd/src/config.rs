@@ -522,9 +522,21 @@ pub(crate) struct Table {
 pub(crate) struct Column {
     /// The column's name.
     pub(crate) name: String,
-    /// One of `bool`, `bytes`, `str`, `i64`, `u64`, `f64`, `uuid`, `vector`.
+    /// One of `bool`, `bytes`, `str`, `i64`, `u64`, `f64`, `uuid`, `vector`,
+    /// `decimal`.
     #[serde(rename = "type")]
     pub(crate) value_type: String,
+    /// Digits after the decimal point, for a `decimal` column.
+    ///
+    /// Required there and refused anywhere else, rather than defaulted to 0: a
+    /// decimal column whose scale was left out would silently store units at
+    /// scale 0, so every value in it would be a hundred times the number
+    /// somebody meant, and nothing would ever say so. A scale on a column that
+    /// is not a decimal is a different mistake with the same cause — somebody
+    /// believes this column holds a fixed-point number — and is refused for
+    /// the same reason.
+    #[serde(default)]
+    pub(crate) scale: Option<u8>,
     /// Whether the column may hold null.
     #[serde(default)]
     pub(crate) nullable: bool,

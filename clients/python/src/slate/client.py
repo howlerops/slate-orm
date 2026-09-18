@@ -748,22 +748,47 @@ class _Ops:
         return self._write_result(response)
 
     def update(
-        self, table: Table, rows: Iterable[Sequence[PyValue] | Row]
+        self,
+        table: Table,
+        rows: Iterable[Sequence[PyValue] | Row],
+        expected: Iterable[Sequence[PyValue] | Row] | None = None,
     ) -> WriteResult:
         """Replace rows by primary key.
 
         The whole batch is refused if any row is missing, rather than a prefix
         being applied.
+
+        `expected` makes it a *conditional* update: one row per row in `rows`,
+        in the same order, each the row as this caller last read it. The server
+        compares the whole stored row and raises `Aborted` (`ROW_CHANGED`) if
+        anything about it has moved, so a read-modify-write that raced another
+        writer is refused rather than silently overwriting their edit.
+
+        It is the whole row rather than a version column for the reason the
+        kernel gives: a version column only catches writers who remembered to
+        bump it, which makes it a convention rather than a property of the
+        data.
         """
-        response = self._unary(
-            self._conn.stub.Update,
-            pb.UpdateRequest(
-                transaction=self._transaction_id(),
-                table=table.name,
-                rows=self._rows_proto(table, rows),
-                schema=self._schema_check(table),
-            ),
+        request = pb.UpdateRequest(
+            transaction=self._transaction_id(),
+            table=table.name,
+            rows=self._rows_proto(table, rows),
+            schema=self._schema_check(table),
         )
+        if expected is not None:
+            # The arity is the server's to refuse, and it does — but the
+            # message is better from here, where the two sequences still have
+            # names. Sending a short `expected` would leave the rows past its
+            # end updated unconditionally, which is precisely the lost update
+            # this argument exists to catch.
+            witnesses = self._rows_proto(table, expected)
+            if len(witnesses) != len(request.rows):
+                raise ValueError(
+                    f"`expected` must name one row per updated row: "
+                    f"{len(request.rows)} row(s) and {len(witnesses)} expected"
+                )
+            request.expected.extend(witnesses)
+        response = self._unary(self._conn.stub.Update, request)
         return self._write_result(response)
 
     def delete(

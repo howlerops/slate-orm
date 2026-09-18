@@ -864,6 +864,26 @@ impl TableBuilder {
         self.push_decimal(name, scale, true, 0)
     }
 
+    /// Set the scale of a decimal column already appended.
+    ///
+    /// [`TableBuilder::decimal_column`] is the way to declare one, and this is
+    /// for a caller that cannot use it: `slate-serverd` builds a column from a
+    /// TOML table whose `nullable`, `added_in` and `default` combination is
+    /// already a five-armed match over the four `column` entry points, and a
+    /// scale-carrying variant of each would double it for one type.
+    ///
+    /// A name that is not a column here is ignored rather than refused. The
+    /// builder reports nothing until [`TableBuilder::build`], and the column
+    /// this would have named is refused there under its own error — which is a
+    /// better message than "no such column" from a scale.
+    #[must_use]
+    pub fn scale_for(mut self, column: &str, scale: u8) -> Self {
+        if let Some(found) = self.columns.iter_mut().find(|c| c.name == column) {
+            found.scale = scale;
+        }
+        self
+    }
+
     fn push_decimal(
         mut self,
         name: impl Into<String>,

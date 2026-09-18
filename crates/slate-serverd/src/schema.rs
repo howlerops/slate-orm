@@ -30,7 +30,7 @@ use slate_kernel::Expr;
 use slate_schema::{
     Catalog, CheckDef, ForeignKeyDef, IndexDef, IndexId, ReferentialAction, TableDef, TableId,
 };
-use slate_tuple::Direction;
+use slate_tuple::{Direction, ValueType};
 use std::collections::BTreeMap;
 
 /// Build the catalog the head node serves.
@@ -180,6 +180,22 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
             &column.value_type,
             &format!("column `{}`'s `type`", column.name),
         )?;
+        match (declared, column.scale) {
+            (ValueType::Decimal, None) => {
+                return Err(Fault::new(format!(
+                    "column `{}` is a decimal and has no `scale`; a decimal value is a count of the column's smallest unit, so without a scale nothing can say whether `1250` is 12.50 or 1250",
+                    column.name
+                )));
+            }
+            (other, Some(_)) if other != ValueType::Decimal => {
+                return Err(Fault::new(format!(
+                    "column `{}` has a `scale` and holds {other}, which has no scale; only a decimal column does",
+                    column.name
+                )));
+            }
+            _ => {}
+        }
+
         let default = column
             .default
             .as_ref()
@@ -210,6 +226,15 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
             (None, true, _) => builder.nullable_column(&column.name, declared),
             (None, false, _) => builder.column(&column.name, declared),
         };
+
+        // After the arms above, because a decimal's scale belongs to the
+        // column and every one of those builders takes only a type. The
+        // `decimal_column` pair is the scale-carrying entry point, and using
+        // it would mean duplicating the whole `added_in`/`nullable`/`default`
+        // matrix a second time for one type.
+        if let Some(scale) = column.scale {
+            builder = builder.scale_for(&column.name, scale);
+        }
 
         // `added_column_with_default` has already applied it; applying it
         // twice is harmless but the second `ColumnChange` would be noise in
@@ -536,6 +561,100 @@ primary_key = ["id"]
         assert!(
             error.contains("`docs`") && error.contains("`other`"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn a_decimal_column_carries_its_scale() {
+        let catalog = tables(
+            r#"
+[[tables]]
+name = "prices"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "amount", type = "decimal", scale = 2 },
+]
+primary_key = ["id"]
+"#,
+        )
+        .expect("a decimal column is declarable");
+        let table = catalog.table_by_name("prices").expect("prices");
+        let amount = &table.columns()[1];
+        assert_eq!(amount.value_type(), ValueType::Decimal);
+        assert_eq!(amount.scale(), Some(2));
+        // And it is `None` for the column beside it, so a caller cannot read a
+        // scale off a type that does not have one.
+        assert_eq!(table.columns()[0].scale(), None);
+    }
+
+    #[test]
+    fn a_decimal_column_without_a_scale_is_refused() {
+        // Not defaulted to 0. A decimal is a count of the column's smallest
+        // unit, so a column that meant scale 2 and got 0 stores every value a
+        // hundred times too large and nothing anywhere says so.
+        let error = tables(
+            r#"
+[[tables]]
+name = "prices"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "amount", type = "decimal" },
+]
+primary_key = ["id"]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("has no `scale`"), "{error}");
+        assert!(error.contains("12.50"), "{error}");
+    }
+
+    #[test]
+    fn a_scale_on_a_column_that_is_not_a_decimal_is_refused() {
+        // The same mistake from the other side: somebody believes this column
+        // holds a fixed-point number. Accepting the scale and ignoring it
+        // would confirm the belief.
+        let error = tables(
+            r#"
+[[tables]]
+name = "prices"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "amount", type = "i64", scale = 2 },
+]
+primary_key = ["id"]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("only a decimal column does"), "{error}");
+    }
+
+    #[test]
+    fn a_decimal_default_is_its_units() {
+        // An integer, not `12.50`. TOML would parse a float default as a
+        // binary double and round it before this code saw it — the exact loss
+        // the type exists to avoid — so the units are what a default names.
+        let catalog = tables(
+            r#"
+[[tables]]
+name = "prices"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "amount", type = "decimal", scale = 2, default = 1250 },
+]
+primary_key = ["id"]
+"#,
+        )
+        .expect("a decimal default is declarable");
+        let table = catalog.table_by_name("prices").expect("prices");
+        assert_eq!(
+            table.columns()[1].default_value(),
+            Some(&Value::Decimal(1250))
         );
     }
 

@@ -19,6 +19,7 @@ from slate import Column, Table, ValueType
 I64 = ValueType.I64
 U64 = ValueType.U64
 STR = ValueType.STR
+DECIMAL = ValueType.DECIMAL
 
 DOCS = Table(
     "docs",
@@ -123,4 +124,33 @@ COPIES = Table(
     primary_key=["tenant_id", "id"],
 )
 
-ALL = (DOCS, USERS, AUTHORS, BOOKS, SALES, SECRETS, LIBRARIES, SHELVES, COPIES)
+# A decimal column, at a scale that is neither 0 nor 1 — at scale 0 a decimal
+# is indistinguishable from an `i64` in every assertion, which is the one scale
+# a test of decimals must not use. `1250` here is 12.50.
+#
+# The scale is declared and is *not* part of the fingerprint, because the
+# server does not hash it: a scale addresses no column, so a client that has it
+# wrong still reaches the right one and renders the wrong number. That is a
+# real hole and this declaration is where it would start.
+PRICES = Table(
+    "prices",
+    [
+        Column("id", U64),
+        Column("label", STR),
+        Column("amount", DECIMAL, scale=2),
+    ],
+    primary_key=["id"],
+)
+
+ALL = (
+    DOCS,
+    USERS,
+    AUTHORS,
+    BOOKS,
+    SALES,
+    SECRETS,
+    LIBRARIES,
+    SHELVES,
+    COPIES,
+    PRICES,
+)

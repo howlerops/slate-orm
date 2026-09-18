@@ -21,12 +21,23 @@ export type ColumnType =
   | "u64"
   | "f64"
   | "uuid"
-  | "vector";
+  | "vector"
+  | "decimal";
 
 /** One column of a [TableDef]. */
 export interface ColumnDef {
   readonly name: string;
   readonly type: ColumnType;
+  /**
+   * Digits after the decimal point, for a `"decimal"` column. Absent and
+   * meaningless for every other type.
+   *
+   * Deliberately *not* part of the fingerprint, because the server does not
+   * hash it either: a scale addresses no column, so a client that has it wrong
+   * still reaches the right one. It is here for rendering — see
+   * `unitsToString` — and for nothing else.
+   */
+  readonly scale?: number;
 }
 
 /** This client's declaration of a table. */

@@ -32,10 +32,19 @@ an unset `oneof`, for the same reason.
 `bool`, `str`, `float`, `bytes` and `UUID` are unambiguous and need no hint.
 `None` is `NULL_VALUE` — an explicit null, which is the only kind the server
 accepts.
+
+A decimal is the same problem a third time, and gets the same answer. The wire
+carries a count of the column's smallest unit and nothing else; the *scale* is
+the column's and lives in the catalog. So `Units(1250)` states a decimal
+explicitly, a bare `int` against a column declared `ValueType.DECIMAL` is taken
+as units, and a `decimal.Decimal` is **refused** — it carries a scale of its
+own, there is no schema on the wire to reconcile it against, and guessing would
+be off by a factor of ten.
 """
 
 from __future__ import annotations
 
+import decimal as _decimal
 import uuid as _uuid
 from collections.abc import Sequence
 
@@ -46,6 +55,7 @@ __all__ = [
     "NULL",
     "Null",
     "PyValue",
+    "Units",
     "Vector",
     "from_value",
     "i64",
@@ -100,6 +110,35 @@ class u64(_Tagged):
     __slots__ = ()
 
 
+class Units(_Tagged):
+    """A count of a decimal column's smallest unit.
+
+    The same type the Rust surface has, and for the same reason: **the scale
+    lives in the schema, not in the value.** `Units(1250)` in a column declared
+    `scale=2` is 12.50, and the identical value in a `scale=0` column is 1250.
+    Nothing on the wire says which, because the protocol publishes no schema.
+
+    So this does not accept a `decimal.Decimal` and does not multiply anything.
+    `to_string_with_scale` is how a value becomes a number a person reads, and
+    it takes the scale as an argument because a value does not have one.
+    """
+
+    __slots__ = ()
+
+    def to_string_with_scale(self, scale: int) -> str:
+        """Render against `scale`, as a decimal string.
+
+        Mirrors `slate_orm::Units::to_string_with_scale`, and the conformance
+        corpus compares the two.
+        """
+        if scale < 0:
+            raise ValueError(f"a scale is not negative, got {scale}")
+        if scale == 0:
+            return str(int(self))
+        whole, part = divmod(abs(int(self)), 10**scale)
+        return f"{'-' if int(self) < 0 else ''}{whole}.{part:0{scale}d}"
+
+
 class Vector(tuple[float, ...]):
     """A dense f32 vector, for an embedding column.
 
@@ -115,7 +154,8 @@ class Vector(tuple[float, ...]):
 
 
 #: Everything this client will encode. `int` is here and is refused without a
-#: hint; see the module docstring.
+#: hint; see the module docstring. `Units` is an `int` subclass, so it needs no
+#: arm of its own.
 PyValue = None | Null | bool | int | float | str | bytes | _uuid.UUID | Vector
 
 
@@ -143,12 +183,22 @@ def to_value(value: PyValue, hint: ValueType | None = None) -> pb.Value:
         return pb.Value(int64_value=int(value))
     if isinstance(value, u64):
         return pb.Value(uint64_value=int(value))
+    if isinstance(value, Units):
+        return pb.Value(decimal_value=int(value))
 
     if isinstance(value, int):
         if hint is ValueType.I64:
             return pb.Value(int64_value=value)
         if hint is ValueType.U64:
             return pb.Value(uint64_value=value)
+        if hint is ValueType.DECIMAL:
+            # The units, not the number: an `int` going into a decimal column
+            # is already a count of the column's smallest unit, exactly as
+            # `Units` would be. Coercing here rather than refusing keeps the
+            # rule the module docstring states — a declared slot disambiguates
+            # a bare `int` — and a caller who finds that surprising is a caller
+            # who has not read the column's scale, which no client can fix.
+            return pb.Value(decimal_value=value)
         raise ValueTypeError(
             f"the integer {value} is going into a slot with no declared type, and the "
             "wire has both `int64_value` and `uint64_value`. The kernel orders values "
@@ -168,6 +218,16 @@ def to_value(value: PyValue, hint: ValueType | None = None) -> pb.Value:
         return pb.Value(vector_value=pb.Vector(elements=list(value)))
     if isinstance(value, bytes):
         return pb.Value(bytes_value=value)
+
+    if isinstance(value, _decimal.Decimal):
+        raise ValueTypeError(
+            "a `decimal.Decimal` has a scale of its own and a decimal column has "
+            "one too, and nothing on the wire reconciles them: the protocol "
+            "publishes no schema, so this client cannot know that 12.50 into a "
+            "`scale=2` column is 1250 and into a `scale=4` column is 125000. "
+            "Scale it yourself and send `Units(...)` — the same thing the Rust "
+            "surface requires."
+        )
 
     raise ValueTypeError(f"cannot put {type(value).__name__} on the wire")
 
@@ -199,6 +259,8 @@ def from_value(value: pb.Value) -> PyValue:
         return i64(value.int64_value)
     if kind == "uint64_value":
         return u64(value.uint64_value)
+    if kind == "decimal_value":
+        return Units(value.decimal_value)
     if kind == "double_value":
         return value.double_value
     if kind == "string_value":

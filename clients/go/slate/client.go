@@ -406,6 +406,59 @@ func (s *Session) Upsert(ctx context.Context, table string, rows ...[]Value) (Wr
 	})
 }
 
+// RowUpdate is one row of a conditional update.
+//
+// Row is what to write; Was is that row exactly as this caller last read it.
+// The server compares the whole stored row against Was and refuses the write
+// with codes.Aborted (ROW_CHANGED) if anything about it has moved — so a
+// read-modify-write that raced another writer is reported rather than silently
+// overwriting their edit.
+//
+// The whole row rather than a version column, for the reason the kernel gives:
+// a version column only catches writers who remembered to bump it, which makes
+// it a convention every call site has to keep rather than a property of the
+// data.
+type RowUpdate struct {
+	Row []Value
+	Was []Value
+}
+
+// splitUpdates pulls a conditional update apart into the two parallel slices
+// the wire wants.
+//
+// [RowUpdate] pairs them at the call site instead, because the wire's shape —
+// two repeated fields that must be the same length and in the same order — is
+// exactly the shape a caller gets wrong. Pairing them makes a mismatched
+// length unrepresentable rather than a runtime refusal.
+func splitUpdates(updates []RowUpdate) (rows, was [][]Value) {
+	rows = make([][]Value, len(updates))
+	was = make([][]Value, len(updates))
+	for at, update := range updates {
+		rows[at] = update.Row
+		was[at] = update.Was
+	}
+	return rows, was
+}
+
+// UpdateIfUnchanged replaces rows only if each still looks as the caller last
+// read it. See [RowUpdate].
+//
+// A method of its own rather than an argument to [Session.Update], because
+// Update is variadic over its rows and Go has no optional parameters. The
+// Python client spells the same thing `update(..., expected=...)`; the
+// difference is Go's, not the protocol's.
+func (s *Session) UpdateIfUnchanged(
+	ctx context.Context, table string, updates ...RowUpdate,
+) (WriteResult, error) {
+	rows, was := splitUpdates(updates)
+	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return s.client.rpc.Update(ctx, &pb.UpdateRequest{
+			Table: table, Rows: rowsToProto(rows), Expected: rowsToProto(was),
+			Schema: s.client.schemas.claimFor(table),
+		})
+	})
+}
+
 // Update replaces rows, refusing one whose primary key is not there.
 func (s *Session) Update(ctx context.Context, table string, rows ...[]Value) (WriteResult, error) {
 	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
@@ -692,6 +745,21 @@ func (t *Transaction) Update(ctx context.Context, table string, rows ...[]Value)
 	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
 		return t.session.client.rpc.Update(ctx, &pb.UpdateRequest{
 			Transaction: t.id, Table: table, Rows: rowsToProto(rows),
+			Schema: t.session.client.schemas.claimFor(table),
+		})
+	})
+}
+
+// UpdateIfUnchanged replaces rows inside the transaction, only if each still
+// looks as the caller last read it. See [RowUpdate].
+func (t *Transaction) UpdateIfUnchanged(
+	ctx context.Context, table string, updates ...RowUpdate,
+) (WriteResult, error) {
+	rows, was := splitUpdates(updates)
+	return t.session.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return t.session.client.rpc.Update(ctx, &pb.UpdateRequest{
+			Transaction: t.id, Table: table,
+			Rows: rowsToProto(rows), Expected: rowsToProto(was),
 			Schema: t.session.client.schemas.claimFor(table),
 		})
 	})

@@ -53,6 +53,23 @@ class Column:
 
     name: str
     type: ValueType
+    #: Digits after the decimal point, for a `DECIMAL` column; zero and
+    #: meaningless for every other type. Read it with `Table.scale_of`.
+    #:
+    #: Deliberately **not** part of the fingerprint, because the server does not
+    #: hash it either: a scale addresses no column, so a client that has it
+    #: wrong still reaches the right one. It is here for rendering — `Units` to
+    #: a decimal string — and for nothing else.
+    scale: int = 0
+
+    def __post_init__(self) -> None:
+        if self.scale < 0:
+            raise ValueError(f"column `{self.name}` declares a negative scale")
+        if self.scale and self.type is not ValueType.DECIMAL:
+            raise ValueError(
+                f"column `{self.name}` is {self.type.name.lower()} and has no scale; "
+                "only a decimal column does"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +120,18 @@ class Table:
         for at, column in enumerate(self.columns):
             if column.name == name:
                 return at
+        return None
+
+    def scale_of(self, name: str) -> int | None:
+        """The declared scale of a decimal column, or `None` for anything else.
+
+        `None` rather than 0 for a non-decimal, the same distinction
+        `ColumnDef::scale` makes on the Rust side: a caller cannot read a scale
+        off a type that does not have one.
+        """
+        for column in self.columns:
+            if column.name == name:
+                return column.scale if column.type is ValueType.DECIMAL else None
         return None
 
     def type_of(self, name: str) -> ValueType | None:

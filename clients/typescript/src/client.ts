@@ -69,6 +69,29 @@ export interface ServedBy {
   readonly sequence: bigint;
 }
 
+/**
+ * One row of a conditional update.
+ *
+ * `row` is what to write; `was` is that row exactly as this caller last read
+ * it. The server compares the whole stored row against `was` and refuses the
+ * write with `ABORTED` (`ROW_CHANGED`) if anything about it has moved — so a
+ * read-modify-write that raced another writer is reported rather than silently
+ * overwriting their edit.
+ *
+ * The whole row rather than a version column, for the reason the kernel gives:
+ * a version column only catches writers who remembered to bump it, which makes
+ * it a convention every call site has to keep rather than a property of the
+ * data.
+ *
+ * A pair rather than two parallel arrays, because the wire's shape — two
+ * repeated fields that must be the same length and in the same order — is
+ * exactly the shape a caller gets wrong.
+ */
+export interface RowUpdate {
+  readonly row: Value[];
+  readonly was: Value[];
+}
+
 /** What a write reports. */
 export interface WriteResult {
   /** The writer's position after this write, if it said. */
@@ -845,6 +868,22 @@ export class Session {
     });
   }
 
+  /**
+   * Replace rows only if each still looks as the caller last read it.
+   *
+   * See {@link RowUpdate}. A method of its own rather than an argument to
+   * `update`, because `update` is variadic over its rows; the Python client
+   * spells the same thing `update(..., expected=...)`.
+   */
+  updateIfUnchanged(table: string, ...updates: RowUpdate[]): Promise<WriteResult> {
+    return this.#write("Update", {
+      table,
+      rows: updates.map((u) => rowToWire(u.row)),
+      expected: updates.map((u) => rowToWire(u.was)),
+      schema: this.#client.claim(table),
+    });
+  }
+
   /** Remove rows by primary key. */
   delete(table: string, ...keys: Value[][]): Promise<WriteResult> {
     return this.#write("Delete", {
@@ -1513,6 +1552,20 @@ export class Transaction {
       transaction: this.#id,
       table,
       rows: rows.map(rowToWire),
+      schema: this.#client.claim(table),
+    });
+  }
+
+  /**
+   * Replace rows inside the transaction, only if each still looks as the
+   * caller last read it. See {@link RowUpdate}.
+   */
+  updateIfUnchanged(table: string, ...updates: RowUpdate[]): Promise<WriteResult> {
+    return this.#session.writeThrough("Update", {
+      transaction: this.#id,
+      table,
+      rows: updates.map((u) => rowToWire(u.row)),
+      expected: updates.map((u) => rowToWire(u.was)),
       schema: this.#client.claim(table),
     });
   }

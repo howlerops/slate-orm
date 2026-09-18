@@ -19,6 +19,7 @@ export type Value =
   | { kind: "int"; value: bigint }
   | { kind: "uint"; value: bigint }
   | { kind: "float"; value: number }
+  | { kind: "units"; value: bigint }
   | { kind: "uuid"; value: Uint8Array }
   | { kind: "vector"; value: number[] };
 
@@ -49,6 +50,43 @@ export const uint = (value: bigint | number): Value => ({
 /** A double. */
 export const float = (value: number): Value => ({ kind: "float", value });
 
+/**
+ * A count of a decimal column's smallest unit.
+ *
+ * The same type the Rust surface has, and for the same reason: the *scale*
+ * lives in the schema, not in the value. `units(1250n)` in a column declared
+ * scale 2 is 12.50, and the identical value in a scale-0 column is 1250.
+ * Nothing on the wire says which, because the protocol publishes no schema.
+ *
+ * `bigint`, like the other 64-bit integers — a decimal column is exactly where
+ * a `number`'s 2^53 would be reached by a currency total and lost silently.
+ */
+export const units = (value: bigint | number): Value => ({
+  kind: "units",
+  value: BigInt(value),
+});
+
+/**
+ * Render units against a scale, as a decimal string.
+ *
+ * Mirrors `slate_orm::Units::to_string_with_scale`, and the conformance corpus
+ * compares the two. A scale below zero is treated as zero rather than throwing:
+ * this is a rendering helper, and a caller who got a scale wrong wants a number
+ * they can see is wrong, not an exception in a render path.
+ */
+export function unitsToString(value: bigint, scale: number): string {
+  const digits = Math.max(0, Math.trunc(scale));
+  if (digits === 0) {
+    return value.toString();
+  }
+  const divisor = 10n ** BigInt(digits);
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  const whole = magnitude / divisor;
+  const part = magnitude % divisor;
+  return `${negative ? "-" : ""}${whole}.${part.toString().padStart(digits, "0")}`;
+}
+
 /** A UUID, as its sixteen bytes. */
 export function uuid(value: Uint8Array): Value {
   if (value.length !== 16) {
@@ -77,6 +115,8 @@ export function valueToWire(value: Value): Record<string, unknown> {
       return { uint64Value: value.value.toString() };
     case "float":
       return { doubleValue: value.value };
+    case "units":
+      return { decimalValue: value.value.toString() };
     case "uuid":
       return { uuidValue: Buffer.from(value.value) };
     case "vector":
@@ -113,6 +153,8 @@ export function valueFromWire(wire: unknown): Value {
       return { kind: "uint", value: BigInt(String(w["uint64Value"])) };
     case "doubleValue":
       return { kind: "float", value: Number(w["doubleValue"]) };
+    case "decimalValue":
+      return { kind: "units", value: BigInt(String(w["decimalValue"])) };
     case "uuidValue": {
       const raw = toBytes(w["uuidValue"]);
       if (raw.length !== 16) {
