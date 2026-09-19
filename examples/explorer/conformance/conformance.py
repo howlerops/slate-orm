@@ -547,7 +547,34 @@ EXPECTED_REFUSALS = {
 #: comparison lives.
 MUST_DIFFER: list[tuple[str, str]] = [
     ("a read that cannot see a retired row", "a read that asks for retired rows too"),
+    # `returning` has the same shape and was demonstrated to have the same
+    # hole: every `Returning` in all three clients set to false — twelve call
+    # sites — and the run stayed green at 96 cases agreeing. These two cases
+    # were already here, adjacent, describing each other in their comments, and
+    # nothing compared them.
+    ("a predicate delete, returning what it destroyed", "a predicate delete, not returning"),
 ]
+
+#: What `MUST_DIFFER` is for, and what it is *not* needed for.
+#:
+#: A request field that every client drops is invisible to "three clients
+#: agree": all three send the same smaller request and agree about the same
+#: smaller answer. Three separate things protect against that, and knowing
+#: which one covers a field is the difference between a pair worth adding and
+#: one that is noise:
+#:
+#: 1. **A refusal case.** If dropping the field turns a refusal into an answer,
+#:    `EXPECTED_REFUSALS` catches it — the runner reports the list as stale.
+#:    This covers `paged`, which was assumed to need a pair until dropping it
+#:    in all three clients was tried: it broke three refusal cases, not the
+#:    page contents.
+#: 2. **A `MUST_DIFFER` pair.** For a field that changes an *answer* and
+#:    nothing refuses without it. `include_deleted` and `returning`.
+#: 3. **Nothing.** A field whose absence changes neither, which is a field
+#:    doing nothing observable — worth knowing about for its own sake.
+#:
+#: Adding a field to the protocol means deciding which of these applies, and
+#: the only honest way to know is to drop it in all three clients and run.
 
 
 def normalise(answer: Any) -> Any:

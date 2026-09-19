@@ -236,6 +236,9 @@ pub fn security() -> SecurityCatalog {
             RETIRE,
             [Action::Read, Action::ReadDeleted],
         ))
+        // Plain `read` and nothing else, for the join tests: a caller who may
+        // read the table and may not lift the soft-delete filter.
+        .grant(Grant::new("plain_reader", RETIRE, [Action::Read]))
         // The four data actions and *not* `Explain`, which is its own. Only an
         // identity that can run a read but cannot ask for its plan can tell a
         // present authorization check from a missing one; `app` holds

@@ -23,6 +23,7 @@ mod common;
 
 use common::{app, as_principal, retire, serving_leader};
 use slate_kernel::memory::MemoryStore;
+use slate_server::convert::column_ref;
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
 use slate_tuple::Value;
@@ -243,4 +244,134 @@ async fn a_purge_of_a_table_that_does_not_soft_delete_is_refused() {
         .await
         .expect_err("docs does not soft-delete");
     assert_eq!(refused.code(), Code::FailedPrecondition, "{refused:?}");
+}
+
+// --- a join input asks for retired rows -------------------------------------
+
+/// Holds `read` on `retire` and nothing else — not `read_deleted`.
+fn plain_reader<T>(message: T) -> Request<T> {
+    as_principal(message, "u64:9", None, "plain_reader")
+}
+
+/// `retire` joined to itself on `kind`, with each side's visibility chosen.
+///
+/// A self-join, because the fixture has one soft-deleting table and what is
+/// under test is per-*input* behaviour rather than anything about two tables.
+/// Every row's `kind` is unique, so each visible row pairs with itself and the
+/// row count is exactly "rows both sides can see".
+fn self_join(left_sees_deleted: bool, right_sees_deleted: bool) -> pb::JoinQuery {
+    let table = retire();
+    let kind = common::at(&table, "kind").0;
+    let side = |include: bool| {
+        let mut query = common::plain_query("retire");
+        query.schema = None;
+        query.include_deleted = include;
+        Some(query)
+    };
+    pb::JoinQuery {
+        inputs: vec![
+            pb::JoinInput {
+                query: side(left_sees_deleted),
+                on: Vec::new(),
+                join_type: pb::JoinType::Inner as i32,
+                having: None,
+                force: None,
+            },
+            pb::JoinInput {
+                query: side(right_sees_deleted),
+                on: vec![pb::JoinOn {
+                    earlier: Some(column_ref(0, kind)),
+                    own: Some(column_ref(1, kind)),
+                }],
+                join_type: pb::JoinType::Inner as i32,
+                having: None,
+                force: None,
+            },
+        ],
+        limit: None,
+        offset: 0,
+        build_limit: None,
+        after: Vec::new(),
+        paged: false,
+        compute: Vec::new(),
+    }
+}
+
+async fn joined_rows(client: &mut RecordsClient<Channel>, join: pb::JoinQuery) -> usize {
+    let mut stream = client
+        .join(app(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(join),
+            freshness: None,
+        }))
+        .await
+        .expect("join")
+        .into_inner();
+    let mut rows = 0;
+    while let Some(page) = stream.message().await.expect("page") {
+        rows += page.rows.len();
+    }
+    rows
+}
+
+#[tokio::test]
+async fn a_join_input_can_ask_for_retired_rows_on_its_own() {
+    // `include_deleted` sits on the *shared* part of the query builders
+    // precisely so a join input can set it, and nothing checked the flag
+    // survived the trip: an input is converted by a different function from a
+    // plain read, and that function refuses several fields it considers
+    // meaningless on one. It could have joined them.
+    //
+    // Four rows, two retired, `kind` unique per row. A self-join on `kind`
+    // pairs each row with itself, so the count is the number of rows *both*
+    // sides admit — which makes the flag's effect a number rather than a shape.
+    let serving = seeded().await;
+    let mut client = serving.client().await;
+
+    assert_eq!(
+        joined_rows(&mut client, self_join(false, false)).await,
+        2,
+        "neither side sees a retired row"
+    );
+    assert_eq!(
+        joined_rows(&mut client, self_join(true, true)).await,
+        4,
+        "both sides do, so the two retired rows pair up as well"
+    );
+    // The asymmetric cases are the ones that say the flag is honoured *per
+    // input* rather than once for the whole join: a retired row on one side
+    // has nothing to match on the other.
+    assert_eq!(
+        joined_rows(&mut client, self_join(true, false)).await,
+        2,
+        "input 0 sees four and input 1 sees two, so two pair"
+    );
+    assert_eq!(
+        joined_rows(&mut client, self_join(false, true)).await,
+        2,
+        "and the other way round"
+    );
+}
+
+#[tokio::test]
+async fn a_join_input_asking_for_retired_rows_needs_the_grant_too() {
+    // The check lives in `plan`, which every input goes through — so a caller
+    // without `read_deleted` is refused for input 1 exactly as for a plain
+    // read. Asserted because "it is in the shared function" is a claim about
+    // code, and this is the observation of it.
+    let serving = seeded().await;
+    let mut client = serving.client().await;
+    let refused = client
+        .join(plain_reader(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(self_join(false, true)),
+            freshness: None,
+        }))
+        .await
+        .expect_err("reading retired rows on an input still needs the grant");
+    assert_eq!(refused.code(), Code::PermissionDenied, "{refused:?}");
+    assert!(
+        refused.message().contains("read_deleted"),
+        "should name the action: {refused:?}"
+    );
 }
