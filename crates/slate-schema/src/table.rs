@@ -574,6 +574,12 @@ pub struct TableDef {
     checks: Vec<CheckDef>,
     foreign_keys: Vec<ForeignKeyDef>,
     tenant_column: Option<Ordinal>,
+    /// The column a soft delete stamps, if this table soft-deletes.
+    ///
+    /// Its presence changes two things: `delete` stamps this column instead of
+    /// removing the row, and every read conjoins `<column> IS NULL`. See
+    /// [`TableBuilder::soft_delete`].
+    soft_delete: Option<Ordinal>,
     schema_version: u32,
 }
 
@@ -590,6 +596,7 @@ impl TableDef {
             checks: Vec::new(),
             foreign_keys: Vec::new(),
             tenant_column: None,
+            soft_delete: None,
             schema_version: 0,
             changes: Vec::new(),
         }
@@ -737,6 +744,14 @@ impl TableDef {
         self.tenant_column
     }
 
+    /// The column a soft delete stamps, if this table soft-deletes.
+    ///
+    /// `None` is an ordinary table, where `delete` removes the row.
+    #[must_use]
+    pub const fn soft_delete(&self) -> Option<Ordinal> {
+        self.soft_delete
+    }
+
     /// The current schema version, stamped onto every row written.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
@@ -755,6 +770,7 @@ pub struct TableBuilder {
     checks: Vec<CheckDef>,
     foreign_keys: Vec<ForeignKeyBuilder>,
     tenant_column: Option<String>,
+    soft_delete: Option<String>,
     schema_version: u32,
     /// Column changes applied after the columns are declared, so that a drop, a
     /// rename or a default can be written next to the version it happened in
@@ -989,6 +1005,34 @@ impl TableBuilder {
         self
     }
 
+    /// Soft-delete this table, stamping `name` instead of removing a row.
+    ///
+    /// `delete` writes the current time into `name` and leaves the row where
+    /// it is, and every read conjoins `name IS NULL` so the row stops being
+    /// visible. The column is nullable `i64` seconds, null meaning "not
+    /// deleted" — the one representation that needs no sentinel time and no
+    /// second boolean to disagree with.
+    ///
+    /// The read filter goes through [`SecurityCatalog::row_filter`], the same
+    /// choke point row-level security uses, for one reason: that path is
+    /// already proven to cover every access path, and a second filtering
+    /// mechanism would have to be proven again — on the joins, the aggregates,
+    /// the chains and the index-only scans. It also inherits the property that
+    /// makes it safe, which is that the filter is conjoined *before* planning,
+    /// so an index that does not carry this column cannot be chosen for an
+    /// index-only scan and answer from keys alone.
+    ///
+    /// It is not a policy, though a policy could express it, because a deleted
+    /// row is not hidden for a security reason: a superuser is not exempt, and
+    /// it applies whether or not row-level security is enabled for the table.
+    ///
+    /// [`SecurityCatalog::row_filter`]: ../slate_kernel/struct.SecurityCatalog.html
+    #[must_use]
+    pub fn soft_delete(mut self, name: impl Into<String>) -> Self {
+        self.soft_delete = Some(name.into());
+        self
+    }
+
     /// Attach a secondary index.
     #[must_use]
     pub fn index(mut self, index: IndexBuilder) -> Self {
@@ -1162,6 +1206,59 @@ impl TableBuilder {
             }
         };
 
+        // A soft-delete column is the inverse of a managed one in the place
+        // that matters: it *must* be nullable, because null is what "not
+        // deleted" means. The rest of the rules are the same, and for the same
+        // reasons.
+        let soft_delete = match &self.soft_delete {
+            None => None,
+            Some(name) => {
+                let ordinal = resolve(name)?;
+                // `resolve` already refused an unknown name, so this is the
+                // same lookup rather than a second chance to fail.
+                let col =
+                    self.columns
+                        .get(ordinal.0)
+                        .ok_or_else(|| SchemaError::UnknownColumn {
+                            table: table.clone(),
+                            column: name.clone(),
+                        })?;
+                if col.ty != ValueType::I64 {
+                    return Err(SchemaError::SoftDeleteNotTimestamp {
+                        table: table.clone(),
+                        column: name.clone(),
+                        found: col.ty,
+                    });
+                }
+                // Refused rather than tolerated, and this is the rule that
+                // catches the likely mistake: a non-nullable column has no
+                // value meaning "not deleted", so every row would read as
+                // deleted the moment the table was declared and the table
+                // would go silently empty.
+                if !col.nullable {
+                    return Err(SchemaError::SoftDeleteNotNullable {
+                        table: table.clone(),
+                        column: name.clone(),
+                    });
+                }
+                // No check for "in the primary key" here, though the case is
+                // real: a soft-delete column must be nullable and a primary
+                // key column may not be, so `NullablePrimaryKey` already
+                // refuses the combination from the other side. A check was
+                // written, and a mutation showed no input could reach it.
+                // `updated_at` moves on every write including the delete,
+                // which is right; `created_at` and the delete stamp would
+                // fight over one column, which is not.
+                if col.managed.is_some() {
+                    return Err(SchemaError::SoftDeleteManaged {
+                        table: table.clone(),
+                        column: name.clone(),
+                    });
+                }
+                Some(ordinal)
+            }
+        };
+
         let mut indexes: Vec<IndexDef> = Vec::with_capacity(self.indexes.len());
         for spec in &self.indexes {
             // An index keys on columns or on an expression. Neither is nothing
@@ -1270,6 +1367,7 @@ impl TableBuilder {
             checks: self.checks,
             foreign_keys,
             tenant_column,
+            soft_delete,
             schema_version: self.schema_version,
         })
     }

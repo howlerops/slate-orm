@@ -511,6 +511,9 @@ pub(crate) struct Table {
     /// The tenant discriminator, which must be the first key column.
     #[serde(default)]
     pub(crate) tenant_column: Option<String>,
+    /// Stamp this column on delete instead of removing the row, and hide
+    /// stamped rows from every read. Nullable `i64`; null means not deleted.
+    pub(crate) soft_delete: Option<String>,
     /// The version stamped onto rows as they are written.
     #[serde(default)]
     pub(crate) schema_version: Option<u32>,

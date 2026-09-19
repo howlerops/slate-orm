@@ -276,6 +276,9 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
     }
 
     builder = builder.primary_key(table.primary_key.iter().map(String::as_str));
+    if let Some(column) = &table.soft_delete {
+        builder = builder.soft_delete(column);
+    }
     if let Some(tenant) = &table.tenant_column {
         builder = builder.tenant_column(tenant);
     }

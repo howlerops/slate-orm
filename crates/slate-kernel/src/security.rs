@@ -327,6 +327,24 @@ pub struct SecurityCatalog {
     rls_enabled: BTreeMap<TableId, bool>,
 }
 
+/// Whether a read may see rows a soft delete has retired.
+///
+/// The default everywhere is [`Hidden`](Self::Hidden). A caller that wants a
+/// deleted row has to name it, which is the opposite of how the tenant and
+/// policy filters work and is deliberate: forgetting a security filter must
+/// fail closed, and forgetting this one must still hide the row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Deleted {
+    /// Soft-deleted rows are not returned. The default.
+    Hidden,
+    /// Soft-deleted rows are returned alongside live ones.
+    ///
+    /// For restoring a row, auditing one, or reaping them. There is no way to
+    /// tell the two apart other than by reading the column, which the caller
+    /// asking for this already knows about.
+    Visible,
+}
+
 impl SecurityCatalog {
     /// An empty catalog. Denies every non-superuser action.
     #[must_use]
@@ -398,8 +416,40 @@ impl SecurityCatalog {
         table: &TableDef,
         action: Action,
     ) -> crate::Result<Expr> {
+        self.row_filter_with(context, table, action, Deleted::Hidden)
+    }
+
+    /// [`row_filter`](Self::row_filter), saying whether soft-deleted rows count.
+    ///
+    /// Only a read that explicitly asks passes [`Deleted::Visible`]; everything
+    /// else takes the default through `row_filter`, which is what makes
+    /// "deleted rows are invisible" true of paths nobody thought about.
+    ///
+    /// # Errors
+    /// If the tenant restriction cannot be built.
+    pub fn row_filter_with(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+        deleted: Deleted,
+    ) -> crate::Result<Expr> {
+        // Before the superuser bypass, deliberately. A deleted row is not
+        // hidden for a security reason, so the escape hatch for security is
+        // not the escape hatch for this: a superuser reading a soft-deleting
+        // table sees live rows, and the seeder, the migration runner and
+        // `--seed` are all superusers. The way to see a deleted row is to ask
+        // for one.
+        let not_deleted = match (deleted, table.soft_delete()) {
+            (Deleted::Visible, _) | (_, None) => Expr::True,
+            (Deleted::Hidden, Some(column)) => Expr::IsNull {
+                column,
+                negated: false,
+            },
+        };
+
         if context.is_superuser() {
-            return Ok(Expr::True);
+            return Ok(not_deleted);
         }
 
         let mut filter = self.tenant_filter(context, table)?;
@@ -426,7 +476,7 @@ impl SecurityCatalog {
             filter = filter.and(policy_filter);
         }
 
-        Ok(filter)
+        Ok(filter.and(not_deleted))
     }
 
     /// Force the principal's tenant onto a tenant-scoped table.

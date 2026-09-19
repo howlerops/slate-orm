@@ -21,6 +21,46 @@ pub enum SchemaError {
         found: slate_tuple::ValueType,
     },
 
+    /// A soft-delete column that is not an `i64`.
+    #[error(
+        "table `{table}` soft-deletes into column `{column}`, which is declared {found:?}; \
+         a soft-delete column is nullable `i64` seconds since the epoch, null meaning \
+         the row is not deleted"
+    )]
+    SoftDeleteNotTimestamp {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+        /// The type it was declared as.
+        found: slate_tuple::ValueType,
+    },
+
+    /// A soft-delete column that cannot hold "not deleted".
+    #[error(
+        "table `{table}` soft-deletes into column `{column}`, which is not nullable; \
+         null is what \"not deleted\" means, so without it every row reads as deleted \
+         and the table answers nothing"
+    )]
+    SoftDeleteNotNullable {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+    },
+
+    /// A soft-delete column that is also managed.
+    #[error(
+        "table `{table}` soft-deletes into column `{column}`, which is also a managed \
+         timestamp; the delete stamp and the managed stamp would both own one column"
+    )]
+    SoftDeleteManaged {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+    },
+
     /// A managed column is declared nullable, which it can never be.
     #[error(
         "column `{column}` of table `{table}` is managed and nullable; the store writes a \

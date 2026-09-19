@@ -111,7 +111,7 @@ then did not ship it to the three audiences most likely to need it.
 | Generated *types* from the catalog | Drizzle, Prisma | `scripts/codegen.py` generates the schema declaration for all three clients from `slate-serverd --print-schema`, and CI diffs it; what it does **not** generate is a typed row — a query still returns `Value`s, not a `Book` — see below |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
-| Soft delete as a first-class concept | ActiveRecord (gems), Prisma (pattern) | partial indexes support `WHERE deleted_at IS NULL` well; no convention on top |
+| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. Kernel and daemon config only, not on the wire; see below |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
 | CTEs / recursive queries | SQLAlchemy, Drizzle, Diesel | no plan node |
 | Set operations (`UNION`/`INTERSECT`/`EXCEPT`) | all | refused by name in the SQL front end; no spec node |
@@ -144,6 +144,44 @@ then did not ship it to the three audiences most likely to need it.
 > compares the whole row. Nothing crosses the wire and no client changed: the
 > server stamps, and a client sends whatever it likes into a slot that is
 > overwritten.
+
+> **Built: soft delete.** `soft_delete = "deleted_at"` on a table, or
+> `TableBuilder::soft_delete`. `delete` writes the current time into the column
+> and leaves the row where it is; every read conjoins `deleted_at IS NULL`. The
+> column is nullable `i64` seconds, null meaning not deleted — the one
+> representation needing neither a sentinel time nor a second boolean to
+> disagree with.
+>
+> **The read filter is installed in `row_filter`, the choke point row-level
+> security already uses**, and that is the whole design. A second filtering
+> mechanism would have to be proven against joins, aggregates, chains, point
+> gets and index-only scans separately; this one inherits a matrix that was
+> closed once. It also inherits the property that makes covering scans safe —
+> the filter is conjoined *before* planning, so an index that does not carry
+> `deleted_at` cannot be chosen to answer from keys alone and hand back a
+> retired row. Nothing in the soft-delete code arranges that, which is exactly
+> why there is a test for it.
+>
+> It is **not** a policy, though a policy could express it. A deleted row is
+> not hidden for a security reason, so the conjunct goes in *before* the
+> superuser bypass and applies whether or not RLS is on for the table — the
+> seeder, the migration runner and `--seed` are all superusers, and a superuser
+> seeing deleted rows by default would be a surprise rather than a privilege.
+>
+> `delete` funnels through one function, so a **cascade** into a soft-deleting
+> child retires the child rather than removing it, and deleting an
+> already-retired row is a no-op rather than a second stamp — the row is
+> invisible to `delete` for the same reason it is invisible to `get`.
+>
+> Two things it is not. `include_deleted` is a kernel-level flag and is **not
+> on the wire**: "show me the deleted ones" is a privileged read and the
+> protocol has no way to say who may make it, so shipping the flag before that
+> question is answered would put the decision in the caller's hands. And there
+> is no `restore`; un-deleting is an ordinary update through the kernel.
+>
+> A check refusing a soft-delete column in the primary key was written and then
+> **removed**: a mutation showed no input could reach it, because the column
+> must be nullable and a nullable primary key is already refused.
 
 > **Built, and narrower than the row it replaces: client codegen.** The row
 > used to read "every client hand-declares its schema". That is no longer true:
@@ -1170,8 +1208,11 @@ the moment of the write. Making a default hold that means an expression
 evaluated per write in a schema layer that evaluates nothing — a second
 expression language, for two cases. So `created_at` is not sugar over a
 default; it is the thing a default cannot be, and it lives in the store's one
-write choke point instead. The partial-index half of the claim is still
-untested, because soft delete is still unbuilt.
+write choke point instead. The partial-index half of the claim
+has since been built and *does* hold: a soft-deleting table's unique index
+declared `WHERE deleted_at IS NULL` stops admitting a row when it is retired,
+so the entry goes and the slot is reusable. Half the original sentence was
+wrong about the mechanism and half was right.
 
 Generated migrations and client codegen are also out of both, and are the two
 table rows most likely to be worth a plan of their own next. Codegen in

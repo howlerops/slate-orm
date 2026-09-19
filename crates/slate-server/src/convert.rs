@@ -1538,6 +1538,13 @@ pub fn query_from_proto_at(
             // fails rather than the second. `after` implies it; this carries
             // the caller's intent for the page that has no cursor yet.
             paging: query.paged || after_is_set,
+            // Not on the wire, so always false here: a remote caller cannot
+            // ask to see soft-deleted rows. Deliberate for now rather than
+            // forgotten — "show me the deleted ones" is a privileged read and
+            // the protocol has no way to say who may make it, so shipping the
+            // flag before that answer exists would put the decision in the
+            // caller's hands. Restoring and reaping run against the kernel.
+            include_deleted: false,
         },
         warnings,
     ))

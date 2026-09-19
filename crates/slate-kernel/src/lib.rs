@@ -65,7 +65,7 @@ pub use record::{
 pub use retry::{RetryPolicy, with_retries};
 pub use scalar::{CalendarPart, CalendarUnit, Metric, Scalar, TimeUnit};
 pub use security::{
-    Action, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
+    Action, Deleted, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
 };
 pub use stats::{ColumnStats, Histogram, Statistics, TableStats};
 pub use store::{

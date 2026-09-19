@@ -148,6 +148,13 @@ pub struct Query {
     pub after: Option<Vec<Value>>,
     /// Whether this read will be resumed from a cursor. See [`Query::paging`].
     pub paging: bool,
+    /// Whether to return rows a soft delete has retired.
+    ///
+    /// `false` everywhere unless asked for, including for a superuser: a
+    /// deleted row is not hidden for a security reason, so the bypass that
+    /// exists for security is not the one that applies here. Has no effect on
+    /// a table that does not soft-delete.
+    pub include_deleted: bool,
 }
 
 impl Default for Query {
@@ -171,6 +178,7 @@ impl Query {
             compute: Vec::new(),
             after: None,
             paging: false,
+            include_deleted: false,
         }
     }
 

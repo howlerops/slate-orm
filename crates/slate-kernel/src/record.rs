@@ -1619,7 +1619,7 @@ impl<'a> RecordTransaction<'a> {
         // `RESTRICT` further out depend on the order the walk happened to take.
         let doomed = self.deletion_closure(context, table, existing).await?;
         for (owner, row) in &doomed {
-            self.remove_row(owner, row)?;
+            self.remove_row(owner, row).await?;
         }
         Ok(true)
     }
@@ -1692,7 +1692,7 @@ impl<'a> RecordTransaction<'a> {
         // the duplication is three lines.
         let doomed = self.deletion_closure(context, table, existing).await?;
         for (owner, row) in &doomed {
-            self.remove_row(owner, row)?;
+            self.remove_row(owner, row).await?;
         }
         Ok(())
     }
@@ -1767,7 +1767,7 @@ impl<'a> RecordTransaction<'a> {
             // holds until somebody uses the other spelling.
             let doomed = self.deletion_closure(context, table, row.clone()).await?;
             for (owner, victim) in &doomed {
-                self.remove_row(owner, victim)?;
+                self.remove_row(owner, victim).await?;
             }
             removed.push(row);
         }
@@ -2059,7 +2059,43 @@ impl<'a> RecordTransaction<'a> {
     /// itself and is not harmless in a transaction: it writes the key, and so
     /// conflicts with any concurrent writer of the row that really does own
     /// that slot.
-    fn remove_row(&self, table: &TableDef, row: &Row) -> Result<()> {
+    async fn remove_row(&self, table: &TableDef, row: &Row) -> Result<()> {
+        // Every delete in this file funnels through here — `delete`,
+        // `delete_where` and the cascade walk — which is why the soft-delete
+        // decision is here and not in the three of them. A cascade into a
+        // soft-deleting child retires the child rather than removing it, and
+        // that falls out of this placement rather than needing its own rule.
+        if let Some(column) = table.soft_delete() {
+            let now = self.clock.map_or_else(|| SystemClock.now(), Clock::now);
+            let mut values = row.values().to_vec();
+            let Some(slot) = values.get_mut(column.0) else {
+                // Shorter than the table, which `row.validate` refuses on every
+                // path that writes. Falling through to the hard delete would
+                // remove a row the schema says to keep, so this refuses instead.
+                return Err(KernelError::Schema(SchemaError::ColumnCountMismatch {
+                    table: table.name().to_owned(),
+                    expected: table.columns().len(),
+                    actual: values.len(),
+                }));
+            };
+            *slot = Value::I64(now);
+            let retired = Row::new(values);
+            // Through the ordinary write path, not a bespoke one. That is what
+            // maintains the indexes across the transition, and it matters most
+            // for a partial index on `deleted_at IS NULL`: the retired row stops
+            // being admitted, so its entry is deleted and no new one written —
+            // which is how a soft delete frees a unique slot instead of holding
+            // it forever.
+            //
+            // `verify_unique` is false because this write can only ever remove
+            // entries or leave their keys alone. A unique index that does not
+            // mention the column has an unchanged key and is skipped; one that
+            // does stops admitting the row.
+            return self
+                .write_row_with(table, &retired, Some(row.clone()), false)
+                .await;
+        }
+
         for index in table.indexes().iter().filter(|index| index.admits(row)) {
             let entry = self.entry_for(table, index, row);
             self.poison_on_err(self.txn.delete(entry.key))?;

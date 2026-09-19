@@ -16,7 +16,7 @@ use crate::limits::ExecutionLimits;
 use crate::plan::{Plan, Projection, plan_hinted};
 use crate::query::{AccessHint, Query};
 use crate::scalar::Scalar;
-use crate::security::{Action, SecurityCatalog, SecurityContext};
+use crate::security::{Action, Deleted, SecurityCatalog, SecurityContext};
 use crate::stats::Statistics;
 use crate::store::{KeyRange, KvIterator, KvSnapshot, ScanOrder};
 use bytes::Bytes;
@@ -51,6 +51,10 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         // it is the intent to resume, and there is nothing here to resume.
         after: None,
         paging: false,
+        // Carried, unlike the cursor. This one is not about resuming: it says
+        // which rows exist for this read at all, so an aggregate that dropped
+        // it would count a different set than the scan beside it returns.
+        include_deleted: query.include_deleted,
     }
 }
 
@@ -512,10 +516,15 @@ impl<'a> SecuredReads<'a> {
         // Conjoining the policy *before* planning is what lets it narrow the
         // scan; it also means a policy on a column the index lacks correctly
         // prevents an index-only scan rather than being skipped by one.
-        let secured = Arc::new(query.filter.clone().and(self.security.row_filter(
+        let secured = Arc::new(query.filter.clone().and(self.security.row_filter_with(
             context,
             table,
             Action::Read,
+            if query.include_deleted {
+                Deleted::Visible
+            } else {
+                Deleted::Hidden
+            },
         )?));
         // A read that is *paging* takes the cursor path whether or not it is
         // carrying one yet. Otherwise the first page of an unpageable read is

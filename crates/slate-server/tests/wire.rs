@@ -186,6 +186,11 @@ fn any_query() -> impl Strategy<Value = Query> {
                 // round trip compares a value the builder cannot produce.
                 paging: after.is_some(),
                 after,
+                // Always false, for the same reason the empty cursor is always
+                // `None`: it is a kernel-side flag with no field on the wire,
+                // so `true` is a value the round trip cannot preserve. When it
+                // does cross, this becomes generated and this comment goes.
+                include_deleted: false,
             },
         )
 }
