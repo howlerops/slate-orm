@@ -318,6 +318,51 @@
         <a href="../workbench.html">workbench</a>.
       </p>
 
+    <h3>Timestamps the store writes</h3>
+      <p>
+        <code>#[record(created_at)]</code> and
+        <code>#[record(updated_at)]</code> on an <code>i64</code> field, or
+        <code>{ name = "created_at", type = "i64", managed = "created_at" }</code>
+        in the daemon's TOML. The store fills both on insert; on every write
+        after that <code>updated_at</code> moves and <code>created_at</code>
+        does not.
+      </p>
+      <p>
+        <strong>The value you send is discarded.</strong> Not filled-in-if-null
+        — overwritten, on insert and on update. Honouring a supplied value is
+        what makes importing rows with their original times possible and it is
+        the wrong default: the whole promise of the column is that it says when
+        the row was written, and a client that can set it can break that
+        promise with nothing downstream able to tell a real timestamp from a
+        claimed one. An import that needs the original times declares the
+        column unmanaged and writes them, which is one word in a schema against
+        a hazard on every write of every managed column.
+      </p>
+      <p>
+        This is not a <code>DEFAULT</code>, because a default is a stored value
+        and the wanted value is "whatever the clock says at the moment of the
+        write". Widening defaults to hold an expression would mean a second
+        expression language in the schema layer, evaluated on a path that
+        evaluates nothing today, to express two cases.
+      </p>
+      <p>
+        Seconds, like every other time here, so <code>date_trunc</code> and the
+        calendar functions read it correctly. The cost is real and worth
+        stating: two writes in the same second give the same
+        <code>updated_at</code>, so it cannot order writes within a second or
+        serve as a concurrency token. <code>update_if_unchanged</code> is the
+        thing for that, and it compares the whole row.
+      </p>
+      <p>
+        The schema layer refuses a managed column that is not an
+        <code>i64</code>, is nullable, or is in the primary key — all three at
+        build time, so a node with one does not start rather than surprising
+        somebody on their first insert. It is <em>not</em> in the schema
+        fingerprint, on the rule the fingerprint already follows: a client that
+        disagrees still reaches the right column, and the disagreement shows
+        immediately, because it reads back a value it did not write.
+      </p>
+
     <h3>No date type, and an enum is its own name</h3>
       <p>
         The value model is closed &mdash; nine types, each one the tuple codec

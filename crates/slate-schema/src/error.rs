@@ -6,6 +6,47 @@ use slate_tuple::{TupleError, ValueType};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SchemaError {
+    /// A managed column is not the type a timestamp is here.
+    #[error(
+        "column `{column}` of table `{table}` is managed, so the store writes a time into it, \
+         but it is declared {found:?}; a managed column is `i64` seconds since the epoch, \
+         which is what every other time in this schema is"
+    )]
+    ManagedColumnNotTimestamp {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+        /// The type it was declared as.
+        found: slate_tuple::ValueType,
+    },
+
+    /// A managed column is declared nullable, which it can never be.
+    #[error(
+        "column `{column}` of table `{table}` is managed and nullable; the store writes a \
+         value on every write, so the null can never happen and the declaration would send a \
+         reader down a branch that cannot run"
+    )]
+    ManagedColumnNullable {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+    },
+
+    /// A managed column is in the primary key.
+    #[error(
+        "column `{column}` of table `{table}` is managed and in the primary key; the store \
+         writes it, so the key would either move on every update or be unknown until after \
+         the insert"
+    )]
+    ManagedColumnInKey {
+        /// The table being defined.
+        table: String,
+        /// The column.
+        column: String,
+    },
+
     /// A decimal column's scale leaves no room for an integral part.
     #[error(
         "column `{column}` of table `{table}` declares scale {scale}; an i64 holds about \

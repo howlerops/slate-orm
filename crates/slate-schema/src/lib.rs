@@ -40,6 +40,6 @@ pub use constraint::{CheckDef, ForeignKeyBuilder, ForeignKeyDef, Predicate, Refe
 pub use error::{Result, SchemaError};
 pub use row::{PartialRow, Row, decode_row, decode_row_columns, encode_body};
 pub use table::{
-    ColumnDef, Computed, IndexBuilder, IndexColumn, IndexDef, IndexExpression, IndexId, Ordinal,
-    TableBuilder, TableDef, TableId,
+    ColumnDef, Computed, IndexBuilder, IndexColumn, IndexDef, IndexExpression, IndexId, Managed,
+    Ordinal, TableBuilder, TableDef, TableId,
 };

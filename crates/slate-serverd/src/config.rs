@@ -546,6 +546,15 @@ pub(crate) struct Column {
     /// the same reason.
     #[serde(default)]
     pub(crate) scale: Option<u8>,
+    /// `"created_at"` or `"updated_at"`: the store writes this column.
+    ///
+    /// A string rather than two booleans, because the two are exclusive and a
+    /// column with both set would have no meaning — `created_at = true,
+    /// updated_at = true` is a configuration somebody can write and nobody can
+    /// explain. One field with two spellings makes that unsayable rather than
+    /// refused.
+    #[serde(default)]
+    pub(crate) managed: Option<String>,
     /// Whether the column may hold null.
     #[serde(default)]
     pub(crate) nullable: bool,

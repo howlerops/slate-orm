@@ -448,6 +448,18 @@ impl PartialRow {
             .zip(self.values)
             .map(|(column, supplied)| match supplied {
                 Some(value) => value,
+                // A managed column left unset gets a placeholder, not a null.
+                // The store overwrites it before the write — that is what
+                // "managed" means — but `validate` runs first and would refuse
+                // a null in a non-nullable column, so a caller using
+                // `insert_partial` would have to name the one column the whole
+                // feature exists to let them ignore.
+                //
+                // Zero rather than anything cleverer because nothing ever
+                // reads it: `RecordTransaction::stamp` replaces every managed
+                // slot on every write, so the only way to observe this value
+                // is to bypass the store entirely.
+                None if column.managed().is_some() => Value::I64(0),
                 None => column.default_value().cloned().unwrap_or(Value::Null),
             })
             .collect();

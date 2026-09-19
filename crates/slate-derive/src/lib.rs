@@ -352,6 +352,12 @@ struct FieldSpec {
     added_in: Option<u32>,
     /// `#[record(scale = n)]`, for a decimal column.
     scale: Option<u8>,
+    /// `#[record(created_at)]` or `#[record(updated_at)]`.
+    ///
+    /// A `&'static str` rather than the kernel's `Managed`, because this crate
+    /// is a proc macro and depends on nothing it generates code against. The
+    /// two spellings are checked here and turned into a path below.
+    managed: Option<&'static str>,
 }
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -433,6 +439,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         let mut added_in: Option<u32> = None;
         let mut renamed: Option<String> = None;
         let mut scale: Option<u8> = None;
+        let mut managed: Option<&'static str> = None;
 
         // Names are resolved after the loop, so index specs on this field are
         // collected against the field's *final* column name.
@@ -451,11 +458,16 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     added_in = Some(meta.value()?.parse::<LitInt>()?.base10_parse()?);
                 } else if meta.path.is_ident("scale") {
                     scale = Some(meta.value()?.parse::<LitInt>()?.base10_parse()?);
+                } else if meta.path.is_ident("created_at") {
+                    managed = Some("CreatedAt");
+                } else if meta.path.is_ident("updated_at") {
+                    managed = Some("UpdatedAt");
                 } else if meta.path.is_ident("index") {
                     field_indexes.push(parse_index(&meta, Some("\0self"))?);
                 } else {
                     return Err(meta.error(
-                        "unknown option; expected `pk`, `rename`, `added_in`, `scale` or `index`",
+                        "unknown option; expected `pk`, `rename`, `added_in`, `scale`, \
+                         `created_at`, `updated_at` or `index`",
                     ));
                 }
                 Ok(())
@@ -484,10 +496,21 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             primary_key: is_pk,
             added_in,
             scale,
+            managed,
         });
     }
 
     validate(input, &fields, &primary_key, tenant.as_ref(), &indexes)?;
+    let managed_stmts: Vec<TokenStream2> = fields
+        .iter()
+        .filter_map(|f| {
+            let which = Ident::new(f.managed?, proc_macro2::Span::call_site());
+            let name = &f.column;
+            Some(quote! {
+                builder = builder.managed_for(#name, ::slate_orm::Managed::#which);
+            })
+        })
+        .collect();
     validate_relations(&fields, &relations)?;
 
     // --- code generation
@@ -745,6 +768,11 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     );
                     #(#column_stmts)*
                     builder = builder.primary_key([#(#pk_names),*]);
+                    // After the key, because the schema layer refuses a managed
+                    // column that is *in* the key and can only see that once
+                    // the key is set. Emitting these first would turn a real
+                    // schema error into no error at all.
+                    #(#managed_stmts)*
                     #tenant_stmt
                     #(#index_stmts)*
                     builder = builder.schema_version(#version);

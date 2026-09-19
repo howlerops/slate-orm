@@ -755,6 +755,16 @@ fn describe(catalog: &Catalog) -> String {
                         // restate by hand" was omitting the one field nothing
                         // else could supply.
                         "scale": column.scale(),
+                        // `null`, `"created_at"` or `"updated_at"`. Not in the
+                        // schema fingerprint and so not something a client has
+                        // to restate — it is here because this dump describes
+                        // the catalog, and a reader wondering why a column
+                        // ignores what they write should find the answer in
+                        // the one place that claims to describe it.
+                        "managed": column.managed().map(|managed| match managed {
+                            slate_schema::Managed::CreatedAt => "created_at",
+                            slate_schema::Managed::UpdatedAt => "updated_at",
+                        }),
                         "nullable": column.is_nullable(),
                         "added_in": column.added_in(),
                         "dropped_in": column.dropped_in(),

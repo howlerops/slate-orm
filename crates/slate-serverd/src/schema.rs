@@ -28,7 +28,8 @@ use crate::lang::{TableScope, pred, scalar};
 use crate::value;
 use slate_kernel::Expr;
 use slate_schema::{
-    Catalog, CheckDef, ForeignKeyDef, IndexDef, IndexId, ReferentialAction, TableDef, TableId,
+    Catalog, CheckDef, ForeignKeyDef, IndexDef, IndexId, Managed, ReferentialAction, TableDef,
+    TableId,
 };
 use slate_tuple::{Direction, ValueType};
 use std::collections::BTreeMap;
@@ -234,6 +235,26 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
         // matrix a second time for one type.
         if let Some(scale) = column.scale {
             builder = builder.scale_for(&column.name, scale);
+        }
+
+        // Same placement and the same reason as the scale: a managed column is
+        // a property of the column, and every builder arm above takes only a
+        // type. The schema layer refuses a managed column that is not an
+        // `i64`, is nullable, or is in the primary key — all three at
+        // `build()`, which is where the key is known.
+        if let Some(managed) = column.managed.as_deref() {
+            let which = match managed {
+                "created_at" => Managed::CreatedAt,
+                "updated_at" => Managed::UpdatedAt,
+                other => {
+                    return Err(Fault::new(format!(
+                        "column `{}` has `managed = \"{other}\"`, which is not a thing this \
+                         store writes; the two are `created_at` and `updated_at`",
+                        column.name
+                    )));
+                }
+            };
+            builder = builder.managed_for(&column.name, which);
         }
 
         // `added_column_with_default` has already applied it; applying it

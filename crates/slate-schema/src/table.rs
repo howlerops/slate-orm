@@ -28,6 +28,40 @@ pub struct IndexId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ordinal(pub usize);
 
+/// A column whose value the store writes, not the caller.
+///
+/// # Why this is not a `DEFAULT`
+///
+/// A `DEFAULT` is a stored [`Value`], and the value wanted here is "whatever
+/// the clock says at the moment of the write". There is no `Value` that means
+/// that. Widening `DEFAULT` to hold an expression was the obvious alternative
+/// and was rejected: a default that can call a function is a default that has
+/// to be *evaluated*, which means a second expression language in the schema
+/// layer, evaluated on a path that currently does no evaluation at all, to
+/// express two cases.
+///
+/// # Why the caller's value is overwritten rather than honoured
+///
+/// Honouring a supplied value — filling in only where the caller left null —
+/// is what makes an import of historical rows possible, and it is the wrong
+/// default. The whole promise of the column is that it says when the row was
+/// written; a client that can set it can break that promise silently, and
+/// nothing downstream can tell a real timestamp from a claimed one. Anybody
+/// importing rows with their original times declares the column *unmanaged*
+/// and writes them, which is one word in a schema against a hazard on every
+/// write of every managed column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Managed {
+    /// Set when the row is first written, and preserved by every later write.
+    ///
+    /// Preserved rather than left alone: an update carries a full row, so
+    /// "leave it alone" would mean taking the caller's copy, which is a value
+    /// they could have edited.
+    CreatedAt,
+    /// Set when the row is written, and on every write after that.
+    UpdatedAt,
+}
+
 /// A single column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDef {
@@ -43,6 +77,8 @@ pub struct ColumnDef {
     /// Zero for every other type, and meaningless there. See
     /// [`ColumnDef::scale`].
     scale: u8,
+    /// Whether the store writes this column's value. See [`Managed`].
+    managed: Option<Managed>,
 }
 
 impl ColumnDef {
@@ -56,6 +92,20 @@ impl ColumnDef {
     #[must_use]
     pub const fn value_type(&self) -> ValueType {
         self.ty
+    }
+
+    /// Whether the store writes this column, and when. See [`Managed`].
+    ///
+    /// Deliberately **not** part of the schema fingerprint, and the reason is
+    /// the rule the fingerprint already follows rather than an exception to
+    /// it: a client that disagrees about this still reaches the right column,
+    /// and the disagreement is *visible* — it reads back a value it did not
+    /// write, on the very first row. That is the test a `CHECK` and a
+    /// `DEFAULT` pass and a decimal's scale fails, which is why the scale is
+    /// hashed and these three are not.
+    #[must_use]
+    pub const fn managed(&self) -> Option<Managed> {
+        self.managed
     }
 
     /// Digits after the decimal point, for a decimal column.
@@ -839,6 +889,7 @@ impl TableBuilder {
             default: None,
             previous_names: Vec::new(),
             scale: 0,
+            managed: None,
         });
         self
     }
@@ -862,6 +913,25 @@ impl TableBuilder {
     #[must_use]
     pub fn nullable_decimal_column(self, name: impl Into<String>, scale: u8) -> Self {
         self.push_decimal(name, scale, true, 0)
+    }
+
+    /// Make a column already appended one the store writes. See [`Managed`].
+    ///
+    /// On an already-appended column for the reason [`TableBuilder::scale_for`]
+    /// is: the four `column` entry points already cover a
+    /// nullable/`added_in`/`default` matrix, and a managed variant of each
+    /// would double it to express one property.
+    ///
+    /// A name that is not a column here is ignored rather than refused, again
+    /// as `scale_for` does — the builder reports nothing until
+    /// [`TableBuilder::build`], and the column this would have named is
+    /// refused there under its own error, which is a better message.
+    #[must_use]
+    pub fn managed_for(mut self, column: &str, managed: Managed) -> Self {
+        if let Some(found) = self.columns.iter_mut().find(|c| c.name == column) {
+            found.managed = Some(managed);
+        }
+        self
     }
 
     /// Set the scale of a decimal column already appended.
@@ -985,6 +1055,48 @@ impl TableBuilder {
                     max: MAX_SCALE,
                 });
             }
+        }
+
+        // A managed column is a timestamp the store writes, so three things
+        // have to hold and none of them is obvious from the type alone.
+        for (at, col) in self.columns.iter().enumerate() {
+            let Some(managed) = col.managed else {
+                continue;
+            };
+            // `I64` because that is what a time is everywhere else here —
+            // seconds since the epoch, which is what `date_trunc`,
+            // `CalendarPart` and every seeded timestamp in this repository
+            // already mean. A managed column of another type would be a
+            // second, silently different, representation of time.
+            if col.ty != ValueType::I64 {
+                return Err(SchemaError::ManagedColumnNotTimestamp {
+                    table: table.clone(),
+                    column: col.name.clone(),
+                    found: col.ty,
+                });
+            }
+            // Nullable is refused rather than tolerated. It would be harmless
+            // — the store always writes a value — and it would be a lie in the
+            // schema: a reader seeing `nullable` reasonably writes code that
+            // handles the null, and that branch can never run.
+            if col.nullable {
+                return Err(SchemaError::ManagedColumnNullable {
+                    table: table.clone(),
+                    column: col.name.clone(),
+                });
+            }
+            // A key column addresses the row. `UpdatedAt` in a key would move
+            // the row on every write, and `CreatedAt` would make the key
+            // unknowable until after the insert — so neither is a key, and the
+            // two failures are different enough that saying "managed" once is
+            // clearer than two messages.
+            if self.primary_key.iter().any(|name| name == &col.name) {
+                return Err(SchemaError::ManagedColumnInKey {
+                    table: table.clone(),
+                    column: col.name.clone(),
+                });
+            }
+            let _ = (at, managed);
         }
 
         self.apply_changes(table)?;

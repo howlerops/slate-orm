@@ -110,7 +110,7 @@ then did not ship it to the three audiences most likely to need it.
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
 | Generated *types* from the catalog | Drizzle, Prisma | `scripts/codegen.py` generates the schema declaration for all three clients from `slate-serverd --print-schema`, and CI diffs it; what it does **not** generate is a typed row — a query still returns `Value`s, not a `Book` — see below |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `grep -rcn "validate\|before_save\|Changeset" crates/slate-orm/src/` → nothing |
-| Automatic `created_at` / `updated_at` | ActiveRecord, Ecto, Prisma | nothing in the derive macro or the kernel |
+| ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
 | Soft delete as a first-class concept | ActiveRecord (gems), Prisma (pattern) | partial indexes support `WHERE deleted_at IS NULL` well; no convention on top |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
 | CTEs / recursive queries | SQLAlchemy, Drizzle, Diesel | no plan node |
@@ -119,6 +119,31 @@ then did not ship it to the three audiences most likely to need it.
 | Array / list column type | Drizzle, SQLAlchemy, Ecto | `ValueType` has no `Array` |
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
 | Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | `slate-serverd --seed` loads a static TOML fixture; nothing *generates* rows, and no client or the Rust library can seed at all — see below |
+
+> **Built: automatic timestamps.** `#[record(created_at)]` and
+> `#[record(updated_at)]` on an `i64` field, or `managed = "created_at"` on a
+> column in `slate-serverd`'s TOML. The store fills both on insert; after that
+> `updated_at` moves on every write and `created_at` does not.
+>
+> Three decisions worth stating, because each had a defensible alternative.
+> **The caller's value is discarded**, not merged where null: honouring it is
+> what makes a historical import possible and it lets a client break the one
+> promise the column makes, silently. An import declares the column unmanaged.
+> **It is not a `DEFAULT`**, because a default is a stored `Value` and the
+> value wanted is "whatever the clock says now" — widening defaults to hold an
+> expression means a second expression language in the schema layer, evaluated
+> on a path that evaluates nothing, for two cases. **It is not in the schema
+> fingerprint**, on the rule the fingerprint already follows: a client that
+> disagrees still reaches the right column and finds out at once, because it
+> reads back a value it did not write. That is the test a `CHECK` and a
+> `DEFAULT` pass and a decimal's scale fails.
+>
+> Seconds, so the calendar functions read it. Two writes in the same second
+> therefore share an `updated_at`, which means it cannot order writes within a
+> second or act as a concurrency token; `update_if_unchanged` is that, and it
+> compares the whole row. Nothing crosses the wire and no client changed: the
+> server stamps, and a client sends whatever it likes into a slot that is
+> overwritten.
 
 > **Built, and narrower than the row it replaces: client codegen.** The row
 > used to read "every client hand-declares its schema". That is no longer true:

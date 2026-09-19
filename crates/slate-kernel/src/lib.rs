@@ -10,6 +10,7 @@
 
 pub mod aggregate;
 pub mod chain;
+pub mod clock;
 pub mod error;
 pub mod exec;
 pub mod explain;

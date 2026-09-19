@@ -417,7 +417,7 @@ pub use slate_kernel::{
     memory, migrate,
 };
 pub use slate_schema::{
-    Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Ordinal, Row, SchemaError, TableDef,
-    TableId,
+    Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Managed, Ordinal, Row, SchemaError,
+    TableDef, TableId,
 };
 pub use slate_tuple::{Direction, Value, ValueType};

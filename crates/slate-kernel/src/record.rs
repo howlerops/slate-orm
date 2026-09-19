@@ -32,6 +32,7 @@
 
 use crate::aggregate::{Aggregate, Group, Grouping};
 use crate::chain::{Chain, ChainCursor, ChainPlan};
+use crate::clock::{Clock, SystemClock};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::explain::{Explanation, JoinExplanation};
@@ -51,11 +52,12 @@ use crate::token::ReadToken;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{
-    Catalog, ForeignKeyDef, IndexDef, IndexExpression, IndexId, Ordinal, PartialRow,
+    Catalog, ForeignKeyDef, IndexDef, IndexExpression, IndexId, Managed, Ordinal, PartialRow,
     ReferentialAction, Row, SchemaError, TableDef, encode_body,
 };
-use slate_tuple::Value;
+use slate_tuple::{Value, ValueType};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// How many distinct values [`RecordTransaction::analyze`] counts per column
@@ -177,6 +179,13 @@ pub struct RecordStore<S> {
     retry: RetryPolicy,
     statistics: Statistics,
     limits: ExecutionLimits,
+    /// Where a managed column's timestamp comes from.
+    ///
+    /// `Option` rather than `Arc<dyn Clock>` with a default, because
+    /// [`RecordStore::new`] is `const` and an `Arc` cannot be built in a
+    /// `const fn`. `None` means [`SystemClock`], which is resolved at the one
+    /// place that reads it.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl<S> RecordStore<S> {
@@ -192,6 +201,7 @@ impl<S> RecordStore<S> {
             security,
             retry: RetryPolicy::DEFAULT,
             statistics: Statistics::new(),
+            clock: None,
         }
     }
 
@@ -204,6 +214,18 @@ impl<S> RecordStore<S> {
     #[must_use]
     pub fn with_statistics(mut self, statistics: Statistics) -> Self {
         self.statistics = statistics;
+        self
+    }
+
+    /// Take managed columns' timestamps from `clock` instead of the machine's.
+    ///
+    /// For tests, and for nothing else that exists yet: a deployment wanting a
+    /// clock other than the machine's has a problem this cannot fix. See
+    /// [`crate::clock`] for why a settable clock rather than a tolerance
+    /// around `now`.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = Some(clock);
         self
     }
 
@@ -428,6 +450,7 @@ impl<S: KvStore> RecordStore<S> {
             catalog: &self.catalog,
             security: &self.security,
             statistics: &self.statistics,
+            clock: self.clock.as_deref(),
             poisoned: AtomicBool::new(false),
         })
     }
@@ -490,6 +513,8 @@ pub struct RecordTransaction<'a> {
     /// between a rule and an invariant.
     poisoned: AtomicBool,
     limits: ExecutionLimits,
+    /// The store's clock, or `None` for the machine's. See [`crate::clock`].
+    clock: Option<&'a dyn Clock>,
 }
 
 impl core::fmt::Debug for RecordTransaction<'_> {
@@ -2209,6 +2234,54 @@ impl<'a> RecordTransaction<'a> {
     }
 
     /// Write a row and reconcile its index entries against `previous`.
+    /// A copy of `row` with its managed columns written, or `None` when the
+    /// table has none.
+    ///
+    /// `None` rather than an unconditional clone: a managed column is a
+    /// per-table opt-in and most tables have none, so the common case must not
+    /// pay for a row copy on every write. The table is scanned rather than
+    /// consulting a precomputed flag because the scan is over a handful of
+    /// `ColumnDef`s already in cache and a cached flag is a second thing that
+    /// can disagree with the catalog.
+    ///
+    /// Validation is the schema builder's: a managed column is `I64`, not
+    /// nullable and not in the key, all three refused at build time. So this
+    /// writes an `I64` without checking, and a column that somehow reached
+    /// here declared otherwise is left alone rather than written with the
+    /// wrong type — `row.validate` would refuse the result, which is a worse
+    /// error than the schema error that should have happened.
+    fn stamp(&self, table: &TableDef, row: &Row, previous: Option<&Row>) -> Option<Row> {
+        if table.columns().iter().all(|c| c.managed().is_none()) {
+            return None;
+        }
+        let now = self.clock.map_or_else(|| SystemClock.now(), Clock::now);
+        let mut values = row.values().to_vec();
+        for (at, column) in table.columns().iter().enumerate() {
+            let (Some(managed), ValueType::I64) = (column.managed(), column.value_type()) else {
+                continue;
+            };
+            let Some(slot) = values.get_mut(at) else {
+                // Shorter than the table. `row.validate` refuses that and has
+                // already run on every path into here; skipping rather than
+                // panicking so a future path that forgot to validate gets the
+                // validation error and not an index panic from a timestamp.
+                continue;
+            };
+            *slot = match managed {
+                // Taken from the stored row, not from the caller's copy of it.
+                // An update carries a full row, so "leave it alone" would mean
+                // trusting a field the caller could have edited — and the
+                // whole point of the column is that they cannot.
+                Managed::CreatedAt => previous
+                    .and_then(|before| before.values().get(at).cloned())
+                    .filter(|held| matches!(held, Value::I64(_)))
+                    .unwrap_or(Value::I64(now)),
+                Managed::UpdatedAt => Value::I64(now),
+            };
+        }
+        Some(Row::new(values))
+    }
+
     async fn write_row(&self, table: &TableDef, row: &Row, previous: Option<Row>) -> Result<()> {
         self.write_row_with(table, row, previous, true).await
     }
@@ -2222,6 +2295,13 @@ impl<'a> RecordTransaction<'a> {
         previous: Option<Row>,
         verify_unique: bool,
     ) -> Result<()> {
+        // Every write in this file funnels through here, and `previous`
+        // already carries the one distinction a managed column needs — the
+        // bulk path above derives its `Action` from exactly this. Stamping in
+        // the five callers instead would be five chances to forget, and the
+        // sixth caller added later would be the one that forgot.
+        let stamped = self.stamp(table, row, previous.as_ref());
+        let row = stamped.as_ref().unwrap_or(row);
         let primary_key = row.primary_key_values(table);
 
         for index in table.indexes() {
