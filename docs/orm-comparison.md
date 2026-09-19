@@ -1261,9 +1261,28 @@ declared `WHERE deleted_at IS NULL` stops admitting a row when it is retired,
 so the entry goes and the slot is reusable. Half the original sentence was
 wrong about the mechanism and half was right.
 
-Generated migrations and client codegen are also out of both, and are the two
-table rows most likely to be worth a plan of their own next. Codegen in
-particular would turn `SchemaCheck`'s run-time drift refusal into a
-compile-time one in three languages, which is a bigger and better change than
-anything in the second six — and a bad reason to delay the six edges that are
-already half-built.
+Generated migrations are also out of both, and remain the table row most
+likely to be worth a plan of its own next.
+
+> **Built, and the prediction about it was wrong: client codegen.** This
+> paragraph used to name codegen alongside generated migrations and claim it
+> "would turn `SchemaCheck`'s run-time drift refusal into a compile-time one in
+> three languages". Codegen shipped, and it did neither half of that.
+>
+> It is not compile-time. `scripts/codegen.py --check` regenerates the
+> declarations and diffs them against the committed files in CI; a catalog
+> change nobody regenerated fails that step. None of the three type systems is
+> involved — the generated files mention the fingerprint only in comments, and
+> it is computed from the declaration at run time, as before. Making a type
+> carry it would mean the client's declaration and the server's catalog agreeing
+> at *compile* time, which means having the server at compile time.
+>
+> Nor did it replace the run-time refusal, and it must not: the check exists for
+> a deployed client older than the catalog the running server holds, which is a
+> state no amount of generation at build time can rule out. What codegen added
+> is an *earlier* check for the case where both are built together. Two checks
+> at two moments, not one moved.
+>
+> The word doing the damage was "turn". A prediction shaped as "X becomes Y"
+> reads as a plan to delete Y, and the reason to keep Y was the part the
+> prediction never examined.
