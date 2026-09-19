@@ -204,6 +204,6 @@ pub use auth::{Authenticator, DenyEveryone, MetadataIdentity, REQUEST_ID_KEY};
 pub use fingerprint::of_table as schema_fingerprint;
 pub use leadership::{Cadence, Leadership, Standing, StepDown, follow, maintain};
 pub use lease::{Clock, Lease, LeaseError, ObjectStoreLease, SystemClock, Term};
-pub use service::{Head, HeadConfig};
+pub use service::{Head, HeadConfig, WriteObserver};
 pub use session::{Limits, Sessions};
 pub use status::{DOMAIN, LEADER_KEY, code_for, from_kernel, reason_for};

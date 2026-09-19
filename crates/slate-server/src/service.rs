@@ -76,6 +76,27 @@ use tonic::{Code, Request, Response, Status};
 /// gathering routing statistics can see the difference.
 const IN_TRANSACTION: &str = "writer (in transaction)";
 
+/// Told how many rows each standalone write actually touched.
+///
+/// The metrics layer around this server sees a method, a status and a
+/// duration — never a response body — so "the purge ran" is observable and
+/// "the purge erased nine thousand rows" is not. That is the gap this closes,
+/// and it closes it for every write rather than for the purge that prompted
+/// it: a purge-shaped counter would have been a special case of exactly this
+/// hook, and building the special case first is how a general one never
+/// arrives.
+///
+/// Implemented outside this crate, because what to do with the number — a
+/// counter, a log line, nothing — is a deployment's business and this crate
+/// has no opinion. `None` is the ordinary case and costs a branch per write.
+pub trait WriteObserver: Send + Sync {
+    /// `kind` is the statement (`insert`, `purge_deleted`, …) and `table` is
+    /// its table. Both are bounded — by the enum and by the catalog — so a
+    /// counter keyed on the pair cannot grow without limit, which is the
+    /// failure a label taken from a request would have.
+    fn wrote(&self, kind: &'static str, table: &str, affected: u64);
+}
+
 /// Everything a head node needs that is not a request.
 ///
 /// A struct rather than a long argument list because the catalog, the security
@@ -171,6 +192,27 @@ pub struct Head<S> {
     authenticator: Arc<dyn Authenticator>,
     sessions: Arc<Sessions>,
     limits: Limits,
+    /// Told what each standalone write touched; see [`WriteObserver`].
+    ///
+    /// A field set after construction rather than a `HeadConfig` entry,
+    /// because every existing caller builds that struct literally and a new
+    /// field would break each of them for something all but one of them wants
+    /// to leave unset.
+    writes: Option<Arc<dyn WriteObserver>>,
+}
+
+impl<S> Head<S> {
+    /// Report every standalone write's row count to `observer`.
+    ///
+    /// Consuming, so it reads as part of building the node rather than as a
+    /// mutation of one already serving — there is no way to attach an observer
+    /// to a head that is already handling requests, which keeps "the counters
+    /// started late" from being a state anybody has to reason about.
+    #[must_use]
+    pub fn observing_writes(mut self, observer: Arc<dyn WriteObserver>) -> Self {
+        self.writes = Some(observer);
+        self
+    }
 }
 
 impl<S> core::fmt::Debug for Head<S> {
@@ -251,6 +293,7 @@ impl<S> Head<S> {
             authenticator,
             sessions: Arc::new(Sessions::new(limits)),
             limits,
+            writes: None,
         }
     }
 
@@ -310,6 +353,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
             authenticator,
             sessions: Arc::new(Sessions::new(limits)),
             limits,
+            writes: None,
         }
     }
 
@@ -958,7 +1002,17 @@ impl<S: KvStore + KvReadStore> Head<S> {
             .await;
 
         match outcome {
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => {
+                // After the transaction committed, never before: a write that
+                // conflicted and was retried applies more than once and
+                // commits once, and counting attempts would report a number no
+                // row ever had.
+                if let Some(observer) = &self.writes {
+                    let (kind, table) = write.labels();
+                    observer.wrote(kind, table.name(), outcome.0.affected);
+                }
+                Ok(outcome)
+            }
             Err(error) => {
                 if matches!(error, KernelError::WriterFenced) {
                     self.leadership.fenced().await;
@@ -1039,6 +1093,31 @@ struct Written {
 }
 
 impl Write<'_> {
+    /// This statement's name and its table, for a [`WriteObserver`]'s labels.
+    ///
+    /// `&'static str` from a match rather than anything derived: a label has
+    /// to be bounded, and the compiler refusing to build until a new variant
+    /// is named here is the cheapest way to keep it so.
+    const fn labels(&self) -> (&'static str, &TableDef) {
+        match self {
+            Self::Insert {
+                table,
+                upsert: false,
+                ..
+            } => ("insert", table),
+            Self::Insert {
+                table,
+                upsert: true,
+                ..
+            } => ("upsert", table),
+            Self::Update { table, .. } => ("update", table),
+            Self::Delete { table, .. } => ("delete", table),
+            Self::DeleteWhere { table, .. } => ("delete_where", table),
+            Self::UpdateWhere { table, .. } => ("update_where", table),
+            Self::PurgeDeleted { table, .. } => ("purge_deleted", table),
+        }
+    }
+
     /// Apply it, returning how many rows it acted on and which they were.
     async fn apply(
         &self,

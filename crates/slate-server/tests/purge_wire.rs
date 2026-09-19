@@ -23,6 +23,7 @@ mod common;
 
 use common::{app, as_principal, retire, serving_leader};
 use slate_kernel::memory::MemoryStore;
+use slate_server::WriteObserver;
 use slate_server::convert::column_ref;
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
@@ -374,4 +375,108 @@ async fn a_join_input_asking_for_retired_rows_needs_the_grant_too() {
         refused.message().contains("read_deleted"),
         "should name the action: {refused:?}"
     );
+}
+
+// --- what an operator can see -----------------------------------------------
+
+/// Records what a [`slate_server::WriteObserver`] is told.
+///
+/// The daemon's real one adds to a Prometheus counter; this keeps the calls so
+/// a test can read them back. What is under test is the *seam* — that the
+/// server reports a write's row count at all, with the right labels — not what
+/// any particular deployment does with it.
+#[derive(Default)]
+struct Recorded(std::sync::Mutex<Vec<(&'static str, String, u64)>>);
+
+impl slate_server::WriteObserver for Recorded {
+    fn wrote(&self, kind: &'static str, table: &str, affected: u64) {
+        self.0
+            .lock()
+            .expect("no panic holds this")
+            .push((kind, table.to_owned(), affected));
+    }
+}
+
+#[tokio::test]
+async fn a_purge_reports_what_it_erased_to_the_observer() {
+    // The gap: `affected` goes back to the caller and the metrics layer sees
+    // only a method, a status and a duration — so "the sweep ran" was
+    // observable and "the sweep erased nothing" was not, and those are the two
+    // states an operator needs to tell apart.
+    let backing = Arc::new(MemoryStore::new());
+    {
+        let store = common::store(Arc::clone(&backing));
+        let context = slate_kernel::SecurityContext::superuser();
+        let table = retire();
+        let rows: Vec<_> = (1..=4_u64)
+            .map(|id| {
+                slate_schema::Row::new(vec![
+                    Value::U64(id),
+                    Value::Str(format!("kind-{id}")),
+                    Value::Null,
+                ])
+            })
+            .collect();
+        let txn = store.begin().await.unwrap();
+        txn.insert_many(&context, &table, &rows).await.unwrap();
+        txn.commit().await.unwrap();
+        let txn = store.begin().await.unwrap();
+        for id in [1_u64, 2] {
+            txn.delete(&context, &table, &[Value::U64(id)])
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
+    }
+
+    let seen = Arc::new(Recorded::default());
+    let serving =
+        common::serving_leader_observed(backing, Arc::clone(&seen) as Arc<dyn WriteObserver>).await;
+    let mut client = serving.client().await;
+    client.purge_deleted(app(purge(0))).await.expect("purge");
+
+    let calls = seen.0.lock().expect("no panic holds this").clone();
+    assert_eq!(
+        calls,
+        vec![("purge_deleted", "retire".to_owned(), 2)],
+        "one call, naming the statement, the table and the count"
+    );
+}
+
+#[tokio::test]
+async fn a_purge_that_erased_nothing_still_reports() {
+    // Zero is the number worth watching. A sweep that stopped working reports
+    // it, and an observer that only fired on a non-zero count would make that
+    // indistinguishable from a sweep nobody scheduled.
+    let seen = Arc::new(Recorded::default());
+    let serving = common::serving_leader_observed(
+        Arc::new(MemoryStore::new()),
+        Arc::clone(&seen) as Arc<dyn WriteObserver>,
+    )
+    .await;
+    let mut client = serving.client().await;
+    client.purge_deleted(app(purge(0))).await.expect("purge");
+    assert_eq!(
+        *seen.0.lock().expect("no panic holds this"),
+        vec![("purge_deleted", "retire".to_owned(), 0)]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_purge_reports_nothing() {
+    // The observer is told after the transaction commits, so a write that
+    // never happened contributes no rows. A counter that moved on a refusal
+    // would make a permission problem look like data loss.
+    let seen = Arc::new(Recorded::default());
+    let serving = common::serving_leader_observed(
+        Arc::new(MemoryStore::new()),
+        Arc::clone(&seen) as Arc<dyn WriteObserver>,
+    )
+    .await;
+    let mut client = serving.client().await;
+    client
+        .purge_deleted(plain_reader(purge(0)))
+        .await
+        .expect_err("no grant");
+    assert!(seen.0.lock().expect("no panic holds this").is_empty());
 }

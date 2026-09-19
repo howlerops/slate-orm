@@ -552,6 +552,19 @@ pub async fn serving_leader(writer: Arc<MemoryStore>) -> Serving {
     serve(head(writer, Vec::new(), leadership)).await
 }
 
+/// The same, with a [`WriteObserver`] attached.
+///
+/// Separate rather than an `Option` on the one above, so the twenty callers
+/// that want no observer keep reading as they did.
+pub async fn serving_leader_observed(
+    writer: Arc<MemoryStore>,
+    observer: Arc<dyn slate_server::WriteObserver>,
+) -> Serving {
+    let leadership = Leadership::new(Arc::new(AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+    serve(head(writer, Vec::new(), leadership).observing_writes(observer)).await
+}
+
 // --- requests -------------------------------------------------------------
 
 /// Attach an identity to a request, the way the proxy in front of a real

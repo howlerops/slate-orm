@@ -270,9 +270,54 @@ const OVERFLOW: &str = "(other)";
 #[derive(Debug, Default)]
 pub(crate) struct Counters {
     methods: Mutex<BTreeMap<String, Arc<Method>>>,
+    /// Rows a standalone write touched, keyed on (statement, table).
+    ///
+    /// Separate from `methods` because it is a different question with a
+    /// different key. "How many purges ran" is already a method counter; "how
+    /// many rows did they erase" is the one an operator watching a retention
+    /// sweep actually needs, and a sweep that runs nightly and erases nothing
+    /// looks identical to a working one in every counter that existed before.
+    ///
+    /// Both halves of the key are bounded — the statement by an enum, the
+    /// table by the catalog — so unlike the method map this needs no overflow
+    /// bucket. `MAX_METHODS` exists because a method name arrives from the
+    /// wire; neither of these does.
+    rows: Mutex<BTreeMap<(&'static str, String), Arc<AtomicU64>>>,
+}
+
+/// The head node reports its writes straight into the scrape counters.
+///
+/// A trait implementation rather than a closure passed in, because the head
+/// holds it for the process's life and `Arc<dyn Trait>` is what that wants;
+/// and on `Counters` rather than a wrapper, because the wrapper would hold
+/// exactly one field and forward one method.
+impl slate_server::WriteObserver for Counters {
+    fn wrote(&self, kind: &'static str, table: &str, affected: u64) {
+        Self::wrote(self, kind, table, affected);
+    }
 }
 
 impl Counters {
+    /// Record that a write touched `affected` rows.
+    ///
+    /// Counted even when it is zero: a purge that found nothing is a fact
+    /// worth having, and a series that only appears once it is non-zero is a
+    /// series a dashboard cannot tell from a node that never ran one.
+    pub(crate) fn wrote(&self, kind: &'static str, table: &str, affected: u64) {
+        let entry = {
+            let mut rows = self
+                .rows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let key = (kind, table.to_owned());
+            match rows.get(&key) {
+                Some(entry) => Arc::clone(entry),
+                None => Arc::clone(rows.entry(key).or_default()),
+            }
+        };
+        entry.fetch_add(affected, Ordering::Relaxed);
+    }
+
     /// Record one finished call, and hand back the row it landed in.
     ///
     /// The row is returned rather than looked up again later because a
@@ -436,6 +481,31 @@ impl Counters {
             "slate_request_late_failures_total",
             &|method| method.late.load(Ordering::Relaxed),
         );
+
+        // Its own loop rather than a `family` call: this is keyed on a pair,
+        // not on a method, so it shares neither the row set nor the label.
+        let written: Vec<((&'static str, String), u64)> = {
+            let rows = self
+                .rows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            rows.iter()
+                .map(|((kind, table), n)| ((*kind, escape_label(table)), n.load(Ordering::Relaxed)))
+                .collect()
+        };
+        if !written.is_empty() {
+            let _ = writeln!(
+                out,
+                "# HELP slate_rows_written_total Rows a standalone write touched, by statement."
+            );
+            let _ = writeln!(out, "# TYPE slate_rows_written_total counter");
+            for ((kind, table), n) in &written {
+                let _ = writeln!(
+                    out,
+                    "slate_rows_written_total{{statement=\"{kind}\",table=\"{table}\"}} {n}"
+                );
+            }
+        }
 
         let _ = writeln!(out, "# HELP {HEAD} Seconds to the response head.");
         let _ = writeln!(out, "# TYPE {HEAD} histogram");
@@ -776,6 +846,72 @@ impl<S> tower::Layer<S> for ObserveLayer {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_written_are_counted_by_statement_and_table() {
+        // The gap this closes: a nightly purge that erases nothing looks
+        // exactly like a working one in every counter that existed before,
+        // because those count calls and not effect.
+        let counters = Counters::default();
+        counters.wrote("purge_deleted", "shipments", 9);
+        counters.wrote("purge_deleted", "shipments", 3);
+        counters.wrote("insert", "books", 1);
+        // A call has to have been recorded too, or the exposition is empty by
+        // design — see the early return in `prometheus`.
+        counters.record(
+            "/slate.v1.Records/PurgeDeleted",
+            Duration::from_millis(1),
+            false,
+        );
+
+        let text = counters.prometheus();
+        assert!(
+            text.contains(
+                "slate_rows_written_total{statement=\"purge_deleted\",table=\"shipments\"} 12"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("slate_rows_written_total{statement=\"insert\",table=\"books\"} 1"),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("# TYPE slate_rows_written_total").count(),
+            1,
+            "one family header for every series: {text}"
+        );
+    }
+
+    #[test]
+    fn a_purge_that_found_nothing_is_still_a_series() {
+        // Zero is the answer an operator most needs: a sweep running and
+        // erasing nothing is the failure mode, and a series that only appears
+        // once it is non-zero cannot be told from a node that never swept.
+        let counters = Counters::default();
+        counters.wrote("purge_deleted", "shipments", 0);
+        counters.record(
+            "/slate.v1.Records/PurgeDeleted",
+            Duration::from_millis(1),
+            false,
+        );
+        assert!(
+            counters.prometheus().contains(
+                "slate_rows_written_total{statement=\"purge_deleted\",table=\"shipments\"} 0"
+            ),
+            "{}",
+            counters.prometheus()
+        );
+    }
+
+    #[test]
+    fn a_node_that_wrote_nothing_exposes_no_write_family() {
+        // The same reasoning the method families already use: a family header
+        // with no series under it is as informative as silence and longer.
+        let counters = Counters::default();
+        counters.record("/slate.v1.Records/Query", Duration::from_millis(1), false);
+        let text = counters.prometheus();
+        assert!(!text.contains("slate_rows_written_total"), "{text}");
+    }
 
     #[test]
     fn a_summary_reports_calls_failures_and_timing() {

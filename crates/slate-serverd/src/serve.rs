@@ -44,7 +44,7 @@
 use crate::error::{Fault, Started};
 use core::time::Duration;
 use slate_kernel::{KvReadStore, KvStore};
-use slate_server::{Head, Leadership};
+use slate_server::{Head, Leadership, WriteObserver};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -102,6 +102,13 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         .map(|accepted| accepted.map(without_nagle));
     let (stop, stopped) = oneshot::channel::<()>();
     let counters = Arc::new(crate::observe::Counters::default());
+
+    // Here, rather than where the head is built, because this is where the
+    // counters come into existence — and the head is still owned at this point
+    // and not yet serving, which is the only moment an observer can be
+    // attached without anybody having to reason about counters that started
+    // late.
+    let head = head.observing_writes(Arc::clone(&counters) as Arc<dyn WriteObserver>);
 
     // The summary ticker, if one was asked for. Spawned rather than folded
     // into the accept loop so it keeps its cadence while the node is idle —
