@@ -61,6 +61,7 @@ mod value;
 use clap::Parser;
 use core::time::Duration;
 use error::{Fault, Started};
+use slate_kernel::memory::MemoryStore;
 use slate_kernel::{ExecutionLimits, KvReadStore, KvStore, RoutingPolicy, Statistics};
 use slate_schema::Catalog;
 use slate_server::{Cadence, Head, HeadConfig, Leadership, Limits, maintain};
@@ -201,6 +202,58 @@ async fn run(arguments: cli::Cli) -> Started<()> {
             chosen.description,
             document.storage.backend,
         );
+        return Ok(());
+    }
+
+    // Past `--check`, because the plan is a function of what is stored and
+    // `--check` deliberately opens no storage. Before the metrics bind and
+    // before the campaign: a preview that held a port or took the lease would
+    // be a preview with a side effect, and the second of those would fence the
+    // very node whose next deploy is being previewed.
+    if arguments.plan {
+        let prepared = storage::prepare(&document.storage)?;
+        let plan = match storage::open_for_plan(&prepared).await? {
+            storage::PlanSource::Stored(reader) => {
+                let snapshot = reader
+                    .snapshot()
+                    .await
+                    .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?;
+                slate_kernel::migrate::plan_of(snapshot.as_ref(), &catalog)
+                    .await
+                    .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?
+            }
+            // Nothing stored yet, so every table is new and every index needs
+            // building. Planned against an empty store rather than described in
+            // prose, so the first deploy is previewed by the same code path as
+            // every later one — a hand-written "everything would be created"
+            // is a second implementation of `plan_of` that nothing checks.
+            storage::PlanSource::Fresh(path) => {
+                println!("Nothing is stored at `{path}` yet, so this is a first deploy.\n");
+                slate_kernel::migrate::plan(&MemoryStore::new(), &catalog)
+                    .await
+                    .map_err(|why| {
+                        Fault::new(format!("cannot plan against an empty keyspace: {why}"))
+                    })?
+            }
+            // `backend = "memory"` keeps its keyspace in the process that made
+            // it, so there is no state a separate invocation can read. Saying
+            // so is the honest answer; printing a first-deploy plan would be a
+            // real plan's shape over a keyspace nobody looked at.
+            storage::PlanSource::Ephemeral => {
+                println!(
+                    "`backend = \"memory\"` keeps its keyspace in the process that made it, so\n\
+                     there is no stored state for `--plan` to read. Point this at `local` or\n\
+                     `s3` storage to preview a deploy."
+                );
+                return Ok(());
+            }
+        };
+        println!("{}", render_plan(&plan, &catalog));
+        if plan.is_blocked() {
+            // Non-zero so a deployment can gate on it. The reason is already
+            // printed above; returning a `Fault` would print it a second time.
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
@@ -723,6 +776,87 @@ async fn reconcile<S: slate_kernel::store::KvStore + ?Sized>(
         );
     }
     Ok(())
+}
+
+/// Render a migration plan for a person about to deploy.
+///
+/// Prose rather than JSON, unlike `--print-schema`: that output is read by a
+/// generator and this one by a human deciding whether to ship. A machine reader
+/// here would want the exit code, which it has.
+///
+/// Every step is named, not just the index builds. The running node announces
+/// `BuildIndex` and nothing else, on the reasoning that a backfill is the one
+/// step slow enough to look like a hang — true, and it leaves `DropIndex`
+/// applying in silence. A preview has no such excuse: its whole job is to be
+/// complete.
+fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -> String {
+    use core::fmt::Write as _;
+    use slate_kernel::migrate::Step;
+
+    let named = |id: slate_schema::TableId| {
+        catalog
+            .table(id)
+            .map_or_else(|| format!("table {}", id.0), |t| format!("`{}`", t.name()))
+    };
+
+    let mut out = String::new();
+    if !plan.refusals.is_empty() {
+        out.push_str("This migration is BLOCKED and none of it would be applied:\n\n");
+        for refusal in &plan.refusals {
+            let _ = writeln!(out, "  - {refusal}");
+        }
+        if !plan.steps.is_empty() {
+            out.push_str(
+                "\nThe steps below are what it would otherwise have done. A plan with any \n\
+                 refusal is not applied at all, rather than applied up to the refusal.\n",
+            );
+        }
+    }
+
+    if plan.steps.is_empty() {
+        if plan.refusals.is_empty() {
+            out.push_str("Up to date: the stored schema already matches this configuration.");
+        }
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "\n{} step{} would be applied, in this order:\n",
+        plan.steps.len(),
+        if plan.steps.len() == 1 { "" } else { "s" },
+    );
+    for step in &plan.steps {
+        let line = match step {
+            Step::Register { name, .. } => {
+                format!("register `{name}`, a table the keyspace has never held")
+            }
+            // The one step that reads and writes row data, so the one whose
+            // cost is not constant. Said plainly, because "would take minutes"
+            // is the answer a deploy window is actually asking for.
+            Step::BuildIndex { name, table, .. } => format!(
+                "build index `{name}` on {} — reads every row and writes an entry\n    \
+                 for each, so this is the step that can take minutes",
+                named(*table)
+            ),
+            // No name available, by definition: the index is one this catalog
+            // no longer declares, so there is nothing to look it up in. The id
+            // is what the keyspace has.
+            Step::DropIndex { table, index } => format!(
+                "delete the entries of index {} on {}, which this configuration\n    \
+                 no longer declares",
+                index.0,
+                named(*table)
+            ),
+            Step::NoteVersion { table, from, to } => format!(
+                "record {} at schema version {to}, up from {from} — a layout-compatible\n    \
+                 change, so no row is rewritten",
+                named(*table)
+            ),
+        };
+        let _ = writeln!(out, "  - {line}");
+    }
+    out
 }
 
 fn describe(catalog: &Catalog) -> String {

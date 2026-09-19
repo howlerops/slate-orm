@@ -49,6 +49,19 @@ pub(crate) struct Cli {
     /// which is what a client in another language has to restate by hand.
     #[arg(long)]
     pub(crate) print_schema: bool,
+
+    /// Print the migration this configuration would apply, and exit.
+    ///
+    /// Reads the schema state out of storage and applies nothing. It never
+    /// campaigns for the lease and never opens a writer, so it is safe to run
+    /// against a keyspace a live node is serving — the property that makes
+    /// that true is the same one a read replica relies on, and it is the whole
+    /// reason this is not `--check` with storage turned on.
+    ///
+    /// Exits non-zero when the migration is blocked, so a deployment can gate
+    /// on it rather than discover at boot that the node will not start.
+    #[arg(long, conflicts_with_all = ["check", "print_schema", "seed", "listen"])]
+    pub(crate) plan: bool,
 }
 
 const LONG_ABOUT: &str = "\

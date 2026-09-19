@@ -101,7 +101,8 @@
 
     <p>
       <code>slate-serverd --config head.toml</code>, and
-      <code>--check</code> validates without starting. The
+      <code>--check</code> validates without starting, and <code>--plan</code>
+      shows the schema migration a restart would apply. The
       <a href="quickstart.html">quickstart</a> has a complete one. Two knobs worth
       knowing about before you deploy:
     </p>
@@ -113,6 +114,15 @@
         first accepts a connection and answers it wrongly. Setting it to
         <code>false</code> makes the node verify and refuse to start, which is not
         the same as skipping.
+      </li>
+      <li>
+        <code>--plan</code> prints what that reconciliation would do, and applies
+        nothing. It reads the schema state out of storage without campaigning for
+        the lease and without opening a writer, so it is safe to point at a
+        keyspace a live node is serving. It exits non-zero when the migration is
+        <em>blocked</em> — a column layout that changed under rows already stored —
+        so a deployment can find that out before the restart rather than from a
+        node that will not come up.
       </li>
       <li>
         <code>[auth] mode</code> decides where identity comes from. There is no mode

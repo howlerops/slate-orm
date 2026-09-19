@@ -313,6 +313,77 @@ pub(crate) async fn open(
     }
 }
 
+/// What `--plan` found to read.
+pub(crate) enum PlanSource {
+    /// A keyspace that exists, opened for reading.
+    Stored(Arc<dyn KvReadStore>),
+    /// The object store answered and holds nothing under this path: no deploy
+    /// has happened yet, so the plan is the first-deploy plan. Carries the
+    /// path so the caller can name it without `Prepared` having to expose it.
+    Fresh(String),
+    /// `backend = "memory"`, which has no state a separate invocation can read.
+    Ephemeral,
+}
+
+/// Open the primary keyspace for reading only: what `--plan` uses.
+///
+/// A `SlateReader` reads the manifest and the SSTs and never claims the writer
+/// role — the same property [`open_read_only`] relies on — so this is safe to
+/// run against a keyspace a live node is writing. It does not go *through*
+/// `open_read_only` because that one refuses a node with no `[[replicas]]`
+/// configured, which is the common case and has nothing to do with whether the
+/// schema state can be read.
+///
+/// `Latest` rather than `Following`: the plan should be against the newest
+/// durable state, and a follower's poll interval would answer for a manifest
+/// that may be a poll old. There is no lease and no checkpoint to pin to.
+///
+/// **The existence probe is not an optimisation.** Opening a reader on a
+/// keyspace that was never created fails deep inside SlateDB with "failed to
+/// find latest transactional object (e.g. manifest)" — which is the single
+/// most likely thing to be true the first time anybody runs `--plan`, and it
+/// reads as a broken deployment rather than an empty one. `StorageError` is an
+/// opaque box, so there is no variant to match; matching the message text
+/// would pin this to a string in another crate's error path. Asking the object
+/// store whether anything is there answers the question directly, and keeps
+/// the three cases apart that matter: the store is unreachable (credentials, a
+/// wrong bucket) is an error, and empty is not.
+pub(crate) async fn open_for_plan(prepared: &Prepared) -> Started<PlanSource> {
+    if matches!(prepared.kind, Kind::Memory) {
+        return Ok(PlanSource::Ephemeral);
+    }
+
+    let listing = prepared
+        .objects
+        .list_with_delimiter(Some(&prepared.path))
+        .await
+        .map_err(|why| {
+            Fault::new(format!(
+                "cannot reach the object store to read `{}`: {why}",
+                prepared.path
+            ))
+        })?;
+    if listing.objects.is_empty() && listing.common_prefixes.is_empty() {
+        return Ok(PlanSource::Fresh(prepared.path.to_string()));
+    }
+
+    let reader = SlateReader::open_with(
+        "plan",
+        prepared.path.clone(),
+        Arc::clone(&prepared.objects),
+        ReplicaMode::Latest,
+        DbReaderOptions::default(),
+    )
+    .await
+    .map_err(|why| {
+        Fault::new(format!(
+            "cannot read the database at `{}`: {why}",
+            prepared.path
+        ))
+    })?;
+    Ok(PlanSource::Stored(Arc::new(reader)))
+}
+
 /// Open only the replicas: what a node that lost the campaign may do.
 ///
 /// The whole of the difference from [`open`] is the line that is not here. A
