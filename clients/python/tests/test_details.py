@@ -256,7 +256,7 @@ def test_the_order_is_the_schemas_and_not_the_maps() -> None:
     # The captured bytes really do carry the keys out of order, which is what
     # makes this worth asserting rather than assuming.
     assert CHECKS_BLOB.index(b"check.1") < CHECKS_BLOB.index(b"check.0")
-    assert [f.check for f in check_failures_of(CHECKS_BLOB)][0] == "title_length"
+    assert check_failures_of(CHECKS_BLOB)[0].check == "title_length"
 
 
 def violation_decoy(reason: str, metadata: dict[str, str]) -> bytes:
