@@ -948,6 +948,57 @@ class Adapter {
   }
 
   /**
+   * Sends two shipments an independent batch will refuse, one for two reasons
+   * and one for a single reason.
+   *
+   * The gap this closes: a batch reports each failure as *data* inside a
+   * successful response, so there are no trailers and no
+   * `grpc-status-details-bin`. A caller submitting a form as a batch got the
+   * reason token and the prose and nothing to put beside a field. The server
+   * now carries the same blob in the message body.
+   *
+   * Both rows are refused, so nothing is written and there is nothing to undo
+   * — and the two refusals differ, which is what makes the case say more than
+   * "a batch can fail": 9498 breaks `status_known` and `id_is_seeded`, 9497
+   * breaks only `id_is_seeded`, and an adapter reporting one list for both
+   * would be caught here rather than looking plausible.
+   */
+  async badBatch(session: Session): Promise<unknown> {
+    const result = await session.batch({
+      atomicity: "independent",
+      operations: [
+        {
+          kind: "insert",
+          table: "shipments",
+          rows: [[uint(9498n), uint(10n), str("teleported"), nullValue]],
+        },
+        {
+          kind: "insert",
+          table: "shipments",
+          rows: [[uint(9497n), uint(10n), str("pending"), nullValue]],
+        },
+      ],
+    });
+    return {
+      outcomes: result.outcomes.map((one) => {
+        if (!one.error) {
+          // Reached only if the server stopped enforcing a check, which is a
+          // disagreement worth failing loudly on.
+          throw new Error("the server accepted a row two checks refuse");
+        }
+        return {
+          kind: one.error.kind,
+          reason: one.error.reason,
+          violations: one.error.violations.map((violation) => ({
+            check: violation.check,
+            column: violation.column,
+          })),
+        };
+      }),
+    };
+  }
+
+  /**
    * Reads two rows and decodes them with the *generated* decoders.
    *
    * The gap this closes, recorded when the decoders were first executed: every
@@ -1109,6 +1160,7 @@ async function main(): Promise<void> {
     "/api/purge": (s) => adapter.purge(s),
     "/api/bad-status": (s) => adapter.badStatus(s),
     "/api/typed": (s) => adapter.typed(s),
+    "/api/bad-batch": (s) => adapter.badBatch(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

@@ -7,9 +7,11 @@ import (
 	"strconv"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
 )
@@ -337,6 +339,12 @@ func reasonOf(st *status.Status) string {
 // response, so the code and message arrive in a message body rather than in
 // trailers. This turns them back into the same type a lone call returns, so a
 // caller writes one errors.As whether or not the write was batched.
+//
+// Including Violations, which used to be the one field a batched failure could
+// not carry: there are no trailers, so there was no `grpc-status-details-bin`
+// and nothing to decode. The server now puts the same blob in the message
+// body, and this reads it with the same decoder the lone path uses — so a form
+// submitted as a batch gets the same typed failures as one submitted alone.
 func fromBatchError(failed *pb.BatchError) error {
 	if failed == nil {
 		return &Error{Kind: KindInternal, Message: "a batch reported an empty error", Code: codes.Unknown}
@@ -347,11 +355,31 @@ func fromBatchError(failed *pb.BatchError) error {
 		kind = KindInternal
 	}
 	return &Error{
-		Kind:    kind,
-		Message: failed.Message,
-		Code:    code,
-		Reason:  failed.Reason,
+		Kind:       kind,
+		Message:    failed.Message,
+		Code:       code,
+		Reason:     failed.Reason,
+		Violations: violationsInDetails(failed.Details),
 	}
+}
+
+// violationsInDetails decodes a `google.rpc.Status` carried as bytes.
+//
+// [violationsOf] takes a *status.Status because that is what a lone failure
+// arrives as; a batched one arrives as the encoded bytes. Rebuilding the
+// status from them rather than writing a second walk keeps one decoder: the
+// alternative is two, which agree until somebody edits one.
+func violationsInDetails(details []byte) []CheckViolation {
+	if len(details) == 0 {
+		return nil
+	}
+	var raw rpcstatus.Status
+	if proto.Unmarshal(details, &raw) != nil {
+		// A blob that does not parse loses the violations and nothing else.
+		// Raising here would replace the server's failure with this client's.
+		return nil
+	}
+	return violationsOf(status.FromProto(&raw))
 }
 
 // withTrailers refines an error using the call's trailers.

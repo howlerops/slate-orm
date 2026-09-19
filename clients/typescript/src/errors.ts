@@ -174,10 +174,25 @@ export function fromBatchError(failed: {
   code?: number;
   message?: string;
   reason?: string;
+  details?: Uint8Array;
 }): SlateError {
   const code = (failed.code ?? 2) as GrpcStatus;
   const kind = BY_CODE[code] ?? "internal";
-  return new SlateError(kind, failed.message ?? "", code, {}, undefined, failed.reason ?? "");
+  // `details` is the same `google.rpc.Status` blob a lone failure carries in
+  // `grpc-status-details-bin`, put in the message body by the server because a
+  // batch has no trailers. Decoded by the same function the lone path uses, so
+  // a form submitted as a batch gets the same typed failures as one submitted
+  // alone. It used to be the one field a batched failure could not have.
+  return new SlateError(
+    kind,
+    failed.message ?? "",
+    code,
+    {},
+    undefined,
+    failed.reason ?? "",
+    "",
+    failed.details ? checkFailuresOf(failed.details) : [],
+  );
 }
 
 /**

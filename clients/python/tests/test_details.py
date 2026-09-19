@@ -16,7 +16,14 @@ import grpc
 import pytest
 
 from slate._details import ERROR_INFO_URL, check_failures_of, reason_of
-from slate.errors import _DETAILS_KEY, ResourceLimit, RpcCall, from_rpc_error
+from slate.errors import (
+    _DETAILS_KEY,
+    NotFound,
+    ResourceLimit,
+    RpcCall,
+    from_batch_error,
+    from_rpc_error,
+)
 
 #: A real `grpc-status-details-bin`, captured from a `delete_where` with
 #: `returning` that matched more rows than `max_returned_rows` allowed.
@@ -349,4 +356,49 @@ def test_the_error_a_caller_catches_carries_them() -> None:
 def test_an_ordinary_failure_carries_an_empty_list() -> None:
     """Not `None`: a caller iterating does not have to check first."""
     error = from_rpc_error(_FakeCall(BLOB))
+    assert error.violations == []
+
+
+def test_a_batched_refusal_carries_the_same_violations() -> None:
+    """The field a batched failure could not have.
+
+    An independent batch reports each failure *as data* inside a successful
+    response, so there are no trailers and no `grpc-status-details-bin` — a
+    form submitted as a batch got the token and the prose and nothing to put
+    beside a field. The server puts the same blob in the message body now.
+
+    Against the same fixture the lone path uses, which is the point: one blob,
+    one decoder, and a batched refusal that cannot come to disagree with an
+    unbatched one.
+    """
+    error = from_batch_error(
+        grpc.StatusCode.INVALID_ARGUMENT.value[0],
+        "row violates 3 checks on table `docs`",
+        "CHECK_VIOLATION",
+        CHECKS_BLOB,
+    )
+    assert error.reason == "CHECK_VIOLATION"
+    assert [f.check for f in error.violations] == [
+        "title_length",
+        "size_positive",
+        "discount_under_price",
+    ]
+    assert error.violations[2].column is None
+
+
+def test_a_batched_failure_with_no_details_has_no_violations() -> None:
+    """Which is most of them, and is why `details` defaults to empty."""
+    error = from_batch_error(grpc.StatusCode.NOT_FOUND.value[0], "no such row", "")
+    assert error.violations == []
+    assert isinstance(error, NotFound)
+
+
+def test_a_batched_failure_with_rubbish_details_does_not_raise() -> None:
+    """The reasoning `reason_of` gives, one path over."""
+    error = from_batch_error(
+        grpc.StatusCode.INVALID_ARGUMENT.value[0],
+        "refused",
+        "CHECK_VIOLATION",
+        b"not a status",
+    )
     assert error.violations == []

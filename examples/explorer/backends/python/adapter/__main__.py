@@ -836,6 +836,44 @@ class Adapter:
         session.delete(SHIPMENTS, [(u64(603),)])
         return answer
 
+    def bad_batch(self, session, body):
+        """Two shipments an independent batch refuses, for different reasons.
+
+        The gap this closes: a batch reports each failure *as data* inside a
+        successful response, so there are no trailers and no
+        `grpc-status-details-bin`. A caller submitting a form as a batch got
+        the reason token and the prose and nothing to put beside a field. The
+        server now carries the same blob in the message body.
+
+        Both rows are refused, so nothing is written and there is nothing to
+        undo — and the two refusals differ, which is what makes the case say
+        more than "a batch can fail": 9498 breaks `status_known` and
+        `id_is_seeded`, 9497 breaks only `id_is_seeded`, and an adapter
+        reporting one list for both would be caught here rather than looking
+        plausible.
+        """
+        b = Batch(Atomicity.INDEPENDENT)
+        b.insert(SHIPMENTS, [[u64(9498), u64(10), "teleported", None]])
+        b.insert(SHIPMENTS, [[u64(9497), u64(10), "pending", None]])
+
+        outcomes = []
+        for one in session.batch(b).outcomes:
+            if one.ok:
+                # Reached only if the server stopped enforcing a check, which
+                # is a disagreement worth failing loudly on.
+                raise RuntimeError("the server accepted a row two checks refuse")
+            outcomes.append(
+                {
+                    "kind": kind_name(one.error),
+                    "reason": one.error.reason,
+                    "violations": [
+                        {"check": v.check, "column": v.column or ""}
+                        for v in one.error.violations
+                    ],
+                }
+            )
+        return {"outcomes": outcomes}
+
     def typed(self, session, body):
         """Read two rows and decode them with the *generated* decoders.
 
@@ -1015,6 +1053,7 @@ ROUTES = {
     "/api/purge": "purge",
     "/api/bad-status": "bad_status",
     "/api/typed": "typed",
+    "/api/bad-batch": "bad_batch",
     "/api/transaction": "transaction",
 }
 

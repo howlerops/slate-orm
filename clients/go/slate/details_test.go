@@ -14,6 +14,8 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
+
+	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
 )
 
 // blobHex is a real grpc-status-details-bin, captured from a running head node
@@ -329,6 +331,76 @@ func TestAnOrdinaryFailureCarriesNoViolations(t *testing.T) {
 	var e *Error
 	if !errors.As(fromRPC(context.Background(), statusFrom(t, mustDecode(t, blobHex)).Err()), &e) {
 		t.Fatal("fromRPC did not produce a *slate.Error")
+	}
+	if len(e.Violations) != 0 {
+		t.Fatalf("Violations = %+v, want none", e.Violations)
+	}
+}
+
+// --- a batch's per-operation failure -----------------------------------------
+
+func TestABatchedRefusalCarriesTheSameViolations(t *testing.T) {
+	// The field a batched failure could not have. An independent batch reports
+	// each failure as data inside a *successful* response, so there are no
+	// trailers and no `grpc-status-details-bin` — a form submitted as a batch
+	// got the token and the prose and nothing to put beside a field. The
+	// server puts the same blob in the message body now.
+	//
+	// Asserted against the same fixture the lone path uses, which is the
+	// point: one blob, one decoder, and a batched refusal that cannot come to
+	// disagree with an unbatched one.
+	var e *Error
+	failed := &pb.BatchError{
+		Code:    int32(codes.InvalidArgument),
+		Message: "row violates 3 checks on table `docs`",
+		Reason:  "CHECK_VIOLATION",
+		Details: mustDecode(t, checksBlobHex),
+	}
+	if !errors.As(fromBatchError(failed), &e) {
+		t.Fatal("fromBatchError did not produce a *slate.Error")
+	}
+	if e.Reason != "CHECK_VIOLATION" {
+		t.Fatalf("Reason = %q", e.Reason)
+	}
+	if len(e.Violations) != 3 {
+		t.Fatalf("Violations = %+v, want three", e.Violations)
+	}
+	if e.Violations[0].Column != "title" || e.Violations[2].Column != "" {
+		t.Errorf("Violations = %+v", e.Violations)
+	}
+}
+
+func TestABatchedFailureWithNoDetailsHasNoViolations(t *testing.T) {
+	// Which is most of them: the blob is empty for every failure the server
+	// does not attach one to, and an empty `bytes` field must not become a
+	// decode attempt that answers something.
+	var e *Error
+	failed := &pb.BatchError{
+		Code: int32(codes.NotFound), Message: "no such row", Reason: "",
+	}
+	if !errors.As(fromBatchError(failed), &e) {
+		t.Fatal("fromBatchError did not produce a *slate.Error")
+	}
+	if len(e.Violations) != 0 {
+		t.Fatalf("Violations = %+v, want none", e.Violations)
+	}
+	if e.Kind != KindNotFound {
+		t.Fatalf("Kind = %v", e.Kind)
+	}
+}
+
+func TestABatchedFailureWithRubbishDetailsDoesNotPanic(t *testing.T) {
+	// The reasoning `reasonOf` gives: losing the violations is a degradation,
+	// and raising here would replace the server's failure with this client's.
+	var e *Error
+	failed := &pb.BatchError{
+		Code:    int32(codes.InvalidArgument),
+		Message: "refused",
+		Reason:  "CHECK_VIOLATION",
+		Details: []byte{0xff, 0xff, 0xff, 0xff},
+	}
+	if !errors.As(fromBatchError(failed), &e) {
+		t.Fatal("fromBatchError did not produce a *slate.Error")
 	}
 	if len(e.Violations) != 0 {
 		t.Fatalf("Violations = %+v, want none", e.Violations)

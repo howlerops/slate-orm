@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Metadata, status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
 
 import { DETAILS_KEY, ERROR_INFO_URL, checkFailuresOf, reasonOf } from "../src/details.js";
-import { fromServiceError } from "../src/errors.js";
+import { fromBatchError, fromServiceError } from "../src/errors.js";
 
 /**
  * A real `grpc-status-details-bin`, captured from a running head node rather
@@ -325,4 +325,52 @@ test("fromServiceError carries the violations onto the error", () => {
 test("an ordinary failure carries an empty list", () => {
   // Not `undefined`: a caller iterating does not have to check first.
   assert.deepEqual(fromServiceError(serviceError(BLOB)).violations, []);
+});
+
+// --- a batch's per-operation failure -----------------------------------------
+
+test("a batched refusal carries the same violations", () => {
+  // The field a batched failure could not have. An independent batch reports
+  // each failure as data inside a *successful* response, so there are no
+  // trailers and no `grpc-status-details-bin` — a form submitted as a batch got
+  // the token and the prose and nothing to put beside a field. The server puts
+  // the same blob in the message body now.
+  //
+  // Against the same fixture the lone path uses, which is the point: one blob,
+  // one decoder, and a batched refusal that cannot come to disagree with an
+  // unbatched one.
+  const error = fromBatchError({
+    code: GrpcStatus.INVALID_ARGUMENT,
+    message: "row violates 3 checks on table `docs`",
+    reason: "CHECK_VIOLATION",
+    details: CHECKS,
+  });
+  assert.equal(error.reason, "CHECK_VIOLATION");
+  assert.deepEqual(
+    error.violations.map((one) => one.check),
+    ["title_length", "size_positive", "discount_under_price"],
+  );
+  assert.equal(error.violations[2]?.column, "");
+});
+
+test("a batched failure with no details has no violations", () => {
+  // Which is most of them: the field is absent for every failure the server
+  // does not attach a blob to, and that must not become a decode attempt.
+  const error = fromBatchError({
+    code: GrpcStatus.NOT_FOUND,
+    message: "no such row",
+  });
+  assert.deepEqual(error.violations, []);
+  assert.equal(error.kind, "not-found");
+});
+
+test("a batched failure with rubbish details does not throw", () => {
+  // The reasoning `reasonOf` gives, one path over.
+  const error = fromBatchError({
+    code: GrpcStatus.INVALID_ARGUMENT,
+    message: "refused",
+    reason: "CHECK_VIOLATION",
+    details: Buffer.from("not a status"),
+  });
+  assert.deepEqual(error.violations, []);
 });

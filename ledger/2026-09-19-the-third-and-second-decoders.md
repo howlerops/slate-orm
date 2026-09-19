@@ -147,8 +147,7 @@ them in `--print-schema` and codegen narrows an enum column's type from them,
 but no client refuses a row locally; every bad row still costs a round trip.
 That is the same gap the Q4 entry left and this does not touch it.
 
-**A batched write's check violation carries no violations.** `fromBatchError`
-and its two counterparts build an error from a code, a message and a reason
-inside a successful response — there is no details blob in that path, so there
-is nothing to decode. A caller batching a form's write gets the token and the
-prose, which is where all three clients were before this change.
+~~**A batched write's check violation carries no violations.**~~ **Closed** —
+`BatchError` grew a `details` blob and the three clients decode it with the
+same function they use for a lone refusal. See
+`2026-09-19-the-one-path-that-could-not-carry-them.md`.

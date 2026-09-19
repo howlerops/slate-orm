@@ -2959,6 +2959,7 @@ class BatchError(_message.Message):
     CODE_FIELD_NUMBER: _builtins.int
     MESSAGE_FIELD_NUMBER: _builtins.int
     REASON_FIELD_NUMBER: _builtins.int
+    DETAILS_FIELD_NUMBER: _builtins.int
     code: _builtins.int
     """The gRPC status code, as an integer, the way a client's own error type
     spells it.
@@ -2967,16 +2968,33 @@ class BatchError(_message.Message):
     """The message a caller would have seen from the same operation sent alone."""
     reason: _builtins.str
     """The stable reason token, as `ErrorDetail.reason`."""
+    details: _builtins.bytes
+    """The same `google.rpc.Status` a lone call would have carried in
+    `grpc-status-details-bin`.
+
+    Empty for a failure that has none. It is here because the token says
+    *that* a row broke a check and not which ones: a refused form needs
+    `violations`, `check.N`, `column.N` and `message.N`, and a batch had no
+    way to carry them — a caller submitting a form as a batch got the token
+    and the prose, which is where every client was before the decoders were
+    written.
+
+    Opaque bytes rather than a repeated message of check failures, so that the
+    three clients decode a batched refusal with the *same* function they
+    already use for a lone one. A parallel shape here would be a fourth
+    encoding of one thing and a fourth place for it to drift.
+    """
     def __init__(
         self,
         *,
         code: _builtins.int = ...,
         message: _builtins.str = ...,
         reason: _builtins.str = ...,
+        details: _builtins.bytes = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["code", b"code", "message", b"message", "reason", b"reason"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["code", b"code", "details", b"details", "message", b"message", "reason", b"reason"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

@@ -961,6 +961,11 @@ impl<S: KvStore + KvReadStore> Head<S> {
                         code: status.code() as i32,
                         message: status.message().to_owned(),
                         reason: reason_of(&status),
+                        // The whole blob, not a re-encoding of part of it: a
+                        // client decodes a batched refusal with the same
+                        // function it uses for a lone one, so the two cannot
+                        // come to disagree.
+                        details: status.details().to_vec(),
                     })),
                 }),
             }

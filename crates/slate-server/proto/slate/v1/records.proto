@@ -1387,6 +1387,21 @@ message BatchError {
   string message = 2;
   // The stable reason token, as `ErrorDetail.reason`.
   string reason = 3;
+  // The same `google.rpc.Status` a lone call would have carried in
+  // `grpc-status-details-bin`.
+  //
+  // Empty for a failure that has none. It is here because the token says
+  // *that* a row broke a check and not which ones: a refused form needs
+  // `violations`, `check.N`, `column.N` and `message.N`, and a batch had no
+  // way to carry them — a caller submitting a form as a batch got the token
+  // and the prose, which is where every client was before the decoders were
+  // written.
+  //
+  // Opaque bytes rather than a repeated message of check failures, so that the
+  // three clients decode a batched refusal with the *same* function they
+  // already use for a lone one. A parallel shape here would be a fourth
+  // encoding of one thing and a fourth place for it to drift.
+  bytes details = 4;
 }
 
 // ── Reads ────────────────────────────────────────────────────────────────────

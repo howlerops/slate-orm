@@ -357,7 +357,9 @@ def _trailers(error: grpc.RpcError | RpcCall) -> dict[str, str]:
     return out
 
 
-def from_batch_error(code: int, message: str, reason: str) -> SlateError:
+def from_batch_error(
+    code: int, message: str, reason: str, details: bytes = b""
+) -> SlateError:
     """The exception a batch's per-operation failure becomes.
 
     An independent batch reports each failure *as data*, inside a successful
@@ -369,10 +371,25 @@ def from_batch_error(code: int, message: str, reason: str) -> SlateError:
     `reason` is carried on the exception rather than in `trailers`, because
     there are no trailers: the whole point of an independent batch is that the
     request succeeded and the operation did not.
+
+    `details` is the same `google.rpc.Status` blob a lone failure carries in
+    `grpc-status-details-bin`, put in the message body by the server for the
+    same reason. It is decoded by `check_failures_of` — the function the lone
+    path uses — so a form submitted as a batch gets the same typed failures as
+    one submitted alone. It used to be the field a batched failure could not
+    have: there are no trailers, so there was nothing to decode.
+
+    Defaulted to empty rather than required, because a batch error built by a
+    caller's own test should not have to supply a blob to say there is none.
     """
     status = _BY_VALUE.get(code, grpc.StatusCode.UNKNOWN)
     kind: type[SlateError] = _BY_CODE.get(status, InternalError)
-    return kind(message or status.name, code=status, reason=reason)
+    return kind(
+        message or status.name,
+        code=status,
+        reason=reason,
+        violations=check_failures_of(details),
+    )
 
 
 #: gRPC's numeric codes, which arrive as an `int32` in a `BatchError`.

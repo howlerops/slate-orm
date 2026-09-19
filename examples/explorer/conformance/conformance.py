@@ -523,6 +523,21 @@ CASES: list[tuple[str, str, Any, str]] = [
     # one. Integers are spelled as decimal strings because one of the three
     # reads them as `bigint`.
     ("two rows through the generated decoders", "/api/typed", {}, "app"),
+
+    # The same typed refusal, through a *batch*.
+    #
+    # A batch reports each failure as data inside a successful response, so
+    # there are no trailers and no `grpc-status-details-bin`; this was the one
+    # path that could not carry `violations` at all, and a form submitted as a
+    # batch got the token and the prose. The server puts the same blob in the
+    # message body now and each client decodes it with the function it already
+    # had.
+    #
+    # Two rows, refused differently — one breaks two checks and one breaks one
+    # — because an adapter that reported the same list for every failed
+    # operation would otherwise look right. Nothing is written, so the case
+    # leaves the database as it found it.
+    ("a batch where two rows are refused differently", "/api/bad-batch", {}, "app"),
 ]
 
 

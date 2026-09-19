@@ -816,7 +816,9 @@ export class Session {
     const outcomes = (response.results ?? []).map((raw) => {
       const result = raw as {
         ok?: { sequence?: string; affected?: string; rows?: unknown[] };
-        error?: { code?: number; message?: string; reason?: string };
+        // `details` is a `bytes` field, which proto-loader hands over as a
+        // `Buffer` — a `Uint8Array`, which is what the decoder takes.
+        error?: { code?: number; message?: string; reason?: string; details?: Uint8Array };
       };
       if (result.error) {
         return { error: fromBatchError(result.error) } as BatchOutcome;

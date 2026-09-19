@@ -169,7 +169,10 @@ class BatchOutcome:
             return cls(
                 None,
                 from_batch_error(
-                    result.error.code, result.error.message, result.error.reason
+                    result.error.code,
+                    result.error.message,
+                    result.error.reason,
+                    result.error.details,
                 ),
             )
         sequence = result.ok.sequence if result.ok.HasField("sequence") else None

@@ -1369,3 +1369,56 @@ func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMe
 		},
 	}, nil
 }
+
+// badBatch sends two shipments an independent batch will refuse, one for two
+// reasons and one for a single reason.
+//
+// The gap this closes: a batch reports each failure as *data* inside a
+// successful response, so there are no trailers and no
+// `grpc-status-details-bin`. A caller submitting a form as a batch got the
+// reason token and the prose and nothing to put beside a field, which is
+// where every client was before the check decoders were written. The server
+// now carries the same blob in the message body.
+//
+// Both rows are refused, so nothing is written and there is nothing to undo —
+// and the two refusals differ, which is what makes the case say more than "a
+// batch can fail": 9498 breaks `status_known` and `id_is_seeded`, 9497 breaks
+// only `id_is_seeded`, and an adapter reporting one list for both would be
+// caught here rather than looking plausible.
+func (s *server) badBatch(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
+	b := slate.NewBatch(slate.Independent)
+	b.Insert("shipments", []slate.Value{
+		slate.Uint(9498), slate.Uint(10), slate.String("teleported"), slate.Null{},
+	})
+	b.Insert("shipments", []slate.Value{
+		slate.Uint(9497), slate.Uint(10), slate.String("pending"), slate.Null{},
+	})
+
+	result, err := session.Batch(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+
+	outcomes := make([]any, 0, len(result.Outcomes))
+	for _, one := range result.Outcomes {
+		if one.OK() {
+			// Reached only if the server stopped enforcing a check, which is a
+			// disagreement worth failing loudly on.
+			return nil, fmt.Errorf("the server accepted a row two checks refuse")
+		}
+		var e *slate.Error
+		if !errors.As(one.Err, &e) {
+			return nil, one.Err
+		}
+		broke := make([]map[string]string, 0, len(e.Violations))
+		for _, violation := range e.Violations {
+			broke = append(broke, map[string]string{
+				"check": violation.Check, "column": violation.Column,
+			})
+		}
+		outcomes = append(outcomes, map[string]any{
+			"kind": kindName(e.Kind), "reason": e.Reason, "violations": broke,
+		})
+	}
+	return map[string]any{"outcomes": outcomes}, nil
+}

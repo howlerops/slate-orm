@@ -5835,7 +5835,22 @@ type BatchError struct {
 	// The message a caller would have seen from the same operation sent alone.
 	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	// The stable reason token, as `ErrorDetail.reason`.
-	Reason        string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	// The same `google.rpc.Status` a lone call would have carried in
+	// `grpc-status-details-bin`.
+	//
+	// Empty for a failure that has none. It is here because the token says
+	// *that* a row broke a check and not which ones: a refused form needs
+	// `violations`, `check.N`, `column.N` and `message.N`, and a batch had no
+	// way to carry them — a caller submitting a form as a batch got the token
+	// and the prose, which is where every client was before the decoders were
+	// written.
+	//
+	// Opaque bytes rather than a repeated message of check failures, so that the
+	// three clients decode a batched refusal with the *same* function they
+	// already use for a lone one. A parallel shape here would be a fourth
+	// encoding of one thing and a fourth place for it to drift.
+	Details       []byte `protobuf:"bytes,4,opt,name=details,proto3" json:"details,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5889,6 +5904,13 @@ func (x *BatchError) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *BatchError) GetDetails() []byte {
+	if x != nil {
+		return x.Details
+	}
+	return nil
 }
 
 // Read one row by its primary key.
@@ -8137,12 +8159,13 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\vBatchResult\x12)\n" +
 	"\x02ok\x18\x01 \x01(\v2\x17.slate.v1.WriteResponseH\x00R\x02ok\x12,\n" +
 	"\x05error\x18\x02 \x01(\v2\x14.slate.v1.BatchErrorH\x00R\x05errorB\x04\n" +
-	"\x02of\"R\n" +
+	"\x02of\"l\n" +
 	"\n" +
 	"BatchError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xd6\x01\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
+	"\adetails\x18\x04 \x01(\fR\adetails\"\xd6\x01\n" +
 	"\n" +
 	"GetRequest\x12 \n" +
 	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12\x14\n" +
