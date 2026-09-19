@@ -202,6 +202,19 @@ export interface Query {
    */
   readonly paged?: boolean;
   /**
+   * Also return rows a soft delete has retired.
+   *
+   * Needs the `read_deleted` action on the table, which `read` does not imply
+   * and the `all` shorthand does not include: a soft delete hides a row from
+   * every ordinary read, so lifting it shows rows the application decided were
+   * gone. Without the grant the server answers `PERMISSION_DENIED` naming
+   * `read_deleted`, rather than quietly serving the smaller set.
+   *
+   * On a table that does not soft-delete it does nothing and needs no grant —
+   * there is nothing to reveal.
+   */
+  readonly includeDeleted?: boolean;
+  /**
    * Values computed per row, appended after the table's own columns and named
    * with `computed0`.
    *
@@ -249,6 +262,7 @@ export function queryToWire(
     out["after"] = query.after.map(valueToWire);
   }
   if (query.paged) out["paged"] = true;
+  if (query.includeDeleted) out["includeDeleted"] = true;
   return out;
 }
 

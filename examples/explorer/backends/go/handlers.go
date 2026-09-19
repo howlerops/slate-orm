@@ -18,7 +18,13 @@ func (s *server) meta(ctx context.Context, session *slate.Session, _ json.RawMes
 	return map[string]any{
 		"sdk":    "go",
 		"leader": status.Leader,
-		"tables": []string{"authors", "books", "sales"},
+		// Derived from the allowlist the query path enforces, not a second
+		// literal beside it. The two were separate lists and drifted the
+		// moment a table was added: the query path learned `shipments` and
+		// this did not, so `/api/meta` reported three tables while
+		// `/api/query` served four — and the conformance `meta` case caught
+		// it because the node adapter had already been deriving its list.
+		"tables": knownTables(),
 	}, nil
 }
 

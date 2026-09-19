@@ -126,6 +126,7 @@ class _QueryBase:
         self._order = ScanOrder.ASCENDING
         self._compute: list[Scalar] = []
         self._hint: pb.AccessHint | None = None
+        self._include_deleted = False
 
     @property
     def c(self) -> Columns:
@@ -134,6 +135,27 @@ class _QueryBase:
         The only way to obtain a reference. See `expr.Columns`.
         """
         return Columns(self.table, self._input)
+
+    def include_deleted(self) -> Self:
+        """Also return rows a soft delete has retired.
+
+        Needs the `read_deleted` action on the table, which `read` does not
+        imply and the `all` shorthand does not include: a soft delete hides a
+        row from every ordinary read, so lifting it shows rows the application
+        decided were gone. Without the grant the server answers
+        `PERMISSION_DENIED` naming `read_deleted`, rather than quietly serving
+        the smaller set.
+
+        On a table that does not soft-delete this does nothing and needs no
+        grant — there is nothing to reveal.
+
+        On `_QueryBase` rather than on `Query` alone because the wire carries
+        the flag per `Query`, and a join has one per input: reading live
+        parents against every child, retired ones included, is a real request,
+        and asking for it input by input is what the server accepts.
+        """
+        self._include_deleted = True
+        return self
 
     def computed(self, index: int) -> ColumnRef:
         """The `index`th value this input computes, counting from zero.
@@ -161,6 +183,7 @@ class _QueryBase:
             query.filter.CopyFrom(self._filter.to_proto())
         if self._hint is not None:
             query.hint.CopyFrom(self._hint)
+        query.include_deleted = self._include_deleted
         return query
 
 

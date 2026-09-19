@@ -94,7 +94,7 @@ const IDENTITIES: Record<string, Identity> = {
   stranger: { principal: "u64:3", tenant: "u64:1", roles: ["stranger"] },
 };
 
-const TABLES = ["authors", "books", "sales"];
+const TABLES = ["authors", "books", "sales", "shipments"];
 
 interface FilterSpec {
   op: string;
@@ -162,6 +162,8 @@ interface QuerySpec {
   limit?: number | null;
   offset?: number;
   columns?: Ordinal[];
+  /** Ask for rows a soft delete has retired; needs the `read_deleted` grant. */
+  includeDeleted?: boolean;
 }
 
 function buildQuery(spec: QuerySpec): Query {
@@ -183,6 +185,7 @@ function buildQuery(spec: QuerySpec): Query {
     ...(spec.limit !== undefined && spec.limit !== null ? { limit: spec.limit } : {}),
     ...(spec.offset ? { offset: spec.offset } : {}),
     ...(spec.columns?.length ? { columns: spec.columns } : {}),
+    ...(spec.includeDeleted ? { includeDeleted: true } : {}),
   };
 }
 

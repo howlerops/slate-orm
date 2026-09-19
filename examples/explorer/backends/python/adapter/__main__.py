@@ -106,9 +106,22 @@ def build_filter(query, table, spec: dict[str, Any] | None):
     raise ValueError(f"no such filter operator: {op}")
 
 
+#: The tables `/api/query` serves, which is not every table in the catalog.
+#:
+#: `editions` is reachable only through a relationship, so naming it here would
+#: make this adapter answer a request the other two refuse — and the contract
+#: says all three word that refusal identically.
+#:
+#: One tuple rather than a literal here and another in `/api/meta`. They were
+#: two lists and drifted the moment a table was added: the query path learned
+#: `shipments` and the meta handler did not, so the two endpoints described
+#: different databases. The conformance `meta` case is what reported it.
+QUERYABLE = ("authors", "books", "sales", "shipments")
+
+
 def build_query(spec: dict[str, Any]) -> Query:
     name = spec.get("table", "")
-    table = BY_NAME.get(name)
+    table = BY_NAME.get(name) if name in QUERYABLE else None
     if table is None:
         # Caught here rather than by the server, because two of the three
         # clients hold a schema and cannot build a request without one. The
@@ -132,6 +145,8 @@ def build_query(spec: dict[str, Any]) -> Query:
         query.offset(int(spec["offset"]))
     if spec.get("columns"):
         query.select(*(query.c[table.column_names[i]] for i in spec["columns"]))
+    if spec.get("includeDeleted"):
+        query.include_deleted()
     return query
 
 
@@ -146,7 +161,7 @@ class Adapter:
         return {
             "sdk": "python",
             "leader": self.clients["app"].session().leadership().is_leader,
-            "tables": ["authors", "books", "sales"],
+            "tables": list(QUERYABLE),
         }
 
     def query(self, session, body):

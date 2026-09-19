@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
 )
@@ -94,6 +95,9 @@ type querySpec struct {
 	Limit   *uint64         `json:"limit"`
 	Offset  uint64          `json:"offset"`
 	Columns []slate.Ordinal `json:"columns"`
+	// IncludeDeleted asks for rows a soft delete has retired, which needs the
+	// `read_deleted` grant the demo gives `app` and withholds from `reader`.
+	IncludeDeleted bool `json:"includeDeleted"`
 }
 
 // tables the demo serves.
@@ -103,13 +107,33 @@ type querySpec struct {
 // clients hold a schema and *cannot* build a request without one — so the
 // server never sees their bad name. One of the three refusing differently is a
 // contract divergence, and the conformance runner found exactly that.
-var known = map[string]bool{"authors": true, "books": true, "sales": true}
+var known = map[string]bool{
+	"authors": true, "books": true, "sales": true, "shipments": true,
+}
+
+// knownTables is `known` as a sorted slice, for `/api/meta`.
+//
+// Sorted because a map's iteration order is deliberately random in Go, and
+// the conformance runner compares the three adapters' answers as JSON: an
+// unsorted list would disagree with itself between two runs of the same
+// binary, which is a far more confusing failure than a missing table.
+func knownTables() []string {
+	out := make([]string, 0, len(known))
+	for name := range known {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func (q *querySpec) build() (slate.Query, error) {
 	if !known[q.Table] {
 		return slate.Query{}, fmt.Errorf("no such table: %s", q.Table)
 	}
-	out := slate.Query{Table: q.Table, Offset: q.Offset, Columns: q.Columns}
+	out := slate.Query{
+		Table: q.Table, Offset: q.Offset, Columns: q.Columns,
+		IncludeDeleted: q.IncludeDeleted,
+	}
 	if q.Filter != nil {
 		filter, err := q.Filter.build()
 		if err != nil {

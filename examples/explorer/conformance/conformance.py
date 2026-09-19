@@ -461,6 +461,28 @@ CASES: list[tuple[str, str, Any, str]] = [
 
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
+
+    # Soft delete, across the wire, in all three clients.
+    #
+    # `shipments` seeds four rows and retires one. These three cases are the
+    # whole of the convention: what an ordinary read sees, what lifting the
+    # filter adds, and who is allowed to lift it.
+    #
+    # The first two are a pair on purpose. "Four rows came back" proves
+    # nothing on its own — a server that ignored the flag entirely would also
+    # return four — so the case that matters is the *difference* between them,
+    # and the corpus only sees a difference if it asks both ways.
+    ("a read that cannot see a retired row", "/api/query",
+     {"table": "shipments", "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+    ("a read that asks for retired rows too", "/api/query",
+     {"table": "shipments", "includeDeleted": True,
+      "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+    # And the refusal. `reader` holds `read` on `shipments` and not
+    # `read_deleted`, which is the entire reason the action is separate: a
+    # server that folded it into `read` would answer this with rows.
+    ("a reader may not ask for retired rows", "/api/query",
+     {"table": "shipments", "includeDeleted": True,
+      "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
 ]
 
 
@@ -492,7 +514,28 @@ EXPECTED_REFUSALS = {
     "a predicate update with no assignments",
     "a reader may not write by predicate",
     "a reader may not batch",
+    # Not a refusal of the *read* — `reader` may read `shipments`. It is a
+    # refusal of lifting the soft-delete filter, which is the whole reason
+    # `read_deleted` is an action of its own rather than part of `read`.
+    "a reader may not ask for retired rows",
 }
+
+
+#: Pairs of cases whose answers must **differ** from each other.
+#:
+#: Three clients agreeing is the whole point of this runner and it cannot see
+#: one class of bug: a request field that every client drops. All three then
+#: send the same smaller request, get the same smaller answer, and agree
+#: perfectly about it.
+#:
+#: `includeDeleted` is exactly that shape. "The read returned four rows" proves
+#: nothing on its own — a server ignoring the flag returns four too, if four is
+#: what the plain read returns. The evidence is that asking changes the answer,
+#: which needs two cases and a comparison between them, and this is where that
+#: comparison lives.
+MUST_DIFFER: list[tuple[str, str]] = [
+    ("a read that cannot see a retired row", "a read that asks for retired rows too"),
+]
 
 
 def normalise(answer: Any) -> Any:
@@ -519,6 +562,11 @@ def main() -> int:
     adapters = {sdk: getattr(args, sdk) for sdk in DEFAULTS}
 
     failures: list[str] = []
+    # Every case's agreed answer, for the `MUST_DIFFER` check below. Only the
+    # cases where all three agreed are recorded: a disagreement is already a
+    # failure and comparing one of three answers to another case would say
+    # nothing about which.
+    agreed_by_name: dict[str, str] = {}
     for name, path, body, identity in CASES:
         answers = {
             sdk: normalise(call(base, path, body, identity)) for sdk, base in adapters.items()
@@ -550,6 +598,7 @@ def main() -> int:
                     f"answered it; the list is stale"
                 )
                 continue
+            agreed_by_name[name] = rendered[next(iter(rendered))]
             if args.verbose:
                 print(f"  ok    {name}")
             continue
@@ -557,6 +606,25 @@ def main() -> int:
         failures.append(f"{name} ({identity}): the adapters disagree")
         for sdk, text in rendered.items():
             failures.append(f"    {sdk:7} {text[:400]}")
+
+    for quiet, loud in MUST_DIFFER:
+        if quiet not in agreed_by_name or loud not in agreed_by_name:
+            # One of them already failed, or is missing from CASES entirely —
+            # the second is worth saying out loud, because a renamed case would
+            # otherwise turn this check off silently.
+            missing = [n for n in (quiet, loud) if n not in agreed_by_name]
+            failures.append(
+                f"the must-differ pair ({quiet!r}, {loud!r}) is not comparable: "
+                f"{', '.join(repr(n) for n in missing)} produced no agreed answer"
+            )
+            continue
+        if agreed_by_name[quiet] == agreed_by_name[loud]:
+            failures.append(
+                f"{quiet!r} and {loud!r} returned the same answer, so whatever "
+                f"separates them was dropped by all three clients or ignored by "
+                f"the server"
+            )
+            failures.append(f"    {agreed_by_name[quiet][:400]}")
 
     print()
     if failures:

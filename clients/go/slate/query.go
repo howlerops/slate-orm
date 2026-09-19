@@ -290,6 +290,18 @@ type Query struct {
 	// (no limit, or a projection dropping a key column) rather than serving it
 	// without one, which it can only do if it knows one was wanted.
 	Paged bool
+	// IncludeDeleted also returns rows a soft delete has retired.
+	//
+	// Needs the `read_deleted` action on the table, which `read` does not
+	// imply and the `all` shorthand does not include: a soft delete hides a
+	// row from every ordinary read, so lifting it shows rows the application
+	// decided were gone. Without the grant the server answers
+	// PERMISSION_DENIED naming `read_deleted`, rather than quietly serving the
+	// smaller set.
+	//
+	// On a table that does not soft-delete it does nothing and needs no grant
+	// — there is nothing to reveal.
+	IncludeDeleted bool
 }
 
 // Limit is a convenience for setting [Query.Limit].
@@ -308,6 +320,8 @@ func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
 		Schema:  claim,
 		Compute: scalarsToProto(q.Compute),
 		Paged:   q.Paged,
+
+		IncludeDeleted: q.IncludeDeleted,
 	}
 	for _, value := range q.After {
 		out.After = append(out.After, value.toProto())
