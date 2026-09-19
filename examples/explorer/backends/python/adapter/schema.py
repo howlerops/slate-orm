@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from slate import Column, Table, ValueType
 from slate.values import Null, Units
@@ -24,10 +24,12 @@ __all__ = [
     "BY_NAME",
     "EDITIONS",
     "SALES",
+    "SHIPMENTS",
     "Authors",
     "Books",
     "Editions",
     "Sales",
+    "Shipments",
 ]
 
 AUTHORS = Table(
@@ -84,7 +86,26 @@ EDITIONS = Table(
     primary_key=["id"],
 )
 
-BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS,)}
+SHIPMENTS = Table(
+    "shipments",
+    [
+        Column("id", ValueType.U64),
+        Column("book_id", ValueType.U64),
+        Column("status", ValueType.STR),
+        Column("deleted_at", ValueType.I64),
+    ],
+    primary_key=["id"],
+)
+
+SHIPMENTS_CHECKS = {
+    "status_known": {
+        "column": "status",
+        "message": "Status must be pending, shipped or delivered.",
+        "predicate": "status in ('pending', 'shipped', 'delivered')",
+    },
+}
+
+BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, SHIPMENTS,)}
 
 
 def _field(values: Sequence[object], at: int, table: str, column: str,
@@ -209,4 +230,28 @@ class Editions:
             id=cast("int", _field(values, 0, "editions", "id", int, False)),
             book_id=cast("int", _field(values, 1, "editions", "book_id", int, False)),
             format=cast("str", _field(values, 2, "editions", "format", str, False)),
+        )
+
+
+@dataclass(frozen=True)
+class Shipments:
+    """A row of `shipments`, decoded."""
+
+    id: int
+    book_id: int
+    status: Literal["pending", "shipped", "delivered"]
+    deleted_at: int | None
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Shipments:
+        """Decode a row of `shipments`, by ordinal."""
+        if len(values) != 4:
+            raise ValueError(
+                f"shipments has 4 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "shipments", "id", int, False)),
+            book_id=cast("int", _field(values, 1, "shipments", "book_id", int, False)),
+            status=cast("Literal['pending', 'shipped', 'delivered']", _field(values, 2, "shipments", "status", str, False)),
+            deleted_at=cast("int | None", _field(values, 3, "shipments", "deleted_at", int, True)),
         )

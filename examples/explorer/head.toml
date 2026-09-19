@@ -126,17 +126,67 @@ name = "edition_book"
 parent = "books"
 columns = ["book_id"]
 
+[[tables]]
+name = "shipments"
+id = 5
+columns = [
+  { name = "id",      type = "u64" },
+  { name = "book_id", type = "u64" },
+  # The demo's one enumerated column, and the reason this table exists.
+  #
+  # The generator turns a `column in (…)` check over a `str` into a narrowed
+  # type — `Literal["pending", …]` in Python, a union in TypeScript. Until
+  # this column that narrowing was proved only against catalogs invented
+  # inside `scripts/test_codegen.py`, which is a test of the matcher and not
+  # of the pipeline: nothing showed a real `--print-schema` reaching a real
+  # generated file with a real type in it.
+  { name = "status",  type = "str" },
+  # And the demo's one soft delete, for the same reason. `include_deleted`
+  # crosses the wire and `purge_deleted` erases what it finds, and neither had
+  # a table in this repository to act on.
+  #
+  # Nullable and `i64`, which is what `soft_delete` requires: a retired row
+  # carries the second it was retired, a live one carries null.
+  { name = "deleted_at", type = "i64", nullable = true },
+]
+primary_key = ["id"]
+soft_delete = "deleted_at"
+
+[[tables.checks]]
+name = "status_known"
+predicate = "status in ('pending', 'shipped', 'delivered')"
+column = "status"
+message = "Status must be pending, shipped or delivered."
+
+# A third foreign key, so a soft-deleted row is also a *referencing* row.
+#
+# It makes the retirement path do something worth watching: retiring a shipment
+# goes through `remove_row`, which maintains every index across the transition
+# rather than deleting the row, and a parent that is still referenced by a
+# retired child is still referenced.
+[[tables.foreign_keys]]
+name = "shipment_book"
+parent = "books"
+columns = ["book_id"]
+
 # `app` can do everything, including EXPLAIN.
 [[security.grants]]
 role = "app"
-tables = ["authors", "books", "sales", "editions"]
+tables = ["authors", "books", "sales", "editions", "shipments"]
 actions = ["everything"]
 
 # `reader` can read and nothing else — notably not EXPLAIN, which is its own
-# action precisely because a plan is costed against rows a policy may hide.
+# action precisely because a plan is costed against rows a policy may hide,
+# and notably not `read_deleted`, which is its own action for the same shape of
+# reason: a soft delete hides a row from every ordinary read, so lifting that
+# shows rows the application decided were gone.
+#
+# `everything` above grants both. This grant is what makes the refusal
+# demonstrable: `reader` may read `shipments` and may not ask to see the
+# retired ones.
 [[security.grants]]
 role = "reader"
-tables = ["authors", "books", "sales", "editions"]
+tables = ["authors", "books", "sales", "editions", "shipments"]
 actions = ["read"]
 
 # `stranger` holds a role with no grant at all. Every table is denied, and the

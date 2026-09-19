@@ -252,6 +252,64 @@ def test_a_generated_python_row_decodes_and_refuses_a_transposed_one() -> None:
         raise AssertionError("a short row decoded without complaint")
 
 
+def test_a_generated_module_with_an_enum_is_valid_python() -> None:
+    """The narrowed type has to survive being written into a *string*.
+
+    This exists because it did not. The Python decoder casts to a quoted type
+    — `cast("int | None", …)` — to avoid building a union object per row, and a
+    `Literal["pending"]` closed that string early and made the whole generated
+    module a `SyntaxError`.
+
+    Every check in CI passed on it. `ruff` never saw the file, the codegen
+    tests asserted on the *annotation* line rather than the cast, and the one
+    test that executes generated Python used a catalog with no enumerated
+    column. It was found by starting the demo, which is the only thing that
+    had ever imported the result.
+
+    So this compiles the module rather than reading it, and does so for a
+    catalog that narrows — the combination none of the three checks had.
+    """
+    spec = [
+        table(
+            "posts",
+            [column("id", "u64", 0), column("status", "string", 1), nullable("tag", "string", 2)],
+            [0],
+        )
+    ]
+    spec[0]["checks"] = [
+        check("status_known", "status in ('draft', 'live')"),
+        # A nullable enumerated column too: its hint is `Literal[…] | None`,
+        # which is the composition of the two spellings and the place a naive
+        # fix would put the quotes back.
+        check("tag_known", "tag in ('red', 'blue')"),
+    ]
+    body = codegen.python_module(spec)
+
+    # `compile`, not `ast.parse`: it is the check that actually failed, and a
+    # module that parses but does not compile would still be broken.
+    compile(body, "<generated>", "exec")
+
+    try:
+        import slate  # noqa: F401
+    except ImportError:
+        print("  (skipped executing it: the `slate` client is not installed)")
+        return
+
+    namespace: dict[str, object] = {}
+    exec(compile(body, "<generated>", "exec"), namespace)
+    row_type: Any = namespace["Posts"]
+    decoded = row_type.from_row([1, "live", None])
+    assert decoded.status == "live"
+    assert decoded.tag is None
+
+    # And the narrowing is a *type*, not a runtime check: the server enforces
+    # the rule, so a value outside the set still decodes. Asserted because the
+    # opposite is the natural assumption to make about a `Literal`, and a
+    # caller who believed it would skip handling a value the server allows
+    # after a schema change the client has not regenerated for.
+    assert row_type.from_row([2, "archived", None]).status == "archived"
+
+
 def test_a_non_nullable_column_that_comes_back_null_is_refused() -> None:
     """Null into a column declared not-null is a server or schema bug, not a None."""
     spec = [table("t", [column("id", "u64", 0)], [0])]

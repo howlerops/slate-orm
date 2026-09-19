@@ -112,6 +112,42 @@ func (s *server) seed() error {
 		edition(501, 10, "paperback"),
 		edition(502, 11, "paperback"),
 	}
-	_, err := session.Upsert(ctx, "editions", editions...)
+	if _, err := session.Upsert(ctx, "editions", editions...); err != nil {
+		return err
+	}
+
+	// Shipments: the demo's one enumerated column and its one soft delete.
+	//
+	// `status` is constrained by a CHECK to three values, which is what the
+	// generator turns into `Literal[…]` in Python and a union in TypeScript.
+	// Seeding all three means the generated type is exercised by real rows
+	// rather than merely emitted.
+	shipment := func(id, book uint64, status string) []slate.Value {
+		// `deleted_at` is null: a live row. It cannot be seeded any other
+		// way — the write path checks that the writer could read back what it
+		// wrote, and a row born retired fails its own soft-delete filter.
+		return []slate.Value{
+			slate.Uint(id), slate.Uint(book), slate.String(status), slate.Null{},
+		}
+	}
+	shipments := [][]slate.Value{
+		shipment(600, 10, "delivered"),
+		shipment(601, 11, "shipped"),
+		shipment(602, 12, "pending"),
+		shipment(603, 13, "pending"),
+	}
+	if _, err := session.Upsert(ctx, "shipments", shipments...); err != nil {
+		return err
+	}
+
+	// And retire one, so the database holds a row that an ordinary read cannot
+	// see and a `read_deleted` grant can. Without this the whole soft-delete
+	// surface would be demonstrable only in the negative — every read agreeing
+	// on the same four rows proves nothing about a filter with nothing to
+	// filter.
+	//
+	// A delete rather than a retired row written directly, because the stamp
+	// is the server's clock and this is the only path that sets it.
+	_, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(603)})
 	return err
 }

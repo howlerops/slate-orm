@@ -82,12 +82,24 @@ export const EDITIONS: TableDef = {
   primaryKey: ["id"],
 };
 
+export const SHIPMENTS: TableDef = {
+  name: "shipments",
+  columns: [
+    { name: "id", type: "u64" },
+    { name: "book_id", type: "u64" },
+    { name: "status", type: "string" },
+    { name: "deleted_at", type: "i64" },
+  ],
+  primaryKey: ["id"],
+};
+
 /** Every table the catalog declares, for `client.declaring(TABLES)`. */
 export const TABLES: Schemas = {
   [AUTHORS.name]: AUTHORS,
   [BOOKS.name]: BOOKS,
   [SALES.name]: SALES,
   [EDITIONS.name]: EDITIONS,
+  [SHIPMENTS.name]: SHIPMENTS,
 };
 
 
@@ -211,5 +223,43 @@ export function decodeEditions(row: Value[]): Editions {
     id: field(row, 0, "editions", "id", "uint", false) as bigint,
     book_id: field(row, 1, "editions", "book_id", "uint", false) as bigint,
     format: field(row, 2, "editions", "format", "string", false) as string,
+  };
+}
+
+/**
+ * Every `CHECK` on `shipments`, by name.
+ *
+ * Published rather than restated: checks are outside the schema
+ * fingerprint, so a client cannot derive them and would otherwise learn
+ * each rule from a refusal.
+ */
+export const ShipmentsChecks: Record<string, CheckRule> = {
+  "status_known": { column: "status", message: "Status must be pending, shipped or delivered.", predicate: "status in ('pending', 'shipped', 'delivered')" },
+};
+
+/** A row of `shipments`, decoded. */
+export interface Shipments {
+  id: bigint;
+  book_id: bigint;
+  status: "pending" | "shipped" | "delivered";
+  deleted_at: bigint | null;
+}
+
+/**
+ * Decode one row of `shipments`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodeShipments(row: Value[]): Shipments {
+  if (row.length !== 4) {
+    throw new Error(`shipments has 4 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "shipments", "id", "uint", false) as bigint,
+    book_id: field(row, 1, "shipments", "book_id", "uint", false) as bigint,
+    status: field(row, 2, "shipments", "status", "string", false) as "pending" | "shipped" | "delivered",
+    deleted_at: field(row, 3, "shipments", "deleted_at", "int", true) as bigint | null,
   };
 }

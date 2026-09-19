@@ -58,6 +58,16 @@ var Tables = slate.Schemas{
 		},
 		PrimaryKey: []string{"id"},
 	},
+	"shipments": {
+		Name: "shipments",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "book_id", Type: slate.TypeUint},
+			{Name: "status", Type: slate.TypeString},
+			{Name: "deleted_at", Type: slate.TypeInt},
+		},
+		PrimaryKey: []string{"id"},
+	},
 }
 
 // Authors is a row of `authors`, decoded.
@@ -314,6 +324,80 @@ func ScanEditions(row []slate.Value) (Editions, error) {
 		out.Format = string(v)
 	} else {
 		return out, fmt.Errorf("editions.format is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// ShipmentsStatusValues is every value the `shipments`
+// check allows in `status`. The server enforces it; this is here so a
+// caller can offer the choices without asking, and is not a type because
+// Go has no union of string literals.
+var ShipmentsStatusValues = []string{"pending", "shipped", "delivered"}
+
+// ShipmentsChecks is every `CHECK` on `shipments`, by name.
+//
+// Published rather than restated: checks are outside the schema
+// fingerprint, so a client cannot derive them and would otherwise learn
+// each rule from a refusal. The `check` key in a violation's details is
+// the key here.
+var ShipmentsChecks = map[string]slate.CheckRule{
+	"status_known": {Column: "status", Message: "Status must be pending, shipped or delivered.", Predicate: "status in ('pending', 'shipped', 'delivered')"},
+}
+
+// Shipments is a row of `shipments`, decoded.
+type Shipments struct {
+	Id        uint64
+	BookId    uint64
+	Status    string
+	DeletedAt *int64
+}
+
+// ScanShipments decodes one row of `shipments`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanShipments(row []slate.Value) (Shipments, error) {
+	var out Shipments
+	if len(row) != 4 {
+		return out, fmt.Errorf("shipments has 4 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("shipments.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("shipments.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("shipments.book_id: expected slate.Uint, got %T", row[1])
+		}
+		out.BookId = uint64(v)
+	} else {
+		return out, fmt.Errorf("shipments.book_id is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("shipments.status: expected slate.String, got %T", row[2])
+		}
+		out.Status = string(v)
+	} else {
+		return out, fmt.Errorf("shipments.status is not nullable and came back null")
+	}
+	if _, null := row[3].(slate.Null); !null {
+		v, ok := row[3].(slate.Int)
+		if !ok {
+			return out, fmt.Errorf("shipments.deleted_at: expected slate.Int, got %T", row[3])
+		}
+		value := int64(v)
+		out.DeletedAt = &value
+	} else {
+		out.DeletedAt = nil
 	}
 	return out, nil
 }

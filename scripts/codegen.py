@@ -448,7 +448,20 @@ def python_rows(tables: list[dict]) -> list[str]:
             nullable = "True" if column["nullable"] else "False"
             native = PYTHON_FIELDS[column["type"]][0]
             if column["name"] in enums:
-                native = f"Literal[{quoted(enums[column['name']], chr(34))}]"
+                # **Single** quotes, because this hint goes inside the
+                # double-quoted cast target below and a `Literal["a"]` closes
+                # it early. The annotation on the dataclass field above uses
+                # double quotes, which is what ruff wants in real code; here
+                # the type is the contents of a string and the inner quoting
+                # is ours to pick.
+                #
+                # Found by running the demo: the generated module was a
+                # `SyntaxError`, and every check in CI passed on it. `ruff`
+                # does not parse a file it is not given, the codegen tests
+                # asserted on the *annotation* line and never the cast, and
+                # the one test that executes generated Python used a catalog
+                # with no enumerated column in it.
+                native = f"Literal[{quoted(enums[column['name']], chr(39))}]"
             hint = f"{native} | None" if column["nullable"] else native
             # The cast target is a *string*. `cast(str | None, …)` builds a
             # union object at run time on every row, and importing `Optional`
