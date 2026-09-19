@@ -495,6 +495,19 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a reader may not ask for retired rows", "/api/query",
      {"table": "shipments", "includeDeleted": True,
       "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
+
+    # A refusal with *structure*, which is a thing no other case here has.
+    #
+    # Every other refusal is compared on `kind` and `reason` — two strings the
+    # server hands over whole. This one is compared on `violations`, which no
+    # server hands over: each client hand-decodes it out of
+    # `ErrorInfo.metadata`, counting up from a `violations` key and reading
+    # `check.N`, `column.N`, `message.N`. Three hand-written parsers of one
+    # undeclared shape is the most drift-prone thing in these clients, and
+    # until this case existed each was checked only against a recording of the
+    # bytes. A recording cannot notice that the server started indexing from
+    # one.
+    ("a write the schema's CHECK refuses", "/api/bad-status", {}, "app"),
 ]
 
 
@@ -530,6 +543,10 @@ EXPECTED_REFUSALS = {
     # refusal of lifting the soft-delete filter, which is the whole reason
     # `read_deleted` is an action of its own rather than part of `read`.
     "a reader may not ask for retired rows",
+    # The row is refused by `shipments.status_known` before it is written, so
+    # there is nothing to undo — unlike the purge case above, which has to put
+    # the database back.
+    "a write the schema's CHECK refuses",
 }
 
 

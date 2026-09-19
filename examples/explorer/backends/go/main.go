@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("/api/conditional-update", s.handle(s.conditionalUpdate))
 	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
 	mux.HandleFunc("/api/purge", s.handle(s.purge))
+	mux.HandleFunc("/api/bad-status", s.handle(s.badStatus))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)
@@ -138,7 +139,7 @@ func (s *server) handle(fn handler) http.HandlerFunc {
 			// fault and says so rather than borrowing a database kind.
 			var e *slate.Error
 			if errors.As(err, &e) {
-				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason)
+				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason, e.Violations)
 				return
 			}
 			writeError(w, http.StatusBadRequest, "adapter", err.Error())
@@ -210,9 +211,33 @@ func writeError(w http.ResponseWriter, status int, kind, message string) {
 // of the pair — kind is this adapter's word for a status code, the token is the
 // server's own and is finer than the code — so a client decoding the blob
 // differently from the other two disagrees here rather than in production.
-func writeSlateError(w http.ResponseWriter, kind, message, reason string) {
+//
+// violations is the same argument one level down. The token says *that* a row
+// broke a check; this says which ones, and it is the part each client decodes
+// by hand out of ErrorInfo.metadata. Three hand-written decoders is exactly the
+// shape of thing that drifts, and each client's own unit tests decode a
+// captured fixture — which proves each agrees with a recording, not that they
+// agree with each other against a live server. This is where that is checked.
+// Always present, [] included, for the reason reason is.
+func writeSlateError(
+	w http.ResponseWriter, kind, message, reason string, violations []slate.CheckViolation,
+) {
+	// Rendered rather than handed to the encoder, so the JSON is this
+	// adapter's shape and not Go's idea of a Go struct: the Python client
+	// spells an absent column None and this one spells it "", which is each
+	// language's own idiom and not a disagreement about what the server said.
+	// Flattening both to "" here is the same normalisation kindName already
+	// does for status codes.
+	broke := make([]map[string]string, 0, len(violations))
+	for _, one := range violations {
+		broke = append(broke, map[string]string{
+			"check": one.Check, "column": one.Column, "message": one.Message,
+		})
+	}
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, map[string]any{
-		"error": map[string]string{"kind": kind, "message": message, "reason": reason},
+		"error": map[string]any{
+			"kind": kind, "message": message, "reason": reason, "violations": broke,
+		},
 	})
 }

@@ -217,6 +217,15 @@ to work around; it is the reason the catalog is the answer.
    beside a `violations` count, and the unindexed `check`/`column` stay as the
    first failure for a client that shows one error at a time.
 
+   All three clients decode that shape and hand a caller typed values —
+   `error.violations` in Python and TypeScript, `Error.Violations` in Go — so a
+   form picks the field from `column` and fills it from `message` without
+   touching the status text. None of them expose the raw `metadata` map: the
+   check keys are the one family the server specifies, and the rest vary per
+   variant, so there is nothing else a client could promise about. An absent
+   column is `None` in Python and `""` in Go and TypeScript, which is each
+   language's own idiom rather than a disagreement.
+
 3. ~~**Publish the constraints.**~~ **Built, in part.** `--print-schema` now
    carries `checks` (name, column, message, and the text the predicate was
    parsed from) and `foreign_keys`, and `scripts/codegen.py` generates from

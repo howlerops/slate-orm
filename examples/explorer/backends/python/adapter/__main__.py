@@ -791,6 +791,26 @@ class Adapter:
         session.delete(SHIPMENTS, [(u64(603),)])
         return answer
 
+    def bad_status(self, session, body):
+        """Write a shipment whose status no CHECK admits, and let it fail.
+
+        Three failing checks would be a better fixture than one, and
+        `shipments` declares only `status_known`, so this reaches the
+        single-failure shape. The three-failure shape is covered by each
+        client's unit tests against the captured blob; what this adds is a
+        *live* server, which those cannot have.
+
+        The row is never written, so there is nothing to clean up — the one
+        convenience a refusal case has over `purge` above.
+        """
+        session.insert(
+            SHIPMENTS, [[u64(9499), u64(10), "teleported", None]], upsert=True
+        )
+        # Reached only if the server stopped enforcing the check, which is a
+        # disagreement worth failing loudly on rather than reporting as an
+        # answer.
+        raise RuntimeError("the server accepted a status no CHECK admits")
+
     #: The id the conditional-delete handler owns.
     CONDITIONAL_DELETE_ID = 9301
 
@@ -893,6 +913,7 @@ ROUTES = {
     "/api/conditional-update": "conditional_update",
     "/api/conditional-delete": "conditional_delete",
     "/api/purge": "purge",
+    "/api/bad-status": "bad_status",
     "/api/transaction": "transaction",
 }
 
@@ -962,10 +983,34 @@ def handler_for(adapter: Adapter):
                 # while the token is the server's own and is finer than the
                 # code. A client that decodes the details blob differently from
                 # the other two disagrees here rather than in production.
+                #
+                # `violations` is that argument one level down. The token says
+                # *that* a row broke a check; this says which ones, and it is
+                # the part each client decodes by hand out of
+                # `ErrorInfo.metadata`. Three hand-written decoders is exactly
+                # the shape of thing that drifts, and each client's unit tests
+                # decode a captured fixture — which proves each agrees with a
+                # recording, not that the three agree with each other against a
+                # live server. This is where that is checked.
+                #
+                # `or ""` rather than passing `None` through, so the JSON is
+                # this adapter's shape and not Python's: this client spells an
+                # absent column `None` and the other two spell it `""`, which
+                # is each language's own idiom and not a disagreement about
+                # what the server said. The flattening is what `kind_name`
+                # already does for status codes.
                 self._send(200, {"error": {
                     "kind": kind_name(error),
                     "message": str(error.message),
                     "reason": error.reason,
+                    "violations": [
+                        {
+                            "check": one.check,
+                            "column": one.column or "",
+                            "message": one.message or "",
+                        }
+                        for one in error.violations
+                    ],
                 }})
                 return
             except Exception as error:  # noqa: BLE001

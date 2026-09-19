@@ -925,6 +925,29 @@ class Adapter {
     return answer;
   }
 
+  /**
+   * Writes a shipment whose status no CHECK admits, and lets it fail.
+   *
+   * Three failing checks would be a better fixture than one, and `shipments`
+   * declares only `status_known`, so this reaches the single-failure shape.
+   * The three-failure shape is covered by each client's unit tests against the
+   * captured blob; what this adds is a *live* server, which those cannot have.
+   *
+   * The row is never written, so there is nothing to clean up — the one
+   * convenience a refusal case has over `purge` above.
+   */
+  async badStatus(session: Session): Promise<unknown> {
+    await session.upsert("shipments", [
+      uint(9499n),
+      uint(10n),
+      str("teleported"),
+      nullValue,
+    ]);
+    // Reached only if the server stopped enforcing the check, which is a
+    // disagreement worth failing loudly on rather than reporting as an answer.
+    throw new Error("the server accepted a status no CHECK admits");
+  }
+
   async conditionalDelete(
     session: Session,
     body: { stale?: boolean; gone?: boolean },
@@ -1011,6 +1034,7 @@ async function main(): Promise<void> {
     "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
     "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
     "/api/purge": (s) => adapter.purge(s),
+    "/api/bad-status": (s) => adapter.badStatus(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 
@@ -1050,10 +1074,31 @@ async function main(): Promise<void> {
             // client that silently stopped decoding the details blob would
             // otherwise report the same body as one that decoded it and found
             // nothing.
+            // `violations` is the same argument one level down. The token
+            // says *that* a row broke a check; this says which ones, and it
+            // is the part each client decodes by hand out of
+            // `ErrorInfo.metadata`. Three hand-written decoders is exactly
+            // the shape of thing that drifts, and each client's unit tests
+            // decode a captured fixture — which proves each agrees with a
+            // recording, not that they agree with each other against a live
+            // server. This is where that is checked. Always present, `[]`
+            // included, for the reason `reason` is.
+            //
+            // Spread into fresh objects rather than passed through, so the
+            // JSON is this adapter's shape and not one client's: Python
+            // spells an absent column `None` and this one spells it `""`,
+            // which is each language's own idiom and not a disagreement
+            // about what the server said. The flattening is what `kindName`
+            // already does for status codes.
             error: {
               kind: kindName(error),
               message: error.message.replace(/^[a-z-]+: /, ""),
               reason: error.reason,
+              violations: error.violations.map((one) => ({
+                check: one.check,
+                column: one.column,
+                message: one.message,
+              })),
             },
           });
           return;

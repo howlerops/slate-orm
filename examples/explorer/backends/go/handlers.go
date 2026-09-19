@@ -1247,3 +1247,26 @@ func (s *server) purge(
 	}
 	return map[string]any{"purged": purged.Affected, "left": ids}, nil
 }
+
+// badStatus writes a shipment whose status no CHECK admits, and lets it fail.
+//
+// Three checks would be a better fixture than one, and `shipments` declares
+// only `status_known`, so this reaches the single-failure shape. The
+// three-failure shape is covered by each client's unit tests against the
+// captured blob; what this adds is a *live* server, which those cannot have.
+//
+// The row is never written, so there is nothing to clean up — which is the one
+// convenience a refusal case has over the purge above.
+func (s *server) badStatus(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	_, err := session.Upsert(ctx, "shipments", []slate.Value{
+		slate.Uint(9499), slate.Uint(10), slate.String("teleported"), slate.Null{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Reached only if the server stopped enforcing the check, which is a
+	// disagreement worth failing loudly on rather than reporting as an answer.
+	return nil, fmt.Errorf("the server accepted a status no CHECK admits")
+}
