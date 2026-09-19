@@ -376,3 +376,258 @@ async fn a_statement_that_matched_nothing_still_reports_its_zero() {
         .expect("commit");
     assert_eq!(seen.calls(), vec![("delete_where", "docs".to_owned(), 0)]);
 }
+
+// --- what a refused statement contributes ------------------------------------
+//
+// Found by re-reading this file's own source rather than by a failure: `insert`
+// skipped the tally when it failed and `update` recorded a zero, and every test
+// above passed under either spelling. Two arms of one enum disagreeing about
+// the same question is the kind of thing that stays true until somebody reads
+// it, so the rule is now one function — `Tally::applied` — and these are what
+// pin it.
+//
+// The rule: a statement contributes unless it *both* failed and applied
+// nothing. It is the rule the standalone path already follows, which
+// `purge_wire.rs::a_refused_purge_reports_nothing` pins from the other side.
+
+#[tokio::test]
+async fn a_statement_that_failed_having_applied_nothing_contributes_no_series() {
+    // Not "contributes a zero". A counter that moved on a refusal would make a
+    // permission problem look like data loss, which is the argument the
+    // standalone path was built on; a transaction is the same claim, delayed.
+    //
+    // The commit is what makes this observable at all: a rollback drops the
+    // tally whatever is in it, so the difference between "no series" and "a
+    // zero series" can only be seen by a transaction that failed a statement
+    // and committed anyway — which a caller may do, because a refused
+    // statement does not end the transaction.
+    //
+    // The refusal is the *only* statement on purpose. The first draft of this
+    // test put a successful insert of key 1 in front of it and expected a
+    // total of one; a mutation dropping the `ok` clause from `Tally::applied`
+    // passed it, because the tally sums by (statement, table) and a zero folded
+    // into that one is still one. A series that must not exist has to be tested
+    // where nothing else can hide it.
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    // Key 1, committed, so the refusal below is a duplicate rather than the
+    // first thing this transaction does.
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1])))
+        .await
+        .expect("setup");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+    let before = seen.calls();
+
+    let txn = begin(&mut client).await;
+    client
+        .insert(app(insert(&txn, &[2, 1])))
+        .await
+        .expect_err("a batch naming a taken key is refused");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    // `insert_many` validates the whole batch before writing any of it, so the
+    // refusal applied nothing — not the two rows it named, and not the one that
+    // was free. Checked rather than assumed: key 2 is absent below.
+    assert_eq!(
+        seen.calls(),
+        before,
+        "the refused transaction contributed a series"
+    );
+
+    let read = begin(&mut client).await;
+    let got = client
+        .get(app(pb::GetRequest {
+            transaction: read.clone(),
+            table: "docs".to_owned(),
+            primary_key: Some(pb::Row {
+                values: vec![slate_server::convert::value_to_proto(&Value::U64(2))],
+                computed: Vec::new(),
+            }),
+            freshness: None,
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect("get")
+        .into_inner();
+    assert!(!got.found, "the free half of the refused batch was written");
+}
+
+#[tokio::test]
+async fn a_statement_that_failed_having_applied_some_contributes_those() {
+    // The other clause, and the one that is not obvious. A conditional update
+    // applies rows one at a time and stops at the first refusal, so a batch of
+    // two where the second has moved leaves *one* row in the transaction's
+    // buffer. The caller may still commit, and that row lands.
+    //
+    // Dropping it because the statement failed would under-report a write that
+    // happened, which is the mirror of the test above and the reason the rule
+    // has two clauses rather than "count successes".
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    // Two rows to update conditionally, committed first so the transaction
+    // below has something to read.
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1, 2])))
+        .await
+        .expect("setup");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+
+    let txn = begin(&mut client).await;
+    let moved = doc(2, "not what the caller expects", 2, None);
+    let outcome = client
+        .update(app(pb::UpdateRequest {
+            transaction: txn.clone(),
+            table: "docs".to_owned(),
+            rows: vec![
+                slate_server::convert::row_to_proto(&doc(1, "edited", 1, None)),
+                slate_server::convert::row_to_proto(&doc(2, "edited", 2, None)),
+            ],
+            // Row 1's expectation is what is there; row 2's is not, so the
+            // loop applies the first and is refused on the second.
+            expected: vec![
+                slate_server::convert::row_to_proto(&doc(1, "written", 1, None)),
+                slate_server::convert::row_to_proto(&moved),
+            ],
+            schema: Some(common::claim("docs")),
+        }))
+        .await;
+    assert!(outcome.is_err(), "the second row's expectation should fail");
+
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    let mut calls = seen.calls();
+    calls.sort();
+    assert_eq!(
+        calls,
+        vec![
+            ("insert", "docs".to_owned(), 2),
+            // One, not two and not zero: the row the loop got through before
+            // it stopped.
+            ("update", "docs".to_owned(), 1),
+        ]
+    );
+}
+
+// The two arms below exist because a mutation survived. Turning `update` and
+// `delete` back to the unconditional `Tally::add` they used before `applied`
+// existed left all eleven tests green: the insert test above pins the rule for
+// its own arm and says nothing about the other two, which is the same
+// arm-by-arm blindness that let the arms disagree in the first place.
+
+#[tokio::test]
+async fn a_refused_update_that_applied_nothing_contributes_no_series() {
+    // `update_many` is all-or-nothing and fails before writing, so a batch
+    // naming a row that is not there applies zero. Under the old spelling this
+    // reported `("update", "docs", 0)` — a series that says "a write ran and
+    // touched nothing", which is what an operator watches a retention sweep
+    // for, raised here by a request that was refused outright.
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+    let txn = begin(&mut client).await;
+
+    client
+        .update(app(pb::UpdateRequest {
+            transaction: txn.clone(),
+            table: "docs".to_owned(),
+            rows: vec![slate_server::convert::row_to_proto(&doc(
+                7, "edited", 7, None,
+            ))],
+            expected: Vec::new(),
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("a row that is not there cannot be updated");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    assert!(
+        seen.calls().is_empty(),
+        "a refused update reported: {:?}",
+        seen.calls()
+    );
+}
+
+#[tokio::test]
+async fn a_refused_conditional_delete_that_applied_nothing_contributes_no_series() {
+    // The conditional delete's own loop, refused on its first key. It is the
+    // arm that *can* apply a prefix, which is exactly why "applied nothing"
+    // has to be tested separately from "applied some": the count is a
+    // variable here rather than the all-or-nothing arms' constant.
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1])))
+        .await
+        .expect("setup");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+    let before = seen.calls();
+
+    let txn = begin(&mut client).await;
+    client
+        .delete(app(pb::DeleteRequest {
+            transaction: txn.clone(),
+            table: "docs".to_owned(),
+            primary_keys: vec![pb::Row {
+                values: vec![slate_server::convert::value_to_proto(&Value::U64(1))],
+                computed: Vec::new(),
+            }],
+            // Not what is stored, so the first and only key is refused.
+            expected: vec![slate_server::convert::row_to_proto(&doc(
+                1,
+                "not what the caller expects",
+                1,
+                None,
+            ))],
+            schema: Some(common::claim("docs")),
+        }))
+        .await
+        .expect_err("the expectation does not match");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    assert_eq!(
+        seen.calls(),
+        before,
+        "a refused conditional delete reported a series"
+    );
+}

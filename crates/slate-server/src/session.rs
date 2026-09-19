@@ -862,16 +862,48 @@ struct Tally {
 impl Tally {
     /// Remember that `kind` on `table` applied `affected` rows.
     ///
-    /// Called with what the kernel *did*, not with what was asked for, and on a
-    /// failed command as well as a successful one. A command that deleted two
-    /// keys and then hit a refused third has applied two rows into the
-    /// transaction's buffer; the caller may still commit, and a count that
-    /// dropped them would under-report a write that actually landed.
+    /// Called with what the kernel *did*, not with what was asked for. See
+    /// [`Tally::applied`] for the one rule every arm follows about whether to
+    /// call it at all.
     fn add(&mut self, kind: &'static str, table: &str, affected: u64) {
         // Zero is kept, for the reason the observer's own documentation gives:
         // a series that appears only when non-zero cannot be told from a node
         // that never did the thing.
         *self.rows.entry((kind, table.to_owned())).or_default() += affected;
+    }
+
+    /// Record what a command applied, if anything is worth recording.
+    ///
+    /// **A statement contributes unless it both failed and applied nothing.**
+    /// Two clauses, because it answers two different questions — and the first
+    /// version of this file got it wrong in both directions at once: `insert`
+    /// dropped a failure and `update` recorded a zero for one, and twenty-two
+    /// tests passed either way.
+    ///
+    /// *Succeeded, applied zero* contributes. A `delete_where` that stopped
+    /// matching is the failure a retention sweep's operator watches for, and a
+    /// series that appears only when non-zero cannot be told from a sweep
+    /// nobody scheduled.
+    ///
+    /// *Failed, applied zero* contributes nothing — the rule the standalone
+    /// path already follows and `a_refused_purge_reports_nothing` already
+    /// pins: a counter that moved on a permission error would make
+    /// misconfiguration look like data loss.
+    ///
+    /// *Failed, applied some* contributes those. A conditional update that
+    /// applied two rows and was refused on the third has put two rows in the
+    /// transaction's buffer, and the caller may still commit; dropping them
+    /// would under-report a write that landed.
+    ///
+    /// All three clauses rest on `rows` being what the kernel *applied*, which
+    /// for an all-or-nothing arm is zero whenever `ok` is false. Passing the
+    /// requested count instead turns the second clause into the third, and no
+    /// signature can catch it — both are `u64`. It is the mistake this
+    /// function's own first caller made.
+    fn applied(&mut self, kind: &'static str, table: &str, rows: u64, ok: bool) {
+        if ok || rows > 0 {
+            self.add(kind, table, rows);
+        }
     }
 
     /// Tell `observer` everything, once the transaction has committed.
@@ -1008,11 +1040,16 @@ async fn apply<S: KvStore>(
             } else {
                 transaction.insert_many(&context, definition, &rows).await
             };
-            // All-or-nothing, so a failure applied nothing and is not counted;
-            // `insert_many` and `upsert_many` both fail before writing.
-            if outcome.is_ok() {
-                tally.add("insert", definition.name(), affected);
-            }
+            // All-or-nothing: `insert_many` and `upsert_many` validate the
+            // whole batch before writing any of it, so a refused batch applied
+            // *zero* — not `affected`, which is what was asked for. Verified
+            // rather than read off that comment: inserting `[2, 1]` where 1 is
+            // taken leaves key 2 absent after the commit. Passing `affected`
+            // here made a refused two-row insert report two rows written, and
+            // it is the mistake `Tally::add`'s "what the kernel did, not what
+            // was asked for" exists to name.
+            let applied = outcome.as_ref().map_or(0, |()| affected);
+            tally.applied("insert", definition.name(), applied, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::Update {
@@ -1055,13 +1092,14 @@ async fn apply<S: KvStore>(
             // `update_many` is all-or-nothing. The conditional loop is not: it
             // breaks on the first refusal, having applied the rows before it,
             // and those rows are in the buffer whether or not the caller goes
-            // on to commit. `applied` is the honest count for both.
-            let applied = if outcome.is_ok() {
+            // on to commit. `conditional` is the honest count there, and is
+            // zero for the branch that never partially applies.
+            let rows = if outcome.is_ok() {
                 affected
             } else {
                 conditional
             };
-            tally.add("update", definition.name(), applied);
+            tally.applied("update", definition.name(), rows, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::Delete {
@@ -1088,7 +1126,7 @@ async fn apply<S: KvStore>(
                     }
                     applied += 1;
                 }
-                tally.add("delete", definition.name(), applied);
+                tally.applied("delete", definition.name(), applied, outcome.is_ok());
                 return answer(reply, outcome.map(|()| keys.len() as u64));
             }
             let mut affected = 0;
@@ -1108,9 +1146,11 @@ async fn apply<S: KvStore>(
                     }
                 }
             }
-            // `affected` counts the keys that were there, error or not: a
-            // loop that removed two rows and then failed has removed two.
-            tally.add("delete", definition.name(), affected);
+            // `affected` counts the keys that were there, error or not: a loop
+            // that removed two rows and then failed has removed two. A
+            // *successful* delete of absent keys is zero and still counts,
+            // which is why this is `applied` and not `if affected > 0`.
+            tally.applied("delete", definition.name(), affected, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::PurgeDeleted {
@@ -1124,9 +1164,12 @@ async fn apply<S: KvStore>(
             let outcome = transaction
                 .purge_deleted(&context, definition, before, at_most)
                 .await;
-            if let Ok(affected) = &outcome {
-                tally.add("purge_deleted", definition.name(), *affected);
-            }
+            tally.applied(
+                "purge_deleted",
+                definition.name(),
+                outcome.as_ref().copied().unwrap_or(0),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::DeleteWhere {
@@ -1142,9 +1185,12 @@ async fn apply<S: KvStore>(
                 .await;
             // The rows are the answer here, so their count is the affected
             // count; `Write::labels` spells the same statement the same way.
-            if let Ok(rows) = &outcome {
-                tally.add("delete_where", definition.name(), rows.len() as u64);
-            }
+            tally.applied(
+                "delete_where",
+                definition.name(),
+                outcome.as_ref().map_or(0, |rows| rows.len() as u64),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::UpdateWhere {
@@ -1159,9 +1205,12 @@ async fn apply<S: KvStore>(
             let outcome = transaction
                 .update_where(&context, definition, predicate, &assignments, at_most)
                 .await;
-            if let Ok(rows) = &outcome {
-                tally.add("update_where", definition.name(), rows.len() as u64);
-            }
+            tally.applied(
+                "update_where",
+                definition.name(),
+                outcome.as_ref().map_or(0, |rows| rows.len() as u64),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::Get {
