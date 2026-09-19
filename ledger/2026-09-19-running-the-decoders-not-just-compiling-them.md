@@ -76,9 +76,11 @@ synthetic catalog, not against the demo's generated file the way these two now
 are. The coverage is equivalent in kind; the two suites do not share a corpus,
 so a case added to one does not appear in the others.
 
-Only `books` is decoded. It is the widest table and covers every value type the
-demo uses, but `authors`, `sales` and `editions` have generated decoders that
-no test calls.
+~~Only `books` is decoded.~~ **Closed** — see
+`2026-09-19-every-generated-decoder-runs.md`. Each of the other four now has a
+case, and a check that reads the generated file fails if a decoder exists with
+nothing running it, because "add a case when you add a table" was the same
+instruction the demo's table list had ignored five times.
 
 Nothing tests the decoders against rows that came from the *server*. These
 build `[]slate.Value` by hand, so a disagreement between what the server sends

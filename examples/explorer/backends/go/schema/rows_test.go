@@ -9,6 +9,8 @@
 package schema
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -132,5 +134,158 @@ func TestBooksChecksCarriesTheRule(t *testing.T) {
 	}
 	if rule.Predicate != "year > 0" {
 		t.Errorf("predicate = %q", rule.Predicate)
+	}
+}
+
+// --- every other table ------------------------------------------------------
+//
+// `books` had all of the above and the other four had nothing: generated,
+// compiled, `go vet`-ed and never executed. The demo reads `authors`, `sales`,
+// `editions` and `shipments` through the client's untyped `Value`s, so a wrong
+// ordinal in any of their decoders would have been found by nobody.
+//
+// One case each rather than the five `books` gets, because what differs
+// between tables is the column list and not the decoder's shape — the
+// generator emits one shape. What each case is really asserting is that *this
+// table's* ordinals are the catalog's. The transposition and null cases stay
+// on `books`, which is where the shape is checked.
+
+// decoders is every generated `Scan…` with a row the catalog says is valid.
+//
+// `TestEveryGeneratedDecoderIsExercised` below fails if a `Scan…` exists in the
+// generated file and is missing here, which is the point of the table: adding
+// a table to `head.toml` regenerates a decoder, and a decoder nothing runs is
+// how this gap opened in the first place.
+var decoders = map[string]func(*testing.T){
+	"Authors": checkAuthors,
+	// `books` is already covered five ways above; this entry is here so the
+	// coverage check below sees it, and running its happy path twice costs
+	// nothing.
+	"Books":     func(t *testing.T) { TestScanBooksDecodesEveryColumn(t) },
+	"Sales":     checkSales,
+	"Editions":  checkEditions,
+	"Shipments": checkShipments,
+}
+
+func TestEveryGeneratedDecoderRuns(t *testing.T) {
+	for name, run := range decoders {
+		t.Run(name, run)
+	}
+}
+
+func checkAuthors(t *testing.T) {
+	got, err := ScanAuthors([]slate.Value{
+		slate.Uint(3),
+		slate.String("Ursula"),
+		slate.String("US"),
+		slate.Int(1929),
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := Authors{Id: 3, Name: "Ursula", Country: "US", Born: 1929}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	// `name` and `country` are both strings and adjacent, so the values are
+	// distinguishable on purpose: a decoder reading ordinal 2 for `name` would
+	// pass a test that used the same string for both.
+}
+
+func checkSales(t *testing.T) {
+	got, err := ScanSales([]slate.Value{slate.Uint(11), slate.Uint(7), slate.Int(430)})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := Sales{Id: 11, BookId: 7, Units: 430}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func checkEditions(t *testing.T) {
+	got, err := ScanEditions([]slate.Value{slate.Uint(5), slate.Uint(7), slate.String("paperback")})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := Editions{Id: 5, BookId: 7, Format: "paperback"}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func checkShipments(t *testing.T) {
+	// The only generated Go decoder with a nullable column, so this is the
+	// only place the `*int64` branch runs at all. Both ways round, because
+	// "null becomes nil" and "a value becomes a pointer to it" are two
+	// branches and a test of one says nothing about the other.
+	live, err := ScanShipments([]slate.Value{
+		slate.Uint(9), slate.Uint(7), slate.String("shipped"), slate.Null{},
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if live.Id != 9 || live.BookId != 7 || live.Status != "shipped" {
+		t.Errorf("got %+v", live)
+	}
+	if live.DeletedAt != nil {
+		t.Errorf("deleted_at = %v, want nil", *live.DeletedAt)
+	}
+
+	retired, err := ScanShipments([]slate.Value{
+		slate.Uint(9), slate.Uint(7), slate.String("shipped"), slate.Int(1_700_000_042),
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if retired.DeletedAt == nil || *retired.DeletedAt != 1_700_000_042 {
+		t.Errorf("deleted_at = %v, want 1700000042", retired.DeletedAt)
+	}
+}
+
+// TestEveryGeneratedDecoderIsExercised reads the generated file and fails if it
+// declares a `Scan…` the table above does not run.
+//
+// The table is hand-written, which is the whole point — a test the generator
+// emitted would agree with it by construction — and a hand-written list beside
+// a generated file is the thing this repository has watched drift five times.
+// Parsing the source is cheap and turns "somebody remembers" into a failure.
+func TestEveryGeneratedDecoderIsExercised(t *testing.T) {
+	source, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("reading the generated file: %v", err)
+	}
+	declared := regexp.MustCompile(`(?m)^func Scan(\w+)\(`).FindAllStringSubmatch(string(source), -1)
+	if len(declared) < 5 {
+		t.Fatalf("found %d decoders in schema.go; the pattern is not matching", len(declared))
+	}
+	for _, match := range declared {
+		if _, covered := decoders[match[1]]; !covered {
+			t.Errorf("Scan%s is generated and nothing runs it; add it to `decoders`", match[1])
+		}
+	}
+	for name := range decoders {
+		if !regexp.MustCompile(`func Scan` + name + `\(`).Match(source) {
+			t.Errorf("`decoders` names Scan%s, which schema.go no longer declares", name)
+		}
+	}
+}
+
+// TestShipmentsChecksCarriesTheEnumeration is the second published constraint,
+// and the one codegen narrows a *type* from — `Status` is a plain `string` in
+// Go, which has no union of string literals, so the values are only ever
+// available as this predicate's text.
+func TestShipmentsChecksCarriesTheEnumeration(t *testing.T) {
+	rule, ok := ShipmentsChecks["status_known"]
+	if !ok {
+		t.Fatalf("no such check, have %v", ShipmentsChecks)
+	}
+	if rule.Column != "status" {
+		t.Errorf("column = %q, want status", rule.Column)
+	}
+	for _, value := range []string{"pending", "shipped", "delivered"} {
+		if !strings.Contains(rule.Predicate, value) {
+			t.Errorf("the predicate %q does not mention %q", rule.Predicate, value)
+		}
 	}
 }
