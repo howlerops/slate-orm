@@ -597,6 +597,9 @@ pub fn plain_query(table: &str) -> pb::Query {
         sort: Vec::new(),
         limit: None,
         offset: 0,
+        // The ordinary read every test wants. Asking for retired rows needs
+        // the `read_deleted` grant, which the suite's identities do not hold.
+        include_deleted: false,
         hint: None,
         compute: Vec::new(),
         after: Vec::new(),

@@ -138,12 +138,14 @@ fn actions(names: &[String], place: &str) -> Started<Vec<Action>> {
             "update" => out.push(Action::Update),
             "delete" => out.push(Action::Delete),
             "explain" => out.push(Action::Explain),
+            "read_deleted" => out.push(Action::ReadDeleted),
             other => {
                 return Err(Fault::at(
                     place.to_owned(),
                     format!(
                         "`{other}` is not an action; there are read, insert, update, delete, \
-                         explain, all (the four data actions) and everything (those plus explain)"
+                         explain, read_deleted, all (the four data actions) and \
+                         everything (those plus explain and read_deleted)"
                     ),
                 ));
             }

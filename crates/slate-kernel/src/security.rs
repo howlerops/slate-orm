@@ -89,6 +89,20 @@ pub enum Action {
     /// this. The grant exists for the case that is not true: a table-level
     /// grant plus a row policy, which is the ordinary tenant arrangement.
     Explain,
+    /// Reading rows a soft delete has retired.
+    ///
+    /// Separate from [`Action::Read`] for the same shape of reason
+    /// [`Action::Explain`] is, and it is worth spelling out because the two
+    /// look different and are not. A soft delete hides a row from every
+    /// ordinary read; a caller who can lift that sees rows the application
+    /// decided were gone. Whether that is a privilege at all depends entirely
+    /// on the deployment — a recycle bin the user empties themselves, versus
+    /// a retention archive only compliance may open — and the catalog is where
+    /// a deployment says which.
+    ///
+    /// Not implied by `Read`, and not in [`Action::ALL`], so no existing
+    /// blanket grant silently acquires it.
+    ReadDeleted,
 }
 
 impl Action {
@@ -103,19 +117,21 @@ impl Action {
     /// grant plus a row policy is precisely the arrangement that has it.
     pub const ALL: [Self; 4] = [Self::Read, Self::Insert, Self::Update, Self::Delete];
 
-    /// Every action, data and `EXPLAIN` alike.
-    pub const EVERYTHING: [Self; 5] = [
+    /// Every action: the data ones, `EXPLAIN`, and reading retired rows.
+    pub const EVERYTHING: [Self; 6] = [
         Self::Read,
         Self::Insert,
         Self::Update,
         Self::Delete,
         Self::Explain,
+        Self::ReadDeleted,
     ];
 
     /// A human-readable name, used in error messages.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::ReadDeleted => "read_deleted",
             Self::Read => "read",
             Self::Insert => "insert",
             Self::Update => "update",

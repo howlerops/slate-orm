@@ -1627,6 +1627,7 @@ class Query(_message.Message):
     SCHEMA_FIELD_NUMBER: _builtins.int
     AFTER_FIELD_NUMBER: _builtins.int
     PAGED_FIELD_NUMBER: _builtins.int
+    INCLUDE_DELETED_FIELD_NUMBER: _builtins.int
     table: _builtins.str
     """Table name, resolved against the server's catalog."""
     order: Global___ScanOrder.ValueType
@@ -1652,6 +1653,18 @@ class Query(_message.Message):
     A `bool` and not a `Unit`, unlike the `oneof` arms above: the false
     spelling here is the absence of the request and is exactly what a client
     that zeroed the struct means.
+    """
+    include_deleted: _builtins.bool
+    """Also return rows a soft delete has retired.
+
+    Requires the `read_deleted` action on the table, which is **not** implied
+    by `read` and is not in the `all` shorthand. A soft delete hides a row
+    from every ordinary read, so lifting that shows rows the application
+    decided were gone — and whether that is a privilege at all depends on the
+    deployment, which is why the catalog decides rather than the protocol.
+
+    Ignored on a table that does not soft-delete, where there is nothing to
+    reveal and so nothing to grant.
     """
     @_builtins.property
     def filter(self) -> Global___Expr:
@@ -1725,10 +1738,11 @@ class Query(_message.Message):
         schema: Global___SchemaCheck | None = ...,
         after: _abc.Iterable[Global___Value] | None = ...,
         paged: _builtins.bool = ...,
+        include_deleted: _builtins.bool = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "filter", b"filter", "hint", b"hint", "limit", b"limit", "projection", b"projection", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "after", b"after", "compute", b"compute", "filter", b"filter", "hint", b"hint", "limit", b"limit", "offset", b"offset", "order", b"order", "paged", b"paged", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "after", b"after", "compute", b"compute", "filter", b"filter", "hint", b"hint", "include_deleted", b"include_deleted", "limit", b"limit", "offset", b"offset", "order", b"order", "paged", b"paged", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
     _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015

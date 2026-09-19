@@ -745,6 +745,17 @@ message Query {
   // spelling here is the absence of the request and is exactly what a client
   // that zeroed the struct means.
   bool paged = 12;
+  // Also return rows a soft delete has retired.
+  //
+  // Requires the `read_deleted` action on the table, which is **not** implied
+  // by `read` and is not in the `all` shorthand. A soft delete hides a row
+  // from every ordinary read, so lifting that shows rows the application
+  // decided were gone — and whether that is a privilege at all depends on the
+  // deployment, which is why the catalog decides rather than the protocol.
+  //
+  // Ignored on a table that does not soft-delete, where there is nothing to
+  // reveal and so nothing to grant.
+  bool include_deleted = 13;
 }
 
 // ── Joins and chains ─────────────────────────────────────────────────────────

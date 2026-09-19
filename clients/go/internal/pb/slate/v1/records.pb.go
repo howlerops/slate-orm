@@ -3594,9 +3594,20 @@ type Query struct {
 	// A `bool` and not a `Unit`, unlike the `oneof` arms above: the false
 	// spelling here is the absence of the request and is exactly what a client
 	// that zeroed the struct means.
-	Paged         bool `protobuf:"varint,12,opt,name=paged,proto3" json:"paged,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Paged bool `protobuf:"varint,12,opt,name=paged,proto3" json:"paged,omitempty"`
+	// Also return rows a soft delete has retired.
+	//
+	// Requires the `read_deleted` action on the table, which is **not** implied
+	// by `read` and is not in the `all` shorthand. A soft delete hides a row
+	// from every ordinary read, so lifting that shows rows the application
+	// decided were gone — and whether that is a privilege at all depends on the
+	// deployment, which is why the catalog decides rather than the protocol.
+	//
+	// Ignored on a table that does not soft-delete, where there is nothing to
+	// reveal and so nothing to grant.
+	IncludeDeleted bool `protobuf:"varint,13,opt,name=include_deleted,json=includeDeleted,proto3" json:"include_deleted,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Query) Reset() {
@@ -3709,6 +3720,13 @@ func (x *Query) GetAfter() []*Value {
 func (x *Query) GetPaged() bool {
 	if x != nil {
 		return x.Paged
+	}
+	return false
+}
+
+func (x *Query) GetIncludeDeleted() bool {
+	if x != nil {
+		return x.IncludeDeleted
 	}
 	return false
 }
@@ -7884,7 +7902,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x05index\x18\x02 \x01(\tH\x00R\x05index\x12/\n" +
 	"\n" +
 	"table_scan\x18\x03 \x01(\x0e2\x0e.slate.v1.UnitH\x00R\ttableScanB\x06\n" +
-	"\x04pathJ\x04\b\x01\x10\x02\"\xcc\x03\n" +
+	"\x04pathJ\x04\b\x01\x10\x02\"\xf5\x03\n" +
 	"\x05Query\x12\x14\n" +
 	"\x05table\x18\x01 \x01(\tR\x05table\x12&\n" +
 	"\x06filter\x18\x02 \x01(\v2\x0e.slate.v1.ExprR\x06filter\x12)\n" +
@@ -7900,7 +7918,8 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x06schema\x18\n" +
 	" \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\x12%\n" +
 	"\x05after\x18\v \x03(\v2\x0f.slate.v1.ValueR\x05after\x12\x14\n" +
-	"\x05paged\x18\f \x01(\bR\x05pagedB\b\n" +
+	"\x05paged\x18\f \x01(\bR\x05paged\x12'\n" +
+	"\x0finclude_deleted\x18\r \x01(\bR\x0eincludeDeletedB\b\n" +
 	"\x06_limit\"\x86\x01\n" +
 	"\rJoinAlgorithm\x12/\n" +
 	"\n" +

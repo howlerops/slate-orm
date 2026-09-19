@@ -1371,6 +1371,7 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
         // the plan — it decides whether a cursor refusal applies. `after`
         // implies it on the way back in, so only a first page needs it stated.
         paged: query.paging,
+        include_deleted: query.include_deleted,
         filter: Some(expr_to_proto(&space, &query.filter)),
         order: match query.order {
             ScanOrder::Ascending => pb::ScanOrder::Ascending as i32,
@@ -1538,13 +1539,15 @@ pub fn query_from_proto_at(
             // fails rather than the second. `after` implies it; this carries
             // the caller's intent for the page that has no cursor yet.
             paging: query.paged || after_is_set,
-            // Not on the wire, so always false here: a remote caller cannot
-            // ask to see soft-deleted rows. Deliberate for now rather than
-            // forgotten — "show me the deleted ones" is a privileged read and
-            // the protocol has no way to say who may make it, so shipping the
-            // flag before that answer exists would put the decision in the
-            // caller's hands. Restoring and reaping run against the kernel.
-            include_deleted: false,
+            // On the wire now, and safe to be, because the catalog answers
+            // the question that kept it off. The objection recorded here was
+            // that "show me the deleted ones" is a privileged read and the
+            // protocol could not say who may make it — true, and the protocol
+            // still cannot. It does not have to: `Action::ReadDeleted` is a
+            // grant like any other, so the *deployment* decides, and the
+            // planner refuses a caller who lacks it. That is the same shape
+            // `Action::Explain` already had.
+            include_deleted: query.include_deleted,
         },
         warnings,
     ))

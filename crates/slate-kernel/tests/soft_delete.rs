@@ -636,3 +636,139 @@ async fn a_purge_past_its_ceiling_is_refused_before_it_erases_anything() {
     // the first delete, so the transaction has written nothing to roll back.
     assert_eq!(all_ids(&store).await, vec![1, 2, 3, 4]);
 }
+
+// --- who may see a retired row ----------------------------------------------
+
+/// A store whose `reader` role may read `docs` and nothing more.
+fn store_granting(actions: &[slate_kernel::Action]) -> RecordStore<MemoryStore> {
+    let security = slate_kernel::SecurityCatalog::new().grant(slate_kernel::Grant::new(
+        "reader",
+        DOCS,
+        actions.to_vec(),
+    ));
+    RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(5_000)))
+}
+
+fn reader() -> SecurityContext {
+    SecurityContext::new(slate_kernel::Principal::new(Value::U64(1)).with_role("reader"))
+}
+
+/// Insert three and retire one, as the superuser, then hand the store back.
+async fn seeded_for(store: &RecordStore<MemoryStore>) {
+    let txn = store.begin().await.expect("begin");
+    for id in 1..=3 {
+        txn.insert(&root(), &docs(), &doc(id, "a"))
+            .await
+            .expect("insert");
+    }
+    txn.delete(&root(), &docs(), &[Value::U64(2)])
+        .await
+        .expect("retire");
+    txn.commit().await.expect("commit");
+}
+
+#[tokio::test]
+async fn a_plain_reader_cannot_ask_to_see_retired_rows() {
+    // The grant this change exists for. `read` is not `read_deleted`, and a
+    // caller holding the first does not silently acquire the second — which
+    // is the whole reason `Action::ALL` excludes it.
+    let store = store_granting(&[slate_kernel::Action::Read]);
+    seeded_for(&store).await;
+
+    let txn = store.begin().await.expect("begin");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let table = docs();
+    let refused = txn
+        .execute(&reader(), &table, &query)
+        .await
+        .expect_err("a plain reader may not lift the soft-delete filter");
+    assert!(
+        matches!(
+            refused,
+            slate_kernel::KernelError::AccessDenied { ref action, .. }
+            if action == &"read_deleted"
+        ),
+        "got {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_plain_reader_still_reads_live_rows() {
+    // The other half, and the one a mistake here would break loudly: refusing
+    // `include_deleted` must not refuse an ordinary read.
+    let store = store_granting(&[slate_kernel::Action::Read]);
+    seeded_for(&store).await;
+
+    let txn = store.begin().await.expect("begin");
+    let table = docs();
+    let rows = txn
+        .execute(&reader(), &table, &Query::all())
+        .await
+        .expect("an ordinary read is unaffected")
+        .collect()
+        .await
+        .expect("collect");
+    assert_eq!(rows.len(), 2, "the two rows that are not retired");
+}
+
+#[tokio::test]
+async fn a_reader_granted_read_deleted_sees_them() {
+    let store = store_granting(&[
+        slate_kernel::Action::Read,
+        slate_kernel::Action::ReadDeleted,
+    ]);
+    seeded_for(&store).await;
+
+    let txn = store.begin().await.expect("begin");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let table = docs();
+    let rows = txn
+        .execute(&reader(), &table, &query)
+        .await
+        .expect("granted")
+        .collect()
+        .await
+        .expect("collect");
+    assert_eq!(rows.len(), 3, "all three, retired one included");
+}
+
+#[tokio::test]
+async fn include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete() {
+    // Demanding a privilege for a no-op teaches callers to ask for privileges
+    // they do not need, and a grant asked for often enough gets given.
+    let plain = TableDef::builder("plain", NOTES)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let security = slate_kernel::SecurityCatalog::new().grant(slate_kernel::Grant::new(
+        "reader",
+        NOTES,
+        vec![slate_kernel::Action::Read],
+    ));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([plain.clone()]).expect("catalog"),
+        security,
+    );
+    let txn = store.begin().await.expect("begin");
+    txn.insert(&root(), &plain, &Row::new(vec![Value::U64(1)]))
+        .await
+        .expect("insert");
+    txn.commit().await.expect("commit");
+
+    let txn = store.begin().await.expect("begin");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&reader(), &plain, &query)
+        .await
+        .expect("no soft delete, so nothing to reveal and nothing to grant")
+        .collect()
+        .await
+        .expect("collect");
+    assert_eq!(rows.len(), 1);
+}

@@ -491,6 +491,19 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<Plan> {
         self.security.authorize(context, table, Action::Read)?;
+        // Lifting the soft-delete filter is its own grant, checked here
+        // because this is the one function that honours the flag — every
+        // read, join side and chain step plans through it, so a path that
+        // forgot the check would have to route around the planner.
+        //
+        // Only when the table actually soft-deletes. `include_deleted` on a
+        // table with no retired rows to reveal is a no-op, and demanding a
+        // grant for a no-op teaches callers to ask for privileges they do not
+        // need.
+        if query.include_deleted && table.soft_delete().is_some() {
+            self.security
+                .authorize(context, table, Action::ReadDeleted)?;
+        }
         // In `plan` rather than in `execute`, because the answer is "this
         // expression has no scale to be at" and that is a fact about the
         // query, not about any row — so `explain` should refuse it too. A plan

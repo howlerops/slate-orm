@@ -171,26 +171,30 @@ fn any_query() -> impl Strategy<Value = Query> {
             prop::collection::vec(any_value(), 1..3).prop_map(Some),
         ],
     )
+        // A second tuple because `prop::strategy` tuples stop at twelve arms
+        // and the first is full; `any::<bool>()` is the whole of it.
+        .prop_flat_map(|first| (Just(first), any::<bool>()))
         .prop_map(
-            |(filter, order, projection, sort, limit, offset, hint, after)| Query {
-                filter,
-                order,
-                projection,
-                sort,
-                limit,
-                offset,
-                hint,
-                compute: Vec::new(),
-                // `paging` is implied by `after` on the way in and is set by
-                // `Query::after`, so a generated `after` must carry it or the
-                // round trip compares a value the builder cannot produce.
-                paging: after.is_some(),
-                after,
-                // Always false, for the same reason the empty cursor is always
-                // `None`: it is a kernel-side flag with no field on the wire,
-                // so `true` is a value the round trip cannot preserve. When it
-                // does cross, this becomes generated and this comment goes.
-                include_deleted: false,
+            |((filter, order, projection, sort, limit, offset, hint, after), include_deleted)| {
+                Query {
+                    filter,
+                    order,
+                    projection,
+                    sort,
+                    limit,
+                    offset,
+                    hint,
+                    compute: Vec::new(),
+                    // `paging` is implied by `after` on the way in and is set by
+                    // `Query::after`, so a generated `after` must carry it or the
+                    // round trip compares a value the builder cannot produce.
+                    paging: after.is_some(),
+                    after,
+                    // It crosses now, so it is generated rather than pinned false.
+                    // The comment this replaces said "when it does cross, this
+                    // becomes generated" — which is what happened.
+                    include_deleted,
+                }
             },
         )
 }
