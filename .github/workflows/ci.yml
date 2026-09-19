@@ -277,6 +277,13 @@ jobs:
       # demo's schema has, and the cases most worth getting right (a dropped
       # column, an unknown type) are ones it does not.
       - run: python3 scripts/test_codegen.py
+      # That `scripts/check.sh` still lists every step in this file, or says
+      # why it cannot run one. The script exists because three commits in one
+      # afternoon went red on checks that existed and were run from the wrong
+      # directory; a list that falls behind would be the same story with an
+      # extra step, and this is what stops it. Adding a step above fails here
+      # until somebody classifies it.
+      - run: python3 scripts/test_check_sh.py
 
   quickstarts:
     name: the landing page's code

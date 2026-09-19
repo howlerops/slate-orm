@@ -86,15 +86,30 @@ branch with no pull request. Turning it on found eleven real defects in one
 morning. **A check that never fires is a check nobody has debugged** — which
 applies to anything you add here too.
 
-Locally, the useful subset:
+Locally, **start with one command**:
 
 ```sh
-cargo fmt -p <the crates you touched>                   # CI checks --all; see below
+sh scripts/check.sh      # every static check CI runs: fmt, clippy, doc, ty,
+                         # ruff, gofmt, go vet, three typecheckers, the
+                         # workspace guard, the hook suite. `--list` names them.
+```
+
+It runs all of them and reports at the end rather than stopping at the first,
+because a session that fixes one and re-runs pays the whole cost again to find
+the second. It needs no built binary, no browser, no container and no network,
+which is what makes it worth running before every commit — and is exactly why
+it is not enough. `scripts/test_check_sh.py`, which CI runs, fails if a step is
+added to `ci.yml` and neither listed in the script nor written down as one it
+cannot run.
+
+Then the suites it cannot reach, whichever your change touches:
+
+```sh
 cargo test -p <the crates you touched> --no-fail-fast   # see the disk note below
-cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
-sh .githooks/test-pre-commit.sh                         # the hook's own suite
-ruff check . && ty check                                # the Python outside clients/; see below
-python3 scripts/check_workspace.py                      # every crate is a member
+cd clients/python && python3 -m pytest -q               # the whole suite, not one file
+cd clients/go && go test ./...                          # both need a built server
+cd clients/typescript && npm test
+cd examples/explorer/web && npm test                    # the demo's own; reads head.toml
 python3 site/check/docs.py                              # the docs site holds together
 python3 site/check/quickstarts.py                       # the docs' code, run
 python3 site/check/workbench.py                         # the kernel, in a browser
@@ -102,6 +117,10 @@ cd examples/explorer && ./run.sh --conformance          # the three SDKs agree
 cd examples/explorer && ./run.sh --e2e                  # the demo, in a browser
 cd examples/deployed && ./run.sh                        # the whole stack, for real
 ```
+
+**Running one file of a suite is not running the suite.** `pytest
+tests/test_one.py` passed on a change to a module every other test imports, and
+CI failed on two of them. If you changed something shared, run the suite.
 
 The client suites and the demo build `slate-serverd` with `cargo` by default.
 `SLATE_SERVERD=/path/to/slate-serverd` (and `SLATE_TESTSERVER` for the Python
@@ -115,7 +134,8 @@ that is set and missing is a hard error, never a silent fall back to building.
   `cargo fmt -p <your-crates>`, and actually run it: CI checks `--all`, and a
   session that formatted nothing turned that job red on nothing but line
   breaks. It is its own job now, so it no longer hides clippy and the tests
-  behind it, but red is still red.
+  behind it, but red is still red. `scripts/check.sh` runs `--all -- --check`,
+  which reports without writing, so it is safe beside another session's work.
 - Disk is tight and several builds run at once. A linker `Bus error`, an
   `rustc-LLVM ERROR: IO failure`, or a sudden burst of `E0463: can't find
   crate` is almost always ENOSPC or a damaged build cache, not your code.
@@ -166,7 +186,13 @@ that is set and missing is a hard error, never a silent fall back to building.
   ```
 
   A bare `ty check` is necessary and not sufficient, the same way a green local
-  clippy is.
+  clippy is. `scripts/check.sh` builds that virtualenv on first use and runs
+  `ty` against it, so this is one of the things you no longer have to remember.
+- **There are two `ruff` runs and two `ty` runs, over disjoint trees.** One
+  pair in `clients/python`, reading that package's own configuration; one pair
+  at the root for everything else. `ruff check .` at the root passed while the
+  client's failed, on a file in `clients/python/tests/`. `scripts/check.sh`
+  runs all four.
 - **Pin anything that generates committed code.** `grpcio-tools` was declared
   `>=`, so the test that regenerates the Python protobuf stubs and compares
   them byte for byte was pinned to upstream's release calendar. It went red
