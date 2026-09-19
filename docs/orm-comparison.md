@@ -1145,12 +1145,23 @@ answer is that we have not worked it out. Probably the catalog, as declarative
 constraints beside `CHECK`, so the answer is the same in all three. That is a
 design note somebody should write before any of it is built.
 
-Automatic timestamps and soft-delete conventions are deliberately left out of
-both: they are sugar over things that already work (a default, a partial
-index), and sugar is the right thing to add *after* the shape of the write path
-stops changing, not during. The write path changed twice in the first six —
-predicate writes, then batch — which is the evidence for that ordering rather
-than a restatement of it.
+Automatic timestamps and soft-delete conventions were left out of both, and
+the ordering argument for that held: sugar is the right thing to add *after*
+the shape of the write path stops changing, not during. The write path changed
+twice in the first six — predicate writes, then batch — which is the evidence
+for that ordering rather than a restatement of it. Timestamps were built once
+it had stopped.
+
+**The reason given here for calling them sugar was wrong, and building them is
+what showed it.** This said they were "sugar over things that already work (a
+default, a partial index)". A `DEFAULT` cannot express automatic timestamps: a
+default is a stored `Value`, and the value wanted is whatever the clock says at
+the moment of the write. Making a default hold that means an expression
+evaluated per write in a schema layer that evaluates nothing — a second
+expression language, for two cases. So `created_at` is not sugar over a
+default; it is the thing a default cannot be, and it lives in the store's one
+write choke point instead. The partial-index half of the claim is still
+untested, because soft delete is still unbuilt.
 
 Generated migrations and client codegen are also out of both, and are the two
 table rows most likely to be worth a plan of their own next. Codegen in
