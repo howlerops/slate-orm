@@ -631,3 +631,27 @@ async fn a_refused_conditional_delete_that_applied_nothing_contributes_no_series
         "a refused conditional delete reported a series"
     );
 }
+
+// --- the arm with no test, and the two routes that do not reach it -----------
+//
+// `Command::Delete`'s plain (non-conditional) branch shares the rule above
+// through the same `tally.applied` call, but its "failed having applied
+// nothing" case has no test, because nothing in this fixture can produce it
+// over the wire. Written down rather than left as an absence, since an absence
+// reads as "nobody thought of it":
+//
+//   - **An absent key is not a failure.** `transaction.delete` answers
+//     `Ok(false)`, deliberately, so a caller cannot use the count to learn
+//     whether a row the policy hides was there. The loop keeps going.
+//   - **An unauthorized delete never reaches the arm.** Measured, not assumed:
+//     a principal holding a role with no grant on `docs` gets
+//     `PermissionDenied`, and turning this arm back to the unconditional `add`
+//     leaves that case green — the refusal is raised before the session task is
+//     dispatched to at all, so the tally is never touched.
+//
+// What is left is a genuine kernel error mid-loop: a foreign-key restriction,
+// a storage failure, a fence. This fixture declares no foreign keys, and adding
+// one to a `TableDef` every test in the crate shares is a larger change than
+// the hole is worth. The conditional branch's test one screen up covers the
+// identical call two lines away, which is the reason to stop here rather than
+// the reason there is nothing missing.

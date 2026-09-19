@@ -115,13 +115,18 @@ ok, none failed. `cargo test -p slate-serverd --test observing` — 13 ok.
 ## What this does not do
 
 - **The plain (non-conditional) delete arm's "failed having applied nothing" is
-  still unpinned.** Its loop only breaks on a real `Err` from `transaction
-  .delete`, and deleting an absent key returns `Ok(false)` rather than failing,
-  so I could not reach that state over the wire without a policy or fencing
-  setup this file has no harness for. The conditional delete covers the same
-  `tally.applied` call site one line away, which is why I stopped there rather
-  than moving a harness in. Named here because it is a hole, not because it is
-  covered.
+  still unpinned**, and the two routes I tried are now written beside the tests
+  rather than left as an absence. An absent key answers `Ok(false)` by design,
+  so the loop does not fail. An unauthorized delete is refused *before* the
+  session task is dispatched to — measured, not assumed: a principal holding a
+  role with no grant on `docs` gets `PermissionDenied`, and mutating this arm
+  back to the unconditional `add` leaves that case green, which is how I found
+  out the arm is never entered. What remains is a real kernel error mid-loop
+  (a foreign-key restriction, a storage failure, a fence); this fixture declares
+  no foreign keys, and adding one to a `TableDef` that every test in the crate
+  shares is a larger change than the hole is worth. The conditional branch's
+  test covers the identical call two lines away. Named because it is a hole, not
+  because it is covered.
 - **Nothing about the counts an atomic batch reports.** That path collects
   through `Decoded::apply` and reports after `Ok`, and has its own tests; it
   does not go through `Tally::applied`.
