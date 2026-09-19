@@ -108,7 +108,7 @@ then did not ship it to the three audiences most likely to need it.
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
-| Generated *types* from the catalog | Drizzle, Prisma | `scripts/codegen.py` generates the schema declaration for all three clients from `slate-serverd --print-schema`, and CI diffs it; what it does **not** generate is a typed row — a query still returns `Value`s, not a `Book` — see below |
+| ~~Generated *types* from the catalog~~ | Drizzle, Prisma | **Built** — `scripts/codegen.py` generates both the schema declaration and a typed row per table for all three clients, and CI diffs them. What is still hand-written is the *call*: a query answers `Value`s and the caller passes them to the generated decoder |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
 | ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. Kernel and daemon config only, not on the wire; see below |
@@ -203,12 +203,33 @@ then did not ship it to the three audiences most likely to need it.
 > all** — the clients had supported one since the SchemaCheck item, and the two
 > adapters had never been given a declaration to send. Both now do.
 >
-> What this is not is what Drizzle and Prisma are actually known for. There is
-> no generated *row type*: a query still answers a list of `Value`, and turning
-> that into a `Book` is still the caller's loop. The generated declaration
-> makes the ordinals right; it does not make them disappear. That is the
-> remaining half of this row and it is a larger change, because it needs a
-> decoder per table in three languages rather than a data literal.
+> **The remaining half is now built too: generated row types.** Beside each
+> declaration the generator now writes a type per table and a decoder for it —
+> a frozen dataclass and `from_row` in Python, a struct and `ScanBooks` in Go,
+> an interface and `decodeBooks` in TypeScript. A query still answers `Value`s;
+> what has gone is the caller's loop turning them into fields, and with it the
+> ordinal arithmetic that was the silent half of the problem.
+>
+> Every column is *checked*, not cast. A declaration one column out would
+> otherwise hand back the neighbour — populated, plausible, and wrong at the
+> call site rather than at the decode — so each field asserts its tag and
+> raises naming the table and the column. That check is what the generated
+> decoder buys over a hand-written struct literal; the types alone would not.
+>
+> Three decisions with defensible alternatives. **A dropped column is in the
+> declaration and not in the row type**, which looks inconsistent and is not:
+> the fingerprint hashes which columns are dropped, so the declaration must
+> carry it, and a field nobody can read is noise — the columns after it still
+> decode from their real ordinals, which is the bug that test exists for.
+> **A table is not de-pluralised**: `books` becomes `Books`, because guessing
+> the singular is guessing about English and it is wrong on `data`, `series`
+> and every domain noun already plural. **Go fields are mechanically
+> Title-cased**, so `id` is `Id` and not the `ID` Go style wants: an initialism
+> list is a second thing to keep in step and is never complete.
+>
+> What this still is not is Prisma. The decoder is called by hand — nothing
+> returns a `Books` from a query — so the generated type is a tool the caller
+> picks up, not a return type they are handed.
 
 > **Half-built: seeding.** This row said "none" and that was wrong.
 > `slate-serverd --seed fixtures.toml` loads rows by column *name* under a

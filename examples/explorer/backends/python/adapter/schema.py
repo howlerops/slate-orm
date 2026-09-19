@@ -11,7 +11,12 @@ two cannot drift.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import cast
+
 from slate import Column, Table, ValueType
+from slate.values import Null, Units
 
 __all__ = [
     "AUTHORS",
@@ -19,6 +24,10 @@ __all__ = [
     "BY_NAME",
     "EDITIONS",
     "SALES",
+    "Authors",
+    "Books",
+    "Editions",
+    "Sales",
 ]
 
 AUTHORS = Table(
@@ -68,3 +77,128 @@ EDITIONS = Table(
 )
 
 BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS,)}
+
+
+def _field(values: Sequence[object], at: int, table: str, column: str,
+           kind: type | tuple[type, ...], nullable: bool) -> object:
+    """One column of a row, checked.
+
+    The check is the point. Python would happily hand back whatever sat
+    at the ordinal, and a declaration that is one column out reads the
+    neighbour and looks plausible — which is the failure this whole
+    generator exists to make impossible. Raising here names the table
+    and the column, so the error says where to look.
+    """
+    value = values[at]
+    if value is None or isinstance(value, Null):
+        if nullable:
+            return None
+        raise ValueError(
+            f"{table}.{column} is not nullable and came back null"
+        )
+    if not isinstance(value, kind):
+        raise TypeError(
+            f"{table}.{column} is {type(value).__name__}, "
+            f"not the declared {kind}"
+        )
+    return value
+
+
+@dataclass(frozen=True)
+class Authors:
+    """A row of `authors`, decoded."""
+
+    id: int
+    name: str
+    country: str
+    born: int
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Authors:
+        """Decode a row of `authors`, by ordinal."""
+        if len(values) != 4:
+            raise ValueError(
+                f"authors has 4 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "authors", "id", int, False)),
+            name=cast("str", _field(values, 1, "authors", "name", str, False)),
+            country=cast("str", _field(values, 2, "authors", "country", str, False)),
+            born=cast("int", _field(values, 3, "authors", "born", int, False)),
+        )
+
+
+@dataclass(frozen=True)
+class Books:
+    """A row of `books`, decoded."""
+
+    id: int
+    author_id: int
+    title: str
+    year: int
+    rating: float
+    released: int
+    embedding: Sequence[float]
+    price: Units
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Books:
+        """Decode a row of `books`, by ordinal."""
+        if len(values) != 8:
+            raise ValueError(
+                f"books has 8 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "books", "id", int, False)),
+            author_id=cast("int", _field(values, 1, "books", "author_id", int, False)),
+            title=cast("str", _field(values, 2, "books", "title", str, False)),
+            year=cast("int", _field(values, 3, "books", "year", int, False)),
+            rating=cast("float", _field(values, 4, "books", "rating", float, False)),
+            released=cast("int", _field(values, 5, "books", "released", int, False)),
+            embedding=cast("Sequence[float]", _field(values, 6, "books", "embedding", tuple, False)),
+            price=cast("Units", _field(values, 7, "books", "price", Units, False)),
+        )
+
+
+@dataclass(frozen=True)
+class Sales:
+    """A row of `sales`, decoded."""
+
+    id: int
+    book_id: int
+    units: int
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Sales:
+        """Decode a row of `sales`, by ordinal."""
+        if len(values) != 3:
+            raise ValueError(
+                f"sales has 3 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "sales", "id", int, False)),
+            book_id=cast("int", _field(values, 1, "sales", "book_id", int, False)),
+            units=cast("int", _field(values, 2, "sales", "units", int, False)),
+        )
+
+
+@dataclass(frozen=True)
+class Editions:
+    """A row of `editions`, decoded."""
+
+    id: int
+    book_id: int
+    format: str
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Editions:
+        """Decode a row of `editions`, by ordinal."""
+        if len(values) != 3:
+            raise ValueError(
+                f"editions has 3 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "editions", "id", int, False)),
+            book_id=cast("int", _field(values, 1, "editions", "book_id", int, False)),
+            format=cast("str", _field(values, 2, "editions", "format", str, False)),
+        )

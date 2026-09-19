@@ -7,7 +7,11 @@
 // catalog itself so the two cannot drift.
 package schema
 
-import "github.com/howlerops/slate-orm/clients/go/slate"
+import (
+	"fmt"
+
+	"github.com/howlerops/slate-orm/clients/go/slate"
+)
 
 // Tables is every table the catalog declares, ready for
 // `client.Declaring(schema.Tables)`.
@@ -54,4 +58,252 @@ var Tables = slate.Schemas{
 		},
 		PrimaryKey: []string{"id"},
 	},
+}
+
+// Authors is a row of `authors`, decoded.
+type Authors struct {
+	Id      uint64
+	Name    string
+	Country string
+	Born    int64
+}
+
+// ScanAuthors decodes one row of `authors`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanAuthors(row []slate.Value) (Authors, error) {
+	var out Authors
+	if len(row) != 4 {
+		return out, fmt.Errorf("authors has 4 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("authors.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("authors.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("authors.name: expected slate.String, got %T", row[1])
+		}
+		out.Name = string(v)
+	} else {
+		return out, fmt.Errorf("authors.name is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("authors.country: expected slate.String, got %T", row[2])
+		}
+		out.Country = string(v)
+	} else {
+		return out, fmt.Errorf("authors.country is not nullable and came back null")
+	}
+	if _, null := row[3].(slate.Null); !null {
+		v, ok := row[3].(slate.Int)
+		if !ok {
+			return out, fmt.Errorf("authors.born: expected slate.Int, got %T", row[3])
+		}
+		out.Born = int64(v)
+	} else {
+		return out, fmt.Errorf("authors.born is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// Books is a row of `books`, decoded.
+type Books struct {
+	Id        uint64
+	AuthorId  uint64
+	Title     string
+	Year      int64
+	Rating    float64
+	Released  int64
+	Embedding []float32
+	Price     slate.Units
+}
+
+// ScanBooks decodes one row of `books`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanBooks(row []slate.Value) (Books, error) {
+	var out Books
+	if len(row) != 8 {
+		return out, fmt.Errorf("books has 8 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("books.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("books.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("books.author_id: expected slate.Uint, got %T", row[1])
+		}
+		out.AuthorId = uint64(v)
+	} else {
+		return out, fmt.Errorf("books.author_id is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("books.title: expected slate.String, got %T", row[2])
+		}
+		out.Title = string(v)
+	} else {
+		return out, fmt.Errorf("books.title is not nullable and came back null")
+	}
+	if _, null := row[3].(slate.Null); !null {
+		v, ok := row[3].(slate.Int)
+		if !ok {
+			return out, fmt.Errorf("books.year: expected slate.Int, got %T", row[3])
+		}
+		out.Year = int64(v)
+	} else {
+		return out, fmt.Errorf("books.year is not nullable and came back null")
+	}
+	if _, null := row[4].(slate.Null); !null {
+		v, ok := row[4].(slate.Float)
+		if !ok {
+			return out, fmt.Errorf("books.rating: expected slate.Float, got %T", row[4])
+		}
+		out.Rating = float64(v)
+	} else {
+		return out, fmt.Errorf("books.rating is not nullable and came back null")
+	}
+	if _, null := row[5].(slate.Null); !null {
+		v, ok := row[5].(slate.Int)
+		if !ok {
+			return out, fmt.Errorf("books.released: expected slate.Int, got %T", row[5])
+		}
+		out.Released = int64(v)
+	} else {
+		return out, fmt.Errorf("books.released is not nullable and came back null")
+	}
+	if _, null := row[6].(slate.Null); !null {
+		v, ok := row[6].(slate.Vector)
+		if !ok {
+			return out, fmt.Errorf("books.embedding: expected slate.Vector, got %T", row[6])
+		}
+		out.Embedding = []float32(v)
+	} else {
+		return out, fmt.Errorf("books.embedding is not nullable and came back null")
+	}
+	if _, null := row[7].(slate.Null); !null {
+		v, ok := row[7].(slate.Units)
+		if !ok {
+			return out, fmt.Errorf("books.price: expected slate.Units, got %T", row[7])
+		}
+		out.Price = slate.Units(v)
+	} else {
+		return out, fmt.Errorf("books.price is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// Sales is a row of `sales`, decoded.
+type Sales struct {
+	Id     uint64
+	BookId uint64
+	Units  int64
+}
+
+// ScanSales decodes one row of `sales`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanSales(row []slate.Value) (Sales, error) {
+	var out Sales
+	if len(row) != 3 {
+		return out, fmt.Errorf("sales has 3 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("sales.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("sales.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("sales.book_id: expected slate.Uint, got %T", row[1])
+		}
+		out.BookId = uint64(v)
+	} else {
+		return out, fmt.Errorf("sales.book_id is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.Int)
+		if !ok {
+			return out, fmt.Errorf("sales.units: expected slate.Int, got %T", row[2])
+		}
+		out.Units = int64(v)
+	} else {
+		return out, fmt.Errorf("sales.units is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// Editions is a row of `editions`, decoded.
+type Editions struct {
+	Id     uint64
+	BookId uint64
+	Format string
+}
+
+// ScanEditions decodes one row of `editions`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanEditions(row []slate.Value) (Editions, error) {
+	var out Editions
+	if len(row) != 3 {
+		return out, fmt.Errorf("editions has 3 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("editions.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("editions.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("editions.book_id: expected slate.Uint, got %T", row[1])
+		}
+		out.BookId = uint64(v)
+	} else {
+		return out, fmt.Errorf("editions.book_id is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("editions.format: expected slate.String, got %T", row[2])
+		}
+		out.Format = string(v)
+	} else {
+		return out, fmt.Errorf("editions.format is not nullable and came back null")
+	}
+	return out, nil
 }

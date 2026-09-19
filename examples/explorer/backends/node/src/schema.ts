@@ -6,7 +6,35 @@
 // positionally-wrong. This file is that declaration, produced from the
 // catalog itself so the two cannot drift.
 
-import type { Schemas, TableDef } from "@slate-orm/client";
+import type { Schemas, TableDef, Value } from "@slate-orm/client";
+
+/**
+ * One column of a row, with its tag checked.
+ *
+ * The check is the point. A declaration one column out would otherwise
+ * hand back the neighbour, which type-checks at the call site and is
+ * wrong; this throws naming the table and the column.
+ */
+function field(
+  row: Value[],
+  at: number,
+  table: string,
+  column: string,
+  kind: string,
+  nullable: boolean,
+): unknown {
+  const value = row[at];
+  if (value === undefined || value.kind === "null") {
+    if (nullable) return null;
+    throw new Error(`${table}.${column} is not nullable and came back null`);
+  }
+  if (value.kind !== kind) {
+    throw new Error(
+      `${table}.${column} is ${value.kind}, not the declared ${kind}`,
+    );
+  }
+  return "value" in value ? value.value : undefined;
+}
 
 export const AUTHORS: TableDef = {
   name: "authors",
@@ -61,3 +89,116 @@ export const TABLES: Schemas = {
   [SALES.name]: SALES,
   [EDITIONS.name]: EDITIONS,
 };
+
+
+/** A row of `authors`, decoded. */
+export interface Authors {
+  id: bigint;
+  name: string;
+  country: string;
+  born: bigint;
+}
+
+/**
+ * Decode one row of `authors`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodeAuthors(row: Value[]): Authors {
+  if (row.length !== 4) {
+    throw new Error(`authors has 4 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "authors", "id", "uint", false) as bigint,
+    name: field(row, 1, "authors", "name", "string", false) as string,
+    country: field(row, 2, "authors", "country", "string", false) as string,
+    born: field(row, 3, "authors", "born", "int", false) as bigint,
+  };
+}
+
+/** A row of `books`, decoded. */
+export interface Books {
+  id: bigint;
+  author_id: bigint;
+  title: string;
+  year: bigint;
+  rating: number;
+  released: bigint;
+  embedding: number[];
+  price: bigint;
+}
+
+/**
+ * Decode one row of `books`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodeBooks(row: Value[]): Books {
+  if (row.length !== 8) {
+    throw new Error(`books has 8 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "books", "id", "uint", false) as bigint,
+    author_id: field(row, 1, "books", "author_id", "uint", false) as bigint,
+    title: field(row, 2, "books", "title", "string", false) as string,
+    year: field(row, 3, "books", "year", "int", false) as bigint,
+    rating: field(row, 4, "books", "rating", "float", false) as number,
+    released: field(row, 5, "books", "released", "int", false) as bigint,
+    embedding: field(row, 6, "books", "embedding", "vector", false) as number[],
+    price: field(row, 7, "books", "price", "units", false) as bigint,
+  };
+}
+
+/** A row of `sales`, decoded. */
+export interface Sales {
+  id: bigint;
+  book_id: bigint;
+  units: bigint;
+}
+
+/**
+ * Decode one row of `sales`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodeSales(row: Value[]): Sales {
+  if (row.length !== 3) {
+    throw new Error(`sales has 3 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "sales", "id", "uint", false) as bigint,
+    book_id: field(row, 1, "sales", "book_id", "uint", false) as bigint,
+    units: field(row, 2, "sales", "units", "int", false) as bigint,
+  };
+}
+
+/** A row of `editions`, decoded. */
+export interface Editions {
+  id: bigint;
+  book_id: bigint;
+  format: string;
+}
+
+/**
+ * Decode one row of `editions`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodeEditions(row: Value[]): Editions {
+  if (row.length !== 3) {
+    throw new Error(`editions has 3 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "editions", "id", "uint", false) as bigint,
+    book_id: field(row, 1, "editions", "book_id", "uint", false) as bigint,
+    format: field(row, 2, "editions", "format", "string", false) as string,
+  };
+}
