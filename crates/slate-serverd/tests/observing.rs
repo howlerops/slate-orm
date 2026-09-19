@@ -21,7 +21,7 @@
 
 mod harness;
 
-use harness::{Files, Identity, Serving, connect, proto, query, rows, u64_value};
+use harness::{Files, Identity, Serving, connect, proto, query, row, rows, str_value, u64_value};
 
 /// A node that says nothing extra. The `[observability]` section is absent on
 /// purpose: the default is what most deployments run.
@@ -197,6 +197,80 @@ async fn a_scrape_reports_what_the_node_served() {
             "slate_request_head_seconds_bucket{{method=\"{query_method}\",le=\"+Inf\"}} 2"
         )),
         "{answered}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_scrape_reports_the_rows_a_write_touched() {
+    // The other counter, and the other wiring line. `a_scrape_reports_what the
+    // node served` above covers `slate_requests_total`, whose layer wraps the
+    // router; `slate_rows_written_total` comes from a `WriteObserver` attached
+    // in one line of `serve.rs`, and until now nothing ran that line. The
+    // observer has a recording double, `Counters::prometheus` has its own
+    // tests, and their composition had neither — the exact shape of gap the
+    // module docstring above was written about.
+    //
+    // Both write paths, because they reach the observer differently and only
+    // one of them existed when it was built: a standalone insert is counted
+    // after `autocommit`, and an insert inside a caller's transaction is
+    // tallied and reported on `Commit`.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            table: "docs".to_owned(),
+            rows: vec![row(vec![u64_value(10), str_value("standalone")])],
+            ..Default::default()
+        }))
+        .await
+        .expect("a standalone insert");
+
+    let transaction = client
+        .begin(APP.on(proto::BeginRequest {}))
+        .await
+        .expect("begin")
+        .into_inner()
+        .transaction;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            rows: vec![
+                row(vec![u64_value(11), str_value("in a transaction")]),
+                row(vec![u64_value(12), str_value("in a transaction")]),
+            ],
+            ..Default::default()
+        }))
+        .await
+        .expect("an insert inside a transaction");
+
+    // Scraped *before* the commit, so the reading is evidence of the rule and
+    // not just of the total: three rows have been written and one has landed.
+    let midway = scrape(&address, "/metrics").await;
+    assert!(
+        midway.contains("slate_rows_written_total{statement=\"insert\",table=\"docs\"} 1"),
+        "only the committed row should be counted yet:\n{midway}"
+    );
+
+    client
+        .commit(APP.on(proto::CommitRequest { transaction }))
+        .await
+        .expect("commit");
+    drop(client);
+
+    let answered = scrape(&address, "/metrics").await;
+    assert!(answered.starts_with("HTTP/1.1 200 OK"), "{answered}");
+    assert!(
+        answered.contains("slate_rows_written_total{statement=\"insert\",table=\"docs\"} 3"),
+        "the transaction's two rows should join the standalone one:\n{answered}"
     );
 
     let finished = serving.terminate();

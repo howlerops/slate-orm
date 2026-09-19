@@ -109,10 +109,13 @@ The rest of `slate-server` (24 test binaries) and `slate-serverd` (8) pass, and
 
 ## What this does not do
 
-**Still nothing scrapes `/metrics` over a socket in a test.** The observer is
-covered by a recording double, `Counters::prometheus` is covered by its own
-tests, and their composition is one line in `serve.rs`. Unchanged from the
-previous entry, and still the weakest link in this chain.
+~~**Still nothing scrapes `/metrics` over a socket in a test.**~~ **Closed**,
+and the claim was wrong in a way worth naming: `observing.rs` had scraped a real
+socket from a real process since the endpoint shipped, for the *request*
+counters. I read the previous entry's gap paragraph and repeated it rather than
+looking. What was true underneath is that `slate_rows_written_total` was never
+scraped and `serve.rs`'s attaching line never run — including the commit rule
+this entry is about. See `2026-09-19-the-counter-nobody-scraped.md`.
 
 **A fence mid-transaction is covered by the compiler, not by a test.** Stated
 above rather than buried: there is no test that fences a write inside a

@@ -95,10 +95,12 @@ not happened yet when they are applied, so the counting needed somewhere to
 *wait*, not just somewhere to hook. A tally per transaction, reported on a
 successful commit, is what that turned out to be.
 
-**Nothing scrapes it in a test.** The counter is asserted through
-`Counters::prometheus` and the observer through a recording double; no test
-starts a daemon, runs a purge and reads `/metrics` over a socket. The three
-pieces are each covered and their composition is one line in `serve.rs`.
+~~**Nothing scrapes it in a test.**~~ **Closed**, and the claim was too broad
+as written: `observing.rs` already scraped `/metrics` over a real socket from a
+real process — for the *request* counters. What had no end-to-end coverage was
+`slate_rows_written_total` and the one line in `serve.rs` that attaches the
+observer. `a_scrape_reports_the_rows_a_write_touched` covers both now; see
+`2026-09-19-the-counter-nobody-scraped.md`.
 
 No alert or dashboard ships with it, and there is still no scheduler — an
 operator wanting a nightly purge writes their own cron against the RPC.
