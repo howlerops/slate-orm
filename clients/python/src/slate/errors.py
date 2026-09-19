@@ -60,11 +60,12 @@ from typing import Final, Protocol, runtime_checkable
 
 import grpc
 
-from ._details import reason_of
+from ._details import CheckFailure, check_failures_of, reason_of
 
 __all__ = [
     "AlreadyExists",
     "Cancelled",
+    "CheckFailure",
     "Conflict",
     "DataLoss",
     "DeadlineExceeded",
@@ -108,6 +109,7 @@ class SlateError(Exception):
         trailers: dict[str, str] | None = None,
         reason: str = "",
         request_id: str = "",
+        violations: list[CheckFailure] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -138,6 +140,18 @@ class SlateError(Exception):
         #: the server. Compare it against the tokens in `status.rs::reason_for`
         #: rather than branching on `str(error)`.
         self.reason = reason
+        #: Every `CHECK` a refused row violated, in declaration order.
+        #:
+        #: Empty for every failure that is not a check violation, which is
+        #: almost all of them. Each entry carries the constraint's name, the
+        #: column it is about and the sentence to show — so a form puts the
+        #: message beside the field rather than parsing it out of `message`,
+        #: which is the contract this exists to avoid inventing.
+        #:
+        #: The server reports *every* failing check rather than the first, so
+        #: a row with three bad fields produces three entries and one round
+        #: trip. `str(error)` summarises the same set for a log.
+        self.violations = violations or []
 
     def __str__(self) -> str:
         return f"{self.code.name.lower()}: {self.message}"
@@ -456,6 +470,7 @@ def from_rpc_error(error: grpc.RpcError | RpcCall, request_id: str = "") -> Slat
         trailers=trailers,
         reason=_reason(error),
         request_id=request_id,
+        violations=_check_failures(error),
     )
 
 
@@ -478,3 +493,24 @@ def _reason(error: grpc.RpcError | RpcCall) -> str:
         if entry[0] == _DETAILS_KEY and isinstance(entry[1], bytes):
             return reason_of(entry[1])
     return ""
+
+
+def _check_failures(error: object) -> list[CheckFailure]:
+    """Every check a refused write violated, from the same blob.
+
+    A second pass over the trailers rather than one that returns both, so the
+    common failure — which is not a check violation — parses nothing extra
+    and the reason extraction above stays the shape every caller already
+    knows.
+    """
+    getter = getattr(error, "trailing_metadata", None)
+    if getter is None:
+        return []
+    try:
+        metadata = getter()
+    except Exception:  # pragma: no cover - defensive, as in `_trailers`
+        return []
+    for entry in metadata or ():
+        if entry[0] == _DETAILS_KEY and isinstance(entry[1], bytes):
+            return check_failures_of(entry[1])
+    return []

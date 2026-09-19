@@ -15,7 +15,7 @@ from __future__ import annotations
 import grpc
 import pytest
 
-from slate._details import ERROR_INFO_URL, reason_of
+from slate._details import ERROR_INFO_URL, check_failures_of, reason_of
 from slate.errors import _DETAILS_KEY, ResourceLimit, RpcCall, from_rpc_error
 
 #: A real `grpc-status-details-bin`, captured from a `delete_where` with
@@ -189,3 +189,164 @@ def test_the_protocol_matches_what_a_real_failure_carries() -> None:
     # which is not a `grpc.Call`, still count as one.
     assert isinstance(_FakeCall(b""), RpcCall)
     assert not isinstance(_CodeOnly("x"), RpcCall)
+
+
+#: A real `grpc-status-details-bin` from a write that violated **three**
+#: checks, captured the same way `BLOB` was — printed by
+#: `cargo test -p slate-server --test status -- --ignored --nocapture
+#: emit_a_check_violation_blob`, which exists to produce exactly this.
+#:
+#: Three failures on purpose, and the third with neither a column nor a
+#: message: `discount_under_price` spans two columns, so naming one would be a
+#: lie a form renders beside the wrong field. A fixture with one failure, or
+#: three identical ones, would not separate "reads the list" from "reads the
+#: first" or "assumes every failure has a column".
+CHECKS_BLOB = bytes.fromhex(
+    "0803129b01726f772076696f6c61746573203320636865636b73206f6e207461626c"
+    "652060646f6373603a20607469746c655f6c656e677468603a205469746c65206d75"
+    "7374206265203120746f20383020636861726163746572732e3b206073697a655f70"
+    "6f736974697665603a2053697a652063616e6e6f74206265206e656761746976652e"
+    "3b2060646973636f756e745f756e6465725f7072696365601ae1020a28747970652e"
+    "676f6f676c65617069732e636f6d2f676f6f676c652e7270632e4572726f72496e66"
+    "6f12b4020a0f434845434b5f56494f4c4154494f4e1209736c6174652d6f726d1a0f"
+    "0a06636f6c756d6e12057469746c651a180a07636865636b2e31120d73697a655f70"
+    "6f7369746976651a1f0a07636865636b2e321214646973636f756e745f756e646572"
+    "5f70726963651a110a08636f6c756d6e2e3012057469746c651a2e0a096d65737361"
+    "67652e3012215469746c65206d757374206265203120746f20383020636861726163"
+    "746572732e1a100a08636f6c756d6e2e31120473697a651a250a096d657373616765"
+    "2e31121853697a652063616e6e6f74206265206e656761746976652e1a0d0a057461"
+    "626c651204646f63731a0f0a0a76696f6c6174696f6e731201331a170a0763686563"
+    "6b2e30120c7469746c655f6c656e6774681a150a05636865636b120c7469746c655f"
+    "6c656e677468"
+)
+
+
+def test_every_failing_check_comes_back_typed() -> None:
+    """The payoff of publishing `column` and `message`: no prose to parse.
+
+    A form reads `column` to pick the field and `message` to fill it. The
+    alternative a caller has without this is a regular expression over the
+    status text, which lasts until somebody rewords a sentence.
+    """
+    failures = check_failures_of(CHECKS_BLOB)
+    assert [f.check for f in failures] == [
+        "title_length",
+        "size_positive",
+        "discount_under_price",
+    ], "declaration order, not the map's"
+    assert failures[0].column == "title"
+    assert failures[0].message == "Title must be 1 to 80 characters."
+    assert failures[1].column == "size"
+    assert failures[1].message == "Size cannot be negative."
+    # The cross-column one: a name and nothing to hang it on.
+    assert failures[2].column is None
+    assert failures[2].message is None
+
+
+def test_the_order_is_the_schemas_and_not_the_maps() -> None:
+    """`check.10` must not sort between `check.1` and `check.2`.
+
+    The metadata is a string-keyed map and the server sends the index in the
+    key, so anything that walked the map in key order would be right for nine
+    failures and wrong for eleven. Reading `violations` and counting up is
+    what makes that unreachable, and this is the assertion that says so —
+    against the real three-failure blob, whose map order is *not* the
+    declaration order.
+    """
+    # The captured bytes really do carry the keys out of order, which is what
+    # makes this worth asserting rather than assuming.
+    assert CHECKS_BLOB.index(b"check.1") < CHECKS_BLOB.index(b"check.0")
+    assert [f.check for f in check_failures_of(CHECKS_BLOB)][0] == "title_length"
+
+
+def violation_decoy(reason: str, metadata: dict[str, str]) -> bytes:
+    """An `ErrorInfo` with a chosen reason and a chosen metadata map.
+
+    Hand-encoded in the opposite direction from the decoder, like `decoy`
+    above and for the same reason. This one exists because two properties
+    cannot be reached with a blob the server would actually send: a
+    *non*-check failure carrying check-shaped keys, and a metadata map whose
+    count and keys disagree. Both are what the decoder's guards are for, and
+    both were mutations that survived until this existed.
+    """
+    fields = _bytes_field(1, reason.encode()) + _bytes_field(2, b"slate-orm")
+    for key, value in metadata.items():
+        entry = _bytes_field(1, key.encode()) + _bytes_field(2, value.encode())
+        fields += _bytes_field(3, entry)
+    any_message = _bytes_field(1, ERROR_INFO_URL.encode()) + _bytes_field(2, fields)
+    return _tag(1, 0) + _varint(9) + _bytes_field(3, any_message)
+
+
+def test_the_decoy_is_read_when_it_says_it_is_a_check_violation() -> None:
+    """The negative control, in the shape this file already uses.
+
+    Without it the two tests below pass for two different reasons — the guard
+    working, or the hand-encoder producing something no decoder could read —
+    and only one of those is the property.
+    """
+    blob = violation_decoy(
+        "CHECK_VIOLATION",
+        {"violations": "1", "check.0": "only", "column.0": "a"},
+    )
+    assert [f.check for f in check_failures_of(blob)] == ["only"]
+
+
+def test_check_shaped_metadata_under_another_reason_is_ignored() -> None:
+    """A failure that is not a check violation yields nothing, whatever it carries.
+
+    The real `BLOB` cannot show this: it carries no `violations` key, so a
+    decoder missing the reason check falls through to the same empty answer by
+    accident. This one carries the keys and the wrong reason, so only the
+    check itself can produce the empty list.
+    """
+    blob = violation_decoy(
+        "UNIQUE_VIOLATION",
+        {"violations": "1", "check.0": "not_a_check", "column.0": "email"},
+    )
+    assert check_failures_of(blob) == []
+
+
+def test_a_count_the_keys_do_not_match_yields_nothing() -> None:
+    """Three promised, two present: the prefix would be a quiet lie.
+
+    A caller shown two failures for a row that broke three fixes two fields,
+    resubmits, and is refused again — which is the round-trip-per-field
+    behaviour this whole feature exists to remove. Returning nothing makes the
+    disagreement visible instead.
+    """
+    blob = violation_decoy(
+        "CHECK_VIOLATION",
+        {"violations": "3", "check.0": "one", "check.1": "two"},
+    )
+    assert check_failures_of(blob) == []
+
+
+def test_a_failure_that_is_not_a_check_violation_has_none() -> None:
+    """`BLOB` is a predicate write that matched too many rows."""
+    assert check_failures_of(BLOB) == []
+
+
+def test_rubbish_yields_no_failures_rather_than_raising() -> None:
+    """The reasoning `reason_of` gives: never replace the server's failure."""
+    assert check_failures_of(b"not a status") == []
+    assert check_failures_of(b"") == []
+
+
+def test_the_error_a_caller_catches_carries_them() -> None:
+    """End to end, and a different test from the ones above on purpose.
+
+    Those call `check_failures_of` directly, so every one of them keeps
+    passing if `from_rpc_error` simply stops asking — which is exactly the
+    wiring a caller depends on and never touches itself. The reasoning is the
+    token test's, two functions up.
+    """
+    error = from_rpc_error(_FakeCall(CHECKS_BLOB))
+    assert error.reason == "CHECK_VIOLATION"
+    assert [f.column for f in error.violations] == ["title", "size", None]
+    assert error.violations[0].message == "Title must be 1 to 80 characters."
+
+
+def test_an_ordinary_failure_carries_an_empty_list() -> None:
+    """Not `None`: a caller iterating does not have to check first."""
+    error = from_rpc_error(_FakeCall(BLOB))
+    assert error.violations == []

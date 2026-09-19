@@ -52,6 +52,7 @@ from .client import (
 from .errors import (
     AlreadyExists,
     Cancelled,
+    CheckFailure,
     Conflict,
     DataLoss,
     DeadlineExceeded,
@@ -137,6 +138,7 @@ __all__ = [
     "CalendarPart",
     "CalendarUnit",
     "Cancelled",
+    "CheckFailure",
     "Client",
     "CmpOp",
     "Column",

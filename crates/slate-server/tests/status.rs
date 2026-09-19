@@ -508,3 +508,53 @@ fn a_single_failure_reads_the_way_it_always_did() {
         "row violates check `size_positive` on table `docs`"
     );
 }
+
+/// Print a real `grpc-status-details-bin` for a three-check violation.
+///
+/// Ignored, so it never runs in CI: it asserts nothing and exists to *produce*
+/// the artefact the three client suites decode. `cargo test -p slate-server
+/// --test status -- --ignored --nocapture emit_a_check_violation_blob` prints
+/// the hex to paste into them.
+///
+/// Kept rather than deleted after use, because the alternative when the
+/// metadata shape changes is a client fixture nobody can regenerate — and a
+/// fixture a client encoded itself would agree with that client's own idea of
+/// the wire format, which is the thing `test_details.py` opens by saying
+/// proves nothing.
+#[test]
+#[ignore = "emits a fixture rather than asserting anything"]
+fn emit_a_check_violation_blob() {
+    let status = slate_server::from_kernel(&KernelError::Schema(
+        slate_schema::SchemaError::CheckViolation {
+            table: "docs".to_owned(),
+            violations: vec![
+                slate_schema::CheckFailure {
+                    check: "title_length".to_owned(),
+                    column: Some("title".to_owned()),
+                    message: Some("Title must be 1 to 80 characters.".to_owned()),
+                },
+                slate_schema::CheckFailure {
+                    check: "size_positive".to_owned(),
+                    column: Some("size".to_owned()),
+                    message: Some("Size cannot be negative.".to_owned()),
+                },
+                slate_schema::CheckFailure {
+                    check: "discount_under_price".to_owned(),
+                    column: None,
+                    message: None,
+                },
+            ],
+        },
+    ));
+    // `details()` is the decoded blob itself — the same bytes tonic base64s
+    // into `grpc-status-details-bin` on the way out, which is what a client
+    // decodes.
+    let hex: String = status
+        .details()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    for chunk in hex.as_bytes().chunks(68) {
+        println!("\"{}\"", String::from_utf8_lossy(chunk));
+    }
+}

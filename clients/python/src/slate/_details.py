@@ -40,6 +40,7 @@ blob built from the real thing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Final
 
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
@@ -83,14 +84,42 @@ _status.field.add(
     type_name=".slate._rpc.Any",
 )
 
-# `google.rpc.ErrorInfo`: reason = 1, domain = 2. The metadata map is field 3
-# and is deliberately not declared — see `reason_of`.
+# `google.rpc.ErrorInfo`: reason = 1, domain = 2, metadata = 3.
 _info = _file.message_type.add(name="ErrorInfo")
 _info.field.add(
     name="reason", number=1, type=_Field.TYPE_STRING, label=_Field.LABEL_OPTIONAL
 )
 _info.field.add(
     name="domain", number=2, type=_Field.TYPE_STRING, label=_Field.LABEL_OPTIONAL
+)
+# The metadata map, which used to be left undeclared on the grounds that
+# surfacing it "means deciding what a client promises about keys that vary per
+# variant". That was right when every variant invented its own keys. It is no
+# longer the whole story: the check-violation keys are specified — `violations`
+# is a count and `check.N`, `column.N`, `message.N` are indexed from zero — so
+# there is exactly one shape a client can promise something about.
+#
+# So the map is parsed and *not* exposed raw. `check_failures_of` reads the one
+# documented shape into typed values and nothing hands a caller the dictionary,
+# which keeps the original objection answered rather than overruled: a key this
+# client has no contract for still reaches nobody.
+#
+# A `map<string, string>` on the wire is a repeated message of key/value pairs
+# with the `map_entry` option set, which is what this builds by hand.
+_entry = _info.nested_type.add(name="MetadataEntry")
+_entry.field.add(
+    name="key", number=1, type=_Field.TYPE_STRING, label=_Field.LABEL_OPTIONAL
+)
+_entry.field.add(
+    name="value", number=2, type=_Field.TYPE_STRING, label=_Field.LABEL_OPTIONAL
+)
+_entry.options.map_entry = True
+_info.field.add(
+    name="metadata",
+    number=3,
+    type=_Field.TYPE_MESSAGE,
+    label=_Field.LABEL_REPEATED,
+    type_name=".slate._rpc.ErrorInfo.MetadataEntry",
 )
 
 _pool.Add(_file)
@@ -108,13 +137,9 @@ def reason_of(blob: bytes) -> str:
     the server's failure with its own, which is strictly worse than losing a
     token: the caller would no longer know why the call failed at all.
 
-    The `ErrorInfo.metadata` map is *not* returned. The server populates it
-    with a variant's payload — `index` and `table` on a unique violation,
-    `limit` on a predicate write that matched too many — and surfacing it means
-    deciding what a client promises about keys that vary per variant. The token
-    alone is what `errors.py` needs to branch below a status code, and it is
-    what three clients can agree on. Field 3 is therefore left undeclared and
-    skipped as an unknown field.
+    The `ErrorInfo.metadata` map is not returned *here*. The token alone is
+    what `errors.py` needs to branch below a status code. See
+    `check_failures_of` for the one part of that map this client reads.
     """
     # `Any`, because these classes are built at import from a descriptor and
     # `message_factory` types them as the base `Message`: the field names below
@@ -133,3 +158,79 @@ def reason_of(blob: bytes) -> str:
     except Exception:  # pragma: no cover - see the docstring
         return ""
     return ""
+
+
+@dataclass(frozen=True)
+class CheckFailure:
+    """One `CHECK` a refused row violated.
+
+    The point of the whole thing: a form can put `message` next to `column`
+    without parsing it out of the status text, which is the contract a caller
+    would otherwise have to invent — and which would last until somebody
+    reworded a sentence.
+    """
+
+    #: The constraint's name, as the schema declares it.
+    check: str
+    #: The column it is about, or `None` for one spanning several. A caller
+    #: with nowhere to put it shows it beside the form rather than a field.
+    column: str | None
+    #: The sentence to show, or `None` where the schema wrote none.
+    message: str | None
+
+
+def check_failures_of(blob: bytes) -> list[CheckFailure]:
+    """Every check a refused write violated, in declaration order.
+
+    Empty for any failure that is not a check violation, and for a blob that
+    does not parse — a client that raised while building an error message
+    would replace the server's failure with its own, which is the reasoning
+    `reason_of` already gives.
+
+    Reads the indexed keys (`check.0`, `column.0`, `message.0`, …) rather than
+    the unindexed pair, because the unindexed one is only the *first* failure
+    and this is the call that exists to return all of them. A server old
+    enough to send only the unindexed pair yields one failure here, which is
+    the honest reading of what it said.
+    """
+    try:
+        status: Any = _Status()
+        status.ParseFromString(blob)
+        for detail in status.details:
+            if detail.type_url != ERROR_INFO_URL:
+                continue
+            info: Any = _ErrorInfo()
+            info.ParseFromString(detail.value)
+            if str(info.reason) != "CHECK_VIOLATION":
+                return []
+            data = dict(info.metadata)
+            # The count, not the key set: a message or column may legitimately
+            # be absent, so counting `check.N` keys would be right and
+            # counting the map's size would not. The server sends `violations`
+            # for exactly this.
+            try:
+                total = int(data.get("violations", ""))
+            except ValueError:
+                # Old enough to send the unindexed pair and no count. One
+                # failure is what that means.
+                name = data.get("check")
+                if name is None:
+                    return []
+                return [
+                    CheckFailure(name, data.get("column"), data.get("message"))
+                ]
+            out = []
+            for at in range(total):
+                name = data.get(f"check.{at}")
+                if name is None:
+                    # A gap means the server and this reader disagree about
+                    # the shape. Returning the prefix would be a quiet lie
+                    # about how many rules the row broke.
+                    return []
+                out.append(
+                    CheckFailure(name, data.get(f"column.{at}"), data.get(f"message.{at}"))
+                )
+            return out
+    except Exception:  # pragma: no cover - see the docstring
+        return []
+    return []
