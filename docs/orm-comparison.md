@@ -848,10 +848,18 @@ as a named refusal.
 >   and was caught only by the conformance runner. All three clients now have a
 >   test that goes through their error constructor.
 >
-> *Stops at* the token, as written below. Also stops at `NOT_LEADER`: it is a
-> token now, but `slate-leader` stays the discriminator, because a client that
-> reads the trailer and not the blob still follows the redirect and a working
-> mechanism is not worth churning.
+> ~~*Stops at* the token, as written below.~~ **Superseded.** The three clients
+> read the `ErrorInfo.metadata` of a check violation too — `violations`, and
+> `check.N`/`column.N`/`message.N` indexed from zero — because those keys are
+> the one *specified* family in a map whose other keys vary per variant. A
+> refused form gets a typed list rather than a sentence to parse. And a batched
+> refusal gets the same list: `BatchError` carries the whole blob, since a
+> batch has no trailers to put it in. The token is still the only thing read
+> from a failure that is *not* a check violation.
+>
+> Also stops at `NOT_LEADER`: it is a token now, but `slate-leader` stays the
+> discriminator, because a client that reads the trailer and not the blob still
+> follows the redirect and a working mechanism is not worth churning.
 
 All three clients drop `grpc-status-details-bin`, each with a comment saying so.
 The stable reason token therefore reaches a caller only when the failure was
@@ -868,7 +876,9 @@ now rather than a reason it stays skipped.
 failure, which is the only check that stops one client decoding it differently.
 Mutation: drop the decode, in each, and a named case must fail.
 
-*Stops at.* The token. Not the rest of the details message.
+*Stops at.* The token. Not the rest of the details message. (Superseded — see
+the note above: the check-violation keys are read as well, on the lone path and
+the batched one.)
 
 ### N5 — The demo shows none of the last three features — **built**
 
