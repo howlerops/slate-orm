@@ -109,7 +109,7 @@ then did not ship it to the three audiences most likely to need it.
 | --- | --- | --- |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
 | Generated *types* from the catalog | Drizzle, Prisma | `scripts/codegen.py` generates the schema declaration for all three clients from `slate-serverd --print-schema`, and CI diffs it; what it does **not** generate is a typed row — a query still returns `Value`s, not a `Book` — see below |
-| Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `grep -rcn "validate\|before_save\|Changeset" crates/slate-orm/src/` → nothing |
+| Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
 | Soft delete as a first-class concept | ActiveRecord (gems), Prisma (pattern) | partial indexes support `WHERE deleted_at IS NULL` well; no convention on top |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
@@ -1142,8 +1142,18 @@ It also does not add validations, changesets or lifecycle hooks. Those are a
 design question rather than a missing function — where does validation live
 when three clients in three languages share one catalog? — and the honest
 answer is that we have not worked it out. Probably the catalog, as declarative
-constraints beside `CHECK`, so the answer is the same in all three. That is a
-design note somebody should write before any of it is built.
+constraints beside `CHECK`, so the answer is the same in all three.
+
+That note now exists: [`validation.md`](validation.md). It agrees about the
+catalog and disagrees about what the work is. `CHECK` already *is* a
+declarative constraint in the catalog, so the rule language is not the gap —
+what is missing is that a check cannot name the column it is about, cannot
+report more than one failure at a time, and is not published to any client, so
+every validation costs a round trip and no generated type can reflect one. It
+also found, by running the examples rather than reading the parser, that the
+kernel's regex node is unreachable from a check: `lang/pred.rs` has keywords
+for `like`, `ilike` and `in` and none for `matches`, so format validation is
+limited to `LIKE` patterns. Lifecycle hooks it recommends refusing outright.
 
 Automatic timestamps and soft-delete conventions were left out of both, and
 the ordering argument for that held: sugar is the right thing to add *after*
