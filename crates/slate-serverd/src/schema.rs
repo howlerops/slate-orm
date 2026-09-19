@@ -502,6 +502,95 @@ primary_key = ["id"]
     }
 
     #[test]
+    fn a_check_can_be_a_regular_expression() {
+        // `docs/validation.md` claimed this was the one hole in the rule
+        // language — that format validation was reachable only through `LIKE`
+        // — on the strength of `title matches '…'` being refused. `matches` is
+        // not the syntax; `~` is, and it was there all along. This test is the
+        // withdrawal, and it is here rather than in `lang/pred.rs` because the
+        // parser's own test proves the *parse* and the claim was about what a
+        // `CHECK` can express.
+        let catalog = tables(&format!(
+            "{DOCS}\n[[tables.checks]]\nname = \"title_length\"\npredicate = \"kind ~ '^.{{1,8}}$'\"\n"
+        ))
+        .unwrap();
+        let docs = catalog.table_by_name("docs").unwrap();
+        let check = docs.checks().first().expect("one check");
+        let row = |kind: &str| {
+            Row::new(vec![
+                Value::U64(1),
+                Value::Str(kind.into()),
+                Value::I64(0),
+                Value::Null,
+            ])
+        };
+        assert!(check.satisfied_by(&row("ok")));
+        // The bound LIKE cannot express: too long, not merely empty.
+        assert!(!check.satisfied_by(&row("far too long for eight")));
+        assert!(!check.satisfied_by(&row("")));
+    }
+
+    #[test]
+    fn the_four_regex_operators_differ_in_case_and_sense() {
+        // Written because a mutation made `~` case-insensitive and every
+        // assertion above still passed: the pattern was `^.{1,8}$`, which has
+        // no letter in it. A test that cannot tell `~` from `~*` is not
+        // testing the operator, only that *some* regex ran.
+        let check_for = |predicate: &str| {
+            let catalog = tables(&format!(
+                "{DOCS}\n[[tables.checks]]\nname = \"c\"\npredicate = \"{predicate}\"\n"
+            ))
+            .unwrap();
+            catalog
+                .table_by_name("docs")
+                .unwrap()
+                .checks()
+                .first()
+                .expect("one check")
+                .clone()
+        };
+        let row = |kind: &str| {
+            Row::new(vec![
+                Value::U64(1),
+                Value::Str(kind.into()),
+                Value::I64(0),
+                Value::Null,
+            ])
+        };
+
+        let sensitive = check_for("kind ~ '^[a-z]+$'");
+        assert!(sensitive.satisfied_by(&row("abc")));
+        assert!(!sensitive.satisfied_by(&row("ABC")), "`~` is case-sensitive");
+
+        let insensitive = check_for("kind ~* '^[a-z]+$'");
+        assert!(insensitive.satisfied_by(&row("abc")));
+        assert!(insensitive.satisfied_by(&row("ABC")), "`~*` folds case");
+
+        // The negated pair, which is the half a `LIKE`-only language cannot
+        // reach at all: "must not look like this".
+        let not_sensitive = check_for("kind !~ '^[a-z]+$'");
+        assert!(!not_sensitive.satisfied_by(&row("abc")));
+        assert!(not_sensitive.satisfied_by(&row("ABC")));
+
+        let not_insensitive = check_for("kind !~* '^[a-z]+$'");
+        assert!(!not_insensitive.satisfied_by(&row("abc")));
+        assert!(!not_insensitive.satisfied_by(&row("ABC")));
+        assert!(not_insensitive.satisfied_by(&row("123")));
+    }
+
+    #[test]
+    fn a_check_regular_expression_that_does_not_compile_is_refused() {
+        // At query time an uncompilable pattern matches nothing; in a
+        // configuration file that is a check that silently passes everything.
+        let error = tables(&format!(
+            "{DOCS}\n[[tables.checks]]\nname = \"bad\"\npredicate = \"kind ~ '('\"\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("not a valid regular expression"), "{error}");
+    }
+
+    #[test]
     fn a_check_is_enforced_by_the_definition_it_produces() {
         let catalog = tables(&format!(
             "{DOCS}\n[[tables.checks]]\nname = \"positive\"\npredicate = \"size >= 0\"\n"

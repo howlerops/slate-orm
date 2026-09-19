@@ -1208,11 +1208,13 @@ catalog and disagrees about what the work is. `CHECK` already *is* a
 declarative constraint in the catalog, so the rule language is not the gap —
 what is missing is that a check cannot name the column it is about, cannot
 report more than one failure at a time, and is not published to any client, so
-every validation costs a round trip and no generated type can reflect one. It
-also found, by running the examples rather than reading the parser, that the
-kernel's regex node is unreachable from a check: `lang/pred.rs` has keywords
-for `like`, `ilike` and `in` and none for `matches`, so format validation is
-limited to `LIKE` patterns. Lifecycle hooks it recommends refusing outright.
+every validation costs a round trip and no generated type can reflect one. The note
+also carried a fourth finding — that the kernel's regex node was unreachable
+from a check, leaving format validation stuck with `LIKE` — and that one is
+**withdrawn**: `lang/pred.rs` spells a regular expression `~`, the way Postgres
+does, and the draft had tested a `matches` keyword that was never the syntax.
+A check can bound a title's length today. Lifecycle hooks the note recommends
+refusing outright.
 
 Automatic timestamps and soft-delete conventions were left out of both, and
 the ordering argument for that held: sugar is the right thing to add *after*

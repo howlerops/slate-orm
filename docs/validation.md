@@ -95,27 +95,47 @@ predicate = "discount <= price"          # two columns, one row
 predicate is already inside a TOML string. The parser says so when you get it
 wrong, which is how the version of this note that had it backwards was caught.)
 
-### The rule language is *almost* not the gap
+### The rule language is not the gap — a correction
 
 `Expr` — the kernel's predicate type — holds `Compare`, `CompareColumns`,
 `IsNull`, `Like`, `Matches`, `In`, `And`, `Or` and `Not`. `Matches` is a real
 regular expression, added when the last ClickBench query needed one.
 
-**It cannot be written in a check.** The daemon's predicate language
-(`lang/pred.rs`) has keywords for `and`, `or`, `not`, `is null`, `like`,
-`ilike` and `in`, and none for regex. So the kernel can evaluate
-`title matches '^.{1,80}$'` and the catalog has no way to say it. The first
-draft of this note asserted the opposite and used exactly that example; running
-it produced `expected a comparison after the column, found \`matches\``.
+**It can be written in a check, and this note's first version said it could
+not.** That claim was wrong and is withdrawn. The daemon's predicate language
+spells a regular expression the way Postgres does — `~`, `~*`, `!~`, `!~*` —
+not with a `matches` keyword, and the first draft tested `title matches '…'`,
+got `expected a comparison after the column, found \`matches\``, and concluded
+the feature was missing. The error was about a word that was never the syntax.
 
-That makes format validation — the single most common kind, an email, a slug, a
-length bound — reachable only through `LIKE` patterns, which can express "not
-empty" and "starts with" and cannot express "between 1 and 80 characters" or
-"looks like an address". Closing it is a keyword in one parser over a kernel
-node that already exists, and it is a prerequisite for any of this being useful
-rather than a separate nicety.
+The grammar comment at the top of `lang/pred.rs` says so in as many words —
+*"Every `Expr` variant is reachable, which is the property that makes this a
+surface syntax for the kernel's predicates rather than a subset of them"* — and
+the file has carried a parser test for `kind ~ '^a'` since regex was added.
+Reading one screen further up would have caught it; running one more spelling
+would have caught it.
 
-So: one hole in the rule language, and three other things.
+So format validation is available today:
+
+```toml
+[[tables.checks]]
+name = "title_length"
+predicate = "title ~ '^.{1,80}$'"
+```
+
+`schema.rs` has two tests for this — one that the check accepts a short title
+and rejects both an over-long one and an empty one, which is the bound `LIKE`
+provably cannot express, and one that a pattern which does not compile is
+refused at startup rather than silently matching nothing.
+
+**What this changes about the recommendation below:** the prerequisite is gone.
+There were never four things, only three, and none of them is in the rule
+language. It also removes the one item that would have been a code change to
+the parser, which makes the remaining three purely about *reporting* and
+*publishing* constraints — a narrower and more coherent piece of work than the
+note originally described.
+
+So: no hole in the rule language, and three other things.
 
 ### 1. A check cannot say which column it is about
 
