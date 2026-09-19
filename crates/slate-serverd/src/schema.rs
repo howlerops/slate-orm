@@ -122,7 +122,31 @@ fn one(table: &config::Table, ids: &BTreeMap<&str, TableId>) -> Started<TableDef
     for check in &table.checks {
         let expression = constant_predicate(&check.predicate, &shape)
             .map_err(|fault| fault.within(format!("check `{}`, `predicate`", check.name)))?;
-        builder = builder.check(CheckDef::new(&check.name, expression));
+        let mut definition = CheckDef::new(&check.name, expression);
+        if let Some(column) = &check.column {
+            // Refused rather than passed through. The whole point of `column`
+            // is that a form can put the error beside a field; one naming a
+            // column that does not exist sends it beside nothing, and does it
+            // silently, at the moment a write fails rather than at startup.
+            if shape.ordinal_of(column).is_none() {
+                return Err(Fault::new(format!(
+                    "check `{}` says it is about column `{column}`, which this table does not have; it has {}",
+                    check.name,
+                    pred::list_columns(
+                        &shape
+                            .columns()
+                            .iter()
+                            .map(|c| c.name().to_owned())
+                            .collect::<Vec<_>>()
+                    )
+                )));
+            }
+            definition = definition.with_column(column);
+        }
+        if let Some(message) = &check.message {
+            definition = definition.with_message(message);
+        }
+        builder = builder.check(definition);
     }
 
     for key in &table.foreign_keys {
@@ -502,6 +526,57 @@ primary_key = ["id"]
     }
 
     #[test]
+    fn a_check_carries_its_column_and_message() {
+        let catalog = tables(&format!(
+            "{DOCS}\n[[tables.checks]]\nname = \"positive\"\npredicate = \"size >= 0\"\ncolumn = \"size\"\nmessage = \"Size cannot be negative.\"\n"
+        ))
+        .unwrap();
+        let check = catalog
+            .table_by_name("docs")
+            .unwrap()
+            .checks()
+            .first()
+            .expect("one check")
+            .clone();
+        assert_eq!(check.column(), Some("size"));
+        assert_eq!(check.message(), Some("Size cannot be negative."));
+    }
+
+    #[test]
+    fn a_check_without_a_column_or_message_has_neither() {
+        // Both are absent by default rather than defaulted to something. A
+        // check over two columns has no single one, and inventing a message
+        // would put words in the schema author's mouth.
+        let catalog = tables(&format!(
+            "{DOCS}\n[[tables.checks]]\nname = \"positive\"\npredicate = \"size >= 0\"\n"
+        ))
+        .unwrap();
+        let check = catalog
+            .table_by_name("docs")
+            .unwrap()
+            .checks()
+            .first()
+            .expect("one check")
+            .clone();
+        assert_eq!(check.column(), None);
+        assert_eq!(check.message(), None);
+    }
+
+    #[test]
+    fn a_check_naming_a_column_that_does_not_exist_is_refused() {
+        // At startup, not at the write. A `column` naming nothing sends the
+        // error beside no field, silently, the first time a row is refused.
+        let error = tables(&format!(
+            "{DOCS}\n[[tables.checks]]\nname = \"positive\"\npredicate = \"size >= 0\"\ncolumn = \"sizr\"\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("does not have"), "{error}");
+        // The message lists what the table does have, so the typo is visible.
+        assert!(error.contains("size"), "{error}");
+    }
+
+    #[test]
     fn a_check_can_be_a_regular_expression() {
         // `docs/validation.md` claimed this was the one hole in the rule
         // language — that format validation was reachable only through `LIKE`
@@ -560,7 +635,10 @@ primary_key = ["id"]
 
         let sensitive = check_for("kind ~ '^[a-z]+$'");
         assert!(sensitive.satisfied_by(&row("abc")));
-        assert!(!sensitive.satisfied_by(&row("ABC")), "`~` is case-sensitive");
+        assert!(
+            !sensitive.satisfied_by(&row("ABC")),
+            "`~` is case-sensitive"
+        );
 
         let insensitive = check_for("kind ~* '^[a-z]+$'");
         assert!(insensitive.satisfied_by(&row("abc")));

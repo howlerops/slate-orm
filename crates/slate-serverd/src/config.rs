@@ -629,6 +629,14 @@ pub(crate) struct Check {
     pub(crate) name: String,
     /// The predicate a stored row must not violate.
     pub(crate) predicate: String,
+    /// The column this check is about, for a caller that wants to put the
+    /// error next to a field. Optional: a check over two columns has no
+    /// single one, and naming either would be a lie.
+    #[serde(default)]
+    pub(crate) column: Option<String>,
+    /// The sentence to show a person in place of the default text.
+    #[serde(default)]
+    pub(crate) message: Option<String>,
 }
 
 /// A foreign key into another table's primary key.

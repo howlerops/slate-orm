@@ -64,6 +64,8 @@ pub trait Predicate: Send + Sync + 'static {
 pub struct CheckDef {
     name: String,
     predicate: Arc<dyn Predicate>,
+    column: Option<String>,
+    message: Option<String>,
 }
 
 impl core::fmt::Debug for CheckDef {
@@ -94,13 +96,58 @@ impl CheckDef {
         Self {
             name: name.into(),
             predicate: Arc::new(predicate),
+            column: None,
+            message: None,
         }
+    }
+
+    /// Say which column this check is about.
+    ///
+    /// Optional, and optional is not laziness: `discount <= price` is about two
+    /// columns and naming one of them would be a lie a form would render next
+    /// to the wrong field. A check that *is* about one column should say so,
+    /// and one that is not should stay silent rather than guess.
+    ///
+    /// Nothing here verifies the column exists — this crate does not hold the
+    /// table. The daemon's schema loader does, and refuses a `column` that
+    /// names nothing, because an error pointing at a field the form does not
+    /// have is worse than an error pointing at no field at all.
+    #[must_use]
+    pub fn with_column(mut self, column: impl Into<String>) -> Self {
+        self.column = Some(column.into());
+        self
+    }
+
+    /// The sentence to show a person, in place of the default.
+    ///
+    /// A plain string, not a translation key. Both were defensible and the
+    /// note that proposed this said so; a string wins here because the catalog
+    /// is the only place the rule exists, and a key would put the rule in the
+    /// catalog and its meaning somewhere this system cannot see. A deployment
+    /// that needs two languages can put a key *in* the string — nothing stops
+    /// it — and it keeps the default case readable.
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
+        self
     }
 
     /// The check's name, unique within its table.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The column this check is about, when it is about one.
+    #[must_use]
+    pub fn column(&self) -> Option<&str> {
+        self.column.as_deref()
+    }
+
+    /// The sentence to show a person, when one was written.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
     }
 
     /// Whether `row` satisfies the constraint.

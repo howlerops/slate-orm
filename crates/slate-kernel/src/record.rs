@@ -2884,6 +2884,8 @@ fn check_constraints(table: &TableDef, row: &Row) -> Result<()> {
             return Err(SchemaError::CheckViolation {
                 table: table.name().to_owned(),
                 check: check.name().to_owned(),
+                column: check.column().map(ToOwned::to_owned),
+                message: check.message().map(ToOwned::to_owned),
             }
             .into());
         }

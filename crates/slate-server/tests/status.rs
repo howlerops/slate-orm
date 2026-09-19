@@ -356,3 +356,66 @@ fn the_details_are_a_google_rpc_status_agreeing_with_the_outer_one() {
         Some("read")
     );
 }
+
+/// A check violation names its column in the details, the same way a unique
+/// violation names its index — and for the same reason.
+///
+/// The `message` travels in the status text, because it is a sentence and that
+/// is where a sentence belongs. The `column` does not: it is the field a form
+/// puts the sentence beside, and a client recovering it by parsing the text
+/// would be matching on prose, which is the contract this avoids.
+#[test]
+fn a_check_violation_names_its_column_in_the_details() {
+    let status = slate_server::from_kernel(&KernelError::Schema(
+        slate_schema::SchemaError::CheckViolation {
+            table: "docs".to_owned(),
+            check: "title_length".to_owned(),
+            column: Some("title".to_owned()),
+            message: Some("Title must be 1 to 80 characters.".to_owned()),
+        },
+    ));
+    let info = error_info(&status);
+    assert_eq!(info.reason, "CHECK_VIOLATION");
+    assert_eq!(info.metadata.get("table").map(String::as_str), Some("docs"));
+    assert_eq!(
+        info.metadata.get("check").map(String::as_str),
+        Some("title_length")
+    );
+    assert_eq!(
+        info.metadata.get("column").map(String::as_str),
+        Some("title")
+    );
+    assert!(
+        status
+            .message()
+            .contains("Title must be 1 to 80 characters."),
+        "{}",
+        status.message()
+    );
+}
+
+/// A check with no column omits the key rather than sending an empty one.
+///
+/// An empty string is a value: a client reading `column` would render the
+/// error beside a field named "", which is worse than being told nothing and
+/// falling back to a form-level error.
+#[test]
+fn a_check_violation_with_no_column_omits_the_key() {
+    let status = slate_server::from_kernel(&KernelError::Schema(
+        slate_schema::SchemaError::CheckViolation {
+            table: "docs".to_owned(),
+            check: "discount_under_price".to_owned(),
+            column: None,
+            message: None,
+        },
+    ));
+    let info = error_info(&status);
+    assert_eq!(info.reason, "CHECK_VIOLATION");
+    assert!(!info.metadata.contains_key("column"), "{:?}", info.metadata);
+    // With no message the text is the default, which names the check.
+    assert!(
+        status.message().contains("discount_under_price"),
+        "{}",
+        status.message()
+    );
+}

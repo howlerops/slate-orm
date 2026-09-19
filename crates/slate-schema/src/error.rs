@@ -492,12 +492,25 @@ pub enum SchemaError {
     },
 
     /// A row failed a `CHECK` constraint.
-    #[error("row violates check `{check}` on table `{table}`")]
+    ///
+    /// The default text names the check and the table, which is what a log
+    /// wants. `column` and `message` are what a *form* wants, and they are
+    /// `None` unless the schema said otherwise — a check about two columns has
+    /// no single field to blame, and most checks have no sentence written for
+    /// them.
+    #[error(
+        "row violates check `{check}` on table `{table}`{}",
+        .message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
+    )]
     CheckViolation {
         /// The table written to.
         table: String,
         /// The constraint that refused the row.
         check: String,
+        /// The column the constraint is about, when it is about one.
+        column: Option<String>,
+        /// The sentence to show a person, when the schema wrote one.
+        message: Option<String>,
     },
 
     /// A write referenced a parent row that is not there.

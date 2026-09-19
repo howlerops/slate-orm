@@ -188,12 +188,19 @@ to work around; it is the reason the catalog is the answer.
 
 **Keep the rule language. Fix the three gaps. Refuse hooks.**
 
-1. **Give a check a column and a message.** Two optional fields beside
-   `name` and `predicate`: `column`, naming the field the error belongs to,
-   and `message`, the text a form shows. Optional because a cross-column check
-   like `discount <= price` has no single column, and forcing one would make
-   the answer a lie. The daemon returns them in the error rather than the
-   caller parsing a name.
+1. ~~**Give a check a column and a message.**~~ **Built.** Two optional fields
+   beside `name` and `predicate`: `column`, naming the field the error belongs
+   to, and `message`, the text a form shows. Optional because a cross-column
+   check like `discount <= price` has no single column, and forcing one would
+   make the answer a lie. A `column` naming no column on the table is refused
+   at startup rather than at the write.
+
+   The error carries both. `message` rides in the status text, because it is a
+   sentence; `column` rides in `ErrorInfo.metadata`, because a caller parsing a
+   field name out of prose is the contract this exists to avoid. A check
+   violation also got its own reason token, `CHECK_VIOLATION`, split out of the
+   generic `SCHEMA`: the caller's *data* being wrong is retryable after editing
+   a field and the caller's *schema* being wrong is not.
 
 2. **Collect every failure.** Evaluate all checks and return the set, not the
    first. The cost is bounded and known — checks are compiled `Expr` over one

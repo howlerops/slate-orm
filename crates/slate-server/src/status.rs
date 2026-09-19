@@ -61,6 +61,7 @@
 use crate::proto::rpc;
 use prost::Message as _;
 use slate_kernel::KernelError;
+use slate_schema::SchemaError;
 use std::collections::HashMap;
 use tonic::{Code, Status};
 
@@ -173,6 +174,23 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
             put("table", table.clone());
             put("limit", limit.to_string());
         }
+        // The same reasoning as `UniqueViolation` above, one step further. The
+        // status message already carries the check's `message` when the schema
+        // wrote one, because it is part of the error's text; `column` is not
+        // text, it is the field a form puts the error beside, and a caller
+        // parsing it out of a sentence is the contract this avoids.
+        KernelError::Schema(SchemaError::CheckViolation {
+            table,
+            check,
+            column,
+            ..
+        }) => {
+            put("table", table.clone());
+            put("check", check.clone());
+            if let Some(column) = column {
+                put("column", column.clone());
+            }
+        }
         _ => {}
     }
     rpc::ErrorInfo {
@@ -203,6 +221,13 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::ReplicaTooStale { .. } => "REPLICA_TOO_STALE",
         KernelError::NoReplicaAvailable { .. } => "NO_REPLICA_AVAILABLE",
         KernelError::Storage(_) => "STORAGE",
+        // Split out of `SCHEMA` deliberately. A check violation is the
+        // caller's *data* being wrong, which a form retries after editing a
+        // field; every other schema error is the caller's *schema* being
+        // wrong, which retrying cannot fix. Collapsing them is exactly the
+        // loss of information this token exists to undo. Safe to add: nothing
+        // in any client matched `SCHEMA` when this was written.
+        KernelError::Schema(SchemaError::CheckViolation { .. }) => "CHECK_VIOLATION",
         KernelError::Schema(_) => "SCHEMA",
         KernelError::NotSummable { .. } => "NOT_SUMMABLE",
         KernelError::ComparisonTypeMismatch { .. } => "COMPARISON_TYPE_MISMATCH",

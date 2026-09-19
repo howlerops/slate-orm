@@ -73,10 +73,11 @@ fn authors() -> TableDef {
         .primary_key(["id"])
         .index(IndexDef::builder("by_name", IndexId(10)).column("name"))
         // Nullable on purpose: an unknown predicate is the interesting case.
-        .check(CheckDef::new(
-            "age_positive",
-            Expr::compare(AGE, CmpOp::Gt, Value::I64(0)),
-        ))
+        .check(
+            CheckDef::new("age_positive", Expr::compare(AGE, CmpOp::Gt, Value::I64(0)))
+                .with_column("age")
+                .with_message("Age must be greater than zero."),
+        )
         .build()
         .expect("valid schema")
 }
@@ -1559,4 +1560,76 @@ async fn a_table_with_no_constraints_is_unaffected() {
     assert!(txn.delete(&root(), &plain, &[Value::U64(1)]).await.unwrap());
     txn.commit().await.unwrap();
     assert!(ids(&store, &plain).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_check_violation_carries_the_column_and_message_it_was_given() {
+    // The error a form reads. Without these it names the check and the table,
+    // which tells a caller which *rule* fired and not which *field* to put the
+    // message beside — and the only way to get from one to the other is to
+    // parse a name the caller chose, which breaks the day somebody renames it.
+    let store = store(library(ReferentialAction::Restrict));
+    let table = authors();
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert(&root(), &table, &author(1, "Ada", Some(-1)))
+        .await
+        .unwrap_err();
+    let KernelError::Schema(SchemaError::CheckViolation {
+        check,
+        column,
+        message,
+        ..
+    }) = &refused
+    else {
+        panic!("got {refused:?}");
+    };
+    assert_eq!(check, "age_positive");
+    assert_eq!(column.as_deref(), Some("age"));
+    assert_eq!(message.as_deref(), Some("Age must be greater than zero."));
+    // The message is in the rendered text too, because that is what a log and
+    // a bare `Display` caller see.
+    assert!(
+        refused
+            .to_string()
+            .contains("Age must be greater than zero."),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn a_check_with_no_column_or_message_reports_neither() {
+    // The default, and it must stay absent rather than become an empty string:
+    // a form told the column is "" would render the error beside a field whose
+    // name is the empty string, which is worse than being told nothing.
+    let table = TableDef::builder("plain", TableId(77))
+        .column("id", ValueType::U64)
+        .nullable_column("age", ValueType::I64)
+        .primary_key(["id"])
+        .check(CheckDef::new(
+            "age_positive",
+            Expr::compare(Ordinal(1), CmpOp::Gt, Value::I64(0)),
+        ))
+        .build()
+        .expect("valid schema");
+    let store = store(Catalog::from_tables([table.clone()]).expect("catalog"));
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert(
+            &root(),
+            &table,
+            &Row::new(vec![Value::U64(1), Value::I64(-1)]),
+        )
+        .await
+        .unwrap_err();
+    let KernelError::Schema(SchemaError::CheckViolation {
+        column, message, ..
+    }) = &refused
+    else {
+        panic!("got {refused:?}");
+    };
+    assert_eq!(*column, None);
+    assert_eq!(*message, None);
 }
