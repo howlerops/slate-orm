@@ -56,6 +56,14 @@ BOOKS = Table(
     primary_key=["id"],
 )
 
+BOOKS_CHECKS = {
+    "year_is_positive": {
+        "column": "year",
+        "message": "Year must be a positive number.",
+        "predicate": "year > 0",
+    },
+}
+
 SALES = Table(
     "sales",
     [

@@ -152,6 +152,7 @@ export {
 export {
   fingerprint,
   ordinalOf,
+  type CheckRule,
   type ColumnDef,
   type ColumnType,
   type Schemas,

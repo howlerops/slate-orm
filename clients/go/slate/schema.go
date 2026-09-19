@@ -171,3 +171,23 @@ func (s Schemas) claimFor(table string) *pb.SchemaCheck {
 	}
 	return nil
 }
+
+// CheckRule is one `CHECK` constraint, as the catalog publishes it.
+//
+// Data, not behaviour. Nothing here evaluates a predicate: doing so would mean
+// a second implementation of the server's expression language in Go, and two
+// implementations of one rule disagree. This is what a caller shows a person
+// before they submit, and what maps the `check` key in a refusal's details
+// back to a field.
+//
+// Empty strings rather than pointers for the absent cases. A check about two
+// columns has no `Column` and most have no `Message`; Go's zero value says
+// that adequately and a `*string` would make every read a nil check.
+type CheckRule struct {
+	// The column the rule is about, or "" when it is about several.
+	Column string
+	// The sentence to show a person, or "" when the schema wrote none.
+	Message string
+	// The text the predicate was parsed from, or "" for a check built in Rust.
+	Predicate string
+}

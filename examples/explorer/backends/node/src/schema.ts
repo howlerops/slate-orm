@@ -6,7 +6,7 @@
 // positionally-wrong. This file is that declaration, produced from the
 // catalog itself so the two cannot drift.
 
-import type { Schemas, TableDef, Value } from "@slate-orm/client";
+import type { CheckRule, Schemas, TableDef, Value } from "@slate-orm/client";
 
 /**
  * One column of a row, with its tag checked.
@@ -117,6 +117,17 @@ export function decodeAuthors(row: Value[]): Authors {
     born: field(row, 3, "authors", "born", "int", false) as bigint,
   };
 }
+
+/**
+ * Every `CHECK` on `books`, by name.
+ *
+ * Published rather than restated: checks are outside the schema
+ * fingerprint, so a client cannot derive them and would otherwise learn
+ * each rule from a refusal.
+ */
+export const BooksChecks: Record<string, CheckRule> = {
+  "year_is_positive": { column: "year", message: "Year must be a positive number.", predicate: "year > 0" },
+};
 
 /** A row of `books`, decoded. */
 export interface Books {

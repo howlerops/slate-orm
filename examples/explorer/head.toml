@@ -58,6 +58,21 @@ columns = [
 ]
 primary_key = ["id"]
 
+# The demo's one CHECK, here so `--print-schema` publishes a real constraint
+# and the generated declarations carry one rather than an empty list nobody
+# has looked at. Deliberately weak — every seeded year is a real year — because
+# a demo constraint that rejected the demo's own data would be a trap for the
+# next person to add a row, not a better demonstration.
+#
+# `column` and `message` are what a form reads: the refusal arrives naming
+# `year` and carrying this sentence, instead of naming a rule the caller has to
+# map back to a field.
+[[tables.checks]]
+name = "year_is_positive"
+predicate = "year > 0"
+column = "year"
+message = "Year must be a positive number."
+
 [[tables]]
 name = "sales"
 id = 3

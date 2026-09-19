@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -152,6 +153,62 @@ TYPESCRIPT_FIELDS = {
     "vector": ("number[]", "vector"),
     "decimal": ("bigint", "units"),
 }
+
+
+#: A check whose predicate is exactly `column in ('a', 'b', …)` over a string
+#: column describes an enumeration, and an enumeration is a *type* in two of
+#: the three target languages. This matches that shape and nothing else.
+#:
+#: Deliberately narrow. A general predicate parser in Python would be a second
+#: implementation of `lang/pred.rs` — the thing this repository has spent two
+#: tasks proving is expensive to keep in step — so anything this does not
+#: recognise in full is left alone and the field keeps its plain type. A
+#: narrowing that is sometimes right and sometimes silently absent is worse
+#: than one that is obviously all-or-nothing.
+ENUM_CHECK = re.compile(
+    r"^\s*(?P<column>[A-Za-z_][A-Za-z0-9_]*)\s+in\s*\((?P<values>[^()]*)\)\s*$",
+    re.IGNORECASE,
+)
+#: One single-quoted SQL string literal, with `''` as the escape.
+ENUM_VALUE = re.compile(r"^\s*'((?:[^']|'')*)'\s*$")
+
+
+def enumerations(table: dict) -> dict[str, list[str]]:
+    """Column name -> the values a check restricts it to.
+
+    Only for a `str` column: `status in (1, 2)` over an integer is a range
+    somebody wrote as a set, and turning it into a union of numeric literals
+    would be a type that says less than `int` does about arithmetic.
+    """
+    by_name = {column["name"]: column for column in live_columns(table)}
+    found: dict[str, list[str]] = {}
+    for check in table.get("checks", []):
+        predicate = check.get("predicate")
+        if not predicate:
+            continue
+        match = ENUM_CHECK.match(predicate)
+        if not match:
+            continue
+        column = by_name.get(match.group("column"))
+        if column is None or column["type"] != "string":
+            continue
+        values = []
+        for piece in match.group("values").split(","):
+            literal = ENUM_VALUE.match(piece)
+            if literal is None:
+                values = []
+                break
+            values.append(literal.group(1).replace("''", "'"))
+        if values:
+            # Last one wins if two checks restrict the same column, which is a
+            # schema nobody should write; the declaration still lists both.
+            found[column["name"]] = values
+    return found
+
+
+def quoted(values: list[str], quote: str = '"') -> str:
+    """Values as a comma-separated list of quoted literals."""
+    return ", ".join(f"{quote}{value}{quote}" for value in values)
 
 
 def row_columns(table: dict) -> list[tuple[int, dict]]:
@@ -264,6 +321,62 @@ def spelling(table: dict, types: dict[str, str]) -> str:
     return table["name"].upper().replace("-", "_")
 
 
+def go_checks(table: dict, name: str) -> list[str]:
+    """A table's `CHECK` constraints, as Go data.
+
+    A `map[string]CheckRule` rather than a generated struct per check: the set
+    is data the server owns and a caller looks up by name, which is what the
+    `check` key in a refusal's details already hands them.
+    """
+    checks = table.get("checks", [])
+    if not checks:
+        return []
+    out = [
+        f"// {name}Checks is every `CHECK` on `{table['name']}`, by name.",
+        "//",
+        "// Published rather than restated: checks are outside the schema",
+        "// fingerprint, so a client cannot derive them and would otherwise learn",
+        "// each rule from a refusal. The `check` key in a violation's details is",
+        "// the key here.",
+        f"var {name}Checks = map[string]slate.CheckRule{{",
+    ]
+    for check in checks:
+        parts = []
+        for field, key in (("column", "Column"), ("message", "Message"), ("predicate", "Predicate")):
+            value = check.get(field)
+            spelled = '""' if value is None else '"' + value.replace('"', '\\"') + '"'
+            parts.append(f"{key}: {spelled}")
+        out.append(f'\t"{check["name"]}": {{{", ".join(parts)}}},')
+    out.extend(["}", ""])
+    return out
+
+
+def typescript_checks(table: dict, name: str) -> list[str]:
+    """A table's `CHECK` constraints, as a TypeScript record."""
+    checks = table.get("checks", [])
+    if not checks:
+        return []
+    out = [
+        "/**",
+        f" * Every `CHECK` on `{table['name']}`, by name.",
+        " *",
+        " * Published rather than restated: checks are outside the schema",
+        " * fingerprint, so a client cannot derive them and would otherwise learn",
+        " * each rule from a refusal.",
+        " */",
+        f"export const {name}Checks: Record<string, CheckRule> = {{",
+    ]
+    for check in checks:
+        parts = []
+        for field, key in (("column", "column"), ("message", "message"), ("predicate", "predicate")):
+            value = check.get(field)
+            spelled = "null" if value is None else '"' + value.replace('"', '\\"') + '"'
+            parts.append(f"{key}: {spelled}")
+        out.append(f'  "{check["name"]}": {{ {", ".join(parts)} }},')
+    out.extend(["};", ""])
+    return out
+
+
 def python_rows(tables: list[dict]) -> list[str]:
     """Typed rows for Python: a frozen dataclass and a decoder per table."""
     out = [
@@ -297,6 +410,7 @@ def python_rows(tables: list[dict]) -> list[str]:
     for table in tables:
         name = type_name(table)
         fields = row_columns(table)
+        enums = enumerations(table)
         out.extend(
             [
                 "",
@@ -308,6 +422,11 @@ def python_rows(tables: list[dict]) -> list[str]:
         )
         for _, column in fields:
             native, _ = PYTHON_FIELDS[column["type"]]
+            # A `CHECK` restricting the column to a set of strings is an
+            # enumeration, and the server already refuses anything outside it,
+            # so the narrower type states a rule rather than inventing one.
+            if column["name"] in enums:
+                native = f"Literal[{quoted(enums[column['name']], chr(34))}]"
             hint = f"{native} | None" if column["nullable"] else native
             out.append(f"    {column['name']}: {hint}")
         width = len(live_columns(table))
@@ -328,6 +447,8 @@ def python_rows(tables: list[dict]) -> list[str]:
             _, runtime = PYTHON_FIELDS[column["type"]]
             nullable = "True" if column["nullable"] else "False"
             native = PYTHON_FIELDS[column["type"]][0]
+            if column["name"] in enums:
+                native = f"Literal[{quoted(enums[column['name']], chr(34))}]"
             hint = f"{native} | None" if column["nullable"] else native
             # The cast target is a *string*. `cast(str | None, …)` builds a
             # union object at run time on every row, and importing `Optional`
@@ -351,6 +472,24 @@ def go_rows(tables: list[dict]) -> list[str]:
     for table in tables:
         name = type_name(table)
         fields = row_columns(table)
+        # Go has no union of string literals, so the field stays `string` and
+        # the allowed values are emitted beside it. A named type with a const
+        # block was the alternative and buys nothing a plain `string` does not
+        # already have: Go would still let any string be converted into it, so
+        # it would look like a check and not be one.
+        for column, values in enumerations(table).items():
+            out.extend(
+                [
+                    f"// {name}{go_field(column)}Values is every value the `{table['name']}`",
+                    f"// check allows in `{column}`. The server enforces it; this is here so a",
+                    "// caller can offer the choices without asking, and is not a type because",
+                    "// Go has no union of string literals.",
+                    f"var {name}{go_field(column)}Values = []string{{{quoted(values)}}}",
+                    "",
+                ]
+            )
+        for line in go_checks(table, name):
+            out.append(line)
         out.extend([f"// {name} is a row of `{table['name']}`, decoded.", f"type {name} struct {{"])
         # Padded to the longest field name, because that is what `gofmt` does
         # to a struct and a generator whose output `gofmt -l` lists is a
@@ -414,9 +553,13 @@ def typescript_rows(tables: list[dict]) -> list[str]:
     for table in tables:
         name = type_name(table)
         fields = row_columns(table)
+        enums = enumerations(table)
+        out.extend(typescript_checks(table, name))
         out.extend([f"/** A row of `{table['name']}`, decoded. */", f"export interface {name} {{"])
         for _, column in fields:
             native, _ = TYPESCRIPT_FIELDS[column["type"]]
+            if column["name"] in enums:
+                native = " | ".join(f'"{value}"' for value in enums[column["name"]])
             hint = f"{native} | null" if column["nullable"] else native
             out.append(f"  {column['name']}: {hint};")
         out.extend(["}", ""])
@@ -440,6 +583,8 @@ def typescript_rows(tables: list[dict]) -> list[str]:
         )
         for at, column in fields:
             native, tag = TYPESCRIPT_FIELDS[column["type"]]
+            if column["name"] in enums:
+                native = " | ".join(f'"{value}"' for value in enums[column["name"]])
             nullable = "true" if column["nullable"] else "false"
             out.append(
                 f'    {column["name"]}: field(row, {at}, "{table["name"]}", '
@@ -468,7 +613,15 @@ def python_module(tables: list[dict]) -> str:
         "",
         "from collections.abc import Sequence",
         "from dataclasses import dataclass",
-        "from typing import cast",
+        # `Literal` only when a check actually narrows a field. An unused
+        # import is what ruff strips out of the generated file, and a
+        # generated file a linter edits has drifted by the next `--check` —
+        # the same failure the `Optional` import had, caught the same way.
+        (
+            "from typing import Literal, cast"
+            if any(enumerations(table) for table in tables)
+            else "from typing import cast"
+        ),
         "",
         "from slate import Column, Table, ValueType",
         "from slate.values import Null, Units",
@@ -502,6 +655,21 @@ def python_module(tables: list[dict]) -> str:
         key = ", ".join(f'"{name}"' for name in key_names(table, columns))
         out.append(f"    primary_key=[{key}],")
         out.extend([")", ""])
+        # The constraints, as data. Not part of the declaration the fingerprint
+        # hashes — checks are excluded from it — so this is published rather
+        # than restated: a form can show the rule beside the field before the
+        # person submits, instead of learning it from a refusal.
+        checks = table.get("checks", [])
+        if checks:
+            out.append(f"{spelling(table, PYTHON_TYPES)}_CHECKS = {{")
+            for check in checks:
+                out.append(f'    "{check["name"]}": {{')
+                for field in ("column", "message", "predicate"):
+                    value = check.get(field)
+                    spelled = "None" if value is None else '"' + value.replace('"', '\\"') + '"'
+                    out.append(f'        "{field}": {spelled},')
+                out.append("    },")
+            out.extend(["}", ""])
 
     joined = ", ".join(names)
     out.append(f"BY_NAME = {{table.name: table for table in ({joined},)}}")
@@ -562,7 +730,7 @@ def typescript_module(tables: list[dict]) -> str:
         "// positionally-wrong. This file is that declaration, produced from the",
         "// catalog itself so the two cannot drift.",
         "",
-        'import type { Schemas, TableDef, Value } from "@slate-orm/client";',
+        'import type { CheckRule, Schemas, TableDef, Value } from "@slate-orm/client";',
         "",
         "/**",
         " * One column of a row, with its tag checked.",

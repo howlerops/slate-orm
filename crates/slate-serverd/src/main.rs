@@ -927,6 +927,48 @@ fn describe(catalog: &Catalog) -> String {
                     })
                 })
                 .collect();
+            // Checks and foreign keys were both missing, and the schema
+            // fingerprint deliberately excludes them — the migration refusal
+            // says so. That exclusion is *why* they belong here: a client
+            // cannot restate what it cannot see, so a rule that exists only in
+            // the catalog costs a round trip to discover and cannot be
+            // rendered, generated from, or shown next to a field.
+            let checks: Vec<serde_json::Value> = table
+                .checks()
+                .iter()
+                .map(|check| {
+                    serde_json::json!({
+                        "name": check.name(),
+                        "column": check.column(),
+                        "message": check.message(),
+                        // The text the predicate was parsed from, not the
+                        // predicate — a predicate is a Rust function. `null`
+                        // for a check built in Rust rather than parsed from a
+                        // config, which this daemon never does but the library
+                        // can.
+                        "predicate": check.source(),
+                    })
+                })
+                .collect();
+            let foreign_keys: Vec<serde_json::Value> = table
+                .foreign_keys()
+                .iter()
+                .map(|key| {
+                    serde_json::json!({
+                        "name": key.name(),
+                        // The id rather than the name: `TableDef` holds the
+                        // parent by id and resolving it here would mean
+                        // searching the catalog for something the reader can
+                        // look up in the same document.
+                        "parent": key.parent().0,
+                        "columns": key.columns().iter().map(|o| o.0).collect::<Vec<_>>(),
+                        "on_delete": match key.on_delete() {
+                            slate_schema::ReferentialAction::Restrict => "restrict",
+                            slate_schema::ReferentialAction::Cascade => "cascade",
+                        },
+                    })
+                })
+                .collect();
             serde_json::json!({
                 "name": table.name(),
                 "id": table.id().0,
@@ -935,6 +977,8 @@ fn describe(catalog: &Catalog) -> String {
                 "tenant_column": table.tenant_column().map(|o| o.0),
                 "columns": columns,
                 "indexes": indexes,
+                "checks": checks,
+                "foreign_keys": foreign_keys,
             })
         })
         .collect();

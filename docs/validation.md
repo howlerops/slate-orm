@@ -217,12 +217,22 @@ to work around; it is the reason the catalog is the answer.
    beside a `violations` count, and the unindexed `check`/`column` stay as the
    first failure for a client that shows one error at a time.
 
-3. **Publish the constraints.** Add checks to `--print-schema`, which turns
-   them into something `scripts/codegen.py` can generate from. This is the one
-   that changes the user's experience rather than the error string: a client
-   that holds the predicates can refuse a bad row without a round trip, and
-   the generated types work can render a rule as a type where the rule is
-   simple enough (`status in (…)` is an enum).
+3. ~~**Publish the constraints.**~~ **Built, in part.** `--print-schema` now
+   carries `checks` (name, column, message, and the text the predicate was
+   parsed from) and `foreign_keys`, and `scripts/codegen.py` generates from
+   both. `status in ('draft', 'live')` over a `str` column becomes
+   `Literal["draft", "live"]` in Python and `"draft" | "live"` in TypeScript;
+   Go has no union of string literals, so it gets the values as a slice and the
+   field stays `string`.
+
+   **The half that is not built is client-side evaluation**, which is what
+   "refuse a bad row without a round trip" meant. That needs an expression
+   evaluator in three languages — a second, third and fourth implementation of
+   `lang/pred.rs` — and this note's own open question about regular expressions
+   across three engines is the first of many ways they would disagree. What
+   exists is the rule as *data*: enough to show it beside a field, generate a
+   type from the simple shape, and map a refusal back to a column. The server
+   remains the only thing that evaluates anything.
 
 Do them in that order. (1) and (2) are server-side and independently useful.
 (3) is the largest and depends on the generated-types work, and it introduces

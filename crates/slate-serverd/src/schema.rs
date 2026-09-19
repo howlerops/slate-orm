@@ -122,7 +122,7 @@ fn one(table: &config::Table, ids: &BTreeMap<&str, TableId>) -> Started<TableDef
     for check in &table.checks {
         let expression = constant_predicate(&check.predicate, &shape)
             .map_err(|fault| fault.within(format!("check `{}`, `predicate`", check.name)))?;
-        let mut definition = CheckDef::new(&check.name, expression);
+        let mut definition = CheckDef::new(&check.name, expression).with_source(&check.predicate);
         if let Some(column) = &check.column {
             // Refused rather than passed through. The whole point of `column`
             // is that a form can put the error beside a field; one naming a

@@ -117,6 +117,16 @@ func ScanAuthors(row []slate.Value) (Authors, error) {
 	return out, nil
 }
 
+// BooksChecks is every `CHECK` on `books`, by name.
+//
+// Published rather than restated: checks are outside the schema
+// fingerprint, so a client cannot derive them and would otherwise learn
+// each rule from a refusal. The `check` key in a violation's details is
+// the key here.
+var BooksChecks = map[string]slate.CheckRule{
+	"year_is_positive": {Column: "year", Message: "Year must be a positive number.", Predicate: "year > 0"},
+}
+
 // Books is a row of `books`, decoded.
 type Books struct {
 	Id        uint64

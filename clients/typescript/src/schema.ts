@@ -160,3 +160,21 @@ export function claimFor(
   if (!def) return undefined;
   return { columns: def.columns.length, fingerprint: fingerprint(def).toString() };
 }
+
+/**
+ * One `CHECK` constraint, as the catalog publishes it.
+ *
+ * Data, not behaviour. Nothing here evaluates a predicate: that would be a
+ * second implementation of the server's expression language, and two
+ * implementations of one rule disagree. This is what a caller shows a person
+ * before they submit, and what maps the `check` key in a refusal's details
+ * back to a field.
+ */
+export interface CheckRule {
+  /** The column the rule is about, or null when it is about several. */
+  column: string | null;
+  /** The sentence to show a person, or null when the schema wrote none. */
+  message: string | null;
+  /** The text the predicate was parsed from, or null if it was built in Rust. */
+  predicate: string | null;
+}

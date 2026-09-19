@@ -66,6 +66,7 @@ pub struct CheckDef {
     predicate: Arc<dyn Predicate>,
     column: Option<String>,
     message: Option<String>,
+    source: Option<String>,
 }
 
 impl core::fmt::Debug for CheckDef {
@@ -98,6 +99,7 @@ impl CheckDef {
             predicate: Arc::new(predicate),
             column: None,
             message: None,
+            source: None,
         }
     }
 
@@ -132,10 +134,34 @@ impl CheckDef {
         self
     }
 
+    /// Keep the text the predicate was parsed from, for publishing.
+    ///
+    /// The predicate itself is a Rust function and cannot be printed. This is
+    /// the string a human wrote, carried alongside so `--print-schema` can
+    /// publish the rule rather than only its name — which is what lets a
+    /// generator turn `status in ('draft', 'live')` into a type.
+    ///
+    /// It is *not* the authority on anything. The predicate is what runs; this
+    /// is what it was built from. A caller that finds them disagreeing has
+    /// found a bug in whoever called this, and a check built in Rust rather
+    /// than parsed from a config has no source at all, which is why it is
+    /// optional.
+    #[must_use]
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
     /// The check's name, unique within its table.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The text the predicate was parsed from, when there was one.
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     /// The column this check is about, when it is about one.

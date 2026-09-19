@@ -272,6 +272,132 @@ def test_a_non_nullable_column_that_comes_back_null_is_refused() -> None:
         raise AssertionError("a null in a non-nullable column decoded without complaint")
 
 
+def check(name: str, predicate: str, column: str | None = None, message: str | None = None) -> dict:
+    return {"name": name, "predicate": predicate, "column": column, "message": message}
+
+
+def test_a_string_in_check_becomes_a_type_in_the_two_languages_that_have_one() -> None:
+    """`status in ('draft', 'live')` is an enumeration, and enumerations are types.
+
+    The note that asked for constraints to be published named exactly this as
+    the payoff. The server already refuses anything outside the set, so the
+    narrower type states the existing rule rather than inventing one.
+    """
+    spec = [
+        table(
+            "posts",
+            [column("id", "u64", 0), column("status", "string", 1)],
+            [0],
+        )
+    ]
+    spec[0]["checks"] = [check("status_known", "status in ('draft', 'live', 'archived')")]
+
+    body = codegen.python_module(spec)
+    assert '    status: Literal["draft", "live", "archived"]' in body
+    # And the import is there, which is not automatic: it is emitted only when
+    # some table narrows, because an unused one is what ruff deletes out of the
+    # generated file and turns into drift.
+    assert "from typing import Literal, cast" in body
+    assert '  status: "draft" | "live" | "archived";' in codegen.typescript_module(spec)
+
+    # Go has no union of string literals, so the values are data beside the
+    # struct and the field stays `string`.
+    go = codegen.go_file(spec, "schema")
+    assert 'var PostsStatusValues = []string{"draft", "live", "archived"}' in go, go
+    assert "\tStatus string" in go, go
+
+
+def test_a_predicate_the_matcher_does_not_fully_understand_narrows_nothing() -> None:
+    """All-or-nothing on purpose.
+
+    A general predicate parser here would be a second implementation of
+    `lang/pred.rs`, which this repository has twice now paid to keep in step.
+    Anything not recognised in full leaves the field alone, which is visible,
+    rather than narrowing to a subset, which is silently wrong.
+    """
+    for predicate in (
+        # A conjunction: the `in` is there but so is something else.
+        "status in ('draft') and id > 0",
+        # A column, not a literal.
+        "status in ('draft', title)",
+        # Not an `in` at all.
+        "status = 'draft'",
+        # Nested parentheses the narrow matcher refuses to guess at.
+        "status in (('draft'))",
+    ):
+        spec = [
+            table(
+                "posts",
+                [column("id", "u64", 0), column("status", "string", 1), column("title", "string", 2)],
+                [0],
+            )
+        ]
+        spec[0]["checks"] = [check("c", predicate)]
+        assert "    status: str" in codegen.python_module(spec), predicate
+        assert "Literal" not in codegen.python_module(spec).split("__all__")[1], predicate
+
+
+def test_an_in_check_over_a_number_narrows_nothing() -> None:
+    """`priority in (1, 2, 3)` is a range somebody wrote as a set.
+
+    A union of numeric literals says less about arithmetic than `int` does, so
+    the field keeps its plain type. Two spellings, because they fail the
+    matcher at different places and only the second reaches the type guard:
+    bare numbers are not string literals and are rejected by the value
+    pattern, while *quoted* numbers parse fine and are refused only because
+    the column is not a `str`.
+    """
+    for predicate in ("priority in (1, 2, 3)", "priority in ('1', '2', '3')"):
+        spec = [table("posts", [column("id", "u64", 0), column("priority", "i64", 1)], [0])]
+        spec[0]["checks"] = [check("priority_known", predicate)]
+        body = codegen.python_module(spec)
+        assert "    priority: int" in body, predicate
+        assert "Literal[" not in body.split("__all__")[1], predicate
+        assert "  priority: bigint;" in codegen.typescript_module(spec), predicate
+
+
+def test_the_constraints_are_published_to_every_language() -> None:
+    """Name, column, message and predicate, as data a client can read."""
+    spec = [table("posts", [column("id", "u64", 0), column("title", "string", 1)], [0])]
+    spec[0]["checks"] = [
+        check("title_length", "title ~ '^.{1,80}$'", "title", "Title must be 1 to 80 characters.")
+    ]
+
+    body = codegen.python_module(spec)
+    assert '"title_length": {' in body
+    assert '"column": "title",' in body
+    assert '"message": "Title must be 1 to 80 characters.",' in body
+
+    go = codegen.go_file(spec, "schema")
+    assert "var PostsChecks = map[string]slate.CheckRule{" in go
+    assert 'Column: "title"' in go
+
+    typescript = codegen.typescript_module(spec)
+    assert "export const PostsChecks: Record<string, CheckRule>" in typescript
+    assert 'message: "Title must be 1 to 80 characters."' in typescript
+
+
+def test_a_check_with_no_column_publishes_the_absence() -> None:
+    """Null, not an empty string, for the same reason the wire omits the key."""
+    spec = [table("posts", [column("id", "u64", 0), column("title", "string", 1)], [0])]
+    spec[0]["checks"] = [check("cross", "id > 0")]
+    assert '"column": None,' in codegen.python_module(spec)
+    assert "column: null" in codegen.typescript_module(spec)
+
+
+def test_a_table_with_no_checks_emits_no_check_block() -> None:
+    """An empty map in three languages is three pieces of noise."""
+    spec = [table("posts", [column("id", "u64", 0)], [0])]
+    body = codegen.python_module(spec)
+    # The other half of the conditional import: nothing narrows here, so
+    # `Literal` must be absent rather than imported and unused.
+    assert "from typing import cast" in body
+    assert "Literal" not in body
+    assert "_CHECKS" not in body
+    assert "PostsChecks" not in codegen.go_file(spec, "schema")
+    assert "PostsChecks" not in codegen.typescript_module(spec)
+
+
 def main() -> int:
     failed = 0
     for name, test in sorted(globals().items()):
