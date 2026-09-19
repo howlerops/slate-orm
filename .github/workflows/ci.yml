@@ -450,6 +450,14 @@ jobs:
       # that has just checked them against it.
       - run: go test ./schema/
         working-directory: examples/explorer/backends/go
+      # The node adapter resolves `@slate-orm/client` to a symlink into
+      # `clients/typescript` and imports its *built* `dist/`, which `npm ci`
+      # does not produce — `run.sh` builds it explicitly for exactly this
+      # reason and says so. The decoder test below runs *before* `run.sh`, so
+      # it is the first thing in this job to need the build, and it went red
+      # on a missing module rather than on anything it was testing.
+      - run: npm run build
+        working-directory: clients/typescript
       - run: npm test
         working-directory: examples/explorer/backends/node
       # The only thing anywhere that compares the three clients to *each
