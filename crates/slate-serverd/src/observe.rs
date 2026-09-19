@@ -496,7 +496,7 @@ impl Counters {
         if !written.is_empty() {
             let _ = writeln!(
                 out,
-                "# HELP slate_rows_written_total Rows a standalone write touched, by statement."
+                "# HELP slate_rows_written_total Rows a committed write touched, by statement."
             );
             let _ = writeln!(out, "# TYPE slate_rows_written_total counter");
             for ((kind, table), n) in &written {

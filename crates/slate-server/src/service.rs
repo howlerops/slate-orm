@@ -89,11 +89,35 @@ const IN_TRANSACTION: &str = "writer (in transaction)";
 /// Implemented outside this crate, because what to do with the number — a
 /// counter, a log line, nothing — is a deployment's business and this crate
 /// has no opinion. `None` is the ordinary case and costs a branch per write.
+///
+/// # When it is told
+///
+/// **After the write committed, never before.** There are three paths and all
+/// three obey it, for three different reasons:
+///
+/// - [`Head::autocommit`], for a standalone write: a conflicting write is
+///   retried and applies more than once while committing once, so counting
+///   attempts would report a number no row ever had.
+/// - An atomic batch that opens its own transaction: the same retry, one level
+///   up, so the counts are returned out of the closure rather than added
+///   inside it.
+/// - A caller's own transaction, in `session::run`: the caller decides whether
+///   any of it lands. The counts accumulate for the transaction's life and are
+///   reported on a successful `Commit`; a rollback, an idle timeout, a fence
+///   or a client that walked away reports nothing.
+///
+/// A deployment therefore sees committed rows and only committed rows, which
+/// is what makes the number worth alerting on.
 pub trait WriteObserver: Send + Sync {
     /// `kind` is the statement (`insert`, `purge_deleted`, …) and `table` is
     /// its table. Both are bounded — by the enum and by the catalog — so a
     /// counter keyed on the pair cannot grow without limit, which is the
     /// failure a label taken from a request would have.
+    ///
+    /// Called once per statement for a standalone write or an atomic batch,
+    /// and once per (statement, table) *pair* for a transaction, which is why
+    /// an implementation must add rather than set: a transaction that inserted
+    /// into one table twenty times is one call of the sum.
     fn wrote(&self, kind: &'static str, table: &str, affected: u64);
 }
 
@@ -192,7 +216,7 @@ pub struct Head<S> {
     authenticator: Arc<dyn Authenticator>,
     sessions: Arc<Sessions>,
     limits: Limits,
-    /// Told what each standalone write touched; see [`WriteObserver`].
+    /// Told what each committed write touched; see [`WriteObserver`].
     ///
     /// A field set after construction rather than a `HeadConfig` entry,
     /// because every existing caller builds that struct literally and a new
@@ -863,21 +887,33 @@ impl<S: KvStore + KvReadStore> Head<S> {
         let outcome = writer
             .transact_boxed_tracked(move |txn| {
                 Box::pin(async move {
+                    // Collected and returned rather than counted here: the
+                    // closure is `Fn` because it runs once per retry, and a
+                    // conflicting batch that applies twice and commits once
+                    // would otherwise report every row twice.
+                    let mut wrote = Vec::with_capacity(decoded.len());
                     for operation in decoded {
-                        operation.apply(txn, context, returnable).await?;
+                        wrote.push(operation.apply(txn, context, returnable).await?);
                     }
-                    Ok(())
+                    Ok(wrote)
                 })
             })
             .await;
         match outcome {
-            Ok(((), token)) => Ok(Response::new(pb::BatchResponse {
-                // No per-operation results: they all happened. Reporting a
-                // list of successes would invite a caller to check it, and the
-                // only thing it could ever say is "yes" for every entry.
-                results: Vec::new(),
-                sequence: token.map(ReadToken::sequence),
-            })),
+            Ok((wrote, token)) => {
+                if let Some(observer) = &self.writes {
+                    for (kind, table, affected) in &wrote {
+                        observer.wrote(kind, table, *affected);
+                    }
+                }
+                Ok(Response::new(pb::BatchResponse {
+                    // No per-operation results: they all happened. Reporting a
+                    // list of successes would invite a caller to check it, and the
+                    // only thing it could ever say is "yes" for every entry.
+                    results: Vec::new(),
+                    sequence: token.map(ReadToken::sequence),
+                }))
+            }
             Err(error) => {
                 if matches!(error, KernelError::WriterFenced) {
                     self.leadership.fenced().await;
@@ -1340,16 +1376,25 @@ impl<'a> Decoded<'a> {
     }
 
     /// Apply it inside a transaction the caller already has.
+    ///
+    /// Answers the statement's label, its table and how many rows it touched,
+    /// which is what an atomic batch needs to tell a [`WriteObserver`] once the
+    /// transaction it ran in has committed. The rows themselves are dropped:
+    /// an atomic batch reports no per-operation results, which is the whole
+    /// difference from the independent one.
     async fn apply(
         &self,
         transaction: &RecordTransaction<'_>,
         context: &SecurityContext,
         at_most: Option<usize>,
-    ) -> Result<(), KernelError> {
-        self.as_write(at_most)
+    ) -> Result<(&'static str, String, u64), KernelError> {
+        let write = self.as_write(at_most);
+        let (kind, table) = write.labels();
+        let name = table.name().to_owned();
+        write
             .apply(transaction, context)
             .await
-            .map(|_| ())
+            .map(|written| (kind, name, written.affected))
     }
 
     /// The ceiling this operation's match is held to, given the node's.
@@ -1536,6 +1581,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 writer,
                 Arc::clone(&self.leadership),
                 context.principal().clone(),
+                self.writes.clone(),
             )
             .await?;
         Ok(Response::new(pb::BeginResponse {

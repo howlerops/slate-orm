@@ -87,12 +87,13 @@ way.
 
 ## What this does not do
 
-**Writes inside a transaction are not counted.** `autocommit` is the funnel for
-standalone writes; a transaction commits through the session machinery and
-never passes this hook. So the metric undercounts on any deployment that uses
-transactions, and nothing says so at the scrape. That is a real gap and the
-honest reason it is not closed here is that the session path has no equivalent
-single funnel — every command applies separately and the commit is elsewhere.
+~~**Writes inside a transaction are not counted.**~~ **Closed** — see
+`2026-09-19-what-a-transaction-wrote.md`. It was a real gap and the reason
+given here for leaving it ("the session path has no equivalent single funnel")
+was only half the story: the harder half is that a transaction's writes have
+not happened yet when they are applied, so the counting needed somewhere to
+*wait*, not just somewhere to hook. A tally per transaction, reported on a
+successful commit, is what that turned out to be.
 
 **Nothing scrapes it in a test.** The counter is asserted through
 `Counters::prometheus` and the observer through a recording double; no test
