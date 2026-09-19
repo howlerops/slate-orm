@@ -275,4 +275,5 @@ export const TABLES: Record<string, string[]> = {
   books: ["id", "author_id", "title", "year", "rating", "released", "embedding", "price"],
   sales: ["id", "book_id", "units"],
   editions: ["id", "book_id", "format"],
+  shipments: ["id", "book_id", "status", "deleted_at"],
 };
