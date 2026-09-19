@@ -369,9 +369,11 @@ fn a_check_violation_names_its_column_in_the_details() {
     let status = slate_server::from_kernel(&KernelError::Schema(
         slate_schema::SchemaError::CheckViolation {
             table: "docs".to_owned(),
-            check: "title_length".to_owned(),
-            column: Some("title".to_owned()),
-            message: Some("Title must be 1 to 80 characters.".to_owned()),
+            violations: vec![slate_schema::CheckFailure {
+                check: "title_length".to_owned(),
+                column: Some("title".to_owned()),
+                message: Some("Title must be 1 to 80 characters.".to_owned()),
+            }],
         },
     ));
     let info = error_info(&status);
@@ -404,9 +406,11 @@ fn a_check_violation_with_no_column_omits_the_key() {
     let status = slate_server::from_kernel(&KernelError::Schema(
         slate_schema::SchemaError::CheckViolation {
             table: "docs".to_owned(),
-            check: "discount_under_price".to_owned(),
-            column: None,
-            message: None,
+            violations: vec![slate_schema::CheckFailure {
+                check: "discount_under_price".to_owned(),
+                column: None,
+                message: None,
+            }],
         },
     ));
     let info = error_info(&status);
@@ -417,5 +421,90 @@ fn a_check_violation_with_no_column_omits_the_key() {
         status.message().contains("discount_under_price"),
         "{}",
         status.message()
+    );
+}
+
+/// Several failures travel as an indexed set, message included.
+///
+/// This is the whole point of collecting them: a form with three bad fields
+/// gets three field-to-message pairs from one round trip. A client that can
+/// only show one error still reads the unindexed `check`/`column`, which are
+/// the first failure.
+#[test]
+fn every_failing_check_reaches_the_client_with_its_own_message() {
+    let status = slate_server::from_kernel(&KernelError::Schema(
+        slate_schema::SchemaError::CheckViolation {
+            table: "docs".to_owned(),
+            violations: vec![
+                slate_schema::CheckFailure {
+                    check: "title_length".to_owned(),
+                    column: Some("title".to_owned()),
+                    message: Some("Title must be 1 to 80 characters.".to_owned()),
+                },
+                slate_schema::CheckFailure {
+                    check: "size_positive".to_owned(),
+                    column: Some("size".to_owned()),
+                    message: Some("Size cannot be negative.".to_owned()),
+                },
+                slate_schema::CheckFailure {
+                    check: "discount_under_price".to_owned(),
+                    column: None,
+                    message: None,
+                },
+            ],
+        },
+    ));
+    let info = error_info(&status);
+    assert_eq!(info.reason, "CHECK_VIOLATION");
+    assert_eq!(
+        info.metadata.get("violations").map(String::as_str),
+        Some("3")
+    );
+
+    let get = |key: &str| info.metadata.get(key).map(String::as_str);
+    assert_eq!(get("check.0"), Some("title_length"));
+    assert_eq!(get("column.0"), Some("title"));
+    assert_eq!(get("message.0"), Some("Title must be 1 to 80 characters."));
+    assert_eq!(get("check.1"), Some("size_positive"));
+    assert_eq!(get("column.1"), Some("size"));
+    assert_eq!(get("message.1"), Some("Size cannot be negative."));
+    // The cross-column one contributes a name and nothing to hang it on.
+    assert_eq!(get("check.2"), Some("discount_under_price"));
+    assert_eq!(get("column.2"), None);
+    assert_eq!(get("message.2"), None);
+
+    // The unindexed pair is the first, for a one-error client.
+    assert_eq!(get("check"), Some("title_length"));
+    assert_eq!(get("column"), Some("title"));
+
+    // The text summarises rather than naming only the first, because naming
+    // only the first is what this change exists to stop.
+    let text = status.message();
+    assert!(text.contains("3 checks"), "{text}");
+    assert!(text.contains("title_length"), "{text}");
+    assert!(text.contains("size_positive"), "{text}");
+    assert!(text.contains("discount_under_price"), "{text}");
+}
+
+/// One failure reads exactly as it did before several were possible.
+///
+/// Worth pinning: the wording of the single-failure case is what every log
+/// line and every existing test matches on, and a list of one rendering as
+/// "row violates 1 checks" would be a gratuitous break.
+#[test]
+fn a_single_failure_reads_the_way_it_always_did() {
+    let status = slate_server::from_kernel(&KernelError::Schema(
+        slate_schema::SchemaError::CheckViolation {
+            table: "docs".to_owned(),
+            violations: vec![slate_schema::CheckFailure {
+                check: "size_positive".to_owned(),
+                column: None,
+                message: None,
+            }],
+        },
+    ));
+    assert_eq!(
+        status.message(),
+        "row violates check `size_positive` on table `docs`"
     );
 }

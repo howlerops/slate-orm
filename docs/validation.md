@@ -202,11 +202,20 @@ to work around; it is the reason the catalog is the answer.
    generic `SCHEMA`: the caller's *data* being wrong is retryable after editing
    a field and the caller's *schema* being wrong is not.
 
-2. **Collect every failure.** Evaluate all checks and return the set, not the
-   first. The cost is bounded and known — checks are compiled `Expr` over one
-   in-memory row, the same evaluation the planner does per row during a scan —
-   and it is paid only on the failure path if the first-failure case short
-   circuits when the caller does not ask for all of them.
+2. ~~**Collect every failure.**~~ **Built**, and the hedge in this paragraph
+   turned out to be unnecessary. It proposed making the collecting behaviour
+   opt-in so the common case could still stop early; there is no common case to
+   protect. **A row that passes already evaluates every check**, because that
+   is what passing means. Short-circuiting only ever saved work on the
+   *failure* path — the rare one — and the saving is a few predicate
+   evaluations against one in-memory row. So: no flag, no second code path, and
+   `violations` is always the whole set, in declaration order.
+
+   `SchemaError::CheckViolation` now holds `Vec<CheckFailure>`. One failure
+   renders exactly as it did before several were possible; several render as a
+   list. On the wire each failure gets `check.N`, `column.N` and `message.N`
+   beside a `violations` count, and the unindexed `check`/`column` stay as the
+   first failure for a client that shows one error at a time.
 
 3. **Publish the constraints.** Add checks to `--print-schema`, which turns
    them into something `scripts/codegen.py` can generate from. This is the one

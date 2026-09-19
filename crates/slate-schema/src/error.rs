@@ -2,6 +2,50 @@
 
 use slate_tuple::{TupleError, ValueType};
 
+/// One `CHECK` a row failed.
+///
+/// Separate from the error so the error can hold several. `column` and
+/// `message` are `None` unless the schema said otherwise: a check about two
+/// columns has no single field to blame, and most checks have no sentence
+/// written for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckFailure {
+    /// The constraint that refused the row.
+    pub check: String,
+    /// The column the constraint is about, when it is about one.
+    pub column: Option<String>,
+    /// The sentence to show a person, when the schema wrote one.
+    pub message: Option<String>,
+}
+
+/// The text a [`SchemaError::CheckViolation`] renders to.
+///
+/// One failure reads exactly as it did when only one could be reported, so a
+/// log line and a test that matched the old wording still do. Several read as
+/// a list, because the alternative — reporting the first and dropping the rest
+/// into a count — throws away the thing that made collecting them worthwhile.
+fn render_violations(table: &str, violations: &[CheckFailure]) -> String {
+    let one = |failure: &CheckFailure| match &failure.message {
+        Some(message) => format!("`{}`: {message}", failure.check),
+        None => format!("`{}`", failure.check),
+    };
+    match violations {
+        [only] => format!(
+            "row violates check `{}` on table `{table}`{}",
+            only.check,
+            only.message
+                .as_deref()
+                .map(|m| format!(": {m}"))
+                .unwrap_or_default()
+        ),
+        many => format!(
+            "row violates {} checks on table `{table}`: {}",
+            many.len(),
+            many.iter().map(one).collect::<Vec<_>>().join("; ")
+        ),
+    }
+}
+
 /// A schema definition was rejected, or a row did not match its schema.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -491,26 +535,21 @@ pub enum SchemaError {
         actual: ValueType,
     },
 
-    /// A row failed a `CHECK` constraint.
+    /// A row failed one or more `CHECK` constraints.
     ///
-    /// The default text names the check and the table, which is what a log
-    /// wants. `column` and `message` are what a *form* wants, and they are
-    /// `None` unless the schema said otherwise — a check about two columns has
-    /// no single field to blame, and most checks have no sentence written for
-    /// them.
-    #[error(
-        "row violates check `{check}` on table `{table}`{}",
-        .message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
-    )]
+    /// **Every** failing check, not the first. A form with four bad fields
+    /// should cost one round trip, which was the headline feature of
+    /// ActiveRecord validations and the reason this is a list.
+    ///
+    /// `violations` is never empty — an empty one would render as "row
+    /// violates 0 checks", which is not a thing that can happen and would mean
+    /// a bug here rather than in the caller's data.
+    #[error("{}", render_violations(table, violations))]
     CheckViolation {
         /// The table written to.
         table: String,
-        /// The constraint that refused the row.
-        check: String,
-        /// The column the constraint is about, when it is about one.
-        column: Option<String>,
-        /// The sentence to show a person, when the schema wrote one.
-        message: Option<String>,
+        /// Every constraint that refused the row, in declaration order.
+        violations: Vec<CheckFailure>,
     },
 
     /// A write referenced a parent row that is not there.

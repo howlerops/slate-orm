@@ -52,8 +52,8 @@ use crate::token::ReadToken;
 use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt as _};
 use slate_schema::{
-    Catalog, ForeignKeyDef, IndexDef, IndexExpression, IndexId, Managed, Ordinal, PartialRow,
-    ReferentialAction, Row, SchemaError, TableDef, encode_body,
+    Catalog, CheckFailure, ForeignKeyDef, IndexDef, IndexExpression, IndexId, Managed, Ordinal,
+    PartialRow, ReferentialAction, Row, SchemaError, TableDef, encode_body,
 };
 use slate_tuple::{Value, ValueType};
 use std::collections::HashSet;
@@ -2872,23 +2872,42 @@ impl<'a> RecordSnapshot<'a> {
     }
 }
 
-/// Refuse a row that fails a `CHECK`.
+/// Refuse a row that fails a `CHECK`, reporting *every* check it fails.
 ///
 /// A check passes when its predicate is *unknown*, which is the opposite of a
 /// `WHERE` and is easy to get backwards; the rule itself lives in
 /// [`CheckDef::satisfied_by`](slate_schema::CheckDef::satisfied_by) so there is
 /// one copy of it.
+///
+/// # Why this does not short circuit
+///
+/// It used to return at the first failure, and the note proposing the change
+/// hedged about the cost — suggesting the collecting behaviour be opt-in so
+/// the common case could still stop early. The hedge is unnecessary and the
+/// reason is worth writing down: **a row that passes already evaluates every
+/// check**, because that is what "passes" means. Stopping early only ever
+/// saved work on the *failure* path, which is the rare one, and the saving is
+/// a few predicate evaluations against one in-memory row.
+///
+/// So there is no success-path cost to weigh, no flag, and no second code
+/// path to keep in step with this one.
 fn check_constraints(table: &TableDef, row: &Row) -> Result<()> {
-    for check in table.checks() {
-        if !check.satisfied_by(row) {
-            return Err(SchemaError::CheckViolation {
-                table: table.name().to_owned(),
-                check: check.name().to_owned(),
-                column: check.column().map(ToOwned::to_owned),
-                message: check.message().map(ToOwned::to_owned),
-            }
-            .into());
-        }
+    let violations: Vec<CheckFailure> = table
+        .checks()
+        .iter()
+        .filter(|check| !check.satisfied_by(row))
+        .map(|check| CheckFailure {
+            check: check.name().to_owned(),
+            column: check.column().map(ToOwned::to_owned),
+            message: check.message().map(ToOwned::to_owned),
+        })
+        .collect();
+    if violations.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    Err(SchemaError::CheckViolation {
+        table: table.name().to_owned(),
+        violations,
+    }
+    .into())
 }

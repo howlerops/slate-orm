@@ -298,7 +298,8 @@ async fn a_check_refuses_a_row_and_leaves_nothing_behind() {
     assert!(
         matches!(
             &refused,
-            KernelError::Schema(SchemaError::CheckViolation { check, .. }) if check == "age_positive"
+            KernelError::Schema(SchemaError::CheckViolation { violations, .. })
+                if violations.len() == 1 && violations[0].check == "age_positive"
         ),
         "got {refused:?}"
     );
@@ -1576,18 +1577,18 @@ async fn a_check_violation_carries_the_column_and_message_it_was_given() {
         .insert(&root(), &table, &author(1, "Ada", Some(-1)))
         .await
         .unwrap_err();
-    let KernelError::Schema(SchemaError::CheckViolation {
-        check,
-        column,
-        message,
-        ..
-    }) = &refused
-    else {
+    let KernelError::Schema(SchemaError::CheckViolation { violations, .. }) = &refused else {
         panic!("got {refused:?}");
     };
-    assert_eq!(check, "age_positive");
-    assert_eq!(column.as_deref(), Some("age"));
-    assert_eq!(message.as_deref(), Some("Age must be greater than zero."));
+    let [only] = violations.as_slice() else {
+        panic!("one violation, got {violations:?}");
+    };
+    assert_eq!(only.check, "age_positive");
+    assert_eq!(only.column.as_deref(), Some("age"));
+    assert_eq!(
+        only.message.as_deref(),
+        Some("Age must be greater than zero.")
+    );
     // The message is in the rendered text too, because that is what a log and
     // a bare `Display` caller see.
     assert!(
@@ -1624,12 +1625,115 @@ async fn a_check_with_no_column_or_message_reports_neither() {
         )
         .await
         .unwrap_err();
-    let KernelError::Schema(SchemaError::CheckViolation {
-        column, message, ..
-    }) = &refused
-    else {
+    let KernelError::Schema(SchemaError::CheckViolation { violations, .. }) = &refused else {
         panic!("got {refused:?}");
     };
-    assert_eq!(*column, None);
-    assert_eq!(*message, None);
+    let [only] = violations.as_slice() else {
+        panic!("one violation, got {violations:?}");
+    };
+    assert_eq!(only.column, None);
+    assert_eq!(only.message, None);
+}
+
+#[tokio::test]
+async fn every_failing_check_is_reported_at_once() {
+    // The reason this is a list. A form with three bad fields discovers all
+    // three from one write; before, it discovered one, the person fixed it,
+    // and the next attempt showed them the second — which is the behaviour
+    // that made per-attribute errors the headline feature of ActiveRecord
+    // validations.
+    let table = TableDef::builder("profiles", TableId(78))
+        .column("id", ValueType::U64)
+        .column("name", ValueType::Str)
+        .nullable_column("age", ValueType::I64)
+        .nullable_column("score", ValueType::I64)
+        .primary_key(["id"])
+        .check(
+            CheckDef::new("name_not_empty", Expr::matches(Ordinal(1), "^.+$"))
+                .with_column("name")
+                .with_message("Name is required."),
+        )
+        .check(
+            CheckDef::new(
+                "age_positive",
+                Expr::compare(Ordinal(2), CmpOp::Gt, Value::I64(0)),
+            )
+            .with_column("age")
+            .with_message("Age must be greater than zero."),
+        )
+        .check(
+            CheckDef::new(
+                "score_positive",
+                Expr::compare(Ordinal(3), CmpOp::Gt, Value::I64(0)),
+            )
+            .with_column("score"),
+        )
+        .build()
+        .expect("valid schema");
+    let store = store(Catalog::from_tables([table.clone()]).expect("catalog"));
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert(
+            &root(),
+            &table,
+            &Row::new(vec![
+                Value::U64(1),
+                Value::Str(String::new()),
+                Value::I64(-1),
+                Value::I64(-2),
+            ]),
+        )
+        .await
+        .unwrap_err();
+
+    let KernelError::Schema(SchemaError::CheckViolation { violations, .. }) = &refused else {
+        panic!("got {refused:?}");
+    };
+    // All three, in declaration order, so a form can rely on the order it
+    // wrote them in rather than on a hash iteration.
+    let names: Vec<&str> = violations.iter().map(|v| v.check.as_str()).collect();
+    assert_eq!(names, ["name_not_empty", "age_positive", "score_positive"]);
+    assert_eq!(violations[2].column.as_deref(), Some("score"));
+    assert_eq!(violations[2].message, None);
+    assert!(refused.to_string().contains("3 checks"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_row_that_fails_one_of_three_reports_only_that_one() {
+    // The complement, and the case a naive "collect everything" would get
+    // wrong by reporting checks that passed.
+    let table = TableDef::builder("profiles", TableId(79))
+        .column("id", ValueType::U64)
+        .nullable_column("age", ValueType::I64)
+        .nullable_column("score", ValueType::I64)
+        .primary_key(["id"])
+        .check(CheckDef::new(
+            "age_positive",
+            Expr::compare(Ordinal(1), CmpOp::Gt, Value::I64(0)),
+        ))
+        .check(CheckDef::new(
+            "score_positive",
+            Expr::compare(Ordinal(2), CmpOp::Gt, Value::I64(0)),
+        ))
+        .build()
+        .expect("valid schema");
+    let store = store(Catalog::from_tables([table.clone()]).expect("catalog"));
+
+    let txn = store.begin().await.unwrap();
+    let refused = txn
+        .insert(
+            &root(),
+            &table,
+            &Row::new(vec![Value::U64(1), Value::I64(5), Value::I64(-2)]),
+        )
+        .await
+        .unwrap_err();
+    let KernelError::Schema(SchemaError::CheckViolation { violations, .. }) = &refused else {
+        panic!("got {refused:?}");
+    };
+    let [only] = violations.as_slice() else {
+        panic!("one violation, got {violations:?}");
+    };
+    assert_eq!(only.check, "score_positive");
 }

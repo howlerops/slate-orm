@@ -179,16 +179,32 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
         // wrote one, because it is part of the error's text; `column` is not
         // text, it is the field a form puts the error beside, and a caller
         // parsing it out of a sentence is the contract this avoids.
-        KernelError::Schema(SchemaError::CheckViolation {
-            table,
-            check,
-            column,
-            ..
-        }) => {
+        KernelError::Schema(SchemaError::CheckViolation { table, violations }) => {
             put("table", table.clone());
-            put("check", check.clone());
-            if let Some(column) = column {
-                put("column", column.clone());
+            put("violations", violations.len().to_string());
+            // Indexed rather than comma-joined. A join needs a separator that
+            // cannot occur in a name; identifiers cannot contain a comma
+            // today, and relying on that is a constraint nobody wrote down.
+            // Indexed keys also carry the *message* per failure, which a form
+            // needs to build a field-to-error map and cannot recover from the
+            // status text without parsing prose.
+            for (at, failure) in violations.iter().enumerate() {
+                put(&format!("check.{at}"), failure.check.clone());
+                if let Some(column) = &failure.column {
+                    put(&format!("column.{at}"), column.clone());
+                }
+                if let Some(message) = &failure.message {
+                    put(&format!("message.{at}"), message.clone());
+                }
+            }
+            // The unindexed pair is the first failure, kept for the common
+            // client that shows one error at a time and should not have to
+            // learn the indexed form to do it.
+            if let Some(first) = violations.first() {
+                put("check", first.check.clone());
+                if let Some(column) = &first.column {
+                    put("column", column.clone());
+                }
             }
         }
         _ => {}

@@ -37,7 +37,7 @@ pub mod table;
 pub use catalog::Catalog;
 pub use columns::ColumnSet;
 pub use constraint::{CheckDef, ForeignKeyBuilder, ForeignKeyDef, Predicate, ReferentialAction};
-pub use error::{Result, SchemaError};
+pub use error::{CheckFailure, Result, SchemaError};
 pub use row::{PartialRow, Row, decode_row, decode_row_columns, encode_body};
 pub use table::{
     ColumnDef, Computed, IndexBuilder, IndexColumn, IndexDef, IndexExpression, IndexId, Managed,
