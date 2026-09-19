@@ -70,18 +70,19 @@ Eleven tests in `observing.rs` pass unmutated.
 
 ## What this does not do
 
-**A rolled-back transaction is not scraped.** The mid-transaction reading
-proves the rows are not counted *yet*; nothing here rolls back and scrapes
-again to prove they are never counted. `transaction_counts.rs` does that in
-process. Adding it here is three lines and was left out only because the test
-is already the longest in the file — which is a preference, not a reason, and
-is said so.
+~~**A rolled-back transaction is not scraped.**~~ **Closed.** It was left out
+because the test was already the longest in the file, which this entry itself
+called "a preference, not a reason". It is its own test now:
+`a_rolled_back_transactions_rows_never_reach_the_scrape`, which asserts the
+whole `slate_rows_written_total` family is *absent* rather than zero.
 
-**`purge_deleted` is still not scraped.** The write that prompted the whole
-counter. It needs a table with a soft delete in this harness's fixture
-configuration, which has two columns and no `deleted_at`. The statement label
-travels the same path as `insert`, so there is no reason to expect a
-difference — a hypothesis, labelled as one.
+~~**`purge_deleted` is still not scraped.**~~ **Closed**, and the hypothesis
+this paragraph labelled — "the statement label travels the same path as
+`insert`" — is now a test rather than a label. The harness fixture grew a
+second table with a soft delete, kept separate from `docs` rather than widening
+every row literal in the file.
+
+Both in `2026-09-19-the-two-things-i-left-out.md`.
 
 **The two claims this corrects were in ledger entries, not in code.** Nothing
 was broken by them; what they cost is a reader believing a gap existed where it

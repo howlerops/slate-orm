@@ -130,7 +130,10 @@ what this entry exists to stop.
 and repeated here because it is the kind of asymmetry that is invisible until
 somebody ports code between the two.
 
-**A composite foreign key is untested.** The demo's three are all single-column
-and the synthetic catalog's is too. Nothing in the generator looks at the column
-list, so there is no reason to expect trouble — which is a hypothesis, labelled
-as one.
+~~**A composite foreign key is untested.**~~ **Closed** —
+`test_a_composite_foreign_key_generates_like_any_other` builds a two-column key
+over a two-column primary key and pins the shape of the answer: *one* entry,
+with no ordinal in it, exactly as a single-column key gives. The hypothesis
+this paragraph labelled was right, and a mutation that emitted one entry per
+referencing column is now caught rather than argued against. The demo's own
+three are still all single-column.

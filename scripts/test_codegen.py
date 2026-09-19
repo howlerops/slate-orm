@@ -514,6 +514,47 @@ def test_the_child_is_the_table_the_key_is_declared_on() -> None:
     assert 'Parent: "posts"' in line, line
 
 
+def test_a_composite_foreign_key_generates_like_any_other() -> None:
+    """Two columns, one key, and nothing in the generated file about columns.
+
+    Closes a hypothesis the foreign-key entry labelled: "Nothing in the
+    generator looks at the column list, so there is no reason to expect
+    trouble." That is testable in ten lines, and a labelled hypothesis in this
+    repository is a thing to go and test rather than a thing to leave labelled.
+
+    What it pins is the *shape* of the answer: a composite key generates one
+    entry with a name, a child and a parent, exactly as a single-column key
+    does, because the referencing columns are deliberately not generated —
+    nothing in any client's surface takes them, since the server resolves the
+    key by name.
+    """
+    posts = table("posts", [column("tenant", "u64", 0), column("id", "u64", 1)], [0, 1])
+    comments = table(
+        "comments",
+        [
+            column("id", "u64", 0),
+            column("post_tenant", "u64", 1),
+            column("post_id", "u64", 2),
+        ],
+        [0],
+    )
+    comments["id"] = 2
+    comments["foreign_keys"] = [foreign_key("comment_post", 1, [1, 2])]
+    spec = [posts, comments]
+
+    go = codegen.go_file(spec, "schema")
+    line = next(one for one in go.splitlines() if "comment_post" in one and "Child" in one)
+    assert 'Child: "comments"' in line, line
+    assert 'Parent: "posts"' in line, line
+    # One entry, not one per column, and no ordinal anywhere in it.
+    assert go.count('"comment_post":') == 1, go
+    for spelled in ("1, 2", "[1 2]", "columns"):
+        assert spelled not in line, f"the column list leaked into {line}"
+
+    assert 'parent: "posts"' in codegen.typescript_module(spec)
+    assert '"parent": "posts",' in codegen.python_module(spec)
+
+
 def test_a_table_with_no_foreign_keys_emits_no_block() -> None:
     """An empty map in three languages is three pieces of noise."""
     spec = [table("posts", [column("id", "u64", 0)], [0])]
