@@ -88,6 +88,7 @@ func main() {
 	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
 	mux.HandleFunc("/api/purge", s.handle(s.purge))
 	mux.HandleFunc("/api/bad-status", s.handle(s.badStatus))
+	mux.HandleFunc("/api/typed", s.handle(s.typed))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)

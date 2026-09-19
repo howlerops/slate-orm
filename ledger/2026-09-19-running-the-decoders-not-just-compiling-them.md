@@ -82,8 +82,8 @@ case, and a check that reads the generated file fails if a decoder exists with
 nothing running it, because "add a case when you add a table" was the same
 instruction the demo's table list had ignored five times.
 
-Nothing tests the decoders against rows that came from the *server*. These
-build `[]slate.Value` by hand, so a disagreement between what the server sends
-and what the decoder expects — a value arriving as `Int` where the schema says
-`Uint`, say — would not be caught here. The conformance suite exercises the
-real wire and does not use these decoders.
+~~Nothing tests the decoders against rows that came from the *server*.~~
+**Closed** — see `2026-09-19-decoders-over-the-servers-own-rows.md`, which also
+found the larger thing hiding behind it: no code path *called* a generated
+decoder at all, in any of the three languages. `/api/typed` does, and a
+conformance case compares what the three make of two real rows.

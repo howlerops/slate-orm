@@ -508,6 +508,21 @@ CASES: list[tuple[str, str, Any, str]] = [
     # bytes. A recording cannot notice that the server started indexing from
     # one.
     ("a write the schema's CHECK refuses", "/api/bad-status", {}, "app"),
+
+    # The generated *decoders*, over rows a real server sent.
+    #
+    # Every other case here compares what the three clients do with values;
+    # this one compares what they do with values *after the generated row type
+    # has read them by ordinal*. The decoders had a suite each and both built
+    # their rows by hand, so all three agreed with their own idea of what the
+    # server sends — and until this route existed, no code path outside a test
+    # called a generated decoder at all.
+    #
+    # A `books` row and a `shipments` row, so the answer covers a u64, a
+    # string, an i64, a decimal, a vector, a nullable column and an enumerated
+    # one. Integers are spelled as decimal strings because one of the three
+    # reads them as `bigint`.
+    ("two rows through the generated decoders", "/api/typed", {}, "app"),
 ]
 
 

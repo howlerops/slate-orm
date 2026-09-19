@@ -64,6 +64,8 @@ from .schema import (
     SALES,
     SALES_FOREIGN_KEYS,
     SHIPMENTS,
+    Books,
+    Shipments,
 )
 from .values import decode, encode, encode_row, format_float
 
@@ -834,6 +836,60 @@ class Adapter:
         session.delete(SHIPMENTS, [(u64(603),)])
         return answer
 
+    def typed(self, session, body):
+        """Read two rows and decode them with the *generated* decoders.
+
+        The gap this closes, recorded when the decoders were first executed:
+        every test of them builds values by hand, so all three suites agree
+        with their own idea of what the server sends. A value arriving as an
+        `int` where the schema says `u64` would pass every one of them and
+        fail here — the only failure the decoders exist to catch that a
+        hand-built row cannot show.
+
+        It is also the first thing that *calls* a generated decoder outside a
+        test. They were generated, checked, and run against fixtures, and no
+        code path used one.
+
+        `books` 10 covers u64, str, i64, decimal and vector; `shipments` 600
+        covers the nullable column and the enumerated one. `rating` is left
+        out on purpose: a float's spelling is the one thing three languages
+        will not agree on without a shared formatter, the corpus pins it
+        elsewhere, and this case is about *decoding* rather than rendering.
+        """
+        book_row = session.get(BOOKS, (u64(10),))
+        if book_row is None:
+            raise RuntimeError("the seeded book is not there")
+        book = Books.from_row(list(book_row))
+
+        shipment_row = session.get(SHIPMENTS, (u64(600),))
+        if shipment_row is None:
+            raise RuntimeError("the seeded shipment is not there")
+        shipment = Shipments.from_row(list(shipment_row))
+
+        # Every integer as a decimal string, because one of the three
+        # languages reads them as `bigint` and JSON numbers are doubles. The
+        # demo's other handlers agree.
+        return {
+            "book": {
+                "id": str(book.id),
+                "author_id": str(book.author_id),
+                "title": book.title,
+                "year": str(book.year),
+                # A decimal is a count of the smallest unit; the scale lives
+                # in the schema and the row type does not know it.
+                "price": str(int(book.price)),
+                "dimensions": len(book.embedding),
+            },
+            "shipment": {
+                "id": str(shipment.id),
+                "book_id": str(shipment.book_id),
+                "status": shipment.status,
+                "deleted_at": "null"
+                if shipment.deleted_at is None
+                else str(shipment.deleted_at),
+            },
+        }
+
     def bad_status(self, session, body):
         """Write a shipment whose status no CHECK admits, and let it fail.
 
@@ -957,6 +1013,7 @@ ROUTES = {
     "/api/conditional-delete": "conditional_delete",
     "/api/purge": "purge",
     "/api/bad-status": "bad_status",
+    "/api/typed": "typed",
     "/api/transaction": "transaction",
 }
 

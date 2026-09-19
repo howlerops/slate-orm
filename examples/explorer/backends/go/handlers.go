@@ -1291,3 +1291,73 @@ func (s *server) badStatus(
 	// disagreement worth failing loudly on rather than reporting as an answer.
 	return nil, fmt.Errorf("the server accepted a status no CHECK admits")
 }
+
+// typed reads two rows and decodes them with the *generated* decoders.
+//
+// The gap this closes, recorded when the decoders were first executed: every
+// test of them builds `[]slate.Value` by hand, so all three suites agree with
+// their own idea of what the server sends. A value arriving as `Int` where the
+// schema says `Uint` would pass every one of them and fail here — which is the
+// only failure the decoders exist to catch that a hand-built row cannot show.
+//
+// It is also the first thing that *calls* a generated decoder outside a test.
+// They were generated, compiled, vetted and run against fixtures, and no code
+// path used one; a decoder nothing calls is a decoder whose contract with the
+// server is a hypothesis.
+//
+// `books` 10 covers u64, str, i64, decimal and vector; `shipments` 600 covers
+// the nullable column and the enumerated one. `rating` is left out on purpose:
+// a float's spelling is the one thing three languages will not agree on
+// without a shared formatter, the corpus pins it elsewhere, and this case is
+// about *decoding* rather than about rendering.
+func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
+	bookRow, found, err := session.Get(ctx, "books", []slate.Value{slate.Uint(10)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded book is not there")
+	}
+	book, err := schema.ScanBooks(bookRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding books: %w", err)
+	}
+
+	shipmentRow, found, err := session.Get(ctx, "shipments", []slate.Value{slate.Uint(600)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded shipment is not there")
+	}
+	shipment, err := schema.ScanShipments(shipmentRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding shipments: %w", err)
+	}
+
+	// Every integer as a decimal string, because one of the three languages
+	// reads them as `bigint` and JSON numbers are doubles. The demo's other
+	// handlers spell values the same way for the same reason.
+	deleted := "null"
+	if shipment.DeletedAt != nil {
+		deleted = fmt.Sprintf("%d", *shipment.DeletedAt)
+	}
+	return map[string]any{
+		"book": map[string]any{
+			"id":        fmt.Sprintf("%d", book.Id),
+			"author_id": fmt.Sprintf("%d", book.AuthorId),
+			"title":     book.Title,
+			"year":      fmt.Sprintf("%d", book.Year),
+			// A decimal is a count of the smallest unit; the scale lives in the
+			// schema and the row type does not know it.
+			"price":      fmt.Sprintf("%d", int64(book.Price)),
+			"dimensions": len(book.Embedding),
+		},
+		"shipment": map[string]any{
+			"id":         fmt.Sprintf("%d", shipment.Id),
+			"book_id":    fmt.Sprintf("%d", shipment.BookId),
+			"status":     shipment.Status,
+			"deleted_at": deleted,
+		},
+	}, nil
+}

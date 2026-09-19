@@ -84,6 +84,8 @@ import {
   EditionsForeignKeys,
   SalesForeignKeys,
   TABLES as CATALOG,
+  decodeBooks,
+  decodeShipments,
 } from "./schema.js";
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
@@ -946,6 +948,56 @@ class Adapter {
   }
 
   /**
+   * Reads two rows and decodes them with the *generated* decoders.
+   *
+   * The gap this closes, recorded when the decoders were first executed: every
+   * test of them builds values by hand, so all three suites agree with their
+   * own idea of what the server sends. A value arriving as `int` where the
+   * schema says `uint` would pass every one of them and fail here — the only
+   * failure the decoders exist to catch that a hand-built row cannot show.
+   *
+   * It is also the first thing that *calls* a generated decoder outside a
+   * test. They were generated, compiled, typechecked and run against fixtures,
+   * and no code path used one.
+   *
+   * `books` 10 covers uint, string, int, decimal and vector; `shipments` 600
+   * covers the nullable column and the enumerated one. `rating` is left out on
+   * purpose: a float's spelling is the one thing three languages will not
+   * agree on without a shared formatter, the corpus pins it elsewhere, and
+   * this case is about *decoding* rather than rendering.
+   */
+  async typed(session: Session): Promise<unknown> {
+    const bookRow = await session.get("books", [uint(10n)]);
+    if (!bookRow) throw new Error("the seeded book is not there");
+    const book = decodeBooks(bookRow);
+
+    const shipmentRow = await session.get("shipments", [uint(600n)]);
+    if (!shipmentRow) throw new Error("the seeded shipment is not there");
+    const shipment = decodeShipments(shipmentRow);
+
+    // Every integer as a decimal string, because these are `bigint` here and
+    // JSON numbers are doubles. The demo's other handlers agree.
+    return {
+      book: {
+        id: String(book.id),
+        author_id: String(book.author_id),
+        title: book.title,
+        year: String(book.year),
+        // A decimal is a count of the smallest unit; the scale lives in the
+        // schema and the row type does not know it.
+        price: String(book.price),
+        dimensions: book.embedding.length,
+      },
+      shipment: {
+        id: String(shipment.id),
+        book_id: String(shipment.book_id),
+        status: shipment.status,
+        deleted_at: shipment.deleted_at === null ? "null" : String(shipment.deleted_at),
+      },
+    };
+  }
+
+  /**
    * Writes a shipment whose status no CHECK admits, and lets it fail.
    *
    * Three failing checks would be a better fixture than one, and `shipments`
@@ -1055,6 +1107,7 @@ async function main(): Promise<void> {
     "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
     "/api/purge": (s) => adapter.purge(s),
     "/api/bad-status": (s) => adapter.badStatus(s),
+    "/api/typed": (s) => adapter.typed(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 
