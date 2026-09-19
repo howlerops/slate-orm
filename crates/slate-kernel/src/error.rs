@@ -380,6 +380,21 @@ pub enum KernelError {
         /// The limit that was passed.
         limit: usize,
     },
+
+    /// A purge was asked for on a table that does not soft-delete.
+    ///
+    /// Refused rather than treated as a no-op. A table with no `soft_delete`
+    /// column has no retired rows *by construction*, so "purge everything
+    /// retired before Tuesday" against one is not a request that found nothing
+    /// — it is a request aimed at the wrong table, and a caller running it on a
+    /// schedule would never learn that.
+    #[error(
+        "table `{table}` does not soft-delete, so it has no retired rows to purge;          declare `soft_delete` on it or purge a table that has one"
+    )]
+    NotSoftDeleting {
+        /// The table the purge named.
+        table: String,
+    },
 }
 
 impl KernelError {

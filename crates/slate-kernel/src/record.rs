@@ -36,7 +36,7 @@ use crate::clock::{Clock, SystemClock};
 use crate::error::{KernelError, Result};
 use crate::exec::QueryCursor;
 use crate::explain::{Explanation, JoinExplanation};
-use crate::expr::{Expr, Truth};
+use crate::expr::{CmpOp, Expr, Truth};
 use crate::join::{Join, JoinCursor, JoinSchema};
 use crate::keys::{self, IndexEntry};
 use crate::limits::ExecutionLimits;
@@ -1774,6 +1774,100 @@ impl<'a> RecordTransaction<'a> {
         Ok(removed)
     }
 
+    /// Delete outright every row retired before `before`, for good.
+    ///
+    /// The other half of soft delete. Stamping a column instead of removing a
+    /// row means the row is still there, so a table that only ever
+    /// soft-deletes grows without bound — and nothing else in this file was
+    /// ever going to remove one, because every delete funnels through
+    /// `remove_row`, which is precisely what turns a delete into a stamp.
+    ///
+    /// `before` is an instant in seconds since the epoch, not a duration and
+    /// not a policy. How long retired rows are kept is a deployment's decision
+    /// — a regulator's retention period, a product's undo window — and the
+    /// kernel has no business holding an opinion it would then have to make
+    /// configurable.
+    ///
+    /// Returns how many rows were erased.
+    ///
+    /// # What it is allowed to reach
+    ///
+    /// Exactly the rows the caller could have deleted: `Action::Delete` is
+    /// authorized first, and the scan runs under the caller's row policy, so a
+    /// tenant purging its own retired rows cannot reach another tenant's. A
+    /// purge that ignored row-level security would be the one operation in
+    /// this file that could destroy data the caller cannot see, which is not a
+    /// power worth the convenience.
+    ///
+    /// # Why it does not cascade
+    ///
+    /// A retired row's children were already dealt with when it was retired:
+    /// the cascade ran then, through `remove_row`, and retired them too. By
+    /// the time a purge sees the row the graph has already been walked, so
+    /// walking it again would at best repeat itself and at worst erase a child
+    /// that is *not* yet old enough to purge. Each row is erased on its own
+    /// merits and its own timestamp.
+    ///
+    /// A `RESTRICT` edge is not re-checked either, for the same reason: it was
+    /// checked at retirement, and a parent that was legal to retire is legal
+    /// to forget.
+    pub async fn purge_deleted(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        before: i64,
+        at_most: Option<usize>,
+    ) -> Result<u64> {
+        let Some(column) = table.soft_delete() else {
+            return Err(KernelError::NotSoftDeleting {
+                table: table.name().to_owned(),
+            });
+        };
+        self.security.authorize(context, table, Action::Delete)?;
+
+        // `include_deleted`, which is the only reason that flag exists outside
+        // a test: every ordinary read conjoins `deleted_at IS NULL`, so a
+        // purge using the ordinary path would match nothing, always, and
+        // report a cheerful zero.
+        //
+        // `IS NOT NULL` as well as the bound. **This conjunct is redundant**
+        // and is kept deliberately: a null `deleted_at` compares unknown
+        // against any bound and the row is withheld either way. Deleting it
+        // changes nothing, and a mutation that does so survives the whole
+        // suite — recorded rather than papered over, because the alternative
+        // is a test that asserts three-valued logic works, which is a test of
+        // `Expr` and not of this.
+        //
+        // It stays because this is the one operation here that destroys data a
+        // caller cannot get back, and "live rows are excluded" should be
+        // legible in the predicate rather than deduced from SQL's null
+        // semantics by whoever reads it next.
+        let mut query = Query::all().filter(Expr::all([
+            Expr::is_not_null(column),
+            Expr::compare(column, CmpOp::Lt, Value::I64(before)),
+        ]));
+        query.include_deleted = true;
+        let mut cursor = self.execute(context, table, &query).await?;
+        let mut doomed = Vec::new();
+        while let Some(row) = cursor.next().await? {
+            if let Some(limit) = at_most
+                && doomed.len() >= limit
+            {
+                return Err(KernelError::PredicateWriteTooLarge { limit });
+            }
+            doomed.push(row);
+        }
+        // Collected before erasing rather than erased as the cursor walks: the
+        // scan reads the same keyspace the deletes write, and mutating under
+        // an open cursor is the shape of bug this repository has paid for once
+        // already in the index-maintenance path.
+        drop(cursor);
+        for row in &doomed {
+            self.erase_row(table, row)?;
+        }
+        Ok(doomed.len() as u64)
+    }
+
     /// Update every row the predicate selects, by assigning to columns.
     ///
     /// Each assignment is a column and a [`Scalar`] evaluated **over the row as
@@ -2096,6 +2190,16 @@ impl<'a> RecordTransaction<'a> {
                 .await;
         }
 
+        self.erase_row(table, row)
+    }
+
+    /// Delete a row and its index entries outright, soft delete or not.
+    ///
+    /// Split out of [`Self::remove_row`] for exactly one other caller,
+    /// [`Self::purge_deleted`], which is the only place in this file that is
+    /// *supposed* to bypass the soft-delete convention. Anything else reaching
+    /// for this is almost certainly reaching for `remove_row`.
+    fn erase_row(&self, table: &TableDef, row: &Row) -> Result<()> {
         for index in table.indexes().iter().filter(|index| index.admits(row)) {
             let entry = self.entry_for(table, index, row);
             self.poison_on_err(self.txn.delete(entry.key))?;

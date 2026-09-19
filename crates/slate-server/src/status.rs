@@ -179,6 +179,7 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
         // wrote one, because it is part of the error's text; `column` is not
         // text, it is the field a form puts the error beside, and a caller
         // parsing it out of a sentence is the contract this avoids.
+        KernelError::NotSoftDeleting { table } => put("table", table.clone()),
         KernelError::Schema(SchemaError::CheckViolation { table, violations }) => {
             put("table", table.clone());
             put("violations", violations.len().to_string());
@@ -254,6 +255,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::JoinBuildTooLarge { .. } => "JOIN_BUILD_TOO_LARGE",
         KernelError::InvalidCursor { .. } => "INVALID_CURSOR",
         KernelError::PredicateWriteTooLarge { .. } => "PREDICATE_WRITE_TOO_LARGE",
+        KernelError::NotSoftDeleting { .. } => "NOT_SOFT_DELETING",
         KernelError::SortTooLarge { .. } => "SORT_TOO_LARGE",
         KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
         KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
@@ -340,6 +342,13 @@ pub fn code_for(error: &KernelError) -> Code {
         // bad request" from "the server broke" at `INTERNAL`, and the second
         // invites a retry that will fail identically forever.
         KernelError::InvalidCursor { .. } => Code::InvalidArgument,
+        // `FailedPrecondition`, not `InvalidArgument`: the request is
+        // well-formed and the *table* is the wrong shape for it. gRPC's own
+        // guidance draws that line — `InvalidArgument` is an argument bad
+        // regardless of state, `FailedPrecondition` is an argument that would
+        // be fine against a differently-configured system. Declaring
+        // `soft_delete` makes this same call succeed.
+        KernelError::NotSoftDeleting { .. } => Code::FailedPrecondition,
 
         // A stored key or index entry did not decode. This is the index and
         // the table disagreeing, which the write path is built to prevent, so

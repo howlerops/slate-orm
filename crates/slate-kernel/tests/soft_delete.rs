@@ -419,3 +419,220 @@ async fn an_ordinary_caller_does_not_see_a_deleted_row() {
         "the retired row is hidden from an ordinary caller too"
     );
 }
+
+// --- purge ------------------------------------------------------------------
+
+/// One live row and three retired at t=1000, t=5000 and t=9000.
+///
+/// Aged by moving the clock between deletes, which is what `FixedClock::set`
+/// is for. Inserting rows with `deleted_at` already stamped was the first
+/// attempt and is *refused* — the write path checks that the writer could read
+/// back what it just wrote, and an already-retired row fails its own
+/// soft-delete filter. That refusal is correct and worth knowing about: there
+/// is no way to create a row that is born deleted.
+async fn aged() -> (RecordStore<MemoryStore>, Arc<FixedClock>) {
+    let clock = Arc::new(FixedClock::at(1_000));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), SecurityCatalog::new())
+        .with_clock(clock.clone());
+
+    let txn = store.begin().await.expect("begin");
+    txn.insert(&root(), &docs(), &doc(1, "alive"))
+        .await
+        .expect("insert");
+    txn.insert(&root(), &docs(), &doc(2, "old"))
+        .await
+        .expect("insert");
+    txn.insert(&root(), &docs(), &doc(3, "middling"))
+        .await
+        .expect("insert");
+    txn.insert(&root(), &docs(), &doc(4, "recent"))
+        .await
+        .expect("insert");
+    txn.commit().await.expect("commit");
+
+    for (id, at) in [(2_u64, 1_000_i64), (3, 5_000), (4, 9_000)] {
+        clock.set(at);
+        let txn = store.begin().await.expect("begin");
+        txn.delete(&root(), &docs(), &[Value::U64(id)])
+            .await
+            .expect("retire");
+        txn.commit().await.expect("commit");
+    }
+    clock.set(10_000);
+    (store, clock)
+}
+
+/// Every row in the table, retired ones included.
+async fn all_ids(store: &RecordStore<MemoryStore>) -> Vec<u64> {
+    let txn = store.begin().await.expect("begin");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let table = docs();
+    let cursor = txn.execute(&root(), &table, &query).await.expect("execute");
+    let rows = cursor.collect().await.expect("collect");
+    let mut ids: Vec<u64> = rows
+        .iter()
+        .map(|row| match row.values().first() {
+            Some(Value::U64(id)) => *id,
+            other => panic!("id is {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+#[tokio::test]
+async fn a_purge_erases_only_rows_retired_before_the_bound() {
+    // The bound is the undo window. A purge without one is "forget everything
+    // that was ever deleted", which is a different and far less useful
+    // operation than "forget what has been deleted long enough".
+    let (store, _clock) = aged().await;
+    let txn = store.begin().await.expect("begin");
+    let purged = txn
+        .purge_deleted(&root(), &docs(), 6_000, None)
+        .await
+        .expect("purge");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(purged, 2, "t=1000 and t=5000 are older than t=6000");
+    // 1 is alive and was never a candidate; 4 was retired after the bound.
+    assert_eq!(all_ids(&store).await, vec![1, 4]);
+}
+
+#[tokio::test]
+async fn the_bound_is_strict_so_a_row_retired_exactly_then_survives() {
+    // Written because a mutation changing `<` to `<=` passed everything: the
+    // retirement times were 1000, 5000 and 9000 and the bounds were 6000 and
+    // i64::MAX, so no row ever sat *on* the boundary. A purge whose bound is
+    // off by one instant is the kind of thing nobody notices until a row that
+    // should have survived did not.
+    let (store, _clock) = aged().await;
+    let txn = store.begin().await.expect("begin");
+    let purged = txn
+        .purge_deleted(&root(), &docs(), 5_000, None)
+        .await
+        .expect("purge");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(purged, 1, "only t=1000; t=5000 is not *before* t=5000");
+    assert_eq!(all_ids(&store).await, vec![1, 3, 4]);
+}
+
+#[tokio::test]
+async fn a_purge_never_touches_a_live_row() {
+    // The failure that would matter most, stated on its own: a bound far in
+    // the future must still leave every *un-retired* row alone. Without the
+    // `IS NOT NULL` conjunct a null `deleted_at` compares unknown and is
+    // withheld — true, and relying on it silently is how a destructive
+    // operation acquires a subtle dependency on three-valued logic.
+    let (store, _clock) = aged().await;
+    let txn = store.begin().await.expect("begin");
+    let purged = txn
+        .purge_deleted(&root(), &docs(), i64::MAX, None)
+        .await
+        .expect("purge");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(purged, 3, "every retired row, and only those");
+    assert_eq!(all_ids(&store).await, vec![1], "the live row survives");
+}
+
+#[tokio::test]
+async fn a_purged_row_takes_its_index_entries_with_it() {
+    // A row erased without its index entries leaves a key pointing at nothing,
+    // which the next scan over that index either skips silently or reports as
+    // corruption. `erase_row` is the same code the hard-delete path uses, and
+    // this is what says so.
+    let (store, _clock) = aged().await;
+    let txn = store.begin().await.expect("begin");
+    txn.purge_deleted(&root(), &docs(), i64::MAX, None)
+        .await
+        .expect("purge");
+    txn.commit().await.expect("commit");
+
+    // Read **index-only**, which is the only way to see this.
+    //
+    // An ordinary read cannot: it walks the index to a primary key, fetches
+    // the row, finds nothing and skips — so an orphaned entry looks exactly
+    // like a purged one. A projection of just the indexed column is answered
+    // from the keys without a fetch, so a surviving entry is returned.
+    //
+    // `include_deleted` matters here too: with the soft-delete conjunct in
+    // place the planner will not choose an index that lacks `deleted_at`, so
+    // the covering scan this test depends on would not happen.
+    let txn = store.begin().await.expect("begin");
+    let mut query = Query::all()
+        .filter(slate_kernel::Expr::eq(
+            slate_schema::Ordinal(1),
+            Value::Str("old".to_owned()),
+        ))
+        .select([slate_schema::Ordinal(1)]);
+    query.include_deleted = true;
+    let table = docs();
+    let rows = txn
+        .execute(&root(), &table, &query)
+        .await
+        .expect("execute")
+        .collect()
+        .await
+        .expect("collect");
+    assert!(
+        rows.is_empty(),
+        "a purged row left {} entry/entries in `by_kind`",
+        rows.len()
+    );
+}
+
+#[tokio::test]
+async fn a_purge_of_a_table_that_does_not_soft_delete_is_refused() {
+    // Not a no-op. A table with no `soft_delete` has no retired rows by
+    // construction, so this is a request aimed at the wrong table — and a
+    // caller running it nightly would never find that out from a zero.
+    let plain = TableDef::builder("plain", NOTES)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([plain.clone()]).expect("catalog"),
+        SecurityCatalog::new(),
+    );
+    let txn = store.begin().await.expect("begin");
+    let refused = txn
+        .purge_deleted(&root(), &plain, i64::MAX, None)
+        .await
+        .expect_err("a table with no soft delete has nothing to purge");
+    assert!(
+        matches!(
+            refused,
+            slate_kernel::KernelError::NotSoftDeleting { ref table } if table == "plain"
+        ),
+        "got {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_purge_past_its_ceiling_is_refused_before_it_erases_anything() {
+    // The same ceiling `delete_where` has, and for the same reason: a purge
+    // that quietly erased ten million rows because a bound was mistyped is the
+    // one mistake here that cannot be undone.
+    let (store, _clock) = aged().await;
+    let txn = store.begin().await.expect("begin");
+    let refused = txn
+        .purge_deleted(&root(), &docs(), i64::MAX, Some(2))
+        .await
+        .expect_err("three retired rows exceed a ceiling of two");
+    assert!(
+        matches!(
+            refused,
+            slate_kernel::KernelError::PredicateWriteTooLarge { limit: 2 }
+        ),
+        "got {refused:?}"
+    );
+    drop(txn);
+
+    // And nothing was erased: the refusal happens after the scan and before
+    // the first delete, so the transaction has written nothing to roll back.
+    assert_eq!(all_ids(&store).await, vec![1, 2, 3, 4]);
+}
