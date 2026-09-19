@@ -77,9 +77,14 @@ import {
   type Session,
   type Step,
   type Value,
+  answers,
 } from "@slate-orm/client";
 
-import { TABLES as CATALOG } from "./schema.js";
+import {
+  EditionsForeignKeys,
+  SalesForeignKeys,
+  TABLES as CATALOG,
+} from "./schema.js";
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
 /**
@@ -232,16 +237,20 @@ class Adapter {
   ): Promise<unknown> {
     const parents = body.way === "parents";
     const keys = (body.keys ?? []).map(decode);
+    // The key, from the generated declaration rather than three string
+    // literals. `answers` is the reason: the table a read decodes as is
+    // `sales` one way and `books` the other, and it used to be written out
+    // here and again in `path` below. The wrong one is refused by the schema
+    // check rather than mis-decoded — measured in Go, see the type's own
+    // comment — so this is a convenience, not a fix for a silent bug.
+    const key = SalesForeignKeys["sale_book"]!;
+    const way = parents ? "parents" : "children";
     // `through` is overridable only so the conformance corpus can name a key
     // that does not exist and compare the three refusals, which is the one
     // thing about this call the three could spell differently.
     const groups = await session.related(
-      parents ? "books" : "sales",
-      {
-        on: "sales",
-        through: body.through || "sale_book",
-        way: parents ? "parents" : "children",
-      },
+      answers(key, way),
+      { on: key.child, through: body.through || key.name, way },
       keys,
     );
     // A group per key the caller sent, in the caller's order, including the
@@ -272,9 +281,20 @@ class Adapter {
     body: { keys?: Record<string, unknown>[] },
   ): Promise<unknown> {
     const keys = (body.keys ?? []).map(decode);
+    // Both steps from the generated declaration, so the `table` beside each
+    // is the catalog's answer rather than this file's memory of it. The two
+    // go in opposite directions, which is exactly where `answers` earns its
+    // keep.
+    const up = SalesForeignKeys["sale_book"]!;
+    const down = EditionsForeignKeys["edition_book"]!;
     const steps: Step[] = [
-      { on: "sales", through: "sale_book", way: "parents", table: "books" },
-      { on: "editions", through: "edition_book", way: "children", table: "editions" },
+      { on: up.child, through: up.name, way: "parents", table: answers(up, "parents") },
+      {
+        on: down.child,
+        through: down.name,
+        way: "children",
+        table: answers(down, "children"),
+      },
     ];
     const trees = await session.relatedPath(steps, keys);
     const through = await session.relatedThrough(steps, keys);

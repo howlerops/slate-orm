@@ -456,6 +456,96 @@ def test_a_table_with_no_checks_emits_no_check_block() -> None:
     assert "PostsChecks" not in codegen.typescript_module(spec)
 
 
+def foreign_key(name: str, parent: int, columns: list[int]) -> dict:
+    return {"name": name, "parent": parent, "columns": columns, "on_delete": "restrict"}
+
+
+def two_tables_with_a_key() -> list[dict]:
+    """`comments.post_id -> posts`, with the tables at ids 1 and 2.
+
+    Two tables, because a foreign key is the one generated thing that needs a
+    *second* table to be right about: its parent is published as an id and the
+    generator has to resolve it.
+    """
+    posts = table("posts", [column("id", "u64", 0)], [0])
+    comments = table(
+        "comments", [column("id", "u64", 0), column("post_id", "u64", 1)], [0]
+    )
+    comments["id"] = 2
+    comments["foreign_keys"] = [foreign_key("comment_post", 1, [1])]
+    return [posts, comments]
+
+
+def test_a_foreign_keys_parent_is_resolved_to_a_name_in_every_language() -> None:
+    """The id in `--print-schema` becomes a table name in the generated file.
+
+    This is the whole feature. A client holding a `Relation` knows the child
+    and the key; the *parent* is what a `parents` read decodes as, and it is
+    published as an id — which means nothing outside the catalog. A generated
+    file carrying the id would leave the caller doing the look-up, and a
+    caller doing it from memory is how one table's rows get decoded against
+    another's ordinals.
+    """
+    spec = two_tables_with_a_key()
+    go = codegen.go_file(spec, "schema")
+    assert "CommentsForeignKeys" in go
+    assert 'Parent: "posts"' in go, go[go.index("CommentsForeignKeys") :][:400]
+    assert "Parent: 1" not in go, "the id leaked into the generated file"
+
+    typescript = codegen.typescript_module(spec)
+    assert 'parent: "posts"' in typescript
+    assert "parent: 1" not in typescript
+
+    python = codegen.python_module(spec)
+    assert "COMMENTS_FOREIGN_KEYS" in python
+    assert '"parent": "posts",' in python
+    assert '"parent": 1,' not in python
+
+
+def test_the_child_is_the_table_the_key_is_declared_on() -> None:
+    """Not the parent, and not a guess from the column's name.
+
+    `Relation.On` is always the child, either direction, and getting these two
+    the wrong way round is a mistake that reads a plausible-looking table.
+    """
+    go = codegen.go_file(two_tables_with_a_key(), "schema")
+    line = next(one for one in go.splitlines() if "comment_post" in one and "Child" in one)
+    assert 'Child: "comments"' in line, line
+    assert 'Parent: "posts"' in line, line
+
+
+def test_a_table_with_no_foreign_keys_emits_no_block() -> None:
+    """An empty map in three languages is three pieces of noise."""
+    spec = [table("posts", [column("id", "u64", 0)], [0])]
+    assert "PostsForeignKeys" not in codegen.go_file(spec, "schema")
+    assert "PostsForeignKeys" not in codegen.typescript_module(spec)
+    assert "_FOREIGN_KEYS" not in codegen.python_module(spec)
+
+
+def test_a_key_pointing_at_a_table_that_is_not_here_is_refused() -> None:
+    """Rather than generated with a missing parent.
+
+    Unreachable from a catalog the server would serve — it refuses the key at
+    build time — so this is a guard against a bug in the generator or in
+    `--print-schema`, not against anybody's schema. It matters because the
+    quiet alternative is a generated file whose parent is empty, which reads a
+    row of no table at all.
+    """
+    spec = two_tables_with_a_key()
+    spec[1]["foreign_keys"][0]["parent"] = 99
+    for produce in (
+        lambda: codegen.go_file(spec, "schema"),
+        lambda: codegen.typescript_module(spec),
+        lambda: codegen.python_module(spec),
+    ):
+        try:
+            produce()
+        except SystemExit as why:
+            assert "comment_post" in str(why), why
+        else:
+            raise AssertionError("a dangling parent was generated rather than refused")
+
+
 def main() -> int:
     failed = 0
     for name, test in sorted(globals().items()):

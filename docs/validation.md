@@ -229,7 +229,10 @@ to work around; it is the reason the catalog is the answer.
 3. ~~**Publish the constraints.**~~ **Built, in part.** `--print-schema` now
    carries `checks` (name, column, message, and the text the predicate was
    parsed from) and `foreign_keys`, and `scripts/codegen.py` generates from
-   both. `status in ('draft', 'live')` over a `str` column becomes
+   both. A foreign key's `parent` arrives as a table *id*, which means nothing
+   outside the catalog; the generator resolves it to a name, so a client
+   holding a relation also holds the table a `parents` read decodes as — the
+   one fact about a relationship that a client cannot work out for itself. `status in ('draft', 'live')` over a `str` column becomes
    `Literal["draft", "live"]` in Python and `"draft" | "live"` in TypeScript;
    Go has no union of string literals, so it gets the values as a slice and the
    field stays `string`.

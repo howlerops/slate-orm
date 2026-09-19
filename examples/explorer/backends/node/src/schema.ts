@@ -6,7 +6,7 @@
 // positionally-wrong. This file is that declaration, produced from the
 // catalog itself so the two cannot drift.
 
-import type { CheckRule, Schemas, TableDef, Value } from "@slate-orm/client";
+import type { CheckRule, ForeignKey, Schemas, TableDef, Value } from "@slate-orm/client";
 
 /**
  * One column of a row, with its tag checked.
@@ -176,6 +176,20 @@ export function decodeBooks(row: Value[]): Books {
   };
 }
 
+/**
+ * Every foreign key on `sales`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const SalesForeignKeys: Record<string, ForeignKey> = {
+  "sale_book": { name: "sale_book", child: "sales", parent: "books", onDelete: "restrict" },
+};
+
 /** A row of `sales`, decoded. */
 export interface Sales {
   id: bigint;
@@ -200,6 +214,20 @@ export function decodeSales(row: Value[]): Sales {
     units: field(row, 2, "sales", "units", "int", false) as bigint,
   };
 }
+
+/**
+ * Every foreign key on `editions`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const EditionsForeignKeys: Record<string, ForeignKey> = {
+  "edition_book": { name: "edition_book", child: "editions", parent: "books", onDelete: "restrict" },
+};
 
 /** A row of `editions`, decoded. */
 export interface Editions {
@@ -235,6 +263,20 @@ export function decodeEditions(row: Value[]): Editions {
  */
 export const ShipmentsChecks: Record<string, CheckRule> = {
   "status_known": { column: "status", message: "Status must be pending, shipped or delivered.", predicate: "status in ('pending', 'shipped', 'delivered')" },
+};
+
+/**
+ * Every foreign key on `shipments`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const ShipmentsForeignKeys: Record<string, ForeignKey> = {
+  "shipment_book": { name: "shipment_book", child: "shipments", parent: "books", onDelete: "restrict" },
 };
 
 /** A row of `shipments`, decoded. */

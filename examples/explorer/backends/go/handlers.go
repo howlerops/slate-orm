@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
+	"github.com/howlerops/slate-orm/examples/explorer/backends/go/schema"
 )
 
 func (s *server) meta(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
@@ -559,13 +560,29 @@ func (s *server) related(ctx context.Context, session *slate.Session, body json.
 		return nil, fmt.Errorf("decoding the relation: %w", err)
 	}
 
-	way, table := slate.Children, "sales"
+	// The key, from the generated declaration rather than from three string
+	// literals here. `Answers` is the reason: the table a read decodes as is
+	// `sales` one way and `books` the other, and it used to be spelled out
+	// twice in this function and once more in `path` below. Making `Answers`
+	// return the child either way turns four conformance cases red with a
+	// schema-check refusal — the server catches it, so this is a convenience
+	// rather than a fix for a silent bug. See the type's own comment.
+	key := schema.SalesForeignKeys["sale_book"]
+	way := slate.Children
 	if spec.Way == "parents" {
-		way, table = slate.Parents, "books"
+		way = slate.Parents
 	}
-	through := spec.Through
-	if through == "" {
-		through = "sale_book"
+	relation := key.Children()
+	if way == slate.Parents {
+		relation = key.Parents()
+	}
+	table := key.Answers(way)
+	// The conformance corpus names a key that does not exist, so that the
+	// three refusals can be compared. That is the one thing about this call
+	// the three could spell differently, and it is why the override survives
+	// the generated key above.
+	if spec.Through != "" {
+		relation.Through = spec.Through
 	}
 
 	keys := make([][]slate.Value, 0, len(spec.Keys))
@@ -577,8 +594,7 @@ func (s *server) related(ctx context.Context, session *slate.Session, body json.
 		keys = append(keys, []slate.Value{value})
 	}
 
-	groups, err := session.Related(ctx, table,
-		slate.Relation{On: "sales", Through: through, Way: way}, keys...)
+	groups, err := session.Related(ctx, table, relation, keys...)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,11 +1127,16 @@ func (s *server) path(ctx context.Context, session *slate.Session, body json.Raw
 		keys = append(keys, []slate.Value{value})
 	}
 
+	// Both steps from the generated declaration, so the `Table` beside each
+	// relation is the catalog's answer rather than this file's memory of it.
+	// The two steps go in opposite directions — up to the book a sale sold,
+	// then down to that book's editions — which is exactly the case where
+	// `Answers` earns its keep.
+	up := schema.SalesForeignKeys["sale_book"]
+	down := schema.EditionsForeignKeys["edition_book"]
 	steps := []slate.Step{
-		{Relation: slate.Relation{On: "sales", Through: "sale_book", Way: slate.Parents},
-			Table: "books"},
-		{Relation: slate.Relation{On: "editions", Through: "edition_book", Way: slate.Children},
-			Table: "editions"},
+		{Relation: up.Parents(), Table: up.Answers(slate.Parents)},
+		{Relation: down.Children(), Table: down.Answers(slate.Children)},
 	}
 
 	trees, err := session.RelatedPath(ctx, steps, keys...)

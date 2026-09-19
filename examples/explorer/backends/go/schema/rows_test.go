@@ -289,3 +289,71 @@ func TestShipmentsChecksCarriesTheEnumeration(t *testing.T) {
 		}
 	}
 }
+
+// --- the generated foreign keys ---------------------------------------------
+
+// TestSalesForeignKeyCarriesItsParent is the whole reason foreign keys are
+// generated: `Parent` is the table a `Parents` read answers with, and it is the
+// one fact a client holding a `Relation` cannot derive.
+func TestSalesForeignKeyCarriesItsParent(t *testing.T) {
+	key, ok := SalesForeignKeys["sale_book"]
+	if !ok {
+		t.Fatalf("no such key, have %v", SalesForeignKeys)
+	}
+	want := slate.ForeignKey{
+		Name: "sale_book", Child: "sales", Parent: "books", OnDelete: "restrict",
+	}
+	if key != want {
+		t.Fatalf("got %+v, want %+v", key, want)
+	}
+	// The pair the adapter actually uses, and the pair a transposition breaks:
+	// a `Parents` read of this key answers with `books` and a `Children` read
+	// with `sales`. Swapping them turns four conformance cases red with a
+	// schema-check refusal, which was measured; this test is the fast version
+	// of that, and the slow version is what says the adapter really uses it.
+	if got := key.Answers(slate.Parents); got != "books" {
+		t.Errorf("Answers(Parents) = %q, want books", got)
+	}
+	if got := key.Answers(slate.Children); got != "sales" {
+		t.Errorf("Answers(Children) = %q, want sales", got)
+	}
+	if relation := key.Parents(); relation.On != "sales" || relation.Through != "sale_book" {
+		t.Errorf("Parents() = %+v", relation)
+	}
+}
+
+// TestEveryDeclaredForeignKeyIsGenerated reads the catalog's own output rather
+// than this file's idea of it.
+//
+// A weaker check than the decoder one above — it asserts the *set*, not each
+// key's parent — and it is here for the same reason: the demo's three keys are
+// spread over three tables, and a fourth added to `head.toml` should not be
+// generated into a file nothing looks at.
+func TestEveryDeclaredForeignKeyIsGenerated(t *testing.T) {
+	generated := map[string]slate.ForeignKey{}
+	for _, table := range []map[string]slate.ForeignKey{
+		SalesForeignKeys, EditionsForeignKeys, ShipmentsForeignKeys,
+	} {
+		for name, key := range table {
+			generated[name] = key
+		}
+	}
+	source, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("reading the generated file: %v", err)
+	}
+	declared := regexp.MustCompile(`(?m)^var (\w+)ForeignKeys = `).FindAllStringSubmatch(string(source), -1)
+	if len(declared) != 3 {
+		t.Fatalf("found %d foreign-key maps in schema.go, want 3", len(declared))
+	}
+	if len(generated) != 3 {
+		t.Fatalf("the three maps hold %d keys between them, want 3: %v", len(generated), generated)
+	}
+	// Every one of them points at `books`, which is what makes the demo able
+	// to show a *path* — two steps in opposite directions through one parent.
+	for name, key := range generated {
+		if key.Parent != "books" {
+			t.Errorf("%s points at %q; the demo's three all point at books", name, key.Parent)
+		}
+	}
+}

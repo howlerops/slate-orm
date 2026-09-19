@@ -76,6 +76,15 @@ SALES = Table(
     primary_key=["id"],
 )
 
+SALES_FOREIGN_KEYS = {
+    "sale_book": {
+        "name": "sale_book",
+        "child": "sales",
+        "parent": "books",
+        "on_delete": "restrict",
+    },
+}
+
 EDITIONS = Table(
     "editions",
     [
@@ -85,6 +94,15 @@ EDITIONS = Table(
     ],
     primary_key=["id"],
 )
+
+EDITIONS_FOREIGN_KEYS = {
+    "edition_book": {
+        "name": "edition_book",
+        "child": "editions",
+        "parent": "books",
+        "on_delete": "restrict",
+    },
+}
 
 SHIPMENTS = Table(
     "shipments",
@@ -102,6 +120,15 @@ SHIPMENTS_CHECKS = {
         "column": "status",
         "message": "Status must be pending, shipped or delivered.",
         "predicate": "status in ('pending', 'shipped', 'delivered')",
+    },
+}
+
+SHIPMENTS_FOREIGN_KEYS = {
+    "shipment_book": {
+        "name": "shipment_book",
+        "child": "shipments",
+        "parent": "books",
+        "on_delete": "restrict",
     },
 }
 

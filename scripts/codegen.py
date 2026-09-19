@@ -321,6 +321,93 @@ def spelling(table: dict, types: dict[str, str]) -> str:
     return table["name"].upper().replace("-", "_")
 
 
+def parent_names(tables: list[dict]) -> dict[int, str]:
+    """Table id to table name, for resolving a foreign key's parent.
+
+    `--print-schema` publishes a key's parent as an **id**, because `TableDef`
+    holds it that way and resolving it server-side would mean searching the
+    catalog for something the reader can look up in the same document. This is
+    that look-up, done once.
+    """
+    return {table["id"]: table["name"] for table in tables}
+
+
+def foreign_keys(table: dict, parents: dict[int, str]) -> list[tuple[str, str, str, str]]:
+    """A table's foreign keys as (name, child, parent, on_delete).
+
+    Resolved rather than passed through. A parent id in a generated file would
+    make the caller do the look-up the generator is here to do, and the id is
+    the one part of a catalog that means nothing outside it.
+    """
+    out = []
+    for key in table.get("foreign_keys", []):
+        parent = parents.get(key["parent"])
+        if parent is None:
+            # Reachable only from a catalog the server would itself refuse, so
+            # this is a bug in the generator or in `--print-schema` rather
+            # than in anybody's schema. Loud either way: a generated file with
+            # a wrong parent name reads a row of the wrong table.
+            raise SystemExit(
+                f"table `{table['name']}` has a foreign key `{key['name']}` whose "
+                f"parent is table {key['parent']}, which is not in this catalog."
+            )
+        out.append((key["name"], table["name"], parent, key.get("on_delete", "restrict")))
+    return out
+
+
+def go_foreign_keys(table: dict, name: str, parents: dict[int, str]) -> list[str]:
+    """A table's foreign keys, as Go data."""
+    keys = foreign_keys(table, parents)
+    if not keys:
+        return []
+    out = [
+        f"// {name}ForeignKeys is every foreign key on `{table['name']}`, by name.",
+        "//",
+        "// The parent is the point. A `Relation` names a relationship by the",
+        "// child table and the key, which is all the server needs — but",
+        "// `Related` also wants the table its rows decode as, and for a",
+        "// `Parents` read that is the parent, which no client can derive. It",
+        "// was a string the caller typed; now it is generated. The wrong one",
+        "// is refused by the schema check rather than mis-decoded, which was",
+        "// measured and is why this is a convenience and not a bug fix.",
+        f"var {name}ForeignKeys = map[string]slate.ForeignKey{{",
+    ]
+    for key, child, parent, on_delete in keys:
+        out.append(
+            f'\t"{key}": {{Name: "{key}", Child: "{child}", '
+            f'Parent: "{parent}", OnDelete: "{on_delete}"}},'
+        )
+    out.extend(["}", ""])
+    return out
+
+
+def typescript_foreign_keys(table: dict, name: str, parents: dict[int, str]) -> list[str]:
+    """A table's foreign keys, as a TypeScript record."""
+    keys = foreign_keys(table, parents)
+    if not keys:
+        return []
+    out = [
+        "/**",
+        f" * Every foreign key on `{table['name']}`, by name.",
+        " *",
+        " * The parent is the point. A `Relation` names a relationship by the",
+        " * child table and the key, which is all the server needs — but",
+        " * `related` also wants the table its rows decode as, and for a",
+        ' * `"parents"` read that is the parent, which no client can derive.',
+        " * The wrong one is refused by the schema check rather than",
+        " * mis-decoded, which was measured; this is a convenience, not a fix.",
+        " */",
+        f"export const {name}ForeignKeys: Record<string, ForeignKey> = {{",
+    ]
+    for key, child, parent, on_delete in keys:
+        out.append(
+            f'  "{key}": {{ name: "{key}", child: "{child}", '
+            f'parent: "{parent}", onDelete: "{on_delete}" }},'
+        )
+    out.extend(["};", ""])
+    return out
+
+
 def go_checks(table: dict, name: str) -> list[str]:
     """A table's `CHECK` constraints, as Go data.
 
@@ -479,6 +566,7 @@ def python_rows(tables: list[dict]) -> list[str]:
 
 def go_rows(tables: list[dict]) -> list[str]:
     """Typed rows for Go: a struct and a scanner per table."""
+    parents = parent_names(tables)
     # No leading blank: the declaration block above already ends with one, and
     # two in a row is the only thing `gofmt -l` had to say about this file.
     out: list[str] = []
@@ -502,6 +590,8 @@ def go_rows(tables: list[dict]) -> list[str]:
                 ]
             )
         for line in go_checks(table, name):
+            out.append(line)
+        for line in go_foreign_keys(table, name, parents):
             out.append(line)
         out.extend([f"// {name} is a row of `{table['name']}`, decoded.", f"type {name} struct {{"])
         # Padded to the longest field name, because that is what `gofmt` does
@@ -562,12 +652,14 @@ def go_rows(tables: list[dict]) -> list[str]:
 
 def typescript_rows(tables: list[dict]) -> list[str]:
     """Typed rows for TypeScript: an interface and a decoder per table."""
+    parents = parent_names(tables)
     out = [""]
     for table in tables:
         name = type_name(table)
         fields = row_columns(table)
         enums = enumerations(table)
         out.extend(typescript_checks(table, name))
+        out.extend(typescript_foreign_keys(table, name, parents))
         out.extend([f"/** A row of `{table['name']}`, decoded. */", f"export interface {name} {{"])
         for _, column in fields:
             native, _ = TYPESCRIPT_FIELDS[column["type"]]
@@ -610,6 +702,7 @@ def typescript_rows(tables: list[dict]) -> list[str]:
 
 def python_module(tables: list[dict]) -> str:
     """The Python client's declaration."""
+    parents = parent_names(tables)
     out = [
         '"""The server\'s tables, as this client must declare them.',
         "",
@@ -683,6 +776,20 @@ def python_module(tables: list[dict]) -> str:
                     out.append(f'        "{field}": {spelled},')
                 out.append("    },")
             out.extend(["}", ""])
+        # And the foreign keys, for the reason the Go and TypeScript files
+        # give: the parent table is what a `parents` read decodes as, and it
+        # is the one thing a client holding only a `Relation` cannot work out.
+        keys = foreign_keys(table, parents)
+        if keys:
+            out.append(f"{spelling(table, PYTHON_TYPES)}_FOREIGN_KEYS = {{")
+            for key, child, parent, on_delete in keys:
+                out.append(f'    "{key}": {{')
+                out.append(f'        "name": "{key}",')
+                out.append(f'        "child": "{child}",')
+                out.append(f'        "parent": "{parent}",')
+                out.append(f'        "on_delete": "{on_delete}",')
+                out.append("    },")
+            out.extend(["}", ""])
 
     joined = ", ".join(names)
     out.append(f"BY_NAME = {{table.name: table for table in ({joined},)}}")
@@ -743,7 +850,7 @@ def typescript_module(tables: list[dict]) -> str:
         "// positionally-wrong. This file is that declaration, produced from the",
         "// catalog itself so the two cannot drift.",
         "",
-        'import type { CheckRule, Schemas, TableDef, Value } from "@slate-orm/client";',
+        'import type { CheckRule, ForeignKey, Schemas, TableDef, Value } from "@slate-orm/client";',
         "",
         "/**",
         " * One column of a row, with its tag checked.",

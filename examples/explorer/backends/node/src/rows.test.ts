@@ -16,9 +16,14 @@ import { test } from "node:test";
 
 import type { Value } from "@slate-orm/client";
 
+import { answers } from "@slate-orm/client";
+
 import {
   BooksChecks,
+  EditionsForeignKeys,
+  SalesForeignKeys,
   ShipmentsChecks,
+  ShipmentsForeignKeys,
   decodeAuthors,
   decodeBooks,
   decodeEditions,
@@ -200,5 +205,47 @@ test("ShipmentsChecks carries the enumeration codegen narrows from", () => {
   const predicate = rule.predicate ?? "";
   for (const value of ["pending", "shipped", "delivered"]) {
     assert.ok(predicate.includes(value), `the predicate ${predicate} omits ${value}`);
+  }
+});
+
+// --- the generated foreign keys ----------------------------------------------
+
+test("the sales foreign key carries its parent", () => {
+  // The whole reason foreign keys are generated: `parent` is the table a
+  // `"parents"` read answers with, and it is the one fact a client holding a
+  // `Relation` cannot derive.
+  const key = SalesForeignKeys["sale_book"];
+  assert.ok(key, `no such key, have ${Object.keys(SalesForeignKeys).join(", ")}`);
+  assert.deepEqual(key, {
+    name: "sale_book",
+    child: "sales",
+    parent: "books",
+    onDelete: "restrict",
+  });
+  // The pair the adapter uses, and the pair a transposition breaks: swapping
+  // them claims one table's declaration for another, which the server's schema
+  // check refuses. Measured in Go, where it turned four conformance cases red.
+  assert.equal(answers(key, "parents"), "books");
+  assert.equal(answers(key, "children"), "sales");
+});
+
+test("every declared foreign key is generated", () => {
+  // Weaker than the decoder check above — the *set*, not each key's parent —
+  // and here for the same reason: the demo's three keys are spread over three
+  // tables, and a fourth added to `head.toml` should not be generated into a
+  // file nothing looks at.
+  const generated = {
+    ...SalesForeignKeys,
+    ...EditionsForeignKeys,
+    ...ShipmentsForeignKeys,
+  };
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export const (\w+)ForeignKeys:/gm)];
+  assert.equal(declared.length, 3, "three tables in this catalog declare a key");
+  assert.equal(Object.keys(generated).length, 3);
+  // All three point at `books`, which is what lets the demo show a *path* —
+  // two steps in opposite directions through one parent.
+  for (const [name, key] of Object.entries(generated)) {
+    assert.equal(key.parent, "books", `${name} points at ${key.parent}`);
   }
 });

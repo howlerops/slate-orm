@@ -56,7 +56,15 @@ from slate import (
     year,
 )
 
-from .schema import AUTHORS, BOOKS, BY_NAME, EDITIONS, SALES, SHIPMENTS
+from .schema import (
+    AUTHORS,
+    BOOKS,
+    BY_NAME,
+    EDITIONS_FOREIGN_KEYS,
+    SALES,
+    SALES_FOREIGN_KEYS,
+    SHIPMENTS,
+)
 from .values import decode, encode, encode_row, format_float
 
 # The demo's three personas, mapped onto head-node identities.
@@ -69,6 +77,19 @@ IDENTITIES = {
     "reader": Identity("u64:2", tenant="u64:1", roles=["reader"]),
     "stranger": Identity("u64:3", tenant="u64:1", roles=["stranger"]),
 }
+
+
+def _answers(key: dict[str, str], *, parents: bool):
+    """The table a read of `key` this way decodes as.
+
+    The Go and TypeScript clients spell this `Answers` / `answers` on the
+    client's own `ForeignKey` type. Here the generated file emits a plain
+    dict — matching how it emits checks, and how this client publishes
+    schema data generally — so the helper lives in the adapter rather than
+    in the package. Same three lines either way; the divergence is in where
+    they sit, and is recorded rather than smoothed over.
+    """
+    return BY_NAME[key["parent"] if parents else key["child"]]
 
 
 def build_filter(query, table, spec: dict[str, Any] | None):
@@ -183,14 +204,21 @@ class Adapter:
         """
         parents = body.get("way") == "parents"
         keys = [decode(raw) for raw in body.get("keys", [])]
+        # The key, from the generated declaration rather than three string
+        # literals. `_answers` is the reason: the table a read decodes as is
+        # `sales` one way and `books` the other, and it was written out here
+        # and again in `path` below. The wrong one is refused by the schema
+        # check rather than mis-decoded — measured in Go — so this is a
+        # convenience, not a fix for a silent bug.
+        key = SALES_FOREIGN_KEYS["sale_book"]
         # `through` is overridable only so the conformance corpus can name a
         # key that does not exist and compare the three refusals, which is the
         # one thing about this call the three could spell differently.
         groups = session.related(
-            BOOKS if parents else SALES,
+            _answers(key, parents=parents),
             keys,
-            through=body.get("through") or "sale_book",
-            on=SALES,
+            through=body.get("through") or key["name"],
+            on=BY_NAME[key["child"]],
             children=not parents,
         )
         # A group per key the caller sent, in the caller's order, including the
@@ -219,9 +247,24 @@ class Adapter:
         worth pinning in all three.
         """
         keys = [decode(raw) for raw in body.get("keys", [])]
+        # Both steps from the generated declaration, so the `table` beside
+        # each is the catalog's answer rather than this file's memory of it.
+        # The two go in opposite directions, which is where `_answers` earns
+        # its keep.
+        up = SALES_FOREIGN_KEYS["sale_book"]
+        down = EDITIONS_FOREIGN_KEYS["edition_book"]
         steps = [
-            Step(on=SALES, through="sale_book", table=BOOKS, children=False),
-            Step(on=EDITIONS, through="edition_book", table=EDITIONS),
+            Step(
+                on=BY_NAME[up["child"]],
+                through=up["name"],
+                table=_answers(up, parents=True),
+                children=False,
+            ),
+            Step(
+                on=BY_NAME[down["child"]],
+                through=down["name"],
+                table=_answers(down, parents=False),
+            ),
         ]
         trees = session.related_path(keys, steps)
         through = session.related_through(keys, steps)

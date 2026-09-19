@@ -150,10 +150,12 @@ export {
   type Group,
 } from "./join.js";
 export {
+  answers,
   fingerprint,
   ordinalOf,
   type CheckRule,
   type ColumnDef,
+  type ForeignKey,
   type ColumnType,
   type Schemas,
   type TableDef,

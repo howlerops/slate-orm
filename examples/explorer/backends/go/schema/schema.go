@@ -234,6 +234,19 @@ func ScanBooks(row []slate.Value) (Books, error) {
 	return out, nil
 }
 
+// SalesForeignKeys is every foreign key on `sales`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var SalesForeignKeys = map[string]slate.ForeignKey{
+	"sale_book": {Name: "sale_book", Child: "sales", Parent: "books", OnDelete: "restrict"},
+}
+
 // Sales is a row of `sales`, decoded.
 type Sales struct {
 	Id     uint64
@@ -279,6 +292,19 @@ func ScanSales(row []slate.Value) (Sales, error) {
 		return out, fmt.Errorf("sales.units is not nullable and came back null")
 	}
 	return out, nil
+}
+
+// EditionsForeignKeys is every foreign key on `editions`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var EditionsForeignKeys = map[string]slate.ForeignKey{
+	"edition_book": {Name: "edition_book", Child: "editions", Parent: "books", OnDelete: "restrict"},
 }
 
 // Editions is a row of `editions`, decoded.
@@ -342,6 +368,19 @@ var ShipmentsStatusValues = []string{"pending", "shipped", "delivered"}
 // the key here.
 var ShipmentsChecks = map[string]slate.CheckRule{
 	"status_known": {Column: "status", Message: "Status must be pending, shipped or delivered.", Predicate: "status in ('pending', 'shipped', 'delivered')"},
+}
+
+// ShipmentsForeignKeys is every foreign key on `shipments`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var ShipmentsForeignKeys = map[string]slate.ForeignKey{
+	"shipment_book": {Name: "shipment_book", Child: "shipments", Parent: "books", OnDelete: "restrict"},
 }
 
 // Shipments is a row of `shipments`, decoded.
