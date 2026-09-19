@@ -85,6 +85,41 @@ func (s *Session) DeleteWhere(ctx context.Context, write DeleteWhere) (WriteResu
 	})
 }
 
+// PurgeDeleted erases, for good, every row a soft delete retired before an
+// instant.
+//
+// The other half of soft delete. Stamping a column instead of removing a row
+// means the row is still there, so a table that only ever soft-deletes grows
+// without bound.
+//
+// `before` is seconds since the epoch and the comparison is strict: a row
+// retired exactly then survives. An instant rather than a duration because how
+// long retired rows are kept is a deployment's decision — a regulator's
+// retention period, a product's undo window — so the caller subtracts.
+//
+// `atMost` refuses the whole call if more rows than that match, before the
+// first is erased; zero means no ceiling. This is the one call here that
+// destroys data nobody can get back, and a mistyped `before` is how that
+// happens.
+//
+// Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+// means reading it first.
+//
+// The result's Affected is the count. Rows is always empty — they no longer
+// exist to be returned.
+func (s *Session) PurgeDeleted(
+	ctx context.Context, table string, before int64, atMost uint64,
+) (WriteResult, error) {
+	return s.write(ctx, func(ctx context.Context) (*pb.WriteResponse, error) {
+		return s.client.rpc.PurgeDeleted(ctx, &pb.PurgeDeletedRequest{
+			Table:  table,
+			Before: before,
+			AtMost: atMost,
+			Schema: s.client.schemas.claimFor(table),
+		})
+	})
+}
+
 // UpdateWhere assigns to columns of every row the predicate selects.
 //
 // With Returning set, the result's Rows are the rows as written.

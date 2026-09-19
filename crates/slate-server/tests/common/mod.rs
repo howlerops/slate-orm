@@ -43,6 +43,7 @@ pub const AUTHORS: TableId = TableId(3);
 pub const BOOKS: TableId = TableId(4);
 pub const SALES: TableId = TableId(5);
 pub const PRICES: TableId = TableId(6);
+pub const RETIRE: TableId = TableId(7);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
@@ -158,8 +159,33 @@ pub fn prices() -> TableDef {
         .expect("valid schema")
 }
 
+/// A soft-deleting table, for the purge tests.
+///
+/// The only fixture with a `soft_delete`, and it needs one of its own: every
+/// other table here is read by tests that would start seeing retired rows
+/// disappear from their counts.
+pub fn retire() -> TableDef {
+    TableDef::builder("retire", RETIRE)
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .build()
+        .expect("valid schema")
+}
+
 pub fn catalog() -> Catalog {
-    Catalog::from_tables([docs(), users(), authors(), books(), sales(), prices()]).expect("catalog")
+    Catalog::from_tables([
+        docs(),
+        users(),
+        authors(),
+        books(),
+        sales(),
+        prices(),
+        retire(),
+    ])
+    .expect("catalog")
 }
 
 /// The ordinal of a column of one of the fixture tables, by name.
@@ -196,6 +222,20 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("app", BOOKS, Action::EVERYTHING))
         .grant(Grant::new("app", SALES, Action::EVERYTHING))
         .grant(Grant::new("app", PRICES, Action::EVERYTHING))
+        .grant(Grant::new("app", RETIRE, Action::EVERYTHING))
+        // Two roles that each hold exactly one half of what a purge needs, so
+        // a handler authorising the wrong one is caught. The comment on the
+        // four `users` roles above says how that got through the first time;
+        // a purge has *two* requirements and so two ways to get it wrong.
+        //
+        // `read_deleted` is not in `Action::ALL`, so `purger_blind` holding
+        // every data action still cannot see a retired row.
+        .grant(Grant::new("purger_blind", RETIRE, Action::ALL))
+        .grant(Grant::new(
+            "watcher",
+            RETIRE,
+            [Action::Read, Action::ReadDeleted],
+        ))
         // The four data actions and *not* `Explain`, which is its own. Only an
         // identity that can run a read but cannot ask for its plan can tell a
         // present authorization check from a missing one; `app` holds

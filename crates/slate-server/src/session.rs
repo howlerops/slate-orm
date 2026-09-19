@@ -351,6 +351,14 @@ enum Command {
         at_most: Option<usize>,
         reply: oneshot::Sender<Result<Vec<Row>, KernelError>>,
     },
+    /// Erase rows a soft delete retired, in an open transaction.
+    PurgeDeleted {
+        context: Box<SecurityContext>,
+        table: TableId,
+        before: i64,
+        at_most: Option<usize>,
+        reply: oneshot::Sender<Result<u64, KernelError>>,
+    },
     UpdateWhere {
         context: Box<SecurityContext>,
         table: TableId,
@@ -614,6 +622,31 @@ impl Sessions {
             context: Box::new(context.clone()),
             table,
             predicate,
+            at_most,
+            reply,
+        })
+        .await?
+        .map_err(|error| from_kernel(&error))
+    }
+
+    /// Erase rows a soft delete retired, in an open transaction.
+    ///
+    /// In a transaction as well as standalone because a purge is a write like
+    /// any other, and a caller batching maintenance — retire what is stale,
+    /// then forget what is old — should not have to leave the transaction to
+    /// do half of it.
+    pub async fn purge_deleted(
+        &self,
+        id: &str,
+        context: &SecurityContext,
+        table: TableId,
+        before: i64,
+        at_most: Option<usize>,
+    ) -> Result<u64, Status> {
+        self.dispatch(id, context, |reply| Command::PurgeDeleted {
+            context: Box::new(context.clone()),
+            table,
+            before,
             at_most,
             reply,
         })
@@ -986,6 +1019,19 @@ async fn apply<S: KvStore>(
                 }
             }
             answer(reply, outcome.map(|()| affected))
+        }
+        Command::PurgeDeleted {
+            context,
+            table,
+            before,
+            at_most,
+            reply,
+        } => {
+            let definition = table!(table, reply);
+            let outcome = transaction
+                .purge_deleted(&context, definition, before, at_most)
+                .await;
+            answer(reply, outcome)
         }
         Command::DeleteWhere {
             context,

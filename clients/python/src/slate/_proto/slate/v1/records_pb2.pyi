@@ -2621,7 +2621,7 @@ class Assignment(_message.Message):
 Global___Assignment: _TypeAlias = Assignment  # noqa: Y015
 
 @_typing.final
-class DeleteWhereRequest(_message.Message):
+class PurgeDeletedRequest(_message.Message):
     """Delete every row a predicate selects.
 
     Not a flag on `DeleteRequest`, which names rows by primary key: one message
@@ -2633,8 +2633,66 @@ class DeleteWhereRequest(_message.Message):
     back and delete one per key — N+1 by construction, and not atomic with the
     query that found them: a row inserted in between is missed, and a row
     deleted in between is deleted twice.
+    Erase, for good, every row a soft delete retired before an instant.
+
+    The other half of soft delete: stamping a column instead of removing a row
+    means the row is still there, so a table that only ever soft-deletes grows
+    without bound.
+
+    Sent to the head node rather than run as an offline tool, because a purge is
+    a write and writes go to the holder of the lease. An out-of-band process
+    doing this would have to take the lease to write, which fences the node that
+    is serving — so the safe way to run it on a schedule is to ask the node that
+    already holds it.
     """
 
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TRANSACTION_FIELD_NUMBER: _builtins.int
+    TABLE_FIELD_NUMBER: _builtins.int
+    BEFORE_FIELD_NUMBER: _builtins.int
+    AT_MOST_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    transaction: _builtins.str
+    table: _builtins.str
+    before: _builtins.int
+    """Seconds since the epoch. Every row retired *strictly before* this is
+    erased; a row retired exactly at it survives.
+
+    An instant, not a duration: how long retired rows are kept is a
+    deployment's decision — a regulator's retention period, a product's undo
+    window — and a protocol holding an opinion about it would have to make the
+    opinion configurable. The caller subtracts.
+    """
+    at_most: _builtins.int
+    """Refuse rather than erase if more than this many rows match. Zero means no
+    ceiling.
+
+    A purge is the one call here that destroys data nobody can get back, and a
+    mistyped `before` is the way that happens. The refusal lands before the
+    first delete.
+    """
+    @_builtins.property
+    def schema(self) -> Global___SchemaCheck: ...
+    def __init__(
+        self,
+        *,
+        transaction: _builtins.str = ...,
+        table: _builtins.str = ...,
+        before: _builtins.int = ...,
+        at_most: _builtins.int = ...,
+        schema: Global___SchemaCheck | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["at_most", b"at_most", "before", b"before", "schema", b"schema", "table", b"table", "transaction", b"transaction"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___PurgeDeletedRequest: _TypeAlias = PurgeDeletedRequest  # noqa: Y015
+
+@_typing.final
+class DeleteWhereRequest(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
     TRANSACTION_FIELD_NUMBER: _builtins.int

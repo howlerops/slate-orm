@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
 )
@@ -1152,4 +1153,97 @@ func (s *server) path(ctx context.Context, session *slate.Session, body json.Raw
 	}
 
 	return map[string]any{"trees": outTrees, "through": outThrough}, nil
+}
+
+// purgeIDs are the shipments the purge handler owns.
+//
+// Its own range, and re-seeded on every call, because all three adapters run
+// this case against one database in turn: the first purge erases the rows, and
+// the second and third would find nothing and disagree. The upsert puts them
+// back, which is the same trick conditionalDelete uses.
+var purgeIDs = []uint64{9401, 9402, 9403}
+
+// purge seeds three shipments, retires two, and erases what was retired.
+//
+// The count is the point: a purge answers with how many rows it erased and
+// never with the rows, which no longer exist to be returned.
+func (s *server) purge(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	// A purge is **table-wide** — it takes an instant, not a predicate — so it
+	// also erases the row the demo seeder retired. Left alone that made this
+	// case depend on which adapter ran first: the first purged three rows and
+	// the other two purged two, and all three were right.
+	//
+	// So: clear the table of retired rows first, run the experiment against a
+	// known state, and put the seeder's row back at the end. The handler
+	// leaves the table as it found it, which is what keeps the corpus free of
+	// an ordering rule nobody would think to preserve.
+	if _, err := session.PurgeDeleted(ctx, "shipments", time.Now().Unix()+3600, 0); err != nil {
+		return nil, err
+	}
+
+	rows := make([][]slate.Value, 0, len(purgeIDs))
+	for _, id := range purgeIDs {
+		rows = append(rows, []slate.Value{
+			slate.Uint(id), slate.Uint(10), slate.String("pending"), slate.Null{},
+		})
+	}
+	if _, err := session.Upsert(ctx, "shipments", rows...); err != nil {
+		return nil, err
+	}
+	// Retire two. A delete rather than a write of `deleted_at`, because the
+	// stamp is the server's clock and this is the only path that sets it.
+	retire := [][]slate.Value{{slate.Uint(purgeIDs[0])}, {slate.Uint(purgeIDs[1])}}
+	if _, err := session.Delete(ctx, "shipments", retire...); err != nil {
+		return nil, err
+	}
+
+	// The bound is comfortably after the retirement above. The clock is the
+	// server's and this is the client's, so a bound of "now" would be a race
+	// on a slow machine.
+	before := time.Now().Unix() + 3600
+	purged, err := session.PurgeDeleted(ctx, "shipments", before, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// What is left, retired rows included, so the answer distinguishes
+	// "erased" from "still there but hidden".
+	lower := slate.Uint(purgeIDs[0])
+	stream, err := session.Query(ctx, slate.Query{
+		Table:          "shipments",
+		Filter:         slate.Filter(slate.Ge(0, lower)),
+		Sort:           []slate.SortKey{{Column: 0, Direction: slate.Asc}},
+		IncludeDeleted: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	left, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uint64, 0, len(left))
+	for _, row := range left {
+		id, ok := row[0].(slate.Uint)
+		if !ok {
+			return nil, fmt.Errorf("id is %T", row[0])
+		}
+		ids = append(ids, uint64(id))
+	}
+	// Put the seeder's retired shipment back, so the next adapter to run this
+	// case — and any case added later that expects it — finds the database as
+	// the seeder left it. Written live and then deleted, because a row cannot
+	// be created already retired.
+	restored := []slate.Value{
+		slate.Uint(603), slate.Uint(13), slate.String("pending"), slate.Null{},
+	}
+	if _, err := session.Upsert(ctx, "shipments", restored); err != nil {
+		return nil, err
+	}
+	if _, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(603)}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"purged": purged.Affected, "left": ids}, nil
 }

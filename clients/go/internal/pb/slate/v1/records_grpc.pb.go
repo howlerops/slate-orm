@@ -27,6 +27,7 @@ const (
 	Records_Delete_FullMethodName           = "/slate.v1.Records/Delete"
 	Records_DeleteWhere_FullMethodName      = "/slate.v1.Records/DeleteWhere"
 	Records_UpdateWhere_FullMethodName      = "/slate.v1.Records/UpdateWhere"
+	Records_PurgeDeleted_FullMethodName     = "/slate.v1.Records/PurgeDeleted"
 	Records_Batch_FullMethodName            = "/slate.v1.Records/Batch"
 	Records_Get_FullMethodName              = "/slate.v1.Records/Get"
 	Records_Query_FullMethodName            = "/slate.v1.Records/Query"
@@ -53,6 +54,13 @@ type RecordsClient interface {
 	// write per row. Both go to the writer, like every other write.
 	DeleteWhere(ctx context.Context, in *DeleteWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	UpdateWhere(ctx context.Context, in *UpdateWhereRequest, opts ...grpc.CallOption) (*WriteResponse, error)
+	// Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+	//
+	// Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+	// means reading it first, and `read_deleted` is what says a caller may see
+	// one. A caller holding only `delete` can remove rows it can see and not
+	// ones the convention hid from it.
+	PurgeDeleted(ctx context.Context, in *PurgeDeletedRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	// Several writes in one round trip. The caller says whether they are
 	// independent or atomic; there is no default.
 	Batch(ctx context.Context, in *BatchRequest, opts ...grpc.CallOption) (*BatchResponse, error)
@@ -149,6 +157,16 @@ func (c *recordsClient) UpdateWhere(ctx context.Context, in *UpdateWhereRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteResponse)
 	err := c.cc.Invoke(ctx, Records_UpdateWhere_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *recordsClient) PurgeDeleted(ctx context.Context, in *PurgeDeletedRequest, opts ...grpc.CallOption) (*WriteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteResponse)
+	err := c.cc.Invoke(ctx, Records_PurgeDeleted_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -296,6 +314,13 @@ type RecordsServer interface {
 	// write per row. Both go to the writer, like every other write.
 	DeleteWhere(context.Context, *DeleteWhereRequest) (*WriteResponse, error)
 	UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error)
+	// Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+	//
+	// Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+	// means reading it first, and `read_deleted` is what says a caller may see
+	// one. A caller holding only `delete` can remove rows it can see and not
+	// ones the convention hid from it.
+	PurgeDeleted(context.Context, *PurgeDeletedRequest) (*WriteResponse, error)
 	// Several writes in one round trip. The caller says whether they are
 	// independent or atomic; there is no default.
 	Batch(context.Context, *BatchRequest) (*BatchResponse, error)
@@ -341,6 +366,9 @@ func (UnimplementedRecordsServer) DeleteWhere(context.Context, *DeleteWhereReque
 }
 func (UnimplementedRecordsServer) UpdateWhere(context.Context, *UpdateWhereRequest) (*WriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateWhere not implemented")
+}
+func (UnimplementedRecordsServer) PurgeDeleted(context.Context, *PurgeDeletedRequest) (*WriteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PurgeDeleted not implemented")
 }
 func (UnimplementedRecordsServer) Batch(context.Context, *BatchRequest) (*BatchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Batch not implemented")
@@ -533,6 +561,24 @@ func _Records_UpdateWhere_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RecordsServer).UpdateWhere(ctx, req.(*UpdateWhereRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Records_PurgeDeleted_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PurgeDeletedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecordsServer).PurgeDeleted(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Records_PurgeDeleted_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecordsServer).PurgeDeleted(ctx, req.(*PurgeDeletedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -734,6 +780,10 @@ var Records_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateWhere",
 			Handler:    _Records_UpdateWhere_Handler,
+		},
+		{
+			MethodName: "PurgeDeleted",
+			Handler:    _Records_PurgeDeleted_Handler,
 		},
 		{
 			MethodName: "Batch",

@@ -74,6 +74,11 @@ class RecordsStub:
                 request_serializer=slate_dot_v1_dot_records__pb2.UpdateWhereRequest.SerializeToString,
                 response_deserializer=slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
                 _registered_method=True)
+        self.PurgeDeleted = channel.unary_unary(
+                '/slate.v1.Records/PurgeDeleted',
+                request_serializer=slate_dot_v1_dot_records__pb2.PurgeDeletedRequest.SerializeToString,
+                response_deserializer=slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+                _registered_method=True)
         self.Batch = channel.unary_unary(
                 '/slate.v1.Records/Batch',
                 request_serializer=slate_dot_v1_dot_records__pb2.BatchRequest.SerializeToString,
@@ -175,6 +180,18 @@ class RecordsServicer:
 
     def UpdateWhere(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PurgeDeleted(self, request, context):
+        """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+
+        Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+        means reading it first, and `read_deleted` is what says a caller may see
+        one. A caller holding only `delete` can remove rows it can see and not
+        ones the convention hid from it.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -282,6 +299,11 @@ def add_RecordsServicer_to_server(servicer, server):
             'UpdateWhere': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateWhere,
                     request_deserializer=slate_dot_v1_dot_records__pb2.UpdateWhereRequest.FromString,
+                    response_serializer=slate_dot_v1_dot_records__pb2.WriteResponse.SerializeToString,
+            ),
+            'PurgeDeleted': grpc.unary_unary_rpc_method_handler(
+                    servicer.PurgeDeleted,
+                    request_deserializer=slate_dot_v1_dot_records__pb2.PurgeDeletedRequest.FromString,
                     response_serializer=slate_dot_v1_dot_records__pb2.WriteResponse.SerializeToString,
             ),
             'Batch': grpc.unary_unary_rpc_method_handler(
@@ -550,6 +572,33 @@ class Records:
             target,
             '/slate.v1.Records/UpdateWhere',
             slate_dot_v1_dot_records__pb2.UpdateWhereRequest.SerializeToString,
+            slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PurgeDeleted(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/slate.v1.Records/PurgeDeleted',
+            slate_dot_v1_dot_records__pb2.PurgeDeletedRequest.SerializeToString,
             slate_dot_v1_dot_records__pb2.WriteResponse.FromString,
             options,
             channel_credentials,

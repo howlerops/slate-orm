@@ -54,6 +54,7 @@ import {
   not,
   ref,
   regexpReplace,
+  nullValue,
   str,
   sub,
   units,
@@ -862,6 +863,68 @@ class Adapter {
    * different answers, and the third is the interesting one: a *plain* delete
    * reports an absent key as `affected: 0`, and a conditional one refuses it.
    */
+  /**
+   * Seed three shipments, retire two, and erase what was retired.
+   *
+   * Its own id range, and re-seeded on every call, because all three adapters
+   * run this case against one database in turn: the first purge erases the
+   * rows, and the second and third would find nothing and disagree. The upsert
+   * puts them back, which is the same trick `conditionalDelete` uses.
+   */
+  async purge(session: Session): Promise<unknown> {
+    const ids = [9401n, 9402n, 9403n];
+    // A purge is **table-wide** — it takes an instant, not a predicate — so it
+    // also erases the row the demo seeder retired. Left alone that made this
+    // case depend on which adapter ran first: the first purged three rows and
+    // the other two purged two, and all three were right.
+    //
+    // So: clear the table of retired rows first, run the experiment against a
+    // known state, and put the seeder's row back at the end. The handler
+    // leaves the table as it found it, which is what keeps the corpus free of
+    // an ordering rule nobody would think to preserve.
+    const bound = () => BigInt(Math.floor(Date.now() / 1000)) + 3600n;
+    await session.purgeDeleted("shipments", bound());
+
+    await session.upsert(
+      "shipments",
+      ...ids.map((id) => [uint(id), uint(10n), str("pending"), nullValue]),
+    );
+    // Retire two. A delete rather than a write of `deleted_at`, because the
+    // stamp is the server's clock and this is the only path that sets it.
+    await session.delete("shipments", [uint(ids[0]!)], [uint(ids[1]!)]);
+
+    // The bound is comfortably after the retirement above. The clock is the
+    // server's and this is the client's, so a bound of "now" would be a race
+    // on a slow machine.
+    const purged = await session.purgeDeleted("shipments", bound());
+
+    // What is left, retired rows included, so the answer distinguishes
+    // "erased" from "still there but hidden".
+    const left = await session.query({
+      table: "shipments",
+      filter: ge(0, uint(ids[0]!)),
+      sort: [{ column: 0, direction: "asc" }],
+      includeDeleted: true,
+    });
+    const rows = await left.collect();
+    const answer = {
+      purged: Number(purged.affected),
+      left: rows.map((row) => Number((row[0] as { value: bigint }).value)),
+    };
+    // Put the seeder's retired shipment back, so the next adapter to run this
+    // case — and any case added later that expects it — finds the database as
+    // the seeder left it. Written live and then deleted, because a row cannot
+    // be created already retired.
+    await session.upsert("shipments", [
+      uint(603n),
+      uint(13n),
+      str("pending"),
+      nullValue,
+    ]);
+    await session.delete("shipments", [uint(603n)]);
+    return answer;
+  }
+
   async conditionalDelete(
     session: Session,
     body: { stale?: boolean; gone?: boolean },
@@ -947,6 +1010,7 @@ async function main(): Promise<void> {
     "/api/predicate-write": (s, b) => adapter.predicateWrite(s, b),
     "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
     "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
+    "/api/purge": (s) => adapter.purge(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 

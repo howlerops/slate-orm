@@ -992,6 +992,45 @@ class _Ops:
         )
         return self._write_result(response, write.table)
 
+    def purge_deleted(
+        self, table: Table, before: int, *, at_most: int | None = None
+    ) -> WriteResult:
+        """Erase, for good, every row a soft delete retired before `before`.
+
+        The other half of soft delete. Stamping a column instead of removing a
+        row means the row is still there, so a table that only ever
+        soft-deletes grows without bound.
+
+        `before` is seconds since the epoch and the comparison is strict: a row
+        retired exactly then survives. An instant rather than a duration
+        because how long retired rows are kept is a deployment's decision —
+        a regulator's retention period, a product's undo window — so the caller
+        subtracts.
+
+        `at_most` refuses the whole call if more rows than that match, before
+        the first is erased. This is the one call here that destroys data
+        nobody can get back, and a mistyped `before` is how that happens.
+
+        Needs `delete` **and** `read_deleted` on the table: erasing a retired
+        row means reading it first.
+
+        Returns the count in `result.affected`; never the rows, which no longer
+        exist to be returned.
+        """
+        response = self._unary(
+            self._conn.stub.PurgeDeleted,
+            pb.PurgeDeletedRequest(
+                transaction=self._transaction_id(),
+                table=table.name,
+                before=before,
+                # Zero is the wire's "no ceiling", which is also what a client
+                # that zeroed the struct means.
+                at_most=0 if at_most is None else at_most,
+                schema=self._schema_check(table),
+            ),
+        )
+        return self._write_result(response, table)
+
     def update_where(self, write: UpdateWhere) -> WriteResult:
         """Assign to columns of every row the predicate selects.
 

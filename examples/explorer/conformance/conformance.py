@@ -480,6 +480,18 @@ CASES: list[tuple[str, str, Any, str]] = [
     # And the refusal. `reader` holds `read` on `shipments` and not
     # `read_deleted`, which is the entire reason the action is separate: a
     # server that folded it into `read` would answer this with rows.
+    # And the other half of soft delete: erasing what was retired.
+    #
+    # Each adapter seeds its own three rows, retires two and purges, so the
+    # three runs of this case do not depend on each other — the first purge
+    # erases the rows, and without the re-seed the second and third would find
+    # nothing and disagree.
+    #
+    # `left` is what survives, retired rows included, which is what separates
+    # "erased" from "still there but hidden". A purge that erased the live row
+    # too would agree across all three clients and be very wrong.
+    ("a purge erases what was retired and nothing else", "/api/purge", {}, "app"),
+
     ("a reader may not ask for retired rows", "/api/query",
      {"table": "shipments", "includeDeleted": True,
       "sort": [{"column": 0, "direction": "asc"}]}, "reader"),

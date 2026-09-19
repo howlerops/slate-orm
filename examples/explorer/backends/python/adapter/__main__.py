@@ -16,6 +16,7 @@ import contextlib
 import json
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -55,7 +56,7 @@ from slate import (
     year,
 )
 
-from .schema import AUTHORS, BOOKS, BY_NAME, EDITIONS, SALES
+from .schema import AUTHORS, BOOKS, BY_NAME, EDITIONS, SALES, SHIPMENTS
 from .values import decode, encode, encode_row, format_float
 
 # The demo's three personas, mapped onto head-node identities.
@@ -732,6 +733,64 @@ class Adapter:
             "rendered": price.to_string_with_scale(2),
         }
 
+    #: The ids the purge handler owns.
+    #:
+    #: Its own range, and re-seeded on every call, because all three adapters
+    #: run this case against one database in turn: the first purge erases the
+    #: rows, and the second and third would find nothing and disagree. Upsert
+    #: puts them back, which is the same trick the conditional-delete handler
+    #: uses two methods down.
+    PURGE_IDS = (9401, 9402, 9403)
+
+    def purge(self, session, body):
+        """Seed three shipments, retire two, and erase what was retired.
+
+        The count is the point: a purge answers with how many rows it erased
+        and never with the rows, which no longer exist to be returned.
+        """
+        # A purge is **table-wide** — it takes an instant, not a predicate — so
+        # it also erases the row the demo seeder retired. Left alone that made
+        # this case depend on which adapter ran first: the first purged three
+        # rows and the other two purged two, and all three were right.
+        #
+        # So: clear the table of retired rows first, run the experiment against
+        # a known state, and put the seeder's row back at the end. The handler
+        # leaves the table as it found it, which is what keeps the corpus free
+        # of an ordering rule nobody would think to preserve.
+        before = int(time.time()) + 3600
+        session.purge_deleted(SHIPMENTS, before)
+
+        rows = [[u64(i), u64(10), "pending", None] for i in self.PURGE_IDS]
+        session.insert(SHIPMENTS, rows, upsert=True)
+        # Retire two. A delete rather than a write of `deleted_at`, because the
+        # stamp is the server's clock and this is the only path that sets it.
+        session.delete(SHIPMENTS, [(u64(i),) for i in self.PURGE_IDS[:2]])
+
+        # The bound is comfortably after the retirement the line above just
+        # made. The clock is the server's and this is the client's, so a bound
+        # of "now" would be a race on a slow machine.
+        purged = session.purge_deleted(SHIPMENTS, int(time.time()) + 3600).affected
+
+        # What is left, retired rows included, so the answer distinguishes
+        # "erased" from "still there but hidden".
+        left = Query(SHIPMENTS)
+        survivors = session.query(
+            left.where(left.c.id.ge(u64(self.PURGE_IDS[0])))
+            .include_deleted()
+            .sort(asc(left.c.id))
+        )
+        answer = {
+            "purged": purged,
+            "left": [int(row[0]) for row in survivors],
+        }
+        # Put the seeder's retired shipment back, so the next adapter to run
+        # this case — and any case added later that expects it — finds the
+        # database as the seeder left it. Written live and then deleted,
+        # because a row cannot be created already retired.
+        session.insert(SHIPMENTS, [[u64(603), u64(13), "pending", None]], upsert=True)
+        session.delete(SHIPMENTS, [(u64(603),)])
+        return answer
+
     #: The id the conditional-delete handler owns.
     CONDITIONAL_DELETE_ID = 9301
 
@@ -833,6 +892,7 @@ ROUTES = {
     "/api/predicate-write": "predicate_write",
     "/api/conditional-update": "conditional_update",
     "/api/conditional-delete": "conditional_delete",
+    "/api/purge": "purge",
     "/api/transaction": "transaction",
 }
 

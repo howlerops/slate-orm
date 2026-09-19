@@ -42,6 +42,14 @@ class RecordsStub:
     write per row. Both go to the writer, like every other write.
     """
     UpdateWhere: _grpc.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]
+    PurgeDeleted: _grpc.UnaryUnaryMultiCallable[_records_pb2.PurgeDeletedRequest, _records_pb2.WriteResponse]
+    """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+
+    Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+    means reading it first, and `read_deleted` is what says a caller may see
+    one. A caller holding only `delete` can remove rows it can see and not
+    ones the convention hid from it.
+    """
     Batch: _grpc.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]
     """Several writes in one round trip. The caller says whether they are
     independent or atomic; there is no default.
@@ -70,6 +78,14 @@ class RecordsAsyncStub(RecordsStub):
     write per row. Both go to the writer, like every other write.
     """
     UpdateWhere: _aio.UnaryUnaryMultiCallable[_records_pb2.UpdateWhereRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
+    PurgeDeleted: _aio.UnaryUnaryMultiCallable[_records_pb2.PurgeDeletedRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
+    """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+
+    Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+    means reading it first, and `read_deleted` is what says a caller may see
+    one. A caller holding only `delete` can remove rows it can see and not
+    ones the convention hid from it.
+    """
     Batch: _aio.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]  # type: ignore[assignment]
     """Several writes in one round trip. The caller says whether they are
     independent or atomic; there is no default.
@@ -143,6 +159,20 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
         request: _records_pb2.UpdateWhereRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]: ...
+
+    @_abc_1.abstractmethod
+    def PurgeDeleted(
+        self,
+        request: _records_pb2.PurgeDeletedRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]:
+        """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
+
+        Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+        means reading it first, and `read_deleted` is what says a caller may see
+        one. A caller holding only `delete` can remove rows it can see and not
+        ones the convention hid from it.
+        """
 
     @_abc_1.abstractmethod
     def Batch(

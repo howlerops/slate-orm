@@ -1006,6 +1006,17 @@ enum Write<'a> {
         /// the response is.
         at_most: Option<usize>,
     },
+    /// Erase, for good, every row a soft delete retired before an instant.
+    PurgeDeleted {
+        table: &'a TableDef,
+        /// Seconds since the epoch; strictly before.
+        before: i64,
+        /// The ceiling on the match, or `None`. Unlike the two predicate
+        /// writes, this bounds the *write* rather than the response: a purge
+        /// answers with a count and never with rows, so the only thing a
+        /// ceiling can protect here is the data.
+        at_most: Option<usize>,
+    },
     /// Assign to columns of every row a predicate selects.
     UpdateWhere {
         table: &'a TableDef,
@@ -1135,6 +1146,14 @@ impl Write<'_> {
                 .delete_where(context, table, (*predicate).clone(), *at_most)
                 .await
                 .map(touched),
+            Self::PurgeDeleted {
+                table,
+                before,
+                at_most,
+            } => transaction
+                .purge_deleted(context, table, *before, *at_most)
+                .await
+                .map(counted),
             Self::UpdateWhere {
                 table,
                 predicate,
@@ -1655,6 +1674,68 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             request.returning,
             table,
         )))
+    }
+
+    async fn purge_deleted(
+        &self,
+        request: Request<pb::PurgeDeletedRequest>,
+    ) -> Result<Response<pb::WriteResponse>, Status> {
+        let context = self.context(&request)?;
+        let request = request.into_inner();
+        // `Delete` here; the kernel additionally authorizes `ReadDeleted`,
+        // which is the check that makes a purge stricter than a delete. Not
+        // repeated here, because a second statement of it is a second thing to
+        // keep in step and the kernel's is the one that must hold.
+        //
+        // Defence in depth, and **correctly unobservable**, exactly as
+        // `delete_where` records three handlers down: `purge_deleted`
+        // authorizes `Delete` again in the kernel, so a mutation weakening
+        // this line to `Read` survives the whole suite and the purge still
+        // fails — `a_caller_who_may_see_retired_rows_still_cannot_erase_them`
+        // goes on passing, refused one layer lower. It stays because the
+        // kernel's check must not be the only one, not because this one
+        // catches anything a test can see.
+        let table = self.authorized_table(&context, &request.table, Action::Delete)?;
+        fingerprint::check(table, request.schema.as_ref())?;
+        // Zero means "no ceiling", which is the proto3 default and so what a
+        // client that zeroed the struct means. A caller who wants to purge
+        // nothing passes a `before` in the past, not a ceiling of zero.
+        let at_most = (request.at_most > 0).then_some(request.at_most as usize);
+
+        if request.transaction.is_empty() {
+            let (written, token) = self
+                .autocommit(
+                    &context,
+                    Write::PurgeDeleted {
+                        table,
+                        before: request.before,
+                        at_most,
+                    },
+                )
+                .await?;
+            return Ok(Response::new(pb::WriteResponse {
+                sequence: token.map(ReadToken::sequence),
+                affected: written.affected,
+                rows: Vec::new(),
+            }));
+        }
+        let affected = self
+            .sessions
+            .purge_deleted(
+                &request.transaction,
+                &context,
+                table.id(),
+                request.before,
+                at_most,
+            )
+            .await?;
+        Ok(Response::new(pb::WriteResponse {
+            // No sequence: a write inside a transaction has none until that
+            // transaction commits, which is what every other write here does.
+            sequence: None,
+            affected,
+            rows: Vec::new(),
+        }))
     }
 
     async fn update_where(

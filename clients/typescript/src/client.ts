@@ -851,6 +851,36 @@ export class Session {
   }
 
   /**
+   * Erase, for good, every row a soft delete retired before an instant.
+   *
+   * The other half of soft delete. Stamping a column instead of removing a row
+   * means the row is still there, so a table that only ever soft-deletes grows
+   * without bound.
+   *
+   * `before` is seconds since the epoch and the comparison is strict: a row
+   * retired exactly then survives. An instant rather than a duration because
+   * how long retired rows are kept is a deployment's decision — a regulator's
+   * retention period, a product's undo window — so the caller subtracts.
+   *
+   * `atMost` refuses the whole call if more rows than that match, before the
+   * first is erased. This is the one call here that destroys data nobody can
+   * get back, and a mistyped `before` is how that happens.
+   *
+   * Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+   * means reading it first.
+   *
+   * The result's `affected` is the count; `rows` is always empty.
+   */
+  purgeDeleted(table: string, before: bigint, atMost = 0n): Promise<WriteResult> {
+    return this.#write("PurgeDeleted", {
+      table,
+      before: String(before),
+      atMost: String(atMost),
+      schema: this.#client.claim(table),
+    });
+  }
+
+  /**
    * Assign to columns of every row a predicate selects.
    *
    * With `returning`, the result's rows are the rows **as written**.
@@ -1547,6 +1577,22 @@ export class Transaction {
   deleteWhere(write: DeleteWhere): Promise<WriteResult> {
     return this.#session.writeThrough("DeleteWhere", {
       ...deleteWhereToWire(write, this.#client.claim(write.table)),
+      transaction: this.#id,
+    });
+  }
+
+  /**
+   * Erase rows a soft delete retired, in the transaction.
+   *
+   * On both classes, because the comment above records what happens when a
+   * method reaches only one of them.
+   */
+  purgeDeleted(table: string, before: bigint, atMost = 0n): Promise<WriteResult> {
+    return this.#session.writeThrough("PurgeDeleted", {
+      table,
+      before: String(before),
+      atMost: String(atMost),
+      schema: this.#client.claim(table),
       transaction: this.#id,
     });
   }
