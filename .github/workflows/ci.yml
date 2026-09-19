@@ -437,6 +437,21 @@ jobs:
             --python examples/explorer/backends/python/adapter/schema.py \
             --go examples/explorer/backends/go/schema/schema.go \
             --typescript examples/explorer/backends/node/src/schema.ts
+      # The generated decoders, run rather than only compiled.
+      #
+      # Both shipped type-checking and never executing, which proves they
+      # compile and not that they read the right column — and reading the
+      # neighbour compiles fine whenever the neighbour shares a type. These
+      # are hand-written beside the generated files on purpose: a test the
+      # generator emitted would agree with the generator by construction.
+      #
+      # Here rather than in the Go and TypeScript client jobs because the
+      # files under test are generated from the catalog, and this is the job
+      # that has just checked them against it.
+      - run: go test ./schema/
+        working-directory: examples/explorer/backends/go
+      - run: npm test
+        working-directory: examples/explorer/backends/node
       # The only thing anywhere that compares the three clients to *each
       # other*. Each client's own suite compares it to the server, which
       # catches one client being wrong and cannot catch two being wrong the

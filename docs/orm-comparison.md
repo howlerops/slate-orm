@@ -227,6 +227,20 @@ then did not ship it to the three audiences most likely to need it.
 > Title-cased**, so `id` is `Id` and not the `ID` Go style wants: an initialism
 > list is a second thing to keep in step and is never complete.
 >
+> All three decoders are now **executed** by a test, not merely compiled. Go's
+> and TypeScript's shipped type-checking and never running, which proves they
+> compile and not that they read the right column; six mutations of the
+> generator — a skipped assertion, a dropped length check, every column reading
+> ordinal 0 — are caught in each language. The tests are hand-written beside
+> the generated files on purpose, because a test the generator emitted would
+> agree with the generator by construction.
+>
+> They also pin what the decoder **cannot** do: two neighbouring columns of the
+> *same* type, swapped, pass through undetected. That is not a defect to fix
+> here — it is what the ordinals in the declaration and the schema fingerprint
+> are for — but "the decoder catches transposition" is the kind of claim that
+> grows in the retelling, so a test asserts the limit.
+>
 > What this still is not is Prisma. The decoder is called by hand — nothing
 > returns a `Books` from a query — so the generated type is a tool the caller
 > picks up, not a return type they are handed.

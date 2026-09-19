@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "tsc -p tsconfig.json && node dist/main.js"
+    "start": "tsc -p tsconfig.json && node dist/main.js",
+    "test": "tsc -p tsconfig.json && node --test dist/rows.test.js"
   },
   "dependencies": {
     "@slate-orm/client": "file:../../../../clients/typescript"
