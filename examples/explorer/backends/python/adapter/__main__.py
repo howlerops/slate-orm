@@ -785,7 +785,7 @@ class Adapter:
     #: rows, and the second and third would find nothing and disagree. Upsert
     #: puts them back, which is the same trick the conditional-delete handler
     #: uses two methods down.
-    PURGE_IDS = (9401, 9402, 9403)
+    PURGE_IDS = (8401, 8402, 8403)
 
     def purge(self, session, body):
         """Seed three shipments, retire two, and erase what was retired.
@@ -891,13 +891,14 @@ class Adapter:
         }
 
     def bad_status(self, session, body):
-        """Write a shipment whose status no CHECK admits, and let it fail.
+        """Write a shipment that breaks two of its table's checks at once.
 
-        Three failing checks would be a better fixture than one, and
-        `shipments` declares only `status_known`, so this reaches the
-        single-failure shape. The three-failure shape is covered by each
-        client's unit tests against the captured blob; what this adds is a
-        *live* server, which those cannot have.
+        Two, not one, and that is the point: `violations` is a *list*, decoded
+        by counting up from a count, and reading one failure is different code
+        from reading several. `"teleported"` breaks `status_known` and `id`
+        9499 breaks `id_is_seeded`, so the refusal carries both — in the order
+        `head.toml` declares them, which is not the order the row breaks them
+        in.
 
         The row is never written, so there is nothing to clean up — the one
         convenience a refusal case has over `purge` above.

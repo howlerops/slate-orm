@@ -496,7 +496,7 @@ CASES: list[tuple[str, str, Any, str]] = [
      {"table": "shipments", "includeDeleted": True,
       "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
 
-    # A refusal with *structure*, which is a thing no other case here has.
+    # A refusal with *structure*, and with more than one entry in it.
     #
     # Every other refusal is compared on `kind` and `reason` — two strings the
     # server hands over whole. This one is compared on `violations`, which no

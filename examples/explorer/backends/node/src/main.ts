@@ -894,7 +894,7 @@ class Adapter {
    * puts them back, which is the same trick `conditionalDelete` uses.
    */
   async purge(session: Session): Promise<unknown> {
-    const ids = [9401n, 9402n, 9403n];
+    const ids = [8401n, 8402n, 8403n];
     // A purge is **table-wide** — it takes an instant, not a predicate — so it
     // also erases the row the demo seeder retired. Left alone that made this
     // case depend on which adapter ran first: the first purged three rows and
@@ -998,12 +998,13 @@ class Adapter {
   }
 
   /**
-   * Writes a shipment whose status no CHECK admits, and lets it fail.
+   * Writes a shipment that breaks two of its table's checks at once.
    *
-   * Three failing checks would be a better fixture than one, and `shipments`
-   * declares only `status_known`, so this reaches the single-failure shape.
-   * The three-failure shape is covered by each client's unit tests against the
-   * captured blob; what this adds is a *live* server, which those cannot have.
+   * Two, not one, and that is the point: `violations` is a *list*, decoded by
+   * counting up from a count, and reading one failure is different code from
+   * reading several. `"teleported"` breaks `status_known` and `id` 9499 breaks
+   * `id_is_seeded`, so the refusal carries both — in the order `head.toml`
+   * declares them, which is not the order the row breaks them in.
    *
    * The row is never written, so there is nothing to clean up — the one
    * convenience a refusal case has over `purge` above.

@@ -158,6 +158,23 @@ predicate = "status in ('pending', 'shipped', 'delivered')"
 column = "status"
 message = "Status must be pending, shipped or delivered."
 
+# A second check, so that one bad row breaks *two* rules.
+#
+# The point is the list. A refusal carries `violations`, `check.N`, `column.N`
+# and `message.N`, and three clients decode them by counting up — but with one
+# check in the whole demo, the live case could only ever exercise the
+# singleton. Reading one failure and reading a list are different code, and
+# only the fixture in each client's unit suite had ever reached the second.
+#
+# `9000` and above is the range the adapters' own handlers write into
+# (`purge` owns 9401-9403, `bad-status` writes 9499), so a seeded row cannot
+# accidentally violate it and a handler's row deliberately does.
+[[tables.checks]]
+name = "id_is_seeded"
+predicate = "id < 9000"
+column = "id"
+message = "Shipment ids above 9000 are reserved for the demo's own handlers."
+
 # A third foreign key, so a soft-deleted row is also a *referencing* row.
 #
 # It makes the retirement path do something worth watching: retiring a shipment

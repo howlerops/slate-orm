@@ -368,6 +368,7 @@ var ShipmentsStatusValues = []string{"pending", "shipped", "delivered"}
 // the key here.
 var ShipmentsChecks = map[string]slate.CheckRule{
 	"status_known": {Column: "status", Message: "Status must be pending, shipped or delivered.", Predicate: "status in ('pending', 'shipped', 'delivered')"},
+	"id_is_seeded": {Column: "id", Message: "Shipment ids above 9000 are reserved for the demo's own handlers.", Predicate: "id < 9000"},
 }
 
 // ShipmentsForeignKeys is every foreign key on `shipments`, by name.

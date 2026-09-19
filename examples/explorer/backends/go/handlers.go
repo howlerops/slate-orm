@@ -1182,7 +1182,12 @@ func (s *server) path(ctx context.Context, session *slate.Session, body json.Raw
 // this case against one database in turn: the first purge erases the rows, and
 // the second and third would find nothing and disagree. The upsert puts them
 // back, which is the same trick conditionalDelete uses.
-var purgeIDs = []uint64{9401, 9402, 9403}
+//
+// Below 9000 because `shipments.id_is_seeded` reserves 9000 and above for rows
+// the demo writes in order to have them refused. These were 9401-9403 and were
+// moved when that check arrived: a handler whose own fixture violated the
+// schema would have been a puzzle rather than a demonstration.
+var purgeIDs = []uint64{8401, 8402, 8403}
 
 // purge seeds three shipments, retires two, and erases what was retired.
 //
@@ -1269,12 +1274,15 @@ func (s *server) purge(
 	return map[string]any{"purged": purged.Affected, "left": ids}, nil
 }
 
-// badStatus writes a shipment whose status no CHECK admits, and lets it fail.
+// badStatus writes a shipment that breaks two of its table's checks at once.
 //
-// Three checks would be a better fixture than one, and `shipments` declares
-// only `status_known`, so this reaches the single-failure shape. The
-// three-failure shape is covered by each client's unit tests against the
-// captured blob; what this adds is a *live* server, which those cannot have.
+// Two, not one, and that is the point: `violations` is a *list*, decoded by
+// counting up from a count, and reading one failure is different code from
+// reading several. With a single check in the demo this case could only ever
+// exercise the singleton, and the list was reached only by each client's unit
+// fixture. `"teleported"` breaks `status_known` and `id` 9499 breaks
+// `id_is_seeded`, so the refusal carries both — in the order `head.toml`
+// declares them, which is not the order the row breaks them in.
 //
 // The row is never written, so there is nothing to clean up — which is the one
 // convenience a refusal case has over the purge above.

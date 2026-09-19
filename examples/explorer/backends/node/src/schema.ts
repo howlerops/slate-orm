@@ -263,6 +263,7 @@ export function decodeEditions(row: Value[]): Editions {
  */
 export const ShipmentsChecks: Record<string, CheckRule> = {
   "status_known": { column: "status", message: "Status must be pending, shipped or delivered.", predicate: "status in ('pending', 'shipped', 'delivered')" },
+  "id_is_seeded": { column: "id", message: "Shipment ids above 9000 are reserved for the demo's own handlers.", predicate: "id < 9000" },
 };
 
 /**

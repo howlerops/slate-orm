@@ -121,6 +121,11 @@ SHIPMENTS_CHECKS = {
         "message": "Status must be pending, shipped or delivered.",
         "predicate": "status in ('pending', 'shipped', 'delivered')",
     },
+    "id_is_seeded": {
+        "column": "id",
+        "message": "Shipment ids above 9000 are reserved for the demo's own handlers.",
+        "predicate": "id < 9000",
+    },
 }
 
 SHIPMENTS_FOREIGN_KEYS = {

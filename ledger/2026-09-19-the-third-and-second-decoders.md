@@ -136,12 +136,11 @@ itself emitted, so a client that stopped parsing fails there. The two mechanisms
 are complementary and neither is sufficient — units catch unanimous loss,
 conformance catches drift between clients.
 
-**The live case exercises one failing check, not three.** `shipments` declares
-only `status_known`, so `/api/bad-status` reaches the single-failure shape. The
-three-failure shape — including the cross-column check that has no column and no
-message — is only ever decoded from the captured fixture. Adding a second CHECK
-to `shipments` would close that, at the cost of a demo table that exists to be
-refused.
+~~**The live case exercises one failing check, not three.**~~ **Partly closed**
+— `shipments` grew a second check and the live refusal now carries two entries
+on two different columns; see `2026-09-19-a-refusal-with-two-things-wrong.md`.
+The list is exercised, which was the point. The *cross-column* shape — no
+column and no message — is still fixture-only, and that entry says why.
 
 **Nothing validates against the published checks before sending.** V3 publishes
 them in `--print-schema` and codegen narrows an enum column's type from them,
