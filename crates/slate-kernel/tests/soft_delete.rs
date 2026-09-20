@@ -1486,24 +1486,17 @@ async fn without_read_deleted_the_bulk_writes_stay_out_of_reach_too() {
     );
 }
 
-#[tokio::test]
-async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
-    // The hypothesis this is written to kill: `referencing_rows` is a *planned*
-    // read, so the planner may answer it from an index — and the index a
-    // soft-deleting table most wants is partial on `deleted_at IS NULL`, which
-    // by construction does not hold retired rows. If the planner chose it, the
-    // `RESTRICT` arm would look for the retired child through a structure that
-    // cannot contain it and find nothing, which is the defect
-    // `a_restrict_edge_blocks_on_a_retired_child` fixed, reintroduced through a
-    // different door and invisible to that test's schema, which has no index at
-    // all on the referencing column.
-    //
-    // It holds, and the reason is worth writing down rather than leaving to the
-    // next person to re-derive: the read carries `include_deleted`, so the
-    // soft-delete conjunct is not in the filter, so a partial index predicated
-    // on it is not implied by the query and cannot be chosen. The same
-    // conjoin-before-planning that stops a covering scan resurrecting a row is
-    // what stops a partial index hiding one here.
+/// `filing`, plus the index that makes the two tests below interesting: the
+/// only index on the referencing column, partial on exactly the predicate that
+/// excludes a retired row.
+///
+/// One fixture for both arms deliberately. The whole question is whether the
+/// *same* structure is safe for a `RESTRICT` search and correct for a `CASCADE`
+/// walk, and two schemas that drifted would answer a question nobody asked.
+async fn indexed_filing(
+    on_delete: slate_schema::ReferentialAction,
+    at: i64,
+) -> (RecordStore<MemoryStore>, Arc<FixedClock>, MemoryStore) {
     let folders = TableDef::builder("folders", FOLDERS)
         .column("id", ValueType::U64)
         .primary_key(["id"])
@@ -1515,8 +1508,6 @@ async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
         .nullable_column("deleted_at", ValueType::I64)
         .primary_key(["id"])
         .soft_delete("deleted_at")
-        // The only index on the referencing column, and partial on exactly the
-        // predicate that excludes the row the RESTRICT arm has to find.
         .index(
             IndexDef::builder("live_by_folder", slate_schema::IndexId(1))
                 .column("folder_id")
@@ -1528,13 +1519,17 @@ async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
         .foreign_key(
             slate_schema::ForeignKeyDef::builder("files_folder", FOLDERS)
                 .column("folder_id")
-                .on_delete(slate_schema::ReferentialAction::Restrict),
+                .on_delete(on_delete),
         )
         .build()
         .expect("a valid table");
-    let clock = Arc::new(FixedClock::at(1_000));
+    let clock = Arc::new(FixedClock::at(at));
+    // Cloned rather than re-made: `MemoryStore` is an `Arc` over its shared
+    // state, so this handle sees the same keyspace the store writes to. It is
+    // how the index count below reads the backend directly.
+    let backend = MemoryStore::new();
     let store = RecordStore::new(
-        MemoryStore::new(),
+        backend.clone(),
         Catalog::from_tables([folders, files]).expect("a catalog"),
         SecurityCatalog::new(),
     )
@@ -1553,8 +1548,127 @@ async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
     )
     .await
     .expect("insert the file");
-    // While it is live the index does hold it, so the control below is not
-    // asking a different question of a different structure.
+    txn.commit().await.expect("commit");
+    (store, clock, backend)
+}
+
+#[tokio::test]
+async fn the_partial_index_holds_a_live_child_and_drops_a_retired_one() {
+    // The premise the two tests below rest on, asserted rather than assumed.
+    //
+    // Both of them are about what happens when the only index on the
+    // referencing column cannot hold a retired row. If index maintenance ever
+    // stopped dropping the entry, the `RESTRICT` test would keep passing — the
+    // row is found either way — while the thing it demonstrates quietly became
+    // untrue, and nothing would say so. Counted out of the backend rather than
+    // through a read, for the reason `index_entry_count` in `constraints.rs`
+    // gives: asking the record layer would let a leaked entry hide behind the
+    // same code that leaked it.
+    let (store, _clock, backend) =
+        indexed_filing(slate_schema::ReferentialAction::Restrict, 1_000).await;
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    let prefix = slate_kernel::keys::index_prefix(files, &files.indexes()[0], None);
+    drop(txn);
+
+    let count = || {
+        backend
+            .keys()
+            .into_iter()
+            .filter(|key| key.starts_with(&prefix))
+            .count()
+    };
+    assert_eq!(count(), 1, "the index holds the live child");
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire it");
+    txn.commit().await.expect("commit");
+    assert_eq!(
+        count(),
+        0,
+        "and drops it when the row is retired, which is what makes it a \
+         structure the RESTRICT search cannot use"
+    );
+}
+
+#[tokio::test]
+async fn a_cascade_edge_over_the_same_index_still_retires_the_live_child() {
+    // The symmetric half of the test below, and the arm where a partial index
+    // on `deleted_at IS NULL` *is* implied by the filter and may well be
+    // chosen: the cascade reads with `Deleted::Hidden`, so the conjunct is in
+    // the query and the index predicate follows from it. That is correct here —
+    // a cascade wants live children and nothing else — but "correct by the same
+    // reasoning" is what the entry beside this one said and did not assert.
+    //
+    // Two children, one live and one already retired, so the run distinguishes
+    // "reached the live one through the index" from "reached nothing".
+    let (store, clock, _backend) =
+        indexed_filing(slate_schema::ReferentialAction::Cascade, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(11), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("a second, live child");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the first");
+    txn.commit().await.expect("commit");
+
+    clock.set(9_000);
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    assert!(
+        txn.delete(&root(), folders, &[Value::U64(1)])
+            .await
+            .expect("the cascade is allowed"),
+        "the folder was there to delete"
+    );
+    txn.commit().await.expect("commit");
+
+    let mut rows = files_of(&store).await;
+    rows.sort_unstable();
+    assert_eq!(
+        rows,
+        vec![(10, Some(1_000)), (11, Some(9_000))],
+        "the live child was retired by the cascade and the already-retired one \
+         kept the timestamp its own delete gave it"
+    );
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
+    // The hypothesis this is written to kill: `referencing_rows` is a *planned*
+    // read, so the planner may answer it from an index — and the index a
+    // soft-deleting table most wants is partial on `deleted_at IS NULL`, which
+    // by construction does not hold retired rows. If the planner chose it, the
+    // `RESTRICT` arm would look for the retired child through a structure that
+    // cannot contain it and find nothing, which is the defect
+    // `a_restrict_edge_blocks_on_a_retired_child` fixed, reintroduced through a
+    // different door and invisible to that test's schema, which has no index at
+    // all on the referencing column.
+    //
+    // It holds, and the reason is worth writing down rather than leaving to the
+    // next person to re-derive: the read carries `include_deleted`, so the
+    // soft-delete conjunct is not in the filter, so a partial index predicated
+    // on it is not implied by the query and cannot be chosen. The same
+    // conjoin-before-planning that stops a covering scan resurrecting a row is
+    // what stops a partial index hiding one here.
+    let (store, _clock, _backend) =
+        indexed_filing(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    // While it is live the index does hold it — `the_partial_index_holds_a
+    // _live_child_and_drops_a_retired_one` reads that out of the backend — so
+    // this is not asking a different question of a different structure.
     txn.delete(&root(), files, &[Value::U64(10)])
         .await
         .expect("retire the file, which drops its entry from the partial index");
