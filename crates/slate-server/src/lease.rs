@@ -753,3 +753,186 @@ fn decode(bytes: &[u8]) -> Result<Term, LeaseError> {
         }),
     }
 }
+
+#[cfg(test)]
+// Tests assert exact outcomes and are meant to panic when one is wrong, which
+// is what the integration suites say with the same block.
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod untrusted {
+    //! The lease decoder against bytes it did not write.
+    //!
+    //! The lease object lives in the same bucket as the data, so anything that
+    //! can corrupt a block can corrupt it — and `docs/security-review.md`
+    //! listed this module as not examined. The contract is the one
+    //! `slate-tuple/tests/untrusted.rs` settled on, for the same reason it is
+    //! the one that can hold: **for any input, `decode` returns `Ok` or
+    //! `Err`.** Nothing is claimed about what it decodes from nonsense.
+    //!
+    //! A panic here is not cosmetic. `current()` is called on every renewal
+    //! and every campaign, so a corrupt lease object would take down every
+    //! head node that looked at it, in a loop, which is an outage rather than
+    //! an error path.
+
+    use super::{Term, decode, encode};
+    use proptest::prelude::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// Bytes biased towards what means something to this parser: the magic
+    /// line, the field separator, the newline, and digits. Uniform random
+    /// bytes fail the magic check on line one and never reach the fields.
+    fn hostile() -> impl Strategy<Value = String> {
+        let fragment = prop_oneof![
+            2 => Just("slate-lease v1".to_owned()),
+            2 => Just("generation:".to_owned()),
+            2 => Just("holder:".to_owned()),
+            2 => Just("expires_ms:".to_owned()),
+            2 => Just(":".to_owned()),
+            1 => Just("18446744073709551615".to_owned()),
+            1 => Just("-1".to_owned()),
+            1 => Just(" ".to_owned()),
+            1 => "[\\x00-\\x7f]{0,8}".prop_map(|s| s),
+        ];
+        proptest::collection::vec(fragment, 0..12).prop_map(|parts| parts.join("\n"))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4000))]
+
+        #[test]
+        fn decoding_hostile_text_never_panics(text in hostile()) {
+            let _ = decode(text.as_bytes());
+        }
+
+        #[test]
+        fn decoding_arbitrary_bytes_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..64)) {
+            let _ = decode(&bytes);
+        }
+
+        /// Every truncation of a valid lease, which is what a partial write
+        /// leaves behind and the likeliest corruption in practice.
+        #[test]
+        fn every_truncation_of_a_valid_lease_is_handled(
+            generation in any::<u64>(),
+            holder in "[a-z0-9-]{0,16}",
+            expires in any::<u64>(),
+            cut in 0usize..200,
+        ) {
+            let term = Term {
+                generation,
+                holder,
+                expires_at: UNIX_EPOCH + Duration::from_millis(expires % 1_000_000_000_000),
+            };
+            let encoded = encode(&term);
+            let at = cut.min(encoded.len());
+            let _ = decode(&encoded[..at]);
+        }
+    }
+
+    /// The largest expiry the field can express.
+    ///
+    /// `expires_ms` is a `u64` parsed straight into `Duration::from_millis`
+    /// and added to `UNIX_EPOCH`, and `SystemTime + Duration` **panics** on
+    /// overflow rather than saturating. Whether `u64::MAX` milliseconds
+    /// overflows a `SystemTime` is a property of the platform's
+    /// representation, not of this code — so it is asserted rather than
+    /// reasoned about, which is the difference between knowing and assuming.
+    #[test]
+    fn an_expiry_at_the_top_of_the_field_does_not_panic() {
+        let text = format!(
+            "slate-lease v1\ngeneration: 1\nholder: x\nexpires_ms: {}\n",
+            u64::MAX
+        );
+        let decoded = decode(text.as_bytes()).expect("the fields are all present and parse");
+        assert!(decoded.expires_at > UNIX_EPOCH);
+    }
+
+    /// An object that is not a lease at all is refused on the first line.
+    ///
+    /// Found by mutation too: accepting any first line survived everything
+    /// else here. The lease shares a bucket with the data, so the object at
+    /// that key could be a block, a manifest, or a file somebody put there by
+    /// hand — and every one of those would reach the field loop, where a
+    /// stray `generation:` anywhere in the bytes is enough to be read as one.
+    /// The magic line is what makes "this is not a lease" the answer instead.
+    #[test]
+    fn an_object_that_is_not_a_lease_is_refused_on_the_first_line() {
+        // Carries all three field names, so only the magic check can refuse it.
+        let impostor = "not-a-lease\ngeneration: 4\nholder: someone\nexpires_ms: 1\n";
+        let refused = decode(impostor.as_bytes()).expect_err("the magic line is wrong");
+        assert!(
+            matches!(&refused, super::LeaseError::Malformed { detail }
+                     if detail.contains("slate-lease v1")),
+            "the refusal should name what it expected: {refused:?}"
+        );
+
+        // And an empty object, which has no first line at all.
+        assert!(decode(b"").is_err());
+    }
+
+    /// Bytes that are not UTF-8 are refused, not decoded lossily.
+    ///
+    /// Found by mutation: replacing the `from_utf8` check with
+    /// `from_utf8_lossy` survived the whole suite. It is not cosmetic —
+    /// lossy decoding turns every invalid sequence into U+FFFD, so a
+    /// corrupted object whose bytes happen to land around the field names
+    /// would parse as a *valid* term rather than as malformed, and a node
+    /// would act on a generation and a holder that nobody wrote.
+    #[test]
+    fn a_lease_that_is_not_utf8_is_refused_rather_than_repaired() {
+        // A valid lease with one byte of the holder replaced by a lone
+        // continuation byte: lossy decoding would substitute U+FFFD and the
+        // three fields would all still parse.
+        let mut bytes = b"slate-lease v1\ngeneration: 3\nholder: node-a\nexpires_ms: 9\n".to_vec();
+        let at = bytes
+            .iter()
+            .position(|byte| *byte == b'a')
+            .expect("the holder has an `a`");
+        bytes[at] = 0x80;
+
+        let refused = decode(&bytes).expect_err("not UTF-8");
+        assert!(
+            matches!(&refused, super::LeaseError::Malformed { detail } if detail == "not UTF-8"),
+            "{refused:?}"
+        );
+    }
+
+    /// A lease claiming to expire in the past, and one claiming zero.
+    #[test]
+    fn a_zero_expiry_is_an_ordinary_term() {
+        let text = "slate-lease v1\ngeneration: 0\nholder: \nexpires_ms: 0\n";
+        let decoded = decode(text.as_bytes()).expect("zero is a number");
+        assert_eq!(decoded.expires_at, UNIX_EPOCH);
+        assert_eq!(decoded.generation, 0);
+    }
+
+    /// A duplicated field: the last one wins, and that is a decision.
+    ///
+    /// An attacker with bucket write could otherwise hope a reader takes the
+    /// first `generation` and a writer the last. There is one parser, so
+    /// there is one answer; this pins which.
+    #[test]
+    fn a_duplicated_field_takes_the_last_value() {
+        let text = "slate-lease v1\ngeneration: 1\ngeneration: 9\nholder: a\nexpires_ms: 5\n";
+        assert_eq!(decode(text.as_bytes()).expect("valid").generation, 9);
+    }
+
+    /// Round-tripping, so the hostile cases above are not testing a decoder
+    /// that rejects everything.
+    #[test]
+    fn a_lease_this_module_wrote_decodes_to_itself() {
+        let term = Term {
+            generation: 7,
+            holder: "node-a".to_owned(),
+            expires_at: UNIX_EPOCH + Duration::from_millis(1_700_000_000_000),
+        };
+        let decoded = decode(&encode(&term)).expect("our own encoding");
+        assert_eq!(decoded.generation, term.generation);
+        assert_eq!(decoded.holder, term.holder);
+        assert_eq!(decoded.expires_at, term.expires_at);
+    }
+}

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ee65fe8ba15c5282f675434e3a089716791247a8c25d9ec19f72fee67b9e073f # shrinks to text = "slate-lease v1\nexpires_ms:"
+cc 4091ddc457a0972be94cb6a6f16f218432756bfc651c131e391b954a26ff6bb5 # shrinks to generation = 100000000000000000, holder = "a0aa-0a0a", expires = 0, cut = 75
+cc c9decd60578a1f99f425799c1c0f09157938c8c9eb67b4f643bf2637ae959a35 # shrinks to generation = 0, holder = "", expires = 9223372037, cut = 60

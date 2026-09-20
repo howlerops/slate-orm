@@ -813,12 +813,22 @@ S3 credential row turned up no defect and two weak tests: the redaction is
 correct in both crates, and neither test would have caught a secret held as
 `Vec<u8>` and printed as a byte list.
 
-The lease *protocol* itself — fencing, generation monotonicity, split brain —
-is still judged by its correctness suites (`crates/slate-server/tests/lease.rs`
-and `tests/leadership.rs`, 1,390 lines) rather than attacked adversarially. The
-row above is struck through for the RPC surface, which is what an unauthorised
-caller can reach; the protocol between a node and its object store is not
-reachable from the wire and was not re-examined.
+The lease's **parser** has now been attacked, and found nothing:
+`lease::untrusted` in `crates/slate-server/src/lease.rs` runs the decoder over
+hostile text, arbitrary bytes and every truncation of a valid lease, 4,000
+cases each. It matters because the lease object shares a bucket with the data,
+so anything that can corrupt a block can corrupt it, and `current()` is read on
+every renewal and every campaign — a panic there is a crash loop across every
+head node that looks, not an error path. Two of the tests exist because a
+mutation survived without them: that a non-UTF-8 object is *refused* rather
+than repaired with U+FFFD, and that the magic line is checked at all.
+
+The lease **protocol** — fencing, generation monotonicity, split brain — is
+still judged by its correctness suites (`crates/slate-server/tests/lease.rs`
+and `tests/leadership.rs`, 1,390 lines) rather than attacked adversarially.
+`lease.rs`'s own module docs are unusually explicit about what it does and does
+not promise (no mutual exclusion; liveness and an ordering; safety from
+SlateDB's fence underneath), and that argument was read and not tested here.
 
 ---
 
