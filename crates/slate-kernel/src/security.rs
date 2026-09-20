@@ -49,8 +49,20 @@
 //!
 //! - It is same-tenant only. A tenant-scoped table puts the tenant in the key
 //!   prefix, so a key in another tenant is a different key and there is no
-//!   collision to observe. (Finding 2 in `docs/security-review.md` was a
-//!   separate path where the same bit *did* cross tenants; that one is fixed.)
+//!   collision to observe.
+//!
+//!   **That bound is about collisions, and it is not the only way the bit can
+//!   cross a tenant.** Finding 2 in `docs/security-review.md` was a path that
+//!   read storage *before* deciding the row policy, so the error said which
+//!   answer the read had given — no collision needed. It was fixed in
+//!   `write_many`, and this paragraph said so while the single-row `upsert`
+//!   went on doing it: a key taken in another tenant came back `RowNotFound`
+//!   from the visibility check, a free one `RowCheckFailed` from the policy.
+//!   Fixed now, and every write path is held to it by
+//!   `no_key_naming_write_path_answers_differently_for_another_tenants_key`.
+//!   The lesson for a reader of this paragraph: "no collision to observe" does
+//!   not mean "nothing to observe", and the ordering of the read against the
+//!   policy is the other half.
 //! - It requires the attacker to be able to name the key. A primary key that is
 //!   a UUID, or drawn from a sequence the attacker cannot read, leaves nothing
 //!   to probe for — the oracle answers a question the attacker cannot ask.

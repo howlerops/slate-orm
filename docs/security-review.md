@@ -739,14 +739,54 @@ Concretely, I would look next at:
    (`deletion_closure`) and it is finding §1. Any future one deserves the same
    treatment: not "is this justified" but "what physically stops it reaching
    another tenant".
-2. **Every pair of single-row and batch operations.** §2 is a divergence
+2. **Every pair of single-row and batch operations.** ~~§2 is a divergence
    between two spellings of one operation. `update_many`/`update` and
-   `delete` are fine today; the next batch method added is the risk. A
+   `delete` are fine today; the next batch method added is the risk.~~ A
    differential test that runs each pair against a hostile row and asserts the
    *same error variant* would have caught it and would catch the next one.
+
+   **Done, and it found one.** This recommendation was right and went unbuilt,
+   and the path it would have caught is `upsert` — one half of exactly such a
+   pair. `no_key_naming_write_path_answers_differently_for_another_tenants_key`
+   is that differential test, widened from pairs to all nine key-naming paths,
+   and `scripts/check_write_paths.py` keeps its roster honest. Worth recording
+   that the review named the test, described what it would catch, and was
+   correct on both counts — the gap was that nobody wrote it.
 3. **Everything derived from global state that a per-caller request can
    observe:** statistics (§3), `EXPLAIN` output, plan choice, and timing. The
    histogram is the sharpest instance because it holds literal values, but
    `estimated_rows` is a channel out of superuser-gathered state in general.
-4. **Resource budgets** (§7). The join has one and nothing else does; that
-   asymmetry looks accidental rather than argued.
+4. **Resource budgets** (§7). ~~The join has one and nothing else does; that
+   asymmetry looks accidental rather than argued.~~ Closed: grouping, distinct
+   and sorting now carry ceilings, the defaults are asserted not to be
+   unbounded, and the grouped join and grouped chain paths — which the first
+   fix missed — are covered.
+
+## The reach-around sweep
+
+Findings 1, 2, 6, 7 and 8 were each fixed once and then found to be open on a
+second path: a second `Catalog` constructor, a second write path, a second
+`Authenticator`, two more `Grouper` sites, four more handlers. Every time, the
+remaining paths had been judged equivalent **by reading**.
+
+So each finding was re-examined for that specific question — *where else does
+this capability live, and does the fix reach there?* — and the answer written
+down rather than assumed:
+
+| finding | second path | how it is held now |
+| --- | --- | --- |
+| 1 | `Catalog::insert` | fixed; the invariant is structural (one `&mut self` method) |
+| 2 | single-row `upsert` | fixed; all twelve write paths probed, roster checked |
+| 3 | none | all six kernel `explain*` methods funnel through one `authorize_explain` with every table, and `estimated_rows` reaches the wire only through the three gated explain RPCs |
+| 4 | n/a | closed as inherent; the bound it relies on is corrected in `security.rs` |
+| 5 | shares finding 1's fix | both constructors refuse the edge |
+| 6 | `TokenIdentity` | fixed; roster of every `Authenticator`, statically checked |
+| 7 | grouped join, grouped chain | fixed; defaults asserted non-unbounded |
+| 8 | four more handlers | fixed; `scripts/check_handlers.py` rules 1–3 |
+
+**3 and 4 are the honest weak rows.** Neither turned up a second path, and
+neither was proved not to have one — they were enumerated by reading the
+callers and the wire surface, which is the method that failed five times
+above. What is different is that the enumeration is small and written down
+here, so a reader can check it; the ones that failed were never written down at
+all.
