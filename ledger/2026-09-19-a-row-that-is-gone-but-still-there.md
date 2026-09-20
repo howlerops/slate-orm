@@ -112,8 +112,9 @@ nothing ever removes a retired row, so a soft-deleting table grows without
 bound. A reaper is a `delete_where` on a table temporarily declared without
 `soft_delete`, which works and is not a feature.
 
-`#[derive(Record)]` has no attribute for it, so the Rust library declares it
-through the builder only.
+~~`#[derive(Record)]` has no attribute for it, so the Rust library declares it
+through the builder only.~~ **Closed** — see
+`2026-09-20-the-attribute-the-builder-already-had.md`.
 
 Nothing measures the cost. Every read of a soft-deleting table carries one
 extra `IsNull` conjunct, and on a table with no partial index the retired rows

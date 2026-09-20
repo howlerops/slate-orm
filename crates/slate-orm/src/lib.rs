@@ -53,6 +53,54 @@ pub use relation::{
 
 /// Derive [`Record`] for a struct. See the crate docs for the attributes.
 ///
+/// # Soft delete
+///
+/// `#[record(soft_delete)]` on a field makes that column the retirement stamp:
+/// a delete writes the clock into it instead of erasing the row, and every
+/// ordinary read hides it thereafter. The column must be a nullable `i64`,
+/// which the schema layer enforces and explains — a non-nullable one has no
+/// value meaning "not deleted", so the table would read as empty.
+///
+/// ```
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "notes", id = 1)]
+/// struct Note {
+///     #[record(pk)]
+///     id: u64,
+///     body: String,
+///     #[record(soft_delete)]
+///     deleted_at: Option<i64>,
+/// }
+///
+/// let table = Note::table();
+/// assert_eq!(table.soft_delete(), table.ordinal_of("deleted_at"));
+/// ```
+///
+/// The attribute is the declaration, not the name: a column called
+/// `deleted_at` without it is an ordinary column, and deletes on that table
+/// erase.
+///
+/// Two of them do not compile. The builder takes one column name and would
+/// keep whichever the macro emitted last, which is a coin toss decided by
+/// field order:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "notes", id = 1)]
+/// struct Note {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(soft_delete)]
+///     deleted_at: Option<i64>,
+///     #[record(soft_delete)]
+///     retired_at: Option<i64>,
+/// }
+/// ```
+///
 /// # Partial indexes
 ///
 /// `only_where(...)` on an index attribute holds a predicate, and the index
