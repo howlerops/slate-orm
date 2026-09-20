@@ -54,9 +54,41 @@ seven ORMs above, `slate-orm` is at or ahead of the field on:
   drifted from the catalog is refused rather than answered from the wrong
   column.
 
-## Missing: the two that matter most
+## ~~Missing: the two that matter most~~ — both built
 
-### 1. Predicate writes — `UPDATE … WHERE` and `DELETE … WHERE`
+> **Both closed, and this section is kept rather than deleted.** The two items
+> below were the audit's headline gaps and are the P1 and P2 of the plan at the
+> end of this file, which marks both **built**. The top of the document went on
+> saying they were missing — so a reader who stopped at the section titled
+> "the two that matter most" was told the product lacks its own predicate
+> writes and its own cross-language relations.
+>
+> The greps each claim names now return the opposite of what the claim says,
+> which is exactly the instruction this file's preamble gives: *"the grep that
+> established each one is named so the next reader can re-run it rather than
+> trust this file — which will go stale, and this paragraph is the instruction
+> for what to do when it has."* Re-run, and the evidence is below each heading.
+>
+> The original text is struck through rather than removed, because what a
+> project judged its two worst gaps — and then closed — is worth more to a
+> reader than a file that has never admitted to one.
+
+### ~~1. Predicate writes — `UPDATE … WHERE` and `DELETE … WHERE`~~ — built
+
+**Now:** `RecordTransaction::delete_where` and `update_where` in
+`crates/slate-kernel/src/record.rs`, `DeleteWhere` and `UpdateWhere` on the
+wire, and all three clients — `delete_where`/`update_where` in Python and
+TypeScript, `predicate_write.go` in Go, and both inside a batch. `update_where`
+takes `(Ordinal, Scalar)` assignments evaluated against the row as it was read,
+so `views = views + 1` is one write rather than the read-modify-write the text
+below complains about. Both take an `at_most` ceiling and refuse past it rather
+than running away. See **P1** at the end of this file.
+
+`grep -rn "fn delete_many\|delete_where" crates/` — the grep the text below
+cites as returning nothing — now returns the kernel method, its callers and its
+tests.
+
+Struck through, original kept:
 
 > **Since this audit was written, this is built in the kernel and the record
 > layer.** The description below is what was found, kept because the reasoning
@@ -88,7 +120,18 @@ policy predicate, and write — inside one transaction, with index maintenance
 per row. That is kernel work, not a convenience wrapper, and doing it in a
 wrapper is exactly the non-atomic version we already have.
 
-### 2. Relations do not cross the wire
+### ~~2. Relations do not cross the wire~~ — built
+
+**Now:** a `Related` RPC in the proto, `related()` in the Python and TypeScript
+clients and `related.go` in Go, plus `through` and nested loading (**N1**). The
+batched load is reachable from all four languages, not only Rust. See **P2**
+and **P4** at the end of this file.
+
+`grep -cin "relat\|preload\|include"` over the proto — cited below as
+returning 1 — now returns the `Related` request, response and relation
+messages.
+
+Struck through, original kept:
 
 **Evidence.** `#[derive(Record)]` accepts `has_many` and `belongs_to` and emits
 a `Related` impl (`crates/slate-derive/src/lib.rs:629`). The proto mentions
@@ -109,7 +152,7 @@ then did not ship it to the three audiences most likely to need it.
 | --- | --- | --- |
 | Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
 | ~~Generated *types* from the catalog~~ | Drizzle, Prisma | **Built** — `scripts/codegen.py` generates both the schema declaration and a typed row per table for all three clients, and CI diffs them. What is still hand-written is the *call*: a query answers `Value`s and the caller passes them to the generated decoder |
-| Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
+| ~~Validations~~ / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | **Half built.** `CHECK` names a column and carries a message (`CheckDef::column`, `CheckDef::message`), `SchemaError::CheckViolation` reports **every** failing check rather than the first, and the whole list reaches all three clients as a typed failure with tests in each (`test_details.py`, `details_test.go`, `details.test.ts`). The three things this row said `CHECK` could not do, it does. What is still absent is *hooks* — before/after callbacks running caller code on a write — and those are designed out in [`validation.md`](validation.md) rather than missing |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
 | ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. `include_deleted`, `purge_deleted` and restoring a retired row are all on the wire behind `read_deleted`. See below |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
