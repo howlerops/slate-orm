@@ -1430,3 +1430,56 @@ async fn a_predicate_that_selects_only_a_live_row_is_the_control() {
         "the same predicate shape does reach a live row"
     );
 }
+
+#[tokio::test]
+async fn without_read_deleted_the_bulk_writes_stay_out_of_reach_too() {
+    // The bulk twin of `without_read_deleted_a_retired_row_stays_out_of_reach`,
+    // and it exists because a mutation survived without it: the grant is read
+    // once per `write_many` call rather than once per row, and setting that one
+    // value to "always reachable" broke nothing. Every bulk test above uses the
+    // superuser, for whom the answer is the same either way.
+    let store = store_granting(&[
+        slate_kernel::Action::Read,
+        slate_kernel::Action::Insert,
+        slate_kernel::Action::Update,
+        slate_kernel::Action::Delete,
+    ]);
+    seeded_for(&store).await; // 1..3, row 2 retired at 5,000
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    // A batch mixing a row they may write with the retired one, so a fix that
+    // only looked at single-row batches would not pass either.
+    let batch = [doc(1, "theirs"), doc(2, "not theirs")];
+
+    let refused = txn
+        .update_many(&reader(), table, &batch)
+        .await
+        .expect_err("the retired row is not theirs to overwrite");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowNotFound { .. }),
+        "{refused:?}"
+    );
+    let refused = txn
+        .upsert_many(&reader(), table, &batch)
+        .await
+        .expect_err("nor by way of an upsert");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowNotFound { .. }),
+        "{refused:?}"
+    );
+    let taken = txn
+        .insert_many(&reader(), table, &batch)
+        .await
+        .expect_err("and the key is still occupied");
+    assert!(
+        matches!(taken, slate_kernel::KernelError::DuplicatePrimaryKey { .. }),
+        "{taken:?}"
+    );
+    drop(txn);
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)],
+        "and row 1, which they may write, was not written either"
+    );
+}

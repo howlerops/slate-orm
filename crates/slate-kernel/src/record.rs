@@ -1450,6 +1450,12 @@ impl<'a> RecordTransaction<'a> {
             parents.extend(primary_keys.iter().map(|key| keys::row_key(table, key)));
         }
 
+        // Asked once. It depends on the caller and the table and on nothing
+        // that varies per row, so computing it inside the loop below is work
+        // that cannot change an answer — and a thousand-row upsert would ask
+        // it a thousand times.
+        let retired = self.retired_rows_reachable(context, table);
+
         // Everything about every row is decided before any of it is written.
         // A check that failed halfway would leave a prefix of the batch
         // buffered, and a caller that committed anyway — having seen the error
@@ -1493,7 +1499,7 @@ impl<'a> RecordTransaction<'a> {
                         table,
                         Action::Update,
                         current,
-                        self.retired_rows_reachable(context, table),
+                        retired,
                     )? {
                         return Err(KernelError::RowNotFound {
                             table: table.name().to_owned(),

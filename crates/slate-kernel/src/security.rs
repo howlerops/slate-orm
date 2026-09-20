@@ -403,15 +403,7 @@ impl SecurityCatalog {
         table: &TableDef,
         action: Action,
     ) -> crate::Result<()> {
-        if context.is_superuser() {
-            return Ok(());
-        }
-        let permitted = self.grants.iter().any(|g| {
-            g.table == table.id()
-                && g.actions.contains(&action)
-                && context.principal.roles.contains(&g.role)
-        });
-        if permitted {
+        if self.grants(context, table, action) {
             Ok(())
         } else {
             Err(KernelError::AccessDenied {
@@ -424,13 +416,21 @@ impl SecurityCatalog {
     /// Whether `context` holds `action` on `table`, as a question rather than
     /// a refusal.
     ///
-    /// [`authorize`](Self::authorize) is the same test and is what every path
-    /// that *requires* a grant calls; this is for the one place that has to
-    /// branch on a grant rather than demand it — whether a write may reach a
-    /// row a soft delete retired.
+    /// The primitive, with [`authorize`](Self::authorize) as the refusal built
+    /// on top rather than the other way round. That direction matters: a
+    /// `grants` written as `authorize(..).is_ok()` builds and throws away an
+    /// `AccessDenied` — two `String` allocations — every time the answer is
+    /// *no*, which is the common answer on the path that asks. Asking has one
+    /// caller today, whether a write may reach a row a soft delete retired,
+    /// and that caller is on a bulk write path.
     #[must_use]
     pub fn grants(&self, context: &SecurityContext, table: &TableDef, action: Action) -> bool {
-        self.authorize(context, table, action).is_ok()
+        context.is_superuser()
+            || self.grants.iter().any(|g| {
+                g.table == table.id()
+                    && g.actions.contains(&action)
+                    && context.principal.roles.contains(&g.role)
+            })
     }
 
     /// The mandatory predicate for `context` on `table` and `action`.
