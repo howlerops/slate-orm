@@ -61,7 +61,8 @@ stopped being true.
 
 `"dialect": "python"` reads the `ok    name` / `FAIL  name` / `N passed, M
 failed` output of this repository's own `scripts/test_*.py` guards instead of
-libtest's. It defaults to `"rust"`.
+libtest's; `"pytest"` reads pytest's, for `clients/python`. It defaults to
+`"rust"`.
 """
 
 from __future__ import annotations
@@ -98,6 +99,19 @@ DIALECTS = {
     "python": (
         re.compile(r"^FAIL\s+(.+?)\s*$", re.MULTILINE),
         re.compile(r"^\d+ passed, \d+ failed\s*$", re.MULTILINE),
+    ),
+    # pytest, which `clients/python` uses and the house style does not match:
+    # `FAILED path::name - reason` in the short summary, and a closing
+    # `4 passed in 0.01s` or `1 failed, 3 passed in 0.02s`.
+    #
+    # Added because pointing this script at the Python client produced
+    # `the command reported no test results at all` — which is the second
+    # failure mode in the docstring above, met while using the tool written
+    # for it. The alternative was reading `4 passed` as a clean run under the
+    # `python` dialect, which would have scored a real mutation as a survivor.
+    "pytest": (
+        re.compile(r"^FAILED (\S+)", re.MULTILINE),
+        re.compile(r"^\d+ (?:passed|failed|error)", re.MULTILINE),
     ),
 }
 

@@ -42,6 +42,20 @@ else:
 '''
 
 
+#: The same stand-in, speaking pytest. `-q` prints `FAILED path::name` in the
+#: short summary and a closing `N passed in Xs` — neither of which the other
+#: two dialects match, which is the whole reason this one exists.
+PYTEST_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "MUTATED" in text:
+    print("FAILED tests/t.py::a_named_test - AssertionError")
+    print("1 failed, 0 passed in 0.01s")
+else:
+    print("1 passed in 0.01s")
+'''
+
+
 def run(spec: str, subject: Path, fake: Path) -> tuple[int, str]:
     """`mutate.py` over `spec`, with its command pointed at the fake."""
     finished = subprocess.run(
@@ -61,8 +75,12 @@ def case(name: str, body: str, expect_code: int, expect_text: list[str]) -> bool
         subject.write_text("ORIGINAL\n")
         fake = home / "fake.py"
         fake.write_text(FAKE)
-        spec = body.replace("__SUBJECT__", str(subject)).replace(
-            "__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"'
+        pytest_fake = home / "pytest_fake.py"
+        pytest_fake.write_text(PYTEST_FAKE)
+        spec = (
+            body.replace("__SUBJECT__", str(subject))
+            .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
+            .replace("__PYTEST__", f'"{sys.executable}", "{pytest_fake}", "{subject}"')
         )
         code, output = run(spec, subject, fake)
         problems = []
@@ -225,6 +243,27 @@ def main() -> int:
             ),
             1,
             ["was CAUGHT", "stopped being true"],
+        ),
+        case(
+            "a pytest failure is read through the pytest dialect",
+            # Three dialects and one of them silently misreading the others'
+            # output is the failure this script exists to stop, so each is
+            # exercised against output shaped like the real thing.
+            '{"file": "__SUBJECT__", "command": [__PYTEST__], "dialect": "pytest",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "tests/t.py::a_named_test"],
+        ),
+        case(
+            "a pytest run that reports nothing is not a clean pass",
+            # The case that produced this dialect: pytest's `4 passed in 0.01s`
+            # matches neither of the other two, so reading it under the wrong
+            # one reports zero suites — which is right, and reading it as clean
+            # would not be.
+            '{"file": "__SUBJECT__", "command": [__PYTEST__], "dialect": "python",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            1,
+            ["reported no test results at all"],
         ),
         case_fresh_bytecode(),
     ]

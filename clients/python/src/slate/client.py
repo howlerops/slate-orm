@@ -132,8 +132,35 @@ class Identity:
     def metadata(self) -> tuple[tuple[str, str], ...]:
         return self._metadata
 
+    #: The keys whose *values* this class prints.
+    #:
+    #: The caller's own principal, tenant and roles: not secrets, and the three
+    #: things anybody debugging an identity wants to see. Everything else is
+    #: `extra`, which the docstring above says carries "a bearer token, a mesh
+    #: header" — so its value is redacted and its key is not.
+    #:
+    #: Keeping the key matters as much as dropping the value. "Is my
+    #: `authorization` header set at all" is the question a caller actually
+    #: has, and a repr that hid the whole entry would answer it wrongly while
+    #: looking tidy.
+    _PRINTABLE: Final = frozenset({PRINCIPAL_KEY, TENANT_KEY, ROLES_KEY})
+
     def __repr__(self) -> str:
-        return f"Identity({dict(self._metadata)!r})"
+        """Identity keys in full, everything else redacted.
+
+        This printed the whole metadata dict, including `extra`, and a `repr`
+        reaches further than it looks: a traceback that formats locals, a log
+        line, a debugger, an assertion failure. A bearer token in any of those
+        is a credential in a place nobody classified as sensitive — which is
+        the exact reasoning `slate-serverd`'s `TokenIdentity` and
+        `slate-slatedb`'s `Credentials` both redact for, on the other end of
+        the same wire.
+        """
+        shown = {
+            key: value if key in self._PRINTABLE else "<redacted>"
+            for key, value in self._metadata
+        }
+        return f"Identity({shown!r})"
 
 
 class BatchOutcome:

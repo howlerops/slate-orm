@@ -1,16 +1,16 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2, 3, 5, 6, 7, 8 and 9 are
-> fixed and their probes now assert the refusal. 4 is closed as inherent, with
+> **Status, later the same session.** Findings 1, 2, 3, 5, 6, 7, 8, 9 and 10
+> are fixed and their probes now assert the refusal. 4 is closed as inherent, with
 > the claim it contradicted narrowed to the truth and one correction to the
 > finding itself: `upsert` leaks the same bit as `insert`, which this document
 > originally said it did not. Each finding carries
 > its own status line below. The fixes are in the commits that reference this
 > file.
 >
-> **Finding 9 was found after this review, by working its own list of areas it
-> did not examine.** That list is the most useful paragraph in the document and
-> it is at the end, under "Not examined in depth".
+> **Findings 9 and 10 were found after this review, by working its own list of
+> areas it did not examine.** That list is the most useful paragraph in the
+> document and it is at the end, under "Not examined in depth".
 
 An adversarial end-to-end review of the authentication, RBAC, row-level
 security, tenant isolation, wire protocol and configuration surfaces, done as
@@ -649,6 +649,44 @@ is the refusal, with an ordinary read beside it as the control.
 
 ---
 
+## 10. The Python client prints a bearer token in an `Identity`'s `repr`
+
+**Status: FIXED.** Identity keys print in full; every other value is
+`<redacted>` and its key is kept.
+
+**Impact: medium — a caller's own credential into a traceback, a log line or a
+debugger.**
+`clients/python/src/slate/client.py`, `Identity.__repr__`.
+
+`Identity.extra` is this client's only way to authenticate against a
+deployment not using the shipped `MetadataIdentity`, and its docstring says so:
+it "carries anything else — **a bearer token**, a mesh header". The `repr`
+printed the whole metadata dict:
+
+```
+Identity({'slate-principal': 'u64:1', 'slate-tenant': 'u64:2',
+          'slate-roles': 'app', 'authorization': 'Bearer zzSECRETzz…'})
+```
+
+A `repr` reaches further than it looks: a traceback that formats locals, a
+structured log, a debugger, a failed assertion. This is the same hazard
+`slate-serverd`'s `TokenIdentity` and `slate-slatedb`'s `Credentials` both
+hand-write a redacting `Debug` for — **the server end of this wire redacts the
+token and the client end printed it.**
+
+**Only Python.** The Go and TypeScript `Identity` types carry principal, tenant
+and roles and nothing else, so neither can hold a credential and neither has a
+formatter to leak one. Python's `extra` is the only first-class place a
+credential lives in any of the three clients, and it was the one that printed
+it. The asymmetry was checked rather than assumed.
+
+The fix keeps each `extra` key and redacts its value, because "is my
+`authorization` header set at all" is the question a caller debugging this
+actually has, and hiding the whole entry would answer it wrongly while looking
+tidy. `clients/python/tests/test_identity_repr.py`, four cases.
+
+---
+
 ## Probed and clean
 
 These were attacked deliberately and did not yield. Listing them so the next
@@ -747,9 +785,16 @@ absent for them, and the grant is required too.
 
 **Not examined in depth**, and therefore not cleared: ~~the lease and leadership
 protocol (`lease.rs`, `leadership.rs`, `filelease.rs`), the S3 backend and its
-credential handling (`slate-slatedb`),~~ the Python client, ~~and the tuple
+credential handling (`slate-slatedb`), the Python client, and the tuple
 codec's behaviour on adversarial encoded input beyond the existing
 `slate-tuple/tests/untrusted.rs`.~~
+
+**All four are now worked, and the paragraph has earned its keep three times.**
+It produced finding 9 (the leadership RPC answering unauthenticated), finding
+10 (the Python client printing a bearer token), a coverage gap in the tuple
+codec's fuzzer, and two weak redaction tests. Three of the four rows turned up
+something; the S3 row turned up no defect. A list of what a review did **not**
+do is worth more than another paragraph about what it did.
 
 The tuple codec row turned up **no defect and one coverage gap**: the suite's
 list of types to fuzz had eight of `ValueType`'s nine, because `Decimal`
@@ -855,12 +900,4 @@ down rather than assumed:
 | 4 | n/a | closed as inherent; the bound it relies on is corrected in `security.rs` |
 | 5 | shares finding 1's fix | both constructors refuse the edge |
 | 6 | `TokenIdentity` | fixed; roster of every `Authenticator`, statically checked |
-| 7 | grouped join, grouped chain | fixed; defaults asserted non-unbounded |
-| 8 | four more handlers | fixed; `scripts/check_handlers.py` rules 1–3 |
-
-**3 and 4 are the honest weak rows.** Neither turned up a second path, and
-neither was proved not to have one — they were enumerated by reading the
-callers and the wire surface, which is the method that failed five times
-above. What is different is that the enumeration is small and written down
-here, so a reader can check it; the ones that failed were never written down at
-all.
+| 7 | groupe
