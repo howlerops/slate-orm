@@ -74,6 +74,24 @@ pub enum Value {
     /// computed per row, and nearest-neighbour search is `ORDER BY` that with
     /// a `LIMIT`.
     Vector(Vec<f32>),
+    /// A homogeneous list, ordered element-wise with a shorter list first.
+    ///
+    /// The element type lives on the column, not in this variant, for the same
+    /// reason a decimal's scale does: [`ValueType`] is fieldless, `Copy` and
+    /// `const`-matchable, and an `Array(Box<ValueType>)` would cost all three
+    /// to describe one column. `docs/arrays.md` works that trade through.
+    ///
+    /// Ordering is `[1] < [1, 2] < [2]` — lexicographic, shorter-is-less —
+    /// which is what an *ordered key* has to give and what a length-prefixed
+    /// encoding gets backwards. The codec earns it with a terminator rather
+    /// than a count; see `codec`'s module docs.
+    ///
+    /// **Arrays do not nest, in this version.** Not because the encoding
+    /// cannot — it recurses naturally — but because [`ValueType::Array`]
+    /// cannot name an inner element type, so a nested array is a value the
+    /// schema cannot describe, and because depth would then be an input the
+    /// caller chooses. The decoder refuses one rather than bounding it.
+    Array(Vec<Value>),
 }
 
 /// The type tag of a [`Value`], used to drive schema-directed decoding.
@@ -98,6 +116,8 @@ pub enum ValueType {
     Uuid,
     /// See [`Value::Vector`].
     Vector,
+    /// See [`Value::Array`]. The element type is declared on the column.
+    Array,
 }
 
 impl ValueType {
@@ -114,7 +134,7 @@ impl ValueType {
     /// wildcard and the wildcard is the hole. Inside the crate it can, which
     /// is why this list and the test that pins it live here rather than beside
     /// the fuzzer that needed them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Bool,
         Self::Bytes,
         Self::Str,
@@ -124,6 +144,7 @@ impl ValueType {
         Self::Decimal,
         Self::Uuid,
         Self::Vector,
+        Self::Array,
     ];
 
     /// A human-readable name, used in error messages.
@@ -139,6 +160,7 @@ impl ValueType {
             Self::Decimal => "decimal",
             Self::Uuid => "uuid",
             Self::Vector => "vector",
+            Self::Array => "array",
         }
     }
 }
@@ -167,6 +189,7 @@ impl Value {
             Self::Decimal(_) => Some(ValueType::Decimal),
             Self::Uuid(_) => Some(ValueType::Uuid),
             Self::Vector(_) => Some(ValueType::Vector),
+            Self::Array(_) => Some(ValueType::Array),
         }
     }
 
@@ -301,7 +324,8 @@ impl Value {
     /// Rank of the value's *class* in the cross-type order.
     ///
     /// Mirrors the ordering of the type codes emitted by the codec:
-    /// null < bool < bytes < string < integer < decimal < double < uuid.
+    /// null < bool < bytes < string < integer < decimal < double < uuid <
+    /// vector < array.
     /// Signed and unsigned integers share a rank because they share an encoding.
     ///
     /// A decimal gets a rank of its own rather than sharing the integers'. It
@@ -320,6 +344,7 @@ impl Value {
             Self::F64(_) => 6,
             Self::Uuid(_) => 7,
             Self::Vector(_) => 8,
+            Self::Array(_) => 9,
         }
     }
 
@@ -362,6 +387,13 @@ impl Ord for Value {
                 }
                 Ordering::Equal
             }),
+            // `Vec<Value>`'s own ordering, which is lexicographic with a
+            // shorter list first — exactly what the encoding's terminator
+            // gives, and the reason the terminator was chosen over a count.
+            // Written as a delegation rather than a hand-rolled loop because a
+            // hand-rolled one is where the two could drift apart, and the
+            // ordering oracle would then be checking a copy of the bug.
+            (Self::Array(a), Self::Array(b)) => a.cmp(b),
             // NaN is canonicalised on encode, so all NaNs are one value here.
             (Self::F64(a), Self::F64(b)) => match (a.is_nan(), b.is_nan()) {
                 (true, true) => Ordering::Equal,
@@ -451,13 +483,36 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 }
 
 #[cfg(test)]
+// Both guards report a collision by naming the two types that collided, which
+// reads better as a `panic!` than as an `assert!` over an `Option`.
+#[allow(clippy::panic)]
 mod value_type_tests {
     use super::ValueType;
+
+    /// Each type prints as itself, and no two print alike.
+    ///
+    /// `name` feeds `TypeMismatch`, which reads "expected {expected}, found
+    /// {found}" — two types sharing a name turn that into "expected vector,
+    /// found vector", which is a message that cannot be acted on. Nothing
+    /// tested `name` at all, for any type, until a mutation renaming `Array`
+    /// to `"vector"` survived the whole suite.
+    #[test]
+    fn every_type_has_a_name_of_its_own() {
+        let mut seen: std::collections::BTreeMap<&str, ValueType> =
+            std::collections::BTreeMap::new();
+        for kind in ValueType::ALL {
+            let name = kind.name();
+            assert!(!name.is_empty(), "{kind:?} has no name");
+            if let Some(clash) = seen.insert(name, kind) {
+                panic!("{kind:?} and {clash:?} both print as {name:?}");
+            }
+        }
+    }
 
     /// `ALL` lists every variant, held to the enum by the compiler.
     ///
     /// The `match` is exhaustive and wildcard-free, which is only possible in
-    /// the crate that defines a `#[non_exhaustive]` enum. A tenth variant
+    /// the crate that defines a `#[non_exhaustive]` enum. An eleventh variant
     /// stops this compiling, naming this test, before any suite goes quietly
     /// one type short.
     #[test]
@@ -473,6 +528,7 @@ mod value_type_tests {
                 ValueType::Decimal => 6,
                 ValueType::Uuid => 7,
                 ValueType::Vector => 8,
+                ValueType::Array => 9,
             }
         }
 

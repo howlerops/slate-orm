@@ -10,3 +10,7 @@ cc e75384d39d1af8fb20e217f9ada97cce18b30de7a722fe6700776cfec0063ab8 # shrinks to
 cc 8935f1ce0a1e4c17e1c957b7656d248f25203a8fb7d4a133ab6030b3306ee0fa # shrinks to a = Decimal(0), b = Decimal(-1)
 cc 94b9e0ad7ae7a999a2b920806b7153ee29ff4b86dd7b9706e1ec243343a41b78 # shrinks to (a, dirs_a) = ([I64(0), Null], [Desc, Asc]), (b, _dirs_b) = ([Decimal(-9223372036854775808), Null], [Asc, Asc])
 cc d6b0f564d085e58b1310bac4cda093de25e94aa9d96469ab733bcb0922fa287a # shrinks to a = I64(0), b = Decimal(-9223372036854775808)
+cc bbd2e5d89eb84b0515c8851a288c0c70bead81b68c79c653f2214a2d2a600f8f # shrinks to idx = [Array([])], pk = []
+cc 6e32274b1e40e1da77bb55f8a4707af4d9c57c9d4c3e58c61ff8b2c6e9ffa7f9 # shrinks to (a, dirs_a) = ([Array([U64(5119219903745877724)])], [Asc]), (b, _dirs_b) = ([Array([Null, Null])], [Asc])
+cc 89fb9d0347e90f9efc1eb29b2686e2d095925c41ec881cf53fd9d0c11570c763 # shrinks to (a, dirs_a) = ([Array([])], [Asc]), (b, _dirs_b) = ([Array([Null])], [Asc])
+cc ccf267cfebc4235d2375f2cb883e753b00b4e9c54c29728abfa5ad03a78a3f37 # shrinks to (a, dirs_a) = ([Array([]), Bytes(b"")], [Desc, Asc]), (b, _dirs_b) = ([Vector([]), Null], [Asc, Asc])

@@ -331,6 +331,8 @@ const fn type_code(ty: ValueType) -> u64 {
         // — the arm keeps that from being a *wrong* answer, and this line
         // keeps it from being the answer at all.
         ValueType::Decimal => 9,
+        // Added when `Value::Array` was, for the reason above.
+        ValueType::Array => 10,
         // `ValueType` is `#[non_exhaustive]`, so a new variant compiles here
         // rather than failing. It must not silently take an existing code: a
         // column of the new type would then fingerprint identically to one of
@@ -803,6 +805,45 @@ async fn drop_entries<S: KvStore + ?Sized>(store: &S, index: IndexId) -> Result<
         txn.commit().await?;
         if batch < BACKFILL_BATCH {
             return Ok(());
+        }
+    }
+}
+
+#[cfg(test)]
+// A guard test that reports a collision by name, which reads better as a
+// `panic!` than as an `assert!` over an `Option`.
+#[allow(clippy::panic)]
+mod type_code_tests {
+    use super::type_code;
+    use slate_tuple::ValueType;
+
+    /// Every type has a code of its own, and none of them is the unknown one.
+    ///
+    /// The distinctness half is also checked through `fingerprint` by
+    /// `every_value_type_fingerprints_apart` in `tests/migrations.rs`, which is
+    /// the property a caller sees. This one exists because that test cannot see
+    /// the other half: with a single type falling through to `_ => 0`, code 0
+    /// is *unique* and no two fingerprints collide, so the integration test
+    /// passes and the trap is armed — the harm arrives with the second
+    /// fallthrough, by which time the first is deployed. A mutation deleting
+    /// `ValueType::Array`'s arm survived it, which is how this was found.
+    ///
+    /// `type_code` is private, so this has to live beside it rather than with
+    /// the other fingerprint tests.
+    #[test]
+    fn every_type_has_its_own_non_zero_code() {
+        let mut seen: std::collections::BTreeMap<u64, ValueType> =
+            std::collections::BTreeMap::new();
+        for kind in ValueType::ALL {
+            let code = type_code(kind);
+            assert_ne!(
+                code, 0,
+                "{kind} falls through to the unknown code; give it an arm in \
+                 type_code, and pick a number no other type uses"
+            );
+            if let Some(clash) = seen.insert(code, kind) {
+                panic!("{kind} and {clash} share fingerprint code {code}");
+            }
         }
     }
 }

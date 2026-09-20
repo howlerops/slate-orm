@@ -653,6 +653,45 @@ async fn an_unreadable_state_record_is_a_refusal_naming_the_table() {
     );
 }
 
+/// Every `ValueType` fingerprints differently from every other.
+///
+/// `type_code` is written out by hand precisely so that a type cannot be
+/// renumbered by accident, and it ends in `_ => 0` so a variant added upstream
+/// compiles. That arm is deliberate and it is also a trap: a type nobody adds
+/// a line for takes code 0, and 0 is shared, so two such columns fingerprint
+/// identically and a migration between them is invisible. Nothing checked
+/// that, because until `ValueType::ALL` existed there was no way to loop over
+/// the type space — a test naming nine types by hand would have gone stale
+/// exactly the way the thing it was checking does.
+///
+/// Through `fingerprint` rather than `type_code`, which is private: the
+/// property that matters is that two schemas differing only in a column's type
+/// hash apart, and that is what a caller sees.
+#[test]
+fn every_value_type_fingerprints_apart() {
+    let mut seen: std::collections::BTreeMap<u64, ValueType> = std::collections::BTreeMap::new();
+    for kind in ValueType::ALL {
+        let table = TableDef::builder("t", USERS)
+            .column("id", ValueType::U64)
+            .column("v", kind)
+            .primary_key(["id"])
+            .build()
+            .unwrap_or_else(|e| panic!("a table with a {kind} column should build: {e}"));
+        let hash = migrate::fingerprint(&table);
+        if let Some(clash) = seen.insert(hash, kind) {
+            panic!(
+                "a {kind} column and a {clash} column fingerprint identically \
+                 ({hash:#x}); give {kind} its own arm in type_code"
+            );
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        ValueType::ALL.len(),
+        "one fingerprint per type, and no type skipped"
+    );
+}
+
 #[test]
 fn the_fingerprint_ignores_names_and_notices_layout() {
     let base = users(false);
