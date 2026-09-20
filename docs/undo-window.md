@@ -95,9 +95,18 @@ Getting there needs one of:
   the one reason to revisit it.
 - **Noticing the transition server-side.** `write_many` already reads the
   previous row, so "the stamp went from set to null" is known where the write
-  happens. Counting it — `slate_rows_written_total{statement="restore"}` — is
-  small. A full audit trail with the principal and a reason is not, and is a
-  different feature from a counter.
+  happens — but **not where the counter is**. `WriteObserver` lives in
+  `slate-server` and is fed by a `Tally` that names statements from the
+  daemon's own arms: it knows `update`, and it cannot know that a particular
+  update cleared a stamp. Surfacing it means the kernel returning the count —
+  `write_many` is `Result<()>`, as are `insert_many`, `upsert_many` and
+  `update_many` — which is a public API change in `slate-orm` and a change in
+  `slate-server` to carry it. Not the one-line counter it looks like.
+
+  (An earlier draft of this note called it "small". That was written without
+  checking which crate the observer is in, and it is wrong: a restore counter
+  is a two-crate change. A full audit trail with the principal and a reason is
+  a further step again.)
 
 ## What this system does not have, in any of the three
 

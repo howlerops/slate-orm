@@ -99,10 +99,9 @@ deployment reaching for it has to build its own `Catalog` and
 the note says plainly and which nothing in this change improves.
 
 **No audit trail, not even the cheap half.** Counting restores —
-`slate_rows_written_total{statement="restore"}` — is small and is described in
-the note rather than built, because a counter that says "three restores
-happened" without saying by whom is the shape of metric that gets mistaken for
-an audit trail.
+`slate_rows_written_total{statement="restore"}` — is described in the note
+rather than built. The note first called that counter "small"; it is not, and
+`ledger/2026-09-20-the-counter-that-is-not-one-line.md` records why.
 
 **The note is one person's reading of three options.** It has no user research
 behind it, no survey of what comparable systems do — `docs/orm-comparison.md`
