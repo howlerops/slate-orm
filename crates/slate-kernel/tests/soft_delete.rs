@@ -1595,6 +1595,110 @@ async fn the_partial_index_holds_a_live_child_and_drops_a_retired_one() {
 }
 
 #[tokio::test]
+async fn a_purge_does_not_conflict_with_the_writer_that_took_the_freed_slot() {
+    // `erase_row` deletes an index entry only for an index that `admits` the
+    // row, and `write_row_with` states the harm that filter prevents:
+    //
+    // > The delete would be harmless in itself and is not harmless in a
+    // > transaction: it writes the key, and so conflicts with any concurrent
+    // > writer of the row that really does own that slot.
+    //
+    // A purge is where that bites hardest, because *every* row it touches is
+    // retired and so outside a partial index on `deleted_at IS NULL` — and
+    // `a_purged_row_takes_its_index_entries_with_it` runs against a table
+    // whose index does hold the row, exercising the other branch.
+    //
+    // **The shape took two wrong drafts and both are worth recording.** The
+    // first asserted that no stray index key was left in the backend; deleting
+    // a key that was never written leaves nothing to count, so the mutation
+    // passed. The second used two overlapping transactions over a *non-unique*
+    // index; its entry key carries the primary key, so two rows never share
+    // one and there was nothing to collide over. It needs a **unique** partial
+    // index, where the key is the indexed value alone — the slot one row frees
+    // by being retired and another then takes.
+    let table = TableDef::builder("notes", NOTES)
+        .column("id", ValueType::U64)
+        .column("slug", ValueType::Str)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .index(
+            IndexDef::builder("live_slug", slate_schema::IndexId(1))
+                .column("slug")
+                .unique()
+                .only_where(slate_kernel::Expr::IsNull {
+                    column: slate_schema::Ordinal(2),
+                    negated: false,
+                }),
+        )
+        .build()
+        .expect("a valid table");
+    let clock = Arc::new(FixedClock::at(1_000));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([table]).expect("a catalog"),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+    let row = |id: u64| {
+        Row::new(vec![
+            Value::U64(id),
+            Value::Str("x".to_owned()),
+            Value::Null,
+        ])
+    };
+
+    let txn = store.begin().await.expect("a transaction");
+    let notes = txn.catalog().table_by_name("notes").expect("notes");
+    txn.insert(&root(), notes, &row(1)).await.expect("insert");
+    txn.delete(&root(), notes, &[Value::U64(1)])
+        .await
+        .expect("retire 1, which frees the slug");
+    txn.commit().await.expect("commit");
+
+    clock.set(9_000);
+    let purge = store.begin().await.expect("the purge's transaction");
+    let writer = store.begin().await.expect("an overlapping writer");
+
+    // The writer takes the freed slot. Its index key is the slug alone, which
+    // is exactly the key the purge would write a delete for if `erase_row` did
+    // not skip an index that does not hold the row.
+    let notes = writer.catalog().table_by_name("notes").expect("notes");
+    writer
+        .insert(&root(), notes, &row(2))
+        .await
+        .expect("2 takes the slug 1 freed");
+
+    let notes = purge.catalog().table_by_name("notes").expect("notes");
+    assert_eq!(
+        purge
+            .purge_deleted(&root(), notes, 9_000, None)
+            .await
+            .expect("purge"),
+        1
+    );
+
+    purge.commit().await.expect("the purge commits");
+    writer
+        .commit()
+        .await
+        .expect("a purge must not conflict over a slot its row had already left");
+
+    let txn = store.begin().await.expect("a transaction");
+    let notes = txn.catalog().table_by_name("notes").expect("notes");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&root(), notes, &query)
+        .await
+        .expect("query")
+        .collect()
+        .await
+        .expect("rows");
+    assert_eq!(rows.len(), 1, "1 was erased and 2 survived");
+}
+
+#[tokio::test]
 async fn a_cascade_edge_over_the_same_index_still_retires_the_live_child() {
     // The symmetric half of the test below, and the arm where a partial index
     // on `deleted_at IS NULL` *is* implied by the filter and may well be
