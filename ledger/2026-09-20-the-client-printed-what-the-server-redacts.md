@@ -131,7 +131,16 @@ should also refuse to send an `authorization` header over an insecure channel
 is a real question and I did not answer it — it would need a way to ask a
 `grpc.Channel` whether it is secure, which the API does not obviously offer.
 
-**Go and TypeScript were read, not tested.** Their `Identity` types cannot
+~~**Go and TypeScript were read, not tested.** Their `Identity` types cannot
 carry a credential today. Nothing stops one gaining an `extra` field tomorrow,
-and there is no check across the three clients for this property — the
+and there is no check across the three clients for this property~~ — the
 three-SDK conformance runner compares behaviour, not formatting.
+
+> **Closed in the next commit.** `scripts/check_client_identity.py` fails if
+> either client's `Identity` declares a member beyond principal, tenant and
+> roles: a new member is a new metadata slot, and a metadata slot is where a
+> credential goes. It does not make a fourth member illegal, it makes it a
+> decision. What remains true is the last clause: the conformance runner still
+> compares behaviour rather than formatting, so this is a check over
+> declarations and not a test of what the clients print. See
+> `2026-09-20-a-fourth-identity-member-is-a-decision.md`.

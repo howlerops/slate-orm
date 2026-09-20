@@ -137,11 +137,17 @@ tomorrow gets no test and nothing will say so. I argued above against building
 a script for it; that argument is a judgement about cost, not a claim that the
 gap is closed.
 
-**Three of the four unexamined areas are still unexamined.** The review names
+~~**Three of the four unexamined areas are still unexamined.** The review names
 the lease and leadership protocol, the Python client, and the tuple codec on
-adversarial input beyond `untrusted.rs`. This entry covers the S3 backend's
+adversarial input beyond `untrusted.rs`.~~ This entry covers the S3 backend's
 credential handling and nothing else, and even there it covers the credentials
 rather than the backend.
+
+> **All four are worked, later the same day**, and the other three turned up
+> more than this one did: the leadership RPC answering unauthenticated
+> (finding 9), the Python client printing a bearer token (finding 10), and a
+> type the tuple codec's fuzzer had never generated. The S3 row is the only
+> one that found no defect.
 
 **The `access_key_id` is printed deliberately and I did not re-derive that.**
 AWS treats a key id as an identifier rather than a secret, the existing test

@@ -144,5 +144,10 @@ it.** It is now behind authentication, so the question is what one authenticated
 tenant learns about the node's internals rather than what a stranger does — a
 smaller question, and still one I have not answered.
 
-**Two of the review's four areas remain**: the Python client, and the tuple
-codec on adversarial encoded input beyond `slate-tuple/tests/untrusted.rs`.
+~~**Two of the review's four areas remain**: the Python client, and the tuple
+codec on adversarial encoded input beyond `slate-tuple/tests/untrusted.rs`.~~
+
+> **Both done, later the same day.** The Python client produced finding 10 —
+> `Identity.__repr__` printing the bearer token the server end redacts — and
+> the tuple codec produced a coverage gap and no defect. All four rows of the
+> review's list are now struck through.

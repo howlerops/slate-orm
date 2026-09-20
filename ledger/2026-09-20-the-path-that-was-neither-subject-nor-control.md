@@ -173,11 +173,17 @@ not be rostered. That would be a strange thing to do — index maintenance lives
 in `write_row_with` — but it is the gap, and the never-fires branch only
 catches the case where *all* of them stop matching.
 
-**Findings 3, 5, 6, 7 and 8 were not re-examined here.** The caveat asked about
-2 through 8 and this closes 2. 1 and 6 were done earlier today, and 8 has a
-guard as of an hour ago. 3, 5 and 7 remain judged rather than probed for this
+~~**Findings 3, 5, 6, 7 and 8 were not re-examined here.** The caveat asked
+about 2 through 8 and this closes 2. 1 and 6 were done earlier today, and 8 has
+a guard as of an hour ago. 3, 5 and 7 remain judged rather than probed for this
 particular class, and I am recording that rather than implying a sweep I did
-not run.
+not run.~~
+
+> **Done in the next commit.** `2026-09-20-where-else-does-this-live.md` asks
+> the question of every finding and records the answer per row in
+> `docs/security-review.md`. 3 and 5 turned up no second path; 3 and 4 are
+> marked there as enumerated by reading rather than probed, which is the part
+> of that sweep still worth distrusting.
 
 **The performance cost of the extra check was not measured.** `upsert` now runs
 `check_row` on every call, including ones that would have passed anyway. It is
