@@ -501,12 +501,39 @@ regardless.
 
 ## 8. Schema disclosure to an authenticated caller with no grant
 
-**Status: FIXED for the shape; table existence is disclosed deliberately.**
-The four handlers that fingerprint-check now authorise first, via
+**Status: FIXED for the shape, twice; table existence is disclosed
+deliberately.** The handlers that fingerprint-check authorise first, via
 `Head::authorized_table`, so a caller with no grant is refused before the
 fingerprint runs and a right guess is indistinguishable from a wrong one —
 same code, same message. `a_caller_with_no_grant_cannot_confirm_a_tables_shape`
-asserts both.
+asserts both. Every `fingerprint::check` in `service.rs` is still immediately
+preceded by an `authorized_table`, which is worth re-checking when a handler is
+added: the fix was written for four of them and there are fourteen now.
+
+**The second time was the read paths, which the first fix did not cover, and
+where the disclosure was larger.** `query`, `explain` and `related` resolved
+their table with the bare resolver and then converted the request — and
+converting is schema-dependent, because a `ColumnRef` names an index into a
+table whose width "only the server knows". So a caller holding no grant at all
+on `users` got:
+
+```
+the projection names column 99 of table `users`, which has 4 columns
+```
+
+Not a bit per request, as the fingerprint channel was: the exact column count,
+in one request, from a role granted nothing. `related` gave up foreign keys the
+same way — `resolve_relation` refuses an unknown key by listing the ones that
+exist. All three now authorise before converting, asserted by
+`a_caller_with_no_grant_cannot_probe_a_tables_width`,
+`explaining_does_not_leak_a_tables_width_either` and
+`loading_does_not_leak_a_tables_foreign_keys`.
+
+`explain` authorises `Action::Explain` rather than `Read` because that is what
+the kernel checks *first* — it checks both — so the refusal a caller holding
+neither receives names the same action it would have named before. That is the
+hazard the fixture below exists for, and the test asserts the action in the
+message: without that assertion, swapping the two is unobservable.
 
 Table *existence* still differs: an unknown name answers `NOT_FOUND`, a known
 one with no grant answers `PERMISSION_DENIED`. Kept, and the same choice
@@ -523,7 +550,7 @@ role holding exactly the one action it needs.
 **Impact: low.** `crates/slate-server/src/service.rs`,
 `crates/slate-server/src/fingerprint.rs`.
 
-Handlers resolve the table (`NOT_FOUND` for an unknown name) and run
+Handlers resolved the table (`NOT_FOUND` for an unknown name) and ran
 `fingerprint::check` before the kernel's RBAC check, which happens inside the
 planner. So a caller who is authenticated but holds no grant on `users` can
 still learn that `users` exists, and can confirm a guessed

@@ -347,3 +347,185 @@ async fn the_early_authorization_does_not_refuse_a_permitted_caller() {
         .await
         .expect("delete is permitted");
 }
+
+/// Finding 8 again, on the read paths the fix did not cover.
+///
+/// The fix ordered the *fingerprint* check behind `authorized_table`, closing
+/// the channel the finding named. `query` and `explain` resolve their table
+/// with the bare `self.table(..)` and then run `query_from_proto`, which turns
+/// a `ColumnRef` into a flat ordinal — and, as the proto says, "only the
+/// server knows how wide each table is". So a caller with no grant can ask
+/// about column *n* and learn from the answer whether the table has one.
+///
+/// Two requests that differ only in an ordinal, from a role granted nothing on
+/// `users`. If the answers differ, the width of a table the caller cannot read
+/// is a binary search away.
+#[tokio::test]
+async fn a_caller_with_no_grant_cannot_probe_a_tables_width() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let stranger = |message: pb::QueryRequest| {
+        common::as_principal(message, "u64:9", Some("u64:1"), "stranger")
+    };
+    let projecting = |ordinal: u32| {
+        let mut query = common::plain_query("users");
+        query.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(query),
+            freshness: None,
+        }
+    };
+
+    // Ordinal 0 exists in every table; 99 exists in none of this size.
+    let real = client.query(stranger(projecting(0))).await.err();
+    let absent = client.query(stranger(projecting(99))).await.err();
+
+    let code = |e: &Option<tonic::Status>| e.as_ref().map(tonic::Status::code);
+    let message = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        code(&real),
+        code(&absent),
+        "a real and an absent column must be indistinguishable to a caller \
+         with no grant: {:?} vs {:?}",
+        message(&real),
+        message(&absent)
+    );
+    assert_eq!(
+        message(&real),
+        message(&absent),
+        "and the message must not vary with the ordinal either"
+    );
+    assert_eq!(
+        code(&real),
+        Some(Code::PermissionDenied),
+        "a caller with no grant must be refused before the query is converted"
+    );
+}
+
+/// The same channel on `explain`, which resolves and converts identically.
+///
+/// `Action::Explain` rather than `Read`, because that is what the kernel
+/// checks first — a handler authorising the wrong action refuses a caller the
+/// kernel would allow, which is the hazard `each_handler_authorizes_the_action_it_performs`
+/// exists for.
+#[tokio::test]
+async fn explaining_does_not_leak_a_tables_width_either() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let explaining = |ordinal: u32| {
+        let mut query = common::plain_query("users");
+        query.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::ExplainRequest {
+                transaction: String::new(),
+                query: Some(query),
+                freshness: None,
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.explain(explaining(0)).await.expect_err("denied");
+    let absent = client.explain(explaining(99)).await.expect_err("denied");
+    assert_eq!(real.code(), Code::PermissionDenied);
+    // And the action named is `explain`, not `read`. The kernel checks
+    // `Action::Explain` first and `Read` second, so a handler authorising
+    // `Read` early answers a caller holding neither with the wrong one — which
+    // is `each_handler_authorizes_the_action_it_performs`'s hazard, "checking
+    // early is checking *differently*", on a handler that test does not cover.
+    // Without this line, swapping the action here changes nothing observable
+    // and the mutation survives.
+    assert!(
+        real.message().contains("explain"),
+        "the refusal should name the action the kernel checks first: {}",
+        real.message()
+    );
+    assert_eq!(
+        real.message(),
+        absent.message(),
+        "a real and an absent column must be indistinguishable: {} vs {}",
+        real.message(),
+        absent.message()
+    );
+}
+
+/// And on `load`, where the schema disclosed is the foreign keys rather than
+/// the width.
+///
+/// `resolve_relation` refuses an unknown foreign key by *listing the ones that
+/// exist*, and it ran before anything authorised the caller. Two requests
+/// differing only in a relation name, from a role granted nothing.
+#[tokio::test]
+async fn loading_does_not_leak_a_tables_foreign_keys() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let loading = |foreign_key: &str| {
+        common::as_principal(
+            pb::RelatedRequest {
+                transaction: String::new(),
+                relation: None,
+                keys: vec![pb::Value {
+                    kind: Some(pb::value::Kind::Uint64Value(1)),
+                }],
+                freshness: None,
+                schema: None,
+                path: vec![pb::RelatedStep {
+                    relation: Some(pb::Relation {
+                        table: "users".to_owned(),
+                        foreign_key: foreign_key.to_owned(),
+                        direction: pb::relation::Direction::Children as i32,
+                    }),
+                    schema: None,
+                }],
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let one = client
+        .related(loading("no_such_key"))
+        .await
+        .expect_err("denied");
+    let other = client
+        .related(loading("also_not_a_key"))
+        .await
+        .expect_err("denied");
+    assert_eq!(
+        one.code(),
+        Code::PermissionDenied,
+        "a caller with no grant must be refused before the relation resolves: {}",
+        one.message()
+    );
+    assert_eq!(
+        one.message(),
+        other.message(),
+        "and the refusal must not name the foreign keys that do exist"
+    );
+}

@@ -2088,6 +2088,22 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                     format!("step {at} of the path has no relation"),
                 ));
             };
+            // Authorised before the relation is resolved, for the reason
+            // `query` is: `resolve_relation`'s refusals name the child's
+            // foreign keys — "`orders` has no foreign key named `x`; it has
+            // …" — and the composition errors below name the tables a path
+            // touches. Both are schema, to a caller who may hold no grant.
+            //
+            // `relation.table` rather than the step's `rows_from`, which is
+            // only known after resolving. For a `CHILDREN` step they are the
+            // same table; for `PARENTS` the child is the *source* and its rows
+            // are not read, so this asks for a grant the read itself does not
+            // need. Accepted deliberately: naming a relation is asking about
+            // the child's foreign keys, and a caller with no grant on the
+            // child has no business being told what they are. The per-step
+            // `Read` on `rows_from` below still happens and is what protects
+            // the rows.
+            self.authorized_table(&context, &relation.table, Action::Read)?;
             let this = self.resolve_relation(relation)?;
             if let Some(previous) = resolved.last()
                 && previous.rows_from.id() != this.source.id()
@@ -2269,7 +2285,18 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.query else {
             return Err(Status::new(Code::InvalidArgument, "no query given"));
         };
-        let table = self.table(&wire.table)?;
+        // Authorised before the query is converted, not only inside the
+        // planner. `query_from_proto` resolves a `ColumnRef` against the
+        // table's width — "only the server knows how wide each table is", as
+        // the proto puts it — and reported the width in the refusal: a caller
+        // holding no grant on `users` got "the projection names column 99 of
+        // table `users`, which has 4 columns". That is finding 8's disclosure
+        // on a path its fix did not cover, and one request rather than a
+        // binary search.
+        //
+        // `Action::Read` because that is what the planner will check; see
+        // `authorized_table` on why the action is passed rather than inferred.
+        let table = self.authorized_table(&context, &wire.table, Action::Read)?;
         // Kept, not dropped. An ignored index hint used to be reported by
         // `Explain` alone, so a caller whose hint did nothing had to issue a
         // *different* request and trust the planner had decided the same way
@@ -2365,7 +2392,13 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.query else {
             return Err(Status::new(Code::InvalidArgument, "no query given"));
         };
-        let table = self.table(&wire.table)?;
+        // `Action::Explain` rather than `Read`, for the same reason the
+        // conversion below needs guarding at all: explaining is its own action
+        // (finding 3), and this must check what the kernel checks first or it
+        // refuses something the kernel would allow. A caller holding `Explain`
+        // and not `Read` still gets no further — the planner checks `Read`
+        // after — so this is a strict narrowing of who reaches the converter.
+        let table = self.authorized_table(&context, &wire.table, Action::Explain)?;
         let (query, warnings) = query_from_proto(&wire, table)?;
 
         if !request.transaction.is_empty() {
