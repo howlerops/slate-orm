@@ -22,9 +22,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import check_handlers
 
-#: The three exemptions the real sources need. A case whose fixture omits one
-#: fails on the stale-entry check rather than on what it is testing, so every
-#: fixture below defines all three.
+#: The three exemptions the real sources need, plus one converter. A case whose
+#: fixture omits one fails on the stale-entry check — or, for the converter, on
+#: the never-fires check — rather than on what it is testing, so every fixture
+#: below defines all four.
 PREAMBLE = """\
 impl Head {
     fn authorized_table(&self, name: &str) -> Result<&TableDef, Status> {
@@ -39,6 +40,13 @@ impl Head {
 
     fn query_from_proto_at(query: &Query, table: &TableDef) -> Result<(), Status> {
         fingerprint::check(table, query.schema.as_ref())?;
+        Ok(())
+    }
+
+    fn join_from_proto(
+        wire: &pb::JoinQuery,
+        catalog: &Catalog,
+    ) -> Result<Join, Status> {
         Ok(())
     }
 """
@@ -200,6 +208,98 @@ impl Authenticator for Known {}
         "",
     ),
     (
+        "a handler converting before authorising fails",
+        # Finding 8 on four RPCs, in miniature: the converter takes the wire
+        # request and a catalog, so it resolves the tables the request names
+        # with nothing to check them against, and the handler called it first.
+        """
+    async fn join(&self) -> Result<(), Status> {
+        let plan = join_from_proto(&wire, self.catalog())?;
+    }
+""",
+        1,
+        "with no authorisation in the",
+    ),
+    (
+        "a handler that authorises its inputs first passes",
+        """
+    async fn join(&self) -> Result<(), Status> {
+        self.authorize_join_inputs(&context, &wire, Action::Read)?;
+        let plan = join_from_proto(&wire, self.catalog())?;
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "a function taking a catalog but no request is not a converter",
+        # The regression this case exists for: an earlier version of the rule
+        # treated *any* `catalog: &Catalog` parameter as the hazard and
+        # reported 59 problems, every one of them CLI and startup code —
+        # `describe`, `reconcile`, `seed::load` — where there is no request, no
+        # caller and no grant to check. A rule that fires on those gets
+        # switched off, and then it guards nothing.
+        """
+    fn describe(catalog: &Catalog) -> String {
+        String::new()
+    }
+
+    async fn print_schema(&self) -> Result<(), Status> {
+        let text = describe(self.catalog());
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "a converter holding a context can check for itself",
+        # The exemption is structural rather than listed: the reason these two
+        # converters are a hazard is that they have nothing to authorise
+        # *with*. One that takes a context does not need its callers to.
+        """
+    fn safe_from_proto(
+        wire: &pb::JoinQuery,
+        catalog: &Catalog,
+        context: &SecurityContext,
+    ) -> Result<Join, Status> {
+        Ok(())
+    }
+
+    async fn join(&self) -> Result<(), Status> {
+        let plan = safe_from_proto(&wire, self.catalog(), &context)?;
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "one converter delegating to another is not a handler",
+        # `aggregate_from_proto_query` calls `join_from_proto` for its join
+        # arm. Neither has a context, so requiring an authorisation between
+        # them would be unsatisfiable — the obligation belongs to whoever
+        # called the outer one, which the rule already covers.
+        """
+    fn aggregate_from_proto_query(
+        wire: &pb::AggregateQuery,
+        catalog: &Catalog,
+    ) -> Result<Agg, Status> {
+        let inner = join_from_proto(wire, catalog)?;
+        Ok(())
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "a tree with no converter at all fails, rather than passing",
+        # The never-fires failure for rule 3, which is the rule most able to
+        # stop matching quietly: a converter is recognised by three conditions
+        # on a signature, not by one literal string.
+        "NO_CONVERTER",
+        1,
+        "so rule 3 checked nothing",
+    ),
+    (
         "an exemption for a function that no longer exists fails",
         # `resolve_relation` is in UNAUTHORIZED but this fixture drops its
         # bare call, so the entry is stale.
@@ -224,7 +324,11 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 code = check_handlers.main([directory])
             return code, out.getvalue()
-        if body == "NO_PREAMBLE":
+        if body == "NO_CONVERTER":
+            path.write_text(
+                PREAMBLE[: PREAMBLE.index("    fn join_from_proto(")] + "}\n"
+            )
+        elif body == "NO_PREAMBLE":
             # Resolutions and exemptions present, no fingerprint anywhere.
             path.write_text(
                 PREAMBLE.replace(

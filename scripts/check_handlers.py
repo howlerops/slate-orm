@@ -21,9 +21,19 @@ loudly instead:
 2. **Every `fingerprint::check(..)`** has an `authorized_table` above it in the
    same function, within `REACH` lines. The fingerprint is the original
    channel and the ordering is the whole fix.
+3. **Every call to a converter that resolves a request's tables** — one taking
+   a `&pb::` request and a `&Catalog` and no `SecurityContext`, so it has
+   nothing to check them against — has an authorisation above it. This is the
+   rule that would have caught finding 8 on `join`, `explain_join`,
+   `aggregate` and `explain_aggregate`, which rules 1 and 2 could not see
+   because the resolution happens a function away.
+4. **Every `impl Authenticator for T`** is named in the `AUTHENTICATORS`
+   roster, and every name in the roster still implements it. Finding 6 was
+   fixed in one of two implementations; the roster is what makes a third
+   arrive with a failing check.
 
-Neither is a proof. A handler can hold a `&TableDef` from one of the accounted
-sites and pass it along, and this will not see it. What it does is make adding
+None is a proof. A handler can hold a `&TableDef` from one of the accounted
+sites and pass it along, and this will not see it. What they do is make adding
 a *new* unauthorised resolution a failure rather than a silence, which is the
 `EXPECTED_REFUSALS` idiom this repository already uses in three places: a list
 you are forced to edit is a list that stays true.
@@ -82,7 +92,9 @@ FINGERPRINT_BY_CALLER = {
         "**The first version of this entry said so when four of the six did "
         "not**, which is the whole reason the reason is written down: it was "
         "a claim from reading, it was wrong, and a caller with no grant read "
-        "a table's column count off `join` until it was checked"
+        "a table's column count off `join` until it was checked. **Rule 3 now "
+        "holds the four indirect callers to it**, so this half of the reason "
+        "is a check rather than a claim; the two direct ones are rule 2's"
     ),
 }
 
@@ -117,10 +129,52 @@ UNAUTHORIZED = {
 ROSTER_LIST = re.compile(r"const AUTHENTICATORS: \[&str; \d+\] = \[([^\]]*)\]")
 IMPLEMENTS = re.compile(r"^impl Authenticator for (\w+)", re.MULTILINE)
 
+#: A converter that resolves tables *itself*, found by its signature.
+#:
+#: `join_from_proto` and `aggregate_from_proto_query` take a `Catalog` and no
+#: `SecurityContext`, so they look tables up with no idea who is asking — and
+#: the four handlers calling them converted first. That is finding 8 on four
+#: RPCs, and this check could not see it: neither function calls
+#: `self.table(..)` nor `fingerprint::check` directly, which is the gap this
+#: file's own entry named.
+#:
+#: The names are *derived* rather than listed, by matching a whole signature.
+#: A list would go stale the moment a third converter is written, which is the
+#: failure mode of every hard-coded thing in this script so far. No call graph
+#: is needed: find the names in one pass, then require every call to them to be
+#: authorised in the next.
+#:
+#: **Three parameters, and the third is the one that took two wrong attempts.**
+#: A first version matched a bare `catalog: &Catalog,` line and attributed it to
+#: the nearest `fn` above, which picked up struct fields: it derived `run`,
+#: `quantile` and `summary` as converters and flagged **47** ordinary calls to
+#: things with those very common names. Matching the signature instead dropped
+#: that to **59** — worse, and the interesting part is *why*. Nothing was
+#: mis-parsed. `reconcile`, `render_plan`, `describe`, `security::catalog`,
+#: `seed::load`, `analyze` and `store_for` all genuinely take a `&Catalog`.
+#: Taking a catalog is simply not the hazard: those are CLI and startup code,
+#: where there is no request, no caller and no grant to check, and demanding an
+#: `authorized_table` above each call would be demanding nonsense.
+#:
+#: The hazard is narrower than "resolves a table". It is **resolving a table
+#: whose name came off the wire, with nothing to check it against** — so the
+#: signature must show both halves: a `&pb::` request type *and* a `&Catalog`,
+#: and no `SecurityContext` that would let it check for itself. That is the
+#: shape of finding 8 stated exactly, rather than a proxy for it that happens
+#: to fit two functions.
+TAKES_CATALOG = re.compile(r"fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)", re.S)
+#: What a request's table names arrive in, and what would let a converter
+#: authorise them itself.
+WIRE = "&pb::"
+CONTEXT = "SecurityContext"
+CATALOG = "catalog: &Catalog"
+
 FUNCTION = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+([a-z_][a-z0-9_]*)")
 BARE = re.compile(r"self\.table\(")
 FINGERPRINT = re.compile(r"fingerprint::check\(")
 AUTHORIZED = re.compile(r"authorized_table\(")
+#: The multi-table helpers, which authorise a whole request's inputs at once.
+AUTHORIZES = re.compile(r"authorize_\w+\(")
 
 
 def enclosing_functions(lines: list[str]) -> list[str]:
@@ -138,6 +192,59 @@ def enclosing_functions(lines: list[str]) -> list[str]:
             current = found.group(1)
         names.append(current)
     return names
+
+
+def catalog_converters(files: list[Path]) -> set[str]:
+    """Functions that resolve a request's tables with nothing to check them by.
+
+    All three conditions matter and the third is the one that makes this a
+    rule rather than a nuisance — see `TAKES_CATALOG` above for the two
+    attempts that got it wrong and what the second one cost.
+    """
+    names: set[str] = set()
+    for path in files:
+        for found in TAKES_CATALOG.finditer(path.read_text()):
+            params = found.group(2)
+            if CATALOG in params and WIRE in params and CONTEXT not in params:
+                names.add(found.group(1))
+    return names
+
+
+def unauthorised_conversions(files: list[Path], converters: set[str]) -> list[str]:
+    """Every call to such a converter has an authorisation above it.
+
+    Same `REACH` window as the fingerprint rule, and the same limitation: this
+    sees adjacency, not that the authorisation covers the tables the
+    conversion will resolve. What it stops is the shape that actually
+    happened — a handler calling the converter with nothing above it at all.
+    """
+    calling = re.compile(r"\b(" + "|".join(sorted(converters)) + r")\(")
+
+    problems = []
+    for path in files:
+        lines = path.read_text().splitlines()
+        owners = enclosing_functions(lines)
+        for at, line in enumerate(lines):
+            found = calling.search(line)
+            if found is None or owners[at] in converters:
+                # A converter calling a converter is the inner machinery, not
+                # a handler: `aggregate_from_proto_query` delegates to
+                # `join_from_proto` for its join arm, and neither has a
+                # context to check with. The obligation is on whoever called
+                # the outer one, which this rule already covers.
+                continue
+            window = lines[max(0, at - REACH) : at]
+            if not any(AUTHORIZED.search(above) or AUTHORIZES.search(above) for above in window):
+                problems.append(
+                    f"{path.name}:{at + 1}: `{owners[at]}` calls "
+                    f"`{found.group(1)}` with no authorisation in the "
+                    f"{REACH} lines above it.\n"
+                    "  That converter takes a `Catalog` and no context, so it "
+                    "resolves and converts for a caller nobody has checked — "
+                    "security finding 8, which reached four RPCs this way. "
+                    "Authorise the tables the request names first."
+                )
+    return problems
 
 
 def unrostered_authenticators(files: list[Path]) -> list[str]:
@@ -241,6 +348,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
     problems.extend(unrostered_authenticators(files))
+    converters = catalog_converters(files)
+    if converters:
+        problems.extend(unauthorised_conversions(files, converters))
 
     # A check that finds nothing has stopped checking, and reads identically to
     # one that found nothing wrong. `CLAUDE.md`: "a check that never fires is a
@@ -253,6 +363,21 @@ def main(argv: list[str] | None = None) -> int:
             f"no `fingerprint::check` anywhere in {len(files)} file(s). Either "
             "the handlers moved and SOURCES is stale, or the check is no longer "
             "what this guards — both need a person, not a pass."
+        )
+    elif not converters:
+        # The same never-fires reasoning as above, and this rule needs it more.
+        # `fingerprint::check` is one literal string; a converter is recognised
+        # by three conditions on a signature, so a rename of the generated
+        # proto module from `pb` to anything else would leave the rule matching
+        # nothing and reporting success. Zero is a person's problem, not a
+        # pass — and if the converters really are gone, deleting this branch is
+        # the deliberate edit that says so.
+        problems.append(
+            f"no converter taking a `{WIRE}` request and a `{CATALOG}` in "
+            f"{len(files)} file(s), so rule 3 checked nothing. Either both "
+            "converters went away, or the signature they are recognised by "
+            "moved — a proto module renamed out of `pb`, a catalog passed by "
+            "value. Both need a person."
         )
 
     # A stale exemption is its own defect: it reads as a live hazard somebody
@@ -275,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"ok    {len(files)} files, {bare} bare resolutions all accounted for, "
         f"{checks} fingerprint checks all authorised first, "
+        f"{len(converters)} converters all called from authorised handlers, "
         f"{authenticators} authenticators all rostered"
     )
     return 0
