@@ -330,12 +330,42 @@ impl TokenIdentity {
 
 impl Authenticator for TokenIdentity {
     fn authenticate(&self, metadata: &MetadataMap) -> Result<SecurityContext, Status> {
-        let Some(header) = metadata.get(AUTHORIZATION) else {
+        // A repeated `authorization` is refused rather than resolved, for the
+        // reason finding 6 of the security review gives about the trusted
+        // header mode: taking the first trusts a proxy that replaces, taking
+        // the last trusts one that appends, and the server cannot tell which
+        // it is behind. `get` takes the first, which is the *caller's* copy
+        // exactly when the proxy appends.
+        //
+        // The same fix landed in `slate_server::auth::text` and stopped
+        // there, because that closed the finding as written and this is the
+        // other implementation of the same trait. Measured here before this
+        // block existed: with the caller's token first and the proxy's second,
+        // the request authenticated as the caller's principal.
+        //
+        // No privilege escalation was demonstrated — a caller needs a valid
+        // token either way, so the usual arrangement only ever downgrades them
+        // to themselves. It defeats a proxy that *downscopes* by replacing the
+        // caller's token with a narrower one, and it is an ambiguity resolved
+        // by a rule the finding explicitly rejected as unsafe to rely on.
+        let mut headers = metadata.get_all(AUTHORIZATION).iter();
+        let Some(header) = headers.next() else {
             return Err(Status::new(
                 Code::Unauthenticated,
                 "no `authorization` in the request metadata; this server expects `authorization: Bearer <token>`",
             ));
         };
+        if headers.next().is_some() {
+            // Naming neither value: the message is read by whatever collects
+            // this server's errors, and a bearer token in a log is a bearer
+            // token in a log.
+            return Err(Status::new(
+                Code::Unauthenticated,
+                "`authorization` appears more than once in the request metadata; \
+                 the proxy in front of this server must replace this header rather \
+                 than append to it",
+            ));
+        }
         let header = header.to_str().map_err(|_| {
             Status::new(
                 Code::Unauthenticated,
@@ -475,6 +505,25 @@ mod tests {
     }
 
     const GOOD: &str = "0123456789abcdef0123456789abcdef";
+    /// A second, equally valid token belonging to a *different* principal, so
+    /// a test about which copy wins can name the winner.
+    const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+    fn two_token_config(directory: &std::path::Path) -> String {
+        let first = directory.join("first");
+        let second = directory.join("second");
+        std::fs::write(&first, GOOD).unwrap_or_else(|e| panic!("{e}"));
+        std::fs::write(&second, OTHER).unwrap_or_else(|e| panic!("{e}"));
+        format!(
+            "mode = \"token\"\n\
+             [[tokens]]\nname = \"caller\"\nsecret_file = \"{}\"\n\
+             principal = \"u64:7\"\ntenant = \"u64:1\"\nroles = [\"app\"]\n\
+             [[tokens]]\nname = \"proxy\"\nsecret_file = \"{}\"\n\
+             principal = \"u64:9\"\ntenant = \"u64:1\"\nroles = [\"app\"]\n",
+            first.display(),
+            second.display()
+        )
+    }
 
     #[test]
     fn no_auth_section_refuses_to_start_and_names_every_mode() {
@@ -601,6 +650,64 @@ mod tests {
         )
         .unwrap();
         assert!(chosen.authenticator.authenticate(&bearer(GOOD)).is_ok());
+    }
+
+    /// Finding 6's shape, in the daemon's *other* authenticator.
+    ///
+    /// The review's finding 6 was that `MetadataIdentity` took the first copy
+    /// of a repeated identity header, which is the client's exactly when the
+    /// proxy appends rather than replaces. That was fixed there, in
+    /// `slate_server::auth::text`. `TokenIdentity` is the second
+    /// implementation of the same trait and reached for `metadata.get`, which
+    /// is also the first copy — so the fix covered one of two.
+    ///
+    /// Two tokens with different principals, so the assertion can say *which*
+    /// one won rather than merely that something did. Before the fix this
+    /// authenticated as principal 7, the caller's own copy, over the one the
+    /// proxy appended.
+    #[test]
+    fn a_duplicated_authorization_header_is_refused_rather_than_resolved() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+
+        let mut metadata = MetadataMap::new();
+        // The caller's own header arrives first...
+        metadata.append(AUTHORIZATION, format!("Bearer {GOOD}").parse().unwrap());
+        // ...and the proxy appends its own after it.
+        metadata.append(AUTHORIZATION, format!("Bearer {OTHER}").parse().unwrap());
+
+        let status = chosen
+            .authenticator
+            .authenticate(&metadata)
+            .expect_err("a duplicated authorization header must not be resolved");
+        assert_eq!(status.code(), Code::Unauthenticated);
+        assert!(
+            status.message().contains("more than once"),
+            "the error should name the duplicate: {}",
+            status.message()
+        );
+        // The refusal must not echo either secret, which would turn a
+        // misconfiguration into a token disclosure in whatever reads the logs.
+        assert!(
+            !status.message().contains(GOOD) && !status.message().contains(OTHER),
+            "the refusal must not echo a token: {}",
+            status.message()
+        );
+    }
+
+    /// The control: one copy still authenticates, and as the right principal.
+    ///
+    /// Without this the test above passes for an authenticator that refuses
+    /// every request.
+    #[test]
+    fn a_single_authorization_header_still_authenticates() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+        let context = chosen
+            .authenticator
+            .authenticate(&bearer(OTHER))
+            .expect("one copy authenticates");
+        assert_eq!(context.principal().id, Value::U64(9));
     }
 
     #[test]

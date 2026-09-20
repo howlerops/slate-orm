@@ -349,9 +349,31 @@ message names the duplicate without echoing the identity that was claimed.
 `a_duplicated_identity_header_is_refused_rather_than_resolved` now asserts the
 refusal.
 
+**And then the same fix, in the other authenticator.** `Authenticator` has two
+real implementations and this finding was written about one of them, so the
+fix landed in one of them: `TokenIdentity` in the daemon went on reading
+`metadata.get(AUTHORIZATION)`, which is the same first-copy-wins rule. Measured
+with two valid tokens naming different principals, the caller's copy first and
+the proxy's appended after it, the request authenticated as **the caller's
+principal**.
+`a_duplicated_authorization_header_is_refused_rather_than_resolved` pins the
+refusal, with `a_single_authorization_header_still_authenticates` as the
+control so it cannot pass for an authenticator that refuses everything.
+
+Its impact is lower than the header mode's and the difference is worth being
+precise about, because "same shape" is not "same severity". A bearer token is
+checked against the configured list, so a caller needs a valid token either
+way and the usual arrangement only ever resolves them to *themselves* — no
+privilege escalation was demonstrated and I do not claim one. What it defeats
+is a proxy that **downscopes**, replacing a caller's broad token with a
+narrower one: append instead of replace there and the caller keeps the broad
+token. That, and an ambiguity resolved by a rule this very finding argues is
+unsafe to rely on.
+
 **Impact: medium — total impersonation, but only under a specific (and easy)
 proxy misconfiguration.**
-`crates/slate-server/src/auth.rs::MetadataIdentity`.
+`crates/slate-server/src/auth.rs::MetadataIdentity`, and
+`crates/slate-serverd/src/auth.rs::TokenIdentity` for the lesser variant above.
 
 `MetadataIdentity` reads `metadata.get(key)`, which returns the **first** value
 for a repeated header. The mode is documented as correct behind a proxy that
