@@ -296,6 +296,11 @@ jobs:
       # extra step, and this is what stops it. Adding a step above fails here
       # until somebody classifies it.
       - run: python3 scripts/test_check_sh.py
+      # The mutation harness's own tests. They use a fake `cargo` — a few lines
+      # of Python that print what a real run prints — so this needs no
+      # toolchain and takes milliseconds, which is why it sits with the static
+      # checks rather than beside the suites it drives.
+      - run: python3 scripts/test_mutate.py
 
   quickstarts:
     name: the landing page's code

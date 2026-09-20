@@ -50,6 +50,18 @@ missing test — write it rather than hide it. Several of this repository's wors
 bugs were found exactly this way, and several tests exist only because a
 mutation survived.
 
+Use `scripts/mutate.py` rather than a hand-rolled `sed` and a grep for
+`FAILED`, because doing it by hand fails in three ways that all look like
+success, and all three were met in one session: the anchor string moves under
+`cargo fmt` so the patch silently matches nothing and the suite passes against
+*unmutated* code; the build dies — on this container, usually ENOSPC — so
+nothing runs and "no test failed" is the same empty output as "no test ran";
+or the shell eats a replacement containing a backtick or a `$`. The script
+refuses a pattern that does not occur exactly once, counts how many suites
+actually reported, takes its spec as JSON on stdin so nothing touches a shell,
+restores the file in a `finally`, and **exits non-zero on a survivor** so a
+finding interrupts you instead of scrolling past. `--help` has the shape.
+
 **Prefer an oracle to a hand-written case.** A test that agrees with an
 independent implementation catches the cases nobody thought of, which is the
 whole point. Hand-written differentials test the cases somebody thought of. Both
