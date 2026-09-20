@@ -60,11 +60,15 @@ from .schema import (
     AUTHORS,
     BOOKS,
     BY_NAME,
+    EDITIONS,
     EDITIONS_FOREIGN_KEYS,
     SALES,
     SALES_FOREIGN_KEYS,
     SHIPMENTS,
+    Authors,
     Books,
+    Editions,
+    Sales,
     Shipments,
 )
 from .values import decode, encode, encode_row, format_float
@@ -904,6 +908,26 @@ class Adapter:
             raise RuntimeError("the seeded shipment is not there")
         shipment = Shipments.from_row(list(shipment_row))
 
+        # The other three tables, added because two of five decoders having a
+        # live row meant "the decoders agree with the server" held for the two
+        # somebody picked. They carry no value *shape* the first two do not —
+        # their point is the column list, checked against the real catalog
+        # rather than a fixture written from it.
+        author_row = session.get(AUTHORS, (u64(1),))
+        if author_row is None:
+            raise RuntimeError("the seeded author is not there")
+        author = Authors.from_row(list(author_row))
+
+        sale_row = session.get(SALES, (u64(100),))
+        if sale_row is None:
+            raise RuntimeError("the seeded sale is not there")
+        sale = Sales.from_row(list(sale_row))
+
+        edition_row = session.get(EDITIONS, (u64(500),))
+        if edition_row is None:
+            raise RuntimeError("the seeded edition is not there")
+        edition = Editions.from_row(list(edition_row))
+
         # Every integer as a decimal string, because one of the three
         # languages reads them as `bigint` and JSON numbers are doubles. The
         # demo's other handlers agree.
@@ -925,6 +949,25 @@ class Adapter:
                 "deleted_at": "null"
                 if shipment.deleted_at is None
                 else str(shipment.deleted_at),
+            },
+            "author": {
+                "id": str(author.id),
+                # `name` and `country` are both strings and adjacent, so a
+                # decoder one ordinal out would read a plausible value. The
+                # seeded values differ, which is what makes that visible here.
+                "name": author.name,
+                "country": author.country,
+                "born": str(author.born),
+            },
+            "sale": {
+                "id": str(sale.id),
+                "book_id": str(sale.book_id),
+                "units": str(sale.units),
+            },
+            "edition": {
+                "id": str(edition.id),
+                "book_id": str(edition.book_id),
+                "format": edition.format,
             },
         }
 

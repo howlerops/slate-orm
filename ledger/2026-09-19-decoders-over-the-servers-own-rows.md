@@ -93,6 +93,10 @@ than a demonstration that the guard fires. Making the server send the wrong
 kind is not reachable through any of its surfaces, which is the good news and
 also why this evidence is weaker than a caught mutation.
 
+~~**Three of five decoders per language are still only run against fixtures.**~~
+**Closed** — see `2026-09-20-the-other-three-decoders.md`, which also shows the
+hypothesis below was wrong about what the remaining three would add.
+
 **Three of five decoders per language are still only run against fixtures.**
 `authors`, `sales` and `editions` have unit cases from the previous entry and
 no live row. The two chosen cover every value shape the demo has between them,

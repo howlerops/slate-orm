@@ -84,7 +84,10 @@ import {
   EditionsForeignKeys,
   SalesForeignKeys,
   TABLES as CATALOG,
+  decodeAuthors,
   decodeBooks,
+  decodeEditions,
+  decodeSales,
   decodeShipments,
 } from "./schema.js";
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
@@ -1026,6 +1029,23 @@ class Adapter {
     if (!shipmentRow) throw new Error("the seeded shipment is not there");
     const shipment = decodeShipments(shipmentRow);
 
+    // The other three tables, added because two of five decoders having a live
+    // row meant "the decoders agree with the server" held for the two somebody
+    // picked. They carry no value *shape* the first two do not — their point is
+    // the column list, checked against the real catalog rather than a fixture
+    // written from it.
+    const authorRow = await session.get("authors", [uint(1n)]);
+    if (!authorRow) throw new Error("the seeded author is not there");
+    const author = decodeAuthors(authorRow);
+
+    const saleRow = await session.get("sales", [uint(100n)]);
+    if (!saleRow) throw new Error("the seeded sale is not there");
+    const sale = decodeSales(saleRow);
+
+    const editionRow = await session.get("editions", [uint(500n)]);
+    if (!editionRow) throw new Error("the seeded edition is not there");
+    const edition = decodeEditions(editionRow);
+
     // Every integer as a decimal string, because these are `bigint` here and
     // JSON numbers are doubles. The demo's other handlers agree.
     return {
@@ -1044,6 +1064,25 @@ class Adapter {
         book_id: String(shipment.book_id),
         status: shipment.status,
         deleted_at: shipment.deleted_at === null ? "null" : String(shipment.deleted_at),
+      },
+      author: {
+        id: String(author.id),
+        // `name` and `country` are both strings and adjacent, so a decoder one
+        // ordinal out would read a plausible value. The seeded values differ,
+        // which is what makes that visible here.
+        name: author.name,
+        country: author.country,
+        born: String(author.born),
+      },
+      sale: {
+        id: String(sale.id),
+        book_id: String(sale.book_id),
+        units: String(sale.units),
+      },
+      edition: {
+        id: String(edition.id),
+        book_id: String(edition.book_id),
+        format: edition.format,
       },
     };
   }

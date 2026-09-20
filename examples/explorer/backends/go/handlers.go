@@ -1343,6 +1343,47 @@ func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMe
 		return nil, fmt.Errorf("decoding shipments: %w", err)
 	}
 
+	// The other three tables, added because two of five decoders having a live
+	// row meant the claim "the decoders agree with the server" held for the
+	// two somebody picked. These carry no value *shape* the first two do not —
+	// their point is the column list: each one's ordinals are checked against
+	// the real catalog rather than against a fixture written from it.
+	authorRow, found, err := session.Get(ctx, "authors", []slate.Value{slate.Uint(1)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded author is not there")
+	}
+	author, err := schema.ScanAuthors(authorRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding authors: %w", err)
+	}
+
+	saleRow, found, err := session.Get(ctx, "sales", []slate.Value{slate.Uint(100)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded sale is not there")
+	}
+	sale, err := schema.ScanSales(saleRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding sales: %w", err)
+	}
+
+	editionRow, found, err := session.Get(ctx, "editions", []slate.Value{slate.Uint(500)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded edition is not there")
+	}
+	edition, err := schema.ScanEditions(editionRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding editions: %w", err)
+	}
+
 	// Every integer as a decimal string, because one of the three languages
 	// reads them as `bigint` and JSON numbers are doubles. The demo's other
 	// handlers spell values the same way for the same reason.
@@ -1366,6 +1407,25 @@ func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMe
 			"book_id":    fmt.Sprintf("%d", shipment.BookId),
 			"status":     shipment.Status,
 			"deleted_at": deleted,
+		},
+		"author": map[string]any{
+			"id": fmt.Sprintf("%d", author.Id),
+			// `name` and `country` are both strings and adjacent, so a decoder
+			// one ordinal out would read a plausible value. The seeded values
+			// differ, which is what makes that visible here.
+			"name":    author.Name,
+			"country": author.Country,
+			"born":    fmt.Sprintf("%d", author.Born),
+		},
+		"sale": map[string]any{
+			"id":      fmt.Sprintf("%d", sale.Id),
+			"book_id": fmt.Sprintf("%d", sale.BookId),
+			"units":   fmt.Sprintf("%d", sale.Units),
+		},
+		"edition": map[string]any{
+			"id":      fmt.Sprintf("%d", edition.Id),
+			"book_id": fmt.Sprintf("%d", edition.BookId),
+			"format":  edition.Format,
 		},
 	}, nil
 }
