@@ -74,10 +74,15 @@ REACH = 4
 #: re-argued when a caller is added.
 FINGERPRINT_BY_CALLER = {
     "query_from_proto_at": (
-        "takes an already-resolved `&TableDef`; its callers are `query`, "
-        "`explain` and the join and chain handlers, each of which authorises "
-        "before converting — which they did not until finding 8 was fixed the "
-        "second time, and which rule 2 now holds them to"
+        "takes an already-resolved `&TableDef`, so it cannot authorise: no "
+        "name to resolve, no context to resolve it for. Its callers are "
+        "`query` and `explain` directly, and `join`, `explain_join`, "
+        "`aggregate` and `explain_aggregate` through `join_from_proto` and "
+        "`aggregate_from_proto_query` — all six authorise before converting. "
+        "**The first version of this entry said so when four of the six did "
+        "not**, which is the whole reason the reason is written down: it was "
+        "a claim from reading, it was wrong, and a caller with no grant read "
+        "a table's column count off `join` until it was checked"
     ),
 }
 

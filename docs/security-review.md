@@ -531,6 +531,22 @@ exist. All three now authorise before converting, asserted by
 `explaining_does_not_leak_a_tables_width_either` and
 `loading_does_not_leak_a_tables_foreign_keys`.
 
+**Then four more, found by checking a claim rather than making it.** The
+exemption added for `query_from_proto_at` asserted that its callers "authorise
+before converting". `join`, `explain_join`, `aggregate` and
+`explain_aggregate` did not: `join_from_proto` and `aggregate_from_proto_query`
+take a `Catalog` rather than a `SecurityContext`, so they resolve and convert
+with no idea who is asking, and the handlers called them first. Measured on
+`join` from a role granted nothing: the same `which has 4 columns`. The tables
+are now authorised off the wire — every input, not the first, since
+`every_input_of_a_join_is_authorised_not_only_the_first` shows a caller who can
+read *one* table could otherwise read every other input's width.
+`joining_does_not_leak_a_tables_width_either` and
+`aggregating_over_a_join_does_not_leak_a_tables_width` pin the rest.
+
+Seven handlers, in three passes, for one finding. The scope a fix inherits from
+its finding is the recurring defect here, not any one of the handlers.
+
 `explain` authorises `Action::Explain` rather than `Read` because that is what
 the kernel checks *first* — it checks both — so the refusal a caller holding
 neither receives names the same action it would have named before. That is the

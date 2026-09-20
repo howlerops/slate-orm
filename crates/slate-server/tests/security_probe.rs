@@ -529,3 +529,277 @@ async fn loading_does_not_leak_a_tables_foreign_keys() {
         "and the refusal must not name the foreign keys that do exist"
     );
 }
+
+/// And on `join`, which resolves *and converts every input* before the first
+/// authorisation.
+///
+/// `join_from_proto(&wire, self.pool.catalog())` takes a catalog rather than a
+/// context — so it cannot authorise, and the handler does not either. Same
+/// width oracle as `query`, on a request that names more tables per round
+/// trip.
+///
+/// Found by checking a claim made from reading: the exemption this session
+/// added for `query_from_proto_at` asserted its callers "authorise before
+/// converting", naming these handlers. Two of the four did not.
+///
+/// Two inputs, because a one-input join is refused by arity *before* anything
+/// converts — the first version of this test asserted indistinguishable
+/// answers and got them, from "a join needs at least two inputs" twice. A
+/// probe that cannot reach the code it is about passes for the wrong reason.
+#[tokio::test]
+async fn joining_does_not_leak_a_tables_width_either() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let joining = |ordinal: u32| {
+        let mut left = common::plain_query("users");
+        left.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        let right = common::plain_query("docs");
+        common::as_principal(
+            pb::JoinRequest {
+                transaction: String::new(),
+                freshness: None,
+                join: Some(pb::JoinQuery {
+                    inputs: vec![
+                        pb::JoinInput {
+                            query: Some(left),
+                            on: Vec::new(),
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                        pb::JoinInput {
+                            query: Some(right),
+                            on: vec![pb::JoinOn {
+                                earlier: Some(pb::ColumnRef {
+                                    input: 0,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                                own: Some(pb::ColumnRef {
+                                    input: 1,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                            }],
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                    ],
+                    limit: None,
+                    offset: 0,
+                    build_limit: None,
+                    after: Vec::new(),
+                    paged: false,
+                    compute: Vec::new(),
+                }),
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.join(joining(0)).await.err();
+    let absent = client.join(joining(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    // The control, so this cannot pass on an arity refusal again: the
+    // *authorised* shape must actually be refused for lack of a grant, which
+    // means conversion was reached and the tables resolved.
+    assert!(
+        says(&real).contains("access denied") || says(&real).contains("no role grants"),
+        "the in-range request should be refused for the grant, not the shape: {}",
+        says(&real)
+    );
+    assert_eq!(
+        says(&real),
+        says(&absent),
+        "a real and an absent column must be indistinguishable to a caller \
+         with no grant"
+    );
+}
+
+/// Every input of a join, not the first.
+///
+/// `reader_only` holds `Read` on `users` and nothing on `docs`, so a join of
+/// the two passes the first check and must still be refused on the second.
+/// Without this, authorising only `wire.inputs[0]` leaves every later input's
+/// width readable to anyone who can read *some* table — which is a lower bar
+/// than holding no grant at all.
+#[tokio::test]
+async fn every_input_of_a_join_is_authorised_not_only_the_first() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let joining = |ordinal: u32| {
+        let left = common::plain_query("users");
+        let mut right = common::plain_query("docs");
+        right.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 1,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::JoinRequest {
+                transaction: String::new(),
+                freshness: None,
+                join: Some(pb::JoinQuery {
+                    inputs: vec![
+                        pb::JoinInput {
+                            query: Some(left),
+                            on: Vec::new(),
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                        pb::JoinInput {
+                            query: Some(right),
+                            on: vec![pb::JoinOn {
+                                earlier: Some(pb::ColumnRef {
+                                    input: 0,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                                own: Some(pb::ColumnRef {
+                                    input: 1,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                            }],
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                    ],
+                    limit: None,
+                    offset: 0,
+                    build_limit: None,
+                    after: Vec::new(),
+                    paged: false,
+                    compute: Vec::new(),
+                }),
+            },
+            "u64:1",
+            Some("u64:1"),
+            "reader_only",
+        )
+    };
+
+    let real = client.join(joining(0)).await.err();
+    let absent = client.join(joining(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        says(&real).contains("docs"),
+        "the in-range request should be refused for the grant on `docs`: {}",
+        says(&real)
+    );
+    assert_eq!(
+        says(&real),
+        says(&absent),
+        "the second input's width must not vary the refusal"
+    );
+}
+
+/// And the aggregate handlers, which convert through the same path.
+///
+/// Its `join` arm was untested until a mutation that skipped it entirely
+/// survived: `aggregate` reaches `join_from_proto` through
+/// `aggregate_from_proto_query`, so a fix applied to `join` alone leaves the
+/// same oracle one RPC away.
+#[tokio::test]
+async fn aggregating_over_a_join_does_not_leak_a_tables_width() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let aggregating = |ordinal: u32| {
+        let mut left = common::plain_query("users");
+        left.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::AggregateRequest {
+                transaction: String::new(),
+                freshness: None,
+                aggregate: Some(pb::AggregateQuery {
+                    input: None,
+                    group_by: Vec::new(),
+                    aggregates: Vec::new(),
+                    having: None,
+                    sort: Vec::new(),
+                    limit: None,
+                    offset: 0,
+                    join: Some(pb::JoinQuery {
+                        inputs: vec![
+                            pb::JoinInput {
+                                query: Some(left),
+                                on: Vec::new(),
+                                join_type: 0,
+                                having: None,
+                                force: None,
+                            },
+                            pb::JoinInput {
+                                query: Some(common::plain_query("docs")),
+                                on: vec![pb::JoinOn {
+                                    earlier: Some(pb::ColumnRef {
+                                        input: 0,
+                                        of: Some(pb::column_ref::Of::Column(0)),
+                                    }),
+                                    own: Some(pb::ColumnRef {
+                                        input: 1,
+                                        of: Some(pb::column_ref::Of::Column(0)),
+                                    }),
+                                }],
+                                join_type: 0,
+                                having: None,
+                                force: None,
+                            },
+                        ],
+                        limit: None,
+                        offset: 0,
+                        build_limit: None,
+                        after: Vec::new(),
+                        paged: false,
+                        compute: Vec::new(),
+                    }),
+                }),
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.aggregate(aggregating(0)).await.err();
+    let absent = client.aggregate(aggregating(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        says(&real).contains("access denied") || says(&real).contains("no role grants"),
+        "the in-range request should be refused for the grant: {}",
+        says(&real)
+    );
+    assert_eq!(says(&real), says(&absent), "and the width must not show");
+}

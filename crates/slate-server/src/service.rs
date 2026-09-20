@@ -464,6 +464,55 @@ impl<S: KvStore + KvReadStore> Head<S> {
         Ok(table)
     }
 
+    /// Authorise every table a multi-table read names, before it is converted.
+    ///
+    /// `join_from_proto` and `aggregate_from_proto_query` take a `Catalog`
+    /// rather than a `SecurityContext`, so they resolve and convert with no
+    /// idea who is asking — and the handlers called them first. That is
+    /// finding 8 on four more handlers than the ones it was written about:
+    /// converting an input resolves its `ColumnRef`s against the table's
+    /// width, and the refusal states the width. Measured on `join`, from a
+    /// role granted nothing: "the projection names column 99 of table
+    /// `users`, which has 4 columns".
+    ///
+    /// The names are read off the wire, because a converted read is the thing
+    /// that cannot be produced safely yet. Every input, not the first: a join
+    /// reads all of them and the kernel checks each, so checking one would
+    /// leave the others' widths readable.
+    fn authorize_join_inputs(
+        &self,
+        context: &SecurityContext,
+        wire: &pb::JoinQuery,
+        action: Action,
+    ) -> Result<(), Status> {
+        for input in &wire.inputs {
+            if let Some(query) = input.query.as_ref() {
+                self.authorized_table(context, &query.table, action)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Head::authorize_join_inputs`] for an aggregate, over either source.
+    ///
+    /// Both arms rather than the one that is set: the converter refuses a
+    /// request setting both, and doing that refusal *after* this one would
+    /// make "set exactly one" a way to choose which table gets checked.
+    fn authorize_aggregate_inputs(
+        &self,
+        context: &SecurityContext,
+        wire: &pb::AggregateQuery,
+        action: Action,
+    ) -> Result<(), Status> {
+        if let Some(input) = wire.input.as_ref() {
+            self.authorized_table(context, &input.table, action)?;
+        }
+        if let Some(join) = wire.join.as_ref() {
+            self.authorize_join_inputs(context, join, action)?;
+        }
+        Ok(())
+    }
+
     /// The writer, if this node may use it.
     fn leader(&self) -> Result<&Arc<RecordStore<Arc<S>>>, Status> {
         match self.leadership.standing() {
@@ -2455,6 +2504,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         // `served_by`. They used to be dropped here on the grounds that a
         // stream has no header; it has one, and it is the message that is
         // always sent even when the result is empty.
+        self.authorize_join_inputs(&context, &wire, Action::Read)?;
         let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
         let definitions = self.definitions(&tables)?;
         let stored: Vec<usize> = definitions
@@ -2546,6 +2596,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.aggregate else {
             return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
         };
+        self.authorize_aggregate_inputs(&context, &wire, Action::Read)?;
         // Carried on the first message, as on `Query` and `Join`.
         let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
         let batch_size = self.limits.rows_per_message.max(1);
@@ -2624,6 +2675,10 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.join else {
             return Err(Status::new(Code::InvalidArgument, "no join given"));
         };
+        // `Explain` rather than `Read`, for the reason the single-table
+        // `explain` gives: it is what the kernel checks first, so a caller
+        // holding neither is told the same thing either way round.
+        self.authorize_join_inputs(&context, &wire, Action::Explain)?;
         let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
         let definitions = self.definitions(&tables)?;
 
@@ -2681,6 +2736,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.aggregate else {
             return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
         };
+        self.authorize_aggregate_inputs(&context, &wire, Action::Explain)?;
         let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
         let grouping = read.grouping();
 

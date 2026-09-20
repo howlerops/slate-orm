@@ -219,6 +219,15 @@ that is set and missing is a hard error, never a silent fall back to building.
   A bare `ty check` is necessary and not sufficient, the same way a green local
   clippy is. `scripts/check.sh` builds that virtualenv on first use and runs
   `ty` against it, so this is one of the things you no longer have to remember.
+- **CI's `ruff` is newer than yours too**, and the clippy note above applies
+  unchanged. `RUF036` — "`None` not at the end of the type union" — turned the
+  `scripts` job red on a file that `ruff 0.15.8` here called clean, twice in
+  one annotation. A green local `ruff check` is necessary and not sufficient,
+  the same way a green local clippy is, and the fix is the same: read the diff
+  out of the job's log and apply it rather than re-running `ruff` here and
+  concluding CI is wrong. Writing `str | dict[str, str] | None` rather than
+  `str | None | dict[str, str]` avoids this one; there is no local command
+  that finds the next.
 - **There are two `ruff` runs and two `ty` runs, over disjoint trees.** One
   pair in `clients/python`, reading that package's own configuration; one pair
   at the root for everything else. `ruff check .` at the root passed while the

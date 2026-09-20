@@ -43,7 +43,7 @@ impl Head {
     }
 """
 
-CASES: list[tuple[str, str | None | dict[str, str], int, str]] = [
+CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
     (
         "a handler that authorises before fingerprinting passes",
         """
@@ -168,7 +168,7 @@ impl Head {
 ]
 
 
-def run(body: str | None | dict[str, str]) -> tuple[int, str]:
+def run(body: str | dict[str, str] | None) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as directory:
         path = pathlib.Path(directory) / "service.rs"
         if isinstance(body, dict):
