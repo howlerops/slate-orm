@@ -28,17 +28,20 @@
 use proptest::prelude::*;
 use slate_tuple::{Direction, TupleReader, Value, ValueType, decode, decode_dynamic, encode};
 
+/// Every `ValueType`, from the enum itself.
+///
+/// This was a hand-written `prop_oneof!` of eight `Just`s, and the enum has
+/// nine: `Decimal` arrived later and nothing said so, so the adversarial
+/// decoder suite never once told the decoder to expect one. A roster nothing
+/// forces you to edit is a roster that goes stale, which is the failure this
+/// repository met in four other places today.
+///
+/// `ValueType::ALL` is the fix, and it lives in `slate-tuple` rather than here
+/// because the enum is `#[non_exhaustive]`: the exhaustive, wildcard-free
+/// match that catches a tenth variant can only be written inside the defining
+/// crate. `value.rs`'s `all_lists_every_variant` is that match.
 fn any_type() -> impl Strategy<Value = ValueType> {
-    prop_oneof![
-        Just(ValueType::Bool),
-        Just(ValueType::Bytes),
-        Just(ValueType::Str),
-        Just(ValueType::I64),
-        Just(ValueType::U64),
-        Just(ValueType::F64),
-        Just(ValueType::Uuid),
-        Just(ValueType::Vector),
-    ]
+    proptest::sample::select(ValueType::ALL.to_vec())
 }
 
 /// Bytes biased towards the ones that mean something to the codec: type tags,
@@ -165,6 +168,12 @@ proptest! {
 
 /// Scalars only: a vector's encoding carries a length that random generation
 /// would rarely make interesting, and it is covered by the hostile-byte cases.
+/// `Uuid` is left out for the same reason — sixteen fixed bytes with no
+/// structure for a corruption to interact with.
+///
+/// `Decimal` was left out by omission rather than by that argument, and is in
+/// now: it is an `i64` on the wire but a *distinct tag*, so the truncation and
+/// single-byte-corruption cases below never produced one.
 fn any_scalar() -> impl Strategy<Value = Value> {
     prop_oneof![
         Just(Value::Null),
@@ -175,6 +184,7 @@ fn any_scalar() -> impl Strategy<Value = Value> {
         any::<i64>().prop_map(Value::I64),
         any::<u64>().prop_map(Value::U64),
         any::<f64>().prop_map(Value::F64),
+        any::<i64>().prop_map(Value::Decimal),
     ]
 }
 

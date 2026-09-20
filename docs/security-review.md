@@ -747,9 +747,18 @@ absent for them, and the grant is required too.
 
 **Not examined in depth**, and therefore not cleared: ~~the lease and leadership
 protocol (`lease.rs`, `leadership.rs`, `filelease.rs`), the S3 backend and its
-credential handling (`slate-slatedb`),~~ the Python client, and the tuple
+credential handling (`slate-slatedb`),~~ the Python client, ~~and the tuple
 codec's behaviour on adversarial encoded input beyond the existing
-`slate-tuple/tests/untrusted.rs`.
+`slate-tuple/tests/untrusted.rs`.~~
+
+The tuple codec row turned up **no defect and one coverage gap**: the suite's
+list of types to fuzz had eight of `ValueType`'s nine, because `Decimal`
+arrived after the list was written. Adding it found nothing — the decoder
+handles a hostile `Decimal` exactly as it handles the rest — so the finding is
+that the list could go stale, not that it hid a bug. It cannot now:
+`ValueType::ALL` lives in the defining crate, where an exhaustive wildcard-free
+match can be written against a `#[non_exhaustive]` enum, and its length is part
+of its type.
 
 **This paragraph has earned its keep twice.** Working it turned up finding 9 —
 the leadership RPC answering unauthenticated — which is a one-line omission

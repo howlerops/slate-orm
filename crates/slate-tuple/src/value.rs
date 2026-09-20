@@ -101,6 +101,31 @@ pub enum ValueType {
 }
 
 impl ValueType {
+    /// Every variant, in declaration order.
+    ///
+    /// Exists so that a caller enumerating the type space cannot silently
+    /// cover eight of nine. `crates/slate-tuple/tests/untrusted.rs` did
+    /// exactly that: its list of types to fuzz was written before `Decimal`
+    /// and nothing connected the two, so the adversarial decoder suite never
+    /// once told the decoder to expect one.
+    ///
+    /// The enum is `#[non_exhaustive]`, so a test outside this crate *cannot*
+    /// write the exhaustive match that would catch it — the compiler demands a
+    /// wildcard and the wildcard is the hole. Inside the crate it can, which
+    /// is why this list and the test that pins it live here rather than beside
+    /// the fuzzer that needed them.
+    pub const ALL: [Self; 9] = [
+        Self::Bool,
+        Self::Bytes,
+        Self::Str,
+        Self::I64,
+        Self::U64,
+        Self::F64,
+        Self::Decimal,
+        Self::Uuid,
+        Self::Vector,
+    ];
+
     /// A human-readable name, used in error messages.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -422,5 +447,40 @@ impl From<Vec<u8>> for Value {
 impl<T: Into<Value>> From<Option<T>> for Value {
     fn from(v: Option<T>) -> Self {
         v.map_or(Self::Null, Into::into)
+    }
+}
+
+#[cfg(test)]
+mod value_type_tests {
+    use super::ValueType;
+
+    /// `ALL` lists every variant, held to the enum by the compiler.
+    ///
+    /// The `match` is exhaustive and wildcard-free, which is only possible in
+    /// the crate that defines a `#[non_exhaustive]` enum. A tenth variant
+    /// stops this compiling, naming this test, before any suite goes quietly
+    /// one type short.
+    #[test]
+    fn all_lists_every_variant() {
+        fn position(kind: ValueType) -> usize {
+            match kind {
+                ValueType::Bool => 0,
+                ValueType::Bytes => 1,
+                ValueType::Str => 2,
+                ValueType::I64 => 3,
+                ValueType::U64 => 4,
+                ValueType::F64 => 5,
+                ValueType::Decimal => 6,
+                ValueType::Uuid => 7,
+                ValueType::Vector => 8,
+            }
+        }
+
+        // Positions rather than `contains`: it checks membership *and* that
+        // nothing is listed twice, which a `contains` loop over a list with a
+        // duplicate and a gap would pass.
+        for (at, kind) in ValueType::ALL.iter().enumerate() {
+            assert_eq!(position(*kind), at, "{kind} is out of place in ALL");
+        }
     }
 }
