@@ -74,6 +74,8 @@ check-sh-guard|.|python3 scripts/test_check_sh.py
 mutate-harness|.|python3 scripts/test_mutate.py
 cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py
+handler-auth|.|python3 scripts/check_handlers.py
+handler-auth-guard|.|python3 scripts/test_check_handlers.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .

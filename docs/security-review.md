@@ -507,8 +507,10 @@ deliberately.** The handlers that fingerprint-check authorise first, via
 fingerprint runs and a right guess is indistinguishable from a wrong one —
 same code, same message. `a_caller_with_no_grant_cannot_confirm_a_tables_shape`
 asserts both. Every `fingerprint::check` in `service.rs` is still immediately
-preceded by an `authorized_table`, which is worth re-checking when a handler is
-added: the fix was written for four of them and there are fourteen now.
+preceded by an `authorized_table`: the fix was written for four of them and
+there are thirteen now. That is no longer worth re-checking by hand —
+`scripts/check_handlers.py` fails if a new one appears without an
+authorisation above it, or if a handler reaches for the bare resolver.
 
 **The second time was the read paths, which the first fix did not cover, and
 where the disclosure was larger.** `query`, `explain` and `related` resolved

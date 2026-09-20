@@ -307,6 +307,12 @@ jobs:
       # document, so only a check finds it.
       - run: python3 scripts/check_cited_tests.py
       - run: python3 scripts/test_check_cited_tests.py
+      # A handler must authorise before it touches a table's shape.
+      # Security finding 8 was fixed twice — the second time because
+      # the first covered the handlers it was written about and the
+      # read paths went on resolving, then converting, then checking.
+      - run: python3 scripts/check_handlers.py
+      - run: python3 scripts/test_check_handlers.py
 
   quickstarts:
     name: the landing page's code
