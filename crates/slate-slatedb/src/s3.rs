@@ -285,6 +285,15 @@ mod tests {
         move |name| map.get(name).cloned()
     }
 
+    /// The absent case, which is the ordinary one: credentials resolved from
+    /// the environment by the object store rather than held here. It must not
+    /// print `<redacted>` and imply a secret nobody set.
+    #[test]
+    fn a_config_with_no_credentials_redacts_nothing() {
+        let printed = format!("{:?}", S3Config::new("bucket"));
+        assert!(!printed.contains("<redacted>"), "{printed}");
+    }
+
     #[test]
     fn no_bucket_means_absent_rather_than_empty() {
         // The integration suite relies on this to choose between a configured
@@ -330,13 +339,23 @@ mod tests {
 
     #[test]
     fn credentials_are_not_printed_by_debug() {
-        let config = S3Config::new("b").with_credentials("AKIAEXAMPLE", "super-secret");
+        let config = S3Config::new("b")
+            .with_credentials("AKIAEXAMPLE", "super-secret")
+            // The session token was not set here, and it is a secret too: a
+            // mutation printing it in place of `<redacted>` survived this test
+            // until it was. An STS token is shorter-lived than a key pair and
+            // every bit as usable while it lasts.
+            .with_session_token("super-secret-session");
         let rendered = format!("{config:?}");
         assert!(rendered.contains("AKIAEXAMPLE"), "key id is useful in logs");
         assert!(
             !rendered.contains("super-secret"),
             "secret leaked through Debug: {rendered}"
         );
+        // Both fields, counted. Without this a `Debug` that dropped the
+        // credentials entirely would pass — useless, and indistinguishable
+        // from one that redacts.
+        assert_eq!(rendered.matches("<redacted>").count(), 2, "{rendered}");
     }
 
     #[test]

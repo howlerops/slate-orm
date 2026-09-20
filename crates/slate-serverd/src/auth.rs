@@ -938,6 +938,36 @@ mod tests {
             !rendered.contains(GOOD),
             "the secret is in the Debug output"
         );
+
+        // As bytes, too, which is the form the secret is actually held in.
+        // `Bearer::secret` is a `Vec<u8>`, so a `Debug` that printed it would
+        // render `[48, 49, 50, ..]` and the substring check above would pass
+        // while every byte of the token sat in the log. This half was added
+        // after a mutation printing `t.secret` in place of `t.name` — the
+        // exact accident being guarded against — was caught by the string
+        // check only because `Vec<u8>` happens to Debug as digits that do not
+        // spell the secret. That is luck, not a test.
+        let bytes = format!("{:?}", GOOD.as_bytes());
+        let listed = bytes.trim_start_matches('[').trim_end_matches(']');
+        assert!(
+            !rendered.contains(listed),
+            "the secret is in the Debug output as bytes: {rendered}"
+        );
+
+        // The startup banner is the other thing written to a log by
+        // construction, and it is built by hand rather than by a `Debug` impl,
+        // so nothing above covers it.
+        assert!(
+            !chosen.description.contains(GOOD),
+            "the secret is in the startup banner: {}",
+            chosen.description
+        );
+
+        // Through `Chosen` as well as through the authenticator alone: it
+        // derives `Debug` over an `Arc<dyn Authenticator>`, and that is the
+        // path a panic message or a trace would actually take.
+        let whole = format!("{chosen:?}");
+        assert!(!whole.contains(GOOD) && !whole.contains(listed), "{whole}");
     }
 
     #[test]
