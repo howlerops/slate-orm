@@ -141,10 +141,19 @@ rather than security ones — a bad width refuses every write rather than
 permitting a bad one — so I left them, but I did not enumerate the whole list
 and confirm that reasoning holds for each.
 
-**`RecordStore` still accepts any `Catalog`.** A catalog built by some future
-third constructor, or by a `Catalog` mutated after validation, reaches the
-store unchecked. The fix closes the one bypass that exists today rather than
-making the invariant structural.
+**`RecordStore` still accepts any `Catalog`.** ~~A catalog built by some
+future third constructor, or by a `Catalog` mutated after validation, reaches
+the store unchecked. The fix closes the one bypass that exists today rather
+than making the invariant structural.~~
+
+> **Withdrawn, same day.** Both halves are false. There is no third
+> constructor — `insert` is `Catalog`'s only `&mut self` method and its only
+> `push`, the field is private, and nothing hands out `&mut` into it — and
+> "mutated after validation" is the same thing said differently, since the only
+> mutation *is* `insert` and it validates. The invariant **is** structural; this
+> fix made it so rather than patching one of two doors. What remains true is
+> narrower and worth keeping: `RecordStore::new` does not re-check, so it relies
+> on that. See `2026-09-20-the-guard-i-did-not-need-to-build.md`.
 
 **No test asserts the daemon's path is the safe one.** I read the five in-repo
 `from_tables` call sites and none of them uses `insert`; that is a grep, not a

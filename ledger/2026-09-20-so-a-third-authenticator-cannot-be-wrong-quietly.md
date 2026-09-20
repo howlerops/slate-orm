@@ -139,6 +139,15 @@ never-fires check catches the case where *all* of them stop matching and not
 the case where one does.
 
 **Nothing does this for the third pattern instance.** `Catalog::from_tables`
-and `insert` are both correct and there is no roster of catalog constructors. A
-third constructor would be the same story, and the shape of a general answer —
-"what else constructs this type" — is still not something I have.
+and `insert` are both correct and there is no roster of catalog constructors.
+~~A third constructor would be the same story, and the shape of a general
+answer — "what else constructs this type" — is still not something I have.~~
+
+> **Withdrawn, same day.** There cannot be a third constructor. `Catalog` has
+> one `impl` block in its defining module, a private `tables` field, no
+> `serde`, no method handing out `&mut` into it, and exactly one `&mut self`
+> method — `insert`, which runs the refusal. The invariant is enforced by the
+> compiler, so the roster this section asks for would check something the type
+> system already guarantees. I inferred the gap from the pattern instead of
+> reading the type, which is the same mistake the entry above it is about. See
+> `2026-09-20-the-guard-i-did-not-need-to-build.md`.

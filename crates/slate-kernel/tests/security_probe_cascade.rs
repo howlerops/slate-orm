@@ -624,3 +624,53 @@ fn a_catalog_assembled_by_insert_is_refused_in_either_order() {
         }
     }
 }
+
+/// There is no third way to get a table into a `Catalog`.
+///
+/// Two ledger entries claimed there might be — "a third constructor would be
+/// the same story", and "a catalog built by some future third constructor, or
+/// by a `Catalog` mutated after validation, reaches the store unchecked".
+/// Both were inferred from the pattern rather than read off the type, and both
+/// are wrong.
+///
+/// `Catalog` has one `impl` block in its defining module, a private `tables`
+/// field, no `serde`, no method handing out `&mut` into it, and exactly one
+/// `&mut self` method — `insert`, which runs the refusal. `Default` and
+/// `Clone` cannot add a table. So the compiler, not a convention, is what makes
+/// the refusal unavoidable, and the roster-style guard those entries asked for
+/// would have checked something the type system already enforces.
+///
+/// This test is not that guard. It pins the two consequences a reader would
+/// otherwise have to re-derive from the type: a cloned catalog is as safe as
+/// its original, and a `Default` one is empty rather than unchecked. If a
+/// second mutating method is ever added it will sit directly below `insert`'s
+/// refusal and these will not catch it, which is stated rather than papered
+/// over.
+#[test]
+fn a_catalog_cannot_be_reached_around_by_cloning_or_defaulting() {
+    for action in [ReferentialAction::Cascade, ReferentialAction::Restrict] {
+        // A clone of a safe catalog stays safe, and still refuses the edge.
+        let mut safe = Catalog::from_tables([orgs()]).expect("a shared parent alone is fine");
+        let mut copied = safe.clone();
+        assert!(
+            matches!(
+                copied.insert(docs(action)),
+                Err(SchemaError::CrossTenantForeignKey { .. })
+            ),
+            "a cloned catalog let the edge in"
+        );
+        // And the original is untouched by what its clone was refused.
+        assert!(safe.insert(docs(action)).is_err());
+
+        // `Default` is the empty catalog, not an unchecked one.
+        let mut fresh = Catalog::default();
+        fresh.insert(orgs()).expect("the parent inserts");
+        assert!(
+            matches!(
+                fresh.insert(docs(action)),
+                Err(SchemaError::CrossTenantForeignKey { .. })
+            ),
+            "a defaulted catalog let the edge in"
+        );
+    }
+}
