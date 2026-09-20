@@ -38,7 +38,17 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SERVICE = ROOT / "crates" / "slate-server" / "src" / "service.rs"
+
+#: Where the handlers live. Directories rather than one file, because the
+#: first version of this check read `service.rs` alone and missed a
+#: `fingerprint::check` in `convert.rs` — a file away, reachable only through
+#: callers, and invisible to a check whose whole subject is "is this reachable
+#: without authorising". That is the caveat this check's own entry named,
+#: biting within the hour.
+SOURCES = (
+    ROOT / "crates" / "slate-server" / "src",
+    ROOT / "crates" / "slate-serverd" / "src",
+)
 
 #: How far above a `fingerprint::check` its authorisation may sit.
 #:
@@ -53,6 +63,24 @@ REACH = 4
 #: Keyed on the enclosing function. The reason is the entry's whole value: a
 #: reader deciding whether their new call belongs here needs to know what makes
 #: these safe, not that somebody once said so.
+#: `fingerprint::check` calls whose table was authorised by their *caller*, and
+#: why that is safe rather than a hole.
+#:
+#: A function taking a `&TableDef` cannot authorise: it has no name to resolve
+#: and no context to resolve it for. The check it owes is on its callers, and
+#: those are the sites rule 2 covers. Listed rather than skipped by shape,
+#: because "takes a table so somebody else checked" is exactly the reasoning
+#: that was wrong three times today, and writing it down forces it to be
+#: re-argued when a caller is added.
+FINGERPRINT_BY_CALLER = {
+    "query_from_proto_at": (
+        "takes an already-resolved `&TableDef`; its callers are `query`, "
+        "`explain` and the join and chain handlers, each of which authorises "
+        "before converting — which they did not until finding 8 was fixed the "
+        "second time, and which rule 2 now holds them to"
+    ),
+}
+
 UNAUTHORIZED = {
     "authorized_table": (
         "this is the authorising resolver itself; it calls the bare one and "
@@ -94,44 +122,77 @@ def main(argv: list[str] | None = None) -> int:
     # checks over a file they wrote, rather than against `service.rs` — where a
     # broken check passes for whatever `service.rs` happens to contain.
     argv = sys.argv[1:] if argv is None else argv
-    service = Path(argv[0]) if argv else SERVICE
+    sources = [Path(one) for one in argv] if argv else list(SOURCES)
 
-    lines = service.read_text().splitlines()
-    names = enclosing_functions(lines)
+    files: list[Path] = []
+    for source in sources:
+        if source.is_dir():
+            files.extend(sorted(source.rglob("*.rs")))
+        elif source.exists():
+            files.append(source)
+
     problems: list[str] = []
     seen: set[str] = set()
+    bare = 0
+    checks = 0
 
-    for at, line in enumerate(lines):
-        if BARE.search(line):
-            owner = names[at]
-            seen.add(owner)
-            if owner not in UNAUTHORIZED:
-                problems.append(
-                    f"{service.name}:{at + 1}: `{owner}` resolves a table with the "
-                    "bare `self.table(..)`, which does not authorise.\n"
-                    "  Use `self.authorized_table(&context, name, action)` with the "
-                    "action the kernel will check, or add it to "
-                    "UNAUTHORIZED with a reason it is safe."
-                )
-        if FINGERPRINT.search(line):
-            window = lines[max(0, at - REACH) : at]
-            if not any(AUTHORIZED.search(above) for above in window):
-                problems.append(
-                    f"{service.name}:{at + 1}: `fingerprint::check` with no "
-                    f"`authorized_table` in the {REACH} lines above it.\n"
-                    "  Fingerprinting before authorising is security finding 8: "
-                    "a caller with no grant confirms a guessed schema one "
-                    "fingerprint at a time."
-                )
+    for path in files:
+        lines = path.read_text().splitlines()
+        names = enclosing_functions(lines)
+        for at, line in enumerate(lines):
+            if BARE.search(line):
+                bare += 1
+                owner = names[at]
+                seen.add(owner)
+                if owner not in UNAUTHORIZED:
+                    problems.append(
+                        f"{path.name}:{at + 1}: `{owner}` resolves a table with the "
+                        "bare `self.table(..)`, which does not authorise.\n"
+                        "  Use `self.authorized_table(&context, name, action)` with "
+                        "the action the kernel will check, or add it to "
+                        "UNAUTHORIZED with a reason it is safe."
+                    )
+            if FINGERPRINT.search(line):
+                checks += 1
+                owner = names[at]
+                seen.add(owner)
+                window = lines[max(0, at - REACH) : at]
+                if owner in FINGERPRINT_BY_CALLER:
+                    continue
+                if not any(AUTHORIZED.search(above) for above in window):
+                    problems.append(
+                        f"{path.name}:{at + 1}: `fingerprint::check` in `{owner}` "
+                        f"with no `authorized_table` in the {REACH} lines above "
+                        "it.\n"
+                        "  Fingerprinting before authorising is security finding "
+                        "8: a caller with no grant confirms a guessed schema one "
+                        "fingerprint at a time. If the table arrives already "
+                        "authorised, add `{owner}` to FINGERPRINT_BY_CALLER with "
+                        "the callers that check it."
+                    )
+
+    # A check that finds nothing has stopped checking, and reads identically to
+    # one that found nothing wrong. `CLAUDE.md`: "a check that never fires is a
+    # check nobody has debugged". If the handlers move, this fails rather than
+    # going quietly green over an empty tree.
+    if not files:
+        problems.append(f"no Rust sources under {[str(one) for one in sources]}")
+    elif checks == 0:
+        problems.append(
+            f"no `fingerprint::check` anywhere in {len(files)} file(s). Either "
+            "the handlers moved and SOURCES is stale, or the check is no longer "
+            "what this guards — both need a person, not a pass."
+        )
 
     # A stale exemption is its own defect: it reads as a live hazard somebody
     # accepted, and the next person weighs a decision nobody is making.
-    for name, reason in UNAUTHORIZED.items():
-        if name not in seen:
-            problems.append(
-                f"UNAUTHORIZED lists `{name}`, which no longer resolves a table "
-                f"that way. Delete the entry; its reason was: {reason}"
-            )
+    for listed, where in ((UNAUTHORIZED, "UNAUTHORIZED"), (FINGERPRINT_BY_CALLER, "FINGERPRINT_BY_CALLER")):
+        for name, reason in listed.items():
+            if name not in seen:
+                problems.append(
+                    f"{where} lists `{name}`, which no longer does what the entry "
+                    f"exempts. Delete it; its reason was: {reason}"
+                )
 
     if problems:
         for problem in problems:
@@ -139,11 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{len(problems)} problem(s)", file=sys.stderr)
         return 1
 
-    bare = sum(1 for line in lines if BARE.search(line))
-    checks = sum(1 for line in lines if FINGERPRINT.search(line))
     print(
-        f"ok    {bare} bare resolutions, all accounted for; "
-        f"{checks} fingerprint checks, all authorised first"
+        f"ok    {len(files)} files, {bare} bare resolutions all accounted for, "
+        f"{checks} fingerprint checks all authorised first"
     )
     return 0
 
