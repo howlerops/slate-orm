@@ -617,9 +617,25 @@ pub enum SchemaError {
     },
 
     /// A delete was refused because rows still reference the row deleted.
+    ///
+    /// `retired` is the difference between a refusal an operator can act on and
+    /// one that reads as the database lying. A `RESTRICT` edge blocks on a
+    /// soft-deleted child — it is still a child, and its reference is still
+    /// there — but an ordinary read of that table returns nothing, so somebody
+    /// told only "rows still reference it" looks, finds an empty result, and
+    /// concludes the constraint is wrong. The message has to say which case it
+    /// is, because the two need opposite responses: delete the children, or
+    /// *purge* them.
     #[error(
-        "cannot delete from `{table}`: rows in `{child}` still reference it \
-         through foreign key `{foreign_key}`"
+        "cannot delete from `{table}`: {}rows in `{child}` still reference it \
+         through foreign key `{foreign_key}`{}",
+        if *retired { "soft-deleted " } else { "" },
+        if *retired {
+            ". A retired row still holds its reference and an ordinary read \
+             will not show it; purge it, or restore it and deal with it"
+        } else {
+            ""
+        }
     )]
     ForeignKeyRestricted {
         /// The table being deleted from.
@@ -628,6 +644,12 @@ pub enum SchemaError {
         child: String,
         /// The constraint that refused the delete.
         foreign_key: String,
+        /// Whether the rows that blocked it are ones a soft delete retired.
+        ///
+        /// True only when *every* blocker found was retired. A mixture reports
+        /// as the ordinary case, because the live ones are what the caller
+        /// should deal with first and they are the ones they can see.
+        retired: bool,
     },
 
     /// A cascading delete would remove more rows than the limit allows.

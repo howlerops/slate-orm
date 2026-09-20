@@ -888,6 +888,10 @@ async fn a_restrict_edge_blocks_on_a_live_child() {
     let why = drop_folder(&store).await.expect_err("a live child blocks");
     assert!(why.contains("files"), "{why}");
     assert!(why.contains("files_folder"), "{why}");
+    // The control for the message as well as for the refusal: a live child
+    // must *not* be described as soft-deleted, or the advice is wrong in the
+    // more common direction — "purge it" for a row a purge would never reach.
+    assert!(!why.contains("soft-deleted"), "{why}");
 }
 
 #[tokio::test]
@@ -913,6 +917,13 @@ async fn a_restrict_edge_blocks_on_a_retired_child() {
         .await
         .expect_err("a retired child is still a child");
     assert!(why.contains("files_folder"), "{why}");
+    // And the message says *which* case it is. Without this an operator reads
+    // "rows in `files` still reference it", queries `files`, finds nothing —
+    // an ordinary read hides the retired row — and concludes the constraint is
+    // wrong. The two cases also need opposite responses: delete the children,
+    // or purge them.
+    assert!(why.contains("soft-deleted"), "{why}");
+    assert!(why.contains("purge it"), "{why}");
     assert_eq!(
         files_of(&store).await,
         vec![(10, Some(1_000))],
@@ -1840,4 +1851,36 @@ async fn a_table_that_does_not_soft_delete_is_untouched_by_the_restore_grant() {
         "and the row was there to delete"
     );
     txn.commit().await.expect("commit");
+}
+
+#[tokio::test]
+async fn a_mixture_of_live_and_retired_blockers_reports_as_the_ordinary_case() {
+    // The third case, and the one a per-row decision would get wrong. With a
+    // live child *and* a retired one both referencing the parent, the caller
+    // should be told about the live one: it is the one they can see, the one
+    // they can delete, and dealing with it is a prerequisite either way.
+    // Advising a purge here would send them to the operation that erases
+    // history for a problem an ordinary delete solves.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(11), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("a second child");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the first, leaving one of each");
+    txn.commit().await.expect("commit");
+
+    let why = drop_folder(&store).await.expect_err("both still block");
+    assert!(why.contains("files_folder"), "{why}");
+    assert!(
+        !why.contains("soft-deleted"),
+        "a mixture must read as the ordinary case: {why}"
+    );
 }

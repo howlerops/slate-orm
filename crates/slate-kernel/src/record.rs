@@ -2147,6 +2147,16 @@ impl<'a> RecordTransaction<'a> {
                 // guards was true; the control for it is
                 // `a_restrict_edge_blocks_on_a_retired_child`, which passes a
                 // live child through the same delete and sees it refused.
+                // Gathered rather than refused on the first one, so the error
+                // can say whether *every* blocker is retired. It cannot be
+                // decided per row: a mixture has to report as the ordinary
+                // case, because the live children are what the caller should
+                // deal with first and are the only ones they can see.
+                //
+                // The cost is bounded by the same read either way — the rows
+                // were already collected by `referencing_rows` — so this walks
+                // a vector rather than issuing anything extra.
+                let mut blockers = Vec::new();
                 for found in self
                     .referencing_rows(
                         &unpoliced,
@@ -2161,13 +2171,22 @@ impl<'a> RecordTransaction<'a> {
                     // block: the reference goes away with it.
                     let key = keys::row_key(child, &found.primary_key_values(child));
                     if !scheduled.contains(&key) {
-                        return Err(SchemaError::ForeignKeyRestricted {
-                            table: parent.name().to_owned(),
-                            child: child.name().to_owned(),
-                            foreign_key: foreign_key.name().to_owned(),
-                        }
-                        .into());
+                        blockers.push(found);
                     }
+                }
+                if !blockers.is_empty() {
+                    let retired = child.soft_delete().is_some_and(|column| {
+                        blockers
+                            .iter()
+                            .all(|row| !matches!(row.get(column), None | Some(Value::Null)))
+                    });
+                    return Err(SchemaError::ForeignKeyRestricted {
+                        table: parent.name().to_owned(),
+                        child: child.name().to_owned(),
+                        foreign_key: foreign_key.name().to_owned(),
+                        retired,
+                    }
+                    .into());
                 }
             }
         }
