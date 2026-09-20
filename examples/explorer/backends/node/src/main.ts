@@ -86,10 +86,11 @@ import {
   TABLES as CATALOG,
   decodeAuthors,
   decodeBooks,
-  encodeBooks,
   decodeEditions,
   decodeSales,
   decodeShipments,
+  encodeBooks,
+  isRetiredShipments,
 } from "./schema.js";
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
@@ -1072,6 +1073,8 @@ class Adapter {
         book_id: String(shipment.book_id),
         status: shipment.status,
         deleted_at: shipment.deleted_at === null ? "null" : String(shipment.deleted_at),
+        // Through the generated accessor; see the Go adapter for why.
+        retired: isRetiredShipments(shipment),
       },
       author: {
         id: String(author.id),

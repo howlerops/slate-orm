@@ -86,16 +86,12 @@ module.
 
 - **There is still no `restore`.** Named above as its own change, and it is now
   the last item left in the entry this closes half of.
-- **No Go or TypeScript test for the new method.** The Python suite covers the
-  positive and the negative; the other two compile it and the conformance
-  corpus does not exercise it, because no adapter route calls it yet. That is
-  the "generated, compiled, never called" shape this repository keeps meeting,
-  and I am naming it rather than claiming otherwise — the honest position is
-  that Python's coverage is real and the other two are typechecked.
-- **Nothing uses it in the demo.** The retired-row route reads `deleted_at`
-  directly, as it did before. Converting it would be a one-line change per
-  adapter and would make the property load-bearing; I stopped at the generator
-  because the recorded gap was about the generator.
+- ~~**No Go or TypeScript test for the new method.**~~ ~~**Nothing uses it in
+  the demo.**~~ **Both closed** — see
+  `2026-09-20-the-accessor-three-adapters-now-call.md`. Named here within the
+  hour of writing them, which is the shortest a "generated, compiled, never
+  called" item has stayed open in this repository and is the argument for
+  naming them at all.
 - **`--print-schema`'s output is not versioned.** A consumer parsing it gets a
   new key without warning. True before this change and unchanged by it, but
   worth saying now that the shape has grown twice in two days.

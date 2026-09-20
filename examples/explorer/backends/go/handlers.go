@@ -1415,6 +1415,12 @@ func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMe
 			"book_id":    fmt.Sprintf("%d", shipment.BookId),
 			"status":     shipment.Status,
 			"deleted_at": deleted,
+			// Through the *generated* accessor rather than by testing
+			// `DeletedAt` here. `--print-schema` publishes which column is the
+			// retirement stamp, so the generator knows and the caller should
+			// not have to — and putting it in this response is what stops the
+			// accessor being generated, compiled and never called.
+			"retired": shipment.Retired(),
 		},
 		"author": map[string]any{
 			"id": fmt.Sprintf("%d", author.Id),

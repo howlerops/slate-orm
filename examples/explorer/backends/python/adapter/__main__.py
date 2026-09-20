@@ -963,6 +963,8 @@ class Adapter:
                 "deleted_at": "null"
                 if shipment.deleted_at is None
                 else str(shipment.deleted_at),
+                # Through the generated accessor; see the Go adapter for why.
+                "retired": shipment.retired,
             },
             "author": {
                 "id": str(author.id),

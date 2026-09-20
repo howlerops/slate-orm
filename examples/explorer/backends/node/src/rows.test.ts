@@ -34,6 +34,7 @@ import {
   encodeEditions,
   encodeSales,
   encodeShipments,
+  isRetiredShipments,
 } from "./schema.js";
 
 /** A well-formed `books` row: the ordinals the catalog declares, in order. */
@@ -324,4 +325,22 @@ test("every generated encoder is exercised", () => {
   for (const name of Object.keys(ROUND_TRIP)) {
     assert.ok(declared.includes(name), `ROUND_TRIP names ${name}, which schema.ts no longer declares`);
   }
+});
+
+// --- the published soft delete ------------------------------------------------
+
+test("isRetiredShipments follows the stamp", () => {
+  // `--print-schema` publishes which column carries the retirement stamp, so
+  // the generator knows `deleted_at` is not an ordinary nullable bigint.
+  const live = { id: 9n, book_id: 7n, status: "shipped" as const, deleted_at: null };
+  assert.equal(isRetiredShipments(live), false);
+  assert.equal(isRetiredShipments({ ...live, deleted_at: 1n }), true);
+});
+
+test("only a soft-deleting table gets a retired accessor", () => {
+  // The negative half, and the one that catches an emitter keying on a column
+  // *name*: `books` declares no soft delete and must not claim one.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function isRetired(\w+)\(/gm)].map((m) => m[1]!);
+  assert.deepEqual(declared, ["Shipments"]);
 });

@@ -477,3 +477,34 @@ func TestEveryGeneratedEncoderIsExercised(t *testing.T) {
 		t.Errorf("roundTrip has %d entries, schema.go declares %d", len(roundTrip), len(declared))
 	}
 }
+
+// --- the published soft delete ------------------------------------------------
+
+func TestRetiredFollowsTheStamp(t *testing.T) {
+	// `--print-schema` publishes which column carries the retirement stamp, so
+	// the generator knows `deleted_at` is not an ordinary nullable int64 and
+	// the caller does not have to.
+	live := Shipments{Id: 9, BookId: 7, Status: "shipped"}
+	if live.Retired() {
+		t.Error("a row with no stamp reports as retired")
+	}
+	at := int64(1)
+	if !(Shipments{Id: 9, BookId: 7, Status: "shipped", DeletedAt: &at}).Retired() {
+		t.Error("a stamped row reports as live")
+	}
+}
+
+func TestOnlyASoftDeletingTableGetsRetired(t *testing.T) {
+	// The negative half, and the one that catches an emitter keying on a
+	// column *name*: `books` declares no soft delete and must not claim one.
+	// Go has no runtime `hasattr`, so this reads the generated source — which
+	// is the same thing the encoder and decoder coverage checks do.
+	source, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("reading the generated file: %v", err)
+	}
+	declared := regexp.MustCompile(`(?m)^func \(r (\w+)\) Retired\(\)`).FindAllStringSubmatch(string(source), -1)
+	if len(declared) != 1 || declared[0][1] != "Shipments" {
+		t.Errorf("Retired() is generated for %v; only Shipments soft-deletes", declared)
+	}
+}
