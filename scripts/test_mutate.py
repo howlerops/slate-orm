@@ -88,6 +88,87 @@ def case(name: str, body: str, expect_code: int, expect_text: list[str]) -> bool
     return True
 
 
+#: A subject that is *imported* rather than read, which is what makes the
+#: bytecode cache reachable at all. The fake command above opens its subject as
+#: text and is immune, which is why this case needs a runner of its own.
+IMPORTED_SUBJECT = "VALUE = 1\n"
+
+RUNNER = '''
+import os, pathlib, sys
+home = pathlib.Path(sys.argv[1])
+# One line per run, so the test can assert every run got its own cache. This
+# is the deterministic half: whether two writes land in the same mtime second
+# is a race, but "each run is given a fresh cache directory" is not.
+with (home / "caches.log").open("a") as log:
+    print(os.environ.get("PYTHONPYCACHEPREFIX", "unset"), file=log)
+sys.path.insert(0, str(home))
+import subject
+if subject.VALUE == 2:
+    print("test saw_two ... FAILED")
+    print("test result: FAILED. 0 passed; 1 failed; 0 ignored")
+elif subject.VALUE == 3:
+    print("test saw_three ... FAILED")
+    print("test result: FAILED. 0 passed; 1 failed; 0 ignored")
+else:
+    print("test result: ok. 1 passed; 0 failed; 0 ignored")
+'''
+
+
+def case_fresh_bytecode() -> bool:
+    """Two same-size mutations of an imported module are scored separately.
+
+    CPython invalidates a `.pyc` on mtime and size. `VALUE = 1` and `VALUE = 2`
+    are the same size, and two mutation runs land in the same second, so
+    without a fresh cache per run the second is scored against the first one's
+    bytecode — and the restore afterwards is invisible too. That is exactly
+    what happened the first time `mutate.py` was pointed at
+    `check_cited_tests.py`, and it is the reason this case exists.
+    """
+    name = "two same-size mutations are not scored against each other's bytecode"
+    with tempfile.TemporaryDirectory() as directory:
+        home = Path(directory)
+        subject = home / "subject.py"
+        subject.write_text(IMPORTED_SUBJECT)
+        runner = home / "runner.py"
+        runner.write_text(RUNNER)
+        body = spec(
+            '{"name": "two", "old": "VALUE = 1", "new": "VALUE = 2"},'
+            '{"name": "three", "old": "VALUE = 1", "new": "VALUE = 3"}'
+        )
+        text = body.replace("__SUBJECT__", str(subject)).replace(
+            "__FAKE__", f'"{sys.executable}", "{runner}", "{home}"'
+        )
+        code, output = run(text, subject, runner)
+
+        problems = []
+        if code != 0:
+            problems.append(f"exit {code}, expected 0")
+        # The symptom: without the fix the second mutation reports the first
+        # one's test name, so `saw_three` never appears.
+        for wanted in ("saw_two", "saw_three"):
+            if wanted not in output:
+                problems.append(f"missing {wanted!r} — the second mutation was "
+                                "scored against the first one's bytecode")
+        caches = (home / "caches.log").read_text().split()
+        if len(caches) != len(set(caches)):
+            problems.append(f"a cache directory was reused across runs: {caches}")
+        if any(cache == "unset" for cache in caches):
+            problems.append("a run was given no cache prefix at all")
+        if subject.read_text() != IMPORTED_SUBJECT:
+            problems.append(f"the subject was left mutated: {subject.read_text()!r}")
+
+        if problems:
+            print(f"FAIL  {name}")
+            for problem in problems:
+                print(f"        {problem}")
+            print("      ---- output ----")
+            for line in output.splitlines():
+                print(f"      {line}")
+            return False
+    print(f"ok    {name}")
+    return True
+
+
 def spec(cases: str) -> str:
     return '{"file": "__SUBJECT__", "command": [__FAKE__], "cases": [' + cases + "]}"
 
@@ -145,6 +226,7 @@ def main() -> int:
             1,
             ["was CAUGHT", "stopped being true"],
         ),
+        case_fresh_bytecode(),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

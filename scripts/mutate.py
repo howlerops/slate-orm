@@ -5,7 +5,8 @@
 thing, confirm a *named* test fails, restore, re-verify. The discipline is
 sound and doing it by hand has a failure mode that looks exactly like success.
 
-**Three ways a hand-run mutation lies, all of them met in one session:**
+**Four ways a mutation run lies. The first three were met by hand in one
+session; the fourth was found by pointing this script at itself:**
 
 1. **The patch does not apply.** An anchor string moves under `cargo fmt` and
    the replacement silently matches nothing. The suite then runs against
@@ -17,6 +18,11 @@ sound and doing it by hand has a failure mode that looks exactly like success.
    the same empty output.
 3. **The shell eats the mutation.** A replacement containing a backtick, a
    `$`, or a bare word the shell wants to run arrives mangled or not at all.
+4. **A stale cache runs the wrong code.** CPython keys a `.pyc` on the
+   source's mtime and size, and a mutation is usually the same size as what it
+   replaces — so a same-second edit can be scored against the *previous*
+   mutation's bytecode, and a restore can be invisible. Found by running this
+   script against itself; see `run()`.
 
 Each is caught here rather than trusted to a reader's attention:
 
@@ -25,7 +31,9 @@ Each is caught here rather than trusted to a reader's attention:
   tree;
 - the command's output is parsed for how many suites *reported*, and zero is a
   hard error that says so rather than a quiet pass;
-- the spec arrives as JSON on stdin, so no replacement ever touches a shell.
+- the spec arrives as JSON on stdin, so no replacement ever touches a shell;
+- every run compiles into a fresh bytecode cache, so a same-size mutation
+  cannot be scored against the previous one.
 
 **A surviving mutation exits non-zero.** That is the point: a survival is a
 finding — a missing test, or code that is redundant — and it should interrupt
@@ -50,27 +58,48 @@ Usage:
 `expect_survivor` on a case takes the reason survival is correct, and inverts
 that case: it then fails if the mutation *is* caught, because the reason has
 stopped being true.
+
+`"dialect": "python"` reads the `ok    name` / `FAIL  name` / `N passed, M
+failed` output of this repository's own `scripts/test_*.py` guards instead of
+libtest's. It defaults to `"rust"`.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: Lines like `test some_name ... FAILED`, which is how libtest names a failure.
-FAILED = re.compile(r"^test (\S+) \.\.\. FAILED\s*$", re.MULTILINE)
-
-#: `test result: ok. 12 passed; ...` — one per test binary that actually ran.
+#: How to read a suite's output: which lines name a failure, and which line
+#: proves a suite reported at all.
 #:
-#: Counted rather than ignored because it is the only thing that separates "the
-#: suite ran and nothing failed" from "the suite never built". Those are the
-#: same empty `FAILED` output and opposite conclusions.
-REPORTED = re.compile(r"^test result:", re.MULTILINE)
+#: Two dialects rather than one because this repository has two kinds of suite
+#: and the first version of this script only knew about Rust — which meant the
+#: Python guards, the ones whose whole job is to catch a mistake nobody
+#: remembers to look for, were the ones that could not be mutation-tested. A
+#: third dialect is a two-line entry here; the point is that an unrecognised
+#: one reports *zero suites* and is refused, rather than reading as a clean
+#: pass, which is failure mode 2 in the docstring above.
+DIALECTS = {
+    # libtest: `test some_name ... FAILED`, and `test result: ok. 12 passed`
+    # once per test binary that actually ran.
+    "rust": (
+        re.compile(r"^test (\S+) \.\.\. FAILED\s*$", re.MULTILINE),
+        re.compile(r"^test result:", re.MULTILINE),
+    ),
+    # The house style of `scripts/test_*.py`: `ok    name` / `FAIL  name`, and
+    # a closing `N passed, M failed`.
+    "python": (
+        re.compile(r"^FAIL\s+(.+?)\s*$", re.MULTILINE),
+        re.compile(r"^\d+ passed, \d+ failed\s*$", re.MULTILINE),
+    ),
+}
 
 
 class Mutation:
@@ -106,24 +135,61 @@ def apply_once(path: Path, mutation: Mutation) -> str:
     return original
 
 
-def run(command: list[str]) -> tuple[list[str], int, str]:
-    """The command, its failing test names, and how many suites reported."""
-    finished = subprocess.run(
-        command, cwd=ROOT, capture_output=True, text=True, check=False
-    )
+def run(command: list[str], dialect: str) -> tuple[list[str], int, str]:
+    """The command, its failing test names, and how many suites reported.
+
+    Every run gets a **fresh bytecode cache**, which is not housekeeping — it
+    is the fourth way a mutation run lies, and the only one found by pointing
+    this script at itself rather than by being bitten in a session.
+
+    CPython invalidates a `.pyc` on the source's *mtime and size*, and a
+    mutation worth making is usually the same size as what it replaces:
+    `{4,}` for `{3,}`, `not any(` for `not all(`, `return 1` for `return 0`.
+    All three of those were run against `check_cited_tests.py` inside one
+    second, and the second mutation was scored against the first one's cached
+    bytecode — it reported a *different test* as the one that caught it, which
+    is the only reason this was noticed at all. Worse, the restore afterwards
+    wrote the original bytes and the final verification still ran the mutated
+    code, so the script announced the tree had not come back clean when it
+    had.
+
+    A same-second, same-size edit is exactly what this tool does, so the
+    ordinary assumption behind the cache does not hold here. `cargo` hashes
+    contents and is immune, but the prefix is set for every dialect: a run
+    that is slower by one recompile is cheaper than a result nobody can trust.
+    """
+    failed, reported = DIALECTS[dialect]
+    with tempfile.TemporaryDirectory(prefix="mutate-pyc-") as cache:
+        environment = dict(os.environ, PYTHONPYCACHEPREFIX=cache)
+        finished = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
     output = finished.stdout + finished.stderr
-    return FAILED.findall(output), len(REPORTED.findall(output)), output
+    return failed.findall(output), len(reported.findall(output)), output
 
 
 def check(spec: dict) -> int:
     path = ROOT / spec["file"]
     command = spec["command"]
+    # Defaulted rather than required: every spec written before dialects
+    # existed drives a Rust suite, and silently changing what those mean would
+    # be the same class of lie this script exists to stop.
+    dialect = spec.get("dialect", "rust")
+    if dialect not in DIALECTS:
+        raise SystemExit(
+            f"unknown dialect {dialect!r}; known: {sorted(DIALECTS)}"
+        )
     cases = [Mutation(case) for case in spec["cases"]]
 
     # A baseline, because a mutation run says nothing if the suite was already
     # red. This is the check a hand-run mutation always skips and the one that
     # makes every result below mean something.
-    failures, reported, output = run(command)
+    failures, reported, output = run(command, dialect)
     if reported == 0:
         print(f"the command reported no test results at all:\n{output[-2000:]}")
         return 1
@@ -136,7 +202,7 @@ def check(spec: dict) -> int:
     for mutation in cases:
         original = apply_once(path, mutation)
         try:
-            failures, reported, output = run(command)
+            failures, reported, output = run(command, dialect)
         finally:
             path.write_text(original)
 
@@ -172,7 +238,7 @@ def check(spec: dict) -> int:
     # Restored and re-verified, which is the step `CLAUDE.md` names and which is
     # skipped most often: a mutation run that leaves the tree broken makes every
     # later result a lie.
-    failures, reported, _ = run(command)
+    failures, reported, _ = run(command, dialect)
     if failures or reported == 0:
         print(f"  !! the tree did not come back clean: {failures[:5]}")
         problems += 1

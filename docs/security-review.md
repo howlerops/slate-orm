@@ -29,8 +29,11 @@ Demonstrations:
 | `crates/slate-kernel/tests/security_probe_resources.rs` | finding 7 |
 | `crates/slate-kernel/tests/rls_probe.rs` | the paths probed and found clean |
 
-The probe tests assert current behaviour, so they pass today. Each one names
-what to change it to once the finding is fixed.
+The probe tests originally asserted the *current* behaviour — the hole — and
+each named what to change it to once the finding was fixed. The fixes landed,
+and inverting a probe generally renamed it. **The names below are the ones that
+exist now**, with the original given where it differs, because a review whose
+demonstrations cannot be located demonstrates nothing.
 
 ---
 
@@ -66,13 +69,18 @@ docs (tenant-scoped) pk (tenant_id, id), FK org_id -> orgs ON DELETE CASCADE
 ```
 
 A caller in tenant A holding `delete` on both tables deletes org 1 and takes
-tenant B's `docs` with it. Demonstrated by
-`a_cascade_from_a_shared_parent_crosses_the_tenant_boundary`: after tenant A's
-delete, the table is empty rather than holding tenant B's row.
+tenant B's `docs` with it. The `RESTRICT` variant is the read-side of the same
+hole — a refusal tells tenant A that *somebody* references the org when nothing
+they can read does.
 
-The `RESTRICT` variant is the read-side of the same hole — a refusal tells
-tenant A that *somebody* references the org when nothing they can read does.
-`a_restrict_refusal_discloses_another_tenants_row`.
+Both are now `a_shared_parent_with_a_tenant_scoped_child_is_refused`, which
+asserts that `Catalog::from_tables` returns `CrossTenantForeignKey` naming
+`docs` and `orgs`, looping over `Cascade` and `Restrict` so neither arm can
+regress alone. It is one test rather than two because the fix refuses the
+**edge** and not either action — before it, the two halves were
+`a_cascade_from_a_shared_parent_crosses_the_tenant_boundary`, which asserted
+that after tenant A's delete the table was empty rather than holding tenant B's
+row, and `a_restrict_refusal_discloses_another_tenants_row`.
 
 **Fix.** The cascade search is the right shape; its *reach* is not. Two
 options, in order of preference:
@@ -212,12 +220,18 @@ relative to those bounds. `Explanation::estimated_rows` is on the wire
 (`convert.rs`), so a caller who can `Explain` a table can binary-search that
 comparison and recover the bounds themselves.
 
-`explain_recovers_a_value_from_a_tenant_the_caller_cannot_read` does exactly
-that: tenant A can read **zero** rows of `payroll` (asserted), and recovers
-tenant B's smallest salary *exactly* by binary search over
-`EXPLAIN ... WHERE salary >= v`, plus the shape of the whole distribution from
-eight more probes. Sixty-five bucket boundaries are recoverable this way, each
-one a real value belonging to whichever tenant it was sampled from.
+`granting_explain_reopens_the_recovery_in_full` does exactly that: tenant A
+can read **zero** rows of `payroll` (asserted), and recovers tenant B's
+smallest salary *exactly* by binary search over `EXPLAIN ... WHERE salary >= v`,
+plus the shape of the whole distribution from eight more probes. Sixty-five
+bucket boundaries are recoverable this way, each one a real value belonging to
+whichever tenant it was sampled from. It was
+`explain_recovers_a_value_from_a_tenant_the_caller_cannot_read` when this
+review was written, and it still passes, because the fix gated `EXPLAIN` behind
+an action of its own rather than blurring the estimate — a caller granted it
+recovers exactly as much as before, which is a cost somebody should have to
+read before granting it.
+`explain_is_refused_to_a_caller_holding_only_read` is the refusal beside it.
 
 Equality is not affected: `equality_selectivity` reads only the distinct count,
 so `EXPLAIN ... WHERE email = 'x'` answers the same whether or not `x` exists.
@@ -301,8 +315,10 @@ matters.
 the catalog now refuses the edge for either action.
 
 **Impact: medium — one bit per probe, cross-tenant.** Covered under §1; the
-demonstration is `a_restrict_refusal_discloses_another_tenants_row`. The same
-fix closes it.
+demonstration is the `Restrict` arm of
+`a_shared_parent_with_a_tenant_scoped_child_is_refused`, and was
+`a_restrict_refusal_discloses_another_tenants_row` before the fix merged the
+two. The same fix closes it.
 
 ---
 
@@ -331,9 +347,13 @@ graceful degradation, it is complete: the client's `slate-principal`,
 first. That is the difference between `proxy_set_header` and `add_header` in
 nginx, and between `set` and `append` in most mesh sidecar configs.
 
-`the_first_copy_of_a_duplicated_identity_header_wins` demonstrates a client
-authenticating as principal `666` in tenant `2` with role `admin` while the
-proxy's own headers say `1`, `1`, `app`.
+`a_duplicated_identity_header_is_refused_rather_than_resolved` carries that
+fixture: a client claiming principal `666` in tenant `2` with role `admin`
+while the proxy's own headers say `1`, `1`, `app`. Under its original name,
+`the_first_copy_of_a_duplicated_identity_header_wins`, it asserted the client
+won. It now asserts an `Unauthenticated` that names the duplicate and does not
+echo `666` — refusing rather than resolving, because resolving either way is a
+guess about a proxy this server cannot see.
 
 **Fix (one line each, clearly correct, defence in depth).** Refuse a repeated
 identity header rather than picking one. In `text()`:

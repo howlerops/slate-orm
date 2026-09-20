@@ -301,6 +301,12 @@ jobs:
       # toolchain and takes milliseconds, which is why it sits with the static
       # checks rather than beside the suites it drives.
       - run: python3 scripts/test_mutate.py
+      # Every test `docs/` names as a demonstration must be openable.
+      # `docs/security-review.md` spent a week citing four probes that
+      # their own fix commits had renamed, and nothing compiles a
+      # document, so only a check finds it.
+      - run: python3 scripts/check_cited_tests.py
+      - run: python3 scripts/test_check_cited_tests.py
 
   quickstarts:
     name: the landing page's code
