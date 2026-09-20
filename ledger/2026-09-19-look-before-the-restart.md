@@ -104,11 +104,22 @@ could answer it and this does not ask them.
 It does not cover `backend = "memory"`, which has no state a separate
 invocation can read; the flag says so rather than printing a plan.
 
-It is not wired into any deployment in this repository — `examples/deployed`
+~~It is not wired into any deployment in this repository — `examples/deployed`
 still restarts and lets the node reconcile. Nothing here proves the exit code
-is usable as a gate beyond the test that asserts it.
+is usable as a gate beyond the test that asserts it.~~ **Closed** — see
+`2026-09-20-the-exit-code-a-deployment-now-uses.md`. The deployed harness
+previews before its restart and fails on anything but an empty plan, which also
+makes it the only place `--plan` meets object storage rather than a temp dir.
 
 `DropIndex` prints an index id and not a name, because the index is by
 definition one the current catalog no longer declares, so there is nothing to
 look the name up in. A reader has to match the number against the previous
 configuration.
+
+> **Checked, and the reason is stronger than "the current catalog".** The
+> stored side does not have the name either: `TableState::built` is a
+> `Vec<IndexId>`, persisted as four bytes per id, so the keyspace has never
+> recorded what an index was called. Printing a name would mean changing that
+> encoding and migrating the migration state, which is disproportionate to the
+> annoyance of matching a number against version control. Not a gap left open
+> by inattention — a consequence of what is stored.
