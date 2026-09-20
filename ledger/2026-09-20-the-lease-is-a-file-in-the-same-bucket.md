@@ -109,16 +109,40 @@ rather than by a red job. `scripts/check.sh`: 29/29.
 
 ## What this does not do
 
-**The protocol is still not attacked**, and that is now the whole of the
+~~**The protocol is still not attacked**, and that is now the whole of the
 review's lease row that remains. Fencing, generation monotonicity and what two
 nodes that both believe they lead can do to each other are covered by 1,390
 lines of correctness testing and by an unusually explicit argument in
-`lease.rs`'s module docs — an argument I read and did not test.
+`lease.rs`'s module docs — an argument I read and did not test.~~
 
-**Nothing asserts the generation never repeats.** `lease.rs` promises "each
+~~**Nothing asserts the generation never repeats.** `lease.rs` promises "each
 acquisition raises a generation number that never repeats", which is the
 property the whole ordering rests on. It is presumably covered by
-`tests/lease.rs`; I did not check which test, and this suite does not.
+`tests/lease.rs`; I did not check which test, and this suite does not.~~
+
+> **Both withdrawn, minutes later, having read the suite I was describing.**
+> "Correctness testing rather than attacked adversarially" is not a fair
+> description of `tests/lease.rs` and `tests/leadership.rs`. Each of the three
+> promises `lease.rs`'s module docs make has a test named after it:
+>
+> | the promise | the test |
+> | --- | --- |
+> | exactly one process wins a contested acquisition | `exactly_one_of_eight_racing_clients_wins` |
+> | a generation never repeats | `a_generation_is_never_reused_across_a_chain_of_handovers` |
+> | the fence is believed over the lease | `being_fenced_stops_the_node_touching_the_store`, `campaigning_after_a_fence_never_touches_the_lease_again` |
+>
+> And several are attacks rather than checks: `a_late_release_cannot_remove_a_successors_lease`,
+> `a_replaced_holder_finds_out`, `a_storage_error_on_renewal_does_not_hand_over_the_database`,
+> `neither_node_can_take_a_lease_the_store_cannot_support`. I wrote "presumably
+> covered; I did not check which test" and then characterised the whole suite
+> without opening it — twice in one entry, which is the mistake the entry above
+> it is about.
+>
+> What is genuinely untested is what the module docs say **cannot** be
+> promised: two processes both believing they hold the lease across a
+> hypervisor pause or a clock disagreement. That is not a gap in the tests, it
+> is the stated limit of the mechanism, and the fence underneath is the answer
+> to it. Testing it here would be testing SlateDB.
 
 **It tests `decode`, not `current()`.** The path from a bucket object to a
 `Term` also includes the `object_store` read, the not-found case and the

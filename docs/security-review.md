@@ -823,12 +823,21 @@ head node that looks, not an error path. Two of the tests exist because a
 mutation survived without them: that a non-UTF-8 object is *refused* rather
 than repaired with U+FFFD, and that the magic line is checked at all.
 
-The lease **protocol** — fencing, generation monotonicity, split brain — is
-still judged by its correctness suites (`crates/slate-server/tests/lease.rs`
-and `tests/leadership.rs`, 1,390 lines) rather than attacked adversarially.
-`lease.rs`'s own module docs are unusually explicit about what it does and does
-not promise (no mutual exclusion; liveness and an ordering; safety from
-SlateDB's fence underneath), and that argument was read and not tested here.
+The lease **protocol** turned out to be in better shape than this review
+assumed. `lease.rs`'s module docs are unusually explicit about what it does and
+does not promise — no mutual exclusion; liveness and an ordering; safety from
+SlateDB's fence underneath — and each promise has a test named after it in
+`crates/slate-server/tests/lease.rs` and `tests/leadership.rs`:
+`exactly_one_of_eight_racing_clients_wins`,
+`a_generation_is_never_reused_across_a_chain_of_handovers`,
+`being_fenced_stops_the_node_touching_the_store`. Several of those 1,390 lines
+are attacks rather than checks — a late release trying to remove a successor's
+lease, a storage error on renewal, a store that cannot do conditional writes.
+
+What is untested is what the docs say cannot be promised: two processes both
+believing they hold the lease across a hypervisor pause or a clock
+disagreement. That is the stated limit of the mechanism rather than a gap, and
+the fence is the answer to it; testing it here would be testing SlateDB.
 
 ---
 
