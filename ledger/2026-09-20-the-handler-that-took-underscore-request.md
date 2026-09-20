@@ -139,10 +139,21 @@ through for the RPC surface only, and the entry in the review says so. What is
 reachable from the wire is one call; the protocol between a node and its object
 store is not, and I did not examine it.
 
-**`stepped_down_because` is free text and I did not audit what can end up in
+~~**`stepped_down_because` is free text and I did not audit what can end up in
 it.** It is now behind authentication, so the question is what one authenticated
 tenant learns about the node's internals rather than what a stranger does — a
-smaller question, and still one I have not answered.
+smaller question, and still one I have not answered.~~
+
+> **Audited, same day: it is not free text.** The field is filled from
+> `StepDown::reason`, a `const fn` over a fieldless four-variant enum returning
+> one of four `&'static str` literals — "fenced by another writer", "the lease
+> was taken by another node", "resigned", "the storage backing the lease cannot
+> support one". Nothing caller-supplied, nothing from the environment, no path,
+> no address, no error text from the object store. The match is exhaustive and
+> wildcard-free inside the defining crate, so a fifth variant cannot reach the
+> wire without someone writing its string. I called it free text from its
+> `String` type on the wire without reading where the string comes from, which
+> is the same mistake as inferring a gap from a pattern.
 
 ~~**Two of the review's four areas remain**: the Python client, and the tuple
 codec on adversarial encoded input beyond `slate-tuple/tests/untrusted.rs`.~~

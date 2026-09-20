@@ -185,8 +185,29 @@ not run.~~
 > marked there as enumerated by reading rather than probed, which is the part
 > of that sweep still worth distrusting.
 
-**The performance cost of the extra check was not measured.** `upsert` now runs
-`check_row` on every call, including ones that would have passed anyway. It is
-an expression evaluation against one row with no I/O, against a path that does
-a storage read, so I judged it irrelevant. That is a judgement, not a
-measurement.
+~~**The performance cost of the extra check was not measured.** `upsert` now
+runs `check_row` on every call, including ones that would have passed anyway.
+It is an expression evaluation against one row with no I/O, against a path that
+does a storage read, so I judged it irrelevant. That is a judgement, not a
+measurement.~~
+
+> **Measured, same day, and the judgement holds.** 20,000 upserts against
+> `MemoryStore`, five runs each, release build:
+>
+> ```
+> with the check:     1.33  1.24  1.22  1.23  1.22   µs/upsert
+> with it removed:    1.30  1.23  1.20  1.20  1.20   µs/upsert
+> ```
+>
+> Steady-state difference about **0.02 µs/upsert, ~2%**, against a run-to-run
+> spread of the same size — the first run of each set is 0.03–0.10 µs slower
+> than the rest, which is larger than the effect being looked for. **That is
+> inside the noise and is not a finding.**
+>
+> Two things make this the pessimistic case and worth saying so: `MemoryStore`
+> does no I/O, so the read the check sits in front of costs almost nothing
+> here and dominates against real storage; and the fixture's policy is a bare
+> tenant equality, which is the cheapest `check_row` there is. A deployment
+> with an elaborate `WITH CHECK` would pay more — and would already be paying
+> it on `insert` and on every batch write, which have run the same check for
+> as long as they have existed.
