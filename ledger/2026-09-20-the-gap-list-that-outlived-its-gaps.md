@@ -102,14 +102,30 @@ No code changed, so there is nothing to mutation-test.
 
 ## What this does not do
 
-**It does not re-verify the rest of the gap table.** Nine rows remain under
+~~**It does not re-verify the rest of the gap table.** Nine rows remain under
 "Missing", and I checked three of them — set operations (still refused by the
 SQL front end, with a reasoned message, so the row is right), the array type
 (`ValueType` has nine variants and none is `Array`, confirmed while working on
 the codec today), and validations. The other six — generated migrations from a
 schema diff, window functions, CTEs, views, full-text search, seed factories —
 I did not re-run the greps for. Given that three of the ones I did check were
-stale, the prior on the rest is not good.
+stale, the prior on the rest is not good.~~
+
+> **Done, and the prior was wrong: all six are accurate.**
+>
+> | row | checked |
+> | --- | --- |
+> | window functions | `Aggregate` has exactly the seven the row lists — `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` — and no frame or partition |
+> | CTEs / recursive | no `WITH`, no `RECURSIVE`, no CTE node anywhere in the SQL front end or the spec |
+> | views | no `ViewDef`, no `CREATE VIEW`, nothing in `slate-schema` or the kernel |
+> | full-text search | nothing; `LIKE`/`ILIKE`/regex, as the row says |
+> | generated migrations from a diff | `migrate.rs` is `plan`, `apply`, `migrate`, `verify`, `fingerprint`, `stored_state` — it reads a catalog you wrote and plans the diff; nothing writes the target catalog |
+> | seed factories | `--seed <file>` on `slate-serverd` and nothing else; no client method, no library entry point |
+>
+> So nine rows: three were stale and six were right. The staleness was
+> concentrated in the rows describing things somebody then went and built,
+> which is the obvious place for it in hindsight and was not the reason I
+> checked them.
 
 **It does not close any of the remaining gaps.** They are feature work, and
 several are in tension with stated architecture: the SQL front end's refusal of
