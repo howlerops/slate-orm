@@ -87,6 +87,8 @@ func main() {
 	mux.HandleFunc("/api/conditional-update", s.handle(s.conditionalUpdate))
 	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
 	mux.HandleFunc("/api/purge", s.handle(s.purge))
+	mux.HandleFunc("/api/restore", s.handle(s.restore))
+	mux.HandleFunc("/api/restore-unchanged", s.handle(s.restoreUnchanged))
 	mux.HandleFunc("/api/bad-status", s.handle(s.badStatus))
 	mux.HandleFunc("/api/typed", s.handle(s.typed))
 	mux.HandleFunc("/api/bad-batch", s.handle(s.badBatch))

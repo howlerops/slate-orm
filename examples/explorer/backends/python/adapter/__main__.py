@@ -854,6 +854,112 @@ class Adapter:
         session.delete(SHIPMENTS, [(u64(603),)])
         return answer
 
+    #: The shipment the restore handlers own.
+    #:
+    #: Below `PURGE_IDS` on purpose. The purge case lists what survives at
+    #: `id >= 8401`, so a row this handler left behind there would change that
+    #: case's answer depending on which ran first — the ordering bug that case's
+    #: own comment records having been bitten by.
+    RESTORE_ID = 8301
+
+    def _retire_restore_row(self, session):
+        """Put `RESTORE_ID` in the table, retired, and hand back the row.
+
+        Upsert then delete, because a row cannot be created already retired —
+        the stamp is the server's clock and `delete` is the only path that sets
+        it. The upsert is also what makes this idempotent now that an upsert at
+        a retired row's key restores it rather than reporting it missing, which
+        is the very behaviour these two handlers exist to demonstrate.
+        """
+        session.insert(
+            SHIPMENTS, [[u64(self.RESTORE_ID), u64(10), "pending", None]], upsert=True
+        )
+        session.delete(SHIPMENTS, [(u64(self.RESTORE_ID),)])
+        query = Query(SHIPMENTS)
+        rows = session.query(
+            query.where(query.c.id.eq(u64(self.RESTORE_ID))).include_deleted()
+        )
+        return Shipments.from_row(list(next(iter(rows)).values))
+
+    def restore(self, session, body):
+        """Bring a retired row back, through the generated helper.
+
+        A retired row used to be writable by nobody at any privilege, so the
+        only thing that could happen to one was being erased. This is the other
+        half of a retention window, and the reason it is a conformance case is
+        that all three clients now generate a `restored` helper and all three
+        have to agree about what it produces and what the server does with it.
+
+        The answer carries the row's state at three points rather than just the
+        last, because "it is live now" is also what a handler that quietly
+        re-inserted a fresh row would report.
+        """
+        retired = self._retire_restore_row(session)
+        # An ordinary read, with no `include_deleted`: the row is invisible.
+        query = Query(SHIPMENTS)
+        hidden = [
+            int(row[0])
+            for row in session.query(query.where(query.c.id.eq(u64(self.RESTORE_ID))))
+        ]
+
+        # The restore. `restored()` is generated from the catalog — it clears
+        # whichever column the catalog names as the stamp — and the update is
+        # ordinary, because there is no restore verb.
+        session.update(SHIPMENTS, [retired.restored().to_row()])
+
+        visible = Query(SHIPMENTS)
+        back = [
+            Shipments.from_row(list(row.values))
+            for row in session.query(visible.where(visible.c.id.eq(u64(self.RESTORE_ID))))
+        ]
+        answer = {
+            "retired_before": retired.retired,
+            "hidden_while_retired": hidden,
+            "visible_after": [row.id for row in back],
+            "retired_after": [row.retired for row in back],
+            # Every other column carried through, which is what separates a
+            # restore from an insert of a fresh row at the same key.
+            "status_after": [row.status for row in back],
+            "book_id_after": [row.book_id for row in back],
+        }
+        self._leave_shipments_as_found(session)
+        return answer
+
+    def restore_unchanged(self, session, body):
+        """Write the retired row back exactly as `include_deleted` gave it.
+
+        The mistake anybody restoring by hand makes first, and the reason the
+        refusal is its own error rather than a row-level-security one: the
+        soft-delete column is the server's to write. Here so that the three
+        clients are compared on the reason token and the message, not only on
+        the happy path.
+
+        The write is refused, so the row is left retired and the cleanup below
+        is the same one the happy path does.
+        """
+        retired = self._retire_restore_row(session)
+        try:
+            session.update(SHIPMENTS, [retired.to_row()])
+        finally:
+            self._leave_shipments_as_found(session)
+        # Reached only if the server stopped refusing, which is a disagreement
+        # worth failing loudly on rather than reporting as an answer.
+        raise RuntimeError("the server accepted a caller-supplied deleted_at")
+
+    def _leave_shipments_as_found(self, session):
+        """Erase this handler's row and put the seeder's retired one back.
+
+        The same shape the purge handler uses, and for the same reason: three
+        adapters run every case against one database in turn, so a case that
+        leaves a row behind makes the next adapter's answer depend on the
+        order. A purge is table-wide, so it takes the seeder's row 603 with it
+        and 603 has to be re-retired afterwards.
+        """
+        session.delete(SHIPMENTS, [(u64(self.RESTORE_ID),)])
+        session.purge_deleted(SHIPMENTS, int(time.time()) + 3600)
+        session.insert(SHIPMENTS, [[u64(603), u64(13), "pending", None]], upsert=True)
+        session.delete(SHIPMENTS, [(u64(603),)])
+
     def bad_batch(self, session, body):
         """Two shipments an independent batch refuses, for different reasons.
 
@@ -1110,6 +1216,8 @@ ROUTES = {
     "/api/conditional-update": "conditional_update",
     "/api/conditional-delete": "conditional_delete",
     "/api/purge": "purge",
+    "/api/restore": "restore",
+    "/api/restore-unchanged": "restore_unchanged",
     "/api/bad-status": "bad_status",
     "/api/typed": "typed",
     "/api/bad-batch": "bad_batch",

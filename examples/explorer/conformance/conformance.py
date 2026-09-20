@@ -492,6 +492,28 @@ CASES: list[tuple[str, str, Any, str]] = [
     # too would agree across all three clients and be very wrong.
     ("a purge erases what was retired and nothing else", "/api/purge", {}, "app"),
 
+    # The *other* other half: taking a delete back. A retired row used to be
+    # writable by nobody at any privilege, so a retention window could only
+    # ever end in the row being erased. All three clients now generate a
+    # `restored` helper from the catalog, so all three have to agree on what it
+    # produces — which column it clears, and that it clears nothing else.
+    #
+    # The answer carries the row's state at three points rather than only the
+    # last. "It is live now" is also what an adapter that quietly inserted a
+    # fresh row at the same key would report, and `status_after` and
+    # `book_id_after` are what tell the two apart.
+    ("a retired row can be restored", "/api/restore", {}, "app"),
+
+    # And the mistake anybody makes first: reading the row with
+    # `include_deleted`, which hands back the retirement stamp, and writing it
+    # straight back. It is refused, and the refusal is its own reason token
+    # rather than a row-level-security one — which matters because the old
+    # message sent the reader to the grants on a table with no policies at all.
+    # Here so the three clients are compared on the refusal too, not only on
+    # the path that works.
+    ("the soft-delete column is not the caller's to write",
+     "/api/restore-unchanged", {}, "app"),
+
     ("a reader may not ask for retired rows", "/api/query",
      {"table": "shipments", "includeDeleted": True,
       "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
@@ -577,6 +599,11 @@ EXPECTED_REFUSALS = {
     # there is nothing to undo — unlike the purge case above, which has to put
     # the database back.
     "a write the schema's CHECK refuses",
+    # Refused by the server, not by any grant: the soft-delete column is
+    # written by `delete` and by nothing else. The adapter puts the database
+    # back either way, because unlike the CHECK above this one had to retire a
+    # row to have something to write back.
+    "the soft-delete column is not the caller's to write",
 }
 
 

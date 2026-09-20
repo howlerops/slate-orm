@@ -1282,6 +1282,192 @@ func (s *server) purge(
 	return map[string]any{"purged": purged.Affected, "left": ids}, nil
 }
 
+// restoreID is the shipment the restore handlers own.
+//
+// Below purgeIDs on purpose. The purge case lists what survives at
+// `id >= 8401`, so a row this handler left behind there would change that
+// case's answer depending on which ran first — the ordering bug that case's
+// own comment records having been bitten by.
+const restoreID = uint64(8301)
+
+// retireRestoreRow puts restoreID in the table, retired, and hands back the row.
+//
+// Upsert then delete, because a row cannot be created already retired — the
+// stamp is the server's clock and Delete is the only path that sets it. The
+// upsert is also what makes this idempotent now that an upsert at a retired
+// row's key restores it rather than reporting it missing, which is the very
+// behaviour these two handlers exist to demonstrate.
+func (s *server) retireRestoreRow(
+	ctx context.Context, session *slate.Session,
+) (schema.Shipments, error) {
+	var zero schema.Shipments
+	fresh := []slate.Value{
+		slate.Uint(restoreID), slate.Uint(10), slate.String("pending"), slate.Null{},
+	}
+	if _, err := session.Upsert(ctx, "shipments", fresh); err != nil {
+		return zero, err
+	}
+	if _, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(restoreID)}); err != nil {
+		return zero, err
+	}
+	stream, err := session.Query(ctx, slate.Query{
+		Table:          "shipments",
+		Filter:         slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+		IncludeDeleted: true,
+	})
+	if err != nil {
+		return zero, err
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		return zero, err
+	}
+	if len(rows) != 1 {
+		return zero, fmt.Errorf("expected one retired shipment, got %d", len(rows))
+	}
+	return schema.ScanShipments(rows[0])
+}
+
+// leaveShipmentsAsFound erases this handler's row and puts the seeder's back.
+//
+// The same shape the purge handler uses, and for the same reason: three
+// adapters run every case against one database in turn, so a case that leaves
+// a row behind makes the next adapter's answer depend on the order. A purge is
+// table-wide, so it takes the seeder's row 603 with it and 603 has to be
+// re-retired afterwards.
+func (s *server) leaveShipmentsAsFound(ctx context.Context, session *slate.Session) error {
+	if _, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(restoreID)}); err != nil {
+		return err
+	}
+	if _, err := session.PurgeDeleted(ctx, "shipments", time.Now().Unix()+3600, 0); err != nil {
+		return err
+	}
+	seeded := []slate.Value{
+		slate.Uint(603), slate.Uint(13), slate.String("pending"), slate.Null{},
+	}
+	if _, err := session.Upsert(ctx, "shipments", seeded); err != nil {
+		return err
+	}
+	_, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(603)})
+	return err
+}
+
+// restore brings a retired row back, through the generated helper.
+//
+// A retired row used to be writable by nobody at any privilege, so the only
+// thing that could happen to one was being erased. This is the other half of a
+// retention window, and the reason it is a conformance case is that all three
+// clients now generate a Restored helper and all three have to agree about
+// what it produces and what the server does with it.
+//
+// The answer carries the row's state at three points rather than just the
+// last, because "it is live now" is also what a handler that quietly
+// re-inserted a fresh row would report.
+func (s *server) restore(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	retired, err := s.retireRestoreRow(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+
+	// An ordinary read, with no IncludeDeleted: the row is invisible.
+	stream, err := session.Query(ctx, slate.Query{
+		Table:  "shipments",
+		Filter: slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	hiddenRows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	hidden := make([]uint64, 0, len(hiddenRows))
+	for _, row := range hiddenRows {
+		id, ok := row[0].(slate.Uint)
+		if !ok {
+			return nil, fmt.Errorf("id is %T", row[0])
+		}
+		hidden = append(hidden, uint64(id))
+	}
+
+	// The restore. Restored is generated from the catalog — it clears
+	// whichever column the catalog names as the stamp — and the update is
+	// ordinary, because there is no restore verb.
+	if _, err := session.Update(ctx, "shipments", retired.Restored().Row()); err != nil {
+		return nil, err
+	}
+
+	stream, err = session.Query(ctx, slate.Query{
+		Table:  "shipments",
+		Filter: slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	backRows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]uint64, 0, len(backRows))
+	retiredAfter := make([]bool, 0, len(backRows))
+	statusAfter := make([]string, 0, len(backRows))
+	bookAfter := make([]uint64, 0, len(backRows))
+	for _, row := range backRows {
+		back, err := schema.ScanShipments(row)
+		if err != nil {
+			return nil, err
+		}
+		visible = append(visible, back.Id)
+		retiredAfter = append(retiredAfter, back.Retired())
+		statusAfter = append(statusAfter, back.Status)
+		bookAfter = append(bookAfter, back.BookId)
+	}
+	answer := map[string]any{
+		"retired_before":       retired.Retired(),
+		"hidden_while_retired": hidden,
+		"visible_after":        visible,
+		"retired_after":        retiredAfter,
+		// Every other column carried through, which is what separates a
+		// restore from an insert of a fresh row at the same key.
+		"status_after":  statusAfter,
+		"book_id_after": bookAfter,
+	}
+	if err := s.leaveShipmentsAsFound(ctx, session); err != nil {
+		return nil, err
+	}
+	return answer, nil
+}
+
+// restoreUnchanged writes the retired row back exactly as IncludeDeleted gave it.
+//
+// The mistake anybody restoring by hand makes first, and the reason the
+// refusal is its own error rather than a row-level-security one: the
+// soft-delete column is the server's to write. Here so that the three clients
+// are compared on the reason token and the message, not only on the happy path.
+//
+// The write is refused, so the row is left retired and the cleanup is the same
+// one the happy path does.
+func (s *server) restoreUnchanged(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	retired, err := s.retireRestoreRow(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	_, writeErr := session.Update(ctx, "shipments", retired.Row())
+	if cleanupErr := s.leaveShipmentsAsFound(ctx, session); cleanupErr != nil {
+		return nil, cleanupErr
+	}
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	// Reached only if the server stopped refusing, which is a disagreement
+	// worth failing loudly on rather than reporting as an answer.
+	return nil, errors.New("the server accepted a caller-supplied deleted_at")
+}
+
 // badStatus writes a shipment that breaks two of its table's checks at once.
 //
 // Two, not one, and that is the point: `violations` is a *list*, decoded by

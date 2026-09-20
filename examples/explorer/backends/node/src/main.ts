@@ -90,8 +90,19 @@ import {
   decodeSales,
   decodeShipments,
   encodeBooks,
+  encodeShipments,
   isRetiredShipments,
+  restoredShipments,
 } from "./schema.js";
+import type { Shipments } from "./schema.js";
+
+// The shipment the restore handlers own.
+//
+// Below the purge handler's ids on purpose. The purge case lists what survives
+// at `id >= 8401`, so a row this handler left behind there would change that
+// case's answer depending on which ran first — the ordering bug that case's own
+// comment records having been bitten by.
+const restoreId = 8301n;
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
 /**
@@ -960,6 +971,132 @@ class Adapter {
   }
 
   /**
+   * Puts `restoreId` in the table, retired, and hands back the decoded row.
+   *
+   * Upsert then delete, because a row cannot be created already retired — the
+   * stamp is the server's clock and `delete` is the only path that sets it.
+   * The upsert is also what makes this idempotent now that an upsert at a
+   * retired row's key restores it rather than reporting it missing, which is
+   * the very behaviour these two handlers exist to demonstrate.
+   */
+  private async retireRestoreRow(session: Session): Promise<Shipments> {
+    await session.upsert("shipments", [
+      uint(restoreId),
+      uint(10n),
+      str("pending"),
+      nullValue,
+    ]);
+    await session.delete("shipments", [uint(restoreId)]);
+    const stream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+      includeDeleted: true,
+    });
+    const rows = await stream.collect();
+    if (rows.length !== 1) {
+      throw new Error(`expected one retired shipment, got ${rows.length}`);
+    }
+    return decodeShipments(rows[0]!);
+  }
+
+  /**
+   * Erases this handler's row and puts the seeder's retired one back.
+   *
+   * The same shape `purge` uses, and for the same reason: three adapters run
+   * every case against one database in turn, so a case that leaves a row
+   * behind makes the next adapter's answer depend on the order. A purge is
+   * table-wide, so it takes the seeder's row 603 with it and 603 has to be
+   * re-retired afterwards.
+   */
+  private async leaveShipmentsAsFound(session: Session): Promise<void> {
+    await session.delete("shipments", [uint(restoreId)]);
+    await session.purgeDeleted(
+      "shipments",
+      BigInt(Math.floor(Date.now() / 1000)) + 3600n,
+    );
+    await session.upsert("shipments", [
+      uint(603n),
+      uint(13n),
+      str("pending"),
+      nullValue,
+    ]);
+    await session.delete("shipments", [uint(603n)]);
+  }
+
+  /**
+   * Brings a retired row back, through the generated helper.
+   *
+   * A retired row used to be writable by nobody at any privilege, so the only
+   * thing that could happen to one was being erased. This is the other half of
+   * a retention window, and the reason it is a conformance case is that all
+   * three clients now generate a `restored` helper and all three have to agree
+   * about what it produces and what the server does with it.
+   *
+   * The answer carries the row's state at three points rather than just the
+   * last, because "it is live now" is also what a handler that quietly
+   * re-inserted a fresh row would report.
+   */
+  async restore(session: Session): Promise<unknown> {
+    const retired = await this.retireRestoreRow(session);
+
+    // An ordinary read, with no `includeDeleted`: the row is invisible.
+    const hiddenStream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+    });
+    const hidden = (await hiddenStream.collect()).map((row) =>
+      Number((row[0] as { value: bigint }).value),
+    );
+
+    // The restore. `restoredShipments` is generated from the catalog — it
+    // clears whichever column the catalog names as the stamp — and the update
+    // is ordinary, because there is no restore verb.
+    await session.update("shipments", encodeShipments(restoredShipments(retired)));
+
+    const backStream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+    });
+    const back = (await backStream.collect()).map((row) => decodeShipments(row));
+    const answer = {
+      retired_before: isRetiredShipments(retired),
+      hidden_while_retired: hidden,
+      visible_after: back.map((row) => Number(row.id)),
+      retired_after: back.map((row) => isRetiredShipments(row)),
+      // Every other column carried through, which is what separates a restore
+      // from an insert of a fresh row at the same key.
+      status_after: back.map((row) => row.status),
+      book_id_after: back.map((row) => Number(row.book_id)),
+    };
+    await this.leaveShipmentsAsFound(session);
+    return answer;
+  }
+
+  /**
+   * Writes the retired row back exactly as `includeDeleted` gave it.
+   *
+   * The mistake anybody restoring by hand makes first, and the reason the
+   * refusal is its own error rather than a row-level-security one: the
+   * soft-delete column is the server's to write. Here so that the three
+   * clients are compared on the reason token and the message, not only on the
+   * happy path.
+   *
+   * The write is refused, so the row is left retired and the cleanup is the
+   * same one the happy path does.
+   */
+  async restoreUnchanged(session: Session): Promise<unknown> {
+    const retired = await this.retireRestoreRow(session);
+    try {
+      await session.update("shipments", encodeShipments(retired));
+    } finally {
+      await this.leaveShipmentsAsFound(session);
+    }
+    // Reached only if the server stopped refusing, which is a disagreement
+    // worth failing loudly on rather than reporting as an answer.
+    throw new Error("the server accepted a caller-supplied deleted_at");
+  }
+
+  /**
    * Sends two shipments an independent batch will refuse, one for two reasons
    * and one for a single reason.
    *
@@ -1208,6 +1345,8 @@ async function main(): Promise<void> {
     "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
     "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
     "/api/purge": (s) => adapter.purge(s),
+    "/api/restore": (s) => adapter.restore(s),
+    "/api/restore-unchanged": (s) => adapter.restoreUnchanged(s),
     "/api/bad-status": (s) => adapter.badStatus(s),
     "/api/typed": (s) => adapter.typed(s),
     "/api/bad-batch": (s) => adapter.badBatch(s),
