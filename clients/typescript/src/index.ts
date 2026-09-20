@@ -26,7 +26,13 @@ export {
   type JoinPage,
   type Page,
 } from "./client.js";
-export { SlateError, isKind, LEADER_KEY, REQUEST_ID_KEY, type Kind } from "./errors.js";
+export {
+  SlateError,
+  isKind,
+  LEADER_KEY,
+  REQUEST_ID_KEY,
+  type Kind,
+} from "./errors.js";
 export {
   type Scalar,
   type TimeUnit,
@@ -75,6 +81,7 @@ export {
   unitsToString,
   uuid,
   vector,
+  array,
   valuesEqual,
   valueKey,
   formatUuid,

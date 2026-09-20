@@ -42,7 +42,7 @@ use slate_server::convert::{
     row_to_proto, scalar_from_proto, scalar_to_proto, value_from_proto, value_to_proto,
 };
 use slate_server::proto as pb;
-use slate_tuple::{Direction, Value};
+use slate_tuple::{Direction, Value, ValueType};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -71,6 +71,33 @@ fn any_value() -> impl Strategy<Value = Value> {
         .prop_map(Value::F64),
         any::<[u8; 16]>().prop_map(|bytes| Value::Uuid(Uuid::from_bytes(bytes))),
         prop::collection::vec(any::<f32>(), 0..8).prop_map(Value::Vector),
+        // `Decimal` was missing here from the day it was added, and so was
+        // this file's expected list — so the round trip has never once
+        // converted one. See `the_value_generator_reaches_every_variant`,
+        // which is the guard that was supposed to catch exactly this and
+        // could not, because it compared the generator against a list
+        // maintained by the same hand.
+        any::<i64>().prop_map(Value::Decimal),
+        // Elements are drawn from the same set minus arrays, because the
+        // server refuses a nested one — see `value_from_proto`.
+        prop::collection::vec(any_element(), 0..5).prop_map(Value::Array),
+    ]
+}
+
+/// What may appear inside an array on the wire: anything but another array.
+fn any_element() -> impl Strategy<Value = Value> {
+    prop_oneof![
+        Just(Value::Null),
+        any::<bool>().prop_map(Value::Bool),
+        prop::collection::vec(any::<u8>(), 0..8)
+            .prop_map(|bytes| Value::Bytes(bytes::Bytes::from(bytes))),
+        ".{0,8}".prop_map(Value::Str),
+        any::<i64>().prop_map(Value::I64),
+        any::<u64>().prop_map(Value::U64),
+        any::<f64>().prop_map(Value::F64),
+        any::<i64>().prop_map(Value::Decimal),
+        any::<[u8; 16]>().prop_map(|bytes| Value::Uuid(Uuid::from_bytes(bytes))),
+        prop::collection::vec(any::<f32>(), 0..4).prop_map(Value::Vector),
     ]
 }
 
@@ -242,7 +269,19 @@ proptest! {
 /// A property suite is only as good as what its generators reach.
 ///
 /// Written after the codec bug where a generator had never been extended to
-/// produce vectors, so the vector path passed every case by never being tried.
+/// produce vectors, so the vector path passed every case by never being tried
+/// — and then this test repeated the mistake it was written against. It
+/// compared `any_value` to a **hand-written list of nine names**, and both
+/// were missing `decimal`, so from the day decimals were added until now the
+/// wire round trip never converted one and this guard said everything was
+/// covered.
+///
+/// The expected set is now `ValueType::ALL` plus `"null"`, which is not a list
+/// anybody maintains: `ALL` is held to the enum by a compiler-checked
+/// exhaustive match inside `slate-tuple`, so a new variant fails *there*, and
+/// then fails here until the generator produces one. `Value::type_name` gives
+/// the same names from the same source, so the two sides cannot drift apart
+/// either.
 #[test]
 fn the_value_generator_reaches_every_variant() {
     let mut seen = BTreeSet::new();
@@ -250,32 +289,65 @@ fn the_value_generator_reaches_every_variant() {
     let strategy = any_value();
     for _ in 0..500 {
         let value = strategy.new_tree(&mut runner).expect("a value").current();
-        seen.insert(variant_of(&value));
+        seen.insert(value.type_name());
     }
-    let expected: BTreeSet<&str> = [
-        "null", "bool", "bytes", "str", "i64", "u64", "f64", "uuid", "vector",
-    ]
-    .into_iter()
-    .collect();
+    let mut expected: BTreeSet<&str> = ValueType::ALL.iter().map(|kind| kind.name()).collect();
+    // Null has no `ValueType` — nullability is a column property — so it is
+    // the one name that has to be added by hand, and it is a constant rather
+    // than a list that can go one short.
+    expected.insert("null");
     assert_eq!(
         seen, expected,
         "the generator never produced some variants, so the round trip never tested them"
     );
 }
 
-fn variant_of(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Bytes(_) => "bytes",
-        Value::Str(_) => "str",
-        Value::I64(_) => "i64",
-        Value::U64(_) => "u64",
-        Value::F64(_) => "f64",
-        Value::Uuid(_) => "uuid",
-        Value::Vector(_) => "vector",
-        other => panic!("a new Value variant is not covered here: {other:?}"),
+/// The array generator reaches everything the outer one does, bar arrays.
+///
+/// Same argument as above, one level down: `a_value_survives_the_round_trip`
+/// converts an array by converting its elements, so an element kind the
+/// generator never produces is an element kind the round trip never sees.
+#[test]
+fn the_array_element_generator_reaches_every_variant_but_array() {
+    let mut seen = BTreeSet::new();
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let strategy = any_element();
+    for _ in 0..500 {
+        let value = strategy.new_tree(&mut runner).expect("a value").current();
+        seen.insert(value.type_name());
     }
+    let mut expected: BTreeSet<&str> = ValueType::ALL
+        .iter()
+        .filter(|kind| **kind != ValueType::Array)
+        .map(|kind| kind.name())
+        .collect();
+    expected.insert("null");
+    assert_eq!(seen, expected);
+}
+
+/// A nested array is refused, with a `Status` rather than a panic or a stack.
+///
+/// The depth here is chosen by whoever sends the message, which is why this is
+/// the server's refusal and not only the kernel's: refusing at depth one means
+/// there is no depth to bound.
+#[test]
+fn a_nested_array_is_refused() {
+    use pb::value::Kind;
+    let inner = pb::Value {
+        kind: Some(Kind::ArrayValue(pb::ArrayValue { elements: vec![] })),
+    };
+    let outer = pb::Value {
+        kind: Some(Kind::ArrayValue(pb::ArrayValue {
+            elements: vec![inner],
+        })),
+    };
+    let error = value_from_proto(&outer).expect_err("an array of arrays must be refused");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert!(
+        error.message().contains("element type"),
+        "the refusal should say why: {}",
+        error.message()
+    );
 }
 
 #[test]

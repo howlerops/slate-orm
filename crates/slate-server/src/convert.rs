@@ -91,6 +91,14 @@ pub fn value_to_proto(value: &Value) -> pb::Value {
         Value::Vector(elements) => Kind::VectorValue(pb::Vector {
             elements: elements.clone(),
         }),
+        // Recursion of depth one: the kernel refuses a nested array, so no
+        // element of this list can be another. Written as a `map` over
+        // `value_to_proto` rather than a flat match so that the two sides
+        // cannot disagree about how an element is encoded — and if nesting is
+        // ever allowed, this half already works.
+        Value::Array(elements) => Kind::ArrayValue(pb::ArrayValue {
+            elements: elements.iter().map(value_to_proto).collect(),
+        }),
         // `Value` is `#[non_exhaustive]`, so this cannot be an exhaustive
         // match and a new variant will reach here rather than failing to
         // compile. Sending it as a null would be silent data loss, so it is an
@@ -131,6 +139,28 @@ pub fn value_from_proto(value: &pb::Value) -> Result<Value, Status> {
             Value::Uuid(Uuid::from_bytes(octets))
         }
         Kind::VectorValue(vector) => Value::Vector(vector.elements.clone()),
+        Kind::ArrayValue(array) => {
+            // A nested array is refused here rather than at the kernel, for
+            // two reasons the kernel's refusal does not cover. The depth is
+            // chosen by whoever sent the message, so recursing on it without a
+            // bound is the denial of service the expression converter already
+            // carries a ceiling against — and refusing at depth one means
+            // there is no depth to bound. And the refusal is a `Status` a
+            // client can read, rather than a schema error raised later from
+            // somewhere it did not call.
+            let mut elements = Vec::with_capacity(array.elements.len());
+            for element in &array.elements {
+                if matches!(element.kind, Some(Kind::ArrayValue(_))) {
+                    return Err(bad(
+                        "an array element cannot itself be an array; a column's \
+                         element type is a scalar type and cannot say what an \
+                         inner array would hold",
+                    ));
+                }
+                elements.push(value_from_proto(element)?);
+            }
+            Value::Array(elements)
+        }
     })
 }
 

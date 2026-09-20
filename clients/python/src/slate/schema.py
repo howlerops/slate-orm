@@ -66,10 +66,32 @@ class Column:
     #: would. See `fingerprint_of`, which hashes it only for a decimal, so a
     #: table without one is unaffected.
     scale: int = 0
+    #: What an `ARRAY` column's elements are, and `None` for every other type.
+    #:
+    #: In the fingerprint, by exactly the argument `scale` gives one type over:
+    #: it addresses no column, and a client that has it wrong reads the *right*
+    #: column and decodes every element as the wrong type, with the wire
+    #: carrying no element type to notice by.
+    element: ValueType | None = None
 
     def __post_init__(self) -> None:
         if self.scale < 0:
             raise ValueError(f"column `{self.name}` declares a negative scale")
+        # Both directions, as the server refuses both: an array with no
+        # element type cannot say what it holds, and an element type on
+        # anything else means the author believes that column is a list.
+        if self.type is ValueType.ARRAY and self.element is None:
+            raise ValueError(
+                f"column `{self.name}` is an array and declares no element type; "
+                "every value in an array column holds the same type"
+            )
+        if self.element is not None and self.type is not ValueType.ARRAY:
+            raise ValueError(
+                f"column `{self.name}` is {self.type.name.lower()} and has no elements; "
+                "only an array column does"
+            )
+        if self.element is ValueType.ARRAY:
+            raise ValueError(f"column `{self.name}` declares an array of arrays")
         if self.scale and self.type is not ValueType.DECIMAL:
             raise ValueError(
                 f"column `{self.name}` is {self.type.name.lower()} and has no scale; "
@@ -227,6 +249,8 @@ def fingerprint_of(table: Table) -> int:
         # wrong column and usually shows, a wrong scale reads the right column
         # and renders every value a power of ten out, for ever, with nothing
         # anywhere reporting it. The wire carries units and never the scale.
+        if column.type is ValueType.ARRAY and column.element is not None:
+            out += _length_prefixed(column.element.value)
         if column.type is ValueType.DECIMAL:
             out += _digits(column.scale)
     key_ordinals = [

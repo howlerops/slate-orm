@@ -22,7 +22,8 @@ export type ColumnType =
   | "f64"
   | "uuid"
   | "vector"
-  | "decimal";
+  | "decimal"
+  | "array";
 
 /** One column of a [TableDef]. */
 export interface ColumnDef {
@@ -40,6 +41,15 @@ export interface ColumnDef {
    * fingerprint is the only place this can be caught.
    */
   readonly scale?: number;
+  /**
+   * What an `"array"` column's elements are; absent for every other type.
+   *
+   * In the fingerprint, by exactly the argument `scale` gives one type over:
+   * it addresses no column, and a client that has it wrong reads the *right*
+   * column and decodes every element as the wrong type, with the wire
+   * carrying no element type to notice by.
+   */
+  readonly element?: ColumnType;
 }
 
 /** This client's declaration of a table. */
@@ -122,6 +132,11 @@ export function fingerprint(table: TableDef): bigint {
     hash.number(ordinal);
     hash.text(column.name);
     hash.text(column.type);
+    // An array's element type, and only an array's, by exactly the argument
+    // below one type over.
+    if (column.type === "array" && column.element !== undefined) {
+      hash.text(column.element);
+    }
     // A decimal's scale, and only a decimal's. It addresses no column -- the
     // test every other excluded property fails -- and is hashed anyway because
     // the failure it prevents is worse: a wrong ordinal reads the wrong column

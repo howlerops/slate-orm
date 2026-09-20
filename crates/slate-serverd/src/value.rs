@@ -55,7 +55,12 @@ pub(crate) fn tagged(text: &str, field: &str) -> Started<Value> {
 /// and a byte string are written as strings, because TOML has no syntax for
 /// either — hexadecimal for bytes, for the reason given in
 /// [`crate::lang::pred`].
-pub(crate) fn from_toml(value: &toml::Value, declared: ValueType, field: &str) -> Started<Value> {
+pub(crate) fn from_toml(
+    value: &toml::Value,
+    declared: ValueType,
+    element: Option<ValueType>,
+    field: &str,
+) -> Started<Value> {
     let mismatch = || {
         Fault::new(format!(
             "`{field}` is {}, and the column it belongs to holds {declared}",
@@ -96,7 +101,43 @@ pub(crate) fn from_toml(value: &toml::Value, declared: ValueType, field: &str) -
             })
             .collect::<Started<Vec<f32>>>()
             .map(Value::Vector),
+        // The element type is the column's, so it has to be threaded in; there
+        // is no way to read it off the TOML. A `None` here for an array column
+        // cannot happen through `columns_builder`, which refuses an array with
+        // no element type before this is reached — but this function is public
+        // within the crate and the seed path calls it too, so it says so
+        // rather than picking a type.
+        (toml::Value::Array(elements), ValueType::Array) => {
+            let Some(element) = element else {
+                return Err(Fault::new(format!(
+                    "`{field}` is a list and its column declares no element type"
+                )));
+            };
+            elements
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    from_toml(item, element, None, &format!("{field}[{index}]"))
+                })
+                .collect::<Started<Vec<Value>>>()
+                .map(Value::Array)
+        }
         _ => Err(mismatch()),
+    }
+}
+
+/// The type names this parser accepts, as a readable list.
+///
+/// Derived from `ValueType::ALL` so it cannot go one short. `str` is listed
+/// beside `string` because the parser takes both and `name()` only gives the
+/// longer one.
+fn known_type_names() -> String {
+    let mut names: Vec<&str> = ValueType::ALL.iter().map(|kind| kind.name()).collect();
+    names.push("str");
+    names.sort_unstable();
+    match names.split_last() {
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
     }
 }
 
@@ -133,8 +174,16 @@ pub(crate) fn value_type(name: &str, field: &str) -> Started<ValueType> {
         "uuid" => Ok(ValueType::Uuid),
         "vector" => Ok(ValueType::Vector),
         "decimal" => Ok(ValueType::Decimal),
+        "array" => Ok(ValueType::Array),
+        // The list is built from `ValueType::ALL` rather than written out, for
+        // the reason everything else in this repository derives its rosters:
+        // a hand-written one goes one short the day a type is added, and a
+        // message that lies about what is available is worse than a bare
+        // refusal. `str` is the one spelling `name()` does not give — the
+        // parser accepts both it and `string` — so it is added by hand.
         other => Err(Fault::new(format!(
-            "`{field} = \"{other}\"` is not a type; there are bool, bytes, str, i64, u64, f64, uuid, vector and decimal"
+            "`{field} = \"{other}\"` is not a type; there are {}",
+            known_type_names()
         ))),
     }
 }
@@ -167,18 +216,18 @@ mod tests {
     fn an_integer_default_takes_the_columns_signedness() {
         let seven = toml::Value::Integer(7);
         assert_eq!(
-            from_toml(&seven, ValueType::U64, "d").unwrap(),
+            from_toml(&seven, ValueType::U64, None, "d").unwrap(),
             Value::U64(7)
         );
         assert_eq!(
-            from_toml(&seven, ValueType::I64, "d").unwrap(),
+            from_toml(&seven, ValueType::I64, None, "d").unwrap(),
             Value::I64(7)
         );
     }
 
     #[test]
     fn a_negative_default_for_an_unsigned_column_is_refused() {
-        let error = from_toml(&toml::Value::Integer(-1), ValueType::U64, "d")
+        let error = from_toml(&toml::Value::Integer(-1), ValueType::U64, None, "d")
             .unwrap_err()
             .to_string();
         assert!(error.contains("negative"), "{error}");
@@ -189,6 +238,7 @@ mod tests {
         let error = from_toml(
             &toml::Value::String("x".into()),
             ValueType::I64,
+            None,
             "docs.size.default",
         )
         .unwrap_err()
@@ -197,9 +247,50 @@ mod tests {
         assert!(error.contains("i64"), "{error}");
     }
 
+    /// The refusal lists every type, derived rather than written out.
+    ///
+    /// The list used to be a string literal naming nine types, which is the
+    /// shape that goes one short: it would have said `array` was not a type
+    /// while the parser accepted it. Held to `ValueType::ALL`, which the
+    /// compiler holds to the enum.
     #[test]
     fn an_unknown_type_lists_the_types_there_are() {
         let error = value_type("varchar", "type").unwrap_err().to_string();
-        assert!(error.contains("uuid"), "{error}");
+        for kind in ValueType::ALL {
+            assert!(
+                error.contains(kind.name()),
+                "{} is a type and the refusal does not list it: {error}",
+                kind.name()
+            );
+        }
+        assert!(error.contains("str"), "{error}");
+    }
+
+    #[test]
+    fn an_array_default_takes_the_columns_element_type() {
+        let list = toml::Value::Array(vec![
+            toml::Value::String("a".into()),
+            toml::Value::String("b".into()),
+        ]);
+        assert_eq!(
+            from_toml(&list, ValueType::Array, Some(ValueType::Str), "d").unwrap(),
+            Value::Array(vec![Value::Str("a".into()), Value::Str("b".into())])
+        );
+
+        // An element of the wrong shape names the element, not just the list.
+        let mixed = toml::Value::Array(vec![
+            toml::Value::String("a".into()),
+            toml::Value::Integer(2),
+        ]);
+        let error = from_toml(&mixed, ValueType::Array, Some(ValueType::Str), "d")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("d[1]"), "{error}");
+
+        // And a list with no element type is refused rather than guessed at.
+        let error = from_toml(&list, ValueType::Array, None, "d")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("element type"), "{error}");
     }
 }

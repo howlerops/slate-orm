@@ -22,6 +22,9 @@ const (
 	// TypeDecimal is an exact decimal. The scale is not part of the type; see
 	// [ColumnDef.Scale].
 	TypeDecimal ColumnType = "decimal"
+	// TypeArray is a homogeneous list. The element type is not part of the
+	// type; see [ColumnDef.Element].
+	TypeArray ColumnType = "array"
 )
 
 // ColumnDef is one column of a [TableDef].
@@ -39,6 +42,14 @@ type ColumnDef struct {
 	// wire carries units and never the scale, so the fingerprint is the only
 	// place this can be caught.
 	Scale int
+	// Element is what a [TypeArray] column's elements are. Empty and
+	// meaningless for every other type.
+	//
+	// In the fingerprint, by exactly the argument [ColumnDef.Scale] gives one
+	// type over: it addresses no column, and a client that has it wrong reads
+	// the *right* column and decodes every element as the wrong type, with
+	// the wire carrying no element type to notice by.
+	Element ColumnType
 }
 
 // TableDef is this client's declaration of a table.
@@ -123,6 +134,9 @@ func (t TableDef) Fingerprint() uint64 {
 		// wrong column and usually shows, a wrong scale reads the right column
 		// and renders every value a power of ten out, for ever, with nothing
 		// anywhere reporting it. The wire carries units and never the scale.
+		if column.Type == TypeArray {
+			h.text(string(column.Element))
+		}
 		if column.Type == TypeDecimal {
 			h.number(column.Scale)
 		}

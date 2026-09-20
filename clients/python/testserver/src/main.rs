@@ -80,6 +80,7 @@ const LIBRARIES: TableId = TableId(7);
 const SHELVES: TableId = TableId(8);
 const COPIES: TableId = TableId(9);
 const PRICES: TableId = TableId(10);
+const POSTS: TableId = TableId(11);
 
 fn docs() -> TableDef {
     TableDef::builder("docs", DOCS)
@@ -258,6 +259,34 @@ fn prices() -> TableDef {
         .expect("valid schema")
 }
 
+/// A table with an array column, for the three clients to round-trip one
+/// through.
+///
+/// Its own table rather than a column on `docs`, because adding a column to a
+/// table three clients declare changes that table's fingerprint and every
+/// declaration of it — so the change that is about arrays would be mostly
+/// about `SchemaCheck`.
+///
+/// Two array columns of different element types, because one would let a
+/// client hard-code the element type it decodes and pass. A nullable one
+/// beside a non-nullable one, because "no tags" and "tags unknown" are
+/// different values and the distinction is exactly what a list type loses
+/// first.
+///
+/// No tenant column and no policy, for the reason `prices` gives: this exists
+/// to exercise an encoding, and a row policy would add a second reason for a
+/// row to be missing.
+fn posts() -> TableDef {
+    TableDef::builder("posts", POSTS)
+        .column("id", ValueType::U64)
+        .column("title", ValueType::Str)
+        .array_column("tags", ValueType::Str)
+        .nullable_array_column("scores", ValueType::I64)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema")
+}
+
 fn catalog() -> Catalog {
     Catalog::from_tables([
         docs(),
@@ -270,6 +299,7 @@ fn catalog() -> Catalog {
         shelves(),
         copies(),
         prices(),
+        posts(),
     ])
     .expect("valid catalog")
 }
@@ -298,6 +328,7 @@ fn security() -> SecurityCatalog {
         .grant(Grant::new("app", SHELVES, Action::EVERYTHING))
         .grant(Grant::new("app", COPIES, Action::EVERYTHING))
         .grant(Grant::new("app", PRICES, Action::EVERYTHING))
+        .grant(Grant::new("app", POSTS, Action::EVERYTHING))
         .grant(Grant::new("reader", DOCS, Action::ALL))
         // Deliberately no grant on `secrets`.
         .policy(Policy::new(
@@ -501,6 +532,23 @@ fn value_json(value: &Value) -> Json {
         Value::Vector(v) => {
             json!({ "vector": v.iter().map(|x| x.to_string()).collect::<Vec<_>>() })
         }
+        // Recursively tagged, so an element's *type* is compared as well as
+        // its text. A list of bare values would let a client that decoded
+        // `["1"]` as strings agree with one that decoded `[1]` as integers,
+        // which is the confusion the tagging in this whole function exists to
+        // stop, one level down.
+        Value::Array(elements) => {
+            json!({ "array": elements.iter().map(value_json).collect::<Vec<_>>() })
+        }
+        // **A `Decimal` still lands here**, and that is a gap rather than a
+        // decision. Nothing puts one through this oracle today — the `prices`
+        // tests assert directly — so it has never mattered, and adding a
+        // `{"decimal": units}` arm here alone would *create* a disagreement:
+        // the Python tagger spells a `Units` as `("Units", n)` because it is
+        // an `int` subclass and takes its own type name, and the Go and
+        // TypeScript taggers have their own spellings again. Closing it means
+        // agreeing on one spelling in four places at once, which is its own
+        // change.
         other => json!({ "unrepresentable": other.type_name() }),
     }
 }

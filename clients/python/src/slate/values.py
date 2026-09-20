@@ -53,6 +53,7 @@ from .types import ValueType
 
 __all__ = [
     "NULL",
+    "Array",
     "Null",
     "PyValue",
     "Units",
@@ -153,10 +154,41 @@ class Vector(tuple[float, ...]):
         return super().__new__(cls, (float(e) for e in elements))
 
 
+class Array(tuple["PyValue", ...]):
+    """A homogeneous list, for an array column.
+
+    A distinct type for the reason `Vector` is one: a bare `list` is
+    indistinguishable from a caller passing the wrong thing, and a `tuple`
+    already means something else here.
+
+    **Homogeneous by the column's declaration, not by this type.** The element
+    type lives on the column — the way a decimal's scale does — and the
+    protocol publishes no schema, so this client cannot check it. A mixed list
+    encodes fine and is refused by the server, naming the element that did not
+    match; that is the same place a wrong scale is caught, and for the same
+    reason.
+
+    An `Array` may not hold another `Array`: a column's element type is a
+    scalar type name and cannot say what an inner list would hold. The server
+    refuses one.
+
+    The elements keep their Python types, so `Array(["a", "b"])` is a list of
+    strings and `Array([i64(1)])` is a list of `i64`. A bare `int` inside one
+    is refused for the same reason a bare `int` anywhere is — the wire has two
+    integer widths and nothing here says which — except that the column's hint
+    cannot help, because a hint names the *array*, not its elements.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, elements: Sequence[PyValue]) -> Array:
+        return super().__new__(cls, elements)
+
+
 #: Everything this client will encode. `int` is here and is refused without a
 #: hint; see the module docstring. `Units` is an `int` subclass, so it needs no
 #: arm of its own.
-PyValue = None | Null | bool | int | float | str | bytes | _uuid.UUID | Vector
+PyValue = None | Null | bool | int | float | str | bytes | _uuid.UUID | Vector | Array
 
 
 class ValueTypeError(TypeError):
@@ -216,6 +248,17 @@ def to_value(value: PyValue, hint: ValueType | None = None) -> pb.Value:
         return pb.Value(uuid_value=value.bytes)
     if isinstance(value, Vector):
         return pb.Value(vector_value=pb.Vector(elements=list(value)))
+    if isinstance(value, Array):
+        # No hint is passed down. A hint is the declared type of the slot, and
+        # the slot here is the array — the element type is on the column and
+        # this protocol publishes no schema, so there is nothing truthful to
+        # pass. A bare `int` element is therefore refused, the way a bare `int`
+        # in a slot with no declared type is, and the message says to write
+        # `i64(...)` or `u64(...)`. Guessing one would be the type confusion
+        # this whole module is arranged to prevent.
+        return pb.Value(
+            array_value=pb.ArrayValue(elements=[to_value(element) for element in value])
+        )
     if isinstance(value, bytes):
         return pb.Value(bytes_value=value)
 
@@ -269,6 +312,12 @@ def from_value(value: pb.Value) -> PyValue:
         return _uuid.UUID(bytes=value.uuid_value)
     if kind == "vector_value":
         return Vector(value.vector_value.elements)
+    if kind == "array_value":
+        # Recursing rather than matching the scalar kinds again, so the two
+        # cannot disagree about what a `uuid_value` decodes to; an element the
+        # server should never send raises the same error any other unreadable
+        # value would.
+        return Array([from_value(element) for element in value.array_value.elements])
     if kind == "bytes_value":
         return value.bytes_value
     raise ValueTypeError(f"unknown value kind `{kind}`")

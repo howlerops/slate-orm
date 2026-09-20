@@ -908,6 +908,13 @@ fn describe(catalog: &Catalog) -> String {
                         // restate by hand" was omitting the one field nothing
                         // else could supply.
                         "scale": column.scale(),
+                        // `null` for every type but `array`, for the reason
+                        // the scale is `null` for everything but a decimal: a
+                        // caller must not read an element type off a column
+                        // that has none. In the schema fingerprint, like the
+                        // scale, so a declaration rebuilt from this output
+                        // without it is refused rather than quietly wrong.
+                        "element_type": column.element_type().map(|kind| kind.name()),
                         // `null`, `"created_at"` or `"updated_at"`. Not in the
                         // schema fingerprint and so not something a client has
                         // to restate — it is here because this dump describes

@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from slate import Group, JoinedRow, PyValue, Row, Vector
+from slate import Array, Group, JoinedRow, PyValue, Row, Vector
 
 Tagged = tuple[str, Any]
 
@@ -44,6 +44,14 @@ def tag(value: PyValue) -> Tagged:
         return ("uuid", str(value))
     if isinstance(value, Vector):
         return ("vector", [float(x) for x in value])
+    # Before `bytes`, and before the fall-through: `Array` is a `tuple`
+    # subclass and nothing above it matches one. Each element is tagged in
+    # turn, so an element's *type* is compared and not only its text — a list
+    # of `["1"]` decoded as strings must not agree with one decoded as
+    # integers, which is the confusion the tagging exists to stop, one level
+    # down.
+    if isinstance(value, Array):
+        return ("array", [tag(element) for element in value])
     if isinstance(value, bytes):
         return ("bytes", list(value))
     raise TypeError(f"nothing tags a {type(value).__name__}")
@@ -56,6 +64,8 @@ def untag(entry: dict[str, Any]) -> Tagged:
         return ("f64", float(raw))
     if kind == "vector":
         return ("vector", [float(x) for x in raw])
+    if kind == "array":
+        return ("array", [untag(element) for element in raw])
     if kind == "null":
         return ("null", None)
     return (kind, raw)

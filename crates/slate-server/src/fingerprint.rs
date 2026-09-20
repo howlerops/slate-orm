@@ -198,6 +198,17 @@ fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
                 if let Some(scale) = column.scale() {
                     state.number(scale as usize);
                 }
+                // An array's element type, and only an array's, by exactly
+                // the argument above one type over. It addresses no column;
+                // a client that has it wrong reads the *right* column and
+                // decodes every element as the wrong type, with the wire
+                // carrying no element type to notice by. And it cannot change
+                // under a running client for the same reason a scale cannot:
+                // it is in the kernel's layout fingerprint too, so changing
+                // one is a refused migration rather than a silent one.
+                if let Some(element) = column.element_type() {
+                    state.text(element.name());
+                }
                 next.push(state);
             }
         }

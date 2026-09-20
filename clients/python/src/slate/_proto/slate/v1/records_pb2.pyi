@@ -459,6 +459,7 @@ class Value(_message.Message):
     UUID_VALUE_FIELD_NUMBER: _builtins.int
     VECTOR_VALUE_FIELD_NUMBER: _builtins.int
     DECIMAL_VALUE_FIELD_NUMBER: _builtins.int
+    ARRAY_VALUE_FIELD_NUMBER: _builtins.int
     null_value: Global___NullValue.ValueType
     bool_value: _builtins.bool
     bytes_value: _builtins.bytes
@@ -486,6 +487,8 @@ class Value(_message.Message):
     """
     @_builtins.property
     def vector_value(self) -> Global___Vector: ...
+    @_builtins.property
+    def array_value(self) -> Global___ArrayValue: ...
     def __init__(
         self,
         *,
@@ -499,12 +502,13 @@ class Value(_message.Message):
         uuid_value: _builtins.bytes = ...,
         vector_value: Global___Vector | None = ...,
         decimal_value: _builtins.int = ...,
+        array_value: Global___ArrayValue | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["array_value", b"array_value", "bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["array_value", b"array_value", "bool_value", b"bool_value", "bytes_value", b"bytes_value", "decimal_value", b"decimal_value", "double_value", b"double_value", "int64_value", b"int64_value", "kind", b"kind", "null_value", b"null_value", "string_value", b"string_value", "uint64_value", b"uint64_value", "uuid_value", b"uuid_value", "vector_value", b"vector_value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_kind: _TypeAlias = _typing.Literal["null_value", "bool_value", "bytes_value", "string_value", "int64_value", "uint64_value", "double_value", "uuid_value", "vector_value", "decimal_value"]  # noqa: Y015
+    _WhichOneofReturnType_kind: _TypeAlias = _typing.Literal["null_value", "bool_value", "bytes_value", "string_value", "int64_value", "uint64_value", "double_value", "uuid_value", "vector_value", "decimal_value", "array_value"]  # noqa: Y015
     _WhichOneofArgType_kind: _TypeAlias = _typing.Literal["kind", b"kind"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_kind) -> _WhichOneofReturnType_kind | None: ...
 
@@ -531,6 +535,44 @@ class Vector(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___Vector: _TypeAlias = Vector  # noqa: Y015
+
+@_typing.final
+class ArrayValue(_message.Message):
+    """A homogeneous list, mirroring `slate_tuple::Value::Array`.
+
+    **The element type is not here.** It lives on the column, the way a
+    decimal's scale does and for the same reason: every value in the column
+    shares it, and sending it per value would let a client and the catalog
+    disagree about what a stored list holds. This protocol publishes no column
+    types at all — only a `SchemaCheck` fingerprint — so a client learns the
+    element type the same way it learns a scale: from `slate-serverd
+    --print-schema`, which is what the generators read.
+
+    **Arrays do not nest.** The schema cannot describe a nested one — an element
+    type is a scalar type name and cannot say what *its* elements are — so a
+    server refuses an `ArrayValue` holding another rather than storing a value
+    no column could have declared. That also keeps the depth of this recursion
+    at one, which matters because the depth is chosen by whoever sends the
+    message.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    ELEMENTS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def elements(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]: ...
+    def __init__(
+        self,
+        *,
+        elements: _abc.Iterable[Global___Value] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["elements", b"elements"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___ArrayValue: _TypeAlias = ArrayValue  # noqa: Y015
 
 @_typing.final
 class Row(_message.Message):

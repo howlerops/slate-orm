@@ -113,6 +113,18 @@ DIALECTS = {
         re.compile(r"^FAILED (\S+)", re.MULTILINE),
         re.compile(r"^\d+ (?:passed|failed|error)", re.MULTILINE),
     ),
+    # `node --test`'s TAP output, which `clients/typescript` uses:
+    # `not ok 3 - the name` per failure, and a closing `# pass N` / `# fail N`.
+    #
+    # The failure pattern skips the per-file wrapper line, which node emits as
+    # `not ok 1 - test/foo.test.ts` alongside the real case — a name ending in
+    # `.ts` is the file, not a test, and counting it would report a failure
+    # nobody wrote. The `# fail` line is the report marker rather than `# pass`
+    # because a run where everything fails still prints it.
+    "node": (
+        re.compile(r"^not ok \d+ - (?!.*\.ts$)(.+?)\s*$", re.MULTILINE),
+        re.compile(r"^# fail \d+\s*$", re.MULTILINE),
+    ),
 }
 
 

@@ -20,6 +20,7 @@ I64 = ValueType.I64
 U64 = ValueType.U64
 STR = ValueType.STR
 DECIMAL = ValueType.DECIMAL
+ARRAY = ValueType.ARRAY
 
 DOCS = Table(
     "docs",
@@ -146,6 +147,24 @@ PRICES = Table(
     primary_key=["id"],
 )
 
+# Two array columns of different element types, because one would let a client
+# hard-code the element type it decodes and pass. The element type *is* part of
+# the fingerprint, which makes this suite an end-to-end check of that: change
+# `STR` below to `I64` and every request against `posts` is refused, the same
+# way changing `PRICES`'s scale is. It is there for the same reason — a wrong
+# element type reaches the *right* column and decodes every element as the
+# wrong type, with the wire carrying no element type to notice by.
+POSTS = Table(
+    "posts",
+    [
+        Column("id", U64),
+        Column("title", STR),
+        Column("tags", ARRAY, element=STR),
+        Column("scores", ARRAY, element=I64),
+    ],
+    primary_key=["id"],
+)
+
 ALL = (
     DOCS,
     USERS,
@@ -157,4 +176,5 @@ ALL = (
     SHELVES,
     COPIES,
     PRICES,
+    POSTS,
 )

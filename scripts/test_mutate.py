@@ -56,6 +56,26 @@ else:
 '''
 
 
+#: The same stand-in, speaking `node --test`'s TAP.
+#:
+#: The wrapper line is the point: node reports the *file* as a failing test
+#: alongside the real case, so a dialect that counted every `not ok` would name
+#: `test/t.test.ts` as a test nobody wrote. The fake emits both.
+NODE_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "MUTATED" in text:
+    print("not ok 1 - a named case")
+    print("not ok 2 - test/t.test.ts")
+    print("# pass 0")
+    print("# fail 2")
+else:
+    print("ok 1 - a named case")
+    print("# pass 1")
+    print("# fail 0")
+'''
+
+
 def run(spec: str, subject: Path, fake: Path) -> tuple[int, str]:
     """`mutate.py` over `spec`, with its command pointed at the fake."""
     finished = subprocess.run(
@@ -68,7 +88,20 @@ def run(spec: str, subject: Path, fake: Path) -> tuple[int, str]:
     return finished.returncode, finished.stdout + finished.stderr
 
 
-def case(name: str, body: str, expect_code: int, expect_text: list[str]) -> bool:
+def case(
+    name: str,
+    body: str,
+    expect_code: int,
+    expect_text: list[str],
+    reject_text: list[str] | None = None,
+) -> bool:
+    """One case. `reject_text` is what must *not* appear.
+
+    Added for the node dialect, whose property is an absence: node reports the
+    test file itself as a failing test beside the real case, and the thing
+    worth asserting is that the file's name never turns up as the test that
+    caught a mutation. A presence check cannot say that.
+    """
     with tempfile.TemporaryDirectory() as directory:
         home = Path(directory)
         subject = home / "subject.txt"
@@ -77,10 +110,13 @@ def case(name: str, body: str, expect_code: int, expect_text: list[str]) -> bool
         fake.write_text(FAKE)
         pytest_fake = home / "pytest_fake.py"
         pytest_fake.write_text(PYTEST_FAKE)
+        node_fake = home / "node_fake.py"
+        node_fake.write_text(NODE_FAKE)
         spec = (
             body.replace("__SUBJECT__", str(subject))
             .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
             .replace("__PYTEST__", f'"{sys.executable}", "{pytest_fake}", "{subject}"')
+            .replace("__NODE__", f'"{sys.executable}", "{node_fake}", "{subject}"')
         )
         code, output = run(spec, subject, fake)
         problems = []
@@ -89,6 +125,9 @@ def case(name: str, body: str, expect_code: int, expect_text: list[str]) -> bool
         for wanted in expect_text:
             if wanted not in output:
                 problems.append(f"missing {wanted!r}")
+        for unwanted in reject_text or []:
+            if unwanted in output:
+                problems.append(f"present and should not be: {unwanted!r}")
         # The guarantee that matters most and is easiest to lose: whatever
         # happened, the file is as it was. A harness that leaves a mutated tree
         # makes every later run a lie.
@@ -261,6 +300,34 @@ def main() -> int:
             # one reports zero suites — which is right, and reading it as clean
             # would not be.
             '{"file": "__SUBJECT__", "command": [__PYTEST__], "dialect": "python",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            1,
+            ["reported no test results at all"],
+        ),
+        case(
+            "a node --test failure is read through the node dialect",
+            '{"file": "__SUBJECT__", "command": [__NODE__], "dialect": "node",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "a named case"],
+        ),
+        case(
+            "the node dialect does not count the per-file wrapper as a test",
+            # node reports the file itself as `not ok N - test/t.test.ts`
+            # beside the real case. Counting it would attribute the catch to a
+            # test nobody wrote, which reads like coverage that is not there.
+            '{"file": "__SUBJECT__", "command": [__NODE__], "dialect": "node",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["a named case"],
+            reject_text=["t.test.ts"],
+        ),
+        case(
+            "node output read as libtest reports nothing rather than a pass",
+            # The `rust` dialect matches neither node's failures nor its
+            # summary, so pointing it at node output must report zero suites.
+            # Reading it as clean would score every mutation a survivor.
+            '{"file": "__SUBJECT__", "command": [__NODE__], "dialect": "rust",'
             ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
             1,
             ["reported no test results at all"],

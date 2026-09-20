@@ -549,6 +549,15 @@ pub(crate) struct Column {
     /// the same reason.
     #[serde(default)]
     pub(crate) scale: Option<u8>,
+    /// What an `array` column's elements are, as a type name.
+    ///
+    /// Required on an array column and refused on any other, which is the
+    /// same pairing `scale` has with `decimal` and for the same reason: an
+    /// element type on a column that has no elements means somebody believes
+    /// this column holds a list, and that belief is worth refusing rather
+    /// than ignoring.
+    #[serde(default)]
+    pub(crate) element: Option<String>,
     /// `"created_at"` or `"updated_at"`: the store writes this column.
     ///
     /// A string rather than two booleans, because the two are exclusive and a

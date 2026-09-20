@@ -96,12 +96,33 @@ message Value {
     // prices, balances, quantities — are mostly positive. Consistency with the
     // arm beside it is worth more than the varint either way.
     int64 decimal_value = 10;
+    ArrayValue array_value = 11;
   }
 }
 
 // A dense f32 vector, for embeddings.
 message Vector {
   repeated float elements = 1;
+}
+
+// A homogeneous list, mirroring `slate_tuple::Value::Array`.
+//
+// **The element type is not here.** It lives on the column, the way a
+// decimal's scale does and for the same reason: every value in the column
+// shares it, and sending it per value would let a client and the catalog
+// disagree about what a stored list holds. This protocol publishes no column
+// types at all — only a `SchemaCheck` fingerprint — so a client learns the
+// element type the same way it learns a scale: from `slate-serverd
+// --print-schema`, which is what the generators read.
+//
+// **Arrays do not nest.** The schema cannot describe a nested one — an element
+// type is a scalar type name and cannot say what *its* elements are — so a
+// server refuses an `ArrayValue` holding another rather than storing a value
+// no column could have declared. That also keeps the depth of this recursion
+// at one, which matters because the depth is chosen by whoever sends the
+// message.
+message ArrayValue {
+  repeated Value elements = 1;
 }
 
 // A row: one value per column of its table, in ordinal order. Also used for a

@@ -221,6 +221,38 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
             _ => {}
         }
 
+        // The same pairing the scale has with `decimal`, one type over. Both
+        // directions, because both are somebody believing the wrong thing
+        // about the column: an array with no element type cannot say what it
+        // holds, and an element type on anything else means the author thinks
+        // it is a list.
+        let element = match (declared, column.element.as_deref()) {
+            (ValueType::Array, None) => {
+                return Err(Fault::new(format!(
+                    "column `{}` is an array and has no `element`; every value in an array column holds the same type and nothing can say which without it",
+                    column.name
+                )));
+            }
+            (ValueType::Array, Some(name)) => {
+                let element =
+                    value::value_type(name, &format!("column `{}`'s `element`", column.name))?;
+                if element == ValueType::Array {
+                    return Err(Fault::new(format!(
+                        "column `{}` declares `element = \"array\"`; the inner array could not say what *its* elements are, so nesting is refused rather than half-described",
+                        column.name
+                    )));
+                }
+                Some(element)
+            }
+            (other, Some(_)) => {
+                return Err(Fault::new(format!(
+                    "column `{}` has an `element` and holds {other}, which has no elements; only an array column does",
+                    column.name
+                )));
+            }
+            (_, None) => None,
+        };
+
         let default = column
             .default
             .as_ref()
@@ -228,6 +260,7 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
                 value::from_toml(
                     value,
                     declared,
+                    element,
                     &format!("column `{}`'s `default`", column.name),
                 )
             })
@@ -259,6 +292,11 @@ fn columns_builder(table: &config::Table) -> Started<slate_schema::TableBuilder>
         // matrix a second time for one type.
         if let Some(scale) = column.scale {
             builder = builder.scale_for(&column.name, scale);
+        }
+
+        // Same placement and the same reason as the scale.
+        if let Some(element) = element {
+            builder = builder.element_for(&column.name, element);
         }
 
         // Same placement and the same reason as the scale: a managed column is
@@ -777,6 +815,91 @@ primary_key = ["id"]
         // And it is `None` for the column beside it, so a caller cannot read a
         // scale off a type that does not have one.
         assert_eq!(table.columns()[0].scale(), None);
+    }
+
+    #[test]
+    fn an_array_column_carries_its_element_type() {
+        let catalog = tables(
+            r#"
+[[tables]]
+name = "posts"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "tags", type = "array", element = "str", default = ["new"] },
+]
+primary_key = ["id"]
+"#,
+        )
+        .expect("an array column is declarable");
+        let table = catalog.table_by_name("posts").expect("posts");
+        let tags = &table.columns()[1];
+        assert_eq!(tags.value_type(), ValueType::Array);
+        assert_eq!(tags.element_type(), Some(ValueType::Str));
+        // `None` beside it, so a caller cannot read an element type off a
+        // column that has no elements.
+        assert_eq!(table.columns()[0].element_type(), None);
+        // The default is read through the element type rather than guessed at.
+        assert_eq!(
+            tags.default_value(),
+            Some(&slate_tuple::Value::Array(vec![slate_tuple::Value::Str(
+                "new".into()
+            )]))
+        );
+    }
+
+    /// Each half of the `array`/`element` pairing is refused without the other.
+    ///
+    /// Both directions, because both are somebody believing the wrong thing.
+    /// An array with no element type cannot say what it holds; an `element` on
+    /// a string column means the author thinks that column is a list, and
+    /// ignoring it would leave them to find out from a write failure.
+    #[test]
+    fn the_array_and_element_pairing_is_refused_either_way_round() {
+        let error = tables(
+            r#"
+[[tables]]
+name = "posts"
+id = 1
+columns = [{ name = "id", type = "u64" }, { name = "tags", type = "array" }]
+primary_key = ["id"]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("has no `element`"), "{error}");
+
+        let error = tables(
+            r#"
+[[tables]]
+name = "posts"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "title", type = "str", element = "str" },
+]
+primary_key = ["id"]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("which has no elements"), "{error}");
+
+        let error = tables(
+            r#"
+[[tables]]
+name = "posts"
+id = 1
+columns = [
+  { name = "id", type = "u64" },
+  { name = "tags", type = "array", element = "array" },
+]
+primary_key = ["id"]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("nesting is refused"), "{error}");
     }
 
     #[test]
