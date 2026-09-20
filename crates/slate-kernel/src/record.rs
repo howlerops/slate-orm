@@ -1254,6 +1254,21 @@ impl<'a> RecordTransaction<'a> {
         self.security.authorize(context, table, Action::Insert)?;
         self.security.authorize(context, table, Action::Update)?;
         row.validate(table)?;
+        // The row policy before the read, which is what `write_many` was fixed
+        // to do and this path was not. It reads the key first, so the read
+        // happened for a tenant the caller could not name — and the two
+        // outcomes left by different doors: a key taken in another tenant came
+        // back `RowNotFound` from the visibility check below, a free one came
+        // back `RowCheckFailed` from `check_row` further down. That difference
+        // is security finding 2 on a path the finding did not name, free and
+        // repeatable because neither answer writes anything.
+        //
+        // `Action::Insert` regardless of which branch this turns out to be,
+        // for the reason `write_many` gives: the tenant restriction is the
+        // same expression either way, so a row outside the caller's tenant is
+        // refused before anything is read, and a row inside it that turns out
+        // to exist still takes the full `Action::Update` check below.
+        self.check_row(context, table, Action::Insert, row)?;
 
         let primary_key = row.primary_key_values(table);
         // Read without the policy: a hidden row still occupies the key, so

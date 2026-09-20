@@ -674,3 +674,253 @@ fn a_catalog_cannot_be_reached_around_by_cloning_or_defaulting() {
         );
     }
 }
+
+/// Every write path that can modify storage, as the probe below must cover
+/// them. Held to `record.rs` by `scripts/check_write_paths.py`, which derives
+/// the same list from what each `pub` method actually calls.
+///
+/// A roster rather than a comment because finding 2 was fixed in `write_many`
+/// with single-row `insert` as the control, and the single-row *upsert* —
+/// neither the subject nor the control — went on disclosing for months. The
+/// list exists so that a thirteenth write path cannot be added without
+/// somebody deciding which column of the table below it belongs in.
+const WRITE_PATHS: [&str; 12] = [
+    "insert",
+    "upsert",
+    "update",
+    "update_if_unchanged",
+    "delete",
+    "delete_if_unchanged",
+    "insert_many",
+    "upsert_many",
+    "update_many",
+    "delete_where",
+    "update_where",
+    "purge_deleted",
+];
+
+/// The paths that take a caller-named primary key or row, and so can be handed
+/// a key in a tenant the caller cannot see. The other three take a predicate
+/// and are covered separately below.
+const KEY_NAMING: [&str; 9] = [
+    "insert",
+    "upsert",
+    "update",
+    "update_if_unchanged",
+    "delete",
+    "delete_if_unchanged",
+    "insert_many",
+    "upsert_many",
+    "update_many",
+];
+
+/// `users`, by ordinal: `tenant_id`, `id`, `email`.
+const TENANT_COLUMN: slate_schema::Ordinal = slate_schema::Ordinal(0);
+const ID_COLUMN: slate_schema::Ordinal = slate_schema::Ordinal(1);
+const EMAIL_COLUMN: slate_schema::Ordinal = slate_schema::Ordinal(2);
+
+/// One write attempt, reduced to what a caller can actually observe.
+///
+/// The discriminant rather than the whole error: the oracle is *which* answer
+/// comes back, and two `RowNotFound`s naming the same table are one answer. The
+/// readable form travels alongside so a failure says what happened rather than
+/// printing two integers.
+async fn answer(
+    transaction: &slate_kernel::RecordTransaction<'_>,
+    caller: &SecurityContext,
+    path: &str,
+    id: u64,
+) -> (String, String) {
+    let row = user_row(TENANT_B, id, "probe@a.example");
+    let key = [Value::U64(TENANT_B), Value::U64(id)];
+    let outcome = match path {
+        "insert" => transaction.insert(caller, &users(), &row).await.map(drop),
+        "upsert" => transaction.upsert(caller, &users(), &row).await.map(drop),
+        "update" => transaction.update(caller, &users(), &row).await.map(drop),
+        "update_if_unchanged" => transaction
+            .update_if_unchanged(caller, &users(), &row, &row)
+            .await
+            .map(drop),
+        // `delete` returns whether it deleted rather than erroring, so its
+        // observable is that boolean and not an error variant.
+        "delete" => match transaction.delete(caller, &users(), &key).await {
+            Ok(deleted) => return (format!("Ok({deleted})"), format!("Ok({deleted})")),
+            Err(error) => Err(error),
+        },
+        "delete_if_unchanged" => transaction
+            .delete_if_unchanged(caller, &users(), &key, &row)
+            .await
+            .map(drop),
+        "insert_many" => transaction
+            .insert_many(caller, &users(), core::slice::from_ref(&row))
+            .await
+            .map(drop),
+        "upsert_many" => transaction
+            .upsert_many(caller, &users(), core::slice::from_ref(&row))
+            .await
+            .map(drop),
+        "update_many" => transaction
+            .update_many(caller, &users(), core::slice::from_ref(&row))
+            .await
+            .map(drop),
+        other => panic!("{other} is in a roster but this probe cannot drive it"),
+    };
+    match outcome {
+        Ok(()) => ("Ok".to_owned(), "Ok".to_owned()),
+        Err(error) => (
+            format!("{:?}", core::mem::discriminant(&error)),
+            format!("{error:?}"),
+        ),
+    }
+}
+
+/// FINDING: the single-row `upsert` had finding 2's shape, and neither the
+/// finding nor its control named it.
+///
+/// Finding 2 was that `write_many` read storage before deciding the row
+/// policy, so its errors answered questions about tenants the caller could not
+/// name. It was fixed there, with single-row `insert` quoted as the control
+/// that showed what correct looked like. `upsert` is neither: it read the key
+/// first, and the two outcomes left by different doors — `RowNotFound` when
+/// the key was taken in another tenant, `RowCheckFailed` when it was free.
+///
+/// Rather than fix that one path and move on for the fourth time today, this
+/// asks the question of **every** path that takes a caller-named key. Nothing
+/// is written by any of them, so the whole table is free and repeatable.
+#[tokio::test]
+async fn no_key_naming_write_path_answers_differently_for_another_tenants_key() {
+    let store = users_store().await;
+    let a = caller(TENANT_A);
+
+    let mut disclosing = Vec::new();
+    for path in KEY_NAMING {
+        let transaction = store.begin().await.unwrap();
+        // Key 7 exists in tenant B; key 8 does not. Tenant A may see neither.
+        let (occupied, occupied_text) = answer(&transaction, &a, path, 7).await;
+        let (free, free_text) = answer(&transaction, &a, path, 8).await;
+        transaction.rollback();
+        if occupied != free {
+            disclosing.push(format!("{path}: {occupied_text} vs {free_text}"));
+        }
+    }
+
+    assert!(
+        disclosing.is_empty(),
+        "these write paths tell tenant A which of tenant B's keys are taken:\n  {}",
+        disclosing.join("\n  ")
+    );
+    assert_eq!(
+        KEY_NAMING.len() + 3,
+        WRITE_PATHS.len(),
+        "a write path is in neither table; every one is key-naming or predicate-driven"
+    );
+}
+
+/// The control the table above needs, and the reason it is not vacuous.
+///
+/// If tenant A's attempts were being refused by the *grant* rather than by the
+/// row policy, every path would answer identically for a reason that has
+/// nothing to do with finding 2, and the table would pass while proving
+/// nothing. `user_security` grants `Action::ALL` on `users` to the role both
+/// callers hold, so every refusal below is the row policy deciding — and the
+/// same paths do succeed against the caller's own tenant.
+#[tokio::test]
+async fn the_same_paths_succeed_inside_the_callers_own_tenant() {
+    let store = users_store().await;
+    let a = caller(TENANT_A);
+
+    let transaction = store.begin().await.unwrap();
+    transaction
+        .insert(&a, &users(), &user_row(TENANT_A, 1, "a@a.example"))
+        .await
+        .expect("tenant A may insert into tenant A");
+    transaction
+        .upsert(&a, &users(), &user_row(TENANT_A, 1, "b@a.example"))
+        .await
+        .expect("tenant A may upsert its own row");
+    transaction
+        .upsert(&a, &users(), &user_row(TENANT_A, 2, "c@a.example"))
+        .await
+        .expect("an upsert that inserts is still permitted");
+    assert!(
+        transaction
+            .delete(&a, &users(), &[Value::U64(TENANT_A), Value::U64(1)])
+            .await
+            .unwrap(),
+        "tenant A may delete its own row"
+    );
+    transaction.rollback();
+}
+
+/// The predicate-driven paths, asked the same question.
+///
+/// A predicate can name another tenant's column values as freely as a key can,
+/// so `tenant_id = B AND id = 7` is the same probe in a different spelling.
+/// These read through `execute`, which conjoins the policy, so the match is
+/// empty either way and the count discloses nothing — but that is the claim,
+/// and the claim is what gets checked.
+#[tokio::test]
+async fn no_predicate_write_path_answers_differently_either() {
+    let store = users_store().await;
+    let a = caller(TENANT_A);
+
+    for id in [7u64, 8] {
+        let occupied = id == 7;
+        let transaction = store.begin().await.unwrap();
+        let naming = Expr::all([
+            Expr::compare(TENANT_COLUMN, slate_kernel::CmpOp::Eq, Value::U64(TENANT_B)),
+            Expr::compare(ID_COLUMN, slate_kernel::CmpOp::Eq, Value::U64(id)),
+        ]);
+        let deleted = transaction
+            .delete_where(&a, &users(), naming.clone(), None)
+            .await
+            .expect("a predicate naming another tenant is not an error, it is empty");
+        let updated = transaction
+            .update_where(
+                &a,
+                &users(),
+                naming,
+                &[(
+                    EMAIL_COLUMN,
+                    slate_kernel::Scalar::literal(Value::Str("owned@a.example".into())),
+                )],
+                None,
+            )
+            .await
+            .expect("likewise");
+        transaction.rollback();
+
+        assert!(
+            deleted.is_empty() && updated.is_empty(),
+            "a predicate naming tenant B matched rows for tenant A \
+             (occupied={occupied}): {deleted:?} / {updated:?}"
+        );
+    }
+}
+
+/// `purge_deleted` is the twelfth path, and it takes neither a key nor a
+/// predicate — only a timestamp and a ceiling. Its count is still an
+/// observable, so the question is whether it counts rows the caller cannot
+/// see.
+///
+/// It reads through `execute`, which conjoins the policy, so it does not. The
+/// table here has no soft-delete column at all, which is the other half: the
+/// path refuses outright rather than reporting a cheerful zero, so a caller
+/// cannot use it against a table that never retires rows.
+#[tokio::test]
+async fn purging_a_table_that_does_not_soft_delete_refuses_rather_than_counting() {
+    let store = users_store().await;
+    let a = caller(TENANT_A);
+
+    let transaction = store.begin().await.unwrap();
+    let refused = transaction
+        .purge_deleted(&a, &users(), i64::MAX, None)
+        .await
+        .unwrap_err();
+    transaction.rollback();
+
+    assert!(
+        matches!(refused, KernelError::NotSoftDeleting { .. }),
+        "expected a refusal naming the table, got {refused:?}"
+    );
+}

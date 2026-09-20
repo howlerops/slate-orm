@@ -119,10 +119,29 @@ Either way the doc comment on `delete` needs its second bound narrowed to
 
 ## 2. `insert_many` / `upsert_many` are a free cross-tenant existence oracle
 
-**Status: FIXED.** `write_many` decides the row policy before its batched
-reads, as single-row `insert` already did. Not applied to `update_many`, which
-is already indistinguishable — pre-checking there would replace `RowNotFound`
-with `RowCheckFailed` and reintroduce this disclosure from the other side.
+**Status: FIXED, twice.** `write_many` decides the row policy before its
+batched reads, as single-row `insert` already did. Not applied to
+`update_many`, which is already indistinguishable — pre-checking there would
+replace `RowNotFound` with `RowCheckFailed` and reintroduce this disclosure
+from the other side.
+
+**The second time was the single-row `upsert`, and it is the more instructive
+half.** This finding named `write_many` and quoted `insert` as the control;
+`upsert` was neither, and it read the key before `check_row` exactly as
+`write_many` had. A key taken in another tenant came back `RowNotFound` from
+the visibility check, a free one came back `RowCheckFailed` — two doors, no
+write, repeatable. Over the wire it is unreachable, because `Write::apply`
+routes even a one-row upsert through `upsert_many`; the exposure was
+`RecordTransaction::upsert` and the typed ORM method over it
+(`crates/slate-orm/src/ext.rs`).
+
+Rather than fix that one path, **every** write path is now asked the question
+at once, in `no_key_naming_write_path_answers_differently_for_another_tenants_key`
+and its two companions. `WRITE_PATHS` in that file lists all twelve, and
+`scripts/check_write_paths.py` derives the same list from what each `pub`
+method in `record.rs` actually calls — so a thirteenth cannot be added without
+somebody deciding which table it belongs in. The other eleven were already
+correct, which is worth stating: this was one path, not a class.
 
 **Impact: high — cross-tenant disclosure of primary keys *and* unique-index
 values, over gRPC, with nothing written.**
