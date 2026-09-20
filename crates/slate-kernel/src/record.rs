@@ -45,7 +45,7 @@ use crate::query::Query;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::scalar::Scalar;
-use crate::security::{Action, SecurityCatalog, SecurityContext};
+use crate::security::{Action, Deleted, SecurityCatalog, SecurityContext};
 use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
@@ -1589,6 +1589,15 @@ impl<'a> RecordTransaction<'a> {
     /// `RESTRICT` pass while the thing it guards is true. Integrity is not
     /// relative to who is asking.
     ///
+    /// A child hidden by a *soft delete* is likewise still a child, so
+    /// `RESTRICT` blocks on a retired row. `CASCADE` does not reach one, which
+    /// is the opposite answer from the same question and is explained at the
+    /// two call sites. The consequence worth stating: on a schema that
+    /// soft-deletes its children, a parent stays undeletable until those
+    /// children are *purged*, not merely retired. That is stricter than it was
+    /// and is the point — the alternative leaves a retired row referencing a
+    /// parent that no longer exists, which a restore would then revive.
+    ///
     /// What that discloses, stated plainly rather than waved away: a caller who
     /// may delete a parent can learn from a `RESTRICT` refusal that *something*
     /// references it, including rows their policy hides, and a `CASCADE` can
@@ -2046,8 +2055,13 @@ impl<'a> RecordTransaction<'a> {
                 if foreign_key.on_delete() != ReferentialAction::Cascade {
                     continue;
                 }
+                // Retired children are deliberately *not* cascaded into. The
+                // cascade already ran when they were retired — `remove_row`
+                // walks the graph on the way down — so reaching them again
+                // would re-stamp `deleted_at` and push their purge deadline
+                // out, erasing the retention clock the first delete started.
                 for found in self
-                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key, Deleted::Hidden)
                     .await?
                 {
                     let key = keys::row_key(child, &found.primary_key_values(child));
@@ -2075,8 +2089,30 @@ impl<'a> RecordTransaction<'a> {
                 if foreign_key.on_delete() != ReferentialAction::Restrict {
                     continue;
                 }
+                // Retired children *do* block, which is the opposite of the
+                // cascade arm above and for the same reason the search ignores
+                // row-level security: "a child hidden from the deleter is still
+                // a child". A soft delete hides the row; it does not remove it.
+                // The row is still in storage, still holds the parent's key,
+                // and is still readable with `include_deleted` — so letting the
+                // parent go leaves a reference to nothing, and a restore (which
+                // the retention window exists to allow) would revive a row that
+                // violates a constraint the schema declares.
+                //
+                // Both arms read through one function because they differ in
+                // exactly this and nothing else. Sharing `Deleted::Hidden`
+                // between them is what made `RESTRICT` pass while the thing it
+                // guards was true; the control for it is
+                // `a_restrict_edge_blocks_on_a_retired_child`, which passes a
+                // live child through the same delete and sees it refused.
                 for found in self
-                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .referencing_rows(
+                        &unpoliced,
+                        child,
+                        foreign_key,
+                        &parent_key,
+                        Deleted::Visible,
+                    )
                     .await?
                 {
                     // A referencing row that is itself being deleted does not
@@ -2125,12 +2161,16 @@ impl<'a> RecordTransaction<'a> {
     /// An ordinary planned read, so an index on the referencing columns makes
     /// this a range rather than a scan — which is the difference between a
     /// cascade costing one scan per parent row and costing rather less.
+    ///
+    /// `retired` is the one thing the two callers disagree about, so it is a
+    /// parameter rather than a constant. See each call site.
     async fn referencing_rows<'t>(
         &'t self,
         context: &SecurityContext,
         child: &'t TableDef,
         foreign_key: &ForeignKeyDef,
         parent_key: &[Value],
+        retired: Deleted,
     ) -> Result<Vec<Row>> {
         let filter = Expr::all(
             foreign_key
@@ -2139,8 +2179,10 @@ impl<'a> RecordTransaction<'a> {
                 .zip(parent_key)
                 .map(|(ordinal, value)| Expr::eq(*ordinal, value.clone())),
         );
+        let mut query = Query::all().filter(filter);
+        query.include_deleted = matches!(retired, Deleted::Visible);
         self.reads()
-            .execute(context, child, &Query::all().filter(filter))
+            .execute(context, child, &query)
             .await?
             .collect()
             .await

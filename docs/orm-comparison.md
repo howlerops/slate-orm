@@ -111,7 +111,7 @@ then did not ship it to the three audiences most likely to need it.
 | ~~Generated *types* from the catalog~~ | Drizzle, Prisma | **Built** — `scripts/codegen.py` generates both the schema declaration and a typed row per table for all three clients, and CI diffs them. What is still hand-written is the *call*: a query answers `Value`s and the caller passes them to the generated decoder |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
-| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. Kernel and daemon config only, not on the wire; see below |
+| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. `include_deleted` and `purge_deleted` are on the wire behind `read_deleted`; there is still no restore, and that is open. See below |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
 | CTEs / recursive queries | SQLAlchemy, Drizzle, Diesel | no plan node |
 | Set operations (`UNION`/`INTERSECT`/`EXCEPT`) | all | refused by name in the SQL front end; no spec node |
@@ -173,11 +173,32 @@ then did not ship it to the three audiences most likely to need it.
 > already-retired row is a no-op rather than a second stamp — the row is
 > invisible to `delete` for the same reason it is invisible to `get`.
 >
-> Two things it is not. `include_deleted` is a kernel-level flag and is **not
-> on the wire**: "show me the deleted ones" is a privileged read and the
-> protocol has no way to say who may make it, so shipping the flag before that
-> question is answered would put the decision in the caller's hands. And there
-> is no `restore`; un-deleting is an ordinary update through the kernel.
+> **A foreign key asks the opposite question of the two arms.** `CASCADE` does
+> not reach a child that is already retired: that child's own cascade ran when
+> it was retired, and re-stamping it would push its purge deadline out and
+> restart a retention window nobody restarted. `RESTRICT` *does* block on one,
+> for the same reason the referencing search already ignores row-level
+> security — a hidden child is still a child. Letting the parent go would leave
+> a row that still holds its key, is still readable with `include_deleted`, and
+> would violate its own foreign key the moment anybody restored it. The
+> consequence for a deployment: a parent stays undeletable until its retired
+> children are **purged**, not merely retired. Both answers came out of one
+> shared read until a probe found the `RESTRICT` half wrong; see
+> `ledger/2026-09-20-a-child-that-is-still-a-child.md`.
+>
+> `include_deleted` **is** on the wire now, as its own action: `read_deleted`,
+> which neither `read` nor the `all` shorthand implies. It was withheld at
+> first because the protocol had no way to say who may make that read, and the
+> action is the answer to that question rather than a way around it.
+>
+> There is still **no `restore`**, and the sentence that used to stand here —
+> "un-deleting is an ordinary update" — is withdrawn. An ordinary update at a
+> retired row is refused as `NotFound`, at every privilege including
+> `everything`, while an insert at the same key is refused as `AlreadyExists`.
+> The row is present to one write path and absent to three. That is recorded
+> in `ledger/2026-09-20-the-row-that-is-both-there-and-not.md` and is open: the
+> fix is small, and whether restoring should require `read_deleted` is a policy
+> decision that belongs to whoever deploys this rather than to whoever fixes it.
 >
 > A check refusing a soft-delete column in the primary key was written and then
 > **removed**: a mutation showed no input could reach it, because the column

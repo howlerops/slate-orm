@@ -772,3 +772,189 @@ async fn include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete() {
         .expect("collect");
     assert_eq!(rows.len(), 1);
 }
+
+// --- soft delete under a foreign key ----------------------------------------
+//
+// A retired row is hidden from reads and still present in storage, so every
+// constraint that decides by reading has to say which of those two facts it
+// means. The two arms of `deletion_closure` want opposite answers, and until
+// this section existed they shared one.
+
+const FOLDERS: TableId = TableId(11);
+const FILES: TableId = TableId(12);
+
+/// A hard-deleting parent and a soft-deleting child on `on_delete`.
+fn filing(on_delete: slate_schema::ReferentialAction) -> Catalog {
+    let folders = TableDef::builder("folders", FOLDERS)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let files = TableDef::builder("files", FILES)
+        .column("id", ValueType::U64)
+        .nullable_column("folder_id", ValueType::U64)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .foreign_key(
+            slate_schema::ForeignKeyDef::builder("files_folder", FOLDERS)
+                .column("folder_id")
+                .on_delete(on_delete),
+        )
+        .build()
+        .expect("a valid table");
+    Catalog::from_tables([folders, files]).expect("a catalog")
+}
+
+/// A folder holding one file, with the clock at `at`.
+async fn filed(
+    on_delete: slate_schema::ReferentialAction,
+    at: i64,
+) -> (RecordStore<MemoryStore>, Arc<FixedClock>) {
+    let clock = Arc::new(FixedClock::at(at));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        filing(on_delete),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(&root(), folders, &Row::new(vec![Value::U64(1)]))
+        .await
+        .expect("insert the folder");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(10), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("insert the file");
+    txn.commit().await.expect("commit");
+    (store, clock)
+}
+
+/// Delete folder 1, and say what happened.
+async fn drop_folder(store: &RecordStore<MemoryStore>) -> Result<bool, String> {
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    match txn.delete(&root(), folders, &[Value::U64(1)]).await {
+        Ok(gone) => {
+            txn.commit().await.expect("commit");
+            Ok(gone)
+        }
+        Err(why) => Err(why.to_string()),
+    }
+}
+
+/// Every row of `files`, retired ones included, as `(id, deleted_at)`.
+async fn files_of(store: &RecordStore<MemoryStore>) -> Vec<(u64, Option<i64>)> {
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&root(), files, &query)
+        .await
+        .expect("query")
+        .collect()
+        .await
+        .expect("rows");
+    rows.into_iter()
+        .map(|row| {
+            let id = match row.values()[0] {
+                Value::U64(id) => id,
+                ref other => panic!("id is {other:?}"),
+            };
+            let at = match row.values()[2] {
+                Value::Null => None,
+                Value::I64(at) => Some(at),
+                ref other => panic!("deleted_at is {other:?}"),
+            };
+            (id, at)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_live_child() {
+    // The control. Without it the next test passes on a schema where the edge
+    // never worked at all, and a mutation that broke `RESTRICT` outright would
+    // be caught only by tests in another file over another schema.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+    let why = drop_folder(&store).await.expect_err("a live child blocks");
+    assert!(why.contains("files"), "{why}");
+    assert!(why.contains("files_folder"), "{why}");
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_retired_child() {
+    // The defect this section was written for: retiring the child made the
+    // identical delete succeed, because the search for referencing rows read
+    // with the ordinary soft-delete filter on. The row was still there, still
+    // holding folder 1's key, and still readable with `include_deleted` — so
+    // the parent went and left it pointing at nothing.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    assert!(
+        txn.delete(&root(), files, &[Value::U64(10)])
+            .await
+            .expect("retire the file"),
+        "the file was there to retire"
+    );
+    txn.commit().await.expect("commit");
+
+    let why = drop_folder(&store)
+        .await
+        .expect_err("a retired child is still a child");
+    assert!(why.contains("files_folder"), "{why}");
+    assert_eq!(
+        files_of(&store).await,
+        vec![(10, Some(1_000))],
+        "and the refusal left the child exactly as it was"
+    );
+}
+
+#[tokio::test]
+async fn a_cascade_edge_leaves_an_already_retired_child_and_its_timestamp_alone() {
+    // The other half, and the reason `referencing_rows` takes a parameter
+    // instead of one constant: a cascade must *not* reach a retired child.
+    // Re-stamping `deleted_at` would push the row's purge deadline out by the
+    // gap between the two deletes, so a retention window would silently
+    // restart — which is why this test moves the clock rather than deleting
+    // twice at the same instant, where a re-stamp is invisible.
+    let (store, clock) = filed(slate_schema::ReferentialAction::Cascade, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the file");
+    txn.commit().await.expect("commit");
+    assert_eq!(files_of(&store).await, vec![(10, Some(1_000))]);
+
+    clock.set(9_000);
+    assert!(
+        drop_folder(&store).await.expect("the cascade is allowed"),
+        "the folder was there to delete"
+    );
+    assert_eq!(
+        files_of(&store).await,
+        vec![(10, Some(1_000))],
+        "the retired child keeps the timestamp its own delete gave it"
+    );
+}
+
+#[tokio::test]
+async fn a_cascade_edge_still_retires_a_live_child() {
+    // The control for the one above: the cascade does reach a live child, and
+    // retires rather than removes it. Reading with `include_deleted` is what
+    // separates "retired by the cascade" from "erased by it".
+    let (store, clock) = filed(slate_schema::ReferentialAction::Cascade, 1_000).await;
+    clock.set(9_000);
+    assert!(drop_folder(&store).await.expect("the cascade is allowed"));
+    assert_eq!(files_of(&store).await, vec![(10, Some(9_000))]);
+}
