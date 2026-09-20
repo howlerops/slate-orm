@@ -938,6 +938,30 @@ impl Parser<'_> {
             Some("insert") => self.insert(),
             Some("update") => self.update(),
             Some("delete") => self.delete(),
+            // `WITH` gets its own message, for the reason the set operators do
+            // one line below: "found `WITH`" is true and reads as a parser
+            // that has not heard of it, when the answer is that `WITH` covers
+            // three constructs with three different answers. Saying "CTEs are
+            // not supported" would be wrong about one of the three, and the
+            // one it would be wrong about is the one somebody could build.
+            //
+            // Worked through in `docs/ctes.md`; the split is summarised here
+            // because an error message a reader has to leave to understand is
+            // most of the way back to "unexpected `WITH`".
+            Some("with") => Err(SqlError {
+                message: "WITH is not supported, and the three things it means have \
+                     different reasons. A recursive CTE is a fixpoint loop and a \
+                     statement compiles to one plan with nothing to iterate. A CTE \
+                     referenced more than once has to be computed once and read twice, \
+                     which is a second plan in the same statement — the same reason \
+                     UNION is refused. A non-recursive CTE referenced *once* is neither: \
+                     it inlines into the outer query, and that inlining is the same \
+                     mechanism a view needs, so it is a gap rather than a refusal. See \
+                     docs/ctes.md. Meanwhile an uncorrelated subquery works in \
+                     `IN (SELECT …)`"
+                    .to_owned(),
+                at: self.at(),
+            }),
             _ => Err(SqlError {
                 message: format!(
                     "expected SELECT, INSERT, UPDATE or DELETE, found {}",
