@@ -102,13 +102,34 @@ No behaviour changed, so there is nothing to mutation-test.
 
 ## What this does not do
 
-**Two rows were not read this way: window functions and views.** For window
+~~**Two rows were not read this way: window functions and views.** For window
 functions I checked only that `Aggregate` is a closed enum of seven with no
 frame or partition, which is the row's own evidence and says nothing about
 whether the sort and grouping machinery would take one. For views I checked
 nothing beyond their absence — the interesting question, whether a view's own
 predicate composes with the caller's row policy, I have not looked at. Both
-are recorded as unread rather than implied to be ordinary.
+are recorded as unread rather than implied to be ordinary.~~
+
+> **Both read, same day, and both are more than the row says.**
+>
+> **Window functions are a new operator, not new variants.** `Grouper` holds
+> `HashMap<encoded_key, (Vec<Value>, Accumulators)>` and folds each row into
+> its group's accumulators, **discarding the row**. A window emits one output
+> row per *input* row with a value computed over the partition — the opposite
+> cardinality, so it cannot be an entry in the aggregate list. It also changes
+> what the finding-7 ceilings bound: `max_groups` counts groups and
+> `max_sort_rows` counts a sort, and a window retaining rows per partition is
+> neither.
+>
+> **Views carry a security hazard that has to be designed around first.**
+> `Grant` and `Policy` are both keyed on `TableId`, and a query resolves its
+> table through `Catalog::table_by_name`. Give a view its own `TableId` so that
+> lookup finds it — the obvious implementation — and every grant and policy
+> check keys on the view's id, so a caller granted the view reads the base
+> table's rows with the base table's policy never consulted. The safe shape is
+> that a view expands to its underlying spec before planning, and that has to
+> be structural rather than a convention. This is finding 1's shape exactly: a
+> capability reachable by a second path where the check does not follow.
 
 **The array-type row was left alone**, and it is the one I am most confident is
 ordinary work — with one design decision the row does not mention: an
