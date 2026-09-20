@@ -166,12 +166,78 @@ proptest! {
     }
 }
 
-/// Scalars only: a vector's encoding carries a length that random generation
-/// would rarely make interesting, and it is covered by the hostile-byte cases.
-/// `Uuid` is left out for the same reason — sixteen fixed bytes with no
-/// structure for a corruption to interact with.
+/// The types `any_scalar` deliberately does not generate, and why.
 ///
-/// `Decimal` was left out by omission rather than by that argument, and is in
+/// An exclusion with no reason is indistinguishable from an omission, which is
+/// exactly how `Decimal` survived in `any_type` for as long as it did. These
+/// two are arguments; `Decimal` was an accident.
+const NOT_GENERATED: [(ValueType, &str); 2] = [
+    (
+        ValueType::Vector,
+        "a length prefix random generation would rarely make interesting; the \
+         hostile-byte cases reach it, and `a_huge_declared_vector_length_does_not_allocate` \
+         is the case that matters",
+    ),
+    (
+        ValueType::Uuid,
+        "sixteen fixed bytes with no structure for a truncation or a \
+         single-byte corruption to interact with",
+    ),
+];
+
+/// `any_scalar` generates every type but those, held to the enum.
+///
+/// The same defect as `any_type`'s, one level down, and the previous entry
+/// left it open: `Value` has no `ALL` to derive from, because its variants
+/// carry data. `Value::value_type` is the bridge — it is an exhaustive
+/// wildcard-free match inside the crate, so a new variant fails to compile
+/// there, and `ValueType::ALL` grows, and this fails until somebody either
+/// generates the new type or writes down why not.
+///
+/// Sampled rather than introspected, because a `prop_oneof!` cannot be asked
+/// what it can produce. 500 draws over 8 arms leaves a miss at
+/// 8·(7/8)^500 ≈ 10^-28, and the runner is seeded deterministically, so this
+/// is not a flake waiting to happen.
+#[test]
+fn any_scalar_generates_every_type_it_does_not_exclude() {
+    use proptest::strategy::ValueTree as _;
+    use proptest::test_runner::TestRunner;
+
+    let strategy = any_scalar();
+    let mut runner = TestRunner::deterministic();
+    let mut seen: std::collections::BTreeSet<ValueType> = std::collections::BTreeSet::new();
+    let mut nulls = 0;
+    for _ in 0..500 {
+        match strategy.new_tree(&mut runner).expect("a value").current() {
+            Value::Null => nulls += 1,
+            other => {
+                seen.insert(other.value_type().expect("a typed value has a type"));
+            }
+        }
+    }
+
+    let excluded: std::collections::BTreeSet<ValueType> =
+        NOT_GENERATED.iter().map(|(kind, _)| *kind).collect();
+    let wanted: std::collections::BTreeSet<ValueType> = ValueType::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !excluded.contains(kind))
+        .collect();
+
+    assert_eq!(
+        seen, wanted,
+        "any_scalar and ValueType::ALL disagree; add the type or add it to \
+         NOT_GENERATED with a reason"
+    );
+    // `Null` has no `ValueType`, so the comparison above cannot see it, and a
+    // strategy that stopped producing it would lose the one value whose
+    // encoding is a bare tag.
+    assert!(nulls > 0, "any_scalar stopped generating Null");
+}
+
+/// Scalars, minus the two `NOT_GENERATED` argues for.
+///
+/// `Decimal` was missing by omission rather than by an argument, and is in
 /// now: it is an `i64` on the wire but a *distinct tag*, so the truncation and
 /// single-byte-corruption cases below never produced one.
 fn any_scalar() -> impl Strategy<Value = Value> {

@@ -124,12 +124,23 @@ Nothing asserts *what* a hostile decimal decodes to, and nothing should: the
 weak contract is the one that can hold.
 
 **`any_scalar` is still a hand-written list**, now of eight of `Value`'s ten
-variants, with the two exclusions reasoned. `Value` has no `ALL` and I did not
-add one: its variants carry data, so an array of them is not a natural
+variants, with the two exclusions reasoned. ~~`Value` has no `ALL` and I did
+not add one: its variants carry data, so an array of them is not a natural
 constant, and the strategies differ per variant in ways a list cannot express.
 A new `Value` variant will be missing from `any_scalar` and nothing will say
 so. That is the same defect as the one this entry fixes, left open one level
-down, and I am recording it rather than implying otherwise.
+down, and I am recording it rather than implying otherwise.~~
+
+> **Closed, same day.** The list is still hand-written and now something says
+> so. `Value::value_type` is the bridge `Value` lacking an `ALL` seemed to
+> rule out: it is an exhaustive wildcard-free match inside the crate, so
+> `any_scalar_generates_every_type_it_does_not_exclude` can sample the
+> strategy, ask each value its type, and compare the set against
+> `ValueType::ALL` minus a `NOT_GENERATED` list that carries a reason per
+> entry. A new variant fails to compile in `value_type`, grows `ALL`, and
+> fails this — which is the chain I said was not available. I concluded it
+> from "an array of `Value` is not natural" without asking what else could
+> stand in for one.
 
 **`ValueType::ALL` is new public API.** Additive, and I did not check whether
 any downstream generated code enumerates types in a way that should now use it
