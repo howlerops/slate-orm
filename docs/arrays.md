@@ -66,11 +66,35 @@ array is the same shape one level up: a tag, then each element encoded in full
 element tag. Shorter-is-less falls out: the terminator is reached first and is
 smaller than whatever the longer array has there.
 
-**The terminator has to be below every tag, and the tag space is not free.**
-`codes` already assigns `0x00` upwards, and the escape machinery reserves
-`0x00` and `0xFF`. Which byte is available, and whether the element encodings
-need their own escaping inside an array, is the one part of this that has to be
-read out of `codec.rs` rather than reasoned about here.
+**The terminator already exists, and the tag space cooperates.** Read out of
+`codec.rs` rather than assumed: `NUL = 0x00` is reserved, and the lowest type
+tag is `NULL = 0x01`, so `NUL` sorts below every element encoding by
+construction. Tags run `0x01`–`0x05`, `0x0D`–`0x1D` for the integers, then
+`0x1E` decimal, `0x21` f64, `0x22` uuid, `0x23` vector — **`0x24` is the next
+free one** for `ARRAY`.
+
+**No escaping is needed at the array level**, which is the part that could have
+gone wrong. An element's body may contain a `0x00`, but the array decoder never
+scans for the terminator: it decodes elements one at a time with the same
+reader, and each element consumes exactly its own bytes — a string by its own
+terminator-and-escape, an integer by the length its tag declares. So `0x00` is
+only ever examined at an element boundary, where it cannot be anything but the
+end of the array.
+
+Checked against the real tag values rather than argued:
+
+```
+lhs          rhs          bytes   lists   agree
+[]           [1]            <       <      OK
+[1]          [1, 2]         <       <      OK
+[1]          [2]            <       <      OK
+[1, 2]       [2]            <       <      OK
+[0]          [0, 1]         <       <      OK
+```
+
+`[1, 2] < [2]` is the case a length prefix gets wrong, and `[0] < [0, 1]` is
+the one a naive terminator gets wrong when the terminator is not below every
+tag. Both hold.
 
 ## 3. No arrays of arrays, in the first version
 
@@ -123,12 +147,20 @@ arm or an explicit refusal either way.
 
 ## What this note does not do
 
-**It does not check the tag space.** Decision 2 depends on a terminator byte
-below every element tag being available in `codes`, and on whether an element's
-own escaping composes inside an array. I reasoned about the technique from the
-string encoding and did not read the tag assignments, which is the one place
-this note could be wrong in a way that changes the design rather than the
-prose.
+~~**It does not check the tag space.**~~ **Checked**, and the design survives —
+see decision 2. `NUL = 0x00` is already reserved and the lowest tag is `0x01`,
+`0x24` is free for `ARRAY`, and no array-level escaping is needed because
+element boundaries are self-delimiting. The five ordering cases above were run
+against the real tag values, including the two that a length prefix and a naive
+terminator respectively get wrong.
+
+**What the check does *not* cover** is a heterogeneous array — the ordering
+above is all `I64`. Cross-type order is a property the codec already has (the
+tags are assigned in type order on purpose), so element-wise comparison should
+inherit it, but decision 1 makes an array homogeneous anyway, so the case
+cannot arise through the schema. It could arise through a hostile encoding,
+which is the decoder's problem and belongs in `untrusted.rs` when the code is
+written.
 
 **It does not size the client work.** Three clients, the generated decoders and
 encoders, the wire `Value` message and the SQL front end's literal syntax all
