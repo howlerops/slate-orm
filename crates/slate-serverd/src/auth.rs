@@ -504,6 +504,21 @@ mod tests {
         metadata
     }
 
+    /// Every `impl Authenticator for` in the workspace.
+    ///
+    /// `scripts/check_handlers.py` fails if one exists that is not here, so a
+    /// new authenticator cannot quietly skip
+    /// `no_authenticator_resolves_a_duplicated_identity_key`.
+    const AUTHENTICATORS: [&str; 3] = ["MetadataIdentity", "DenyEveryone", "TokenIdentity"];
+
+    /// The header `MetadataIdentity` reads. Spelled out rather than imported
+    /// because `slate-server` does not export the constant, and a literal is
+    /// safe here for a reason worth stating: if the header were renamed, this
+    /// would send a key that authenticator ignores, it would refuse with "no
+    /// `…` in the request metadata", and the "more than once" assertion below
+    /// would fail. The test breaks loudly rather than passing vacuously.
+    const PRINCIPAL_KEY: &str = "slate-principal";
+
     const GOOD: &str = "0123456789abcdef0123456789abcdef";
     /// A second, equally valid token belonging to a *different* principal, so
     /// a test about which copy wins can name the winner.
@@ -708,6 +723,126 @@ mod tests {
             .authenticate(&bearer(OTHER))
             .expect("one copy authenticates");
         assert_eq!(context.principal().id, Value::U64(9));
+    }
+
+    /// Every implementation of `Authenticator`, against the hole finding 6
+    /// found in one of them.
+    ///
+    /// The finding was that `metadata.get` returns the *first* value for a
+    /// repeated key, which is the caller's copy exactly when the proxy appends
+    /// rather than replaces. It was fixed in `MetadataIdentity`, and
+    /// `TokenIdentity` went on doing it because the trait says nothing about
+    /// duplicated keys and nothing looked at the other implementation.
+    ///
+    /// Both are right now. This is here so a *third* one cannot be wrong
+    /// quietly: `AUTHENTICATORS` names every implementation, and
+    /// `scripts/check_handlers.py` fails if an `impl Authenticator for` exists
+    /// that the list does not name. A new authenticator therefore arrives with
+    /// a failing check rather than with a hole.
+    ///
+    /// Each reads a different key, so each case names its own. `DenyEveryone`
+    /// reads none and refuses regardless — included anyway, because the list
+    /// has to be complete for the check to mean anything, and a case that is
+    /// trivially true is cheaper than an exception that has to be argued.
+    #[test]
+    fn no_authenticator_resolves_a_duplicated_identity_key() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+
+        // Bound so the trait objects below outlive the vector: a
+        // `&MetadataIdentity::…()` inline borrows a temporary.
+        let headers = MetadataIdentity::trusting_the_caller_completely();
+        let nobody = DenyEveryone;
+        // A struct rather than a five-tuple: clippy calls the tuple a "very
+        // complex type" and CI runs `-D warnings`, but the better reason is
+        // that `names_the_duplicate` reads as a field rather than as the fifth
+        // element of something.
+        // Only the authenticator borrows locally; the rest are literals and
+        // must say so. Tying them all to one `'a` makes inference unify it
+        // with `'static` through `MetadataMap::append`, which then demands a
+        // `'static` authenticator — three "does not live long enough" errors
+        // about the wrong thing.
+        struct Case<'a> {
+            name: &'static str,
+            authenticator: &'a dyn Authenticator,
+            /// The metadata key this implementation reads.
+            key: &'static str,
+            /// Two different values, sent under that one key.
+            values: [&'static str; 2],
+            /// Whether the refusal should name the duplicate. False only for
+            /// an authenticator that refuses before looking at anything.
+            names_the_duplicate: bool,
+        }
+
+        let cases = vec![
+            Case {
+                name: "MetadataIdentity",
+                authenticator: &headers,
+                key: PRINCIPAL_KEY,
+                values: ["u64:666", "u64:1"],
+                names_the_duplicate: true,
+            },
+            Case {
+                name: "DenyEveryone",
+                authenticator: &nobody,
+                key: PRINCIPAL_KEY,
+                values: ["u64:1", "u64:2"],
+                names_the_duplicate: false,
+            },
+            Case {
+                name: "TokenIdentity",
+                authenticator: chosen.authenticator.as_ref(),
+                key: "authorization",
+                values: [
+                    "Bearer 0123456789abcdef0123456789abcdef",
+                    "Bearer fedcba9876543210fedcba9876543210",
+                ],
+                names_the_duplicate: true,
+            },
+        ];
+        assert_eq!(
+            cases.len(),
+            AUTHENTICATORS.len(),
+            "every implementation in AUTHENTICATORS needs a case here"
+        );
+
+        for case in cases {
+            let Case {
+                name,
+                authenticator,
+                key,
+                values,
+                names_the_duplicate,
+            } = case;
+            let mut metadata = MetadataMap::new();
+            for value in values {
+                metadata.append(key, value.parse().unwrap());
+            }
+            let status = authenticator
+                .authenticate(&metadata)
+                .err()
+                .unwrap_or_else(|| {
+                    panic!("{name} resolved a duplicated `{key}` instead of refusing it")
+                });
+            assert_eq!(status.code(), Code::Unauthenticated, "{name}");
+            if names_the_duplicate {
+                assert!(
+                    status.message().contains("more than once"),
+                    "{name} refused for some other reason: {}",
+                    status.message()
+                );
+            }
+            // Whatever the reason, the refusal must not echo what the caller
+            // sent — for a token that would put a bearer token into whatever
+            // collects this server's errors.
+            for value in values {
+                assert!(
+                    !status.message().contains(value),
+                    "{name} echoed what it rejected: {}",
+                    status.message()
+                );
+            }
+        }
     }
 
     #[test]

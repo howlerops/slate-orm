@@ -158,6 +158,48 @@ impl Head {
         "FINGERPRINT_BY_CALLER lists `query_from_proto_at`",
     ),
     (
+        "an authenticator missing from the roster fails",
+        {
+            "a.rs": PREAMBLE + "}\n",
+            "auth.rs": """
+const AUTHENTICATORS: [&str; 1] = ["Known"];
+impl Authenticator for Known {}
+impl Authenticator for Forgotten {}
+""",
+        },
+        1,
+        "`impl Authenticator for Forgotten` is not in AUTHENTICATORS",
+    ),
+    (
+        "a roster naming an authenticator that no longer exists fails too",
+        # Both directions: a stale name means a test looping over something
+        # gone, which passes while covering one case fewer than it claims.
+        {
+            "a.rs": PREAMBLE + "}\n",
+            "auth.rs": """
+const AUTHENTICATORS: [&str; 2] = ["Known", "Departed"];
+impl Authenticator for Known {}
+""",
+        },
+        1,
+        "AUTHENTICATORS names `Departed`",
+    ),
+    (
+        "authenticators with no roster anywhere fails",
+        {
+            "a.rs": PREAMBLE + "}\n",
+            "auth.rs": "impl Authenticator for Alone {}\n",
+        },
+        1,
+        "no AUTHENTICATORS list anywhere",
+    ),
+    (
+        "a tree with no authenticators needs no roster",
+        {"a.rs": PREAMBLE + "}\n"},
+        0,
+        "",
+    ),
+    (
         "an exemption for a function that no longer exists fails",
         # `resolve_relation` is in UNAUTHORIZED but this fixture drops its
         # bare call, so the entry is stale.

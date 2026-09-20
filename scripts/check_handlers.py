@@ -99,6 +99,24 @@ UNAUTHORIZED = {
     ),
 }
 
+#: Where the list of every `Authenticator` lives, and the pattern that finds
+#: the implementations it must account for.
+#:
+#: Finding 6 — a repeated identity header resolved rather than refused — was
+#: fixed in one of the two implementations, and the other went on doing it
+#: because the trait says nothing about duplicated keys and nothing looked.
+#: Both are right now; this is what makes a *third* arrive with a failing check
+#: instead of a hole. The list is a Rust `const` rather than a copy here, so
+#: the check and the test that uses it cannot drift apart.
+#:
+#: The list is *found* among the files being scanned rather than read from a
+#: second hard-coded path. A path here would be a thing that can go stale
+#: silently — which is what the never-fires check below exists to stop, and
+#: what moving `SOURCES` from one file to two directories fixed an hour ago.
+#: It also lets the tests run this rule over a tree they wrote.
+ROSTER_LIST = re.compile(r"const AUTHENTICATORS: \[&str; \d+\] = \[([^\]]*)\]")
+IMPLEMENTS = re.compile(r"^impl Authenticator for (\w+)", re.MULTILINE)
+
 FUNCTION = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+([a-z_][a-z0-9_]*)")
 BARE = re.compile(r"self\.table\(")
 FINGERPRINT = re.compile(r"fingerprint::check\(")
@@ -120,6 +138,52 @@ def enclosing_functions(lines: list[str]) -> list[str]:
             current = found.group(1)
         names.append(current)
     return names
+
+
+def unrostered_authenticators(files: list[Path]) -> list[str]:
+    """Every `impl Authenticator for T` is named in `AUTHENTICATORS`.
+
+    Both directions. An implementation missing from the list means a new
+    authenticator nothing exercises; a name in the list with no implementation
+    means a test looping over something that is gone, which passes while
+    covering one case fewer than it claims.
+    """
+    implemented: set[str] = set()
+    rostered: set[str] | None = None
+    for path in files:
+        text = path.read_text()
+        implemented |= set(IMPLEMENTS.findall(text))
+        found = ROSTER_LIST.search(text)
+        if found is not None:
+            rostered = set(re.findall(r'"(\w+)"', found.group(1)))
+    if not implemented:
+        # Not an error here: a caller may be checking a subtree with no
+        # authenticators in it. The roster check is about agreement, and there
+        # is nothing to agree about.
+        return []
+
+    if rostered is None:
+        return [
+            f"{len(implemented)} `impl Authenticator for` and no AUTHENTICATORS "
+            "list anywhere to account for them"
+        ]
+
+    problems = []
+    for name in sorted(implemented - rostered):
+        problems.append(
+            f"`impl Authenticator for {name}` is not in AUTHENTICATORS in "
+            "the AUTHENTICATORS list.\n"
+            "  Add it, and give it a case in "
+            "`no_authenticator_resolves_a_duplicated_identity_key` — finding 6 "
+            "was a duplicated identity key resolved rather than refused, and it "
+            "survived in the implementation nobody was testing."
+        )
+    for name in sorted(rostered - implemented):
+        problems.append(
+            f"AUTHENTICATORS names `{name}`, which implements `Authenticator` "
+            "nowhere any more. Delete it and its case."
+        )
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -176,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
                         "the callers that check it."
                     )
 
+    problems.extend(unrostered_authenticators(files))
+
     # A check that finds nothing has stopped checking, and reads identically to
     # one that found nothing wrong. `CLAUDE.md`: "a check that never fires is a
     # check nobody has debugged". If the handlers move, this fails rather than
@@ -205,9 +271,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{len(problems)} problem(s)", file=sys.stderr)
         return 1
 
+    authenticators = sum(len(IMPLEMENTS.findall(path.read_text())) for path in files)
     print(
         f"ok    {len(files)} files, {bare} bare resolutions all accounted for, "
-        f"{checks} fingerprint checks all authorised first"
+        f"{checks} fingerprint checks all authorised first, "
+        f"{authenticators} authenticators all rostered"
     )
     return 0
 
