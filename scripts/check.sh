@@ -74,6 +74,8 @@ check-sh-guard|.|python3 scripts/test_check_sh.py
 mutate-harness|.|python3 scripts/test_mutate.py
 cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py
+cited-docs|.|python3 scripts/check_cited_docs.py
+cited-docs-guard|.|python3 scripts/test_check_cited_docs.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 write-paths|.|python3 scripts/check_write_paths.py
