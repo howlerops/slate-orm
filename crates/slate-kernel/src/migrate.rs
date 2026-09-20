@@ -283,6 +283,14 @@ pub fn fingerprint(table: &TableDef) -> u64 {
         // as retyping a column, and belongs in the fingerprint for the same
         // reason. `unwrap_or(0)` covers every other type, which has no scale.
         byte(column.scale().unwrap_or(0), &mut hash);
+        // An array's element type decides how every element of every value in
+        // the column is read, so changing it reinterprets stored rows exactly
+        // as a decimal's scale does — and for exactly that reason it is hashed
+        // here rather than smuggled into the column's own type code. `0` is
+        // the "no element type" case and cannot collide with a real one,
+        // because `type_code` gives every type a non-zero code and
+        // `every_type_has_its_own_non_zero_code` holds it to that.
+        number(column.element_type().map_or(0, type_code), &mut hash);
     }
     number(table.primary_key().len() as u64, &mut hash);
     for ordinal in table.primary_key() {

@@ -12,6 +12,15 @@ forced by properties the tuple codec must not lose, and that the smallest
 honest first version **refuses an array in a key and in an index** rather than
 guessing at what either should mean.
 
+> **Built, in the kernel.** All four decisions are code: `ValueType::Array`,
+> `ColumnDef::element_type`, `TableBuilder::array_column`, tag `0x24` with a
+> terminator, and both refusals. `crates/slate-kernel/tests/arrays.rs` is the
+> demonstration and `crates/slate-tuple/tests/ordering.rs` is the oracle.
+> **Nothing outside the kernel knows about arrays yet** — not the wire, not the
+> three clients, not `slate-serverd`'s TOML schema, not the SQL front end. The
+> sections below are kept as written because they are the reasoning; where a
+> decision was sharpened by building it, that is marked inline.
+
 ## 1. The element type lives on the column, not in the type
 
 `ValueType` is a fieldless, `Copy`, `#[non_exhaustive]` enum with a
@@ -140,10 +149,31 @@ has a code — but the question is whether a non-nullable array column should
 accept a null element, and that is a semantics question with no obvious right
 answer.
 
+> **Still open, and the build had to answer it anyway.** `Row::validate` runs on
+> every write and cannot decline to have an opinion, so it **refuses a null
+> element**, for a reason that is about reversibility rather than about
+> semantics: refusing can be relaxed later without breaking a stored row,
+> whereas accepting is a promise the wire and three clients would have to keep
+> from the moment it ships. It is also a separate knob from the column's own
+> nullability, which still works — the whole value may be absent, and
+> `an_element_of_the_wrong_type_is_refused` asserts both.
+
 **What `SUM` and `COUNT` do with an array column.** Nothing, presumably, the
 way they do nothing with a vector; but "presumably" is how three of today's
 findings started, and the aggregate path has a closed enum that will need an
 arm or an explicit refusal either way.
+
+> **Answered, by running it rather than reasoning about it.** An array reaches
+> `Total::add`'s wildcard and is refused with `NotSummable`, naming the type —
+> `an_array_cannot_be_summed_but_can_be_counted`. The paragraph above guessed
+> exactly that and hedged it "presumably", which is the word this note warned
+> about two sentences earlier; the guess was right and is now a test, because a
+> wildcard could as easily have produced a zero. `COUNT` is deliberately *not*
+> a refusal: counting rows that have a value means something for any type.
+>
+> What remains open is the aggregate *surface* rather than its behaviour —
+> whether an array column should eventually get an array-shaped aggregate
+> (`ARRAY_AGG`, a union, a concatenation) is a question nobody has asked here.
 
 ## What this note does not do
 
@@ -166,6 +196,14 @@ written.
 encoders, the wire `Value` message and the SQL front end's literal syntax all
 need a case. The gap row's evidence is about `ValueType`; the cost is mostly
 outside the kernel, and this note is entirely about the kernel.
+
+> Still true, and now it is the *whole* of what is left. Two concrete edges
+> found while building: `slate-server`'s `value_to_proto` has a wildcard that
+> sends `<unrepresentable array>` rather than a null — loud, which is the right
+> failure but is still a failure — and `slate-serverd`'s TOML type parser
+> refuses `type = "array"` with a message listing the nine types it knows, so a
+> configuration file cannot declare one. Both are correct today and both are
+> the first things the next increment changes.
 
 **It does not argue that an array column is worth building.** The comparison
 lists it because Drizzle, SQLAlchemy and Ecto have one. Whether the answer here

@@ -186,6 +186,71 @@ pub enum SchemaError {
         column: String,
     },
 
+    /// An array column was used in a primary key or an index.
+    ///
+    /// Not for the vector's reason — an array's order *is* meaningful. The
+    /// question asked of an indexed array is containment, and one index entry
+    /// per element is a cardinality this store does not have.
+    #[error(
+        "`{key}` on table `{table}` uses array column `{column}`: an array \
+         sorts meaningfully but the question asked of one is containment, \
+         which needs one index entry per element and is not built"
+    )]
+    ArrayInKey {
+        /// The table being defined.
+        table: String,
+        /// Which key or index.
+        key: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An array column was declared without saying what its elements are.
+    #[error(
+        "column `{column}` on table `{table}` is an array and declares no \
+         element type; use `array_column(name, element)`"
+    )]
+    ArrayWithoutElementType {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An array column declared an array as its element type.
+    ///
+    /// `ValueType::Array` carries no element type of its own, so the inner
+    /// array would be a value the schema cannot describe.
+    #[error(
+        "column `{column}` on table `{table}` declares an array of arrays; \
+         the inner array could not say what *its* elements are, so nesting \
+         is refused rather than half-described"
+    )]
+    NestedArrayColumn {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An element of an array value did not match the column's element type.
+    #[error(
+        "column `{column}` on table `{table}` is an array of {expected}, and \
+         element {index} is {actual}"
+    )]
+    ArrayElementTypeMismatch {
+        /// The table the row belongs to.
+        table: String,
+        /// The offending column.
+        column: String,
+        /// Which element, zero-based.
+        index: usize,
+        /// The declared element type.
+        expected: ValueType,
+        /// What the element actually was.
+        actual: &'static str,
+    },
+
     /// A table was defined without a primary key.
     #[error("table `{table}` has no primary key")]
     MissingPrimaryKey {

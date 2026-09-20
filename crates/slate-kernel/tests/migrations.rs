@@ -671,9 +671,18 @@ async fn an_unreadable_state_record_is_a_refusal_naming_the_table() {
 fn every_value_type_fingerprints_apart() {
     let mut seen: std::collections::BTreeMap<u64, ValueType> = std::collections::BTreeMap::new();
     for kind in ValueType::ALL {
-        let table = TableDef::builder("t", USERS)
-            .column("id", ValueType::U64)
-            .column("v", kind)
+        let builder = TableDef::builder("t", USERS).column("id", ValueType::U64);
+        // An array column must declare what it holds, so it cannot be built
+        // the same way as the other nine. The element type is hashed as well
+        // as the array's own code, which is why it is pinned here rather than
+        // varied: this test is about `type_code`, and
+        // `the_element_type_is_part_of_the_fingerprint` is about the element.
+        let builder = if kind == ValueType::Array {
+            builder.array_column("v", ValueType::Bool)
+        } else {
+            builder.column("v", kind)
+        };
+        let table = builder
             .primary_key(["id"])
             .build()
             .unwrap_or_else(|e| panic!("a table with a {kind} column should build: {e}"));

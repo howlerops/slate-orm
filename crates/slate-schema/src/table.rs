@@ -77,6 +77,12 @@ pub struct ColumnDef {
     /// Zero for every other type, and meaningless there. See
     /// [`ColumnDef::scale`].
     scale: u8,
+    /// What a [`ValueType::Array`] column's elements are.
+    ///
+    /// `None` for every other type, and meaningless there — the same
+    /// arrangement as `scale`, and for the same reason. See
+    /// [`ColumnDef::element_type`].
+    element: Option<ValueType>,
     /// Whether the store writes this column's value. See [`Managed`].
     managed: Option<Managed>,
 }
@@ -122,6 +128,25 @@ impl ColumnDef {
     pub const fn scale(&self) -> Option<u8> {
         match self.ty {
             ValueType::Decimal => Some(self.scale),
+            _ => None,
+        }
+    }
+
+    /// What an array column's elements are.
+    ///
+    /// An array's element type lives here rather than in
+    /// [`ValueType::Array`] for the same reason a decimal's scale does: the
+    /// enum is fieldless, `Copy` and matchable in a `const fn`, and an
+    /// `Array(Box<ValueType>)` would cost all three to describe one column.
+    /// `docs/arrays.md` §1 works the trade through.
+    ///
+    /// `None` for a column that is not an array, so a caller cannot read an
+    /// element type off a type that does not have one. An array column
+    /// *without* one does not exist: [`TableBuilder::build`] refuses it.
+    #[must_use]
+    pub const fn element_type(&self) -> Option<ValueType> {
+        match self.ty {
+            ValueType::Array => self.element,
             _ => None,
         }
     }
@@ -905,6 +930,7 @@ impl TableBuilder {
             default: None,
             previous_names: Vec::new(),
             scale: 0,
+            element: None,
             managed: None,
         });
         self
@@ -929,6 +955,62 @@ impl TableBuilder {
     #[must_use]
     pub fn nullable_decimal_column(self, name: impl Into<String>, scale: u8) -> Self {
         self.push_decimal(name, scale, true, 0)
+    }
+
+    /// Append an array column whose elements are `element`.
+    ///
+    /// The element type is declared once here and every value in the column
+    /// obeys it, which is what keeps [`ValueType`] fieldless. An array of
+    /// arrays is refused at build time: `ValueType::Array` cannot name an
+    /// inner element type, so the inner array would be a value the schema
+    /// cannot describe.
+    ///
+    /// An array cannot be a primary key or an index column. The order is
+    /// meaningful — unlike a vector's — but the question an indexed array is
+    /// asked is *containment*, which needs one index entry per element and is
+    /// a different index cardinality from the one this store has. See
+    /// `docs/arrays.md` §4.
+    #[must_use]
+    pub fn array_column(self, name: impl Into<String>, element: ValueType) -> Self {
+        self.push_array(name, element, false, 0)
+    }
+
+    /// [`TableBuilder::array_column`], accepting nulls.
+    ///
+    /// Nullable in the column's sense: the whole value may be absent. It says
+    /// nothing about an *element* being null, which is refused either way —
+    /// see [`crate::row::Row::validate`].
+    #[must_use]
+    pub fn nullable_array_column(self, name: impl Into<String>, element: ValueType) -> Self {
+        self.push_array(name, element, true, 0)
+    }
+
+    /// Set the element type of an array column already appended.
+    ///
+    /// [`TableBuilder::array_column`] is the way to declare one; this is for a
+    /// caller that cannot use it, exactly as [`TableBuilder::scale_for`] is.
+    /// A name that is not a column here is ignored rather than refused, for
+    /// the reason given there.
+    #[must_use]
+    pub fn element_for(mut self, column: &str, element: ValueType) -> Self {
+        if let Some(found) = self.columns.iter_mut().find(|c| c.name == column) {
+            found.element = Some(element);
+        }
+        self
+    }
+
+    fn push_array(
+        mut self,
+        name: impl Into<String>,
+        element: ValueType,
+        nullable: bool,
+        added_in: u32,
+    ) -> Self {
+        self = self.push_column(name, ValueType::Array, nullable, added_in);
+        if let Some(column) = self.columns.last_mut() {
+            column.element = Some(element);
+        }
+        self
     }
 
     /// Make a column already appended one the store writes. See [`Managed`].
@@ -1091,6 +1173,29 @@ impl TableBuilder {
         // scale that can represent anything above one.
         const MAX_SCALE: u8 = 18;
         for col in &self.columns {
+            // An array column must say what it holds, and must not say
+            // "another array". Both are build-time refusals rather than
+            // silent defaults: an unstated element type has no sensible
+            // stand-in, and a nested one is a value `Row::validate` could
+            // never accept, so accepting the *declaration* would only move
+            // the failure to the first write.
+            if col.ty == ValueType::Array {
+                match col.element {
+                    None => {
+                        return Err(SchemaError::ArrayWithoutElementType {
+                            table: table.clone(),
+                            column: col.name.clone(),
+                        });
+                    }
+                    Some(ValueType::Array) => {
+                        return Err(SchemaError::NestedArrayColumn {
+                            table: table.clone(),
+                            column: col.name.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
             if col.ty == ValueType::Decimal && col.scale > MAX_SCALE {
                 return Err(SchemaError::ScaleTooLarge {
                     table: table.clone(),
@@ -1185,7 +1290,7 @@ impl TableBuilder {
                     column: name.clone(),
                 });
             }
-            reject_vector(&self.columns, ordinal, table.as_str(), "primary key", name)?;
+            reject_unkeyable(&self.columns, ordinal, table.as_str(), "primary key", name)?;
             reject_dropped(&self.columns, ordinal, table.as_str(), "primary key", name)?;
             primary_key.push(ordinal);
         }
@@ -1288,7 +1393,7 @@ impl TableBuilder {
                         column: name.clone(),
                     });
                 }
-                reject_vector(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
+                reject_unkeyable(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
                 reject_dropped(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
                 columns.push(IndexColumn {
                     ordinal,
@@ -1523,28 +1628,40 @@ fn reject_dropped(
     Ok(())
 }
 
-/// Refuse a vector column in a key or an index.
+/// Refuse a vector or an array column in a key or an index.
+///
+/// Two types, two different reasons, and keeping them apart is the point of
+/// the two errors.
 ///
 /// A vector orders totally, so it can be stored and grouped, but that order is
 /// not its similarity — two nearby embeddings need not sort near each other.
 /// An index on one would answer no question worth asking and a range over one
 /// would mean nothing, so this is a schema error rather than a slow query.
-fn reject_vector(
+///
+/// An array's order *is* meaningful, so that argument does not transfer. It is
+/// refused for a different reason: what a user wants from an indexed array is
+/// almost never "rows whose array sorts near this one" but *which rows contain
+/// this element*, and that is one index entry per element per row against a
+/// write path that produces exactly one. The message says so, rather than
+/// leaving a caller to infer that arrays sort badly — they do not.
+fn reject_unkeyable(
     columns: &[ColumnDef],
     ordinal: Ordinal,
     table: &str,
     key: &str,
     column: &str,
 ) -> Result<()> {
-    if columns
-        .get(ordinal.0)
-        .is_some_and(|c| c.value_type() == ValueType::Vector)
-    {
-        return Err(SchemaError::VectorInKey {
+    match columns.get(ordinal.0).map(ColumnDef::value_type) {
+        Some(ValueType::Vector) => Err(SchemaError::VectorInKey {
             table: table.to_owned(),
             key: key.to_owned(),
             column: column.to_owned(),
-        });
+        }),
+        Some(ValueType::Array) => Err(SchemaError::ArrayInKey {
+            table: table.to_owned(),
+            key: key.to_owned(),
+            column: column.to_owned(),
+        }),
+        _ => Ok(()),
     }
-    Ok(())
 }
