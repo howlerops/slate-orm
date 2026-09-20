@@ -1884,3 +1884,117 @@ async fn a_mixture_of_live_and_retired_blockers_reports_as_the_ordinary_case() {
         "a mixture must read as the ordinary case: {why}"
     );
 }
+
+#[tokio::test]
+async fn an_undo_window_can_be_a_policy_rather_than_a_role() {
+    // Not a feature — a demonstration, for `docs/undo-window.md`, that the
+    // second of the three shapes that note weighs is expressible *today* and
+    // needs no new mechanism.
+    //
+    // `PolicyPredicate::build` is called per request with the context, so a
+    // policy is free to read a clock and produce a predicate that means
+    // something different tomorrow. A window is then `deleted_at > now - w`,
+    // scoped to `Action::Update`: the caller may restore what was retired
+    // recently and nothing older, and the bound moves on its own.
+    //
+    // **And it is written here with a companion policy, which is the trap.**
+    // `row_filter_with` fails closed — "RLS on with nothing admitting anything
+    // means no rows, not all rows" — so declaring a policy for `Update` alone
+    // turns `Read`, `Insert` and `Delete` on that table into deny-all for
+    // every non-superuser. The first draft of this test did exactly that, and
+    // what broke was not the window: the *delete* that was supposed to retire
+    // the row silently did nothing, and the row under test was never retired
+    // at all. Anyone reaching for a policy to express a window has to declare
+    // the other actions too.
+    const WINDOW: i64 = 3_600;
+    let policy_clock = Arc::new(FixedClock::at(10_000));
+    let ticking = Arc::clone(&policy_clock);
+    let security = slate_kernel::SecurityCatalog::new()
+        .grant(slate_kernel::Grant::new(
+            "reader",
+            DOCS,
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Update,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+        ))
+        // The companion. Without it the table is invisible for everything but
+        // an update, which is not what "a window on undo" is supposed to mean.
+        .policy(slate_kernel::Policy::new(
+            "everything_else_is_unrestricted",
+            DOCS,
+            [
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ))
+        .policy(slate_kernel::Policy::new(
+            "recent_enough_to_undo",
+            DOCS,
+            [slate_kernel::Action::Update],
+            move |_: &SecurityContext| {
+                let floor = slate_kernel::clock::Clock::now(&*ticking) - WINDOW;
+                // A live row has a null stamp, which compares unknown against
+                // any bound — so the policy has to admit it explicitly or an
+                // ordinary update would be refused on every live row.
+                slate_kernel::Expr::Or(vec![
+                    slate_kernel::Expr::IsNull {
+                        column: slate_schema::Ordinal(2),
+                        negated: false,
+                    },
+                    slate_kernel::Expr::compare(
+                        slate_schema::Ordinal(2),
+                        slate_kernel::CmpOp::Gt,
+                        Value::I64(floor),
+                    ),
+                ])
+            },
+        ));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(10_000)));
+    seeded_for(&store).await; // 1..3 live, then 2 retired at 10,000
+
+    // Inside the window: the undo works.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update(&reader(), table, &doc(2, "undone"))
+        .await
+        .expect("retired now, well inside the hour");
+    txn.commit().await.expect("commit");
+    assert_eq!(ids(&store, Query::all()).await, vec![1, 2, 3]);
+
+    // Retire it again, then let the window close under it.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    assert!(
+        txn.delete(&reader(), table, &[Value::U64(2)])
+            .await
+            .expect("delete"),
+        "the row was there to retire — the companion policy is what makes \
+         this true, and its absence is what the comment above is about"
+    );
+    txn.commit().await.expect("commit");
+    policy_clock.set(10_000 + WINDOW + 1);
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let too_late = txn
+        .update(&reader(), table, &doc(2, "too late"))
+        .await
+        .expect_err("the window has closed");
+    assert!(
+        matches!(too_late, slate_kernel::KernelError::RowNotFound { .. }),
+        "{too_late:?}"
+    );
+    // And a live row is untouched by the window, which is the half a policy of
+    // `deleted_at > floor` alone would get wrong.
+    txn.update(&reader(), table, &doc(1, "ordinary"))
+        .await
+        .expect("a live row is not subject to an undo window");
+}

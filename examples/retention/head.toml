@@ -69,6 +69,14 @@ actions = ["read", "delete", "read_deleted"]
 # third party, and this is their grant.
 #
 # Deliberately not `delete`: restoring is not a step towards erasing.
+#
+# This is one of three shapes an undo window could take, and it is this one
+# because it is the shape that exists rather than because it is the best. A
+# role says nothing about *when*: a row retired two years ago is as restorable
+# as one retired this morning, right up until a purge erases it. See
+# `docs/undo-window.md` for what the other two cost — a time-bounded policy,
+# which works today but only in Rust, and an audited restore, which nothing
+# here supports because a restore is an ordinary update.
 [[security.grants]]
 role = "undo"
 tables = ["notes"]
