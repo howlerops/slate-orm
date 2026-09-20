@@ -129,6 +129,27 @@ export interface PredicateWrite {
   left: number;
 }
 
+/** What the restore handler reports, at three points rather than one.
+ *
+ *  Three because "it is live now" is also what a handler that quietly inserted
+ *  a fresh row at the same key would say. The columns carried through are what
+ *  separate a restore from a replacement, which is why they are in the answer
+ *  and on the screen.
+ */
+export interface Restore {
+  /** The row was retired before any of this — the premise, checked. */
+  retired_before: boolean;
+  /** Ids an *ordinary* read returned while it was retired: none. */
+  hidden_while_retired: number[];
+  /** Ids an ordinary read returns now. */
+  visible_after: number[];
+  /** Whether each of those still carries a stamp: no. */
+  retired_after: boolean[];
+  /** The columns the restore had to carry through, unchanged. */
+  status_after: string[];
+  book_id_after: number[];
+}
+
 /** One operation's outcome inside an independent batch. */
 export type BatchOne = { ok: number } | { kind: string; reason: string };
 
@@ -224,6 +245,13 @@ export const api = {
     persona: Persona,
     spec: { kind: "delete" | "update"; returning: boolean },
   ) => call<PredicateWrite>(sdk, "/api/predicate-write", spec, persona),
+
+  // No arguments, and no separate endpoint for the mistake beside it. The
+  // panel shows the path that works; `/api/restore-unchanged` exists for the
+  // conformance runner, which compares refusals across the three SDKs and is
+  // the right place for one.
+  restore: (sdk: Sdk, persona: Persona) =>
+    call<Restore>(sdk, "/api/restore", {}, persona),
 
   batch: (sdk: Sdk, persona: Persona, atomicity: "independent" | "all-or-nothing") =>
     call<BatchOutcome>(sdk, "/api/batch", { atomicity }, persona),

@@ -13,6 +13,7 @@ import {
   Joins,
   PredicateWrites,
   Relationships,
+  SoftDelete,
   Transactions,
 } from "./panels";
 import "./styles.css";
@@ -23,6 +24,7 @@ const TABS = [
   "groups",
   "relationships",
   "writes",
+  "soft delete",
   "batches",
   "transactions",
   "agreement",
@@ -103,6 +105,9 @@ function App(): JSX.Element {
         </Match>
         <Match when={tab() === "writes"}>
           <PredicateWrites {...context} />
+        </Match>
+        <Match when={tab() === "soft delete"}>
+          <SoftDelete {...context} />
         </Match>
         <Match when={tab() === "batches"}>
           <Batches {...context} />

@@ -623,6 +623,100 @@ export function PredicateWrites(props: Context): JSX.Element {
   );
 }
 
+/**
+ * Retiring a row, and taking it back.
+ *
+ * The half of soft delete that is easy to forget exists, and until recently did
+ * not: a retired row could be written by nobody at any privilege, so the only
+ * thing that could ever happen to one was being erased when the retention
+ * window closed. A retention window is an *undo* window, and this is the undo.
+ *
+ * The three points are the panel. "It is live now" is also what a handler that
+ * quietly inserted a fresh row at the same key would report, so the row's
+ * columns are shown carried through — that is the difference between restoring
+ * a row and replacing it, and it is not visible from the id alone.
+ */
+export function SoftDelete(props: Context): JSX.Element {
+  const [ran, setRan] = createSignal(0);
+
+  const outcome = createQuery(() => ({
+    queryKey: ["restore", props.sdk(), props.persona(), ran()],
+    queryFn: () => api.restore(props.sdk(), props.persona()),
+    enabled: ran() > 0,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Soft delete, and undo</h2>
+      <p class="why">
+        <code>shipments</code> declares <code>soft_delete = "deleted_at"</code>,
+        so a <code>delete</code> stamps the row and leaves it where it is. Every
+        ordinary read hides it. This retires a shipment, shows that an ordinary
+        read no longer returns it, and then brings it back.
+      </p>
+      <p class="why">
+        <b>There is no restore verb.</b> Bringing a row back is an ordinary{" "}
+        <code>update</code> at its key with null in the soft-delete column — the
+        client's generated <code>restored()</code> clears whichever column the
+        catalog names, so nothing here hard-codes <code>deleted_at</code>. It
+        needs the <code>read_deleted</code> action, the same grant that lets you{" "}
+        <i>see</i> a retired row: a write that names a key reaches a hidden row
+        only for a caller who could have read it.
+      </p>
+      <div class="controls">
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+          data-test="restore-run"
+        >
+          retire it, then undo
+        </button>
+      </div>
+      <Show when={ran() > 0} fallback={<div class="note">not run yet</div>}>
+        <Result answer={outcome.data} pending={outcome.isPending}>
+          {(value) => (
+            <>
+              <div class="badges" data-test="restore-summary">
+                <span class="badge" data-tone={value.retired_before ? "good" : "warn"}>
+                  retired first <b>{value.retired_before ? "yes" : "no"}</b>
+                </span>
+                <span
+                  class="badge"
+                  data-tone={value.hidden_while_retired.length === 0 ? "good" : "warn"}
+                >
+                  an ordinary read saw <b>{value.hidden_while_retired.length}</b>
+                </span>
+                <span
+                  class="badge"
+                  data-tone={value.visible_after.length === 1 ? "good" : "warn"}
+                >
+                  after the undo it sees <b>{value.visible_after.length}</b>
+                </span>
+                <span
+                  class="badge"
+                  data-tone={value.retired_after.every((r) => !r) ? "good" : "warn"}
+                >
+                  still stamped <b>{value.retired_after.filter(Boolean).length}</b>
+                </span>
+              </div>
+              <div class="note">
+                The row came back with <code>status</code>{" "}
+                <b>{value.status_after.join(", ") || "—"}</b> and{" "}
+                <code>book_id</code> <b>{value.book_id_after.join(", ") || "—"}</b>,
+                which is what says it is the same row rather than a fresh one
+                written at the key it left free. A replacement would report the
+                same id and the same "not stamped" and differ only here.
+              </div>
+            </>
+          )}
+        </Result>
+      </Show>
+    </div>
+  );
+}
+
 /** Several writes in one request, under each of the two atomicities. */
 export function Batches(props: Context): JSX.Element {
   const [ran, setRan] = createSignal(0);

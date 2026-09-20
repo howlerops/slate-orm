@@ -462,6 +462,29 @@ try {
     if (rows !== 0) throw new Error(`rows were rendered without \`returning\`: ${rows}`);
   });
 
+  // The undo window, asserted on the thing it exists to show rather than on
+  // having rendered. The four badges are four separate claims and the third and
+  // fourth are the ones a broken restore would get wrong.
+  await check("a retired row goes invisible, and comes back the same row", async () => {
+    await at(page, { panel: "soft delete" });
+    const panel = page.locator('.panel:has(h2:text-is("Soft delete, and undo"))');
+    await panel.locator('[data-test="restore-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="restore-summary"]').innerText();
+    if (!summary.includes("retired first yes")) throw new Error(`premise: ${summary}`);
+    // The whole point of a soft delete: an ordinary read stops returning it.
+    if (!summary.includes("an ordinary read saw 0")) throw new Error(`hidden: ${summary}`);
+    // And the whole point of the undo: it comes back to an ordinary read.
+    if (!summary.includes("after the undo it sees 1")) throw new Error(`back: ${summary}`);
+    if (!summary.includes("still stamped 0")) throw new Error(`stamp: ${summary}`);
+    // Carried through, which is what says it is the same row and not a fresh
+    // one written at the key it left free — the difference the badges cannot
+    // show, because a replacement reports the same id and the same "not
+    // stamped".
+    const note = await panel.locator(".note").last().innerText();
+    if (!note.includes("pending")) throw new Error(`status not carried through: ${note}`);
+  });
+
   await check("the two atomicities leave different numbers of rows", async () => {
     await at(page, { panel: "batches" });
     const panel = page.locator('.panel:has(h2:text-is("Batches"))');
