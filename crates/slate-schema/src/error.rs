@@ -460,6 +460,28 @@ pub enum SchemaError {
         check: String,
     },
 
+    /// A `CHECK` carries a message that is empty or only whitespace.
+    ///
+    /// Refused rather than tolerated. The message is not decoration: it is
+    /// published to every client, generated into three languages, and rendered
+    /// beside a form field — so an empty one is a blank error message shown to
+    /// somebody trying to fix their input. It also renders the refusal as
+    /// ``check `year_is_positive`: `` with nothing after the colon.
+    ///
+    /// A check with *no* message is fine and common; this is only for one that
+    /// was given a message and given an empty one, which is never what the
+    /// author meant.
+    #[error(
+        "table `{table}` gives check `{check}` an empty message; \
+         omit the message rather than setting it to nothing"
+    )]
+    EmptyCheckMessage {
+        /// The table being defined.
+        table: String,
+        /// The check whose message is empty.
+        check: String,
+    },
+
     /// Two foreign keys on the same table share a name.
     #[error("table `{table}` declares foreign key `{foreign_key}` more than once")]
     DuplicateForeignKey {

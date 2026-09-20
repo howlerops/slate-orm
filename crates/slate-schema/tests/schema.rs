@@ -768,6 +768,58 @@ fn two_checks_may_not_share_a_name() {
     assert!(matches!(err, SchemaError::DuplicateCheck { .. }));
 }
 
+#[test]
+fn a_check_may_not_carry_an_empty_message() {
+    // `Some("")` rather than `None`. The two are not the same thing: a check
+    // with no message is ordinary, and one *given* a message and given nothing
+    // is an author who meant to write a sentence. It reaches a form as a blank
+    // error beside the field it is supposed to explain, and renders the
+    // refusal with a dangling colon.
+    let err = TableDef::builder("t", TableId(1))
+        .column("id", ValueType::U64)
+        .nullable_column("n", ValueType::I64)
+        .primary_key(["id"])
+        .check(CheckDef::new("c", NonNegative(Ordinal(1))).with_message(""))
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(err, SchemaError::EmptyCheckMessage { .. }),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_check_message_of_only_whitespace_is_empty_too() {
+    // Trimmed, because a message of three spaces renders exactly as badly as
+    // one of none and is harder to spot in a config file.
+    let err = TableDef::builder("t", TableId(1))
+        .column("id", ValueType::U64)
+        .nullable_column("n", ValueType::I64)
+        .primary_key(["id"])
+        .check(CheckDef::new("c", NonNegative(Ordinal(1))).with_message("  \n "))
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(err, SchemaError::EmptyCheckMessage { .. }),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_check_with_no_message_is_fine() {
+    // The control, and the reason this is not simply "messages are required":
+    // most checks have none, and demanding one would be a different and much
+    // larger decision than refusing a blank.
+    let table = TableDef::builder("t", TableId(1))
+        .column("id", ValueType::U64)
+        .nullable_column("n", ValueType::I64)
+        .primary_key(["id"])
+        .check(CheckDef::new("c", NonNegative(Ordinal(1))))
+        .build()
+        .expect("a check with no message is ordinary");
+    assert_eq!(table.checks()[0].message(), None);
+}
+
 // --- foreign keys -----------------------------------------------------------
 
 fn parent() -> TableDef {

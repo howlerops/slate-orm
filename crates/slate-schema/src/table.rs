@@ -1314,6 +1314,16 @@ impl TableBuilder {
                     check: check.name().to_owned(),
                 });
             }
+            // A message that is present and blank. `None` is the way to have no
+            // message; `Some("")` is an author who meant to write one, and it
+            // reaches a form as an empty error beside the field it is supposed
+            // to explain.
+            if check.message().is_some_and(|m| m.trim().is_empty()) {
+                return Err(SchemaError::EmptyCheckMessage {
+                    table: table.clone(),
+                    check: check.name().to_owned(),
+                });
+            }
         }
 
         let mut foreign_keys: Vec<ForeignKeyDef> = Vec::with_capacity(self.foreign_keys.len());
