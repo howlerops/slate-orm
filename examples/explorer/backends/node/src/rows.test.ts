@@ -35,6 +35,7 @@ import {
   encodeSales,
   encodeShipments,
   isRetiredShipments,
+  restoredShipments,
 } from "./schema.js";
 
 /** A well-formed `books` row: the ordinals the catalog declares, in order. */
@@ -342,5 +343,31 @@ test("only a soft-deleting table gets a retired accessor", () => {
   // *name*: `books` declares no soft delete and must not claim one.
   const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
   const declared = [...source.matchAll(/^export function isRetired(\w+)\(/gm)].map((m) => m[1]!);
+  assert.deepEqual(declared, ["Shipments"]);
+});
+
+test("restoredShipments clears the stamp and leaves everything else", () => {
+  // The write-side twin, asserted through the encoder because clearing the
+  // stamp here buys nothing if `encodeShipments` then sends the old value.
+  const retired = {
+    id: 9n,
+    book_id: 7n,
+    status: "shipped" as const,
+    deleted_at: 1_700_000_042n,
+  };
+  const back = restoredShipments(retired);
+  assert.equal(back.deleted_at, null);
+  assert.equal(isRetiredShipments(back), false);
+  // Every other column carried through: a spread that dropped one would pass
+  // a check on `deleted_at` alone.
+  assert.deepEqual([back.id, back.book_id, back.status], [9n, 7n, "shipped"]);
+  assert.equal(retired.deleted_at, 1_700_000_042n, "the input is not mutated");
+  assert.deepEqual(encodeShipments(back)[3], { kind: "null" });
+});
+
+test("only a soft-deleting table gets a restored helper", () => {
+  // The negative half, matching the one above it.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function restored(\w+)\(/gm)].map((m) => m[1]!);
   assert.deepEqual(declared, ["Shipments"]);
 });

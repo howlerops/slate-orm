@@ -523,3 +523,13 @@ func (r Shipments) Row() []slate.Value {
 func (r Shipments) Retired() bool {
 	return r.DeletedAt != nil
 }
+
+// Restored returns this row with its soft delete cleared, ready to
+// write back with Update or Upsert. There is no restore verb; this
+// only clears the column. It needs the `read_deleted` action, the
+// same grant include_deleted needs. Writing the row back unchanged
+// is refused naming the column.
+func (r Shipments) Restored() Shipments {
+	r.DeletedAt = nil
+	return r
+}

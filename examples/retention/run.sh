@@ -61,6 +61,12 @@ echo "head node on $address"
 
 export PYTHONPATH="$root/clients/python/src:$here${PYTHONPATH:+:$PYTHONPATH}"
 python3 "$here/seed.py" --address "$address"
+# Before the sweep, because that is the order a retention window happens in:
+# the rows are kept so a delete can be taken back, and the undo has to land
+# while they are still there. Row 3 is restored here and the sweep below must
+# then leave it alone — so a restore that silently did nothing fails `--verify`
+# rather than passing quietly.
+python3 "$here/seed.py" --address "$address" --undo
 python3 "$here/purge.py" \
   --address "$address" \
   --schema schema \
@@ -71,4 +77,4 @@ python3 "$here/purge.py" \
 python3 "$here/seed.py" --address "$address" --verify
 
 echo
-echo "the retention sweep erased the retired row"
+echo "the retention sweep erased the retired row, and left the restored one"

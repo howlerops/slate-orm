@@ -12,7 +12,7 @@ two cannot drift.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from slate import Column, Table, ValueType
@@ -95,3 +95,18 @@ class Notes:
     def retired(self) -> bool:
         """Whether this row has been soft-deleted."""
         return self.deleted_at is not None
+
+    def restored(self) -> Notes:
+        """This row with its soft delete cleared, ready to write back.
+
+        Restoring is an ordinary `update` or `upsert` — there is no
+        restore verb — so this only clears the column; sending it is
+        the caller's. It needs the `read_deleted` action, the same
+        grant `include_deleted` needs, because a write that names a
+        retired row's key reaches it only for a caller who may see it.
+
+        Writing the row back *unchanged* does not work and is not
+        meant to: the column is the server's, and a row carrying a
+        timestamp is refused naming that column.
+        """
+        return replace(self, deleted_at=None)

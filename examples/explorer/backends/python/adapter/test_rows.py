@@ -308,3 +308,25 @@ def test_only_a_soft_deleting_table_gets_the_property() -> None:
     # The negative half, and the one that would catch an emitter keying on a
     # column *name*: `books` has no soft delete and must not claim one.
     assert not hasattr(Books.from_row(book_row()), "retired")
+
+
+def test_restored_clears_the_stamp_and_leaves_everything_else() -> None:
+    # The write-side twin of `retired`, and the half that has to survive
+    # `to_row`: clearing the stamp in Python buys nothing if the encoder then
+    # sends the old value. Asserted through `to_row` rather than on the
+    # dataclass alone for exactly that reason.
+    retired = Shipments(id=9, book_id=7, status="shipped", deleted_at=1_700_000_042)
+    back = retired.restored()
+    assert back.deleted_at is None
+    assert not back.retired
+    # Every other column is carried through. A `restored()` that built a fresh
+    # row would pass a check on `deleted_at` alone and lose the rest.
+    assert (back.id, back.book_id, back.status) == (9, 7, "shipped")
+    assert retired.deleted_at == 1_700_000_042, "the original is not mutated"
+    encoded = back.to_row()
+    assert encoded[3] is NULL, f"the encoder must send null, got {encoded[3]!r}"
+
+
+def test_only_a_soft_deleting_table_gets_restored() -> None:
+    # The negative half, matching the one above it.
+    assert not hasattr(Books.from_row(book_row()), "restored")

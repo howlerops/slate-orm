@@ -75,6 +75,9 @@ ELSEWHERE = {
 ELSEWHERE_BLOCKS = {
     "Both binaries exist": "asserts on an artefact this script does not build",
     "The generated declarations match the catalog": "needs a built slate-serverd",
+    "The retention example's declaration matches its catalog": (
+        "needs a built slate-serverd"
+    ),
     "Start MinIO": "starts a container",
     "The protobuf compiler, for the stub-freshness check": "installs a tool",
     "Soak the tuple codec properties": "a release build, minutes",

@@ -456,6 +456,19 @@ jobs:
             --python examples/explorer/backends/python/adapter/schema.py \
             --go examples/explorer/backends/go/schema/schema.go \
             --typescript examples/explorer/backends/node/src/schema.ts
+      # The retention example's declaration is generated too and nothing was
+      # checking it, so it silently missed a generator change — which is the
+      # drift `--check` exists to catch, on the one generated file that was
+      # outside it. Its config carries a `{DIR}` placeholder that `run.sh`
+      # substitutes, so this does the same before reading it.
+      - name: The retention example's declaration matches its catalog
+        run: |
+          work=$(mktemp -d)
+          sed "s|{DIR}|$work/store|" examples/retention/head.toml > "$work/head.toml"
+          python3 scripts/codegen.py --check \
+            --config "$work/head.toml" \
+            --serverd "${{ github.workspace }}/bin/slate-serverd" \
+            --python examples/retention/schema.py
       # The generated decoders, run rather than only compiled.
       #
       # Both shipped type-checking and never executing, which proves they

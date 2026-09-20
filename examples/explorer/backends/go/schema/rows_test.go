@@ -508,3 +508,42 @@ func TestOnlyASoftDeletingTableGetsRetired(t *testing.T) {
 		t.Errorf("Retired() is generated for %v; only Shipments soft-deletes", declared)
 	}
 }
+
+func TestRestoredClearsTheStampAndLeavesEverythingElse(t *testing.T) {
+	// The write-side twin of Retired, asserted through Row() because clearing
+	// the stamp in Go buys nothing if the encoder then sends the old value.
+	at := int64(1_700_000_042)
+	retired := Shipments{Id: 9, BookId: 7, Status: "shipped", DeletedAt: &at}
+	back := retired.Restored()
+	if back.DeletedAt != nil {
+		t.Errorf("DeletedAt = %v, want nil", back.DeletedAt)
+	}
+	if back.Retired() {
+		t.Error("a restored row still reports as retired")
+	}
+	// Every other column carried through: a Restored() that built a fresh row
+	// would pass a check on DeletedAt alone and lose the rest.
+	if back.Id != 9 || back.BookId != 7 || back.Status != "shipped" {
+		t.Errorf("restored row = %+v, want the other columns unchanged", back)
+	}
+	// The value receiver is the point, and it is worth an assertion rather
+	// than a comment: a pointer receiver here would blank the caller's row.
+	if retired.DeletedAt == nil || *retired.DeletedAt != 1_700_000_042 {
+		t.Error("Restored() mutated the row it was called on")
+	}
+	if _, ok := back.Row()[3].(slate.Null); !ok {
+		t.Errorf("Row()[3] = %T, want slate.Null", back.Row()[3])
+	}
+}
+
+func TestOnlyASoftDeletingTableGetsRestored(t *testing.T) {
+	// The negative half, matching the one above it.
+	source, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("reading the generated file: %v", err)
+	}
+	declared := regexp.MustCompile(`(?m)^func \(r (\w+)\) Restored\(\)`).FindAllStringSubmatch(string(source), -1)
+	if len(declared) != 1 || declared[0][1] != "Shipments" {
+		t.Errorf("Restored() is generated for %v; only Shipments soft-deletes", declared)
+	}
+}

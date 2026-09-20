@@ -636,6 +636,28 @@ def python_rows(tables: list[dict]) -> list[str]:
                     '        """Whether this row has been soft-deleted."""',
                     f"        return self.{column['name']} is not None",
                     "",
+                    # The write-side twin. It was generated once before and
+                    # reverted, because at the time the server refused every
+                    # write at a retired row's key and a helper for an
+                    # operation the database cannot perform is worse than none:
+                    # a caller reaches for it, writes the row back and gets
+                    # `NotFound` from a row they are holding. That is fixed;
+                    # see `ledger/2026-09-20-the-write-that-names-a-key.md`.
+                    f"    def restored(self) -> {name}:",
+                    '        """This row with its soft delete cleared, ready to write back.',
+                    "",
+                    "        Restoring is an ordinary `update` or `upsert` — there is no",
+                    "        restore verb — so this only clears the column; sending it is",
+                    "        the caller's. It needs the `read_deleted` action, the same",
+                    "        grant `include_deleted` needs, because a write that names a",
+                    "        retired row's key reaches it only for a caller who may see it.",
+                    "",
+                    "        Writing the row back *unchanged* does not work and is not",
+                    "        meant to: the column is the server's, and a row carrying a",
+                    "        timestamp is refused naming that column.",
+                    '        """',
+                    f"        return replace(self, {column['name']}=None)",
+                    "",
                 ]
             )
     return out
@@ -773,6 +795,20 @@ def go_rows(tables: list[dict]) -> list[str]:
                     f"\treturn r.{field} != nil",
                     "}",
                     "",
+                    # See the Python emitter for why this exists now and did
+                    # not before. A value receiver, so the copy is the point:
+                    # the caller's row is not mutated by asking for a restored
+                    # one.
+                    "// Restored returns this row with its soft delete cleared, ready to",
+                    "// write back with Update or Upsert. There is no restore verb; this",
+                    "// only clears the column. It needs the `read_deleted` action, the",
+                    "// same grant include_deleted needs. Writing the row back unchanged",
+                    "// is refused naming the column.",
+                    f"func (r {name}) Restored() {name} {{",
+                    f"\tr.{field} = nil",
+                    "\treturn r",
+                    "}",
+                    "",
                 ]
             )
     return out
@@ -864,6 +900,18 @@ def typescript_rows(tables: list[dict]) -> list[str]:
                     f"  return row.{column['name']} !== null;",
                     "}",
                     "",
+                    # See the Python emitter.
+                    "/**",
+                    f" * This row of `{table['name']}` with its soft delete cleared, ready to",
+                    " * write back with `update` or `upsert`. There is no restore verb; this",
+                    " * only clears the column. It needs the `read_deleted` action, the same",
+                    " * grant `includeDeleted` needs. Writing the row back unchanged is",
+                    " * refused naming the column.",
+                    " */",
+                    f"export function restored{name}(row: {name}): {name} {{",
+                    f"  return {{ ...row, {column['name']}: null }};",
+                    "}",
+                    "",
                 ]
             )
     return out
@@ -907,7 +955,15 @@ def python_module(tables: list[dict]) -> str:
         "from __future__ import annotations",
         "",
         "from collections.abc import Sequence",
-        "from dataclasses import dataclass",
+        # `replace` only when some table soft-deletes, for the same reason
+        # `Literal` is conditional: ruff strips an unused import out of the
+        # generated file, and a generated file a linter edits has drifted by
+        # the next `--check`.
+        (
+            "from dataclasses import dataclass, replace"
+            if any(table.get("soft_delete") is not None for table in tables)
+            else "from dataclasses import dataclass"
+        ),
         # `Literal` only when a check actually narrows a field. An unused
         # import is what ruff strips out of the generated file, and a
         # generated file a linter edits has drifted by the next `--check` —

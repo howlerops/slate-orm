@@ -53,3 +53,23 @@ actions = ["read", "insert", "update", "delete"]
 role = "retention"
 tables = ["notes"]
 actions = ["read", "delete", "read_deleted"]
+
+# The undo window, which is the other half of a retention period and the role
+# neither of the two above can play.
+#
+# Restoring a retired row is an ordinary `update` at its key with null in the
+# soft-delete column — there is no restore verb — and a write that names a key
+# reaches a retired row only for a caller holding `read_deleted`. So it takes
+# `update` *and* `read_deleted`, and look at what that means for the two roles
+# above: the application has `update` and not `read_deleted`, the retention job
+# has `read_deleted` and not `update`, and **neither of them can undo a
+# delete**. That is not an oversight in this file, it is the shape of the
+# grant — an application that can un-delete anything it deleted has no
+# retention policy, only a convention. Whoever operates the undo window is a
+# third party, and this is their grant.
+#
+# Deliberately not `delete`: restoring is not a step towards erasing.
+[[security.grants]]
+role = "undo"
+tables = ["notes"]
+actions = ["read", "update", "read_deleted"]

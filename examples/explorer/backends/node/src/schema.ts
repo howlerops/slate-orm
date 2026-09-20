@@ -390,3 +390,14 @@ export function encodeShipments(row: Shipments): Value[] {
 export function isRetiredShipments(row: Shipments): boolean {
   return row.deleted_at !== null;
 }
+
+/**
+ * This row of `shipments` with its soft delete cleared, ready to
+ * write back with `update` or `upsert`. There is no restore verb; this
+ * only clears the column. It needs the `read_deleted` action, the same
+ * grant `includeDeleted` needs. Writing the row back unchanged is
+ * refused naming the column.
+ */
+export function restoredShipments(row: Shipments): Shipments {
+  return { ...row, deleted_at: null };
+}
