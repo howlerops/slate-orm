@@ -1,0 +1,55 @@
+# A one-table catalog with a soft delete, for the retention harness.
+#
+# `notes` is the smallest table that can demonstrate the thing: a key, a body
+# and a nullable `i64` the delete stamps. Nothing here is shared with the
+# explorer's schema, so a change to the demo cannot quietly change what this
+# harness is testing.
+
+[listen]
+address = "127.0.0.1:0"
+
+[auth]
+mode = "trusted-header"
+
+[shutdown]
+grace = "2s"
+
+[storage]
+backend = "local"
+directory = "{DIR}"
+
+[[tables]]
+name = "notes"
+id = 1
+columns = [
+  { name = "id",         type = "u64" },
+  { name = "body",       type = "str" },
+  # Nullable and `i64`, which is what `soft_delete` requires: a retired row
+  # carries the moment it was retired and a live one carries null.
+  { name = "deleted_at", type = "i64", nullable = true },
+]
+primary_key = ["id"]
+soft_delete = "deleted_at"
+
+# The application. Note what it does *not* hold: `read_deleted`, which is its
+# own action and is not part of `all`. An application does not need to see
+# retired rows and should not be able to erase them.
+[[security.grants]]
+role = "app"
+tables = ["notes"]
+actions = ["read", "insert", "update", "delete"]
+
+# The retention job, and the point of splitting it out.
+#
+# A purge authorizes `delete`, then scans for the retired rows with
+# `include_deleted` — so it needs `read` and `read_deleted` too. Three actions,
+# established by removing them one at a time until the sweep failed, and
+# notably *not* `insert` or `update`. Running the job as the application's role would work and would hand the
+# application the ability to erase history; running it as a superuser would
+# hand a cron entry every privilege in the catalog. This is the grant a
+# retention job should have, and the harness beside this file proves it is
+# sufficient by using nothing else.
+[[security.grants]]
+role = "retention"
+tables = ["notes"]
+actions = ["read", "delete", "read_deleted"]

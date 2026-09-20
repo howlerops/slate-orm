@@ -467,6 +467,20 @@ jobs:
       # Here rather than in the Go and TypeScript client jobs because the
       # files under test are generated from the catalog, and this is the job
       # that has just checked them against it.
+      # The retention example, run rather than shipped. `purge_deleted` had an
+      # RPC and nothing that called it periodically, so a soft-deleting table
+      # grew without bound in every deployment that used the convention; the
+      # example beside this step is the answer, and an example nothing runs is
+      # the defect this repository keeps meeting in other forms.
+      #
+      # In this job because it needs the built `slate-serverd` and the
+      # installed Python client, which this job already has. It brings its own
+      # one-table catalog over a `local` directory, so it shares nothing with
+      # the demo's schema and needs neither MinIO nor a browser.
+      - run: ./run.sh
+        working-directory: examples/retention
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
       - run: go test ./schema/
         working-directory: examples/explorer/backends/go
       # The node adapter resolves `@slate-orm/client` to a symlink into

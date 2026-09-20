@@ -57,6 +57,7 @@ ELSEWHERE = {
     "go test ./schema/": "needs the generated declaration and a server",
     "python -m pytest -q": "needs a built slate-testserver",
     "npm test": "needs a built slate-serverd",
+    "./run.sh": "needs a built slate-serverd",
     "python3 site/check/docs.py": "reads the built site",
     "python3 site/check/quickstarts.py": "runs the docs' code against a server",
     "python3 site/check/workbench.py": "needs a browser and the wasm build",

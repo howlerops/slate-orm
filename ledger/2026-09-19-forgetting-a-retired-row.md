@@ -105,6 +105,10 @@ adding a `KernelError` variant with no status code, exactly as designed.
 
 ## What this does not do
 
+~~**Nothing calls it.**~~ Partly closed twice over: the gRPC method arrived with
+`2026-09-19-a-purge-something-can-call.md`, and the scheduled job with
+`2026-09-20-the-sweep-nobody-scheduled.md`. The original text follows.
+
 **Nothing calls it.** There is no CLI flag, no gRPC method, no scheduled job —
 a deployment that wants a nightly purge has to reach the kernel directly, which
 means the Rust library and not the head node. That is the next step and it is
