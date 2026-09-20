@@ -235,6 +235,14 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("inserter_only", USERS, [Action::Insert]))
         .grant(Grant::new("updater_only", USERS, [Action::Update]))
         .grant(Grant::new("deleter_only", USERS, [Action::Delete]))
+        // Read on the first two tables of a three-input chain and not the
+        // third, which is the only shape that can tell "every input is
+        // authorised" from "the first two are". A role holding none of them is
+        // refused at input 0 and never reaches the question; `reader_only`
+        // holding just `users` is refused at input 1. Both pass for an
+        // authorisation loop that stops early, which a mutation demonstrated.
+        .grant(Grant::new("two_table_reader", USERS, [Action::Read]))
+        .grant(Grant::new("two_table_reader", DOCS, [Action::Read]))
         .policy(Policy::new(
             "own_rows",
             USERS,
