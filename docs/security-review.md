@@ -19,20 +19,29 @@ with a test that exhibits it. The areas probed and found clean are listed at
 the end, because a review that only lists what it found tells the next person
 nothing about where not to look again.
 
-Everything below is reachable by an **ordinary authenticated caller** — a
-principal with a tenant and an `app`-shaped role — unless it says otherwise.
-Nothing here needs a superuser, and nothing here found a way to *obtain* one.
+Everything in findings 1 to 8 is reachable by an **ordinary authenticated
+caller** — a principal with a tenant and an `app`-shaped role — unless it says
+otherwise. Nothing here needs a superuser, and nothing here found a way to
+*obtain* one.
+
+**Findings 9 and 10 do not fit that frame, which is part of why they were
+missed.** 9 needs *no* authentication at all — it is the one RPC that never
+looked at the caller — and 10 is not reachable over the wire in either
+direction: it is a client library printing its own user's credential into a
+log. A review scoped to "what can an authenticated caller reach" would not have
+found either, and did not.
 
 Demonstrations:
 
 | file | what it holds |
 | --- | --- |
 | `crates/slate-kernel/tests/security_probe_cascade.rs` | findings 1, 2, 4, 5 |
-| `crates/slate-server/tests/security_probe.rs` | finding 2 over gRPC, finding 6 |
+| `crates/slate-server/tests/security_probe.rs` | findings 2, 6, 8 and 9, over gRPC |
 | `crates/slate-kernel/tests/security_probe_explain.rs` | finding 3 |
 | `crates/slate-kernel/tests/security_probe_resources.rs` | finding 7 |
 | `crates/slate-kernel/tests/rls_probe.rs` | the paths probed and found clean |
-| `crates/slate-server/tests/security_probe.rs` | findings 8 and 9 over gRPC |
+| `clients/python/tests/test_identity_repr.py` | finding 10 |
+| `crates/slate-server/src/lease.rs` (`mod untrusted`) | the lease decoder, attacked and clean |
 
 The probe tests originally asserted the *current* behaviour — the hole — and
 each named what to change it to once the finding was fixed. The fixes landed,
