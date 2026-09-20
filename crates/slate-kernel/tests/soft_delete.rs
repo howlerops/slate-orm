@@ -1353,3 +1353,80 @@ async fn read_deleted_is_what_makes_the_same_row_restorable() {
     txn.commit().await.expect("commit");
     assert_eq!(state(&store).await, vec![(1, None), (2, None), (3, None)]);
 }
+
+#[tokio::test]
+async fn a_predicate_that_selects_only_the_retired_row_touches_nothing() {
+    // `ledger/2026-09-20-four-say-absent-one-says-present.md` measured the
+    // predicate writes against a predicate matching *everything* and named this
+    // shape as unrun: "a predicate matching only the retired row would report
+    // affected=0". It does, and that is the interesting half — matching
+    // everything cannot tell "skipped the retired row" from "the live ones were
+    // all there was", because both answers are the same count.
+    //
+    // Zero rather than an error is the right answer and not an obvious one: a
+    // caller asking "delete everything matching this" and being told nothing
+    // matched has been told the truth, since to them the row is not there.
+    let store = seeded().await; // 1 and 3 live kind "note"/"memo", 2 retired kind "note"
+    let only_the_retired = slate_kernel::Expr::eq(slate_schema::Ordinal(0), Value::U64(2));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let updated = txn
+        .update_where(
+            &root(),
+            table,
+            only_the_retired.clone(),
+            &[(
+                slate_schema::Ordinal(1),
+                slate_kernel::Scalar::Literal(Value::Str("reached".to_owned())),
+            )],
+            None,
+        )
+        .await
+        .expect("a predicate matching nothing visible is not an error");
+    assert!(updated.is_empty(), "update_where reached {updated:?}");
+
+    let deleted = txn
+        .delete_where(&root(), table, only_the_retired, None)
+        .await
+        .expect("nor is it an error for a delete");
+    assert!(deleted.is_empty(), "delete_where reached {deleted:?}");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)],
+        "and the retired row is untouched — neither restamped nor edited"
+    );
+}
+
+#[tokio::test]
+async fn a_predicate_that_selects_only_a_live_row_is_the_control() {
+    // Without this, the test above passes on a predicate that matches nothing
+    // at all — a wrong ordinal, a wrong type, a comparison that never fires.
+    // Same shape, same call, one different key.
+    let store = seeded().await;
+    let only_a_live_one = slate_kernel::Expr::eq(slate_schema::Ordinal(0), Value::U64(1));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let updated = txn
+        .update_where(
+            &root(),
+            table,
+            only_a_live_one,
+            &[(
+                slate_schema::Ordinal(1),
+                slate_kernel::Scalar::Literal(Value::Str("reached".to_owned())),
+            )],
+            None,
+        )
+        .await
+        .expect("update_where");
+    txn.commit().await.expect("commit");
+    assert_eq!(
+        updated.len(),
+        1,
+        "the same predicate shape does reach a live row"
+    );
+}
