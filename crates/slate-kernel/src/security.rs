@@ -421,6 +421,18 @@ impl SecurityCatalog {
         }
     }
 
+    /// Whether `context` holds `action` on `table`, as a question rather than
+    /// a refusal.
+    ///
+    /// [`authorize`](Self::authorize) is the same test and is what every path
+    /// that *requires* a grant calls; this is for the one place that has to
+    /// branch on a grant rather than demand it — whether a write may reach a
+    /// row a soft delete retired.
+    #[must_use]
+    pub fn grants(&self, context: &SecurityContext, table: &TableDef, action: Action) -> bool {
+        self.authorize(context, table, action).is_ok()
+    }
+
     /// The mandatory predicate for `context` on `table` and `action`.
     ///
     /// This is conjoined onto whatever the caller asked for, and is what makes
@@ -520,6 +532,29 @@ impl SecurityCatalog {
         action: Action,
         row: &Row,
     ) -> crate::Result<bool> {
-        Ok(self.row_filter(context, table, action)?.admits(row))
+        self.permits_row_with(context, table, action, row, Deleted::Hidden)
+    }
+
+    /// [`permits_row`](Self::permits_row), saying whether a retired row counts.
+    ///
+    /// The soft-delete conjunct is the only thing `Deleted::Visible` drops. The
+    /// tenant restriction and the row policy are still applied, which is what
+    /// makes this usable on a write path: "this caller may write this row" and
+    /// "this row is retired" are different questions, and only the second one
+    /// has an answer that depends on why the caller is asking.
+    ///
+    /// # Errors
+    /// If the tenant restriction cannot be built.
+    pub fn permits_row_with(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+        row: &Row,
+        deleted: Deleted,
+    ) -> crate::Result<bool> {
+        Ok(self
+            .row_filter_with(context, table, action, deleted)?
+            .admits(row))
     }
 }

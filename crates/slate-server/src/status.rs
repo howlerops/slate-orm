@@ -150,6 +150,13 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
         | KernelError::TenantRequired { table }
         | KernelError::RowCheckFailed { table }
         | KernelError::InvalidCursor { table, .. } => put("table", table.clone()),
+        KernelError::SoftDeleteColumnSupplied { table, column } => {
+            put("table", table.clone());
+            // Named for the same reason `index` is on a unique violation: the
+            // caller has to blank one column to retry, and the status code
+            // cannot say which.
+            put("column", column.clone());
+        }
         KernelError::AccessDenied { table, action } => {
             put("table", table.clone());
             put("action", (*action).to_owned());
@@ -232,6 +239,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::AccessDenied { .. } => "ACCESS_DENIED",
         KernelError::TenantRequired { .. } => "TENANT_REQUIRED",
         KernelError::RowCheckFailed { .. } => "ROW_CHECK_FAILED",
+        KernelError::SoftDeleteColumnSupplied { .. } => "SOFT_DELETE_COLUMN_SUPPLIED",
         KernelError::TransactionConflict => "TRANSACTION_CONFLICT",
         KernelError::WriterFenced => "WRITER_FENCED",
         KernelError::CommitTimedOut => "COMMIT_TIMED_OUT",
@@ -295,6 +303,13 @@ pub fn code_for(error: &KernelError) -> Code {
         KernelError::AccessDenied { .. }
         | KernelError::TenantRequired { .. }
         | KernelError::RowCheckFailed { .. } => Code::PermissionDenied,
+
+        // `InvalidArgument`, not `PermissionDenied`: no grant fixes this. The
+        // soft-delete column is written by `delete` and by nothing else, so a
+        // caller who supplied a value sent a bad row, not an unauthorised one —
+        // and the whole reason this is its own variant is that it used to come
+        // back as `PermissionDenied` and send people to the grants.
+        KernelError::SoftDeleteColumnSupplied { .. } => Code::InvalidArgument,
 
         // The one code gRPC defines as "retry the whole transaction".
         KernelError::TransactionConflict => Code::Aborted,

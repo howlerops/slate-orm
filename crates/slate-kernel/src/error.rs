@@ -125,6 +125,26 @@ pub enum KernelError {
         table: String,
     },
 
+    /// A write supplied a value for the table's soft-delete column.
+    ///
+    /// Its own error because this is what a caller hits first when they try to
+    /// restore a row: they read it with `include_deleted`, which hands back the
+    /// retirement timestamp, edit a field and write the row back. Before this
+    /// variant that came out as `RowCheckFailed` — "row-level security forbids
+    /// writing this row" — on tables with no row-level security at all, which
+    /// sends the reader to the grants rather than to the one column that is
+    /// actually the problem. The message says what to do instead.
+    #[error(
+        "column `{column}` of table `{table}` is its soft-delete column and is written by `delete`, \
+         not by a caller; send null to restore the row, or leave the row alone to keep it retired"
+    )]
+    SoftDeleteColumnSupplied {
+        /// The table written to.
+        table: String,
+        /// The soft-delete column's name.
+        column: String,
+    },
+
     /// A conditional write found the row already changed.
     ///
     /// Distinct from [`KernelError::TransactionConflict`], and the distinction

@@ -1142,8 +1142,19 @@ impl<'a> RecordTransaction<'a> {
         row.validate(table)?;
 
         let primary_key = row.primary_key_values(table);
+        // An update names one key and means the row at it, so a caller holding
+        // `read_deleted` reaches a retired one and restores it by sending null
+        // in the soft-delete column; `check_row` refuses any other value. See
+        // `retired_rows_reachable` for why the grant, and for what a caller
+        // without it sees instead.
         let existing = self
-            .visible_row(context, table, Action::Update, &primary_key)
+            .visible_row_with(
+                context,
+                table,
+                Action::Update,
+                &primary_key,
+                self.retired_rows_reachable(context, table),
+            )
             .await?;
         let Some(existing) = existing else {
             return Err(KernelError::RowNotFound {
@@ -1254,10 +1265,16 @@ impl<'a> RecordTransaction<'a> {
         } else {
             Action::Insert
         };
+        // An upsert names the key too, so it reaches a retired row on the same
+        // grant an update does. See `retired_rows_reachable`.
         if let Some(current) = &existing
-            && !self
-                .security
-                .permits_row(context, table, Action::Update, current)?
+            && !self.security.permits_row_with(
+                context,
+                table,
+                Action::Update,
+                current,
+                self.retired_rows_reachable(context, table),
+            )?
         {
             return Err(KernelError::RowNotFound {
                 table: table.name().to_owned(),
@@ -1455,10 +1472,29 @@ impl<'a> RecordTransaction<'a> {
                     });
                 }
                 (Some(current), BulkMode::Upsert | BulkMode::Update) => {
-                    if !self
-                        .security
-                        .permits_row(context, table, Action::Update, current)?
-                    {
+                    // The bulk twin of the single-row `update` and `upsert`:
+                    // these rows were named by primary key, so a caller holding
+                    // `read_deleted` reaches a retired one. See
+                    // `retired_rows_reachable`.
+                    //
+                    // Whichever it is, it drops the soft-delete conjunct only.
+                    // The tenant restriction and the row policy still decide, so
+                    // a row another tenant's policy hides is still `RowNotFound`
+                    // and still indistinguishable from a missing one.
+                    //
+                    // Deliberately not extended to `delete`, `delete_where` or
+                    // `update_where`. A delete of a retired row is already a
+                    // no-op rather than a contradiction, and a predicate did
+                    // not name the row — the line is that naming a primary key
+                    // means meaning *that* row, and matching a predicate means
+                    // meaning the live ones.
+                    if !self.security.permits_row_with(
+                        context,
+                        table,
+                        Action::Update,
+                        current,
+                        self.retired_rows_reachable(context, table),
+                    )? {
                         return Err(KernelError::RowNotFound {
                             table: table.name().to_owned(),
                         });
@@ -2388,17 +2424,78 @@ impl<'a> RecordTransaction<'a> {
         action: Action,
         primary_key: &[Value],
     ) -> Result<Option<Row>> {
+        self.visible_row_with(context, table, action, primary_key, Deleted::Hidden)
+            .await
+    }
+
+    /// [`visible_row`](Self::visible_row), saying whether a retired row counts.
+    ///
+    /// `Deleted::Visible` belongs only to a write that *names* this key and
+    /// means the row at it — `update` and `upsert`, which is how a retired row
+    /// is restored. `delete` keeps the default, because a second delete of a
+    /// retired row is a no-op rather than a contradiction.
+    async fn visible_row_with(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+        primary_key: &[Value],
+        deleted: Deleted,
+    ) -> Result<Option<Row>> {
         let Some(row) = self.read_row_unchecked(table, primary_key).await? else {
             return Ok(None);
         };
-        if self.security.permits_row(context, table, action, &row)? {
+        if self
+            .security
+            .permits_row_with(context, table, action, &row, deleted)?
+        {
             Ok(Some(row))
         } else {
             Ok(None)
         }
     }
 
+    /// Whether a write that *names a primary key* may reach a row a soft delete
+    /// retired.
+    ///
+    /// [`Action::ReadDeleted`], the same grant `include_deleted` and
+    /// `purge_deleted` need, and for the reason `purge_deleted` gives about
+    /// itself: acting on a retired row means knowing it is there.
+    ///
+    /// Without the grant the row behaves exactly as a row a *policy* hides
+    /// already does on these paths, which this file settled long before soft
+    /// delete existed: an insert sees the key taken, because "a hidden row
+    /// still occupies the key, so treating it as absent would turn an upsert
+    /// into a silent overwrite of a row the caller may not touch", and an
+    /// update reports it missing. That pair looks like a contradiction and is
+    /// the deliberate answer to a harder question — the alternative hands a
+    /// caller the power to overwrite a row they cannot read.
+    ///
+    /// What *was* a defect, and what this closes, is that a retired row had no
+    /// such caller: the answer was "missing" at every privilege including
+    /// `everything`, so nothing could restore one. Restoring is now an ordinary
+    /// update or upsert made by someone holding `read_deleted`, with null in
+    /// the soft-delete column — which is the sentence the documentation used to
+    /// claim and could not back.
+    fn retired_rows_reachable(&self, context: &SecurityContext, table: &TableDef) -> Deleted {
+        if self.security.grants(context, table, Action::ReadDeleted) {
+            Deleted::Visible
+        } else {
+            Deleted::Hidden
+        }
+    }
+
     /// Postgres's `WITH CHECK`: refuse to store a row the policy would hide.
+    ///
+    /// The soft-delete column is checked separately and first. Both questions
+    /// used to be answered by one filter, so supplying a retirement timestamp
+    /// came back as a row-level-security refusal on tables that have no
+    /// policies — the wrong place to send anyone, and the first thing a caller
+    /// attempting a restore runs into. Splitting them also means the policy
+    /// check below evaluates with `Deleted::Visible`: by that line the only
+    /// value the column can hold is null, so the conjunct has nothing left to
+    /// decide and leaving it in would only make the two checks able to
+    /// disagree.
     fn check_row(
         &self,
         context: &SecurityContext,
@@ -2406,7 +2503,20 @@ impl<'a> RecordTransaction<'a> {
         action: Action,
         row: &Row,
     ) -> Result<()> {
-        if self.security.permits_row(context, table, action, row)? {
+        if let Some(column) = table.soft_delete()
+            && !matches!(row.get(column), None | Some(Value::Null))
+        {
+            return Err(KernelError::SoftDeleteColumnSupplied {
+                table: table.name().to_owned(),
+                column: table
+                    .column(column)
+                    .map_or_else(|| column.0.to_string(), |c| c.name().to_owned()),
+            });
+        }
+        if self
+            .security
+            .permits_row_with(context, table, action, row, Deleted::Visible)?
+        {
             Ok(())
         } else {
             Err(KernelError::RowCheckFailed {

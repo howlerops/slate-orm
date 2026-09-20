@@ -111,7 +111,7 @@ then did not ship it to the three audiences most likely to need it.
 | ~~Generated *types* from the catalog~~ | Drizzle, Prisma | **Built** — `scripts/codegen.py` generates both the schema declaration and a typed row per table for all three clients, and CI diffs them. What is still hand-written is the *call*: a query answers `Value`s and the caller passes them to the generated decoder |
 | Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
-| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. `include_deleted` and `purge_deleted` are on the wire behind `read_deleted`; there is still no restore, and that is open. See below |
+| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. `include_deleted`, `purge_deleted` and restoring a retired row are all on the wire behind `read_deleted`. See below |
 | Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
 | CTEs / recursive queries | SQLAlchemy, Drizzle, Diesel | no plan node |
 | Set operations (`UNION`/`INTERSECT`/`EXCEPT`) | all | refused by name in the SQL front end; no spec node |
@@ -191,14 +191,39 @@ then did not ship it to the three audiences most likely to need it.
 > first because the protocol had no way to say who may make that read, and the
 > action is the answer to that question rather than a way around it.
 >
-> There is still **no `restore`**, and the sentence that used to stand here —
-> "un-deleting is an ordinary update" — is withdrawn. An ordinary update at a
-> retired row is refused as `NotFound`, at every privilege including
-> `everything`, while an insert at the same key is refused as `AlreadyExists`.
-> The row is present to one write path and absent to three. That is recorded
-> in `ledger/2026-09-20-the-row-that-is-both-there-and-not.md` and is open: the
-> fix is small, and whether restoring should require `read_deleted` is a policy
-> decision that belongs to whoever deploys this rather than to whoever fixes it.
+> **Restoring is an ordinary update, and now actually is.** The sentence stood
+> here for a while while being false: an update at a retired row's key was
+> refused as `NotFound` at every privilege including `everything`, while an
+> insert at the same key was refused as `AlreadyExists`, so the row was present
+> to one write and absent to three and nothing could bring it back. The four
+> paths that name a primary key now agree, and the rule that makes them agree is
+> worth stating because it is the whole design:
+>
+> **A write that names a primary key means the row at that key. A write that
+> matches a predicate means the live ones.** So `update`, `upsert`,
+> `update_many` and `upsert_many` reach a retired row and restore it by sending
+> null in the soft-delete column; `insert` still reports the key taken, because
+> succeeding would silently overwrite the row the retention window exists to
+> keep; and `update_where`, `delete_where` and `delete` are untouched — a
+> predicate did not name the row, and re-deleting a retired one is a no-op
+> rather than a contradiction.
+>
+> **It takes `read_deleted`**, the grant `include_deleted` and `purge_deleted`
+> already take, for the reason `purge_deleted` gives about itself: acting on a
+> retired row means knowing it is there. Without it the row behaves exactly as a
+> row a *policy* hides has always behaved on these paths — the key is taken and
+> there is nothing there to update — which looks like a contradiction and is the
+> deliberate answer to a harder question, since the alternative hands a caller
+> the power to overwrite a row they cannot read.
+>
+> The soft-delete column is **not the caller's to write**, on any path. A row
+> carrying a timestamp is refused with `SOFT_DELETE_COLUMN_SUPPLIED` /
+> `InvalidArgument`, naming the column. That is its own error because it is what
+> anyone attempting a restore by hand hits first — read the row with
+> `include_deleted`, edit a field, write it back — and it used to surface as
+> "row-level security forbids writing this row" on tables with no policies at
+> all, which sends the reader to the grants instead of to the one column that is
+> the problem.
 >
 > A check refusing a soft-delete column in the primary key was written and then
 > **removed**: a mutation showed no input could reach it, because the column
