@@ -69,6 +69,7 @@ python-client-ruff|clients/python|ruff check .
 python-rest-ty|.|ty check
 python-rest-ruff|.|ruff check .
 codegen-tests|.|python3 scripts/test_codegen.py
+python-decoders|.|python3 -m pytest examples/explorer/backends/python/adapter -q
 check-sh-guard|.|python3 scripts/test_check_sh.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
@@ -88,15 +89,30 @@ if [ "${1:-}" = "--list" ]; then
     exit 0
 fi
 
-# `ty` for everything outside `clients/python`, against a virtualenv holding
-# exactly what CI's `scripts` job installs and nothing else.
-ci_env_ty() {
+# A virtualenv holding exactly what CI's `scripts` job installs and nothing
+# else. Two checks need it, for the same underlying reason: this container has
+# whatever `site-packages` it happens to have, and CI has almost none, so a
+# check run against the ambient interpreter is a different check.
+ci_env() {
     if [ ! -x "$CI_ENV/bin/ty" ]; then
         printf 'building %s (once)\n' "$CI_ENV"
         python3 -m venv "$CI_ENV" >/dev/null || return 1
         "$CI_ENV/bin/pip" install -q -e './clients/python[dev]' >/dev/null || return 1
     fi
+}
+
+# `ty` for everything outside `clients/python`.
+ci_env_ty() {
+    ci_env || return 1
     "$CI_ENV/bin/ty" check --python "$CI_ENV"
+}
+
+# The demo's generated Python decoders. In the virtualenv rather than the
+# ambient interpreter because the test imports `slate`, and a run that picked
+# up some other copy of it would be testing something else.
+ci_env_pytest() {
+    ci_env || return 1
+    "$CI_ENV/bin/python" -m pytest examples/explorer/backends/python/adapter -q
 }
 
 # `gofmt -l` prints the files it would change and exits zero either way, so a
@@ -121,6 +137,7 @@ run() {
         # `test_check_sh.py` can compare the two literally.
         case $name in
             python-rest-ty) ci_env_ty ;;
+            python-decoders) ci_env_pytest ;;
             *-fmt) go_fmt ;;
             *) eval "$command" ;;
         esac

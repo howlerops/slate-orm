@@ -277,6 +277,18 @@ jobs:
       # demo's schema has, and the cases most worth getting right (a dropped
       # column, an unknown type) are ones it does not.
       - run: python3 scripts/test_codegen.py
+      # The demo's *generated* Python decoders, executed. The step above tests
+      # the generator against catalogs it invents; this tests the file the demo
+      # actually imports, against the ordinals the real catalog declares, and a
+      # generator right about the first and wrong about the second passes the
+      # step above. Go and TypeScript have had this since their decoders
+      # shipped compiled-but-never-run; Python did not.
+      #
+      # Here rather than in the `demo` job, where its two siblings live,
+      # because those need a built server and a browser and this needs neither
+      # — only the committed file and the installed client. That also lets
+      # `check.sh` run it, which it cannot do for the other two.
+      - run: python3 -m pytest examples/explorer/backends/python/adapter -q
       # That `scripts/check.sh` still lists every step in this file, or says
       # why it cannot run one. The script exists because three commits in one
       # afternoon went red on checks that existed and were run from the wrong
