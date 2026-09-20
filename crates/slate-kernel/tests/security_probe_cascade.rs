@@ -565,3 +565,62 @@ async fn an_upsert_leaks_the_same_bit_as_an_insert() {
         .unwrap();
     assert!(visible.is_none(), "alice still cannot read note 7");
 }
+
+// --- does the refusal cover every way a catalog is built? -------------------
+
+/// FIXED: the refusal covers the piecemeal build too, in either order.
+///
+/// `Catalog::from_tables` inserts every table and then calls
+/// `validate_foreign_keys`, and for a while that was the only place the edge
+/// above was refused — while `Catalog::new()` plus `insert` was public, and
+/// `validate_foreign_keys`'s own doc comment said to "call it yourself", which
+/// is advice rather than enforcement. A caller who took the advice was safe
+/// and a caller who did not got the schema finding 1 refuses, with the
+/// cross-tenant cascade live: measured before this fix, tenant A deleting the
+/// shared org left the `docs` table **empty**, tenant B's row included. The
+/// same destruction the refusal was written to make unrepresentable, reached
+/// by the other constructor.
+///
+/// Both orders, because the check `insert` runs skips edges whose parent is
+/// not in the catalog yet — a forward reference is legal. The unsafe shape
+/// needs both endpoints visible, so whichever goes in second catches it, and
+/// asserting only one order would pass for a check that only looked at the
+/// table being inserted.
+#[test]
+fn a_catalog_assembled_by_insert_is_refused_in_either_order() {
+    for action in [ReferentialAction::Cascade, ReferentialAction::Restrict] {
+        for (order, tables) in [
+            ("parent first", vec![orgs(), docs(action)]),
+            ("child first", vec![docs(action), orgs()]),
+        ] {
+            let mut catalog = Catalog::new();
+            let mut refusal = None;
+            for table in tables {
+                if let Err(error) = catalog.insert(table) {
+                    refusal = Some(error);
+                    break;
+                }
+            }
+            let Some(SchemaError::CrossTenantForeignKey {
+                table,
+                parent,
+                action: reported,
+                ..
+            }) = refusal
+            else {
+                panic!("{order}, ON DELETE {action:?}: insert accepted the edge");
+            };
+            assert_eq!(table, "docs");
+            assert_eq!(parent, "orgs");
+            assert_eq!(reported, action);
+
+            // A refused insert must leave the catalog as it was, or a caller
+            // that handles the error goes on using a catalog holding the very
+            // table it was told was refused.
+            assert!(
+                catalog.table(DOCS).is_none() || catalog.table(ORGS).is_none(),
+                "{order}: both tables are still in the catalog after the refusal"
+            );
+        }
+    }
+}

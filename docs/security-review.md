@@ -39,11 +39,26 @@ demonstrations cannot be located demonstrates nothing.
 
 ## 1. A `CASCADE` from a shared parent deletes other tenants' rows
 
-**Status: FIXED.** `Catalog::from_tables` refuses a referential action from a
-non-tenant-scoped parent to a tenant-scoped child, naming both tables. Refused
-rather than confined at the scan — confining stops the destruction and leaves
-other tenants' children pointing at a parent that is gone, trading a security
-hole for a correctness one. Turning the refusal on broke nothing but the pins.
+**Status: FIXED**, and then fixed again in the place the first fix missed.
+`Catalog::from_tables` refuses a referential action from a non-tenant-scoped
+parent to a tenant-scoped child, naming both tables. Refused rather than
+confined at the scan — confining stops the destruction and leaves other
+tenants' children pointing at a parent that is gone, trading a security hole
+for a correctness one. Turning the refusal on broke nothing but the pins.
+
+`Catalog::insert` refuses it too, and for a while did not. `from_tables`
+inserts every table and then calls `validate_foreign_keys`, so the refusal
+lived only in that second call — which is public, opt-in, and documented with
+"call it yourself after building a catalog with `Catalog::insert`". A caller
+who built a catalog the other way got this finding back in full: measured,
+tenant A deleting the shared org left `docs` **empty**, tenant B's row
+included. Only the daemon's own path was ever safe, because
+`slate-serverd/src/schema.rs` goes through `from_tables`; the exposure was to
+anyone using `slate-schema` as a library.
+`a_catalog_assembled_by_insert_is_refused_in_either_order` pins it, in both
+insertion orders, because the check skips an edge whose parent is not in the
+catalog yet and only one of the two orders would exercise a check that looked
+solely at the table being inserted.
 
 **Impact: high — cross-tenant data destruction, no read needed.**
 `crates/slate-kernel/src/record.rs`, `deletion_closure`.
