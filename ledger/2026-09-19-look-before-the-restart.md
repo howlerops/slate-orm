@@ -97,9 +97,13 @@ which is how the missing-manifest case was found.
 
 ## What this does not do
 
-It does not show how long a backfill would take, only that one is coming: the
+~~It does not show how long a backfill would take, only that one is coming: the
 plan holds no row count and the step does not estimate. A table's statistics
-could answer it and this does not ask them.
+could answer it and this does not ask them.~~ **The second sentence is wrong
+and is withdrawn** — the statistics are computed by a scan and held in the
+serving process's memory, so a separate preview cannot read them and could only
+produce them by doing the work it is previewing. What came of asking is in
+`2026-09-20-the-estimate-a-preview-cannot-make.md`.
 
 It does not cover `backend = "memory"`, which has no state a separate
 invocation can read; the flag says so rather than printing a plan.

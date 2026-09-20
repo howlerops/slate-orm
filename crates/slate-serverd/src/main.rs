@@ -774,6 +774,25 @@ async fn reconcile<S: slate_kernel::store::KvStore + ?Sized>(
             if entries == 1 { "y" } else { "ies" },
             started.elapsed(),
         );
+        // Per index as well as in total, when there is more than one.
+        //
+        // `--plan` cannot say how long a backfill will take: the row count
+        // lives in statistics that are computed by a *scan* and held in the
+        // serving process's memory, so a separate preview process could only
+        // learn it by doing the work it is previewing. What it can do is make
+        // the run that pays that cost tell you the number, so the *next*
+        // deploy of the same shape is predictable — and one summed total over
+        // two indexes does not, because the operator cannot tell which of them
+        // was the slow one.
+        //
+        // `Report::entries_written` holds one count per `BuildIndex` step in
+        // step order, and `building` holds their names in the same order, so
+        // the two zip.
+        if building.len() > 1 {
+            for (name, written) in building.iter().zip(&report.entries_written) {
+                eprintln!("slate-serverd:   {name}: {written}");
+            }
+        }
     }
     Ok(())
 }

@@ -170,6 +170,13 @@ async fn a_node_builds_an_index_added_since_the_rows_were_written() {
     let said = finished.output();
     assert!(said.contains("building"), "{said}");
     assert!(said.contains("by_kind"), "{said}");
+    // And afterwards, what it actually wrote. `--plan` cannot estimate a
+    // backfill — the row count is in statistics computed by a scan and held in
+    // the serving process's memory, so a separate preview would have to do the
+    // work it is previewing — which makes the run that pays the cost the only
+    // place the number can come from. An operator sizing the *next* deploy has
+    // nothing else to go on.
+    assert!(said.contains("built 2 index entries"), "{said}");
 }
 
 #[tokio::test]
@@ -220,4 +227,75 @@ async fn a_second_start_with_no_schema_change_builds_nothing() {
         "a restart with nothing to do announced a backfill:\n{}",
         finished.output()
     );
+}
+
+/// `BEFORE`, plus an index on `kind` *and* a second table with an index of its
+/// own and no rows in it.
+///
+/// Two indexes is the point, and two *tables* is what makes their counts
+/// differ: two full indexes over one table write the same number of entries as
+/// each other, so a breakdown over them could be wrong and look right.
+fn after_two_indexes(directory: &str) -> String {
+    let mut config = BEFORE.replace("{DIR}", directory);
+    config.push_str(
+        r#"
+[[tables.indexes]]
+name = "by_kind"
+id = 1
+columns = ["kind"]
+
+[[tables]]
+name = "spares"
+id = 2
+columns = [
+  { name = "id",  type = "u64" },
+  { name = "tag", type = "str" },
+]
+primary_key = ["id"]
+
+[[tables.indexes]]
+name = "by_tag"
+id = 2
+columns = ["tag"]
+
+[[security.grants]]
+role = "app"
+tables = ["spares"]
+actions = ["all"]
+"#,
+    );
+    config
+}
+
+#[tokio::test]
+async fn a_backfill_over_two_indexes_reports_each_one() {
+    // The summed total answers "was there a backfill". It does not answer "and
+    // which of them was the slow one", which is the question an operator has
+    // when the answer to the first is "yes, for four minutes".
+    //
+    // Added because a mutation removing the per-index lines left every other
+    // test here green: the one above builds a single index, and the breakdown
+    // deliberately prints only when there is more than one.
+    let files = Files::new();
+    let directory = files.path().join("store");
+    std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.display().to_string();
+
+    let first = files.write("before.toml", &BEFORE.replace("{DIR}", &directory));
+    let serving = Serving::start(&["--config", first.to_str().unwrap()]);
+    seed(&serving).await;
+    ended_cleanly(&serving.terminate());
+
+    let second = files.write("two.toml", &after_two_indexes(&directory));
+    let serving = Serving::start(&["--config", second.to_str().unwrap()]);
+    let finished = serving.terminate();
+    ended_cleanly(&finished);
+
+    let said = finished.output();
+    assert!(said.contains("building 2 indexes"), "{said}");
+    // The two counts differ, which is the whole reason to print them: `docs`
+    // holds the seeded rows and `spares` holds none. A breakdown that reported
+    // the total against each name would say `2` twice and pass a weaker test.
+    assert!(said.contains("by_kind: 2"), "{said}");
+    assert!(said.contains("by_tag: 0"), "{said}");
 }
