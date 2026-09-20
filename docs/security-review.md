@@ -434,6 +434,23 @@ The three accumulators were genuinely unbounded, and now refuse:
 that adding a `LIMIT` uses the bounded heap instead, which is the mitigation
 that already existed and was unreachable without one.
 
+**Where the ceilings reach, checked rather than assumed.** `SecuredReads`
+builds three `Grouper`s — single table, join, chain — and only the single-table
+one was exercised. `a_grouped_join_past_the_ceiling_is_refused_too` and
+`a_grouped_chain_past_the_ceiling_is_refused_too` cover the other two, because
+a limit threaded into one constructor and not its siblings is the shape that
+left finding 1's refusal covering one catalog constructor of two.
+`SELECT DISTINCT` needs no ceiling of its own: the SQL front end compiles it to
+a `GROUP BY` over the selected columns rather than adding a node, so it is
+already under `max_groups`.
+
+And `the_default_limits_are_not_unbounded`, which is the one that would have
+been missed. Every other limit test sets its own ceiling with `with_limits`, so
+all of them pass against a `new_default` returning `unbounded()` — a node with
+none of these protections, shipped green. It asserts the defaults are finite
+and non-zero without pinning the numbers, since the constants are documented as
+untuned and a deployment is expected to change them.
+
 The daemon gains `max_concurrent_requests` and `request_timeout`, both unset by
 default: a concurrency limit low enough to protect a small node is low enough
 to break a large one, and there is no right number without knowing the machine.
