@@ -71,11 +71,23 @@ RPCs reach `join_from_proto` through `aggregate_from_proto_query`, so fixing
 whole subject, committed again in miniature.
 
 **Make the guard catch this shape rather than fixing the four handlers.** Not
-either/or, and the guard cannot: `join_from_proto` calls neither
+either/or, and ~~the guard cannot: `join_from_proto` calls neither
 `self.table(..)` nor `fingerprint::check` directly. Catching it would mean
-following calls across functions, which is a parser and a call graph. The
+following calls across functions, which is a parser and a call graph.~~ The
 exemption's corrected reason is what carries this now, and the entry says
 plainly that a reason is not a check.
+
+> **Withdrawn, same day.** The guard can, and now does. No call graph was
+> needed: a converter that resolves a request's tables is recognisable by its
+> signature — a `&pb::` request and a `&Catalog` and no `SecurityContext` — so
+> one pass derives the names and a second holds every call to them to an
+> authorisation. What made this look like a parsing problem was stating it as
+> "follows calls across functions" rather than as "which functions cannot
+> check for themselves", and the second question is answerable locally. Four
+> of the six callers this entry's exemption vouched for are now held by a
+> check rather than by my reading. See
+> `2026-09-20-taking-a-catalog-was-not-the-hazard.md`, which also records the
+> two wrong criteria it took to get there.
 
 ## Evidence
 
