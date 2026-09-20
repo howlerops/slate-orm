@@ -782,6 +782,8 @@ async fn include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete() {
 
 const FOLDERS: TableId = TableId(11);
 const FILES: TableId = TableId(12);
+/// A table with no soft delete at all, for the negative half of the feature.
+const PLAIN: TableId = TableId(13);
 
 /// A hard-deleting parent and a soft-deleting child on `on_delete`.
 fn filing(on_delete: slate_schema::ReferentialAction) -> Catalog {
@@ -1482,4 +1484,142 @@ async fn without_read_deleted_the_bulk_writes_stay_out_of_reach_too() {
         vec![(1, None), (2, Some(5_000)), (3, None)],
         "and row 1, which they may write, was not written either"
     );
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
+    // The hypothesis this is written to kill: `referencing_rows` is a *planned*
+    // read, so the planner may answer it from an index — and the index a
+    // soft-deleting table most wants is partial on `deleted_at IS NULL`, which
+    // by construction does not hold retired rows. If the planner chose it, the
+    // `RESTRICT` arm would look for the retired child through a structure that
+    // cannot contain it and find nothing, which is the defect
+    // `a_restrict_edge_blocks_on_a_retired_child` fixed, reintroduced through a
+    // different door and invisible to that test's schema, which has no index at
+    // all on the referencing column.
+    //
+    // It holds, and the reason is worth writing down rather than leaving to the
+    // next person to re-derive: the read carries `include_deleted`, so the
+    // soft-delete conjunct is not in the filter, so a partial index predicated
+    // on it is not implied by the query and cannot be chosen. The same
+    // conjoin-before-planning that stops a covering scan resurrecting a row is
+    // what stops a partial index hiding one here.
+    let folders = TableDef::builder("folders", FOLDERS)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let files = TableDef::builder("files", FILES)
+        .column("id", ValueType::U64)
+        .nullable_column("folder_id", ValueType::U64)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        // The only index on the referencing column, and partial on exactly the
+        // predicate that excludes the row the RESTRICT arm has to find.
+        .index(
+            IndexDef::builder("live_by_folder", slate_schema::IndexId(1))
+                .column("folder_id")
+                .only_where(slate_kernel::Expr::IsNull {
+                    column: slate_schema::Ordinal(2),
+                    negated: false,
+                }),
+        )
+        .foreign_key(
+            slate_schema::ForeignKeyDef::builder("files_folder", FOLDERS)
+                .column("folder_id")
+                .on_delete(slate_schema::ReferentialAction::Restrict),
+        )
+        .build()
+        .expect("a valid table");
+    let clock = Arc::new(FixedClock::at(1_000));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([folders, files]).expect("a catalog"),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(&root(), folders, &Row::new(vec![Value::U64(1)]))
+        .await
+        .expect("insert the folder");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(10), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("insert the file");
+    // While it is live the index does hold it, so the control below is not
+    // asking a different question of a different structure.
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the file, which drops its entry from the partial index");
+    txn.commit().await.expect("commit");
+
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let why = txn
+        .delete(&root(), folders, &[Value::U64(1)])
+        .await
+        .expect_err("a retired child blocks even when no index holds it");
+    assert!(why.to_string().contains("files_folder"), "{why}");
+}
+
+#[tokio::test]
+async fn a_table_that_does_not_soft_delete_is_untouched_by_the_restore_grant() {
+    // The negative half of the whole feature, and it had no test: every write
+    // path now consults `read_deleted` before deciding whether a named key
+    // reaches a hidden row, and the overwhelming majority of tables have no
+    // such row to reach. A caller with no `read_deleted` must write them
+    // exactly as they did before any of this existed.
+    //
+    // `include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete`
+    // says the same thing about reads. This is the write side of it.
+    let plain = TableDef::builder("plain", PLAIN)
+        .column("id", ValueType::U64)
+        .column("body", ValueType::Str)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let security = slate_kernel::SecurityCatalog::new().grant(slate_kernel::Grant::new(
+        "reader",
+        plain.id(),
+        vec![
+            slate_kernel::Action::Read,
+            slate_kernel::Action::Insert,
+            slate_kernel::Action::Update,
+            slate_kernel::Action::Delete,
+        ],
+    ));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([plain.clone()]).expect("a catalog"),
+        security,
+    );
+
+    let row = |body: &str| Row::new(vec![Value::U64(1), Value::Str(body.to_owned())]);
+    let txn = store.begin().await.expect("a transaction");
+    txn.insert(&reader(), &plain, &row("first"))
+        .await
+        .expect("insert");
+    txn.update(&reader(), &plain, &row("second"))
+        .await
+        .expect("an update needs no read_deleted on a table with nothing retired");
+    txn.upsert(&reader(), &plain, &row("third"))
+        .await
+        .expect("nor does an upsert");
+    txn.update_many(&reader(), &plain, &[row("fourth")])
+        .await
+        .expect("nor the bulk path");
+    assert!(
+        txn.delete(&reader(), &plain, &[Value::U64(1)])
+            .await
+            .expect("delete"),
+        "and the row was there to delete"
+    );
+    txn.commit().await.expect("commit");
 }

@@ -2484,6 +2484,17 @@ impl<'a> RecordTransaction<'a> {
     /// the soft-delete column — which is the sentence the documentation used to
     /// claim and could not back.
     fn retired_rows_reachable(&self, context: &SecurityContext, table: &TableDef) -> Deleted {
+        // A table with no soft delete has nothing to reveal, so both answers
+        // build the same filter and the grant cannot matter. Answering without
+        // asking is not only cheaper — on a table nobody retires rows in, a
+        // caller lacking `read_deleted` would otherwise have the grant list
+        // scanned on every named-key write for a decision with one possible
+        // outcome. It also keeps the rule this file states elsewhere: demanding
+        // a grant for a no-op teaches callers to ask for privileges they do not
+        // need, and that rule reads oddly if the code asks anyway.
+        if table.soft_delete().is_none() {
+            return Deleted::Visible;
+        }
         if self.security.grants(context, table, Action::ReadDeleted) {
             Deleted::Visible
         } else {
