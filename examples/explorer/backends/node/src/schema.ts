@@ -383,3 +383,10 @@ export function encodeShipments(row: Shipments): Value[] {
     row.deleted_at === null ? { kind: "null" } : { kind: "int", value: row.deleted_at },
   ];
 }
+
+/**
+ * Whether this row of `shipments` has been soft-deleted.
+ */
+export function isRetiredShipments(row: Shipments): boolean {
+  return row.deleted_at !== null;
+}

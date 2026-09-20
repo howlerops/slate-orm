@@ -293,3 +293,18 @@ def test_every_generated_type_has_a_round_trip() -> None:
     assert set(ROUND_TRIP) == set(DECODERS), (
         "every generated type needs a round-trip instance"
     )
+
+
+def test_a_soft_deleting_table_says_which_rows_are_retired() -> None:
+    # `soft_delete` is published as an ordinal now, so the generator knows
+    # `deleted_at` is the retirement stamp rather than an ordinary nullable
+    # `i64`. Before, a caller had to know that out of band — the catalog held
+    # the fact and the client was not told it.
+    assert not Shipments(id=9, book_id=7, status="shipped", deleted_at=None).retired
+    assert Shipments(id=9, book_id=7, status="shipped", deleted_at=1).retired
+
+
+def test_only_a_soft_deleting_table_gets_the_property() -> None:
+    # The negative half, and the one that would catch an emitter keying on a
+    # column *name*: `books` has no soft delete and must not claim one.
+    assert not hasattr(Books.from_row(book_row()), "retired")

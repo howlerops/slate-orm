@@ -90,3 +90,8 @@ class Notes:
             self.body,
             NULL if self.deleted_at is None else i64(self.deleted_at),
         ]
+
+    @property
+    def retired(self) -> bool:
+        """Whether this row has been soft-deleted."""
+        return self.deleted_at is not None

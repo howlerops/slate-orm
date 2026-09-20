@@ -975,6 +975,13 @@ fn describe(catalog: &Catalog) -> String {
                 "schema_version": table.schema_version(),
                 "primary_key": table.primary_key().iter().map(|o| o.0).collect::<Vec<_>>(),
                 "tenant_column": table.tenant_column().map(|o| o.0),
+                // The retirement stamp, as an ordinal beside the tenant
+                // column and for the same reason: a generated client cannot
+                // tell it from an ordinary nullable `i64`, and the difference
+                // decides what a delete on this table means. Without it,
+                // `include_deleted` is a flag a client can set and a column it
+                // cannot find.
+                "soft_delete": table.soft_delete().map(|o| o.0),
                 "columns": columns,
                 "indexes": indexes,
                 "checks": checks,

@@ -517,3 +517,9 @@ func (r Shipments) Row() []slate.Value {
 	}
 	return out
 }
+
+// Retired reports whether this row of `shipments` has been
+// soft-deleted.
+func (r Shipments) Retired() bool {
+	return r.DeletedAt != nil
+}

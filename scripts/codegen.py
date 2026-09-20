@@ -620,6 +620,24 @@ def python_rows(tables: list[dict]) -> list[str]:
             else:
                 out.append(f"            {wrapped},")
         out.extend(["        ]", ""])
+
+        # `soft_delete` is published as an ordinal, so the generator knows
+        # which column carries the retirement stamp and the row type can say
+        # so. Without this a caller reads a nullable `i64` and has to know, out
+        # of band, that *this* one means "gone" — which is the knowledge the
+        # catalog holds and the client was not being told.
+        stamp = table.get("soft_delete")
+        if stamp is not None:
+            column = next(c for at, c in fields if at == stamp)
+            out.extend(
+                [
+                    "    @property",
+                    "    def retired(self) -> bool:",
+                    '        """Whether this row has been soft-deleted."""',
+                    f"        return self.{column['name']} is not None",
+                    "",
+                ]
+            )
     return out
 
 
@@ -739,6 +757,24 @@ def go_rows(tables: list[dict]) -> list[str]:
                 encoded = GO_ENCODE[column["type"]].format(f"r.{field}")
                 out.append(f"\tout = append(out, {encoded})")
         out.extend(["\treturn out", "}", ""])
+
+        # See the Python emitter: the catalog knows which column is the
+        # retirement stamp and the row type should not make the caller know it
+        # too.
+        stamp = table.get("soft_delete")
+        if stamp is not None:
+            column = next(c for at, c in fields if at == stamp)
+            field = go_field(column["name"])
+            out.extend(
+                [
+                    f"// Retired reports whether this row of `{table['name']}` has been",
+                    "// soft-deleted.",
+                    f"func (r {name}) Retired() bool {{",
+                    f"\treturn r.{field} != nil",
+                    "}",
+                    "",
+                ]
+            )
     return out
 
 
@@ -814,6 +850,22 @@ def typescript_rows(tables: list[dict]) -> list[str]:
             else:
                 out.append(f"    {live},")
         out.extend(["  ];", "}", ""])
+
+        # See the Python emitter.
+        stamp = table.get("soft_delete")
+        if stamp is not None:
+            column = next(c for at, c in fields if at == stamp)
+            out.extend(
+                [
+                    "/**",
+                    f" * Whether this row of `{table['name']}` has been soft-deleted.",
+                    " */",
+                    f"export function isRetired{name}(row: {name}): boolean {{",
+                    f"  return row.{column['name']} !== null;",
+                    "}",
+                    "",
+                ]
+            )
     return out
 
 
