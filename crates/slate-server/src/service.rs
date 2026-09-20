@@ -2799,8 +2799,27 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
     async fn leadership(
         &self,
-        _request: Request<pb::LeadershipRequest>,
+        request: Request<pb::LeadershipRequest>,
     ) -> Result<Response<pb::LeadershipStatus>, Status> {
+        // Authenticated, like the other eighteen. This one took `_request` and
+        // answered anybody who could reach the port — including under
+        // `mode = "deny-all"`, whose startup banner says the node
+        // "authenticates nobody and will refuse every request". That sentence
+        // was false, and it is the strongest statement the configuration can
+        // make.
+        //
+        // No grant is checked, because there is no table to check one against.
+        // The bar is who may talk to this server at all, which is what
+        // authentication decides. All three shipped clients already send their
+        // credentials on this call, so nothing that used it legitimately
+        // notices.
+        //
+        // What it gives up is the holder's identity — the proto calls it a way
+        // for "a client to find the node that will accept its writes", which
+        // is as useful to a scanner picking the write leader out of a set of
+        // identical endpoints — and the lease generation, which counts lease
+        // changes and so reports instability to anyone willing to poll.
+        let _ = self.context(&request)?;
         use pb::leadership_status::Standing as Wire;
         let status = match self.leadership.standing() {
             Standing::Follower { leader } => pb::LeadershipStatus {

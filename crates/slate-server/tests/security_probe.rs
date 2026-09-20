@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{app_in, claim, serving_leader, user};
+use common::{app_in, claim, serving_denied, serving_leader, user};
 use slate_kernel::memory::MemoryStore;
 use slate_server::proto as pb;
 use std::sync::Arc;
@@ -1028,4 +1028,87 @@ async fn the_third_input_of_a_chain_is_authorised_too() {
         real.message(),
         absent.message()
     );
+}
+
+/// FINDING: `Leadership` answered a caller that `deny-all` refuses.
+///
+/// Eighteen of the nineteen RPCs derived a `SecurityContext` from the
+/// request's metadata before doing anything. `leadership` took `_request` — it
+/// never looked at the metadata at all — so it was answered by a caller the
+/// authenticator rejects, including under the one configuration whose whole
+/// statement is that it "authenticates nobody and will refuse every request".
+///
+/// What came back was the node's standing, the lease generation, and the
+/// holder's identity, which the proto describes as something "a client can use
+/// to find the node that will accept its writes". That is a useful thing to
+/// tell a client and a useful thing to tell a scanner: it names the write
+/// leader out of a set of otherwise identical endpoints, and the generation
+/// counts lease changes, so polling it reported instability nobody chose to
+/// publish.
+///
+/// Measured before the fix:
+///
+/// ```text
+/// standing: Leader, generation: Some(1), holder: "test-leader"
+/// ```
+///
+/// FIXED: it authenticates now. No grant is checked — there is no table — so
+/// the bar is who may talk to this server at all.
+#[tokio::test]
+async fn leadership_is_refused_to_a_caller_that_deny_all_refuses() {
+    let writer = Arc::new(MemoryStore::new());
+    let serving = serving_denied(writer).await;
+    let mut client = serving.client().await;
+
+    // The control. Every other RPC must be refused for this to be about
+    // `leadership` rather than about a misbuilt fixture.
+    let read = client
+        .query(pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(common::plain_query("users")),
+            freshness: None,
+        })
+        .await
+        .expect_err("deny-all must refuse an ordinary read");
+    assert_eq!(read.code(), Code::Unauthenticated, "{read:?}");
+
+    let refused = client
+        .leadership(pb::LeadershipRequest {})
+        .await
+        .expect_err("leadership must be refused too");
+    assert_eq!(refused.code(), Code::Unauthenticated, "{refused:?}");
+}
+
+/// The other half, and the reason the fix is authentication rather than a
+/// narrower response: an authenticated caller still learns everything it did.
+///
+/// Without this, deleting the whole handler body would satisfy the probe
+/// above. The three shipped clients all call this to find the write leader and
+/// all of them send their credentials, so the fix costs them nothing — but
+/// that is a claim about the clients, and this is the assertion about the
+/// server.
+#[tokio::test]
+async fn an_authenticated_caller_still_learns_who_holds_the_lease() {
+    let writer = Arc::new(MemoryStore::new());
+    let serving = serving_leader(writer).await;
+    let mut client = serving.client().await;
+
+    let answered = client
+        .leadership(common::as_principal(
+            pb::LeadershipRequest {},
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        ))
+        .await
+        .expect("an authenticated caller may ask")
+        .into_inner();
+
+    assert_eq!(
+        answered.standing,
+        pb::leadership_status::Standing::Leader as i32,
+        "{answered:?}"
+    );
+    assert!(answered.generation.is_some(), "{answered:?}");
+    assert!(!answered.holder.is_empty(), "{answered:?}");
 }

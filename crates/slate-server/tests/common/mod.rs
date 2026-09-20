@@ -26,7 +26,7 @@ use slate_server::leadership::Leadership;
 use slate_server::lease::{Clock, Lease, LeaseError, ObjectStoreLease, Term};
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
-use slate_server::{Head, HeadConfig, MetadataIdentity};
+use slate_server::{DenyEveryone, Head, HeadConfig, MetadataIdentity};
 use slate_tuple::{Direction, Value, ValueType};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -553,6 +553,25 @@ pub fn head_with(
         leadership,
         Arc::new(MetadataIdentity::trusting_the_caller_completely()),
     )
+}
+
+/// A head node that authenticates nobody, serving on a loopback port.
+///
+/// `DenyEveryone` is what `slate-serverd`'s `mode = "deny-all"` installs, and
+/// the banner it prints says "this node authenticates nobody and will refuse
+/// every request". A probe that reaches it is reaching past the strongest
+/// statement the configuration can make.
+pub async fn serving_denied(writer: Arc<MemoryStore>) -> Serving {
+    let leadership = Leadership::new(Arc::new(AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+    serve(Head::new(
+        config(),
+        writer,
+        Vec::new(),
+        leadership,
+        Arc::new(DenyEveryone),
+    ))
+    .await
 }
 
 /// Serve a head node on a loopback port the operating system chooses.

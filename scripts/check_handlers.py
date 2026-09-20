@@ -31,6 +31,11 @@ loudly instead:
    roster, and every name in the roster still implements it. Finding 6 was
    fixed in one of two implementations; the roster is what makes a third
    arrive with a failing check.
+5. **Every RPC handler authenticates.** A method taking a `Request<pb::..>` is
+   reachable from the wire by definition, and must derive a `SecurityContext`
+   before doing anything. `leadership` did not — it took `_request` and
+   answered anybody who could reach the port, including under
+   `mode = "deny-all"`, whose banner promises to "refuse every request".
 
 None is a proof. A handler can hold a `&TableDef` from one of the accounted
 sites and pass it along, and this will not see it. What they do is make adding
@@ -169,6 +174,20 @@ WIRE = "&pb::"
 CONTEXT = "SecurityContext"
 CATALOG = "catalog: &Catalog"
 
+#: A method reachable from the wire, found by its signature.
+#:
+#: `Request<pb::..>` is not a proxy for "is an RPC handler" — it is what being
+#: one consists of, which is the property the converter rule above took two
+#: wrong criteria to find. Nothing else in either crate takes one, and every
+#: tonic service method does.
+#:
+#: The obligation is authentication, not authorisation: rules 1 to 3 cover the
+#: grant on a named table, and a handler naming no table (`begin`, `commit`,
+#: `leadership`) still has to establish *who is asking* before it answers.
+TAKES_REQUEST = re.compile(r"fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)", re.S)
+WIRE_REQUEST = "Request<pb::"
+AUTHENTICATES = re.compile(r"self\.context\(")
+
 FUNCTION = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+([a-z_][a-z0-9_]*)")
 BARE = re.compile(r"self\.table\(")
 FINGERPRINT = re.compile(r"fingerprint::check\(")
@@ -244,6 +263,46 @@ def unauthorised_conversions(files: list[Path], converters: set[str]) -> list[st
                     "security finding 8, which reached four RPCs this way. "
                     "Authorise the tables the request names first."
                 )
+    return problems
+
+
+def wire_handlers(files: list[Path]) -> set[str]:
+    """Methods taking a `Request<pb::..>`, which is what reaches the wire."""
+    names: set[str] = set()
+    for path in files:
+        for found in TAKES_REQUEST.finditer(path.read_text()):
+            if WIRE_REQUEST in found.group(2):
+                names.add(found.group(1))
+    return names
+
+
+def unauthenticated_handlers(files: list[Path], handlers: set[str]) -> list[str]:
+    """Every wire handler derives a `SecurityContext` somewhere in its body.
+
+    Anywhere rather than within `REACH`, unlike the rules above: those are
+    about *ordering* — the check must precede the use — and this one is about
+    presence. A handler that authenticates at all has established who is
+    asking; where in the body it does so is not the hazard.
+    """
+    authenticating: set[str] = set()
+    for path in files:
+        lines = path.read_text().splitlines()
+        owners = enclosing_functions(lines)
+        for at, line in enumerate(lines):
+            if AUTHENTICATES.search(line):
+                authenticating.add(owners[at])
+
+    problems = []
+    for name in sorted(handlers - authenticating):
+        problems.append(
+            f"`{name}` takes a `{WIRE_REQUEST}..>` and never derives a "
+            "SecurityContext.\n"
+            "  It is reachable from the wire, so it answers whoever can open a "
+            "socket — `leadership` did exactly that, under a configuration "
+            "whose banner promises to refuse every request. Call "
+            "`self.context(&request)?` even where there is no table to "
+            "authorise."
+        )
     return problems
 
 
@@ -351,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     converters = catalog_converters(files)
     if converters:
         problems.extend(unauthorised_conversions(files, converters))
+    handlers = wire_handlers(files)
+    problems.extend(unauthenticated_handlers(files, handlers))
 
     # A check that finds nothing has stopped checking, and reads identically to
     # one that found nothing wrong. `CLAUDE.md`: "a check that never fires is a
@@ -363,6 +424,17 @@ def main(argv: list[str] | None = None) -> int:
             f"no `fingerprint::check` anywhere in {len(files)} file(s). Either "
             "the handlers moved and SOURCES is stale, or the check is no longer "
             "what this guards — both need a person, not a pass."
+        )
+    elif not handlers:
+        # The never-fires guard for rule 5, on the same reasoning as the one
+        # below: `Request<pb::` is a spelling, and a crate that aliased the
+        # generated module to anything but `pb` would leave this matching
+        # nothing and printing `ok`.
+        problems.append(
+            f"no method takes a `{WIRE_REQUEST}..>` in {len(files)} file(s), "
+            "so rule 5 checked nothing. Either the service moved or the "
+            "generated proto module is no longer spelled `pb` — both need a "
+            "person, not a pass."
         )
     elif not converters:
         # The same never-fires reasoning as above, and this rule needs it more.
@@ -401,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         f"ok    {len(files)} files, {bare} bare resolutions all accounted for, "
         f"{checks} fingerprint checks all authorised first, "
         f"{len(converters)} converters all called from authorised handlers, "
+        f"{len(handlers)} wire handlers all authenticating, "
         f"{authenticators} authenticators all rostered"
     )
     return 0

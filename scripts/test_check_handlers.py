@@ -49,6 +49,11 @@ impl Head {
     ) -> Result<Join, Status> {
         Ok(())
     }
+
+    async fn get(&self, request: Request<pb::GetRequest>) -> Result<(), Status> {
+        let context = self.context(&request)?;
+        Ok(())
+    }
 """
 
 CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
@@ -291,6 +296,55 @@ impl Authenticator for Known {}
         "",
     ),
     (
+        "an RPC handler that never authenticates fails",
+        # `leadership` took `_request` and answered anybody who could reach the
+        # port, including under a configuration whose banner promises to refuse
+        # every request.
+        """
+    async fn leadership(&self, _request: Request<pb::LeadershipRequest>) -> Result<(), Status> {
+        Ok(())
+    }
+""",
+        1,
+        "never derives a SecurityContext",
+    ),
+    (
+        "a handler that authenticates passes, even with no table to authorise",
+        # The other half: `begin`, `commit` and `leadership` name no table, so
+        # rules 1 to 3 have nothing to say about them. Authentication is still
+        # owed, and satisfying it must be enough.
+        """
+    async fn begin(&self, request: Request<pb::BeginRequest>) -> Result<(), Status> {
+        let context = self.context(&request)?;
+        Ok(())
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "a helper taking no wire request is not a handler",
+        # The criterion is `Request<pb::..>`, not "takes a context" or "is
+        # async": an internal helper handed an already-derived context owes
+        # nothing, and a rule that demanded otherwise would be unsatisfiable.
+        """
+    async fn read_view(&self, context: &SecurityContext) -> Result<(), Status> {
+        Ok(())
+    }
+""",
+        0,
+        "",
+    ),
+    (
+        "a tree with no wire handler at all fails, rather than passing",
+        # The never-fires case for rule 5: `Request<pb::` is a spelling, and a
+        # crate that aliased the generated module would leave it matching
+        # nothing and printing ok.
+        "NO_HANDLER",
+        1,
+        "so rule 5 checked nothing",
+    ),
+    (
         "a tree with no converter at all fails, rather than passing",
         # The never-fires failure for rule 3, which is the rule most able to
         # stop matching quietly: a converter is recognised by three conditions
@@ -324,10 +378,20 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 code = check_handlers.main([directory])
             return code, out.getvalue()
-        if body == "NO_CONVERTER":
+        if body == "NO_HANDLER":
             path.write_text(
-                PREAMBLE[: PREAMBLE.index("    fn join_from_proto(")] + "}\n"
+                PREAMBLE[: PREAMBLE.index("    async fn get(")] + "}\n"
             )
+        elif body == "NO_CONVERTER":
+            # Only the converter is trimmed: dropping everything after it would
+            # take the handler too, and the case would fail on rule 5 rather
+            # than on the rule it is named for.
+            converter = PREAMBLE[
+                PREAMBLE.index("    fn join_from_proto(") : PREAMBLE.index(
+                    "    async fn get("
+                )
+            ]
+            path.write_text(PREAMBLE.replace(converter, "") + "}\n")
         elif body == "NO_PREAMBLE":
             # Resolutions and exemptions present, no fingerprint anywhere.
             path.write_text(

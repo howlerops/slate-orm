@@ -1,12 +1,16 @@
 # Security review
 
-> **Status, later the same session.** Findings 1, 2, 3, 5, 6, 7 and 8 are fixed
-> and their probes now assert the refusal. 4 is closed as inherent, with the
-> claim it contradicted narrowed to the truth and one correction to the finding
-> itself: `upsert` leaks the same bit as `insert`, which this document
+> **Status, later the same session.** Findings 1, 2, 3, 5, 6, 7, 8 and 9 are
+> fixed and their probes now assert the refusal. 4 is closed as inherent, with
+> the claim it contradicted narrowed to the truth and one correction to the
+> finding itself: `upsert` leaks the same bit as `insert`, which this document
 > originally said it did not. Each finding carries
 > its own status line below. The fixes are in the commits that reference this
 > file.
+>
+> **Finding 9 was found after this review, by working its own list of areas it
+> did not examine.** That list is the most useful paragraph in the document and
+> it is at the end, under "Not examined in depth".
 
 An adversarial end-to-end review of the authentication, RBAC, row-level
 security, tenant isolation, wire protocol and configuration surfaces, done as
@@ -28,6 +32,7 @@ Demonstrations:
 | `crates/slate-kernel/tests/security_probe_explain.rs` | finding 3 |
 | `crates/slate-kernel/tests/security_probe_resources.rs` | finding 7 |
 | `crates/slate-kernel/tests/rls_probe.rs` | the paths probed and found clean |
+| `crates/slate-server/tests/security_probe.rs` | findings 8 and 9 over gRPC |
 
 The probe tests originally asserted the *current* behaviour — the hole — and
 each named what to change it to once the finding was fixed. The fixes landed,
@@ -599,6 +604,51 @@ unauthenticated.
 
 ---
 
+## 9. `Leadership` is answered without authentication
+
+**Status: FIXED.** It derives a `SecurityContext` like the other eighteen RPCs.
+No grant is checked, because there is no table to check one against; the bar is
+who may talk to this server at all.
+
+**Impact: medium — unauthenticated disclosure of the write leader's identity
+and the lease generation, to anyone who can open a socket.**
+`crates/slate-server/src/service.rs`, `leadership`.
+
+Nineteen RPC handlers; eighteen began with `let context = self.context(&request)?`.
+`leadership` took `_request` — it never looked at the metadata at all — so it
+answered a caller the authenticator rejects. Including under `mode =
+"deny-all"`, whose startup banner reads *"this node authenticates nobody and
+will refuse every request"*. That sentence was false, and it is the strongest
+statement the configuration language can make.
+
+What came back:
+
+| field | what it is |
+| --- | --- |
+| `standing` | leader, follower, or stepped down |
+| `generation` | the lease generation, which counts lease changes |
+| `holder` | the node the lease says holds it |
+| `stepped_down_because` | a free-text internal reason |
+
+`holder` is described in the proto as something "a client can use to find the
+node that will accept its writes", which is exactly as useful to a scanner
+choosing which of several identical endpoints to attack. `generation` counts
+lease changes, so polling it reports cluster instability nobody chose to
+publish.
+
+This was not a decision that turned out badly — there was no comment, no test
+and no stated reason. It is an omission, and the shape of it is why rule 5 of
+`scripts/check_handlers.py` now exists: a method taking a `Request<pb::..>` is
+reachable from the wire by definition, and must authenticate.
+
+**No client notices.** All three shipped SDKs call this through an
+authenticated client and already send their credentials;
+`an_authenticated_caller_still_learns_who_holds_the_lease` asserts the answer
+is unchanged for them. `leadership_is_refused_to_a_caller_that_deny_all_refuses`
+is the refusal, with an ordinary read beside it as the control.
+
+---
+
 ## Probed and clean
 
 These were attacked deliberately and did not yield. Listing them so the next
@@ -695,11 +745,26 @@ configuration that grants more than it reads as granting.
 `visible_parents` use `SecuredReads::get`, so a parent hidden from the caller is
 absent for them, and the grant is required too.
 
-**Not examined in depth**, and therefore not cleared: the lease and leadership
+**Not examined in depth**, and therefore not cleared: ~~the lease and leadership
 protocol (`lease.rs`, `leadership.rs`, `filelease.rs`), the S3 backend and its
-credential handling (`slate-slatedb`), the Python client, and the tuple codec's
-behaviour on adversarial encoded input beyond the existing
+credential handling (`slate-slatedb`),~~ the Python client, and the tuple
+codec's behaviour on adversarial encoded input beyond the existing
 `slate-tuple/tests/untrusted.rs`.
+
+**This paragraph has earned its keep twice.** Working it turned up finding 9 —
+the leadership RPC answering unauthenticated — which is a one-line omission
+that six other reviews of the surrounding code did not see, because they were
+reading the handlers that do something rather than the one that does not. The
+S3 credential row turned up no defect and two weak tests: the redaction is
+correct in both crates, and neither test would have caught a secret held as
+`Vec<u8>` and printed as a byte list.
+
+The lease *protocol* itself — fencing, generation monotonicity, split brain —
+is still judged by its correctness suites (`crates/slate-server/tests/lease.rs`
+and `tests/leadership.rs`, 1,390 lines) rather than attacked adversarially. The
+row above is struck through for the RPC surface, which is what an unauthorised
+caller can reach; the protocol between a node and its object store is not
+reachable from the wire and was not re-examined.
 
 ---
 
