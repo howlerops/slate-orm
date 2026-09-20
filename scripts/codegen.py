@@ -286,8 +286,6 @@ def go_field(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
-
-
 class Unknown(Exception):
     """A catalog type no target language has a spelling for.
 
@@ -297,6 +295,49 @@ class Unknown(Exception):
     compiles and hashes to the wrong fingerprint, which is the failure this
     whole tool exists to prevent.
     """
+
+
+#: Catalog types no generator emits yet, and what each one would need.
+#:
+#: Separate from "no spelling for this type", which is what happens to a type
+#: nobody has thought about: these are types the *rest* of the system supports
+#: and this tool does not, so the message says what is missing rather than
+#: implying the type does not exist.
+#:
+#: An array needs more than a row in the six type tables below. Its declaration
+#: has to carry the element type — the fingerprint hashes it, so a declaration
+#: without it is refused by the server — and its decoded form is element-typed
+#: in all three languages (`Sequence[str]`, `[]string`, `string[]`), which the
+#: tables cannot express because they are keyed by the column's type alone.
+#: Each language also needs a per-element encode, since `u64` and `i64` are
+#: different wire arms and a list of them cannot pass through unwrapped.
+UNSUPPORTED = {
+    "array": (
+        "an array column's declaration has to carry its element type (the "
+        "fingerprint hashes it) and its decoded form is element-typed in all "
+        "three languages, neither of which the type tables in this file can "
+        "express — they are keyed by the column's type alone"
+    ),
+}
+
+
+def refuse_unsupported(tables: list[dict]) -> None:
+    """Refuse a catalog this tool cannot generate, before emitting anything.
+
+    Up front and in one place, because the alternative is what was here: the
+    declaration emitters refuse an unknown type with a readable `Unknown`, and
+    the *row* emitters index the same tables directly and raise `KeyError`. Two
+    failures for one cause, one of them unreadable, and which one you got
+    depended on the order the emitters ran in.
+    """
+    for table in tables:
+        for column in table.get("columns", ()):
+            reason = UNSUPPORTED.get(column.get("type", ""))
+            if reason is not None:
+                raise Unknown(
+                    f"table `{table['name']}` column `{column['name']}` is "
+                    f"{column['type']}, which this generator does not emit: {reason}"
+                )
 
 
 def catalog(config: Path, serverd: str) -> dict:
@@ -1202,6 +1243,7 @@ def main() -> int:
         parser.error("name at least one of --python, --go, --typescript")
 
     tables = catalog(arguments.config, arguments.serverd)["tables"]
+    refuse_unsupported(tables)
     agreed = True
     if arguments.python:
         agreed &= emit(arguments.python, python_module(tables), arguments.check)

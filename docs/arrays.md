@@ -197,13 +197,25 @@ encoders, the wire `Value` message and the SQL front end's literal syntax all
 need a case. The gap row's evidence is about `ValueType`; the cost is mostly
 outside the kernel, and this note is entirely about the kernel.
 
-> Still true, and now it is the *whole* of what is left. Two concrete edges
-> found while building: `slate-server`'s `value_to_proto` has a wildcard that
-> sends `<unrepresentable array>` rather than a null — loud, which is the right
-> failure but is still a failure — and `slate-serverd`'s TOML type parser
-> refuses `type = "array"` with a message listing the nine types it knows, so a
-> configuration file cannot declare one. Both are correct today and both are
-> the first things the next increment changes.
+> **Both edges closed.** `value_to_proto` sends an `ArrayValue`, and
+> `slate-serverd` takes `type = "array", element = "str"` with each half of
+> that pairing refused without the other. All three clients carry an array and
+> each proves it against a real node.
+>
+> What the note got right is that the cost was mostly outside the kernel, and
+> the sharpest part of it was not the clients: the element type had to be added
+> to **four** independent implementations of the `SchemaCheck` fingerprint, one
+> per language, because that hash is the only thing that can catch a client
+> whose idea of an element type is wrong — it reads the *right* column and
+> decodes every element as the wrong type.
+>
+> Two things are genuinely left. `scripts/codegen.py` refuses an array column
+> rather than generating one, deliberately and with a message saying what it
+> would need: the declaration must carry the element type, and the decoded form
+> is element-typed in all three languages, neither of which its type tables can
+> express since they are keyed by the column's type alone. And the predicate
+> parser has no array literal, so an array cannot appear in a `WHERE` written
+> as text.
 
 **It does not argue that an array column is worth building.** The comparison
 lists it because Drizzle, SQLAlchemy and Ecto have one. Whether the answer here

@@ -587,19 +587,101 @@ def test_a_key_pointing_at_a_table_that_is_not_here_is_refused() -> None:
             raise AssertionError("a dangling parent was generated rather than refused")
 
 
+def test_an_array_column_is_refused_once_and_says_what_is_missing() -> None:
+    """One refusal, before anything is emitted, naming the table and column.
+
+    The state this replaced was worse than either half looked: the three
+    *declaration* emitters looked the type up with `.get()` and raised a
+    readable `Unknown`, while the *row* emitters indexed the same tables
+    directly and raised `KeyError`. Which one a caller got depended on the
+    order the emitters ran in, and one of the two answers was unreadable.
+
+    Refused rather than generated because an array needs more than a row in
+    the type tables — see `codegen.UNSUPPORTED` — and a declaration that
+    omitted the element type would *compile* and hash to a fingerprint the
+    server refuses, which is the failure `Unknown` exists to prevent.
+    """
+    spec = [
+        {
+            "name": "posts",
+            "columns": [
+                {"name": "id", "type": "u64", "nullable": False, "scale": None},
+                {
+                    "name": "tags",
+                    "type": "array",
+                    "element_type": "string",
+                    "nullable": False,
+                    "scale": None,
+                },
+            ],
+            "primary_key": ["id"],
+        }
+    ]
+    try:
+        codegen.refuse_unsupported(spec)
+    except codegen.Unknown as why:
+        # The table and the column, because a catalog has many and "an array
+        # column" is not something a reader can act on.
+        assert "posts" in str(why), why
+        assert "tags" in str(why), why
+        # And what is missing, so the message is a description of the work
+        # rather than a wall.
+        assert "element type" in str(why), why
+    else:
+        raise AssertionError("an array column was accepted by the generator")
+
+
+def test_an_ordinary_catalog_is_not_refused() -> None:
+    """The never-fires half.
+
+    A guard that refused everything would pass the case above and break every
+    real catalog, so the negative is asserted too — the same reason the
+    handler checks in this repository carry one.
+    """
+    codegen.refuse_unsupported(
+        [
+            {
+                "name": "docs",
+                "columns": [
+                    {"name": "id", "type": "u64", "nullable": False, "scale": None},
+                    {"name": "amount", "type": "decimal", "nullable": False, "scale": 2},
+                ],
+                "primary_key": ["id"],
+            }
+        ]
+    )
+
+
 def main() -> int:
+    passed = 0
     failed = 0
     for name, test in sorted(globals().items()):
         if not name.startswith("test_") or not callable(test):
             continue
         try:
             test()
-        except AssertionError as why:
+        # `Exception`, not `AssertionError`. This file is the only `test_*.py`
+        # here that calls functions directly rather than running a subprocess,
+        # so it is the only one where a test raising something *unexpected*
+        # took the whole runner down — no summary line, no `FAIL`, and
+        # `scripts/mutate.py` reporting "no test results at all" rather than
+        # scoring the mutation that caused it. An aborted runner reads exactly
+        # like a clean one, which is the shape of every lie this repository
+        # keeps finding. A test that raises for a reason it did not predict is
+        # a failing test, and is reported as one.
+        except Exception as why:  # noqa: BLE001
             failed += 1
-            print(f"FAIL  {name}: {why}")
+            print(f"FAIL  {name}: {type(why).__name__}: {why}")
         else:
+            passed += 1
             print(f"ok    {name}")
-    print(f"\n{'all pass' if not failed else f'{failed} failed'}")
+    # `N passed, M failed`, which is the house style every other `test_*.py`
+    # here prints and `scripts/mutate.py`'s `python` dialect reads. This file
+    # printed `all pass` instead, which matched neither — so pointing the
+    # mutation harness at this generator reported "no test results at all"
+    # rather than scoring anything. That is the harness refusing to lie, and
+    # the fix is the summary line rather than a fourth dialect.
+    print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
 
