@@ -194,9 +194,7 @@ pub fn mentions() -> TableDef {
         .column("id", ValueType::U64)
         .column("doc_id", ValueType::U64)
         .primary_key(["id"])
-        .foreign_key(
-            slate_schema::ForeignKeyDef::builder("mentions_doc", DOCS).column("doc_id"),
-        )
+        .foreign_key(slate_schema::ForeignKeyDef::builder("mentions_doc", DOCS).column("doc_id"))
         .build()
         .expect("valid schema")
 }

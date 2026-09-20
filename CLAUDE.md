@@ -136,6 +136,15 @@ that is set and missing is a hard error, never a silent fall back to building.
   breaks. It is its own job now, so it no longer hides clippy and the tests
   behind it, but red is still red. `scripts/check.sh` runs `--all -- --check`,
   which reports without writing, so it is safe beside another session's work.
+
+  **And CI's `rustfmt` is newer than yours, exactly as its clippy is.** A
+  hand-wrapped builder call that local `rustfmt 1.8.0` left alone was collapsed
+  onto one 97-character line by CI's, and the `formatting` job went red on a
+  file the local `--check` called clean. There is no local command that catches
+  this — the toolchain gap is the whole problem — so when that job fails, read
+  the diff out of its log and apply it verbatim rather than re-running `fmt`
+  here and concluding CI is wrong. Writing code the *newer* formatter would
+  produce (fewer manual line breaks; let it wrap) avoids most of it.
 - Disk is tight and several builds run at once. A linker `Bus error`, an
   `rustc-LLVM ERROR: IO failure`, or a sudden burst of `E0463: can't find
   crate` is almost always ENOSPC or a damaged build cache, not your code.
