@@ -114,6 +114,13 @@ ok, none failed. `cargo test -p slate-serverd --test observing` — 13 ok.
 
 ## What this does not do
 
+- ~~**The plain (non-conditional) delete arm's "failed having applied nothing"
+  is still unpinned.**~~ **Closed** — see
+  `2026-09-20-the-child-that-made-the-arm-reachable.md`. A child table declared
+  `ON DELETE RESTRICT` reaches it, which turned out to cost one new table rather
+  than the shared-fixture change estimated below. The original text stands
+  unedited from here on, because the estimate being wrong is the useful part.
+
 - **The plain (non-conditional) delete arm's "failed having applied nothing" is
   still unpinned**, and the two routes I tried are now written beside the tests
   rather than left as an absence. An absent key answers `Ok(false)` by design,

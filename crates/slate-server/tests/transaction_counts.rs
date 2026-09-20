@@ -632,26 +632,186 @@ async fn a_refused_conditional_delete_that_applied_nothing_contributes_no_series
     );
 }
 
-// --- the arm with no test, and the two routes that do not reach it -----------
+// --- the plain delete arm, reachable at last -------------------------------
 //
-// `Command::Delete`'s plain (non-conditional) branch shares the rule above
-// through the same `tally.applied` call, but its "failed having applied
-// nothing" case has no test, because nothing in this fixture can produce it
-// over the wire. Written down rather than left as an absence, since an absence
-// reads as "nobody thought of it":
+// This arm's failure branch had no test for two commits, because nothing in the
+// fixture could make `RecordTransaction::delete` return an error: an absent key
+// answers `Ok(false)` by design, and an unauthorized delete is refused before
+// the session task is dispatched to — measured, by turning this arm's tally
+// back to the unconditional `add` and watching that case stay green.
 //
-//   - **An absent key is not a failure.** `transaction.delete` answers
-//     `Ok(false)`, deliberately, so a caller cannot use the count to learn
-//     whether a row the policy hides was there. The loop keeps going.
-//   - **An unauthorized delete never reaches the arm.** Measured, not assumed:
-//     a principal holding a role with no grant on `docs` gets
-//     `PermissionDenied`, and turning this arm back to the unconditional `add`
-//     leaves that case green — the refusal is raised before the session task is
-//     dispatched to at all, so the tally is never touched.
-//
-// What is left is a genuine kernel error mid-loop: a foreign-key restriction,
-// a storage failure, a fence. This fixture declares no foreign keys, and adding
-// one to a `TableDef` every test in the crate shares is a larger change than
-// the hole is worth. The conditional branch's test one screen up covers the
-// identical call two lines away, which is the reason to stop here rather than
-// the reason there is nothing missing.
+// `common::mentions()` is what closes it: a child of `docs` declared
+// `ON DELETE RESTRICT`, so deleting a referenced row fails inside the loop. It
+// is a new table rather than a constraint on `docs`, because a constraint on
+// `docs` would change what every test in this crate may write, and a child with
+// no rows in it changes nothing until one of these two tests puts one there.
+
+/// A row of `mentions` pointing at `docs` key `doc`.
+fn mention(transaction: &str, id: u64, doc: u64) -> pb::InsertRequest {
+    pb::InsertRequest {
+        transaction: transaction.to_owned(),
+        table: "mentions".to_owned(),
+        rows: vec![common::wire_row(vec![
+            slate_server::convert::value_to_proto(&Value::U64(id)),
+            slate_server::convert::value_to_proto(&Value::U64(doc)),
+        ])],
+        upsert: false,
+        schema: Some(common::claim("mentions")),
+    }
+}
+
+/// Delete `keys` from `docs` with no expectations — the plain loop.
+fn delete_docs(transaction: &str, keys: &[u64]) -> pb::DeleteRequest {
+    pb::DeleteRequest {
+        transaction: transaction.to_owned(),
+        table: "docs".to_owned(),
+        primary_keys: keys
+            .iter()
+            .map(|id| {
+                common::wire_row(vec![slate_server::convert::value_to_proto(&Value::U64(
+                    *id,
+                ))])
+            })
+            .collect(),
+        expected: Vec::new(),
+        schema: Some(common::claim("docs")),
+    }
+}
+
+#[tokio::test]
+async fn a_refused_plain_delete_that_applied_nothing_contributes_no_series() {
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1])))
+        .await
+        .expect("the doc");
+    client
+        .insert(app(mention(&setup, 100, 1)))
+        .await
+        .expect("the mention");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+    let before = seen.calls();
+
+    let txn = begin(&mut client).await;
+    client
+        .delete(app(delete_docs(&txn, &[1])))
+        .await
+        .expect_err("a referenced row cannot be deleted");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    // The loop failed on its first and only key, so it removed nothing. A
+    // `("delete", "docs", 0)` here would say a delete ran and matched no rows,
+    // which is what an operator watches a retention sweep for.
+    assert_eq!(
+        seen.calls(),
+        before,
+        "a refused plain delete reported a series"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_plain_delete_reports_the_rows_it_did_remove() {
+    // The other clause on the arm that had neither. The loop removes keys one
+    // at a time and breaks on the first error, so a batch whose *second* key is
+    // referenced leaves the first one deleted in the transaction's buffer — and
+    // the caller may still commit, which this one does.
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1, 2])))
+        .await
+        .expect("two docs");
+    // Only doc 2 is referenced, so only doc 2 resists deletion.
+    client
+        .insert(app(mention(&setup, 100, 2)))
+        .await
+        .expect("the mention");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+    let before = seen.calls();
+
+    let txn = begin(&mut client).await;
+    client
+        .delete(app(delete_docs(&txn, &[1, 2])))
+        .await
+        .expect_err("the second key is referenced");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    let mut expected = before;
+    expected.push(("delete", "docs".to_owned(), 1));
+    assert_eq!(
+        seen.calls(),
+        expected,
+        "the row the refused delete did remove was dropped"
+    );
+}
+
+#[tokio::test]
+async fn a_plain_delete_counts_the_keys_that_were_there() {
+    // Found by a mutation, not by design: making the loop count `Ok(false)` —
+    // a key that was not there — alongside `Ok(true)` left every other test in
+    // this file green. `a_statement_that_matched_nothing_still_reports_its_zero`
+    // looks like it covers this and does not: it goes through `delete_where`,
+    // which gets its count from the rows it returns, not from this loop.
+    //
+    // The distinction matters beyond arithmetic. A row the policy hides deletes
+    // as absent, deliberately, so that a caller cannot use the count to learn
+    // whether it was there. If an absent key counted, that count would leak
+    // exactly what `Ok(false)` exists to withhold.
+    let (serving, seen) = watched().await;
+    let mut client = serving.client().await;
+
+    let setup = begin(&mut client).await;
+    client
+        .insert(app(insert(&setup, &[1])))
+        .await
+        .expect("one doc");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: setup.clone(),
+        }))
+        .await
+        .expect("setup commit");
+    let before = seen.calls();
+
+    let txn = begin(&mut client).await;
+    // Key 1 is there, key 99 never was. The statement succeeds either way.
+    client
+        .delete(app(delete_docs(&txn, &[1, 99])))
+        .await
+        .expect("deleting an absent key is not an error");
+    client
+        .commit(app(pb::CommitRequest {
+            transaction: txn.clone(),
+        }))
+        .await
+        .expect("commit");
+
+    let mut expected = before;
+    expected.push(("delete", "docs".to_owned(), 1));
+    assert_eq!(seen.calls(), expected, "the absent key was counted");
+}

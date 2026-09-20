@@ -44,6 +44,7 @@ pub const BOOKS: TableId = TableId(4);
 pub const SALES: TableId = TableId(5);
 pub const PRICES: TableId = TableId(6);
 pub const RETIRE: TableId = TableId(7);
+pub const MENTIONS: TableId = TableId(8);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
@@ -175,6 +176,31 @@ pub fn retire() -> TableDef {
         .expect("valid schema")
 }
 
+/// A child of `docs`, referencing it `ON DELETE RESTRICT`.
+///
+/// It exists so a *plain* delete can fail. Every other way to make
+/// `RecordTransaction::delete` return an error needs something this harness
+/// has no setup for: an absent key answers `Ok(false)` by design, and an
+/// unauthorized delete is refused before the session task is dispatched to, so
+/// the error branch of the delete loop in `session.rs` was unreachable from any
+/// test in this crate. `transaction_counts.rs` says what that cost.
+///
+/// The reference is declared here rather than on `docs` on purpose: adding a
+/// constraint *to* `docs` would change what every test in the crate may write,
+/// where a new child changes nothing until a row exists in it — and only one
+/// test puts one there.
+pub fn mentions() -> TableDef {
+    TableDef::builder("mentions", MENTIONS)
+        .column("id", ValueType::U64)
+        .column("doc_id", ValueType::U64)
+        .primary_key(["id"])
+        .foreign_key(
+            slate_schema::ForeignKeyDef::builder("mentions_doc", DOCS).column("doc_id"),
+        )
+        .build()
+        .expect("valid schema")
+}
+
 pub fn catalog() -> Catalog {
     Catalog::from_tables([
         docs(),
@@ -184,6 +210,7 @@ pub fn catalog() -> Catalog {
         sales(),
         prices(),
         retire(),
+        mentions(),
     ])
     .expect("catalog")
 }
@@ -200,6 +227,7 @@ pub fn at(table: &TableDef, column: &str) -> slate_schema::Ordinal {
 pub fn security() -> SecurityCatalog {
     SecurityCatalog::new()
         .grant(Grant::new("app", DOCS, Action::EVERYTHING))
+        .grant(Grant::new("app", MENTIONS, Action::EVERYTHING))
         .grant(Grant::new("app", USERS, Action::EVERYTHING))
         // Four single-action roles on `users`, so a handler that authorises
         // the *wrong* action is caught. With only an `EVERYTHING` role to test

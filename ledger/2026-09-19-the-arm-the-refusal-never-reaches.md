@@ -46,6 +46,13 @@ a new constraint on it changes what every one of them is allowed to write. The
 value is one branch of one arm, whose sibling branch two lines away is tested.
 If a future change needs an FK in that fixture for its own reasons, this becomes
 free and should be taken then.
+>
+> **This reasoning was right about the option it names and wrong about the
+> choice.** A foreign key does not have to go *on* `docs` to make a `docs` row
+> undeletable — it can go on a *new child of* `docs`, which no existing test
+> writes to, so the blast radius is zero until a test puts a row there. I did
+> not think of the third option, and rejected the hole on the cost of the
+> second. See `2026-09-20-the-child-that-made-the-arm-reachable.md`.
 
 **Leave the previous entry as it was.** It is one commit old and nobody has read
 it. But it states a reason that is not the reason, and "stale documentation is
@@ -83,9 +90,12 @@ is what rules out the third route without a fixture change.
 
 ## What this does not do
 
-- **The hole is still open.** This commit documents it accurately; it does not
-  close it. The plain delete arm's failure branch has no test and will not have
-  one until something else gives that fixture a foreign key.
+- ~~**The hole is still open.**~~ **Closed the next day** — see
+  `2026-09-20-the-child-that-made-the-arm-reachable.md`. The prediction in the
+  second half of this bullet ("will not have one until something else gives that
+  fixture a foreign key") was right about the mechanism and wrong about the
+  cost: the foreign key did not have to go *on* a shared table, only on a new
+  child of one, which nothing else in the crate touches.
 - **No other arm was re-examined for the same problem.** I checked the one I had
   named. The other six go through the same `applied` call and are pinned by the
   four tests in the previous commit, but "pinned by a test that can fail" was
