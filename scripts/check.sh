@@ -78,6 +78,8 @@ handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
+client-identity|.|python3 scripts/check_client_identity.py
+client-identity-guard|.|python3 scripts/test_check_client_identity.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .
