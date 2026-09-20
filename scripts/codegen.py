@@ -155,6 +155,42 @@ TYPESCRIPT_FIELDS = {
 }
 
 
+#: How a decoded field is turned back into a wire value, per language.
+#:
+#: The *reason* this is generated rather than left to the caller is sharpest in
+#: Python: `u64` and `i64` both decode to a plain `int`, so a caller assembling
+#: a row by hand has to remember which columns carry which tag, and getting it
+#: wrong is refused by the server rather than by anything nearer. That is the
+#: write-side twin of a wrong ordinal, and the decoders have had a guard
+#: against their version of it since they shipped.
+#:
+#: `{}` is the field expression. A type whose decoded form is already the wire
+#: form passes through unwrapped.
+PYTHON_ENCODE = {
+    "bool": "{}",
+    "bytes": "{}",
+    "string": "{}",
+    "i64": "i64({})",
+    "u64": "u64({})",
+    "f64": "{}",
+    "uuid": "{}",
+    "vector": "Vector({})",
+    "decimal": "{}",
+}
+
+GO_ENCODE = {
+    "bool": "slate.Bool({})",
+    "bytes": "slate.Bytes({})",
+    "string": "slate.String({})",
+    "i64": "slate.Int({})",
+    "u64": "slate.Uint({})",
+    "f64": "slate.Float({})",
+    "uuid": "slate.UUID({})",
+    "vector": "slate.Vector({})",
+    "decimal": "{}",
+}
+
+
 #: A check whose predicate is exactly `column in ('a', 'b', …)` over a string
 #: column describes an enumeration, and an enumeration is a *type* in two of
 #: the three target languages. This matches that shape and nothing else.
@@ -561,6 +597,29 @@ def python_rows(tables: list[dict]) -> list[str]:
                 f"{runtime}, {nullable})),"
             )
         out.extend(["        )", ""])
+
+        # The write side. `u64` and `i64` both decode to a plain `int`, so a
+        # caller assembling a row by hand has to remember which tag each column
+        # wants, and getting it wrong is refused by the *server* — a long way
+        # from the mistake, and with nothing naming the column.
+        out.extend(
+            [
+                "    def to_row(self) -> list[object]:",
+                '        """Encode this row in the column order of '
+                + f'`{table["name"]}`."""',
+                "        return [",
+            ]
+        )
+        for _, column in fields:
+            wrapped = PYTHON_ENCODE[column["type"]].format(f"self.{column['name']}")
+            if column["nullable"]:
+                out.append(
+                    f"            NULL if self.{column['name']} is None "
+                    f"else {wrapped},"
+                )
+            else:
+                out.append(f"            {wrapped},")
+        out.extend(["        ]", ""])
     return out
 
 
@@ -647,6 +706,39 @@ def go_rows(tables: list[dict]) -> list[str]:
                 )
             out.append("\t}")
         out.extend(["\treturn out, nil", "}", ""])
+
+        # The write side. Go keeps `uint64` and `int64` apart, so the tag
+        # cannot be confused the way it can in Python or TypeScript; what this
+        # buys here is the *order*, which is what the decoder buys from the
+        # other end.
+        out.extend(
+            [
+                f"// Row encodes r in the column order of `{table['name']}`.",
+                "//",
+                "// The twin of the decoder above. A caller building this slice by hand",
+                "// gets no help with the order, and a transposition the server happens",
+                "// to accept is a row written wrong with nothing to say so.",
+                f"func (r {name}) Row() []slate.Value {{",
+                f"\tout := make([]slate.Value, 0, {width})",
+            ]
+        )
+        for _, column in fields:
+            field = go_field(column["name"])
+            if column["nullable"]:
+                encoded = GO_ENCODE[column["type"]].format(f"*r.{field}")
+                out.extend(
+                    [
+                        f"\tif r.{field} == nil {{",
+                        "\t\tout = append(out, slate.Null{})",
+                        "\t} else {",
+                        f"\t\tout = append(out, {encoded})",
+                        "\t}",
+                    ]
+                )
+            else:
+                encoded = GO_ENCODE[column["type"]].format(f"r.{field}")
+                out.append(f"\tout = append(out, {encoded})")
+        out.extend(["\treturn out", "}", ""])
     return out
 
 
@@ -697,7 +789,52 @@ def typescript_rows(tables: list[dict]) -> list[str]:
                 + (" | null," if column["nullable"] else ",")
             )
         out.extend(["  };", "}", ""])
+
+        # The write side, the twin of the decoder above. It buys the order and
+        # the tag together: `int` and `uint` are both `bigint` here, so a
+        # hand-built row can carry the wrong one and typecheck perfectly.
+        out.extend(
+            [
+                "/**",
+                f" * Encode one row of `{table['name']}` in the catalog column order.",
+                " *",
+                " * `int` and `uint` are both `bigint` on this side, so a hand-built row",
+                " * can carry the wrong tag and still typecheck. This cannot.",
+                " */",
+                f"export function encode{name}(row: {name}): Value[] {{",
+                "  return [",
+            ]
+        )
+        for _, column in fields:
+            _, tag = TYPESCRIPT_FIELDS[column["type"]]
+            ref = f"row.{column['name']}"
+            live = f'{{ kind: "{tag}", value: {ref} }}'
+            if column["nullable"]:
+                out.append(f'    {ref} === null ? {{ kind: "null" }} : {live},')
+            else:
+                out.append(f"    {live},")
+        out.extend(["  ];", "}", ""])
     return out
+
+
+def python_value_imports(tables: list[dict]) -> str:
+    """The `slate.values` names this catalog's generated code refers to.
+
+    `Null` is used by the decoder's null test and `NULL` by the encoder, so a
+    catalog with any column at all needs both; the rest follow the column
+    types actually present.
+    """
+    needed = {"Null", "NULL"}
+    for table in tables:
+        for _, column in row_columns(table):
+            kind = column["type"]
+            if kind in ("i64", "u64"):
+                needed.add(kind)
+            elif kind == "decimal":
+                needed.add("Units")
+            elif kind == "vector":
+                needed.add("Vector")
+    return ", ".join(sorted(needed))
 
 
 def python_module(tables: list[dict]) -> str:
@@ -730,7 +867,14 @@ def python_module(tables: list[dict]) -> str:
         ),
         "",
         "from slate import Column, Table, ValueType",
-        "from slate.values import Null, Units",
+        # Exactly the value names this catalog's encoders and decoders use, and
+        # no others. An unused import is what ruff strips out of a generated
+        # file, and a generated file a linter edits has drifted by the next
+        # `--check`; a *missing* one is worse and was how this was found — the
+        # first version of the encoders imported nothing new and emitted
+        # `u64(...)`, which every static check in CI passed and which raised
+        # `NameError` the moment a row was encoded.
+        f"from slate.values import {python_value_imports(tables)}",
         "",
         "__all__ = [",
     ]

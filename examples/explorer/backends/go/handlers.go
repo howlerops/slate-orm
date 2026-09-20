@@ -771,15 +771,23 @@ func (s *server) predicateWrite(ctx context.Context, session *slate.Session, bod
 	}); err != nil {
 		return nil, err
 	}
+	// Built through the *generated* encoder rather than as a positional list.
+	// The eight values this replaces were in catalog order with nothing
+	// checking that order — the write side of the failure the generated
+	// decoders exist to catch, and the reason the encoders are not another
+	// thing that is generated, compiled and never called.
 	rows := make([][]slate.Value, 0, 4)
 	for n := uint64(0); n < 4; n++ {
-		rows = append(rows, []slate.Value{
-			slate.Uint(predicateFirst + n), slate.Uint(1),
-			slate.String(fmt.Sprintf("Predicate %d", n)),
-			slate.Int(int64(2000 + n)), slate.Float(3.0),
-			slate.Int(1767225600), slate.Vector([]float32{0.1, 0.2, 0.3, 0.4}),
-			slate.Units(1000),
-		})
+		rows = append(rows, schema.Books{
+			Id:        predicateFirst + n,
+			AuthorId:  1,
+			Title:     fmt.Sprintf("Predicate %d", n),
+			Year:      int64(2000 + n),
+			Rating:    3.0,
+			Released:  1767225600,
+			Embedding: []float32{0.1, 0.2, 0.3, 0.4},
+			Price:     slate.Units(1000),
+		}.Row())
 	}
 	if _, err := session.Insert(ctx, "books", rows...); err != nil {
 		return nil, err

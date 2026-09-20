@@ -357,3 +357,123 @@ func TestEveryDeclaredForeignKeyIsGenerated(t *testing.T) {
 		}
 	}
 }
+
+// --- the write side ----------------------------------------------------------
+//
+// The encoders are the decoders' twin and arrived much later: until they
+// existed, a caller built a row to insert as a positional list with nothing
+// checking the order, which is the failure the decoders exist to catch, from
+// the other end. Go's own types keep uint64 and int64 apart, so what is at
+// risk here is the order rather than the tag.
+
+func TestRowAttachesTheTagEachColumnDeclares(t *testing.T) {
+	book, err := ScanBooks(bookRow())
+	if err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	row := book.Row()
+	if _, ok := row[0].(slate.Uint); !ok {
+		t.Errorf("books.id encoded as %T, want slate.Uint", row[0])
+	}
+	if _, ok := row[3].(slate.Int); !ok {
+		t.Errorf("books.year encoded as %T, want slate.Int", row[3])
+	}
+	if _, ok := row[7].(slate.Units); !ok {
+		t.Errorf("books.price encoded as %T, want slate.Units", row[7])
+	}
+}
+
+func TestRowWritesANullForAnAbsentValue(t *testing.T) {
+	absent := Shipments{Id: 9, BookId: 7, Status: "shipped"}
+	if _, ok := absent.Row()[3].(slate.Null); !ok {
+		t.Errorf("an absent deleted_at encoded as %T, want slate.Null", absent.Row()[3])
+	}
+	at := int64(42)
+	present := Shipments{Id: 9, BookId: 7, Status: "shipped", DeletedAt: &at}
+	if got, ok := present.Row()[3].(slate.Int); !ok || int64(got) != 42 {
+		t.Errorf("a present deleted_at encoded as %#v", present.Row()[3])
+	}
+}
+
+// roundTrip holds one well-formed instance of each generated type.
+//
+// An oracle rather than a fixed expectation: each case agrees with an
+// independent implementation — the decoder — rather than with a list somebody
+// typed, so it catches an encoder ordinal nobody thought to assert on. What it
+// cannot catch is both being wrong the same way, which the fixed cases above
+// are for.
+var roundTrip = map[string]func(t *testing.T){
+	"Authors": func(t *testing.T) {
+		want := Authors{Id: 3, Name: "Ursula", Country: "US", Born: 1929}
+		got, err := ScanAuthors(want.Row())
+		if err != nil || got != want {
+			t.Errorf("round trip: got %#v, %v; want %#v", got, err, want)
+		}
+	},
+	"Books": func(t *testing.T) {
+		want, err := ScanBooks(bookRow())
+		if err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		got, err := ScanBooks(want.Row())
+		if err != nil {
+			t.Fatalf("round trip: %v", err)
+		}
+		// A slice field makes Books uncomparable with ==, so the columns that
+		// matter are checked one by one.
+		if got.Id != want.Id || got.Title != want.Title || got.Year != want.Year ||
+			got.Price != want.Price || len(got.Embedding) != len(want.Embedding) {
+			t.Errorf("round trip: got %#v, want %#v", got, want)
+		}
+	},
+	"Sales": func(t *testing.T) {
+		want := Sales{Id: 11, BookId: 7, Units: 430}
+		got, err := ScanSales(want.Row())
+		if err != nil || got != want {
+			t.Errorf("round trip: got %#v, %v; want %#v", got, err, want)
+		}
+	},
+	"Editions": func(t *testing.T) {
+		want := Editions{Id: 5, BookId: 7, Format: "paperback"}
+		got, err := ScanEditions(want.Row())
+		if err != nil || got != want {
+			t.Errorf("round trip: got %#v, %v; want %#v", got, err, want)
+		}
+	},
+	"Shipments": func(t *testing.T) {
+		want := Shipments{Id: 9, BookId: 7, Status: "shipped"}
+		got, err := ScanShipments(want.Row())
+		if err != nil || got.Id != want.Id || got.Status != want.Status ||
+			got.DeletedAt != nil {
+			t.Errorf("round trip: got %#v, %v; want %#v", got, err, want)
+		}
+	},
+}
+
+func TestEveryRowSurvivesARoundTrip(t *testing.T) {
+	for name, run := range roundTrip {
+		t.Run(name, run)
+	}
+}
+
+func TestEveryGeneratedEncoderIsExercised(t *testing.T) {
+	// The same guard the decoders have: a sixth table gets an encoder, this
+	// map is hand-written, and without a check the new one is covered by
+	// nobody and nobody finds out.
+	source, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("reading the generated file: %v", err)
+	}
+	declared := regexp.MustCompile(`(?m)^func \(r (\w+)\) Row\(\)`).FindAllStringSubmatch(string(source), -1)
+	if len(declared) < 5 {
+		t.Fatalf("found %d encoders; the pattern is not matching", len(declared))
+	}
+	for _, match := range declared {
+		if _, ok := roundTrip[match[1]]; !ok {
+			t.Errorf("%s has a generated Row() and nothing runs it", match[1])
+		}
+	}
+	if len(roundTrip) != len(declared) {
+		t.Errorf("roundTrip has %d entries, schema.go declares %d", len(roundTrip), len(declared))
+	}
+}

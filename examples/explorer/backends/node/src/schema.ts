@@ -131,6 +131,21 @@ export function decodeAuthors(row: Value[]): Authors {
 }
 
 /**
+ * Encode one row of `authors` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeAuthors(row: Authors): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "string", value: row.name },
+    { kind: "string", value: row.country },
+    { kind: "int", value: row.born },
+  ];
+}
+
+/**
  * Every `CHECK` on `books`, by name.
  *
  * Published rather than restated: checks are outside the schema
@@ -177,6 +192,25 @@ export function decodeBooks(row: Value[]): Books {
 }
 
 /**
+ * Encode one row of `books` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeBooks(row: Books): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.author_id },
+    { kind: "string", value: row.title },
+    { kind: "int", value: row.year },
+    { kind: "float", value: row.rating },
+    { kind: "int", value: row.released },
+    { kind: "vector", value: row.embedding },
+    { kind: "units", value: row.price },
+  ];
+}
+
+/**
  * Every foreign key on `sales`, by name.
  *
  * The parent is the point. A `Relation` names a relationship by the
@@ -216,6 +250,20 @@ export function decodeSales(row: Value[]): Sales {
 }
 
 /**
+ * Encode one row of `sales` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeSales(row: Sales): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "int", value: row.units },
+  ];
+}
+
+/**
  * Every foreign key on `editions`, by name.
  *
  * The parent is the point. A `Relation` names a relationship by the
@@ -252,6 +300,20 @@ export function decodeEditions(row: Value[]): Editions {
     book_id: field(row, 1, "editions", "book_id", "uint", false) as bigint,
     format: field(row, 2, "editions", "format", "string", false) as string,
   };
+}
+
+/**
+ * Encode one row of `editions` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeEditions(row: Editions): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "string", value: row.format },
+  ];
 }
 
 /**
@@ -305,4 +367,19 @@ export function decodeShipments(row: Value[]): Shipments {
     status: field(row, 2, "shipments", "status", "string", false) as "pending" | "shipped" | "delivered",
     deleted_at: field(row, 3, "shipments", "deleted_at", "int", true) as bigint | null,
   };
+}
+
+/**
+ * Encode one row of `shipments` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeShipments(row: Shipments): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "string", value: row.status },
+    row.deleted_at === null ? { kind: "null" } : { kind: "int", value: row.deleted_at },
+  ];
 }

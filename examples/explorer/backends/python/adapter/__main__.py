@@ -630,14 +630,28 @@ class Adapter:
         # Clean slate. A predicate delete is the tidiest way to say "whatever
         # is left from last time", and it exercises the feature on the way in.
         session.delete_where(mine.where(mine.c.id.ge(u64(first))))
+        # Built through the *generated* encoder rather than as a positional
+        # list. The list this replaces was eight values in catalog order with
+        # nothing checking either the order or the tags, which is the write
+        # side of the failure the generated decoders exist to catch — and
+        # `u64` and `i64` are both `int` here, so a swapped pair would have
+        # been refused by the server with the client none the wiser.
+        #
+        # It is also what stops the encoders being another thing that is
+        # generated, compiled and never called.
         session.insert(
             BOOKS,
             [
-                [
-                    u64(first + n), u64(1), f"Predicate {n}", i64(2000 + n),
-                    3.0, i64(1767225600), Vector((0.1, 0.2, 0.3, 0.4)),
-                    Units(1000),
-                ]
+                Books(
+                    id=first + n,
+                    author_id=1,
+                    title=f"Predicate {n}",
+                    year=2000 + n,
+                    rating=3.0,
+                    released=1767225600,
+                    embedding=(0.1, 0.2, 0.3, 0.4),
+                    price=Units(1000),
+                ).to_row()
                 for n in range(4)
             ],
         )

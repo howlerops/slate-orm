@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from slate.values import Null, Units
+from slate.values import NULL, Null, Units
 
 from .schema import (
     BOOKS_CHECKS,
@@ -230,3 +230,66 @@ def test_every_declared_foreign_key_is_generated() -> None:
     # two steps in opposite directions through one parent.
     for name, key in generated.items():
         assert key["parent"] == "books", f"{name} points at {key['parent']}"
+
+
+# --- the write side ----------------------------------------------------------
+#
+# The encoders are the decoders' twin and arrived much later: until they
+# existed, a caller built a row to insert as a positional list with nothing
+# checking the order, which is the same failure the decoders exist to catch,
+# from the other end. In Python it is worse than order alone — `u64` and `i64`
+# both decode to a plain `int`, so the *tag* has to be re-attached per column
+# and a caller has to remember which.
+
+
+def test_to_row_reattaches_the_tag_the_column_declares() -> None:
+    # The assertion the decoders have no equivalent of. `id` is `u64` and
+    # `year` is `i64`; both are `int` on the way in and the wire needs them
+    # told apart. A row built by hand with these swapped is refused by the
+    # server, which is a long way from the mistake.
+    row = Books.from_row(book_row()).to_row()
+    assert type(row[0]).__name__ == "u64", "books.id should encode as u64"
+    assert type(row[3]).__name__ == "i64", "books.year should encode as i64"
+    assert isinstance(row[7], Units), "books.price should encode as Units"
+
+
+def test_to_row_encodes_a_null_for_an_absent_value() -> None:
+    absent = Shipments(id=9, book_id=7, status="shipped", deleted_at=None)
+    assert absent.to_row()[3] is NULL
+
+    present = Shipments(id=9, book_id=7, status="shipped", deleted_at=1_700_000_042)
+    assert present.to_row()[3] == 1_700_000_042
+
+
+@pytest.mark.parametrize("name", sorted(DECODERS))
+def test_every_row_survives_a_round_trip(name: str) -> None:
+    """decode(encode(row)) == row, for every generated type.
+
+    An oracle rather than a fixed expectation: it agrees with an independent
+    implementation — the decoder — rather than with a list somebody typed, so
+    it catches an encoder ordinal nobody thought to assert on. What it cannot
+    catch is the encoder and the decoder being wrong the *same* way, which is
+    what the fixed per-column cases above are for.
+    """
+    original = ROUND_TRIP[name]
+    again = type(original).from_row(original.to_row())
+    assert again == original
+
+
+#: One well-formed instance of each generated type, for the round trip.
+ROUND_TRIP = {
+    "Authors": Authors(id=3, name="Ursula", country="US", born=1929),
+    "Books": Books.from_row(book_row()),
+    "Sales": Sales(id=11, book_id=7, units=430),
+    "Editions": Editions(id=5, book_id=7, format="paperback"),
+    "Shipments": Shipments(id=9, book_id=7, status="shipped", deleted_at=None),
+}
+
+
+def test_every_generated_type_has_a_round_trip() -> None:
+    # The same guard the decoders have, for the same reason: a sixth table
+    # gets an encoder and this table is hand-written, so without a check the
+    # new one is covered by nobody and nobody finds out.
+    assert set(ROUND_TRIP) == set(DECODERS), (
+        "every generated type needs a round-trip instance"
+    )

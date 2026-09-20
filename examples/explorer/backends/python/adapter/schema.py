@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from slate import Column, Table, ValueType
-from slate.values import Null, Units
+from slate.values import NULL, Null, Units, Vector, i64, u64
 
 __all__ = [
     "AUTHORS",
@@ -188,6 +188,15 @@ class Authors:
             born=cast("int", _field(values, 3, "authors", "born", int, False)),
         )
 
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `authors`."""
+        return [
+            u64(self.id),
+            self.name,
+            self.country,
+            i64(self.born),
+        ]
+
 
 @dataclass(frozen=True)
 class Books:
@@ -220,6 +229,19 @@ class Books:
             price=cast("Units", _field(values, 7, "books", "price", Units, False)),
         )
 
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `books`."""
+        return [
+            u64(self.id),
+            u64(self.author_id),
+            self.title,
+            i64(self.year),
+            self.rating,
+            i64(self.released),
+            Vector(self.embedding),
+            self.price,
+        ]
+
 
 @dataclass(frozen=True)
 class Sales:
@@ -242,6 +264,14 @@ class Sales:
             units=cast("int", _field(values, 2, "sales", "units", int, False)),
         )
 
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `sales`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            i64(self.units),
+        ]
+
 
 @dataclass(frozen=True)
 class Editions:
@@ -263,6 +293,14 @@ class Editions:
             book_id=cast("int", _field(values, 1, "editions", "book_id", int, False)),
             format=cast("str", _field(values, 2, "editions", "format", str, False)),
         )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `editions`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            self.format,
+        ]
 
 
 @dataclass(frozen=True)
@@ -287,3 +325,12 @@ class Shipments:
             status=cast("Literal['pending', 'shipped', 'delivered']", _field(values, 2, "shipments", "status", str, False)),
             deleted_at=cast("int | None", _field(values, 3, "shipments", "deleted_at", int, True)),
         )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `shipments`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            self.status,
+            NULL if self.deleted_at is None else i64(self.deleted_at),
+        ]

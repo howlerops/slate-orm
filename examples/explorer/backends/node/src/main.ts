@@ -86,6 +86,7 @@ import {
   TABLES as CATALOG,
   decodeAuthors,
   decodeBooks,
+  encodeBooks,
   decodeEditions,
   decodeSales,
   decodeShipments,
@@ -689,18 +690,25 @@ class Adapter {
     // Clean slate. A predicate delete is the tidiest way to say "whatever is
     // left from last time", and it exercises the feature on the way in.
     await session.deleteWhere({ table: "books", filter: mine });
+    // Built through the *generated* encoder rather than as a positional list.
+    // The eight values this replaces were in catalog order with nothing
+    // checking the order or the tags — and `int` and `uint` are both `bigint`
+    // here, so a swapped pair typechecks and is refused by the server. It is
+    // also what stops the encoders being generated, compiled and never called.
     const rows: Value[][] = [];
     for (let n = 0n; n < 4n; n++) {
-      rows.push([
-        uint(first + n),
-        uint(1n),
-        { kind: "string", value: `Predicate ${n}` },
-        { kind: "int", value: 2000n + n },
-        { kind: "float", value: 3 },
-        { kind: "int", value: 1767225600n },
-        vector([0.1, 0.2, 0.3, 0.4]),
-        units(1000n),
-      ]);
+      rows.push(
+        encodeBooks({
+          id: first + n,
+          author_id: 1n,
+          title: `Predicate ${n}`,
+          year: 2000n + n,
+          rating: 3,
+          released: 1767225600n,
+          embedding: [0.1, 0.2, 0.3, 0.4],
+          price: 1000n,
+        }),
+      );
     }
     await session.insert("books", ...rows);
 

@@ -127,6 +127,20 @@ func ScanAuthors(row []slate.Value) (Authors, error) {
 	return out, nil
 }
 
+// Row encodes r in the column order of `authors`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Authors) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.String(r.Name))
+	out = append(out, slate.String(r.Country))
+	out = append(out, slate.Int(r.Born))
+	return out
+}
+
 // BooksChecks is every `CHECK` on `books`, by name.
 //
 // Published rather than restated: checks are outside the schema
@@ -234,6 +248,24 @@ func ScanBooks(row []slate.Value) (Books, error) {
 	return out, nil
 }
 
+// Row encodes r in the column order of `books`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Books) Row() []slate.Value {
+	out := make([]slate.Value, 0, 8)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.AuthorId))
+	out = append(out, slate.String(r.Title))
+	out = append(out, slate.Int(r.Year))
+	out = append(out, slate.Float(r.Rating))
+	out = append(out, slate.Int(r.Released))
+	out = append(out, slate.Vector(r.Embedding))
+	out = append(out, r.Price)
+	return out
+}
+
 // SalesForeignKeys is every foreign key on `sales`, by name.
 //
 // The parent is the point. A `Relation` names a relationship by the
@@ -294,6 +326,19 @@ func ScanSales(row []slate.Value) (Sales, error) {
 	return out, nil
 }
 
+// Row encodes r in the column order of `sales`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Sales) Row() []slate.Value {
+	out := make([]slate.Value, 0, 3)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.Int(r.Units))
+	return out
+}
+
 // EditionsForeignKeys is every foreign key on `editions`, by name.
 //
 // The parent is the point. A `Relation` names a relationship by the
@@ -352,6 +397,19 @@ func ScanEditions(row []slate.Value) (Editions, error) {
 		return out, fmt.Errorf("editions.format is not nullable and came back null")
 	}
 	return out, nil
+}
+
+// Row encodes r in the column order of `editions`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Editions) Row() []slate.Value {
+	out := make([]slate.Value, 0, 3)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.String(r.Format))
+	return out
 }
 
 // ShipmentsStatusValues is every value the `shipments`
@@ -440,4 +498,22 @@ func ScanShipments(row []slate.Value) (Shipments, error) {
 		out.DeletedAt = nil
 	}
 	return out, nil
+}
+
+// Row encodes r in the column order of `shipments`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Shipments) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.String(r.Status))
+	if r.DeletedAt == nil {
+		out = append(out, slate.Null{})
+	} else {
+		out = append(out, slate.Int(*r.DeletedAt))
+	}
+	return out
 }
