@@ -1456,6 +1456,33 @@ impl<'a> RecordTransaction<'a> {
         // it a thousand times.
         let retired = self.retired_rows_reachable(context, table);
 
+        // And the filters themselves, for the same reason and with a
+        // measurement behind it rather than an argument. `permits_row_with`
+        // and `check_row` each *build* an `Expr` — the tenant restriction
+        // conjoined with the OR of every applicable policy — and the loop
+        // below called them twice per row.
+        // `ledger/2026-09-20-the-number-that-was-not-there.md` measured this
+        // path, found the grant scan invisible, and named this allocation as
+        // the cost that was left. It is ~7% of a 5,000-row `update_many`.
+        //
+        // **Safe only because a batch is one statement.** A policy is a
+        // function of the context and may read a clock — demonstrated by
+        // `an_undo_window_can_be_a_policy_rather_than_a_role` — so a filter
+        // held across two statements could apply yesterday's window to today's
+        // write. Held across the rows of a single `write_many` it cannot:
+        // every row belongs to one statement the caller submitted at one
+        // instant, and evaluating them against one another's clocks would be
+        // the anomaly rather than the fix.
+        let existing_filter =
+            self.security
+                .row_filter_with(context, table, Action::Update, retired)?;
+        let insert_check =
+            self.security
+                .row_filter_with(context, table, Action::Insert, Deleted::Visible)?;
+        let update_check =
+            self.security
+                .row_filter_with(context, table, Action::Update, Deleted::Visible)?;
+
         // Everything about every row is decided before any of it is written.
         // A check that failed halfway would leave a prefix of the batch
         // buffered, and a caller that committed anyway — having seen the error
@@ -1494,13 +1521,7 @@ impl<'a> RecordTransaction<'a> {
                     // not name the row — the line is that naming a primary key
                     // means meaning *that* row, and matching a predicate means
                     // meaning the live ones.
-                    if !self.security.permits_row_with(
-                        context,
-                        table,
-                        Action::Update,
-                        current,
-                        retired,
-                    )? {
+                    if !existing_filter.admits(current) {
                         return Err(KernelError::RowNotFound {
                             table: table.name().to_owned(),
                         });
@@ -1508,12 +1529,32 @@ impl<'a> RecordTransaction<'a> {
                 }
                 (None, BulkMode::Insert | BulkMode::Upsert) => {}
             }
-            let action = if previous.is_some() {
-                Action::Update
-            } else {
-                Action::Insert
-            };
-            self.check_row(context, table, action, row)?;
+            // **The `insert_check` arm here is redundant, and is kept
+            // deliberately.** Every row that reaches it has no `previous`,
+            // which only happens under `Insert` or `Upsert` — and both of
+            // those satisfy `may_insert()`, so the pre-check above has already
+            // run the identical filter over every row in the batch. Swapping
+            // the two arms therefore breaks no test, and that is a fact about
+            // the code rather than a missing case: the `purge_deleted`
+            // predicate in this file carries the same note for the same reason.
+            //
+            // It stays because the redundancy is one edit away from not being
+            // one. A future mode that writes new rows without `may_insert()`,
+            // or a pre-check narrowed to the rows it can cheaply judge, would
+            // make this the only `WITH CHECK` a fresh row ever gets — and the
+            // failure would be a policy silently not applied, which is the
+            // worst kind. `an_upsert_must_satisfy_the_insert_policy_even_for_a
+            // _row_that_exists` pins the pre-check that makes it redundant, so
+            // removing *that* is what fails loudly.
+            self.check_row_against(
+                table,
+                row,
+                if previous.is_some() {
+                    &update_check
+                } else {
+                    &insert_check
+                },
+            )?;
             self.check_foreign_keys(context, table, row, previous.as_ref(), &parents)
                 .await?;
             previous_rows.push(previous);
@@ -2539,6 +2580,19 @@ impl<'a> RecordTransaction<'a> {
         action: Action,
         row: &Row,
     ) -> Result<()> {
+        let filter = self
+            .security
+            .row_filter_with(context, table, action, Deleted::Visible)?;
+        self.check_row_against(table, row, &filter)
+    }
+
+    /// [`check_row`](Self::check_row) against a filter already built.
+    ///
+    /// The bulk path builds one filter per action for the whole batch; see
+    /// `write_many`. One body rather than two so the rule cannot drift, which
+    /// matters here because the soft-delete guard below is easy to forget in a
+    /// second copy and its absence would be a silently accepted stamp.
+    fn check_row_against(&self, table: &TableDef, row: &Row, filter: &Expr) -> Result<()> {
         if let Some(column) = table.soft_delete()
             && !matches!(row.get(column), None | Some(Value::Null))
         {
@@ -2549,10 +2603,7 @@ impl<'a> RecordTransaction<'a> {
                     .map_or_else(|| column.0.to_string(), |c| c.name().to_owned()),
             });
         }
-        if self
-            .security
-            .permits_row_with(context, table, action, row, Deleted::Visible)?
-        {
+        if filter.admits(row) {
             Ok(())
         } else {
             Err(KernelError::RowCheckFailed {

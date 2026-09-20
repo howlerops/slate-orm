@@ -1998,3 +1998,98 @@ async fn an_undo_window_can_be_a_policy_rather_than_a_role() {
         .await
         .expect("a live row is not subject to an undo window");
 }
+
+#[tokio::test]
+async fn an_upsert_must_satisfy_the_insert_policy_even_for_a_row_that_exists() {
+    // Documented in `write_many` and, until now, asserted nowhere:
+    //
+    // > `Action::Insert` even for an upsert: the tenant restriction is the
+    // > same expression either way, so a row outside the caller's tenant is
+    // > refused by both, and a row inside it that turns out to exist still
+    // > takes the full `Action::Update` check in the loop below.
+    //
+    // It is a real decision with a real consequence — an upsert is *not* "an
+    // update when the row exists" as far as policy goes — and it is the reason
+    // a mutation swapping the loop's two filters survives the whole suite:
+    // every row that reaches the loop's insert branch has already been checked
+    // against the identical filter by the pre-check above it. See the note
+    // there.
+    //
+    // The policies are deliberately lopsided: `Insert` admits only `note`,
+    // `Update` admits anything. If an upsert of an *existing* row were judged
+    // by `Update` alone, writing `memo` over row 1 would be allowed.
+    let security = slate_kernel::SecurityCatalog::new()
+        .grant(slate_kernel::Grant::new(
+            "reader",
+            DOCS,
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Update,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+        ))
+        // The companion, for the reason `an_undo_window_can_be_a_policy_rather
+        // _than_a_role` explains at length: RLS fails closed, so an action with
+        // no policy admits nothing.
+        .policy(slate_kernel::Policy::new(
+            "reads_and_deletes_are_unrestricted",
+            DOCS,
+            [
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ))
+        .policy(slate_kernel::Policy::new(
+            "only_notes_may_be_created",
+            DOCS,
+            [slate_kernel::Action::Insert],
+            |_: &SecurityContext| {
+                slate_kernel::Expr::eq(slate_schema::Ordinal(1), Value::Str("note".to_owned()))
+            },
+        ))
+        .policy(slate_kernel::Policy::new(
+            "anything_may_be_edited",
+            DOCS,
+            [slate_kernel::Action::Update],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(5_000)));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.insert(&reader(), table, &doc(1, "note"))
+        .await
+        .expect("a note may be created");
+    txn.commit().await.expect("commit");
+
+    // The row exists, and the upsert is still refused: the insert policy
+    // applies to every row of a batch that *may* insert, before storage is
+    // read at all.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let refused = txn
+        .upsert_many(&reader(), table, &[doc(1, "memo")])
+        .await
+        .expect_err("an upsert is judged by the insert policy too");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowCheckFailed { .. }),
+        "{refused:?}"
+    );
+    drop(txn);
+
+    // And `update_many`, which cannot insert, is judged by `Update` alone —
+    // which is what makes the paragraph above a decision rather than an
+    // accident of where the check sits.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update_many(&reader(), table, &[doc(1, "memo")])
+        .await
+        .expect("an update names an existing row and takes the update policy");
+    txn.commit().await.expect("commit");
+    assert_eq!(state(&store).await, vec![(1, None)]);
+}
