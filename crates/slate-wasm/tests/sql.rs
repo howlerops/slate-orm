@@ -212,7 +212,9 @@ fn filter_strategy() -> BoxedStrategy<FilterSpec> {
     (0u32..4)
         .prop_flat_map(|column| {
             let ops: Vec<&'static str> = if column == 2 {
-                vec!["eq", "ne", "lt", "le", "gt", "ge", "like", "ilike", "contains"]
+                vec![
+                    "eq", "ne", "lt", "le", "gt", "ge", "like", "ilike", "contains",
+                ]
             } else {
                 vec!["eq", "ne", "lt", "le", "gt", "ge"]
             };

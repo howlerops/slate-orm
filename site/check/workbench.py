@@ -645,8 +645,12 @@ def main() -> int:
         f"tables: {seen['tables']}",
     )
     check(
+        # Three: `trips.pickup_zone`, `books.author_id`, and `books.title`,
+        # which is the inverted one. The tree does not distinguish an inverted
+        # index from an ordinary one and does not claim to — the mark says the
+        # column is indexed, which it is.
         "and marks the indexed columns and the primary keys",
-        len(seen["indexMarks"]) == 2 and len(seen["keyMarks"]) == 4,
+        len(seen["indexMarks"]) == 3 and len(seen["keyMarks"]) == 4,
         f"idx: {seen['indexMarks']}, pk: {seen['keyMarks']}",
     )
     check(
@@ -749,8 +753,10 @@ def main() -> int:
         f"console hidden {storage['consoleHidden']}, tree hidden {storage['treeHidden']}",
     )
     check(
+        # Seven: four tables' rows, and three indexes — `by_pickup_zone`,
+        # `by_author` and `by_title_text`.
         "the whole database is there: every table and every index",
-        len(storage["leaves"]) == 6
+        len(storage["leaves"]) == 7
         and any(
             "trips/" in line and "100,000 keys" in line for line in storage["leaves"]
         )
