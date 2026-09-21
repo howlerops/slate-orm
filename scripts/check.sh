@@ -55,6 +55,23 @@ CI_ENV=${SLATE_CI_ENV:-/tmp/ci-env}
 FAILED=""
 PASSED=0
 
+# `ci.yml` sets these once at workflow level, so every step in every job runs
+# under them and no individual `run:` line mentions them. That invisibility is
+# the point of exporting them here: `RUSTFLAGS=-D warnings` turns a *warning*
+# into a failed job, so `cargo clippy --workspace --all-targets` run without it
+# is a materially weaker check than the identical command in CI — and the
+# command text, which is all `test_check_sh.py` could compare, is identical.
+#
+# That gap is not theoretical. `clippy::indexing_slicing` on a `words[i % 16]`
+# warned here, exited zero, and failed the `clippy, test` job. The local run
+# was green and the command was the same one.
+#
+# `scripts/test_check_sh.py` now holds this list to `ci.yml`'s own `env:`
+# block, so a variable added there fails a test until it is either exported
+# here or given a reason it cannot be.
+export CARGO_TERM_COLOR=always
+export RUSTFLAGS="-D warnings"
+
 # Each check is a name, a directory and a command. Kept as one list so that
 # `--list` and the runner cannot disagree about what "every check" means.
 checks() {

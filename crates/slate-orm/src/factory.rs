@@ -603,9 +603,20 @@ fn phrase(word: u64) -> String {
         "anchor", "bramble", "cinder", "delta", "ember", "fathom", "grove", "harbor", "inlet",
         "juniper", "kestrel", "lantern", "meadow", "north", "orchard", "quarry",
     ];
-    let adjective = ADJECTIVES[(word % 16) as usize];
-    let noun = NOUNS[((word >> 8) % 16) as usize];
-    format!("{adjective} {noun}")
+    format!("{} {}", pick(&ADJECTIVES, word), pick(&NOUNS, word >> 8))
+}
+
+/// One word of a list, chosen by a hash.
+///
+/// `get` rather than `[]` because `clippy::indexing_slicing` cannot see that
+/// `% len` is in range and CI runs with `-D warnings`. The fallback is
+/// unreachable and is a word rather than an `unwrap` on purpose: if the
+/// reasoning above is ever wrong, a dull fixture is a better outcome than a
+/// panic from inside somebody's seed.
+fn pick<'a>(words: &[&'a str], word: u64) -> &'a str {
+    let len = words.len() as u64;
+    let at = if len == 0 { 0 } else { (word % len) as usize };
+    words.get(at).copied().unwrap_or("slate")
 }
 
 /// A uuid from two words, so it is a function of the inputs like everything else.

@@ -15,6 +15,15 @@ it is in `ELSEWHERE` below with a reason it cannot be — and adding a step to
 pattern the conformance runner already uses, for the same reason: a list you
 are forced to edit is a list that stays true.
 
+**And every workflow-level `env:` variable, which was the hole.** Comparing
+commands is not enough, because `ci.yml` sets `RUSTFLAGS: -D warnings` once at
+the top and no `run:` line mentions it. `cargo clippy --workspace
+--all-targets` is therefore a *different check* in CI from the byte-identical
+command in `check.sh`: a warn-level lint exits zero here and fails the job
+there. That happened — `clippy::indexing_slicing` on an in-range index — after
+a green local run of this very script. The script now exports those variables
+and `environment_matches` below holds the two lists together.
+
 Run directly: `python3 scripts/test_check_sh.py`.
 """
 
@@ -84,6 +93,81 @@ ELSEWHERE_BLOCKS = {
 }
 
 
+#: Workflow-level `env:` variables `check.sh` deliberately does not export.
+#:
+#: Same shape and same reason as `ELSEWHERE`: a variable that changes what a
+#: check *means* has to be set here too, and one that does not still has to be
+#: named, so that deciding which it is happens once rather than never.
+ENV_ELSEWHERE: dict[str, str] = {}
+
+
+def workflow_env() -> dict[str, str]:
+    """The workflow-level `env:` block of `ci.yml`, as name to value.
+
+    Only the top-level block, which is the one that applies to every step and
+    is therefore the one nothing in a `run:` line reveals. A `env:` nested
+    under a job or a step sits beside the command it modifies, where a reader
+    comparing the two files can see it.
+    """
+    lines = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
+    found: dict[str, str] = {}
+    inside = False
+    for line in lines:
+        if line.rstrip() == "env:":
+            inside = True
+            continue
+        if not inside:
+            continue
+        entry = re.match(r"^  ([A-Za-z_][A-Za-z0-9_]*): (.+)$", line)
+        if entry:
+            found[entry.group(1)] = entry.group(2).strip()
+            continue
+        # The block ends at the first line that is not one of its entries,
+        # which in this file is the blank line before `jobs:`.
+        if line.strip():
+            break
+    return found
+
+
+def script_env() -> dict[str, str]:
+    """Every variable `check.sh` exports, as name to value."""
+    text = (ROOT / "scripts/check.sh").read_text()
+    # The value may or may not be quoted — `RUSTFLAGS="-D warnings"` has to be
+    # and `CARGO_TERM_COLOR=always` does not — so the quote is captured and
+    # back-referenced rather than stripped afterwards, which would also strip a
+    # value that legitimately ends in one.
+    return {
+        name: value
+        for name, _quote, value in re.findall(
+            r'^export ([A-Za-z_][A-Za-z0-9_]*)=("?)(.*?)\2$', text, re.MULTILINE
+        )
+    }
+
+
+def environment_matches() -> list[str]:
+    """Complaints about `check.sh`'s exports against `ci.yml`'s `env:`."""
+    wanted = workflow_env()
+    assert wanted, "ci.yml has no workflow-level env: block; this guard is blind"
+    exported = script_env()
+    complaints = []
+    for name, value in sorted(wanted.items()):
+        if name in ENV_ELSEWHERE:
+            continue
+        if name not in exported:
+            complaints.append(
+                f"ci.yml sets {name}={value} for every step and check.sh does not "
+                f"export it, so the same command is a different check in the two "
+                f"places; export it or give it a reason in ENV_ELSEWHERE"
+            )
+        elif exported[name] != value:
+            complaints.append(
+                f"ci.yml sets {name}={value} and check.sh exports {name}={exported[name]}"
+            )
+    for name in sorted(set(ENV_ELSEWHERE) - set(wanted)):
+        complaints.append(f"ENV_ELSEWHERE names {name}, which ci.yml no longer sets")
+    return complaints
+
+
 def workflow_steps() -> tuple[list[tuple[str, str]], list[str]]:
     """Every `- run:` in `ci.yml`: single-line steps, and named blocks."""
     lines = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
@@ -144,24 +228,60 @@ def main() -> int:
         if (directory, command) not in covered and command not in ELSEWHERE
     ]
     unknown_blocks = [name for name in blocks if name not in ELSEWHERE_BLOCKS]
-
-    for directory, command in missing:
-        print(f"not in check.sh and not in ELSEWHERE: (in {directory}) {command}")
-    for name in unknown_blocks:
-        print(f"a named run-block nothing accounts for: {name}")
+    env_complaints = environment_matches()
 
     # Entries that no longer match anything are the other half: a stale reason
     # is a reader believing a step exists that does not.
     commands = {command for _, command in steps}
-    for command in sorted(set(ELSEWHERE) - commands):
-        print(f"ELSEWHERE names a step ci.yml no longer has: {command}")
-    for name in sorted(set(ELSEWHERE_BLOCKS) - set(blocks)):
-        print(f"ELSEWHERE_BLOCKS names a block ci.yml no longer has: {name}")
+    stale_elsewhere = sorted(set(ELSEWHERE) - commands)
+    stale_blocks = sorted(set(ELSEWHERE_BLOCKS) - set(blocks))
 
-    stale = (set(ELSEWHERE) - commands) or (set(ELSEWHERE_BLOCKS) - set(blocks))
-    if missing or unknown_blocks or stale:
+    # Reported as named checks with a `N passed, M failed` summary, which is
+    # the shape every other `scripts/test_*.py` here prints — and, more to the
+    # point, the shape `scripts/mutate.py` can read. This script used to print
+    # one `ok` line and no count, so a mutation run against it reported "no
+    # test results at all" and could say nothing about whether a guard worked.
+    # `test_codegen.py` had the identical problem and it was found the same
+    # way.
+    checks: list[tuple[str, list[str]]] = [
+        (
+            "every ci.yml step is in check.sh or in ELSEWHERE",
+            [f"not in check.sh and not in ELSEWHERE: (in {d}) {c}" for d, c in missing],
+        ),
+        (
+            "every named run-block is accounted for",
+            [f"a named run-block nothing accounts for: {name}" for name in unknown_blocks],
+        ),
+        (
+            "check.sh exports ci.yml's workflow-level env",
+            env_complaints,
+        ),
+        (
+            "no ELSEWHERE entry names a step ci.yml has dropped",
+            [f"ELSEWHERE names a step ci.yml no longer has: {c}" for c in stale_elsewhere]
+            + [f"ELSEWHERE_BLOCKS names a block ci.yml no longer has: {n}" for n in stale_blocks],
+        ),
+    ]
+
+    passed = 0
+    failed = 0
+    for name, complaints in checks:
+        if complaints:
+            failed += 1
+            print(f"FAIL  {name}")
+            for complaint in complaints:
+                print(f"      {complaint}")
+        else:
+            passed += 1
+            print(f"ok    {name}")
+
+    print(f"\n{passed} passed, {failed} failed")
+    if failed:
         return 1
-    print(f"ok    {len(steps)} steps and {len(blocks)} blocks, all accounted for")
+    print(
+        f"      {len(steps)} steps, {len(blocks)} blocks and "
+        f"{len(workflow_env())} env vars, all accounted for"
+    )
     return 0
 
 
