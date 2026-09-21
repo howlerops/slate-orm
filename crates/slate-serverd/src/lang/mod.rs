@@ -125,6 +125,15 @@ pub(crate) trait Scope {
     fn ordinal(&self, name: &str) -> Option<Ordinal>;
     /// What the column at `ordinal` holds.
     fn value_type(&self, ordinal: Ordinal) -> Option<ValueType>;
+    /// What an array column's elements hold, or `None` for any other column.
+    ///
+    /// A second method rather than a richer return from
+    /// [`Scope::value_type`], for the reason `docs/arrays.md` gives for
+    /// putting the element type on `ColumnDef` rather than inside
+    /// `ValueType`: the element type belongs to the *column*, and every
+    /// caller of `value_type` that does not care about arrays should not have
+    /// to say so.
+    fn element_type(&self, ordinal: Ordinal) -> Option<ValueType>;
     /// Every column name, for the "did you mean" half of an error.
     fn column_names(&self) -> Vec<String>;
     /// Whether `:principal` and `:tenant` may appear.
@@ -170,6 +179,12 @@ impl Scope for TableScope<'_> {
         self.table
             .column(ordinal)
             .map(slate_schema::ColumnDef::value_type)
+    }
+
+    fn element_type(&self, ordinal: Ordinal) -> Option<ValueType> {
+        self.table
+            .column(ordinal)
+            .and_then(slate_schema::ColumnDef::element_type)
     }
 
     fn column_names(&self) -> Vec<String> {

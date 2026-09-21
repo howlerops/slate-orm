@@ -12,6 +12,8 @@
 //!              | column ( '~' | '~*' | '!~' | '!~*' ) string
 //!              | column ( '=' | '<>' | '!=' | '<' | '<=' | '>' | '>=' ) operand
 //! operand     := string | number | 'TRUE' | 'FALSE' | column | placeholder
+//!              | '[' [ element ( ',' element )* ] ']'
+//! element     := string | number | 'TRUE' | 'FALSE'
 //! ```
 //!
 //! Every [`Expr`] variant is reachable, which is the property that makes this
@@ -526,6 +528,133 @@ impl Parser<'_> {
         }
     }
 
+    /// `[ 'a', 'b' ]` — an array literal, opposite an array column.
+    ///
+    /// The opening bracket is already consumed. The *column* decides the
+    /// element type, exactly as it decides a scalar literal's type: `[1, 2]`
+    /// is a list of `u64` opposite `array<u64>` and of `i64` opposite
+    /// `array<i64>`, and neither needs saying in the text. Guessing from the
+    /// digits instead would make `tags = [7]` mean a different thing from
+    /// `tags = [-7]` in the same table, which is the argument
+    /// `literal_from_number` already makes one level down.
+    ///
+    /// **No nesting**, because the schema has none: an element type is a
+    /// `ValueType` and cannot name an array's own element type, so
+    /// `array<array<str>>` is not a column that exists. A `[` inside the list
+    /// is therefore refused with that reason rather than parsed into
+    /// something the schema could not hold.
+    ///
+    /// An empty `[]` is accepted and is *not* null: `docs/arrays.md` makes
+    /// that distinction load-bearing in the kernel, and a surface syntax that
+    /// could not write one would leave a value nothing can express.
+    fn array_literal(
+        &mut self,
+        column: Ordinal,
+        declared: ValueType,
+        open_at: usize,
+    ) -> LangResult<Value> {
+        if declared != ValueType::Array {
+            return Err(LangError::new(
+                open_at,
+                format!("`[` starts a list and the column opposite it is {declared}"),
+            ));
+        }
+        let Some(element) = self.scope.element_type(column) else {
+            return Err(LangError::new(
+                open_at,
+                "the column on the left is an array with no declared element type",
+            ));
+        };
+
+        let mut elements = Vec::new();
+        loop {
+            let at = self.at();
+            let Some(token) = self.advance().cloned() else {
+                return Err(LangError::new(open_at, "this `[` is never closed"));
+            };
+            match token.kind {
+                Kind::Punct("]") if elements.is_empty() => return Ok(Value::Array(elements)),
+                Kind::Punct("]") => {
+                    return Err(LangError::new(at, "a list cannot end with a comma"));
+                }
+                Kind::Punct("[") => {
+                    return Err(LangError::new(
+                        at,
+                        "a list inside a list has no column type to be: an element type is a single type and cannot itself name an element type, so there is no array-of-arrays column for this to compare with",
+                    ));
+                }
+                // A minus sign is its own token, so a negative element is two.
+                // Handled here rather than in `array_element` because that
+                // takes one token by design — and `operand` does the same
+                // two-token dance one level up, for the same lexer reason.
+                // Found by a test asserting `sizes = [1, -2]`, which is an
+                // ordinary thing to write and did not parse.
+                Kind::Punct("-") => {
+                    let next_at = self.at();
+                    match self.advance().map(|t| t.kind.clone()) {
+                        Some(Kind::Number(text)) => {
+                            elements.push(literal_from_number(&format!("-{text}"), element, at)?);
+                        }
+                        _ => return Err(LangError::new(next_at, "expected a number after `-`")),
+                    }
+                }
+                _ => elements.push(self.array_element(&token.kind, element, at)?),
+            }
+            let at = self.at();
+            match self.advance().map(|t| t.kind.clone()) {
+                Some(Kind::Punct("]")) => return Ok(Value::Array(elements)),
+                Some(Kind::Punct(",")) => {}
+                Some(other) => {
+                    return Err(LangError::new(
+                        at,
+                        format!("expected `,` or `]` in a list, found {}", other.describe()),
+                    ));
+                }
+                None => return Err(LangError::new(open_at, "this `[` is never closed")),
+            }
+        }
+    }
+
+    /// One element of an array literal, at the element type the column gives.
+    ///
+    /// Deliberately not a call back into [`Parser::operand`]. An element is a
+    /// literal and nothing else: a column reference inside a list would have
+    /// to mean "this row's other column, as one element", and a `:principal`
+    /// would make the *literal* caller-dependent rather than the comparison.
+    /// Both are expressible and neither has a meaning anybody asked for, so
+    /// they are refused by not being parsed rather than by a special case.
+    fn array_element(&self, kind: &Kind, element: ValueType, at: usize) -> LangResult<Value> {
+        match kind {
+            Kind::Str(text) => literal_from_string(text, element, at),
+            Kind::Number(text) => literal_from_number(text, element, at),
+            Kind::Word(word)
+                if word.eq_ignore_ascii_case("true") || word.eq_ignore_ascii_case("false") =>
+            {
+                if element == ValueType::Bool {
+                    Ok(Value::Bool(word.eq_ignore_ascii_case("true")))
+                } else {
+                    Err(LangError::new(
+                        at,
+                        format!("`{word}` is a bool and the list holds {element}"),
+                    ))
+                }
+            }
+            // A null element is refused by `Row::validate` on every write, so
+            // a predicate that could name one would be a predicate no stored
+            // row can satisfy. `docs/arrays.md` records that refusal as the
+            // reversible half of an open question; this keeps the two ends
+            // saying the same thing.
+            Kind::Word(word) if word.eq_ignore_ascii_case("null") => Err(LangError::new(
+                at,
+                "a list cannot hold NULL; an array column refuses a null element on every write, so no stored row could match",
+            )),
+            other => Err(LangError::new(
+                at,
+                format!("expected a literal in a list, found {}", other.describe()),
+            )),
+        }
+    }
+
     /// The right-hand side of a comparison against `column`.
     fn operand(&mut self, column: Ordinal) -> LangResult<Operand> {
         let at = self.at();
@@ -608,6 +737,9 @@ impl Parser<'_> {
                 }
                 Ok(Operand::Column(other))
             }
+            Kind::Punct("[") => self
+                .array_literal(column, declared, at)
+                .map(Operand::Literal),
             Kind::Punct(p) => Err(LangError::new(at, format!("expected a value, found `{p}`"))),
         }
     }
@@ -731,6 +863,8 @@ mod tests {
             .column("live", ValueType::Bool)
             .column("owner", ValueType::U64)
             .nullable_column("note", ValueType::Str)
+            .array_column("tags", ValueType::Str)
+            .array_column("sizes", ValueType::I64)
             .primary_key(["id"])
             .build()
             .unwrap()
@@ -986,5 +1120,146 @@ mod tests {
                 .unwrap()
                 .is_constant()
         );
+    }
+
+    // --- array literals -----------------------------------------------------
+
+    #[test]
+    fn an_array_literal_takes_the_element_type_from_the_column() {
+        // The same text, two columns, two different element variants — the
+        // array-level twin of `a_literal_takes_the_type_of_the_column_opposite
+        // _it`, and asserted with `matches!` for the same reason: `Value`'s
+        // equality ranks `I64` and `U64` together, so an `assert_eq!` would
+        // pass against a parser that ignored the element type.
+        let strings = literal(
+            &parse_constant("tags = ['a', 'b']")
+                .unwrap()
+                .lower(&caller()),
+        );
+        let Value::Array(elements) = &strings else {
+            panic!("expected an array, got {strings:?}");
+        };
+        assert!(
+            matches!(elements.as_slice(), [Value::Str(a), Value::Str(b)] if a == "a" && b == "b"),
+            "{elements:?}"
+        );
+
+        let numbers = literal(&parse_constant("sizes = [1, -2]").unwrap().lower(&caller()));
+        let Value::Array(elements) = &numbers else {
+            panic!("expected an array, got {numbers:?}");
+        };
+        assert!(
+            matches!(elements.as_slice(), [Value::I64(1), Value::I64(-2)]),
+            "{elements:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_array_literal_is_a_value_and_not_a_null() {
+        // `docs/arrays.md` makes empty-versus-null load-bearing in the kernel,
+        // and a surface syntax that could not write `[]` would leave a stored
+        // value nothing can name.
+        let empty = literal(&parse_constant("tags = []").unwrap().lower(&caller()));
+        assert_eq!(empty, Value::Array(vec![]));
+        assert!(!empty.is_null(), "an empty list parsed as null");
+    }
+
+    #[test]
+    fn an_array_literal_orders_as_well_as_equals() {
+        // Ordering is the other half of what the kernel supports on an array,
+        // so the parser has to reach it. Element-wise with a shorter prefix
+        // first, which is the codec's rule.
+        let below = parse_constant("tags < ['b']").unwrap().lower(&caller());
+        assert!(
+            matches!(&below, Expr::Compare { op: CmpOp::Lt, .. }),
+            "{below:?}"
+        );
+    }
+
+    #[test]
+    fn an_array_literal_opposite_a_scalar_column_names_both_sides() {
+        let error = parse_constant("kind = ['a']").unwrap_err();
+        let text = error.render("kind = ['a']");
+        assert!(text.contains("list"), "{text}");
+        assert!(text.contains("str"), "{text}");
+    }
+
+    #[test]
+    fn an_element_of_the_wrong_type_is_refused() {
+        // The element type is the column's, so a quoted string in a list of
+        // `i64` is the same mistake as a quoted string opposite an `i64`
+        // column, and reaches the same converter.
+        let error = parse_constant("sizes = ['a']").unwrap_err();
+        let text = error.render("sizes = ['a']");
+        assert!(text.contains("i64"), "{text}");
+    }
+
+    #[test]
+    fn a_list_inside_a_list_is_refused_with_the_reason() {
+        // Nesting is expressible in the *syntax* and impossible in the schema:
+        // an element type is a single `ValueType` and cannot itself name one,
+        // so there is no column this could compare with.
+        let source = "tags = [['a']]";
+        let error = parse_constant(source).unwrap_err();
+        let text = error.render(source);
+        assert!(text.contains("element type"), "{text}");
+    }
+
+    #[test]
+    fn a_null_element_is_refused_because_no_stored_row_could_match() {
+        // `Row::validate` refuses a null element on every write, so a
+        // predicate naming one would select nothing, forever, silently.
+        let source = "tags = ['a', NULL]";
+        let error = parse_constant(source).unwrap_err();
+        let text = error.render(source);
+        assert!(text.contains("NULL"), "{text}");
+    }
+
+    #[test]
+    fn a_malformed_list_says_which_way_it_is_malformed() {
+        // Each case pairs with the words its own refusal has to contain. The
+        // first version of this test asserted only that *an* error came back,
+        // and mutation testing showed why that is worthless here: dropping the
+        // separator check entirely still produces an error, because the stray
+        // element is eaten as a separator and the closing `]` then looks like
+        // a trailing comma. Same refusal count, wrong sentence, test green.
+        for (source, expected) in [
+            ("tags = ['a'", "never closed"),
+            ("tags = ['a',", "never closed"),
+            ("tags = ['a',]", "end with a comma"),
+            ("tags = ['a' 'b']", "expected `,` or `]`"),
+        ] {
+            let Err(error) = parse_constant(source) else {
+                panic!("`{source}` parsed");
+            };
+            let text = error.render(source);
+            assert!(
+                text.contains(expected),
+                "`{source}` should say {expected:?}, said: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_column_reference_inside_a_list_is_refused_rather_than_resolved() {
+        // An element is a literal and nothing else. `kind` here would have to
+        // mean "this row's `kind`, as one element", which is expressible and
+        // has no meaning anybody asked for — so it is refused by not being
+        // parsed rather than by a special case that has to be kept correct.
+        let source = "tags = [kind]";
+        let error = parse_constant(source).unwrap_err();
+        let text = error.render(source);
+        assert!(text.contains("literal"), "{text}");
+    }
+
+    #[test]
+    fn a_placeholder_inside_a_list_is_refused_even_in_a_policy() {
+        // A policy may say `owner = :principal`; it may not say
+        // `tags = [:principal]`, which would make the *literal* vary by caller
+        // rather than the comparison.
+        let source = "tags = [:principal]";
+        let error = parse_policy(source).unwrap_err();
+        let text = error.render(source);
+        assert!(text.contains("literal"), "{text}");
     }
 }

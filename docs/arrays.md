@@ -209,13 +209,33 @@ outside the kernel, and this note is entirely about the kernel.
 > whose idea of an element type is wrong — it reads the *right* column and
 > decodes every element as the wrong type.
 >
-> Two things are genuinely left. `scripts/codegen.py` refuses an array column
+> One thing is genuinely left. `scripts/codegen.py` refuses an array column
 > rather than generating one, deliberately and with a message saying what it
 > would need: the declaration must carry the element type, and the decoded form
 > is element-typed in all three languages, neither of which its type tables can
-> express since they are keyed by the column's type alone. And the predicate
-> parser has no array literal, so an array cannot appear in a `WHERE` written
-> as text.
+> express since they are keyed by the column's type alone.
+>
+> **The predicate parser now has an array literal**: `tags = ['a', 'b']`, with
+> the *column* deciding the element type exactly as it decides a scalar
+> literal's type, so `[1, 2]` is a list of `u64` opposite `array<u64>` and of
+> `i64` opposite `array<i64>` and neither needs saying in the text. `[]` is
+> accepted and is not null, which keeps the surface able to write the
+> distinction the kernel makes. Three things are refused with their own
+> reasons, and each is a decision this note already made one level down: a list
+> inside a list, because an element type is a single `ValueType` and there is
+> no array-of-arrays column for it to compare with; a `NULL` element, because
+> `Row::validate` refuses one on every write so the predicate could match
+> nothing, forever, silently; and a column reference or `:principal` inside a
+> list, which are expressible and mean nothing anybody asked for.
+>
+> Two things were found by writing the tests rather than by reading the code. A
+> negative element — `sizes = [1, -2]` — did not parse, because the lexer makes
+> `-` its own token and the list loop read one token per element. And the
+> refusal for a missing separator was untested in a way that mattered: dropping
+> the check entirely *still* produced an error, because the stray element is
+> eaten as a separator and the closing `]` then looks like a trailing comma.
+> Same refusal count, wrong sentence, green test. The test now pairs each
+> malformed input with the words its own refusal has to contain.
 
 **It does not argue that an array column is worth building.** The comparison
 lists it because Drizzle, SQLAlchemy and Ecto have one. Whether the answer here
