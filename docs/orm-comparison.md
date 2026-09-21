@@ -161,7 +161,7 @@ then did not ship it to the three audiences most likely to need it.
 | Views — **designed, not built** | Drizzle, SQLAlchemy | none yet, and [`views.md`](views.md) settles the shape before any code. A view is a name bound to a `QuerySpec`, **not** a `TableDef`: give it a `TableId` and `row_filter_with` keys RLS and every policy on the view's id instead of the base table's, which is not an error but `Expr::True` over the base rows. Substituting before planning means `security.rs` needs no new case at all. **The second half the row never stated: a view here cannot be a privilege boundary.** Postgres views run with their owner's rights; `Grant { role, table, actions }` has no owner to run as, so a caller needs the grant on every base table — and having it could read the columns the view leaves out. "Give the analysts a narrowed view" is *the* reason people reach for views and it does not work here; column-level grants are the feature that would. Writes through a view are refused. [`ctes.md`](ctes.md) shows a single-reference CTE is the same expansion, so the two rows are one piece of work. `CREATE` is now refused by name saying so. Grants and policies are keyed on `TableId` (`Grant { table: TableId }`, `Policy { table: TableId }`), and a query resolves its table by name through `Catalog::table_by_name`. Give a view its own `TableId` so that lookup finds it, and every grant and policy check keys on the *view's* id — a caller granted the view reads the base table's rows with the base table's policy never consulted. The safe shape is that a view expands to its underlying spec *before* planning, so the base table's id is what reaches the policy, and that has to be structural rather than a convention somebody remembers |
 | ~~Array / list column type~~ **built; not generated, and no SQL literal** | Drizzle, SQLAlchemy, Ecto | `ValueType::Array` exists, `array_column(name, element)` declares one, and the kernel stores, reads, compares and sorts arrays — element-wise with a shorter list first, from a terminated encoding rather than a length prefix, which is the one decision a serialisation format would get backwards. Decided in [`arrays.md`](arrays.md) and built in `crates/slate-kernel/tests/arrays.rs`. The wire carries one, `slate-serverd` declares one as `type = "array", element = "str"`, and Go, Python and TypeScript each send and receive one — proved against a real node in each. **What is left is the generator and the SQL front end**: `scripts/codegen.py` refuses an array column deliberately, saying what it would need (the declaration has to carry the element type, and the decoded form is element-typed in three languages), and the predicate parser has no array literal syntax. An array is still refused in a key and an index, because the question asked of one is *containment* — one index entry per element, the same new cardinality full-text search needs |
 | Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only — **and the row understates the work by a structural assumption.** Every index here writes *one entry per row*: `entry_for` returns a single `IndexEntry` from `index.key_values(row)`, and the write path, the unique-slot check and the scan all assume that cardinality. An inverted index is one entry per *term* per row. So this is not a new index expression, it is a new index cardinality — the write path, the maintenance and the planner's costing each need a case they do not have |
-| Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | **Half refused, half open.** "No client can seed" is a decision with the reasoning already written, in `seed.rs`: seeding writes as `SecurityContext::superuser`, because the rows must land before the grants they will be read under exist, and the module is explicit that this is "the only reason the word `superuser` appears in this crate… neither reachable from the wire". A client-reachable seed is a superuser write path from the wire, which is exactly what that argument designs out. What is genuinely open is the other half: nothing *generates* rows, and the Rust library has no entry point — neither of which needs the wire |
+| Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | **Half refused, half open.** "No client can seed" is a decision with the reasoning already written, in `seed.rs`: seeding writes as `SecurityContext::superuser`, because the rows must land before the grants they will be read under exist, and the module is explicit that this is "the only reason the word `superuser` appears in this crate… neither reachable from the wire". A client-reachable seed is a superuser write path from the wire, which is exactly what that argument designs out. What is genuinely open is the other half: nothing *generates* rows. The Rust library's entry point is not missing, which this row claimed until `crates/slate-orm/tests/seeding.rs` was written to check: it is `insert_records` under `SecurityContext::superuser()`, the same call `--seed` makes, and the test seeds two rows for two owners a policy would have refused. What it has no *factory* for is the rows themselves |
 
 > **Built: automatic timestamps.** `#[record(created_at)]` and
 > `#[record(updated_at)]` on an `i64` field, or `managed = "created_at"` on a
@@ -347,11 +347,24 @@ then did not ship it to the three audiences most likely to need it.
 > There is no *factory*: nothing generates a plausible row, sequences an id, or
 > builds a graph of related records, so a fixture of a thousand rows is a
 > thousand lines of TOML somebody wrote. And it is reachable only from the
-> daemon's command line — the Rust library has no seeding helper and neither do
-> the Python, Go or TypeScript clients, so a test suite in any of them writes
-> its fixture with the ordinary write path, which is not wrong and is not a
-> feature either. The row is rewritten rather than removed: something exists,
-> and it is not what the comparison is about.
+> daemon's command line **from a client**; the Python, Go and TypeScript SDKs
+> have no seeding call and by design cannot, because seeding is a superuser
+> write and `seed.rs` designs a superuser write path out of the wire.
+>
+> **The Rust library is the exception, and this note said otherwise.** It has
+> no function *named* seed, which is what the sentence above used to be about,
+> but it has the entry point: `insert_records` under
+> `SecurityContext::superuser()` is what `--seed` itself reduces to once the
+> TOML is parsed, and `crates/slate-orm/tests/seeding.rs` runs it — two rows
+> landing for two owners whose policy would refuse either of them, read back by
+> each owner afterwards. The second test in that file is why the first means
+> anything: the same two rows under an ordinary context are refused, so the
+> superuser step is load-bearing rather than ceremonial. Claiming "no entry
+> point" for a two-line call that the daemon already uses was a gap invented by
+> not looking, which is the failure this table exists to avoid.
+>
+> The row is rewritten rather than removed: something exists, and it is not
+> what the comparison is about.
 
 > **Built: "Per-request logging and metrics".** `[observability] request_log`
 > writes a line per call — method, gRPC status, time to the response head — and
