@@ -66,6 +66,17 @@ func encode(v slate.Value) tagged {
 			out = append(out, formatFloat(float64(element)))
 		}
 		return tagged{"vector": out}
+	case slate.Array:
+		// Each element tagged in turn, matching the testserver's own
+		// `value_json` and the other two adapters. A list of bare values would
+		// let an adapter that decoded `["1"]` as strings agree with one that
+		// decoded `[1]` as integers — the confusion this tagging exists to
+		// stop, one level down.
+		out := make([]tagged, 0, len(value))
+		for _, element := range value {
+			out = append(out, encode(element))
+		}
+		return tagged{"array": out}
 	default:
 		return tagged{"unknown": fmt.Sprintf("%T", v)}
 	}

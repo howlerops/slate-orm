@@ -948,6 +948,26 @@ impl Parser<'_> {
             // Worked through in `docs/ctes.md`; the split is summarised here
             // because an error message a reader has to leave to understand is
             // most of the way back to "unexpected `WITH`".
+            // `CREATE` for the same reason as `WITH`, and with the same
+            // shape of answer: the interesting part is not that it is
+            // unsupported but *what a view would have to be here*. A caller
+            // reaching for one is usually reaching for a privilege boundary,
+            // and it cannot be one — there is no owner for a view to run as,
+            // so a caller needs the grant on the base table either way.
+            // Saying that at the moment they ask is the whole point; saying
+            // it after they have built a permission model on the opposite
+            // assumption is the failure mode `docs/views.md` is about.
+            Some("create") => Err(SqlError {
+                message: "CREATE is not supported: this front end queries a catalog \
+                     rather than defining one — tables are declared in the daemon's \
+                     configuration, not by a statement. A view in particular could not \
+                     be a privilege boundary here the way it is in Postgres: grants key \
+                     on a table id and nothing owns a view, so a caller would still need \
+                     the grant on the base table, and having it could read the columns \
+                     the view leaves out. See docs/views.md"
+                    .to_owned(),
+                at: self.at(),
+            }),
             Some("with") => Err(SqlError {
                 message: "WITH is not supported, and the three things it means have \
                      different reasons. A recursive CTE is a fixpoint loop and a \

@@ -87,7 +87,8 @@ go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .
 go-adapter-vet|examples/explorer/backends/go|go vet ./...
 ts-client-types|clients/typescript|npx --no-install tsc -p tsconfig.json --noEmit
-ts-adapter-types|examples/explorer/backends/node|npx --no-install tsc --noEmit
+ts-client-build|clients/typescript|npm run build
+ts-adapter-types|examples/explorer/backends/node|npx --no-install tsc -p tsconfig.json --noEmit
 web-types|examples/explorer/web|npm run typecheck
 hook-suite|.|sh .githooks/test-pre-commit.sh
 LIST
@@ -126,6 +127,22 @@ ci_env_pytest() {
     "$CI_ENV/bin/python" -m pytest examples/explorer/backends/python/adapter -q
 }
 
+# The TypeScript client, built, *before* the adapter is type-checked.
+#
+# Not a check of its own in spirit — it is a precondition, and it is here
+# because leaving it out cost a red CI job on a green local run. The demo's
+# Node adapter imports `@slate-orm/client`, which resolves to
+# `clients/typescript/dist`, and `dist` is a *build artifact*: the adapter was
+# type-checked against whatever was last built there. Adding a variant to
+# `Value` made the adapter's `switch` non-exhaustive, and locally the switch
+# still looked exhaustive because `dist/value.d.ts` predated the variant. CI
+# builds first and found it.
+#
+# The same class as the `SLATE_SERVERD` staleness guard: a prebuilt artifact
+# older than its source turns a suite into a test of the past. That one
+# compares modification times and refuses; this one rebuilds, which is cheaper
+# than a second staleness rule and removes the question.
+#
 # `gofmt -l` prints the files it would change and exits zero either way, so a
 # check on it has to look at the output rather than at the status.
 go_fmt() {

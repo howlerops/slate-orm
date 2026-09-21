@@ -111,6 +111,29 @@ fn the_subquery_the_refusal_recommends_is_accepted() {
     );
 }
 
+/// `CREATE` is refused by name too, and says what a view could not be.
+///
+/// Its own test rather than a row in the loop above, because the content that
+/// matters is different: `WITH`'s message is about three shapes, and this one
+/// is about a security expectation a reader arrives with. Somebody writing
+/// `CREATE VIEW` is usually trying to give a role less than a table, and the
+/// answer here is that a view cannot do that — which is worth learning at the
+/// statement rather than after a permission model rests on it.
+#[test]
+fn create_is_refused_by_name_and_says_a_view_is_not_a_grant() {
+    let playground = Playground::new();
+    let message = refusal(&playground, "CREATE VIEW v AS SELECT id FROM books");
+    assert!(
+        !message.contains("expected SELECT"),
+        "CREATE fell through to the generic message: {message}"
+    );
+    // The grant is the point, not the syntax.
+    assert!(message.contains("grant"), "{message}");
+    assert!(message.contains("base table"), "{message}");
+    // And where a reader goes for the rest of it.
+    assert!(message.contains("docs/views.md"), "{message}");
+}
+
 /// A column or table called `with` is still reachable.
 ///
 /// The dispatcher matches `with` only in the *first* position, so this is not
