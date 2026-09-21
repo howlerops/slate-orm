@@ -38,6 +38,7 @@ from slate import (
     Units,
     UpdateWhere,
     Vector,
+    Window,
     as_scalar,
     asc,
     case,
@@ -194,6 +195,61 @@ class Adapter:
 
     def query(self, session, body):
         rows = [encode_row(list(row)) for row in session.query(build_query(body))]
+        return {"rows": rows}
+
+    def window(self, session, body):
+        """A window function, one value per input row. See CONTRACT.md.
+
+        Fixed shape, like `/api/join`: the demo is about which window, not
+        about a general window builder, and three implementations of one would
+        be three places for the same expression language to drift.
+        """
+        query = Query(BOOKS)
+        # The order is the *window's*, not the query's, and whether there is
+        # one is what turns an aggregate's frame from the whole partition into
+        # a running value. The ranking functions and lag/lead always get one:
+        # the server refuses them without, because the answer would be a
+        # number for an order nobody asked for.
+        ordered = bool(body.get("running"))
+        name = body.get("function")
+        if name == "rowNumber":
+            window, ordered = Window.row_number(), True
+        elif name == "rank":
+            window, ordered = Window.rank(), True
+        elif name == "denseRank":
+            window, ordered = Window.dense_rank(), True
+        elif name == "lag":
+            window, ordered = Window.lag(query.c.year, 1), True
+        elif name == "lead":
+            window, ordered = Window.lead(query.c.year, 1), True
+        elif name == "sum":
+            window = Window.aggregate_over(Agg.sum(query.c.year))
+        elif name == "count":
+            window = Window.aggregate_over(Agg.count())
+        else:
+            raise ValueError(f"no such window function: {name}")
+
+        partition = [query.c.author_id] if body.get("partition") else []
+        order = [asc(query.c.year)] if ordered else []
+        # `author_id <= 6` keeps out book 19, whose author matches nobody: it
+        # is here for the outer joins and would be a partition of one in every
+        # answer. The query's own sort is by id, so the three adapters compare
+        # row for row rather than in whatever order the scan produced.
+        query.where(query.c.author_id.le(u64(6))).sort(asc(query.c.id))
+        query.window(window.over(partition=partition, order=order))
+        if body.get("limit") is not None:
+            query.limit(int(body["limit"]))
+        rows = [
+            {
+                "row": encode_row(list(row)),
+                # Its own list, because it is its own list on the wire: a
+                # window value is not a column and not a computed value, and
+                # an adapter folding it into `row` would return something a
+                # caller reads as a different thing.
+                "windowed": encode_row(list(row.window_values)),
+            }
+            for row in session.query(query)
+        ]
         return {"rows": rows}
 
     def related(self, session, body):
@@ -1202,6 +1258,7 @@ class Adapter:
 ROUTES = {
     "/api/meta": "meta",
     "/api/query": "query",
+    "/api/window": "window",
     "/api/join": "join",
     "/api/aggregate": "aggregate",
     "/api/explain": "explain",

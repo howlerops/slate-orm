@@ -156,6 +156,40 @@ CASES: list[tuple[str, str, Any, str]] = [
     # third step itself would not.
     ("a reader's chain", "/api/chain", {"type": "inner"}, "reader"),
 
+    # Windows, which are the one operator whose answer comes back in a list of
+    # its own. Every other case here compares columns; these compare the
+    # *placement* as well, because an adapter that folded a window value into
+    # the row would return something the caller reads as a different thing —
+    # and each SDK's own suite checks that against its own server, which
+    # cannot catch all three doing it the same way.
+    #
+    # Six functions, partitioned and not: a partition is the difference
+    # between "this row's rank among its author's books" and "among all of
+    # them", and a client that dropped the clause answers the second question
+    # with no error anywhere.
+    *[(f"a {fn} window{' per author' if partition else ''}", "/api/window",
+       {"function": fn, "partition": partition, "limit": 20}, "app")
+      for fn in ("rowNumber", "rank", "denseRank", "lag", "lead", "sum", "count")
+      for partition in (True, False)],
+
+    # And the frame rule, which is where SQL surprises people: an aggregate
+    # with no order is the whole partition repeated on every row, and the same
+    # aggregate *with* one is a running value. Not a different spelling — the
+    # standard's default frame changing — so a client that always sent an
+    # order, or never did, disagrees here and nowhere else.
+    *[(f"a running {fn} window", "/api/window",
+       {"function": fn, "partition": True, "running": True, "limit": 20}, "app")
+      for fn in ("sum", "count")],
+
+    # As a reader, whose row policy hides `The Astronauts`: the window is
+    # computed over what the policy admits, so author 4's numbering has to be
+    # two rows rather than three in all three SDKs. A client that windowed
+    # before the filter — which is not a thing this protocol can express, and
+    # is exactly the mistake the refusal on a keyset page exists to prevent —
+    # would report a rank nobody can see the row for.
+    ("a reader's window", "/api/window",
+     {"function": "rowNumber", "partition": True, "limit": 20}, "reader"),
+
     # `decade` is the only case here whose group key is not a column: it is a
     # value the *join* computes, `books.year / 10 * 10`. Every SDK builds that
     # expression itself, so this is the one case that compares three
@@ -627,6 +661,24 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # were already here, adjacent, describing each other in their comments, and
     # nothing compared them.
     ("a predicate delete, returning what it destroyed", "a predicate delete, not returning"),
+    # `partition` and `running` are the two window fields with exactly this
+    # weakness: a client that dropped either sends a smaller request, gets a
+    # smaller answer, and agrees with two other clients doing the same. Nothing
+    # refuses without them, so neither is covered by `EXPECTED_REFUSALS`.
+    #
+    # `rowNumber` for the partition, because it is the function where dropping
+    # the clause is most visibly wrong and least visibly an error: unpartitioned
+    # it numbers 1..11 straight through, which is a column of plausible
+    # integers.
+    ("a rowNumber window per author", "a rowNumber window"),
+    ("a sum window per author", "a sum window"),
+    # And the frame: the same aggregate over the same partition, with and
+    # without the window's own order. One is the total on every row and the
+    # other is a running value, and the standard says the order is what decides
+    # — so a client that always sent one, or never did, is wrong here and
+    # nowhere else.
+    ("a running sum window", "a sum window per author"),
+    ("a running count window", "a count window per author"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.

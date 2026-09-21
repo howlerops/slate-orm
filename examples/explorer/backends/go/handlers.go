@@ -54,6 +54,104 @@ func (s *server) query(ctx context.Context, session *slate.Session, body json.Ra
 	return map[string]any{"rows": out}, nil
 }
 
+// Ordinals of the `books` columns this endpoint names, so a schema change
+// moves one literal rather than five.
+const (
+	bookID       = slate.Ordinal(0)
+	bookAuthorID = slate.Ordinal(1)
+	bookYear     = slate.Ordinal(3)
+)
+
+// windowSpec is the fixed shape `/api/window` takes. See CONTRACT.md.
+type windowSpec struct {
+	Function string `json:"function"`
+	// Partition by `author_id`, rather than one partition over everything.
+	Partition bool `json:"partition"`
+	// Turn an aggregate's frame into a running one by giving it an order.
+	// Ignored by every function that needs an order anyway.
+	Running bool    `json:"running"`
+	Limit   *uint64 `json:"limit"`
+}
+
+func (s *server) window(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec windowSpec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the window: %w", err)
+	}
+
+	// The order is the *window's*, not the query's, and whether there is one
+	// is what turns an aggregate's frame from the whole partition into a
+	// running value. The ranking functions and lag/lead always get one: the
+	// server refuses them without, because the answer would be a number for
+	// an order nobody asked for.
+	ordered := spec.Running
+	var window slate.Window
+	switch spec.Function {
+	case "rowNumber":
+		window, ordered = slate.RowNumberOver(), true
+	case "rank":
+		window, ordered = slate.RankOver(), true
+	case "denseRank":
+		window, ordered = slate.DenseRankOver(), true
+	case "lag":
+		window, ordered = slate.LagOver(slate.Key0(bookYear), 1), true
+	case "lead":
+		window, ordered = slate.LeadOver(slate.Key0(bookYear), 1), true
+	case "sum":
+		window = slate.Over(slate.SumOf(slate.Key0(bookYear)))
+	case "count":
+		window = slate.Over(slate.Count())
+	default:
+		return nil, fmt.Errorf("no such window function: %s", spec.Function)
+	}
+
+	var partition []slate.Column
+	if spec.Partition {
+		partition = []slate.Column{slate.Key0(bookAuthorID)}
+	}
+	var order []slate.SortKey
+	if ordered {
+		order = []slate.SortKey{{Column: bookYear, Direction: slate.Asc}}
+	}
+
+	// `author_id <= 6` keeps out book 19, whose author matches nobody: it is
+	// here for the outer joins and would be a partition of one in every
+	// answer below. The query's own sort is by id, so the three adapters
+	// compare row for row rather than in whatever order the scan produced.
+	filter := slate.Le(bookAuthorID, slate.Uint(6))
+	query := slate.Query{
+		Table:  "books",
+		Filter: &filter,
+		Sort:   []slate.SortKey{{Column: bookID, Direction: slate.Asc}},
+		Limit:  spec.Limit,
+		Window: []slate.Window{window.Over(partition, order)},
+	}
+
+	stream, err := session.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	out := make([]map[string]any, 0, 16)
+	for stream.Next() {
+		// Windowed first: Row advances the cursor.
+		windowed := stream.Windowed()
+		row := stream.Row()
+		out = append(out, map[string]any{
+			"row": encodeRow(row),
+			// Its own list, because it is its own list on the wire: a window
+			// value is not a column and not a computed value, and an adapter
+			// folding it into `row` would return something a caller reads as
+			// a different thing.
+			"windowed": encodeRow(windowed),
+		})
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"rows": out}, nil
+}
+
 func (s *server) join(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
 	var spec struct {
 		Type  string  `json:"type"`

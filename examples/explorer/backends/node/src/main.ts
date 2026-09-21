@@ -62,6 +62,15 @@ import {
   upper,
   vector,
   year,
+  rowNumber,
+  rank,
+  denseRank,
+  lag,
+  lead,
+  aggregateOver,
+  over,
+  sumOf,
+  key0,
   and as andOf,
   or as orOf,
   SlateError,
@@ -72,11 +81,13 @@ import {
   type JoinQuery,
   type JoinType,
   type Ordinal,
+  type Column as ColumnRef,
   type Query,
   type Scalar,
   type Session,
   type Step,
   type Value,
+  type Window,
   answers,
 } from "@slate-orm/client";
 
@@ -103,6 +114,12 @@ import type { Shipments } from "./schema.js";
 // case's answer depending on which ran first — the ordering bug that case's own
 // comment records having been bitten by.
 const restoreId = 8301n;
+
+// Ordinals of the `books` columns `/api/window` names, so a schema change
+// moves one literal rather than five.
+const BOOK_ID = 0;
+const BOOK_AUTHOR_ID = 1;
+const BOOK_YEAR = 3;
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
 /**
@@ -235,6 +252,82 @@ class Adapter {
   async query(session: Session, body: QuerySpec): Promise<unknown> {
     const rows = await session.query(buildQuery(body)).collect();
     return { rows: rows.map(encodeRow) };
+  }
+
+  /**
+   * A window function, one value per input row. See CONTRACT.md.
+   *
+   * Fixed shape, like `/api/join`: the demo is about which window, not about a
+   * general window builder, and three implementations of one would be three
+   * places for the same expression language to drift.
+   */
+  async window(
+    session: Session,
+    body: { function?: string; partition?: boolean; running?: boolean; limit?: number },
+  ): Promise<unknown> {
+    // The order is the *window's*, not the query's, and whether there is one
+    // is what turns an aggregate's frame from the whole partition into a
+    // running value. The ranking functions and lag/lead always get one: the
+    // server refuses them without, because the answer would be a number for
+    // an order nobody asked for.
+    let ordered = body.running === true;
+    let fn: Window;
+    switch (body.function) {
+      case "rowNumber":
+        [fn, ordered] = [rowNumber(), true];
+        break;
+      case "rank":
+        [fn, ordered] = [rank(), true];
+        break;
+      case "denseRank":
+        [fn, ordered] = [denseRank(), true];
+        break;
+      case "lag":
+        [fn, ordered] = [lag(key0(BOOK_YEAR), 1), true];
+        break;
+      case "lead":
+        [fn, ordered] = [lead(key0(BOOK_YEAR), 1), true];
+        break;
+      case "sum":
+        fn = aggregateOver(sumOf(key0(BOOK_YEAR)));
+        break;
+      case "count":
+        fn = aggregateOver(count());
+        break;
+      default:
+        throw new Error(`no such window function: ${body.function}`);
+    }
+    const partition: ColumnRef[] = body.partition ? [key0(BOOK_AUTHOR_ID)] : [];
+    const order = ordered
+      ? [{ column: BOOK_YEAR, direction: "asc" as const }]
+      : [];
+
+    // `author_id <= 6` keeps out book 19, whose author matches nobody: it is
+    // here for the outer joins and would be a partition of one in every
+    // answer. The query's own sort is by id, so the three adapters compare
+    // row for row rather than in whatever order the scan produced.
+    const stream = session.query({
+      table: "books",
+      filter: le(BOOK_AUTHOR_ID, uint(6)),
+      sort: [{ column: BOOK_ID, direction: "asc" }],
+      // Spread rather than `limit: body.limit`, because
+      // `exactOptionalPropertyTypes` makes an explicit `undefined` a different
+      // thing from an absent field — and a `Query` with no limit is the latter.
+      ...(body.limit === undefined ? {} : { limit: body.limit }),
+      window: [over(fn, { partition, order })],
+    });
+    const rows: unknown[] = [];
+    for await (const row of stream.withComputed()) {
+      rows.push({
+        row: encodeRow(row.values),
+        // Its own list, because it is its own list on the wire: a window value
+        // is not a column and not a computed value, and an adapter folding it
+        // into `row` would return something a caller reads as a different
+        // thing.
+        windowed: encodeRow(row.windowed),
+      });
+    }
+    return { rows };
   }
 
   /**
@@ -1331,6 +1424,7 @@ async function main(): Promise<void> {
   const routes: Record<string, (s: Session, b: never) => Promise<unknown>> = {
     "/api/meta": () => adapter.meta(),
     "/api/query": (s, b) => adapter.query(s, b),
+    "/api/window": (s, b) => adapter.window(s, b),
     "/api/join": (s, b) => adapter.join(s, b),
     "/api/aggregate": (s, b) => adapter.aggregate(s, b),
     "/api/explain": (s, b) => adapter.explain(s, b),

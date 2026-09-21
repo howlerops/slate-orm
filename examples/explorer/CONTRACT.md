@@ -101,6 +101,42 @@ attachment — it joins back to the *second* input, and a client that attached i
 to the first would produce a cross join with exactly the right number of
 columns.
 
+### `POST /api/window`
+
+```json
+{"function": "rowNumber"|"rank"|"denseRank"|"lag"|"lead"|"sum"|"count",
+ "partition": true, "running": false, "limit": 20}
+```
+
+Over `books`, filtered to `author_id <= 6`, sorted by `id` ascending and
+limited. Fixed shape, like `/api/join`: a general window builder over HTTP
+would be a second query language to keep three implementations of.
+
+- `partition` true partitions by `author_id`; false is one partition over the
+  whole result, which is what SQL means by omitting the clause.
+- The window's own `ORDER BY` is `year` ascending. It is always present for
+  the ranking functions and for `lag`/`lead` — the server refuses those
+  without one — and present for `sum`/`count` only when `running` is true.
+  That is not a spelling: it is the standard's default frame changing from the
+  whole partition to a running value through the current row's peers.
+- `lag` and `lead` read `year`, one row away. `sum` sums `year`; `count` is
+  `COUNT(*)`.
+
+→ `{"rows": [{"row": [tagged, ...], "windowed": [tagged, ...]}, ...]}`
+
+The two lists are separate in the answer because they are separate on the
+wire. A window value is not a column and not a computed value, and an adapter
+folding it into `row` would return something a caller reads as a different
+thing — which is the failure the three lists exist to prevent and the one that
+looks like working software until somebody adds a column.
+
+The filter keeps out book 19, whose `author_id` is 99 so the outer joins have
+an unmatched side: it would be a partition of one in every answer here. And
+note what the demo's data does *not* have — two books by one author in the
+same year — so `rank` and `denseRank` agree on every row of it. The tie case
+is covered in each client's own suite and in the kernel's; this compares the
+three SDKs to each other.
+
 ### `POST /api/aggregate`
 
 ```json
