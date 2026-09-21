@@ -3884,6 +3884,7 @@ dependencies = [
  "slate-schema",
  "slate-server",
  "slate-slatedb",
+ "slate-sql",
  "slate-tuple",
  "slatedb",
  "subtle",

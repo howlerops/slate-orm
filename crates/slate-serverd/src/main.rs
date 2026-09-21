@@ -57,6 +57,7 @@ mod seed;
 mod serve;
 mod storage;
 mod value;
+mod views;
 
 use clap::Parser;
 use core::time::Duration;
@@ -106,9 +107,16 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 
     let mut warnings = Vec::new();
     let catalog = schema::catalog(&document.tables)?;
+    // Resolved here, beside the catalog and against the same tables, so a view
+    // naming a column that does not exist is a refusal to boot rather than a
+    // surprise the first time somebody reads through it. Deliberately *not*
+    // inserted into the catalog: `views::Views` is a separate map, which is
+    // what makes every path that resolves a table name refuse a view today
+    // without carrying a check for one. See `docs/views.md` §3a.
+    let views = views::views(&document.views, catalog.tables())?;
 
     if arguments.print_schema {
-        println!("{}", describe(&catalog));
+        println!("{}", describe(&catalog, &views));
         return Ok(());
     }
 
@@ -910,7 +918,7 @@ fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -
     out
 }
 
-fn describe(catalog: &Catalog) -> String {
+fn describe(catalog: &Catalog, views: &views::Views) -> String {
     let tables: Vec<serde_json::Value> = catalog
         .tables()
         .iter()
@@ -1047,7 +1055,27 @@ fn describe(catalog: &Catalog) -> String {
             })
         })
         .collect();
-    serde_json::to_string_pretty(&serde_json::json!({ "tables": tables }))
+    // Views are published beside the tables and not among them, which is the
+    // same distinction the server itself draws: a view is a name for a filter
+    // over a base table, and a client that treated one as a table would
+    // generate a row type for something with no id, no index and no write
+    // path. The base table is named so a reader can find the policy that
+    // actually applies — a view is not a privilege boundary, and `docs/views.md`
+    // §2 says so in the one place somebody reading this output might look.
+    let views: Vec<serde_json::Value> = views
+        .iter()
+        .map(|(name, view)| {
+            serde_json::json!({
+                "name": name,
+                "table": view.table,
+                // The compiled spec rather than the SQL it was written as: the
+                // SQL is in the operator's own config file, and what the server
+                // resolved it to is the thing they cannot otherwise see.
+                "spec": view.spec,
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&serde_json::json!({ "tables": tables, "views": views }))
         .unwrap_or_else(|why| format!("{{\"error\": \"{why}\"}}"))
 }
 
@@ -1151,7 +1179,7 @@ where = "id > 0"
         )
         .unwrap();
         let catalog = schema::catalog(&document.tables).unwrap();
-        let json = describe(&catalog);
+        let json = describe(&catalog, &views::Views::new());
         assert!(json.contains("\"ordinal\": 1"), "{json}");
         assert!(json.contains("\"kind\""), "{json}");
         assert!(json.contains("\"partial\": true"), "{json}");

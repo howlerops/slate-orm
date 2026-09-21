@@ -146,6 +146,25 @@ view answers "no table named `recent_books`", which is wrong — it exists, and
 it is not usable *there*. That is a message to improve, not a hole, and
 improving it means naming views in a place that can afford to know about them.
 
+### Where step 1 landed
+
+`crates/slate-serverd/src/views.rs`, resolved in `run` beside
+`schema::catalog` and published by `--print-schema` under a `views` key. The
+subset a view may be is narrower than this section implies and deliberately
+so: a `WHERE` and nothing else. A projection, a sort, a limit, an offset, a
+grouping, a computed column and a window are each refused at load with a
+reason — the module docs argue each one, and the short version is that a
+projection would make the caller's ordinals *view* ordinals and everything
+else changes what a row is, so there would be no base row for a policy to
+admit.
+
+The refusal list is not what decides. `beyond_a_where` serialises the spec and
+refuses any key outside `table`, `filter`, `filters`, so a field added to
+`QuerySpec` later is refused rather than silently accepted; the named list only
+picks the better sentence for the cases somebody has thought about.
+
+Step 2 is open, and the wording cost above is still unpaid.
+
 ## 4. Writes through a view are refused
 
 An updatable view needs a rule for mapping a written row back onto base rows,

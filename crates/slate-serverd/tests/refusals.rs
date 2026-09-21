@@ -573,3 +573,149 @@ fn checking_a_configuration_does_not_need_its_metrics_port_free() {
     assert!(output.contains("is valid"), "{output}");
     drop(taken);
 }
+
+// ── views ───────────────────────────────────────────────────────────────────
+//
+// Step 1 of `docs/views.md` §3a: a view can be declared, is resolved against
+// the catalog at startup, and is refused by every read path because it is not
+// in the catalog at all. These tests cover the declaration half. What they
+// deliberately do *not* cover is a query naming a view — there is nothing to
+// assert yet beyond "the table does not exist", which is the pre-existing
+// refusal for any unknown name and would pass with this feature deleted.
+
+/// The narrow thing a view may be: a name for a `WHERE` over one table.
+#[test]
+fn a_view_that_is_a_where_over_one_table_is_accepted() {
+    accepted(&format!(
+        "{GOOD}\n[[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 100\"\n"
+    ));
+}
+
+/// Resolution happens at boot, so a column that does not exist is a refusal to
+/// start rather than a surprise the first time somebody reads through it.
+#[test]
+fn a_view_naming_a_column_that_does_not_exist_will_not_start() {
+    let output = refused(&format!(
+        "{GOOD}\n[[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE bulk > 100\"\n"
+    ));
+    assert!(output.contains("big"), "name the view: {output}");
+    assert!(output.contains("bulk"), "name the column: {output}");
+}
+
+#[test]
+fn a_view_over_a_table_that_does_not_exist_will_not_start() {
+    let output = refused(&format!(
+        "{GOOD}\n[[views]]\nname = \"big\"\nquery = \"SELECT * FROM papers WHERE size > 1\"\n"
+    ));
+    assert!(output.contains("papers"), "{output}");
+}
+
+/// A view sharing a table's name would be dead config: every resolver reaches
+/// the catalog first, so the declaration would silently do nothing.
+#[test]
+fn a_view_named_after_a_table_will_not_start() {
+    let output = refused(&format!(
+        "{GOOD}\n[[views]]\nname = \"docs\"\nquery = \"SELECT * FROM docs WHERE size > 1\"\n"
+    ));
+    assert!(output.contains("same name as a table"), "{output}");
+}
+
+#[test]
+fn two_views_with_one_name_will_not_start() {
+    let output = refused(&format!(
+        "{GOOD}\n\
+         [[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 1\"\n\
+         [[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 2\"\n"
+    ));
+    assert!(output.contains("two views are named"), "{output}");
+}
+
+/// Every clause beyond a `WHERE` is refused, by name, with a reason. The
+/// refusals are the design — `docs/views.md` argues each one — so each is
+/// tested rather than left to the reader's confidence in a list.
+#[test]
+fn a_view_that_is_more_than_a_where_will_not_start() {
+    for (clause, query, expected) in [
+        (
+            "a projection",
+            "SELECT id, size FROM docs WHERE size > 1",
+            "names its columns",
+        ),
+        ("a sort", "SELECT * FROM docs ORDER BY size", "sorts"),
+        ("a limit", "SELECT * FROM docs LIMIT 10", "has a LIMIT"),
+        // Without a LIMIT, so the OFFSET branch is the one that answers.
+        // `… LIMIT 10 OFFSET 5` trips the LIMIT branch first and proves
+        // nothing about this one.
+        ("an offset", "SELECT * FROM docs OFFSET 5", "has an OFFSET"),
+        (
+            "a grouping",
+            "SELECT kind, count(*) FROM docs GROUP BY kind",
+            "groups or aggregates",
+        ),
+        (
+            "a having",
+            "SELECT kind, count(*) FROM docs GROUP BY kind HAVING count(*) > 1",
+            "has a HAVING",
+        ),
+        // A window arrives with a projection — `SELECT *, <item>` does not
+        // parse, so an item in the select list means naming columns — so the
+        // projection is what refuses it and the `window` branch of the list is
+        // never reached. Asserting the projection's message rather than the
+        // one that branch would give is the honest reading of what this case
+        // proves; `views.rs` covers the branch itself, against a spec built
+        // directly. A computed column has no case here at all: the select list
+        // takes a name or a call, `docs` has no column a scalar function
+        // applies to, and adding one to reach a branch a unit test already
+        // covers would be a fixture change for no evidence.
+        (
+            "a window",
+            "SELECT id, row_number() OVER (ORDER BY size) FROM docs",
+            "names its columns",
+        ),
+    ] {
+        let output = refused(&format!(
+            "{GOOD}\n[[views]]\nname = \"v\"\nquery = \"{query}\"\n"
+        ));
+        assert!(
+            output.contains(expected),
+            "{clause} should be refused with `{expected}`: {output}"
+        );
+    }
+}
+
+/// The compiled spec is published, not only the SQL the operator wrote — that
+/// is the half they cannot otherwise see. Beside the tables and not among
+/// them: a generator that read a view as a table would emit a row type for
+/// something with no id, no index and no write path.
+#[test]
+fn print_schema_publishes_views_beside_the_tables() {
+    let files = Files::new();
+    let path = files.write(
+        "head.toml",
+        &format!(
+            "{GOOD}\n[[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 100\"\n"
+        ),
+    );
+    let finished = run(&["--config", &path.display().to_string(), "--print-schema"]);
+    assert_eq!(finished.code, Some(0), "{}", finished.output());
+    let dump: serde_json::Value = serde_json::from_str(&finished.stdout).unwrap();
+    let views = dump["views"].as_array().unwrap();
+    assert_eq!(views.len(), 1, "{}", finished.stdout);
+    assert_eq!(views[0]["name"], "big");
+    assert_eq!(views[0]["table"], "docs");
+    // The ordinal, not the name: resolution already happened. `filters`
+    // rather than `filter` because that is what the SQL front end lowers a
+    // `WHERE` onto — both are a view's to set, and which one is its business.
+    assert_eq!(
+        views[0]["spec"]["filters"][0]["column"], 2,
+        "{}",
+        finished.stdout
+    );
+    // A view is not a table, and nothing should make it look like one.
+    let tables = dump["tables"].as_array().unwrap();
+    assert!(
+        tables.iter().all(|t| t["name"] != "big"),
+        "{}",
+        finished.stdout
+    );
+}
