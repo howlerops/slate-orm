@@ -99,6 +99,7 @@ import {
   EditionsForeignKeys,
   SalesForeignKeys,
   TABLES as CATALOG,
+  VIEWS as CATALOG_VIEWS,
   decodeAuthors,
   decodeBooks,
   decodeEditions,
@@ -149,16 +150,11 @@ const TABLES = ["authors", "books", "sales", "shipments"];
  * in: everything else answers "`classics` is a view over `books`, and only a
  * plain query can read through one".
  *
- * This adapter needs no declaration for it, and the other two do — a real
- * asymmetry rather than an oversight. `claimFor` returns undefined for a name
- * with no schema and the request goes out with no claim, which is right here:
- * `query` sends no fingerprint anyway, and a claim that `classics` is a table
- * would be a claim about something the catalog does not hold. The Python
- * adapter builds a `Table` because its `Query` takes one, and it builds it
- * from `BOOKS` for the reason `docs/views.md` gives — a view may not narrow
- * columns, so a view's ordinals are its base table's.
+ * Derived from the generated declaration rather than listed here, so the
+ * allowlist and the schema this client declares cannot name different views.
+ * `scripts/codegen.py` emits both from the catalog.
  */
-const VIEWS = ["classics"];
+const VIEWS = Object.keys(CATALOG_VIEWS);
 
 interface FilterSpec {
   op: string;
@@ -263,7 +259,16 @@ class Adapter {
       // `scripts/codegen.py`, so the check cannot be satisfied by a
       // declaration that merely agrees with itself — which is what a
       // hand-typed one would be.
-      this.clients[name] = Client.connect(head, identity).declaring(CATALOG);
+      // Views as well as tables. A client that declared the tables alone
+      // would send a claim for a read of `books` and none for a read of
+      // `classics`, so the view's read — the one most likely to be written
+      // against a stale idea of the base table's columns — would be the
+      // unchecked one. The server verifies a view's claim under the view's
+      // own name, so there is nothing to opt out of.
+      this.clients[name] = Client.connect(head, identity).declaring({
+        ...CATALOG,
+        ...CATALOG_VIEWS,
+      });
     }
   }
 

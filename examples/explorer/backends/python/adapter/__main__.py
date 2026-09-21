@@ -35,7 +35,6 @@ from slate import (
     Query,
     SlateError,
     Step,
-    Table,
     TimeUnit,
     Units,
     UpdateWhere,
@@ -68,6 +67,7 @@ from .schema import (
     SALES,
     SALES_FOREIGN_KEYS,
     SHIPMENTS,
+    VIEWS_BY_NAME,
     Authors,
     Books,
     Editions,
@@ -149,24 +149,18 @@ def build_filter(query, table, spec: dict[str, Any] | None):
 #: different databases. The conformance `meta` case is what reported it.
 QUERYABLE = ("authors", "books", "sales", "shipments")
 
-#: The demo's one view, and the `Table` a client needs in order to name it.
+#: The views this adapter serves, generated from the catalog like the tables.
 #:
-#: Built from `BOOKS` rather than written out, and that is not a convenience —
-#: it is the second thing `docs/views.md`'s no-projection rule buys. A view may
-#: not narrow columns, so a view's ordinals *are* its base table's, so a client
-#: declaring one has nothing of its own to get wrong: the name and the base
-#: table are the whole declaration, and they are the two things `head.toml`
-#: says. A view that could project would need a column list here, and a column
-#: list here is the drift this file has been bitten by twice.
+#: `VIEWS_BY_NAME` is `scripts/codegen.py`'s, and each entry is its base
+#: table's columns under the view's name — which is the whole declaration a
+#: view can have, because `docs/views.md` refuses a projection and so a view's
+#: ordinals *are* its base table's. That is also what makes generating it
+#: safe: there is no per-view column list to get wrong, only a name and a base.
 #:
-#: `query` sends no fingerprint — a read is checked by the planner, not by a
-#: schema comparison — so nothing asks the server to agree that `classics` is a
-#: table. It is not one, and `/api/meta` reports it separately for that reason.
-#:
-#: Not in `BY_NAME` and not in `QUERYABLE`: those are tables, and every other
-#: endpoint here reads them. Only `/api/query` accepts a view, which is exactly
-#: which handler the server opted in.
-VIEWS = {"classics": Table("classics", BOOKS.columns, BOOKS.primary_key)}
+#: Not merged into `BY_NAME` and not in `QUERYABLE`: those are tables, and
+#: every other endpoint here reads them. Only `/api/query` accepts a view,
+#: which is exactly which handler the server opted in.
+VIEWS = dict(VIEWS_BY_NAME)
 
 
 def build_query(spec: dict[str, Any]) -> Query:

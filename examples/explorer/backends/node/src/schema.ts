@@ -143,6 +143,22 @@ export const TABLES: Schemas = {
   [SHIPMENTS.name]: SHIPMENTS,
 };
 
+/** Every view the catalog declares, for
+ * `client.declaring({ ...TABLES, ...VIEWS })`.
+ *
+ * Each is its base table's declaration with the view's name, spread
+ * from the constant above rather than written out again. A view may
+ * not narrow columns, so its ordinals are its base table's and there
+ * is nothing here that could disagree.
+ *
+ * Separate from `TABLES` because a view is not a table: only a plain
+ * query reads through one, and every other request naming it is
+ * refused.
+ */
+export const VIEWS: Schemas = {
+  "classics": { ...BOOKS, name: "classics" },
+};
+
 
 /** A row of `authors`, decoded. */
 export interface Authors {

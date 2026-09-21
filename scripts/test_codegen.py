@@ -59,7 +59,7 @@ def test_a_dropped_column_keeps_its_ordinal() -> None:
     gone = column("removed", "string", 1)
     gone["dropped_in"] = 3
     one = table("t", [column("id", "u64", 0), gone, column("kept", "i64", 2)], [0])
-    body = codegen.python_module([one])
+    body = codegen.python_module([one], [])
     assert '"removed"' in body, body
     assert body.index('"removed"') < body.index('"kept"'), body
 
@@ -74,7 +74,7 @@ def test_an_ordinal_gap_is_refused_rather_than_papered_over() -> None:
     """
     gappy = table("t", [column("id", "u64", 0), column("far", "i64", 4)], [0])
     try:
-        codegen.python_module([gappy])
+        codegen.python_module([gappy], [])
     except SystemExit as stopped:
         assert "gap at ordinal 1" in str(stopped), stopped
     else:
@@ -90,9 +90,9 @@ def test_an_unknown_type_is_refused_in_every_language() -> None:
     """
     exotic = table("t", [column("id", "u64", 0), column("odd", "geography", 1)], [0])
     for produce in (
-        lambda: codegen.python_module([exotic]),
-        lambda: codegen.go_file([exotic], "schema"),
-        lambda: codegen.typescript_module([exotic]),
+        lambda: codegen.python_module([exotic], []),
+        lambda: codegen.go_file([exotic], [], "schema"),
+        lambda: codegen.typescript_module([exotic], []),
     ):
         try:
             produce()
@@ -114,15 +114,15 @@ def test_a_decimal_carries_its_scale_and_nothing_else_does() -> None:
         [column("id", "u64", 0), column("price", "decimal", 1, scale=2)],
         [0],
     )
-    python = codegen.python_module([money])
+    python = codegen.python_module([money], [])
     assert 'Column("price", ValueType.DECIMAL, scale=2)' in python, python
     assert "scale=" not in python.split('Column("id"')[1].split("\n")[0], python
 
-    go = codegen.go_file([money], "schema")
+    go = codegen.go_file([money], [], "schema")
     assert "Scale: 2" in go, go
     assert go.count("Scale:") == 1, go
 
-    typescript = codegen.typescript_module([money])
+    typescript = codegen.typescript_module([money], [])
     assert "scale: 2" in typescript, typescript
     assert typescript.count("scale:") == 1, typescript
 
@@ -139,9 +139,9 @@ def test_the_primary_key_is_named_not_numbered() -> None:
         [column("a", "u64", 0), column("b", "u64", 1), column("c", "i64", 2)],
         [1, 0],
     )
-    assert 'primary_key=["b", "a"]' in codegen.python_module([pair])
-    assert 'PrimaryKey: []string{"b", "a"}' in codegen.go_file([pair], "schema")
-    assert 'primaryKey: ["b", "a"]' in codegen.typescript_module([pair])
+    assert 'primary_key=["b", "a"]' in codegen.python_module([pair], [])
+    assert 'PrimaryKey: []string{"b", "a"}' in codegen.go_file([pair], [], "schema")
+    assert 'primaryKey: ["b", "a"]' in codegen.typescript_module([pair], [])
 
 
 def nullable(name: str, kind: str, ordinal: int) -> dict:
@@ -163,17 +163,17 @@ def test_a_row_type_skips_a_dropped_column_but_not_its_ordinal() -> None:
     gone["dropped_in"] = 2
     spec = [table("t", [column("id", "u64", 0), gone, column("name", "string", 2)], [0])]
 
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
     assert "    old:" not in body, "a dropped column is not a field"
     assert '"t", "name"' in body
     # The point: `name` decodes from ordinal 2, not from 1.
     assert 'values, 2, "t", "name"' in body, body
 
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert "\tOld " not in go
     assert "row[2].(slate.String)" in go, go
 
-    typescript = codegen.typescript_module(spec)
+    typescript = codegen.typescript_module(spec, [])
     assert "  old:" not in typescript
     assert 'field(row, 2, "t", "name"' in typescript, typescript
 
@@ -182,19 +182,19 @@ def test_a_nullable_column_is_optional_in_every_language() -> None:
     """Three languages, three spellings of absent, none of them a zero."""
     spec = [table("t", [column("id", "u64", 0), nullable("note", "string", 1)], [0])]
 
-    assert "    note: str | None" in codegen.python_module(spec)
+    assert "    note: str | None" in codegen.python_module(spec, [])
     # A pointer, because Go's zero string is a real value a caller cannot tell
     # from an absent one.
-    assert "\tNote *string" in codegen.go_file(spec, "schema")
-    assert "  note: string | null;" in codegen.typescript_module(spec)
+    assert "\tNote *string" in codegen.go_file(spec, [], "schema")
+    assert "  note: string | null;" in codegen.typescript_module(spec, [])
 
 
 def test_a_table_name_is_not_de_pluralised() -> None:
     """`books` becomes `Books`. Guessing the singular is guessing about English."""
     spec = [table("series", [column("id", "u64", 0)], [0])]
-    assert "class Series:" in codegen.python_module(spec)
-    assert "type Series struct" in codegen.go_file(spec, "schema")
-    assert "export interface Series {" in codegen.typescript_module(spec)
+    assert "class Series:" in codegen.python_module(spec, [])
+    assert "type Series struct" in codegen.go_file(spec, [], "schema")
+    assert "export interface Series {" in codegen.typescript_module(spec, [])
 
 
 def test_a_generated_python_row_decodes_and_refuses_a_transposed_one() -> None:
@@ -213,7 +213,7 @@ def test_a_generated_python_row_decodes_and_refuses_a_transposed_one() -> None:
             [0],
         )
     ]
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
 
     # Executed, not pattern-matched. The generated module imports from `slate`,
     # so this runs only where the client is installed — skipped rather than
@@ -283,7 +283,7 @@ def test_a_generated_module_with_an_enum_is_valid_python() -> None:
         # fix would put the quotes back.
         check("tag_known", "tag in ('red', 'blue')"),
     ]
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
 
     # `compile`, not `ast.parse`: it is the check that actually failed, and a
     # module that parses but does not compile would still be broken.
@@ -313,7 +313,7 @@ def test_a_generated_module_with_an_enum_is_valid_python() -> None:
 def test_a_non_nullable_column_that_comes_back_null_is_refused() -> None:
     """Null into a column declared not-null is a server or schema bug, not a None."""
     spec = [table("t", [column("id", "u64", 0)], [0])]
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
     try:
         import slate  # noqa: F401
     except ImportError:
@@ -350,17 +350,17 @@ def test_a_string_in_check_becomes_a_type_in_the_two_languages_that_have_one() -
     ]
     spec[0]["checks"] = [check("status_known", "status in ('draft', 'live', 'archived')")]
 
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
     assert '    status: Literal["draft", "live", "archived"]' in body
     # And the import is there, which is not automatic: it is emitted only when
     # some table narrows, because an unused one is what ruff deletes out of the
     # generated file and turns into drift.
     assert "from typing import Literal, cast" in body
-    assert '  status: "draft" | "live" | "archived";' in codegen.typescript_module(spec)
+    assert '  status: "draft" | "live" | "archived";' in codegen.typescript_module(spec, [])
 
     # Go has no union of string literals, so the values are data beside the
     # struct and the field stays `string`.
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert 'var PostsStatusValues = []string{"draft", "live", "archived"}' in go, go
     assert "\tStatus string" in go, go
 
@@ -391,8 +391,8 @@ def test_a_predicate_the_matcher_does_not_fully_understand_narrows_nothing() -> 
             )
         ]
         spec[0]["checks"] = [check("c", predicate)]
-        assert "    status: str" in codegen.python_module(spec), predicate
-        assert "Literal" not in codegen.python_module(spec).split("__all__")[1], predicate
+        assert "    status: str" in codegen.python_module(spec, []), predicate
+        assert "Literal" not in codegen.python_module(spec, []).split("__all__")[1], predicate
 
 
 def test_an_in_check_over_a_number_narrows_nothing() -> None:
@@ -408,10 +408,10 @@ def test_an_in_check_over_a_number_narrows_nothing() -> None:
     for predicate in ("priority in (1, 2, 3)", "priority in ('1', '2', '3')"):
         spec = [table("posts", [column("id", "u64", 0), column("priority", "i64", 1)], [0])]
         spec[0]["checks"] = [check("priority_known", predicate)]
-        body = codegen.python_module(spec)
+        body = codegen.python_module(spec, [])
         assert "    priority: int" in body, predicate
         assert "Literal[" not in body.split("__all__")[1], predicate
-        assert "  priority: bigint;" in codegen.typescript_module(spec), predicate
+        assert "  priority: bigint;" in codegen.typescript_module(spec, []), predicate
 
 
 def test_the_constraints_are_published_to_every_language() -> None:
@@ -421,16 +421,16 @@ def test_the_constraints_are_published_to_every_language() -> None:
         check("title_length", "title ~ '^.{1,80}$'", "title", "Title must be 1 to 80 characters.")
     ]
 
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
     assert '"title_length": {' in body
     assert '"column": "title",' in body
     assert '"message": "Title must be 1 to 80 characters.",' in body
 
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert "var PostsChecks = map[string]slate.CheckRule{" in go
     assert 'Column: "title"' in go
 
-    typescript = codegen.typescript_module(spec)
+    typescript = codegen.typescript_module(spec, [])
     assert "export const PostsChecks: Record<string, CheckRule>" in typescript
     assert 'message: "Title must be 1 to 80 characters."' in typescript
 
@@ -439,21 +439,21 @@ def test_a_check_with_no_column_publishes_the_absence() -> None:
     """Null, not an empty string, for the same reason the wire omits the key."""
     spec = [table("posts", [column("id", "u64", 0), column("title", "string", 1)], [0])]
     spec[0]["checks"] = [check("cross", "id > 0")]
-    assert '"column": None,' in codegen.python_module(spec)
-    assert "column: null" in codegen.typescript_module(spec)
+    assert '"column": None,' in codegen.python_module(spec, [])
+    assert "column: null" in codegen.typescript_module(spec, [])
 
 
 def test_a_table_with_no_checks_emits_no_check_block() -> None:
     """An empty map in three languages is three pieces of noise."""
     spec = [table("posts", [column("id", "u64", 0)], [0])]
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
     # The other half of the conditional import: nothing narrows here, so
     # `Literal` must be absent rather than imported and unused.
     assert "from typing import cast" in body
     assert "Literal" not in body
     assert "_CHECKS" not in body
-    assert "PostsChecks" not in codegen.go_file(spec, "schema")
-    assert "PostsChecks" not in codegen.typescript_module(spec)
+    assert "PostsChecks" not in codegen.go_file(spec, [], "schema")
+    assert "PostsChecks" not in codegen.typescript_module(spec, [])
 
 
 def foreign_key(name: str, parent: int, columns: list[int]) -> dict:
@@ -487,16 +487,16 @@ def test_a_foreign_keys_parent_is_resolved_to_a_name_in_every_language() -> None
     another's ordinals.
     """
     spec = two_tables_with_a_key()
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert "CommentsForeignKeys" in go
     assert 'Parent: "posts"' in go, go[go.index("CommentsForeignKeys") :][:400]
     assert "Parent: 1" not in go, "the id leaked into the generated file"
 
-    typescript = codegen.typescript_module(spec)
+    typescript = codegen.typescript_module(spec, [])
     assert 'parent: "posts"' in typescript
     assert "parent: 1" not in typescript
 
-    python = codegen.python_module(spec)
+    python = codegen.python_module(spec, [])
     assert "COMMENTS_FOREIGN_KEYS" in python
     assert '"parent": "posts",' in python
     assert '"parent": 1,' not in python
@@ -508,7 +508,7 @@ def test_the_child_is_the_table_the_key_is_declared_on() -> None:
     `Relation.On` is always the child, either direction, and getting these two
     the wrong way round is a mistake that reads a plausible-looking table.
     """
-    go = codegen.go_file(two_tables_with_a_key(), "schema")
+    go = codegen.go_file(two_tables_with_a_key(), [], "schema")
     line = next(one for one in go.splitlines() if "comment_post" in one and "Child" in one)
     assert 'Child: "comments"' in line, line
     assert 'Parent: "posts"' in line, line
@@ -542,7 +542,7 @@ def test_a_composite_foreign_key_generates_like_any_other() -> None:
     comments["foreign_keys"] = [foreign_key("comment_post", 1, [1, 2])]
     spec = [posts, comments]
 
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     line = next(one for one in go.splitlines() if "comment_post" in one and "Child" in one)
     assert 'Child: "comments"' in line, line
     assert 'Parent: "posts"' in line, line
@@ -551,16 +551,16 @@ def test_a_composite_foreign_key_generates_like_any_other() -> None:
     for spelled in ("1, 2", "[1 2]", "columns"):
         assert spelled not in line, f"the column list leaked into {line}"
 
-    assert 'parent: "posts"' in codegen.typescript_module(spec)
-    assert '"parent": "posts",' in codegen.python_module(spec)
+    assert 'parent: "posts"' in codegen.typescript_module(spec, [])
+    assert '"parent": "posts",' in codegen.python_module(spec, [])
 
 
 def test_a_table_with_no_foreign_keys_emits_no_block() -> None:
     """An empty map in three languages is three pieces of noise."""
     spec = [table("posts", [column("id", "u64", 0)], [0])]
-    assert "PostsForeignKeys" not in codegen.go_file(spec, "schema")
-    assert "PostsForeignKeys" not in codegen.typescript_module(spec)
-    assert "_FOREIGN_KEYS" not in codegen.python_module(spec)
+    assert "PostsForeignKeys" not in codegen.go_file(spec, [], "schema")
+    assert "PostsForeignKeys" not in codegen.typescript_module(spec, [])
+    assert "_FOREIGN_KEYS" not in codegen.python_module(spec, [])
 
 
 def test_a_key_pointing_at_a_table_that_is_not_here_is_refused() -> None:
@@ -575,9 +575,9 @@ def test_a_key_pointing_at_a_table_that_is_not_here_is_refused() -> None:
     spec = two_tables_with_a_key()
     spec[1]["foreign_keys"][0]["parent"] = 99
     for produce in (
-        lambda: codegen.go_file(spec, "schema"),
-        lambda: codegen.typescript_module(spec),
-        lambda: codegen.python_module(spec),
+        lambda: codegen.go_file(spec, [], "schema"),
+        lambda: codegen.typescript_module(spec, []),
+        lambda: codegen.python_module(spec, []),
     ):
         try:
             produce()
@@ -612,13 +612,13 @@ def test_an_array_column_declares_its_element_type_in_every_language() -> None:
             [0],
         )
     ]
-    python = codegen.python_module(spec)
+    python = codegen.python_module(spec, [])
     assert 'Column("tags", ValueType.ARRAY, element=ValueType.STR)' in python, python
 
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert '{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString}' in go, go
 
-    typescript = codegen.typescript_module(spec)
+    typescript = codegen.typescript_module(spec, [])
     assert '{ name: "tags", type: "array", element: "string" }' in typescript, typescript
 
 
@@ -640,7 +640,7 @@ def test_the_go_and_typescript_decoders_check_an_array_element_by_element() -> N
         )
     ]
 
-    go = codegen.go_file(spec, "schema")
+    go = codegen.go_file(spec, [], "schema")
     assert "Tags []string" in go.replace("  ", " "), go
     # The element is asserted to its own wire type, not to `slate.Value`: a
     # `slate.Array` is a `[]slate.Value`, so asserting the interface always
@@ -651,7 +651,7 @@ def test_the_go_and_typescript_decoders_check_an_array_element_by_element() -> N
     # The write side wraps each element in its own type.
     assert "append(tagsElements, slate.String(e))" in go, go
 
-    typescript = codegen.typescript_module(spec)
+    typescript = codegen.typescript_module(spec, [])
     assert "tags: string[]" in typescript, typescript
     assert 'elements(row, 1, "posts", "tags", "string", false) as string[]' in typescript, (
         typescript
@@ -679,7 +679,7 @@ def test_a_generated_array_column_decodes_and_encodes_element_by_element() -> No
             [0],
         )
     ]
-    body = codegen.python_module(spec)
+    body = codegen.python_module(spec, [])
 
     try:
         from slate import i64
@@ -725,18 +725,18 @@ def test_a_catalog_with_no_array_column_gets_no_array_helper() -> None:
     this is the case that had no coverage — a catalog *without* the feature.
     """
     plain = [table("docs", [column("id", "u64", 0), column("title", "string", 1)], [0])]
-    python = codegen.python_module(plain)
+    python = codegen.python_module(plain, [])
     assert "_elements" not in python, python
     assert "Array" not in python, python
-    typescript = codegen.typescript_module(plain)
+    typescript = codegen.typescript_module(plain, [])
     assert "function elements(" not in typescript, typescript
 
     # And the positive half, so a gate that refused everything would fail too.
     with_array = [
         table("posts", [column("id", "u64", 0), array_column("tags", "string", 1)], [0])
     ]
-    assert "_elements" in codegen.python_module(with_array)
-    assert "function elements(" in codegen.typescript_module(with_array)
+    assert "_elements" in codegen.python_module(with_array, [])
+    assert "function elements(" in codegen.typescript_module(with_array, [])
 
 
 def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> None:
@@ -757,7 +757,7 @@ def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> N
     ]:
         spec = [table("posts", [column("id", "u64", 0), bad], [0])]
         try:
-            codegen.python_module(spec)
+            codegen.python_module(spec, [])
         except codegen.Unknown as why:
             assert "tags" in str(why), why
             assert expected in str(why), why
@@ -812,6 +812,123 @@ def test_an_ordinary_catalog_is_not_refused() -> None:
             }
         ]
     )
+
+
+def test_a_view_is_declared_from_its_base_table_in_every_language() -> None:
+    """A view's declaration is built from the table's, not written out again.
+
+    The property the whole design rests on: `docs/views.md` refuses a
+    projection in a view, so a view's ordinals *are* its base table's, so a
+    generated view needs no column list of its own. Asserting *that* rather
+    than the text of a column list is the point — a generator that emitted the
+    columns a second time would pass a "the view knows its columns" assertion
+    and reintroduce the drift.
+
+    So each language is checked for the derivation, and then for the absence
+    of a second column list: `books`' columns must appear exactly once in each
+    file's declaration section.
+    """
+    books = table(
+        "books",
+        [column("id", "u64", 0), column("title", "string", 1)],
+        [0],
+    )
+    views = [("classics", "books")]
+
+    python = codegen.python_module([books], views)
+    assert 'CLASSICS = Table("classics", BOOKS.columns, BOOKS.primary_key)' in python, python
+
+    # Executed, not read. `assert "VIEWS_BY_NAME" in python` was the first
+    # version and a mutation walked through it: commenting the assignment out
+    # leaves the *string* in the file, so the test passed against a generated
+    # module that defines nothing. Running it is the only assertion that can
+    # tell a definition from a mention.
+    compile(python, "<generated>", "exec")
+    try:
+        import slate  # noqa: F401
+    except ImportError:
+        print("  (skipped executing the Python: the `slate` client is not installed)")
+    else:
+        namespace: dict[str, Any] = {}
+        exec(compile(python, "<generated>", "exec"), namespace)
+        by_name: Any = namespace["VIEWS_BY_NAME"]
+        view = by_name["classics"]
+        assert view.name == "classics", view
+        # The derivation, at run time rather than in the source text: the view
+        # holds the same column objects the table does.
+        assert view.columns == namespace["BOOKS"].columns, view
+        assert view.primary_key == namespace["BOOKS"].primary_key, view
+
+    go = codegen.go_file([books], views, "schema")
+    assert 'named("classics", Tables["books"])' in go, go
+    assert "var Views = slate.Schemas{" in go, go
+
+    typescript = codegen.typescript_module([books], views)
+    assert '{ ...BOOKS, name: "classics" }' in typescript, typescript
+    assert "export const VIEWS: Schemas" in typescript, typescript
+
+    # The control, and the assertion that actually forbids a second column
+    # list: the *declaration* of `title` appears once per language, made by
+    # the table. Matched by each language's declaration spelling rather than
+    # by the bare name, which also occurs in the generated row type and its
+    # decoder — counting those would make this pass or fail for reasons that
+    # have nothing to do with views.
+    assert python.count('Column("title"') == 1, python
+    assert go.count('{Name: "title"') == 1, go
+    assert typescript.count('{ name: "title"') == 1, typescript
+
+
+def test_a_catalog_with_no_view_gets_no_view_block() -> None:
+    """The never-emits half.
+
+    A generator that always wrote the block would put an empty map and, in Go,
+    an unused `named` helper into every file — and `gofmt` and the Go compiler
+    are happy with both, so nothing would report it. This is the same shape as
+    `test_a_catalog_with_no_array_column_gets_no_array_helper`.
+    """
+    books = table("books", [column("id", "u64", 0)], [0])
+    assert "VIEWS_BY_NAME" not in codegen.python_module([books], [])
+    go = codegen.go_file([books], [], "schema")
+    assert "var Views" not in go, go
+    assert "func named(" not in go, go
+    assert "VIEWS" not in codegen.typescript_module([books], [])
+
+
+def test_a_view_over_a_table_that_is_not_emitted_is_refused() -> None:
+    """A base table this file does not declare stops the run.
+
+    Unreachable through `--print-schema` — `slate-serverd` resolves every view
+    against the catalog before it starts — and the arm exists because "cannot
+    happen" is a property of the server's wiring rather than of the generator.
+    A generator that indexed a missing name would emit `Tables["gone"]`, which
+    compiles in Go and is nil at run time, and `BOOKS.columns` on a name that
+    does not exist, which is a `NameError` in a file nobody reads until it is
+    imported.
+    """
+    books = table("books", [column("id", "u64", 0)], [0])
+    printed = {"tables": [books], "views": [{"name": "v", "table": "gone"}]}
+    try:
+        codegen.declared_views(printed, [books])
+    except codegen.Unknown as why:
+        assert "gone" in str(why), why
+    else:
+        raise AssertionError("a view over an unknown table was accepted")
+
+    # The never-fires half: an ordinary view resolves.
+    ok = {"tables": [books], "views": [{"name": "v", "table": "books"}]}
+    assert codegen.declared_views(ok, [books]) == [("v", "books")]
+
+
+def test_a_catalog_that_publishes_no_views_key_is_read_as_none() -> None:
+    """An older server's dump has no `views` key at all.
+
+    `--print-schema` gained one; a prebuilt binary from before that does not,
+    and `SLATE_SERVERD` points these scripts at prebuilt binaries by design.
+    A `KeyError` there would be a generator crash on a catalog that is
+    perfectly valid.
+    """
+    books = table("books", [column("id", "u64", 0)], [0])
+    assert codegen.declared_views({"tables": [books]}, [books]) == []
 
 
 def main() -> int:

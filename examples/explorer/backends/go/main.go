@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"time"
@@ -37,6 +38,22 @@ type server struct {
 	clients map[string]*slate.Client
 }
 
+// declared is the tables and the views in one map, which is what `Declaring`
+// takes.
+//
+// Both, not just the tables. A view is a name a read may use, and a client
+// that declares the tables alone sends a claim for a read of `books` and none
+// for a read of `classics` — so the view's read is the one that goes out
+// unchecked, which is the read most likely to have been written against a
+// stale idea of the base table's columns. The server verifies a view's claim
+// under the view's own name; there is nothing here to opt out of.
+func declared() slate.Schemas {
+	all := make(slate.Schemas, len(schema.Tables)+len(schema.Views))
+	maps.Copy(all, schema.Tables)
+	maps.Copy(all, schema.Views)
+	return all
+}
+
 func main() {
 	head := flag.String("head", "127.0.0.1:7421", "the head node")
 	listen := flag.String("listen", "127.0.0.1:7431", "where to serve")
@@ -54,7 +71,7 @@ func main() {
 		// `scripts/codegen.py`, so the check cannot be satisfied by a
 		// declaration that merely agrees with itself — which is what a
 		// hand-typed one would be.
-		s.clients[name] = client.Declaring(schema.Tables)
+		s.clients[name] = client.Declaring(declared())
 	}
 	defer func() {
 		for _, c := range s.clients {

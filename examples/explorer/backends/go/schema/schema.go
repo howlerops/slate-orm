@@ -80,6 +80,29 @@ var Tables = slate.Schemas{
 	},
 }
 
+// named is a table's declaration under a different name, which is
+// exactly what a view's is: a view may not narrow columns, so its
+// ordinals are its base table's and only the name differs.
+//
+// It copies the struct and reassigns one field. The Columns slice is
+// shared with the table's declaration, which is correct — neither is
+// written after this file is loaded — and is why this is not a deep
+// copy.
+func named(name string, base slate.TableDef) slate.TableDef {
+	base.Name = name
+	return base
+}
+
+// Views is every view the catalog declares, ready for
+// `client.Declaring(schema.Views)` beside the tables.
+//
+// Separate from `Tables` because a view is not a table: only a plain
+// query reads through one, and every other request naming it is
+// refused.
+var Views = slate.Schemas{
+	"classics": named("classics", Tables["books"]),
+}
+
 // Authors is a row of `authors`, decoded.
 type Authors struct {
 	Id      uint64

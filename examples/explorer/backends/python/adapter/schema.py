@@ -152,6 +152,20 @@ SHIPMENTS_FOREIGN_KEYS = {
 
 BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, POSTS, SHIPMENTS,)}
 
+#: The views the catalog declares, for `Query(VIEWS_BY_NAME[name])`.
+#:
+#: Each is its base table's columns under the view's name, built from
+#: the declaration above rather than written out again. A view may not
+#: narrow columns, so its ordinals are its base table's and there is
+#: nothing here that could disagree; the server checks a claim about a
+#: view under the view's own name against exactly those columns.
+#:
+#: Separate from `BY_NAME` because a view is not a table: only a plain
+#: query reads through one, and every other request naming it is
+#: refused.
+CLASSICS = Table("classics", BOOKS.columns, BOOKS.primary_key)
+VIEWS_BY_NAME = {view.name: view for view in (CLASSICS,)}
+
 
 def _field(values: Sequence[object], at: int, table: str, column: str,
            kind: type | tuple[type, ...], nullable: bool) -> object:

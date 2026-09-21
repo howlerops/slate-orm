@@ -459,6 +459,40 @@ def catalog(config: Path, serverd: str) -> dict:
     return json.loads(printed.stdout)
 
 
+def declared_views(printed: dict, tables: list[dict]) -> list[tuple[str, str]]:
+    """Each view as `(name, base table)`, in the order the catalog lists them.
+
+    A view's *declaration* is its base table's, under the view's name. That is
+    the whole of what a client needs and it is not a simplification: a view may
+    not narrow columns — `docs/views.md` refuses a projection, because it would
+    make the caller's ordinals view ordinals — so a view's ordinals are its base
+    table's, and the server checks a claim about a view under the view's name
+    against exactly those columns (`fingerprint::check_named`).
+
+    So nothing per-column is emitted for a view, and there is nothing here that
+    could disagree with the table: each emitter builds the view's declaration
+    from the table's own, in the generated file, rather than writing a second
+    column list beside it.
+
+    The base table is required to be one this file emits. It cannot fail today
+    — `slate-serverd` resolves every view against the catalog before it starts
+    — but "cannot fail" is a property of the server's wiring, and a generator
+    that indexed a missing name would emit a file that does not compile with no
+    idea why.
+    """
+    known = {table["name"] for table in tables}
+    out = []
+    for view in printed.get("views", []):
+        base = view["table"]
+        if base not in known:
+            raise Unknown(
+                f"view `{view['name']}` reads table `{base}`, which is not in "
+                f"the catalog this file declares"
+            )
+        out.append((view["name"], base))
+    return out
+
+
 def live_columns(table: dict) -> list[dict]:
     """The columns a client declares: every one, in ordinal order.
 
@@ -1229,7 +1263,7 @@ def import_order(name: str) -> tuple[int, str]:
     return (2, name)
 
 
-def python_module(tables: list[dict]) -> str:
+def python_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
     """The Python client's declaration."""
     parents = parent_names(tables)
     out = [
@@ -1335,11 +1369,71 @@ def python_module(tables: list[dict]) -> str:
 
     joined = ", ".join(names)
     out.append(f"BY_NAME = {{table.name: table for table in ({joined},)}}")
+    if views:
+        out.extend(["", *python_views(views)])
     out.extend(python_rows(tables))
     return "\n".join(out)
 
 
-def go_file(tables: list[dict], package: str) -> str:
+def python_views(views: list[tuple[str, str]]) -> list[str]:
+    """The view declarations, each built from its base table's above."""
+    out = [
+        "#: The views the catalog declares, for `Query(VIEWS_BY_NAME[name])`.",
+        "#:",
+        "#: Each is its base table's columns under the view's name, built from",
+        "#: the declaration above rather than written out again. A view may not",
+        "#: narrow columns, so its ordinals are its base table's and there is",
+        "#: nothing here that could disagree; the server checks a claim about a",
+        "#: view under the view's own name against exactly those columns.",
+        "#:",
+        "#: Separate from `BY_NAME` because a view is not a table: only a plain",
+        "#: query reads through one, and every other request naming it is",
+        "#: refused.",
+    ]
+    made = []
+    for name, base in views:
+        constant = name.upper()
+        table = base.upper()
+        out.append(
+            f'{constant} = Table("{name}", {table}.columns, {table}.primary_key)'
+        )
+        made.append(constant)
+    joined = ", ".join(made)
+    out.append(f"VIEWS_BY_NAME = {{view.name: view for view in ({joined},)}}")
+    return out
+
+
+def go_views(views: list[tuple[str, str]]) -> list[str]:
+    """The Go view declarations, and the one helper they need."""
+    out = [
+        "// named is a table's declaration under a different name, which is",
+        "// exactly what a view's is: a view may not narrow columns, so its",
+        "// ordinals are its base table's and only the name differs.",
+        "//",
+        "// It copies the struct and reassigns one field. The Columns slice is",
+        "// shared with the table's declaration, which is correct — neither is",
+        "// written after this file is loaded — and is why this is not a deep",
+        "// copy.",
+        "func named(name string, base slate.TableDef) slate.TableDef {",
+        "\tbase.Name = name",
+        "\treturn base",
+        "}",
+        "",
+        "// Views is every view the catalog declares, ready for",
+        "// `client.Declaring(schema.Views)` beside the tables.",
+        "//",
+        "// Separate from `Tables` because a view is not a table: only a plain",
+        "// query reads through one, and every other request naming it is",
+        "// refused.",
+        "var Views = slate.Schemas{",
+    ]
+    for name, base in views:
+        out.append(f'\t"{name}": named("{name}", Tables["{base}"]),')
+    out.append("}")
+    return out
+
+
+def go_file(tables: list[dict], views: list[tuple[str, str]], package: str) -> str:
     """The Go client's declaration."""
     out = [
         f"// {BANNER}",
@@ -1375,11 +1469,36 @@ def go_file(tables: list[dict], package: str) -> str:
         out.append(f"\t\tPrimaryKey: []string{{{key}}},")
         out.append("\t},")
     out.extend(["}", ""])
+    if views:
+        out.extend([*go_views(views), ""])
     out.extend(go_rows(tables))
     return "\n".join(out)
 
 
-def typescript_module(tables: list[dict]) -> str:
+def typescript_views(views: list[tuple[str, str]]) -> list[str]:
+    """The TypeScript view declarations, each spread from its base table's."""
+    out = [
+        "/** Every view the catalog declares, for",
+        " * `client.declaring({ ...TABLES, ...VIEWS })`.",
+        " *",
+        " * Each is its base table's declaration with the view's name, spread",
+        " * from the constant above rather than written out again. A view may",
+        " * not narrow columns, so its ordinals are its base table's and there",
+        " * is nothing here that could disagree.",
+        " *",
+        " * Separate from `TABLES` because a view is not a table: only a plain",
+        " * query reads through one, and every other request naming it is",
+        " * refused.",
+        " */",
+        "export const VIEWS: Schemas = {",
+    ]
+    for name, base in views:
+        out.append(f'  "{name}": {{ ...{base.upper()}, name: "{name}" }},')
+    out.append("};")
+    return out
+
+
+def typescript_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
     """The TypeScript client's declaration."""
     out = [
         "// " + BANNER,
@@ -1478,6 +1597,8 @@ def typescript_module(tables: list[dict]) -> str:
     out.append("export const TABLES: Schemas = {")
     out.extend(f"  [{name}.name]: {name}," for name in names)
     out.extend(["};", ""])
+    if views:
+        out.extend([*typescript_views(views), ""])
     out.extend(typescript_rows(tables))
     return "\n".join(out)
 
@@ -1523,16 +1644,20 @@ def main() -> int:
     if not (arguments.python or arguments.go or arguments.typescript):
         parser.error("name at least one of --python, --go, --typescript")
 
-    tables = catalog(arguments.config, arguments.serverd)["tables"]
+    printed = catalog(arguments.config, arguments.serverd)
+    tables = printed["tables"]
     refuse_unsupported(tables)
+    views = declared_views(printed, tables)
     agreed = True
     if arguments.python:
-        agreed &= emit(arguments.python, python_module(tables), arguments.check)
+        agreed &= emit(arguments.python, python_module(tables, views), arguments.check)
     if arguments.go:
-        body = go_file(tables, arguments.go_package)
+        body = go_file(tables, views, arguments.go_package)
         agreed &= emit(arguments.go, body, arguments.check)
     if arguments.typescript:
-        agreed &= emit(arguments.typescript, typescript_module(tables), arguments.check)
+        agreed &= emit(
+            arguments.typescript, typescript_module(tables, views), arguments.check
+        )
 
     if not agreed:
         print(
