@@ -59,3 +59,4 @@ examples/batchbench/go/batchbench
 # drifts from the kernel it claims to be.
 site/slate_wasm.js
 site/slate_wasm_bg.wasm
+.mutate-in-flight.json

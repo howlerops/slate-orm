@@ -123,14 +123,31 @@ else:
 '''
 
 
-def run(spec: str, subject: Path, fake: Path) -> tuple[int, str]:
-    """`mutate.py` over `spec`, with its command pointed at the fake."""
+def run(
+    spec: str, subject: Path, fake: Path, marker: Path | None = None
+) -> tuple[int, str]:
+    """`mutate.py` over `spec`, with its command pointed at the fake.
+
+    `marker` gives the child its own in-flight marker. Without one it shares
+    the repository's with whatever is driving this suite — and when that is
+    `mutate.py` mutating `mutate.py`, the two recover each other.
+    """
+    import os
+
+    environment = dict(os.environ)
+    if marker is not None:
+        environment["MUTATE_MARKER"] = str(marker)
+    else:
+        # A marker of its own even when a case does not ask, so a suite run
+        # inside a mutation run never touches the outer one's.
+        environment["MUTATE_MARKER"] = str(subject) + ".in-flight"
     finished = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "mutate.py")],
         input=spec.replace("SUBJECT", str(subject)).replace("FAKE", str(fake)),
         capture_output=True,
         text=True,
         check=False,
+        env=environment,
     )
     return finished.returncode, finished.stdout + finished.stderr
 
@@ -337,6 +354,122 @@ def case_fresh_bytecode() -> bool:
     return True
 
 
+def case_recovers_from_a_kill() -> list[bool]:
+    """A run killed mid-mutation is recovered by the next one, or refused.
+
+    `mutate.py` restores in a `finally`, which does not run through a
+    `SIGKILL` — and a mutation run is exactly the kind of thing a timeout
+    kills. That happened: a killed run left `scripts/run_examples.sh` carrying
+    a mutated roster line, and the next test run failed against it in a way
+    that read as a broken test rather than a dirty tree.
+
+    Rather than kill a real run, which would be slow and racy, these write the
+    marker by hand in each of the three states it can be found in. That is what
+    a killed run leaves behind, and it is the input `recover` actually takes.
+    """
+    import json
+
+    results = []
+
+    def attempt(
+        name: str,
+        contents: str,
+        expect_code: int,
+        expect_text: str,
+        expect_after: str | None,
+        vanished: bool = False,
+    ) -> bool:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            subject = home / "subject.txt"
+            subject.write_text(contents)
+            fake = home / "fake.py"
+            fake.write_text(FAKE)
+            # A marker of this case's own, via `MUTATE_MARKER`. The repository
+            # one is shared with the `mutate.py` run that may be driving this
+            # suite, and the two would recover each other's state.
+            marker = home / "marker.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "file": str(home / "gone.txt") if vanished else str(subject),
+                        "case": "a killed case",
+                        "original": "ORIGINAL\n",
+                        "mutated": "MUTATED\n",
+                    }
+                )
+            )
+            try:
+                body = spec('{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}')
+                text = body.replace("__SUBJECT__", str(subject)).replace(
+                    "__FAKE__",
+                    f'"{sys.executable}", "{fake}", "{subject}"',
+                )
+                code, output = run(text, subject, fake, marker)
+                problems = []
+                if code != expect_code:
+                    problems.append(f"exit {code}, expected {expect_code}")
+                if expect_text not in output:
+                    problems.append(f"missing {expect_text!r}")
+                if expect_after is not None and subject.read_text() != expect_after:
+                    problems.append(
+                        f"the file holds {subject.read_text()!r}, "
+                        f"expected {expect_after!r}"
+                    )
+                if expect_code == 0 and marker.exists():
+                    problems.append("the marker was left behind after a clean run")
+            finally:
+                marker.unlink(missing_ok=True)
+        if problems:
+            print(f"FAIL  {name}")
+            for problem in problems:
+                print(f"        {problem}")
+            for line in output.splitlines()[:8]:
+                print(f"      {line}")
+            return False
+        print(f"ok    {name}")
+        return True
+
+    results.append(attempt(
+        "a file left mutated by a killed run is put back",
+        # Exactly what the marker says was written: unambiguously our leftover.
+        "MUTATED\n",
+        0,
+        "recovered",
+        # Restored, then mutated and restored again by the run that follows.
+        "ORIGINAL\n",
+    ))
+    results.append(attempt(
+        "a marker whose file is already back is just dropped",
+        "ORIGINAL\n",
+        0,
+        "already back",
+        "ORIGINAL\n",
+    ))
+    results.append(attempt(
+        "a marker naming a file that is gone is dropped, not acted on",
+        # A fixture in a temporary directory that has since been removed,
+        # which is the commonest leftover of all: there is nothing to restore
+        # and nothing to warn about, and refusing here would make every later
+        # run fail on a file nobody can put back.
+        "ORIGINAL\n",
+        0,
+        "ok   m",
+        "ORIGINAL\n",
+        vanished=True,
+    ))
+    results.append(attempt(
+        "a file edited since the kill is refused rather than guessed at",
+        # Neither version. Overwriting would trade one silent wrong state for
+        # another, so the run refuses and says which file and which case.
+        "SOMEBODY ELSE'S EDIT\n",
+        1,
+        "Refusing to guess",
+        "SOMEBODY ELSE'S EDIT\n",
+    ))
+    return results
+
+
 def spec(cases: str) -> str:
     return '{"file": "__SUBJECT__", "command": [__FAKE__], "cases": [' + cases + "]}"
 
@@ -498,6 +631,7 @@ def main() -> int:
             ["NOTHING RAN"],
         ),
         case_fresh_bytecode(),
+        *case_recovers_from_a_kill(),
         case_help_lists_every_dialect(),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")

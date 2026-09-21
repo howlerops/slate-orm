@@ -5,8 +5,9 @@
 thing, confirm a *named* test fails, restore, re-verify. The discipline is
 sound and doing it by hand has a failure mode that looks exactly like success.
 
-**Four ways a mutation run lies. The first three were met by hand in one
-session; the fourth was found by pointing this script at itself:**
+**Five ways a mutation run lies. The first three were met by hand in one
+session; the fourth was found by pointing this script at itself; the fifth was
+this script's own fault:**
 
 1. **The patch does not apply.** An anchor string moves under `cargo fmt` and
    the replacement silently matches nothing. The suite then runs against
@@ -24,11 +25,19 @@ session; the fourth was found by pointing this script at itself:**
    mutation's bytecode, and a restore can be invisible. Found by running this
    script against itself; see `run()`.
 
+5. **A killed run leaves the tree mutated.** The restore lives in a `finally`,
+   which does not run through a `SIGKILL` — and a mutation run is exactly what
+   a timeout kills. One did, leaving `scripts/run_examples.sh` carrying a
+   mutated roster line, and the next test run failed against it in a way that
+   read as a broken test rather than a dirty tree. That is the first lie again
+   with a longer fuse: a suite running against code nobody meant to be there.
+
 Each is caught here rather than trusted to a reader's attention:
 
 - the old text must occur **exactly once**, and the count is reported when not;
 - the file is restored in a `finally`, so an interrupt does not leave a mutated
-  tree;
+  tree, and an in-flight marker names the file and both versions, so a run that
+  is *killed* — where no `finally` runs — is put back by the next one;
 - the command's output is parsed for how many suites *reported*, and zero is a
   hard error that says so rather than a quiet pass;
 - the spec arrives as JSON on stdin, so no replacement ever touches a shell;
@@ -80,6 +89,32 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+#: Where an in-flight mutation records itself, so a killed run is recoverable.
+#:
+#: The restore below lives in a `finally`, which does not run through a
+#: `SIGKILL` — and a mutation run *is* the kind of thing that gets killed, by a
+#: timeout or by somebody's patience. That happened: a timed-out run left
+#: `scripts/run_examples.sh` carrying a mutated roster line, the next test run
+#: failed against it, and the failure looked like a broken test rather than a
+#: dirty tree. A fifth way a mutation run lies, and the one the script itself
+#: causes.
+#:
+#: Written before the file is touched and removed after it is restored, so its
+#: existence means exactly "a mutation is applied right now, or was when
+#: something killed us".
+#:
+#: One per repository rather than one beside each subject, because the point is
+#: to be *noticed*: the run that trips over a leftover mutation is usually a
+#: run of something else entirely, which is how the original went unnoticed
+#: until a test failed for no visible reason.
+#:
+#: `MUTATE_MARKER` overrides it, and only the tests beside this file set it.
+#: They drive `mutate.py` as a subprocess *while mutating `mutate.py`*, so
+#: parent and child would otherwise share one marker and recover each other's
+#: state — which is not a hypothetical: it made a mutation of the restore path
+#: read as a survivor when running the suite by hand caught it twice.
+MARKER = Path(os.environ.get("MUTATE_MARKER", ROOT / ".mutate-in-flight.json"))
 
 #: How to read a suite's output: which lines name a failure, and which line
 #: proves a suite reported at all.
@@ -198,8 +233,98 @@ def apply_once(path: Path, mutation: Mutation) -> str:
             "  Re-read the file and fix the anchor; do not run the suite, "
             "because it would pass against unmutated code."
         )
-    path.write_text(original.replace(mutation.old, mutation.new, 1))
+    mutated = original.replace(mutation.old, mutation.new, 1)
+    # The marker first, then the write. The other order leaves a window in
+    # which the file is mutated and nothing says so, which is the whole failure
+    # this is for.
+    MARKER.write_text(
+        json.dumps(
+            {
+                # Absolute: the tests beside this file drive it over fixtures
+                # in a temporary directory, which have no path relative to the
+                # repository at all.
+                "file": str(path),
+                "case": mutation.name,
+                "original": original,
+                "mutated": mutated,
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.write_text(mutated)
     return original
+
+
+def restore(path: Path, original: str) -> None:
+    """Put the file back and drop the marker, in that order."""
+    path.write_text(original)
+    MARKER.unlink(missing_ok=True)
+
+
+def recover() -> int:
+    """Put back what a killed run left mutated, or refuse and say so.
+
+    Called before anything else. Restores only when the file still holds
+    *exactly* what was written — anything else means somebody edited it since,
+    and overwriting that would trade one silent wrong state for another.
+    """
+    if not MARKER.exists():
+        return 0
+    try:
+        left = json.loads(MARKER.read_text(encoding="utf-8"))
+        path = Path(left["file"])
+    except (OSError, ValueError, KeyError) as why:
+        print(
+            f"{MARKER} exists and cannot be read ({why}).\n"
+            "  A previous run was killed while a file was mutated. Check "
+            "`git status`, put the file back, and delete the marker.",
+            file=sys.stderr,
+        )
+        return 1
+    if not path.exists():
+        # The subject is gone — a fixture in a temporary directory, usually.
+        # There is nothing to restore and nothing to warn about.
+        #
+        # The unlink is belt and braces and a mutation run says so: removing it
+        # **survives**, because the run that follows writes the marker again
+        # and removes it on the way out. What it covers is the path where that
+        # run never gets that far — a spec naming a file that does not exist
+        # raises in `apply_once` — and a stale marker then outlives the
+        # process. Recorded rather than deleted, with the reason, because the
+        # line costs nothing and the case it covers is the one nobody meets
+        # until they do.
+        MARKER.unlink(missing_ok=True)
+        return 0
+    try:
+        current = path.read_text()
+    except OSError as why:
+        print(
+            f"{MARKER} exists and cannot be read ({why}).\n"
+            "  A previous run was killed while a file was mutated. Check "
+            "`git status`, put the file back, and delete the marker.",
+            file=sys.stderr,
+        )
+        return 1
+    if current == left["mutated"]:
+        path.write_text(left["original"])
+        MARKER.unlink(missing_ok=True)
+        print(
+            f"recovered: {left['file']} was left mutated by a killed run "
+            f"({left['case']!r}); restored."
+        )
+        return 0
+    if current == left["original"]:
+        MARKER.unlink(missing_ok=True)
+        print(f"recovered: {left['file']} was already back; dropped the marker.")
+        return 0
+    print(
+        f"{left['file']} was mutated by a killed run ({left['case']!r}) and "
+        "has changed since.\n"
+        "  Refusing to guess which version you want. Read `git diff` on it, "
+        f"put it right, and delete {MARKER}.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def run(command: list[str], dialect: str) -> tuple[list[str], int, str]:
@@ -241,6 +366,8 @@ def run(command: list[str], dialect: str) -> tuple[list[str], int, str]:
 
 
 def check(spec: dict) -> int:
+    if recover():
+        return 1
     path = ROOT / spec["file"]
     command = spec["command"]
     # Defaulted rather than required: every spec written before dialects
@@ -271,7 +398,7 @@ def check(spec: dict) -> int:
         try:
             failures, reported, output = run(command, dialect)
         finally:
-            path.write_text(original)
+            restore(path, original)
 
         if reported == 0:
             errors = [x for x in output.splitlines() if x.startswith("error")][:3]
