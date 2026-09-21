@@ -320,6 +320,8 @@ jobs:
       - run: python3 scripts/check_handlers.py
       - run: python3 scripts/test_check_handlers.py
       - run: python3 examples/explorer/conformance/test_conformance.py
+      - run: python3 scripts/check_demo_surface.py
+      - run: python3 scripts/test_check_demo_surface.py
       # The TypeScript client carries its own copy of the proto, because
       # `@grpc/proto-loader` reads the file at run time and an npm package
       # cannot reach into a sibling crate. Nothing checked the two agreed:

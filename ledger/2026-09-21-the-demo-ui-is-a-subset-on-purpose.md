@@ -68,10 +68,22 @@ The endpoint lists, taken from the source rather than from memory:
 
 ## What this does not do
 
-Nothing makes the UI's coverage visible. There is no check that the README's
+~~Nothing makes the UI's coverage visible. There is no check that the README's
 *What the UI shows* still describes `web/src/`, and no check comparing the
 UI's endpoint list to the adapters' — so the drift this entry measured
 happened silently over six features and was found by counting on purpose. A
 guard is writable (both lists are greppable, as above) and was not written,
 because a guard that fails whenever the adapters gain an endpoint would fail
-on every surface task and be switched off.
+on every surface task and be switched off.~~
+
+**Half closed, by #267.** The objection was right about a guard that only
+compares two lists, and it names its own answer: `scripts/check_demo_surface.py`
+carries a `NOT_IN_THE_UI` roster with a reason per endpoint, so the failure is
+not "you added an endpoint" but "say in one line why the UI does not show it".
+The count in this entry was already stale when the guard was written — it is
+**12** of 24, not 11, because `/api/restore-unchanged` reached the UI one
+feature later and the sentence in `docs/full-text.md` did not. That is the
+drift, one more time, and it is what the guard stops.
+
+The README half is still open: nothing checks that *What the UI shows* still
+describes `web/src/`.

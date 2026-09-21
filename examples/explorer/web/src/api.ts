@@ -294,9 +294,18 @@ export function kindOf(value: Tagged | undefined): string {
 
 /** The demo's tables, as the UI needs to label them.
  *
- * A copy of the schema, like every client holds. The server checks it on every
- * request and refuses a declaration that disagrees, so this cannot drift
- * silently — it drifts loudly, on the first query.
+ * A copy of the schema, like every client holds — and unlike theirs, **this
+ * one never reaches the server**. The adapters' declarations carry a
+ * fingerprint and are refused when they disagree with the catalog; these are
+ * column *headers*, they stay in the browser, and nothing hashes them. A
+ * stale entry here is a wrong label over a right value, which is the quietest
+ * kind of wrong there is.
+ *
+ * What catches that is `test/api.test.ts`, which parses `head.toml` and
+ * compares this table by table and in order, with `NOT_IN_THE_UI` naming the
+ * tables that are deliberately absent and why. The comment here used to
+ * credit the server's fingerprint check instead, which is true of every other
+ * copy of the schema in this repository and not of this one.
  */
 export const TABLES: Record<string, string[]> = {
   authors: ["id", "name", "country", "born"],
