@@ -122,6 +122,32 @@ pub const COLUMN_RANGE_SELECTIVITY: f64 = 0.33;
 /// about sort position.
 pub const LIKE_SELECTIVITY: f64 = 0.1;
 
+/// How much of a table one search term is expected to keep.
+///
+/// A thousandth, and a guess — the same kind of guess [`LIKE_SELECTIVITY`] is
+/// and for a sharper reason: a histogram describes where a *column's values*
+/// sort, and a term is not one of them. What would answer this is the inverted
+/// index's own distribution, how many rows hold each term, which is a second
+/// statistic over a structure that can carry millions of distinct keys and is
+/// not collected.
+///
+/// The basis for the number is the same one [`ColumnStats::default`] uses, one
+/// order the other way: an un-analysed column is assumed to have a hundred
+/// distinct values, and a text column's *vocabulary* is far larger than a
+/// categorical column's value set — a few thousand distinct words out of a
+/// corpus of short titles is ordinary. A thousandth is that assumption.
+///
+/// **It was 0.05 first, and that made the index unreachable.** Not by a
+/// little: at a twentieth the planner chose a table scan at every size from a
+/// thousand rows to a million, because a twentieth of a large table is a great
+/// many point reads and a scan streams. The measurement is in the ledger
+/// entry; what it demonstrates is that a selectivity guess on a non-covering
+/// index is not a detail, it is whether the index is ever used at all.
+///
+/// Getting it wrong costs a plan, never an answer: the residual re-checks
+/// every term on every row the scan admits, whichever path produced it.
+pub const TERM_SELECTIVITY: f64 = 0.001;
+
 /// Cost of one comparison level when sorting a row: CPU only, no I/O, so
 /// several orders of magnitude below a round trip.
 pub const SORT_ROW_COST: f64 = 0.000_02;
@@ -490,6 +516,22 @@ impl TableStats {
                     _ => LIKE_SELECTIVITY,
                 };
                 if *negated { 1.0 - matched } else { matched }
+            }
+            // Each term independently, which is the same independence
+            // assumption the rest of this file makes and is *more* wrong here:
+            // words in one document correlate strongly, so two terms of a
+            // phrase keep far more than a twentieth of a twentieth. Floored at
+            // one row rather than allowed to reach zero, because a plan
+            // costing an empty result reads nothing and a search that matches
+            // one document is the case this index exists for.
+            //
+            // No terms is no rows: see `Expr::Contains`.
+            Expr::Contains { terms, .. } => {
+                if terms.is_empty() {
+                    return 0.0;
+                }
+                let independent = TERM_SELECTIVITY.powi(terms.len().min(8) as i32);
+                independent.max(1.0 / (self.row_count.max(1)) as f64)
             }
             // A regular expression says nothing about where its matches sort,
             // whatever it is anchored on — `^abc` is a prefix, but so is

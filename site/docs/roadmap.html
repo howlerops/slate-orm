@@ -289,17 +289,21 @@
             <td>Set operations, views, arrays, full-text search</td>
             <td>most</td>
             <td>
-              <strong>One built, one refused, two open.</strong> Arrays are
-              built &mdash; stored, compared, sorted, generated in three
+              <strong>Two built, one refused, one designed.</strong> Arrays
+              are built &mdash; stored, compared, sorted, generated in three
               languages and writable in a predicate. Set operations are refused,
               because the hard half of <code>UNION</code> is deduplicating
               across two independently planned statements. Views are designed
               and not built, and the design&rsquo;s headline is that a view here
               cannot be a privilege boundary the way it is in Postgres.
-              Full-text search is genuinely open, and larger than it looks:
-              every index here writes one entry per row and an inverted index
-              writes one per term, so it is a new index <em>cardinality</em>,
-              not a new index expression.
+              Full-text search is built in the kernel, and the row above was
+              right about where the work was: every index wrote one entry per
+              row and an inverted index writes one per term, so it was a new
+              index <em>cardinality</em> rather than a new expression. One
+              function decides how many entries a row writes; the write path
+              compares two sets of keys; the search text goes through the same
+              tokenizer the write path runs. Nothing outside the kernel reaches
+              it yet.
             </td>
           </tr>
           <tr>
@@ -588,7 +592,7 @@
 
     <p>
       Neither closes the whole table. Window functions, CTEs, views, arrays,
-      full-text search and set operations are all real absences and none is in
+      full-text search and set operations were all real absences and none was in
       either six: they are planner work of a different size, and doing any of
       them before predicate writes and wire relations would have been building
       the interesting thing instead of the needed one. The second six has a

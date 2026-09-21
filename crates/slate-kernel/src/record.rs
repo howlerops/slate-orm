@@ -2360,8 +2360,9 @@ impl<'a> RecordTransaction<'a> {
     /// for this is almost certainly reaching for `remove_row`.
     fn erase_row(&self, table: &TableDef, row: &Row) -> Result<()> {
         for index in table.indexes().iter().filter(|index| index.admits(row)) {
-            let entry = self.entry_for(table, index, row);
-            self.poison_on_err(self.txn.delete(entry.key))?;
+            for entry in self.entries_for(table, index, row) {
+                self.poison_on_err(self.txn.delete(entry.key))?;
+            }
         }
         self.poison_on_err(
             self.txn
@@ -2707,32 +2708,43 @@ impl<'a> RecordTransaction<'a> {
             // leaves an entry pointing at a row the index is not supposed to
             // hold, which reading the index returns and every other access path
             // does not.
-            let new_entry = index.admits(row).then(|| self.entry_for(table, index, row));
-            let old_entry = previous
+            let new_entries = if index.admits(row) {
+                self.entries_for(table, index, row)
+            } else {
+                Vec::new()
+            };
+            let old_entries = previous
                 .as_ref()
                 .filter(|old| index.admits(old))
-                .map(|old| self.entry_for(table, index, old));
+                .map_or_else(Vec::new, |old| self.entries_for(table, index, old));
 
             // An index entry only needs touching when the row's indexed values
             // changed. Rewriting an unchanged key would add a spurious
             // write-write conflict against concurrent writers of other rows
             // that happen to share the slot.
-            if let (Some(old), Some(new)) = (old_entry.as_ref(), new_entry.as_ref())
-                && old.key == new.key
-            {
-                continue;
-            }
+            //
+            // Set membership rather than "the key" now that an index can hold
+            // several: editing one word of a paragraph rewrites two of its
+            // hundred entries, and rewriting the other ninety-eight would make
+            // every writer of a long text conflict with every other. The lists
+            // are short and already sorted — `key_sets` sorts its terms and
+            // an ordinary index has one entry — so a linear scan beats a set.
+            let unchanged = |entry: &IndexEntry, against: &[IndexEntry]| {
+                against.iter().any(|other| other.key == entry.key)
+            };
 
-            if verify_unique
-                && let Some(new) = new_entry.as_ref()
-                && new.enforces_uniqueness
-            {
-                self.check_unique(table, index, new, &primary_key).await?;
+            for old in &old_entries {
+                if !unchanged(old, &new_entries) {
+                    self.poison_on_err(self.txn.delete(old.key.clone()))?;
+                }
             }
-            if let Some(old) = old_entry {
-                self.poison_on_err(self.txn.delete(old.key))?;
-            }
-            if let Some(new) = new_entry {
+            for new in new_entries {
+                if unchanged(&new, &old_entries) {
+                    continue;
+                }
+                if verify_unique && new.enforces_uniqueness {
+                    self.check_unique(table, index, &new, &primary_key).await?;
+                }
                 self.poison_on_err(self.txn.put(new.key, new.value))?;
             }
         }
@@ -2771,13 +2783,20 @@ impl<'a> RecordTransaction<'a> {
         Ok(())
     }
 
-    fn entry_for(&self, table: &TableDef, index: &IndexDef, row: &Row) -> IndexEntry {
-        keys::index_entry(
-            table,
-            index,
-            &index.key_values(row),
-            &row.primary_key_values(table),
-        )
+    /// Every entry `index` holds for `row`.
+    ///
+    /// One, for every index that keys on columns or an expression. **Many**,
+    /// for a full-text index: one per term, which is the cardinality this
+    /// whole layer assumed away until it did not. `IndexDef::key_sets` is the
+    /// one place that difference is decided, so nothing here has to know which
+    /// kind of index it is holding.
+    fn entries_for(&self, table: &TableDef, index: &IndexDef, row: &Row) -> Vec<IndexEntry> {
+        let primary_key = row.primary_key_values(table);
+        index
+            .key_sets(row)
+            .iter()
+            .map(|values| keys::index_entry(table, index, values, &primary_key))
+            .collect()
     }
 
     /// Commit every buffered write atomically.

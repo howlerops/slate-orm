@@ -335,6 +335,15 @@ pub struct IndexDef {
     /// The computed key, when the index keys on a value the row does not hold.
     /// Mutually exclusive with `columns`, which is then empty.
     expression: Option<IndexExpression>,
+    /// Whether this is an inverted index: one entry per *term* of its one
+    /// string column, rather than one entry per row.
+    ///
+    /// A flag rather than a third key shape, because the key *type* is the
+    /// column's own — a `Str` — and only the cardinality differs. Everything
+    /// that reads an entry back (`decode_index_entry`, `index_key_types`) is
+    /// therefore unchanged; what changes is how many entries a row writes,
+    /// which is [`IndexDef::key_sets`].
+    text: bool,
 }
 
 impl core::fmt::Debug for IndexDef {
@@ -346,6 +355,7 @@ impl core::fmt::Debug for IndexDef {
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
             .field("expression", &self.expression)
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -364,6 +374,7 @@ impl PartialEq for IndexDef {
             && self.name == other.name
             && self.columns == other.columns
             && self.unique == other.unique
+            && self.text == other.text
             && self.predicate.is_some() == other.predicate.is_some()
             && self.expression.as_ref().map(IndexExpression::produces)
                 == other.expression.as_ref().map(IndexExpression::produces)
@@ -385,6 +396,7 @@ impl IndexDef {
             unique: false,
             predicate: None,
             expression: None,
+            text: false,
         }
     }
 
@@ -427,6 +439,44 @@ impl IndexDef {
             Some(expression) => vec![expression.value(row)],
             None => row.index_values(self),
         }
+    }
+
+    /// Whether this is an inverted index: one entry per term, not per row.
+    #[must_use]
+    pub const fn is_text(&self) -> bool {
+        self.text
+    }
+
+    /// The key values of every entry this index holds for `row`.
+    ///
+    /// **One list for an ordinary index and one per term for a text one**, and
+    /// this is the only place that difference lives. Every caller that used to
+    /// build a single entry now iterates this, which is the whole of the
+    /// cardinality change: `entry_for` in the record store became
+    /// `entries_for`, and the write path compares two sets of keys where it
+    /// used to compare two keys.
+    ///
+    /// A text index over a value that is not a string — a null, or a column
+    /// whose type the builder somehow let through — holds *no* entry, the same
+    /// way a partial index holds none for a row its predicate rejects. A row
+    /// with no text is a row no term can find, which is the answer a search
+    /// wants; writing an entry for the empty term would put every such row
+    /// under one key and make it a hot spot for nothing.
+    #[must_use]
+    pub fn key_sets(&self, row: &Row) -> Vec<Vec<Value>> {
+        if !self.text {
+            return vec![self.key_values(row)];
+        }
+        let Some(IndexColumn { ordinal, .. }) = self.columns.first() else {
+            return Vec::new();
+        };
+        let Some(Value::Str(text)) = row.get(*ordinal) else {
+            return Vec::new();
+        };
+        crate::text::tokenize(text)
+            .into_iter()
+            .map(|term| vec![Value::Str(term)])
+            .collect()
     }
 
     /// The sort direction of each key term, in key order.
@@ -481,6 +531,7 @@ pub struct IndexBuilder {
     unique: bool,
     predicate: Option<Arc<dyn Predicate>>,
     expression: Option<IndexExpression>,
+    text: bool,
 }
 
 impl core::fmt::Debug for IndexBuilder {
@@ -492,6 +543,7 @@ impl core::fmt::Debug for IndexBuilder {
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
             .field("expression", &self.expression)
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -560,6 +612,29 @@ impl IndexBuilder {
     #[must_use]
     pub fn expression<C: Computed>(self, compute: C, produces: ValueType) -> Self {
         self.expression_with(compute, produces, Direction::Asc)
+    }
+
+    /// Hold one entry per *term* of the column, rather than one per row.
+    ///
+    /// An inverted index, which is what makes `contains` a lookup rather than
+    /// a scan. The column is still named with [`IndexBuilder::column`] — the
+    /// key type is the column's own `Str` — and exactly one is allowed:
+    /// two columns would need a cross product of their terms, which is a
+    /// different structure and a much larger one.
+    ///
+    /// Refused when the table is built, rather than half-working: on a column
+    /// that is not a string, beside a second column, beside an expression, or
+    /// with [`IndexBuilder::unique`]. That last one is worth naming: a term
+    /// appears in many rows by construction, so a unique inverted index is a
+    /// constraint no realistic text can satisfy, and accepting it would turn
+    /// the second row containing "the" into a write failure nobody could read.
+    ///
+    /// [`IndexBuilder::only_where`] composes with it and is free: a partial
+    /// text index holds terms for the rows its predicate admits.
+    #[must_use]
+    pub const fn text(mut self) -> Self {
+        self.text = true;
+        self
     }
 
     /// [`IndexBuilder::expression`] with an explicit direction.
@@ -1366,6 +1441,17 @@ impl TableBuilder {
 
         let mut indexes: Vec<IndexDef> = Vec::with_capacity(self.indexes.len());
         for spec in &self.indexes {
+            // Before the gate below, which would report this as "no columns":
+            // a text index with an expression has columns *and* an expression,
+            // so it lands in the same XNOR and comes back with a reason that
+            // is not its reason.
+            if spec.text && spec.expression.is_some() {
+                return Err(SchemaError::UnindexableText {
+                    table: table.clone(),
+                    index: spec.name.clone(),
+                    reason: "also keys on an expression, and a term is not a computed value",
+                });
+            }
             // An index keys on columns or on an expression. Neither is nothing
             // to look up by; both would be two answers to what its key holds.
             if spec.columns.is_empty() == spec.expression.is_none() {
@@ -1400,6 +1486,39 @@ impl TableBuilder {
                     direction: *direction,
                 });
             }
+            if spec.text {
+                // Four ways to declare something an inverted index cannot
+                // hold, refused here rather than half-working. The types are
+                // read out of the columns being built, not out of the table,
+                // because the table does not exist yet.
+                let reason = if spec.unique {
+                    Some(
+                        "is also unique, which no realistic text can satisfy: a term appears \
+                         in many rows by construction",
+                    )
+                } else if columns.len() != 1 {
+                    Some(
+                        "names more than one column, and a cross product of two columns' \
+                          terms is a different and much larger structure",
+                    )
+                } else if columns
+                    .first()
+                    .and_then(|c| self.columns.get(c.ordinal.0))
+                    .map(ColumnDef::value_type)
+                    != Some(ValueType::Str)
+                {
+                    Some("keys on a column that is not a string")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    return Err(SchemaError::UnindexableText {
+                        table: table.clone(),
+                        index: spec.name.clone(),
+                        reason,
+                    });
+                }
+            }
             indexes.push(IndexDef {
                 id: spec.id,
                 name: spec.name.clone(),
@@ -1407,6 +1526,7 @@ impl TableBuilder {
                 unique: spec.unique,
                 predicate: spec.predicate.clone(),
                 expression: spec.expression.clone(),
+                text: spec.text,
             });
         }
 

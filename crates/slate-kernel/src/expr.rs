@@ -240,6 +240,31 @@ pub enum Expr {
         /// Whether case is ignored.
         insensitive: bool,
     },
+    /// Every one of `terms` is a term of the column's text.
+    ///
+    /// The search half of full-text search, and the reason the terms are
+    /// stored already tokenized: [`Expr::contains`] runs the *same*
+    /// `slate_schema::tokenize` the write path runs, so what a query looks for
+    /// and what the index holds cannot drift. A caller building this variant
+    /// by hand with its own splitting would find fewer rows than the table
+    /// contains, silently, and only a comparison against a scan would say so.
+    ///
+    /// Conjunctive: all the terms, which is what a search box means by two
+    /// words. A disjunction is `Expr::any` of two of these, and phrase search
+    /// — the terms *adjacent, in order* — is not offered at all, because an
+    /// inverted index without positions cannot answer it and adding positions
+    /// is a different structure.
+    ///
+    /// An empty term list matches nothing. `contains(title, '???')` has no
+    /// terms to look for, and the alternative — matching everything — hands
+    /// back the whole table for a query the caller thought was narrow. Same
+    /// choice [`Expr::Matches`] makes for a pattern that does not compile.
+    Contains {
+        /// The column whose text is searched.
+        column: Ordinal,
+        /// The terms, lowercased and deduplicated by [`Expr::contains`].
+        terms: Vec<String>,
+    },
     /// `column IN (values)`.
     In {
         /// The column being tested.
@@ -291,6 +316,19 @@ impl Expr {
     #[must_use]
     pub const fn compare(column: Ordinal, op: CmpOp, value: Value) -> Self {
         Self::Compare { column, op, value }
+    }
+
+    /// Every term of `text` is a term of the column. See [`Expr::Contains`].
+    ///
+    /// Takes the search as written and tokenizes it here, which is the whole
+    /// safety property: one tokenizer, shared with the write path, so a phrase
+    /// a caller types and the entries a row wrote are split the same way.
+    #[must_use]
+    pub fn contains(column: Ordinal, text: &str) -> Self {
+        Self::Contains {
+            column,
+            terms: slate_schema::tokenize(text),
+        }
     }
 
     /// `left <op> right`, comparing two columns rather than a column and a
@@ -523,6 +561,28 @@ impl Expr {
                 };
                 Truth::from(regex.is_match(text) != *negated)
             }
+            Self::Contains { column, terms } => {
+                let Some(actual) = row.value(*column) else {
+                    return Truth::Unknown;
+                };
+                // A null contains no term, and does not fail to contain one
+                // either: the same three-valued rule as a comparison, and the
+                // same one `LIKE` follows one arm up.
+                let Value::Str(text) = actual else {
+                    return Truth::Unknown;
+                };
+                if terms.is_empty() {
+                    return Truth::False;
+                }
+                // Tokenized per row rather than held: the row is already
+                // decoded and the alternative is a cache keyed on a string
+                // this evaluator does not own. `terms` is sorted, so a binary
+                // search would be available — with the handful of terms a
+                // search box produces, over the handful a title has, the scan
+                // is shorter than the setup.
+                let held = slate_schema::tokenize(text);
+                Truth::from(terms.iter().all(|term| held.contains(term)))
+            }
             Self::IsNull { column, negated } => {
                 // `IS NULL` is the one test that is never unknown.
                 let is_null = row.value(*column).is_none_or(Value::is_null);
@@ -622,6 +682,10 @@ impl Expr {
                 op: *op,
                 right: f(*right),
             },
+            Self::Contains { column, terms } => Self::Contains {
+                column: f(*column),
+                terms: terms.clone(),
+            },
             Self::Like {
                 column,
                 pattern,
@@ -719,7 +783,8 @@ impl Expr {
             | Self::In { .. }
             | Self::InSorted { .. }
             | Self::Like { .. }
-            | Self::Matches { .. } => None,
+            | Self::Matches { .. }
+            | Self::Contains { .. } => None,
             Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
                 (Some(a), Some(b)) if a != b => Some((*left, *right)),
                 _ => None,
@@ -753,7 +818,8 @@ impl Expr {
             | Self::In { column, .. }
             | Self::InSorted { column, .. }
             | Self::Like { column, .. }
-            | Self::Matches { column, .. } => {
+            | Self::Matches { column, .. }
+            | Self::Contains { column, .. } => {
                 out.insert(*column);
             }
             Self::CompareColumns { left, right, .. } => {

@@ -1309,6 +1309,14 @@ fn planning_stats<'a>(
 /// what it can answer from — plus, for an expression index, the one computed
 /// value it keys on, which is in the entry and needs no row at all.
 fn covers(cx: &MatchContext<'_>, index: &IndexDef) -> bool {
+    // An inverted index's entries hold a *term*, so a row cannot be rebuilt
+    // from one — not even the column the index is on, whose value is the whole
+    // text rather than the word the entry stands for. `match_text_index` never
+    // asks, and this is here so that a future caller that does gets the right
+    // answer rather than `columns()` reporting the column and being believed.
+    if index.is_text() {
+        return false;
+    }
     // Scanning two short slices beats building a set per index per query; both
     // are a handful of entries and this runs on every plan.
     let holds = |ordinal: Ordinal| {
@@ -1620,6 +1628,88 @@ struct MatchContext<'a> {
     width: usize,
 }
 
+/// The one term an inverted index can be ranged on, if the query names one.
+///
+/// A `contains` conjunct on the index's column and nothing else will do: the
+/// index's keys are terms, and no comparison, `LIKE` or `IN` on the column
+/// says anything about where its terms sort. Without one the index is not a
+/// candidate — which is a table scan rather than a wrong answer, and is the
+/// same conclusion `match_key` reaches by producing an unbounded range.
+///
+/// **Which term is a guess, and a deliberately plain one.** The first is
+/// taken, which after `tokenize` is the lexicographically smallest. Choosing
+/// the *rarest* would be better and needs a per-term document count — the same
+/// statistic `TERM_SELECTIVITY` does not have — so the alternative on offer is
+/// a heuristic dressed as a decision: the longest word, say, which is wrong
+/// for a search containing one long common word. Deterministic beats
+/// arbitrary, and the terms not chosen are still checked, by the residual, on
+/// every row the scan admits.
+fn text_term<'a>(cx: &MatchContext<'a>, index: &IndexDef) -> Option<&'a String> {
+    let column = index.columns().first()?.ordinal;
+    cx.predicate
+        .conjuncts()
+        .into_iter()
+        .find_map(|conjunct| match conjunct {
+            Expr::Contains { column: c, terms } if *c == column => terms.first(),
+            _ => None,
+        })
+}
+
+/// An inverted index, ranged on one term of a `contains`.
+fn match_text_index(
+    cx: &MatchContext<'_>,
+    index: &IndexDef,
+    partial: Option<&Expr>,
+) -> Option<Candidate> {
+    let term = text_term(cx, index)?;
+
+    let mut prefix = keys::index_prefix(cx.table, index, None);
+    if let Some(tenant) = cx.table.tenant_column() {
+        // The tenant leads every index key, so without an equality on it the
+        // term is not at a fixed offset and there is no contiguous span to
+        // read. Not a candidate rather than a scan of the whole index: the
+        // row policy supplies that equality on every tenant-scoped read, so
+        // this is the shape a caller reaching past their tenant would need
+        // and is exactly the one to decline.
+        let value = constraints_for(cx.constraints, tenant).and_then(|c| c.equals)?;
+        encode_value_into(&mut prefix, value, Direction::Asc);
+    }
+    encode_value_into(&mut prefix, &Value::Str(term.clone()), Direction::Asc);
+
+    let mut bound_selectivity = crate::stats::TERM_SELECTIVITY;
+    if let Some(predicate) = partial {
+        bound_selectivity *= cx.stats.predicate_selectivity(predicate);
+    }
+
+    // Under one term the entries differ only in the primary key, so the scan
+    // produces the table's own order — which makes `ORDER BY id LIMIT 10` over
+    // a search free rather than a sort of everything the term matched. The
+    // indexed column is *not* in this list: many titles contain one word, and
+    // claiming an order by `title` would put the rows in the wrong one.
+    let natural_order = if cx.ordered {
+        cx.table
+            .primary_key()
+            .iter()
+            .map(|o| (*o, Direction::Asc))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Some(Candidate {
+        access: Access::IndexScan {
+            index: index.id(),
+            range: KeyRange::prefix(&prefix),
+            // An entry holds a term, so a row cannot be rebuilt from one: not
+            // even the column the index is on, which is why this is false
+            // unconditionally rather than the result of `covers`.
+            covering: false,
+        },
+        bound_selectivity,
+        natural_order,
+    })
+}
+
 fn match_index(cx: &MatchContext<'_>, index: &IndexDef) -> Option<Candidate> {
     // A partial index holds entries only for the rows its predicate admits, so
     // using it for a query that reaches outside them does not return the wrong
@@ -1636,6 +1726,14 @@ fn match_index(cx: &MatchContext<'_>, index: &IndexDef) -> Option<Candidate> {
             _ => return None,
         },
     };
+
+    // An inverted index's keys are *terms*, not the column's values, so
+    // nothing below applies to it: no constraint on the column matches a term,
+    // `covers` can never be true, and the entries under one term are ordered
+    // by the primary key rather than by anything the query named.
+    if index.is_text() {
+        return match_text_index(cx, index, partial);
+    }
 
     // On a tenant-scoped table the tenant leads every index key, so it has to be
     // matched before the index's own columns.

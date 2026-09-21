@@ -305,13 +305,41 @@ pub enum SchemaError {
         actual: &'static str,
     },
 
-    /// An index was defined with no columns.
-    #[error("index `{index}` on table `{table}` has no columns")]
+    /// An index keys on neither columns nor an expression, or on both.
+    ///
+    /// One variant for two opposite mistakes, because the rule is one rule: an
+    /// index's key comes from exactly one place. The message says both, since
+    /// the older wording — "has no columns" — was read by an author who had
+    /// given it columns *and* an expression and explained nothing.
+    #[error(
+        "index `{index}` on table `{table}` must key on columns or on an expression, and has \
+         either neither or both"
+    )]
     EmptyIndex {
         /// The table being defined.
         table: String,
         /// The offending index.
         index: String,
+    },
+
+    /// A full-text index was declared with something it cannot hold terms of.
+    ///
+    /// One error rather than four, carrying the reason, because all four are
+    /// the same mistake at the declaration and a caller fixing one wants to
+    /// read what an inverted index *is*: one entry per term of one string
+    /// column.
+    #[error(
+        "index `{index}` on table `{table}` is a full-text index and {reason}. It holds one \
+         entry per term of one string column, which is what makes `contains` a lookup rather \
+         than a scan"
+    )]
+    UnindexableText {
+        /// The table being defined.
+        table: String,
+        /// The offending index.
+        index: String,
+        /// What is wrong with it.
+        reason: &'static str,
     },
 
     /// The tenant column is not the first primary key column.
