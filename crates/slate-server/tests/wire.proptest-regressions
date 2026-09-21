@@ -11,6 +11,11 @@ cc 2b2077309f8f0b25cc8a2005fe1254aa95f342dd668e116421b7cad14d7ae4b8 # shrinks to
 # passes, and replaying it means the suite always covers that shape even if the
 # generator changes — but it records no bug, and the line above this one does.
 cc 30c1343f0713746fbf468180089728902de61372528ec2706139798bca4451e3 # shrinks to query = Query { filter: True, order: Ascending, projection: All, sort: [], limit: None, offset: 0, hint: None, compute: [], window: [Window { function: RowNumber, partition: [], order: [SortKey { column: Ordinal(0), direction: Asc, nulls: First }] }], after: None, paging: false, include_deleted: false }
+# And the three below, for the same reason and from the same tool: `mutate.py`
+# broke the `contains` conversion three ways on purpose. Each is a valid
+# predicate that passes now, and each pins a `Contains` shape the generator
+# would otherwise only reach by chance — one under a double negation, one
+# inside a `CASE` guard, one under `Or(And(...))`. None records a bug.
 cc 40daec14fb879f5a926f44f023193feadb4be3890316b1619de4ccafca5db0c6 # shrinks to expr = Not(Not(Contains { column: Ordinal(0), terms: ["0"] }))
 cc 8b6d378e61ebe3a48ab808a365e4966bf122aee2e1ded7dfdd457bfe90e2d964 # shrinks to scalar = Length(Case { branches: [(And([And([Contains { column: Ordinal(0), terms: ["a"] }])]), Column(Ordinal(0)))], otherwise: Column(Ordinal(0)) })
 cc 160bbd068a0fccb066a11b5b0c1f3bff782a4b337264febca2c71a689dd596f3 # shrinks to query = Query { filter: Or([And([Contains { column: Ordinal(0), terms: ["0"] }])]), order: Descending, projection: Columns([Ordinal(1), Ordinal(1)]), sort: [SortKey { column: Ordinal(1), direction: Asc, nulls: First }], limit: None, offset: 47, hint: None, compute: [], window: [], after: None, paging: false, include_deleted: false }
