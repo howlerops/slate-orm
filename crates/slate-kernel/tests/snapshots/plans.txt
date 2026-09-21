@@ -8,7 +8,7 @@
 everything
     Table Scan on events  (rows=1000 cost=1.12 decodes=[0,1,2,3])
 primary key equality
-    Point Get on events  (rows=1 cost=3.00 decodes=[0,1,2,3])
+    Point Get on events  (rows=1 cost=1.00 decodes=[0,1,2,3])
 primary key range
     Table Scan on events  (rows=88 cost=1.01 decodes=[0,1,2,3])
 IN over the key
@@ -53,21 +53,21 @@ is null on a nullable column
 everything
     Table Scan on events  (rows=1000000 cost=126.00 decodes=[0,1,2,3])
 primary key equality
-    Point Get on events  (rows=1 cost=3.00 decodes=[0,1,2,3])
+    Point Get on events  (rows=1 cost=1.00 decodes=[0,1,2,3])
 primary key range
     Table Scan on events  (rows=88209 cost=12.25 decodes=[0,1,2,3])
 IN over the key
-    Point Gets (4 keys) on events  (rows=4 cost=12.00 decodes=[0,1,2,3])
+    Point Gets (4 keys) on events  (rows=4 cost=4.00 decodes=[0,1,2,3])
 IN over the key, large set
     Table Scan on events  (rows=1000000 cost=126.00 decodes=[0,1,2,3])
 IN over an indexed column
-    Index Scan using by_kind (3 ranges) on events  (rows=30 cost=93.00 decodes=[0,1,2,3])
+    Index Scan using by_kind (3 ranges) on events  (rows=30 cost=33.00 decodes=[0,1,2,3])
 IN over an indexed column, projecting only indexed columns
     Index Only Scan using by_kind_weight (3 ranges) on events  (rows=30 cost=3.00 decodes=[1,2])
 IN over an indexed column, large set
     Table Scan on events  (rows=20000 cost=126.00 decodes=[0,1,2,3])
 indexed equality
-    Index Scan using by_kind on events  (rows=10 cost=31.00 decodes=[0,1,2,3])
+    Index Scan using by_kind on events  (rows=10 cost=11.00 decodes=[0,1,2,3])
 indexed equality, projecting only indexed columns
     Index Only Scan using by_kind_weight on events  (rows=10 cost=1.00 decodes=[1,2])
 indexed range on a descending index
@@ -77,7 +77,7 @@ anchored LIKE
 unanchored LIKE
     Table Scan on events  (rows=100000 cost=126.00 decodes=[0,1,2,3])
 two columns conjoined
-    Index Scan using by_kind_weight on events  (rows=3 cost=10.90 decodes=[0,1,2,3])
+    Index Scan using by_kind_weight on events  (rows=3 cost=4.30 decodes=[0,1,2,3])
 a disjunction, which no single bound serves
     Table Scan on events  (rows=330007 cost=126.00 decodes=[0,1,2,3])
 contradictory bounds
@@ -89,7 +89,7 @@ sorted by an unindexed column
 top ten by an indexed column
     Table Scan on events  (rows=10 cost=1.00 limit=10 decodes=[0,1,2,3])
 indexed equality with a small limit
-    Index Scan using by_kind on events  (rows=3 cost=10.00 limit=3 decodes=[0,1,2,3])
+    Index Scan using by_kind on events  (rows=3 cost=4.00 limit=3 decodes=[0,1,2,3])
 is null on a nullable column
     Table Scan on events  (rows=100000 cost=126.00 decodes=[0,1,2,3])
 
@@ -98,21 +98,21 @@ is null on a nullable column
 everything
     Table Scan on events  (rows=1000000000 cost=125001.00 decodes=[0,1,2,3])
 primary key equality
-    Point Get on events  (rows=1 cost=3.00 decodes=[0,1,2,3])
+    Point Get on events  (rows=1 cost=1.00 decodes=[0,1,2,3])
 primary key range
     Table Scan on events  (rows=88209000 cost=11251.00 decodes=[0,1,2,3])
 IN over the key
-    Point Gets (4 keys) on events  (rows=4 cost=12.00 decodes=[0,1,2,3])
+    Point Gets (4 keys) on events  (rows=4 cost=4.00 decodes=[0,1,2,3])
 IN over the key, large set
     Table Scan on events  (rows=1000000000 cost=125001.00 decodes=[0,1,2,3])
 IN over an indexed column
-    Index Scan using by_kind (3 ranges) on events  (rows=30 cost=93.00 decodes=[0,1,2,3])
+    Index Scan using by_kind (3 ranges) on events  (rows=30 cost=33.00 decodes=[0,1,2,3])
 IN over an indexed column, projecting only indexed columns
     Index Only Scan using by_kind_weight (3 ranges) on events  (rows=30 cost=3.00 decodes=[1,2])
 IN over an indexed column, large set
     Table Scan on events  (rows=20000 cost=125001.00 decodes=[0,1,2,3])
 indexed equality
-    Index Scan using by_kind on events  (rows=10 cost=31.00 decodes=[0,1,2,3])
+    Index Scan using by_kind on events  (rows=10 cost=11.00 decodes=[0,1,2,3])
 indexed equality, projecting only indexed columns
     Index Only Scan using by_kind_weight on events  (rows=10 cost=1.00 decodes=[1,2])
 indexed range on a descending index
@@ -122,7 +122,7 @@ anchored LIKE
 unanchored LIKE
     Table Scan on events  (rows=100000000 cost=125001.00 decodes=[0,1,2,3])
 two columns conjoined
-    Index Scan using by_kind_weight on events  (rows=3 cost=10.90 decodes=[0,1,2,3])
+    Index Scan using by_kind_weight on events  (rows=3 cost=4.30 decodes=[0,1,2,3])
 a disjunction, which no single bound serves
     Table Scan on events  (rows=330000007 cost=125001.00 decodes=[0,1,2,3])
 contradictory bounds
@@ -134,6 +134,6 @@ sorted by an unindexed column
 top ten by an indexed column
     Table Scan on events  (rows=10 cost=1.00 limit=10 decodes=[0,1,2,3])
 indexed equality with a small limit
-    Index Scan using by_kind on events  (rows=3 cost=10.00 limit=3 decodes=[0,1,2,3])
+    Index Scan using by_kind on events  (rows=3 cost=4.00 limit=3 decodes=[0,1,2,3])
 is null on a nullable column
     Table Scan on events  (rows=100000000 cost=125001.00 decodes=[0,1,2,3])

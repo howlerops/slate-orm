@@ -185,10 +185,13 @@ selectivity:
 | 1,000,000 | 1,000,000 | **index** |
 
 A non-covering index is chosen on this cost model when it is expected to return
-about **one row in 24,000** — which is `SCAN_ROW_COST / POINT_READ_COST`,
-0.000125 against 3.0, both measured on object storage rather than assumed.
-Following an entry to its row is three requests; a scanned row is an
-eight-thousandth of one.
+about **one row in 8,000** — which is `SCAN_ROW_COST / POINT_READ_COST`,
+0.000125 against 1.0, both measured on object storage rather than assumed.
+Following an entry to its row is one request; a scanned row is an
+eight-thousandth of one. It read *one row in 24,000* until `POINT_READ_COST`
+was re-measured at about 1.0 across three benchmarks rather than the recorded
+3.04 — see `correctness.md` — which makes every index a third easier to
+justify and changes none of the verdicts in the table above.
 
 So the honest state of the feature is:
 

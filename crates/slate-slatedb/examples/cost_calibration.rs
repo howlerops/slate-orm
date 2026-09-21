@@ -24,18 +24,39 @@
 //! twice the work. That is the part the planner's decisions rest on, and it is
 //! measurable without a cloud account.
 //!
-//! **These GET counts are warm-cache counts, and that was not said until
-//! now.** The store is opened once below and never reopened, and `analyze`
-//! scans the whole table before the first case runs — so every case after it
-//! reads blocks SlateDB already holds. The effect is not small: the same
-//! 400-row index equality measured here at **27 GETs** costs **406** in
-//! `ascending_walk.rs`, which reopens the store before each arm. Whether the
-//! recorded `POINT_READ_COST` of 3.0, from "400 rows reached by index cost
-//! 1,217 requests", is a cold number, a warm one, or one from a fixture that
-//! no longer exists is not settled here; what is settled is that this file
-//! cannot be the thing that settles it. Nothing is changed in it for that
-//! reason: its numbers are quoted in `docs/performance.md` and re-measuring
-//! them properly is its own piece of work, named in the ledger.
+//! **The default run measures across a warm cache**, which it never said. The
+//! store is opened once below and never reopened, and `analyze` scans the
+//! whole table before the first case runs, so every case after it may read
+//! blocks SlateDB already holds.
+//!
+//! ```sh
+//! cargo run -p slate-slatedb --example cost_calibration -- --cold
+//! ```
+//!
+//! `--cold` reopens before each measurement, and the difference is large:
+//!
+//! | 200,000 rows | warm | cold |
+//! | --- | ---: | ---: |
+//! | point get, one row | 2 | 18 |
+//! | narrow key range, 1,000 rows | 1 | 13 |
+//! | full scan, 200,000 rows | 25 | 58 |
+//! | forced index, 400 rows | 410 | 435 |
+//!
+//! A cold store pays for its manifest and index blocks before it reads a row,
+//! which is most of why one row costs 18 requests and a thousand cost 13. What
+//! the two modes agree on is the **marginal** figure the model is denominated
+//! in: a row reached through an index costs 1.02 requests warm and 1.09 cold,
+//! where `POINT_READ_COST` says 3.0.
+//!
+//! The **"probe, or scan?"** block at the end is the one place the cache
+//! reverses a verdict rather than scaling it. It times an index probe and a
+//! table scan for the same rows immediately after the forced-index case has
+//! pulled the index into memory: warm it reads 40 GETs for the probe against
+//! 424 for the scan, cold 439 against 65. Read its warm numbers as nothing.
+//!
+//! The default stays warm because `docs/performance.md` quotes these numbers
+//! and a file that silently starts answering differently is worse than one
+//! that answers two ways on request.
 
 // Benchmark code, and meant to panic if an assumption about the fixture
 // breaks: a silently short result table would be worse than a stack trace.
@@ -56,6 +77,7 @@ use slate_kernel::{
 use slate_schema::{Catalog, IndexDef, IndexId, Ordinal, Row, TableDef, TableId};
 use slate_slatedb::SlateStore;
 use slate_tuple::{Value, ValueType};
+use std::future::Future;
 use std::time::Instant;
 
 const EVENTS: TableId = TableId(1);
@@ -88,6 +110,43 @@ fn row(id: u64) -> Row {
             "body for row {id}, padded out to a realistic width"
         )),
     ])
+}
+
+/// Reopen the store before each case, so a case measures its own reads.
+///
+/// Off by default, for the reason in the header: this file's warm numbers are
+/// quoted elsewhere. It is a flag rather than a second example because the
+/// fixture, the cases and the summary are all the same — only when the cache
+/// is dropped differs, and duplicating three hundred lines to vary one line is
+/// how two files end up disagreeing about what they measure.
+fn cold() -> bool {
+    std::env::args().skip(1).any(|arg| arg == "--cold")
+}
+
+/// A store over the loaded fixture, carrying statistics somebody else gathered.
+///
+/// **`analyze` is a full table scan, so a reopen that calls it is not cold.**
+/// The first version of `--cold` did exactly that — reopened, analyzed, reset
+/// the counters — and reported that the cache changed nothing, which was true
+/// of a run where every "cold" case had just had the whole table read into
+/// memory on its behalf. Statistics are gathered once by the caller and handed
+/// to each fresh store here, so the store this returns has read nothing.
+fn opened(
+    server: &s3server::LocalS3,
+    path: &str,
+    stats: &Statistics,
+) -> impl Future<Output = RecordStore<SlateStore>> {
+    let path = path.to_string();
+    let config = server.config();
+    let stats = stats.clone();
+    async move {
+        let backend = SlateStore::open_s3(path, config).await.expect("reopen");
+        let catalog = Catalog::from_tables([events()]).expect("catalog");
+        let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
+        let mut store = RecordStore::new(backend, catalog, security);
+        store.set_statistics(stats);
+        store
+    }
 }
 
 #[tokio::main]
@@ -124,21 +183,23 @@ async fn main() {
     // Reopened, so the data is genuinely in object storage rather than a
     // memtable. Without this every query would be served from memory and the
     // GET counts would all be zero.
-    let backend = SlateStore::open_s3(path, server.config())
-        .await
-        .expect("reopen");
-    let catalog = Catalog::from_tables([events()]).expect("catalog");
-    let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
-    let mut store = RecordStore::new(backend, catalog, security);
     let root = SecurityContext::superuser();
-
+    // Gathered once, on a store that is then thrown away. Every store below
+    // carries these without re-reading the table for them.
     let stats = {
+        let backend = SlateStore::open_s3(path.clone(), server.config())
+            .await
+            .expect("reopen");
+        let catalog = Catalog::from_tables([events()]).expect("catalog");
+        let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
+        let store = RecordStore::new(backend, catalog, security);
         let txn = store.begin().await.unwrap();
-        txn.analyze(&root, &events()).await.unwrap()
+        let table = txn.analyze(&root, &events()).await.unwrap();
+        let mut all = Statistics::default();
+        all.set(EVENTS, table);
+        all
     };
-    let mut all = Statistics::default();
-    all.set(EVENTS, stats);
-    store.set_statistics(all);
+    let mut store = opened(&server, &path, &stats).await;
 
     let cases: Vec<(&str, Query)> = vec![
         (
@@ -167,6 +228,14 @@ async fn main() {
     ];
 
     println!(
+        "Cache: {}\n",
+        if cold() {
+            "cold — the store is reopened before every measurement"
+        } else {
+            "warm — one store throughout, as `docs/performance.md` recorded it"
+        }
+    );
+    println!(
         "{:<28} {:>7} {:>10} {:>8} {:>9} {:>11}",
         "query", "rows", "predicted", "GETs", "wall", "ms per GET"
     );
@@ -174,6 +243,13 @@ async fn main() {
 
     let mut points = Vec::new();
     for (name, query) in cases {
+        // A fresh store per case under `--cold`, so this case's GETs are its
+        // own reads rather than whatever the case above it left in SlateDB's
+        // block cache. `opened` runs `analyze`, which scans — hence the reset
+        // *after* it, below, and not before.
+        if cold() {
+            store = opened(&server, &path, &stats).await;
+        }
         let predicted = {
             let txn = store.begin().await.unwrap();
             txn.explain(&root, &events(), &query)
@@ -225,6 +301,9 @@ async fn main() {
             Some(slate_kernel::AccessHint::Index(IndexId(10))),
         ),
     ] {
+        if cold() {
+            store = opened(&server, &path, &stats).await;
+        }
         let mut query = contested.clone();
         query.hint = hint;
         let explained = {
@@ -263,6 +342,9 @@ async fn main() {
         let one_bucket = Expr::eq(col("bucket"), Value::I64(11));
         // A probe-shaped access: fetch the handful of rows for one bucket
         // through the index, which is what a nested loop does per outer row.
+        if cold() {
+            store = opened(&server, &path, &stats).await;
+        }
         counters.reset();
         let started = Instant::now();
         let mut probe_query = Query::all().filter(one_bucket.clone());
@@ -280,6 +362,9 @@ async fn main() {
         let probe_wall = started.elapsed();
         let probe_gets = counters.gets();
 
+        if cold() {
+            store = opened(&server, &path, &stats).await;
+        }
         counters.reset();
         let started = Instant::now();
         let mut scan_query = Query::all().filter(one_bucket);

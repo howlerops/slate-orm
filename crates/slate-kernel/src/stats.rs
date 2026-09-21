@@ -15,15 +15,16 @@
 //! |---|---|---|
 //! | open a scan | 1.0 | one request |
 //! | one row from a scan | 0.000125 | measured: readahead returns ~8,000 rows per request |
-//! | one point read | 3.0 | measured: reaching a row by index takes three requests |
-//! | `n` overlapped reads | `3n` | concurrency hides latency; it does not do less work |
+//! | one point read | 1.0 | measured: one request per row sharing no block |
+//! | `n` overlapped reads | `n` | concurrency hides latency; it does not do less work |
 //! | `k` disjoint ranges of one index | `k` opens | each range is its own iterator, walked in turn |
 //!
 //! The ratio decides when an index is worth using, and since the recalibration
 //! that is a statement about *absolute* numbers rather than percentages: a
 //! non-covering index scan beats a table scan of `n` rows only while it fetches
-//! fewer than `n / 24000` of them. At a million rows that is forty rows, not
-//! six per cent of a million.
+//! fewer than `n / 8000` of them. At a million rows that is a hundred and
+//! twenty-five rows, not six per cent of a million. It read `n / 24000` until
+//! `POINT_READ_COST` was re-measured; same shape, a third less severe.
 //!
 //! Splitting an `IN` into a range per value pays the same arithmetic with the
 //! opens added: `k` ranges start `k` requests in the red and win by fetching
@@ -72,10 +73,42 @@ pub const SCAN_ROW_COST: f64 = 0.000_125;
 
 /// Cost of one point read.
 ///
-/// Measured at **three requests per read**, not one: following an index entry
-/// to its row goes through more than a single object fetch. 400 rows reached
-/// by index cost 1,217 requests.
-pub const POINT_READ_COST: f64 = 3.0;
+/// **One request per row reached through an index.**
+///
+/// ~~Measured at three requests per read, not one: following an index entry to
+/// its row goes through more than a single object fetch. 400 rows reached by
+/// index cost 1,217 requests.~~ ~~Re-measured later at 3.40–3.57 on a
+/// pseudo-random walk, and left at 3.0 as within the spread.~~ **Neither
+/// figure reproduces.** Four measurements, three benchmarks, two fixtures,
+/// both cache states, all taken on one machine on one day:
+///
+/// | measurement | requests per row |
+/// | --- | ---: |
+/// | `cost_calibration`, forced index, 400 of 200,000, warm | 1.02 |
+/// | `cost_calibration`, the same, cold | 1.09 |
+/// | `cost_at_scale`, 200 probes on a pseudo-random walk, cold / warm | 1.16 / 0.96 |
+/// | `ascending_walk`, ordinary and inverted index, stride 500 | 1.015 |
+///
+/// Nothing produces 3. What changed since the recorded runs is not known — a
+/// SlateDB release, a block size, the readahead `#34` turned on — and that is
+/// a reason to re-measure rather than to keep a number four measurements
+/// contradict. A cost model wrong by 3× in the direction of "never use an
+/// index" is the same class of error as the one this constant was introduced
+/// to fix, pointing the other way.
+///
+/// **1.0 rather than 1.02, because it is a bound with a meaning**: one
+/// object-store request for a row that shares its block with no neighbour. No
+/// measurement here exceeds it. Rows that *do* share blocks cost far less —
+/// `ascending_walk` reads 0.043 per row over a contiguous run — so the honest
+/// shape is a function of how clustered a predicate's matches are, which the
+/// planner could know and does not. That is the next measurement, not this one.
+///
+/// **The scan side is not settled and was not changed.** `cost_calibration`
+/// and `cost_at_scale` disagree about what a cold full scan of the same
+/// 200,000-row fixture costs — 58 requests against 205 — and until that is
+/// understood, moving `SCAN_ROW_COST` would be calibrating against a
+/// measurement one of the two says is wrong.
+pub const POINT_READ_COST: f64 = 1.0;
 
 /// What `n` point reads cost when issued `depth` at a time.
 ///

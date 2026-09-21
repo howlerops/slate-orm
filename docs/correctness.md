@@ -716,12 +716,31 @@ Recalibrated from the measurements, the model now predicts 26 against 21 actual
 requests for the scan and 1201 against 1223 for the index, and picks the scan.
 ClickBench is unchanged at 70.1 s.
 
+**Re-measured later, and the point-read half no longer reproduces.** The same
+example on the same fixture makes the forced index do **435 requests cold and
+410 warm** for those 400 rows, not 1,217 — about 1.0 each rather than 3.04.
+Three benchmarks and four measurements agree, across two fixtures and both
+cache states: 1.02 and 1.09 (`cost_calibration`), 1.16 and 0.96
+(`cost_at_scale`, on a pseudo-random walk), 1.015 (`ascending_walk`). Nothing
+produces 3. What changed between then and now is not known — a SlateDB
+release, a block size, the readahead #34 turned on — so `POINT_READ_COST` is
+**1.0**, a bound with a meaning (one request for a row sharing its block with
+no neighbour) rather than a figure four measurements contradict. The crossover
+follows: `n > 8000k` rather than `n > 24000k`. The plan snapshot moved 13
+costs and **no access path**, which is both the blast radius at fixture scale
+and the limit of what the suite could see.
+
+`SCAN_ROW_COST` was **not** changed, because the two examples disagree about
+what a cold full scan of this fixture costs — 58 requests against 205 — and
+calibrating against a measurement one of them contradicts is how the errors
+above were made in the first place.
+
 ### What that changes about indexes
 
 The consequence is counter-intuitive enough to state plainly: **an index earns
 its keep on absolute rows fetched, not on percentage selectivity.** Fetching
-`k` rows beats scanning `n` only when `n > 24000k`, so `k = 0.005n` never
-qualifies at any table size. Seven tests asserted the old rule — that a few
+`k` rows beats scanning `n` only when `n > 8000k` — `n > 24000k` before the
+re-measurement above — so `k = 0.005n` never qualifies at any table size. Seven tests asserted the old rule — that a few
 percent was selective enough — and each was rewritten against the measurement
 rather than nudged: a nested loop now wins at a hundred million inner rows
 rather than a hundred thousand, and a small table is simply cheaper to scan

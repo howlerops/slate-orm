@@ -100,13 +100,27 @@ exists because that cache is real, and this session still walked into it; the
 fix is the reopen per arm, and the episode is why the "which variable moved
 it?" block prints both comparisons rather than the flattering one.
 
-**`cost_calibration.rs` measures across that same warm cache**, which it never
-said. It opens the store once and runs `analyze` — a full table scan — before
-the first case, so every case after it reads cached blocks. Run on this machine
-today it reports **27 GETs** for the 400-row index equality that
-`ascending_walk` measures at **406**. `POINT_READ_COST` is 3.0, from that
-file's "400 rows reached by index cost 1,217 requests", and reproduces as
-neither number here.
+~~**`cost_calibration.rs` measures across that same warm cache**, which it
+never said. It opens the store once and runs `analyze` — a full table scan —
+before the first case, so every case after it reads cached blocks. Run on this
+machine today it reports **27 GETs** for the 400-row index equality that
+`ascending_walk` measures at **406**.~~
+
+**Withdrawn the same day, by #269, which measured it instead of reasoning
+about it.** The two numbers are not the same query. `cost_calibration`'s
+"index equality" row does not use the index — the planner chooses a table scan
+for it, which is §6's whole subject — so 27 GETs is a *scan* of 200,000 rows,
+not 400 point reads. Run with a reopen before every case, that file's table is
+the same as warm within noise (29 → 28, 25 → 28, 410 → 409 for the forced
+index), and its forced-index figure agrees with `ascending_walk`'s to within a
+request. The cache confound was real in *this* file, where arms shared a store
+and read the same blocks; asserting the same of that one was a guess dressed
+as a finding, and it was wrong.
+
+What survives, and is larger: `POINT_READ_COST` is 3.0, from that file's "400
+rows reached by index cost 1,217 requests", and the forced index now measures
+**409 requests for 400 rows — 1.02 each**, in both files and in both cache
+modes. See `2026-09-21-point-read-cost-is-three-times-what-it-measures.md`.
 
 ## What this does not do
 
