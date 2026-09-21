@@ -29,10 +29,20 @@ Two derived figures, both as they are actually written:
   index pays — against `POINT_READ_COST / SCAN_ROW_COST`.
 
 Numbers are matched as digits *and* as the English words this repository
-writes them in, because it writes them both ways in the same paragraph. Only
-`crates/slate-kernel/` is read: that is where the constants are decided and
-where the reasoning lives. `docs/performance.md` quotes measurements rather
-than constants, and `site/check/docs.py` is its own guard.
+writes them in, because it writes them both ways in the same paragraph.
+
+**Every crate is read, not only `slate-kernel`.** It was only the kernel for
+about an hour, on the reasoning that the constants are decided there and the
+reasoning lives there. That was wrong by one file and the file mattered:
+`slate-slatedb`'s `cost_at_scale` example *printed* `POINT_READ_COST = 3.0` in
+its header, "restated so the table below can be read against them" — a
+benchmark misreporting the model it exists to measure, in output a reader sees
+rather than in a comment they might not. It prints the constants now.
+
+`docs/` is still out of scope, and deliberately: `correctness.md` narrates the
+history of these numbers at length, and a guard that cannot tell "it costs
+three" from "it cost three until #269" would either fire on every paragraph or
+need an exemption per paragraph. `site/check/docs.py` is that tree's guard.
 
 A passage that is deliberately historical — a withdrawn figure kept legible
 with a strikethrough, which `ledger/README.md` asks for — is not a claim about
@@ -50,7 +60,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATS = ROOT / "crates/slate-kernel/src/stats.rs"
-WHERE = ROOT / "crates/slate-kernel"
+WHERE = ROOT / "crates"
 
 #: `pub const POINT_READ_COST: f64 = 1.0;`
 CONSTANT = re.compile(

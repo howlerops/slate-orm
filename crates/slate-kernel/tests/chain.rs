@@ -609,15 +609,18 @@ async fn an_accumulated_result_is_bounded() {
 /// This test used to assert a loop at a hundred thousand inner rows, and that
 /// was wrong: measured against object storage, a scan of two hundred thousand
 /// rows costs 25 requests and 0.37 s, while four hundred point reads cost
-/// ~1,221 requests and 3.73 s. ~~Point reads are about three requests each~~
-/// — that figure does not reproduce; #269 re-measured it four ways at about
-/// one request per row and `POINT_READ_COST` is 1.0. A scan still returns
-/// about eight thousand rows per request, so the crossover sits around
-/// **twelve** rows fetched per hundred thousand scanned rather than four —
-/// still orders of magnitude further toward scanning than the model this test
-/// was written against believed, which is why the assertion below did not
-/// move. See `slate-slatedb`'s `cost_calibration` example and
-/// `stats.rs`'s table of the four measurements.
+/// 1,221 requests and 3.73 s. ~~Point reads are about three requests each~~ —
+/// they were, on the build that was measured: `slate-slatedb`'s `cache`
+/// feature was off, and #278 reproduced 1,221 exactly by turning it off again.
+/// With it on, as it ships, the same probe reads 414 and `POINT_READ_COST` is
+/// 1.0.
+///
+/// A scan still returns about eight thousand rows per request, so the
+/// crossover sits around **twelve** rows fetched per hundred thousand scanned
+/// rather than four — still orders of magnitude further toward scanning than
+/// the model this test was written against believed, which is why the
+/// assertion below did not move. See `slate-slatedb`'s `cost_calibration`
+/// example and `stats.rs`'s table.
 ///
 /// So the inner table here is a hundred *million* rows, which is where a probe
 /// genuinely wins, and the hundred-thousand case now asserts the opposite.

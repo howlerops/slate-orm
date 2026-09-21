@@ -703,9 +703,19 @@ at once:
 
 Scans were overcharged about **eighty times** (`SCAN_ROW_COST` assumed 100 rows
 per request; readahead delivers ~8,000). Index lookups were undercharged about
-**forty times**: a point read costs ~3 requests rather than 1, and
-`pipelined_read_cost` divided by concurrency depth — which is true of latency
-and false of work, and the fixture could only ever measure latency.
+**forty times**: a point read cost ~3 requests rather than 1 *on the build
+being measured*, and `pipelined_read_cost` divided by concurrency depth — which
+is true of latency and false of work, and the fixture could only ever measure
+latency.
+
+> The ~3 is past tense now, and the tense is the finding. #278 reproduced it
+> exactly — 1,221 GETs for 400 rows — by rebuilding `slate-slatedb` with
+> `--no-default-features --features aws`, which is the build this was measured
+> on: SlateDB's block cache was compiled out (finding 8 in
+> [`performance.md`](performance.md)). With the cache on, as it has shipped
+> since, the same probe reads 414 and `POINT_READ_COST` is 1.0. The
+> undercharge described here was real; its size was a property of a missing
+> feature rather than of object storage.
 
 The errors compounded in the same direction, and the planner acted on them. For
 `WHERE bucket = 7` it chose an index scan at cost 30 over a table scan at cost

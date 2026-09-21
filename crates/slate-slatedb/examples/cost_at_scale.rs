@@ -76,6 +76,7 @@
 #[path = "../tests/common/s3server.rs"]
 mod s3server;
 
+use slate_kernel::stats::{POINT_READ_COST, SCAN_ROW_COST};
 use slate_kernel::{
     AccessHint, Action, CmpOp, Expr, Grant, Query, RecordStore, SecurityCatalog, SecurityContext,
     Statistics,
@@ -180,10 +181,21 @@ async fn main() {
     println!("S3 server: `s3s` in this process, over a loopback socket.");
     println!("Scales: {sizes:?}");
     println!();
-    println!("The two calibrated constants, restated so the table below can be read");
-    println!("against them:");
-    println!("  SCAN_ROW_COST  = 0.000125  →  a scan returns ~8,000 rows per request");
-    println!("  POINT_READ_COST = 3.0      →  a point read costs ~3 requests");
+    // Printed from the constants, not restated beside them. They were
+    // restated, and one went stale: this line said `POINT_READ_COST = 3.0`
+    // for as long as nobody ran the benchmark, which is every run between
+    // #269 changing it to 1.0 and #278 noticing. A benchmark whose header
+    // misreports the model it is measuring against is worse than one that
+    // prints nothing.
+    println!("The two calibrated constants, read from `slate_kernel::stats` so the");
+    println!("table below can be read against them:");
+    println!(
+        "  SCAN_ROW_COST   = {SCAN_ROW_COST}  →  a scan returns ~{:.0} rows per request",
+        1.0 / SCAN_ROW_COST
+    );
+    println!(
+        "  POINT_READ_COST = {POINT_READ_COST}       →  a point read costs {POINT_READ_COST} request(s)"
+    );
     println!();
 
     let mut points: Vec<Point> = Vec::new();

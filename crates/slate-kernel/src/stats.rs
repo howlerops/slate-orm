@@ -146,10 +146,29 @@ pub const SCAN_ROW_COST: f64 = 0.000_125;
 /// | `cost_at_scale`, 200 probes on a pseudo-random walk, cold / warm | 1.16 / 0.96 |
 /// | `ascending_walk`, ordinary and inverted index, stride 500 | 1.015 |
 ///
-/// Nothing produces 3. What changed since the recorded runs is not known — a
-/// SlateDB release, a block size, the readahead `#34` turned on — and that is
-/// a reason to re-measure rather than to keep a number four measurements
-/// contradict. A cost model wrong by 3× in the direction of "never use an
+/// Nothing produces 3 **on the build that ships today**, and #278 found what
+/// changed. It is none of the three things guessed at here — not a SlateDB
+/// release, a block size, or the readahead `#34` turned on. It is
+/// `slate-slatedb`'s `cache` feature, which `docs/performance.md`'s finding 8
+/// turned on after this constant was calibrated: SlateDB's block and metadata
+/// caches were compiled out, so every index entry and every row went to object
+/// storage separately.
+///
+/// The same `cost_calibration`, same machine, same 200,000 rows, one session
+/// apart:
+///
+/// | build | forced index, 400 rows | per row |
+/// | --- | ---: | ---: |
+/// | `--no-default-features --features aws` (as calibrated) | 1,221 GETs | **3.05** |
+/// | default, with `cache` (as shipped) | 414 GETs | **1.04** |
+///
+/// **1,221 is the recorded figure to the unit** — the struck-through sentence
+/// above says 1,217 and the comments in `join.rs` and `chain.rs` said 1,221.
+/// So the old number was right about the old build and the new number is right
+/// about this one; neither measurement was ever wrong, and the constant was
+/// three times its value for exactly as long as the cache was missing.
+///
+/// The scan side did not move: 29 GETs for the full scan on both arms. A cost model wrong by 3× in the direction of "never use an
 /// index" is the same class of error as the one this constant was introduced
 /// to fix, pointing the other way.
 ///

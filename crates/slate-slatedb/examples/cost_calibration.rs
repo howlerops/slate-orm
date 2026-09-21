@@ -46,7 +46,11 @@
 //! which is most of why one row costs 18 requests and a thousand cost 13. What
 //! the two modes agree on is the **marginal** figure the model is denominated
 //! in: a row reached through an index costs 1.02 requests warm and 1.09 cold,
-//! where `POINT_READ_COST` says 3.0.
+//! which is what `POINT_READ_COST` says. It said 3.0 until #269, and #278
+//! found why: run this with `--no-default-features --features aws` and the
+//! same probe reads 1,221 GETs for 400 rows rather than 414, because
+//! SlateDB's block cache is compiled out. The old constant was calibrated on
+//! that build.
 //!
 //! The **"probe, or scan?"** block at the end is the one place the cache
 //! reverses a verdict rather than scaling it. It times an index probe and a

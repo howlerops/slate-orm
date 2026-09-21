@@ -152,7 +152,7 @@ def main() -> int:
     seen, wrong = guard.check()
     ok = seen > 0 and not wrong
     failed += not ok
-    print(f"{'ok  ' if ok else 'FAIL'}  every claim in the real kernel is current")
+    print(f"{'ok  ' if ok else 'FAIL'}  every claim in the real crates is current")
     for one in wrong:
         print(f"        {one}")
 

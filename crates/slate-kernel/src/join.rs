@@ -31,13 +31,19 @@
 //!
 //! This used to say a loop wins when the outer side is under a hundredth of the
 //! inner, which was three orders of magnitude out. Measured: four hundred point
-//! reads cost ~~1,221 requests~~ and 3.73 s, while scanning the whole
-//! two-hundred thousand row table cost 25 requests and 0.37 s. **The request
-//! figure does not reproduce** — #269 measured about one request per row, four
-//! ways — so the ratio above comes from the constants rather than from that
-//! run. Loading one parent and its ten children still picks a loop, and the
-//! threshold moved with `POINT_READ_COST`: tens of millions of inner rows
-//! rather than hundreds of millions.
+//! reads cost 1,221 requests and 3.73 s, while scanning the whole two-hundred
+//! thousand row table cost 25 requests and 0.37 s.
+//!
+//! ~~**The request figure does not reproduce**~~ — written here a few hours
+//! before #278 reproduced it exactly. It is a property of the *build*: with
+//! `slate-slatedb`'s `cache` feature off, as it was when this was measured,
+//! the same probe reads 1,221 GETs; with it on, 414. Both measurements were
+//! right. See `stats.rs`, which carries the A/B.
+//!
+//! What follows from the constant as it stands today: loading one parent and
+//! its ten children still picks a loop, and the threshold moved with
+//! `POINT_READ_COST` — tens of millions of inner rows rather than hundreds of
+//! millions.
 //!
 //! # Outer joins, and which algorithm can serve them
 //!
