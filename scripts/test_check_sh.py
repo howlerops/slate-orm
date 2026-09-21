@@ -78,6 +78,10 @@ ELSEWHERE = {
         "five benchmarks, each standing up a head node — minutes, and "
         "`check.sh` promises seconds"
     ),
+    "crates/slate-slatedb/run.sh --smoke": (
+        "eight examples, most of them over a real S3 server in the process — "
+        "minutes, and one of them is a server"
+    ),
 }
 
 #: Multi-line `run: |` blocks, by the `name:` above them.

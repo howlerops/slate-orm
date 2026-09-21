@@ -563,6 +563,11 @@ anywhere. The difference between the two is the head node.
 crates/slate-headbench/run.sh
 crates/slate-headbench/run.sh --smoke
 
+# The same for the storage examples, which is where the planner's two cost
+# constants come from. `SCALE_ROWS` shrinks their fixtures the way
+# `HEADBENCH_ROWS` shrinks the head node's.
+crates/slate-slatedb/run.sh --smoke
+
 cargo run --release -p slate-headbench --example head_report
 cargo run --release -p slate-headbench --example head_report -- stream lease
 

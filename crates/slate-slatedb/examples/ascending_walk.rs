@@ -68,7 +68,7 @@ const BY_TEXT: IndexId = IndexId(12);
 
 /// Rows in the fixture.
 ///
-/// `HEADBENCH_ROWS` overrides it, for the same reason the head-node benchmarks
+/// `SCALE_ROWS` overrides it, for the same reason the head-node benchmarks
 /// take one: a smoke run needs to prove this still executes, and at a small
 /// size every arm fits in one block and the answer is four zeroes.
 const ROWS: u64 = 200_000;
@@ -78,7 +78,7 @@ const ROWS: u64 = 200_000;
 const MATCHES: u64 = 400;
 
 fn rows() -> u64 {
-    std::env::var("HEADBENCH_ROWS")
+    std::env::var("SCALE_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|n| *n > 0)
@@ -87,6 +87,19 @@ fn rows() -> u64 {
 
 fn stride() -> u64 {
     (rows() / MATCHES).max(1)
+}
+
+/// Which residue mod [`stride`] the spread arms mark.
+///
+/// `7 % stride()` rather than `7`, and the modulo is the whole point: at the
+/// recorded 200,000 rows the stride is 500 and this is 7, unchanged. At a
+/// smoke size the stride is 5, `id % 5 == 7` is true of no row, and the arm
+/// returns nothing while asserting 400 — which is exactly what the first
+/// `run.sh --smoke` over this crate reported, on an example written the same
+/// day. A constant that is only valid above some fixture size is a fixture
+/// size nobody stated.
+fn mark() -> u64 {
+    7 % stride()
 }
 
 fn docs() -> TableDef {
@@ -116,7 +129,7 @@ fn col(name: &str) -> Ordinal {
 /// rather than the whole column, which is what makes the tokenizer do work.
 fn row(id: u64) -> Row {
     let mut words = String::from("lorem ipsum dolor sit amet consectetur");
-    if id % stride() == 7 {
+    if id % stride() == mark() {
         words.push_str(" scatterling");
     }
     if id < MATCHES {
@@ -147,7 +160,7 @@ fn arms() -> Vec<Arm> {
     vec![
         Arm {
             label: "spread, ordinary index",
-            query: Query::all().filter(Expr::eq(col("bucket"), Value::I64(7))),
+            query: Query::all().filter(Expr::eq(col("bucket"), Value::I64(mark() as i64))),
             hint: AccessHint::Index(BY_BUCKET),
         },
         Arm {

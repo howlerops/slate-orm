@@ -322,6 +322,7 @@ jobs:
       - run: python3 examples/explorer/conformance/test_conformance.py
       - run: python3 scripts/check_demo_surface.py
       - run: python3 scripts/test_check_demo_surface.py
+      - run: python3 scripts/test_run_examples.py
       # The TypeScript client carries its own copy of the proto, because
       # `@grpc/proto-loader` reads the file at run time and an npm package
       # cannot reach into a sibling crate. Nothing checked the two agreed:
@@ -614,6 +615,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: crates/slate-headbench/run.sh --smoke
+
+  # The storage examples, run rather than asserted.
+  #
+  # The same argument as `headbench` above, and this crate has the sharper
+  # version of it: `SCAN_ROW_COST` and `POINT_READ_COST` are calibrated *from*
+  # these, so a benchmark nobody runs is a planner constant nobody re-measures.
+  # `POINT_READ_COST` was three times its measured value when somebody finally
+  # ran one.
+  #
+  # `s3_server` is a server rather than a measurement, so the runner waits for
+  # the `LISTENING` line it prints and kills it — a check, not a skip.
+  slatedbbench:
+    name: storage examples, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: crates/slate-slatedb/run.sh --smoke
 
   # The release build, called rather than copied.
   #

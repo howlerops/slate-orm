@@ -83,6 +83,20 @@ use std::time::Instant;
 const EVENTS: TableId = TableId(1);
 const ROWS: u64 = 200_000;
 
+/// `SCALE_ROWS` overrides it, the same name `cost_at_scale` takes.
+///
+/// One name per crate rather than one per example: a smoke run has to shrink
+/// every fixture it meets, and a runner that needs a different variable for
+/// each is a list nobody keeps current. The default is what
+/// `docs/performance.md` records and is unchanged.
+fn rows() -> u64 {
+    std::env::var("SCALE_ROWS")
+        .ok()
+        .and_then(|value| value.split(',').next().unwrap_or("").parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
+
 fn events() -> TableDef {
     TableDef::builder("events", EVENTS)
         .column("id", ValueType::U64)
@@ -155,7 +169,7 @@ async fn main() {
     let counters = server.counters();
     let path = format!("/calibration-{}", std::process::id());
 
-    println!("Loading {ROWS} rows through SlateDB over S3...");
+    println!("Loading {} rows through SlateDB over S3...", rows());
     let load = Instant::now();
     {
         let backend = SlateStore::open_s3(path.clone(), server.config())
@@ -166,8 +180,10 @@ async fn main() {
         let store = RecordStore::new(backend, catalog, security);
         let root = SecurityContext::superuser();
 
-        for chunk in 0..(ROWS / 5_000) {
-            let rows: Vec<Row> = (chunk * 5_000..(chunk + 1) * 5_000).map(row).collect();
+        for start in (0..rows()).step_by(5_000) {
+            let rows: Vec<Row> = (start..(start + 5_000).min(self::rows()))
+                .map(row)
+                .collect();
             let txn = store.begin().await.unwrap();
             txn.insert_many(&root, &events(), &rows).await.unwrap();
             txn.commit().await.unwrap();
@@ -387,12 +403,13 @@ async fn main() {
             probe_wall.as_secs_f64()
         );
         println!(
-            "  same rows via full scan: {scan_gets:>6} GETs  {:>7.2}s  (of {ROWS} rows)",
-            scan_wall.as_secs_f64()
+            "  same rows via full scan: {scan_gets:>6} GETs  {:>7.2}s  (of {} rows)",
+            scan_wall.as_secs_f64(),
+            rows()
         );
         println!(
             "  => scanning {} rows beats {probed} point reads: {}",
-            ROWS,
+            rows(),
             scan_wall < probe_wall
         );
         assert_eq!(probed, scanned, "the two paths disagreed on the answer");
