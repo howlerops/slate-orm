@@ -26,6 +26,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod lower;
 pub mod sql;
 
 use serde::{Deserialize, Serialize};
