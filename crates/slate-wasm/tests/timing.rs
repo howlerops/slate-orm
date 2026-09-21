@@ -188,16 +188,21 @@ fn the_clock_stops_before_the_rows_are_rendered() {
     // grouping must be the slower of the two. If the plain select comes out
     // ahead, the only thing it can be paying for is `format!` on the rows it
     // returns, which is not the database.
-    for (plain, grouped, rows) in [
+    // A bound per pair, because the two pairs are not alike and one number for
+    // both put the small pair's bound 6% above its own clean reading while the
+    // mutation it has to catch is worth 70%. See the assertion below.
+    for (plain, grouped, rows, bound) in [
         (
             "SELECT pickup_zone FROM trips WHERE pickup_zone = 132",
             "SELECT pickup_zone, count(*) FROM trips WHERE pickup_zone = 132 GROUP BY pickup_zone",
             4_837,
+            1.40,
         ),
         (
             "SELECT pickup_zone FROM trips WHERE pickup_zone >= 0",
             "SELECT pickup_zone, count(*) FROM trips WHERE pickup_zone >= 0 GROUP BY pickup_zone",
             100_000,
+            1.15,
         ),
     ] {
         let (select, group) = paired(&playground, plain, grouped, 9);
@@ -212,19 +217,41 @@ fn the_clock_stops_before_the_rows_are_rendered() {
         );
         assert!(select.kernel > 0.0 && group.kernel > 0.0);
 
-        // Fifteen percent of slack for a shared machine. The mutation this
-        // catches is worth 26% on the small pair and 31% on the large one,
-        // measured — see the ledger entry. The slack is small because
-        // `paired` does the work of surviving contention; widening this
-        // instead would have had to pass 260% to survive four spinning CPUs,
-        // by which point it catches nothing.
+        // Each bound sits between what this pair reads clean and what it reads
+        // mutated, both measured rather than assumed. Re-measured 2026-09-21,
+        // best of nine, four runs each, on a four-core container:
+        //
+        // |     pair | clean         | `render` inside the clock |
+        // |---------:|---------------|---------------------------|
+        // |    4,837 | 1.045 – 1.092 | 1.699 – 1.744             |
+        // |  100,000 | 0.888 – 0.920 | 1.294 – 1.300             |
+        //
+        // So 1.40 for the small pair and 1.15 for the large one: each roughly
+        // the geometric middle of its own gap, rather than one number shared
+        // by two pairs whose clean readings differ by 0.17 and whose signals
+        // differ by 0.40.
+        //
+        // **The single 1.15 was calibrated against a reading that no longer
+        // holds.** The ledger entry of 2026-09-14 recorded the small pair
+        // clean at 11.2 vs 12.9 ms — a ratio of 0.868 — and today it reads
+        // 1.07: the plain select has moved from 13% *faster* than its grouping
+        // to 7% slower. Nothing here chased why; the threshold was simply
+        // sitting 6% above a clean reading, which is not slack. It turned CI
+        // red on 2026-09-21 at 1.252, on a commit that touched no crate
+        // `slate-wasm` compiles.
+        //
+        // Not more samples. `paired` was measured at nine and at twenty-five
+        // and the small pair did not move (1.048–1.080 against 1.046–1.078),
+        // because ~1.06 is what this pair *costs* rather than what the machine
+        // was doing to it. Nine stays.
         assert!(
-            select.kernel < group.kernel * 1.15,
+            select.kernel < group.kernel * bound,
             "returning {rows} rows took {:.3} ms but folding the same read into \
-             one group took only {:.3} ms — the select is being charged for \
-             rendering its output",
+             one group took only {:.3} ms ({:.3}×, and this pair's bound is \
+             {bound:.2}×) — the select is being charged for rendering its output",
             select.kernel,
-            group.kernel
+            group.kernel,
+            select.kernel / group.kernel
         );
     }
 }
