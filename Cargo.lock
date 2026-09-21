@@ -3920,6 +3920,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate-sql"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slate-kernel",
+ "slate-schema",
+ "slate-tuple",
+]
+
+[[package]]
 name = "slate-testserver"
 version = "0.0.1"
 dependencies = [
@@ -3956,6 +3967,7 @@ dependencies = [
  "serde_json",
  "slate-kernel",
  "slate-schema",
+ "slate-sql",
  "slate-tuple",
  "tokio",
  "uuid",

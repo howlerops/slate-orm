@@ -20,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 slate-kernel.workspace = true
+slate-sql.workspace = true
 slate-schema.workspace = true
 slate-tuple.workspace = true
 futures.workspace = true
