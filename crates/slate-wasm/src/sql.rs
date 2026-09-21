@@ -2486,6 +2486,22 @@ impl Parser<'_> {
             "like"
         } else if self.eat("ilike") {
             "ilike"
+        } else if self.eat("contains") {
+            // Infix — `title CONTAINS 'earthsea'` — where SQL Server spells it
+            // `CONTAINS(title, 'earthsea')` and Postgres
+            // `to_tsvector(title) @@ to_tsquery('earthsea')`. Neither is
+            // standard, so there is no spelling to be faithful to, and infix
+            // is the one this parser already has a place for: it is a column,
+            // an operator and a literal, exactly like `LIKE`. A function call
+            // would need its own parse path and would put the column inside
+            // an argument list, where nothing else in this grammar puts one.
+            //
+            // It is *not* `LIKE` with different punctuation. `LIKE '%game%'`
+            // finds `Games`; this does not, because a term is a whole word.
+            // That is the difference worth having a keyword for, and it is
+            // why this is here even though the planner takes a table scan for
+            // it at the fixture's size.
+            "contains"
         } else {
             return Err(SqlError {
                 message: format!("expected a comparison, found {}", self.describe(self.i)),

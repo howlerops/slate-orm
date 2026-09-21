@@ -21,10 +21,9 @@ changed the answer to the last of them.
 > schema. Each client has a live test against a real node
 > (`clients/*/…/fulltext*`), and each of those hints onto the index rather than
 > searching unhinted, for the reason §6 measures.
-> **The SQL front end does not know about it** — there is no `CONTAINS`
-> keyword in `slate-wasm`'s parser and no search box in the demo. Neither is
-> reachable from a corpus that would show the index off, which is why both wait
-> for a follow-up rather than shipping as a scan with a nicer spelling.
+> In the SQL front end: `WHERE title CONTAINS 'the heaven'`, infix, with a
+> text index on the workbench's `books`.
+> **No search box in the demo's web UI**, which is the last surface.
 
 ## 1. One place decides how many entries a row writes
 
@@ -210,6 +209,23 @@ opinions:
    millions of distinct keys, so this is a sampled statistic rather than an
    exact one, and sampling a Zipf distribution for the *rare* tail is the hard
    part.
+### The keyword is worth having even where the index is not chosen
+
+An earlier draft of this note argued the opposite — that a `CONTAINS` the
+planner answers with a table scan would be "a scan with a nicer spelling", and
+that the SQL front end should therefore wait. That was wrong, and the test
+that withdrew it is `a_contains_is_not_a_like`:
+
+- `LIKE '%Cosmic%'` finds *Cosmicomics*; `CONTAINS 'Cosmic'` does not, because
+  a term is a whole word.
+- `CONTAINS 'heaven the'` finds *The Lathe of Heaven*; `LIKE '%Heaven%the%'`
+  does not, because a pattern is ordered and terms are not.
+
+Neither predicate can be written as the other, so the keyword is a new thing to
+say rather than a faster way to say an old one. What the access path costs is a
+separate question from what the predicate means, and conflating them is what
+the withdrawn argument did.
+
 2. **Whether `POINT_READ_COST` is right for this walk.** It was calibrated on
    400 rows reached through an ordinary index, whose entries are in *column*
    order, so the row keys are scattered. Under one term of an inverted index

@@ -137,10 +137,11 @@ fn render(spec: &QuerySpec, table: &TableDef) -> String {
                     "like" => "LIKE",
                     "ilike" => "ILIKE",
                     "matches" => "~",
+                    "contains" => "CONTAINS",
                     other => panic!("no SQL spelling for {other}"),
                 };
                 // Patterns are always strings, whatever the column's type.
-                let value = if matches!(f.op.as_str(), "like" | "ilike" | "matches") {
+                let value = if matches!(f.op.as_str(), "like" | "ilike" | "matches" | "contains") {
                     format!("'{}'", f.value.replace('\'', "''"))
                 } else {
                     literal(f.column, &f.value)
@@ -211,7 +212,7 @@ fn filter_strategy() -> BoxedStrategy<FilterSpec> {
     (0u32..4)
         .prop_flat_map(|column| {
             let ops: Vec<&'static str> = if column == 2 {
-                vec!["eq", "ne", "lt", "le", "gt", "ge", "like", "ilike"]
+                vec!["eq", "ne", "lt", "le", "gt", "ge", "like", "ilike", "contains"]
             } else {
                 vec!["eq", "ne", "lt", "le", "gt", "ge"]
             };

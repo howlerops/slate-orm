@@ -2423,6 +2423,10 @@ fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
     match filter.op.as_str() {
         "like" => return Ok(Expr::like(column, filter.value.clone())),
         "ilike" => return Ok(Expr::ilike(column, filter.value.clone())),
+        // The search text, not a term list: `Expr::contains` tokenizes with
+        // the same function the write path tokenizes the column with. This
+        // binding splitting it first would be a fifth tokenizer.
+        "contains" => return Ok(Expr::contains(column, &filter.value)),
         "matches" => {
             let expr = Expr::matches(column, filter.value.clone());
             if let Some(bad) = expr.regex_error() {
@@ -3343,6 +3347,7 @@ fn having(
         let expr = match spec.op.as_str() {
             "like" => Expr::like(column, spec.value.clone()),
             "ilike" => Expr::ilike(column, spec.value.clone()),
+            "contains" => Expr::contains(column, &spec.value),
             "matches" => {
                 let expr = Expr::matches(column, spec.value.clone());
                 if let Some(bad) = expr.regex_error() {

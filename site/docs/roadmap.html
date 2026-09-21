@@ -306,8 +306,11 @@
               tokenizers would be four chances for a client to find fewer rows
               than the table holds. It reaches outwards now: <code>contains</code>
               on the wire, in all three clients against a real node, and
-              <code>text = true</code> on an index in the TOML schema. The SQL
-              front end still has no <code>CONTAINS</code>.
+              <code>text = true</code> on an index in the TOML schema, and
+              <code>WHERE title CONTAINS 'the heaven'</code> in the SQL front
+              end. It is not a spelling of <code>LIKE</code>: a term is a whole
+              word and terms are unordered, so neither predicate can be written
+              as the other.
             </td>
           </tr>
           <tr>

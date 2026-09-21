@@ -52,6 +52,21 @@ pub fn books() -> TableDef {
         // The point of the whole exercise: with this, `author_id = 2` is an
         // index scan; without it, a table scan. The plan panel shows which.
         .index(IndexDef::builder("by_author", IndexId(10)).column("author_id"))
+        // An inverted index, so `WHERE title CONTAINS 'earthsea'` has one to
+        // reach and the schema tree has an index that is not an ordinary one.
+        //
+        // The planner will not choose it here and that is not a bug: there are
+        // 4,848 books, and a non-covering index is worth taking at about one
+        // row in 24,000 (`docs/full-text.md` measures it). The workbench has no
+        // hint syntax, so every `CONTAINS` in it is a table scan and the plan
+        // panel says so. The keyword still earns its place — it is a different
+        // predicate, not a spelling of `LIKE`, and `LIKE '%game%'` matching
+        // `Games` where this does not is the whole distinction.
+        .index(
+            IndexDef::builder("by_title_text", IndexId(11))
+                .column("title")
+                .text(),
+        )
         .build()
         .expect("the books schema is valid")
 }
