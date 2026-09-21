@@ -144,10 +144,28 @@ window field, and the headers, labels and result rendering all key off it.
 refuses one by name now, which is stronger than the kernel's position: there,
 nothing refuses it because nothing can express it.
 
-**The proto guard covers one pair of files.** `COPIES` is a dict so a second
+~~**The proto guard covers one pair of files.** `COPIES` is a dict so a second
 pair costs a line, and nothing checks that the dict is *complete* — a third
 copy added somewhere would be as unguarded as this one was. I looked for others
-and found none, which is not the same as there being none.
+and found none, which is not the same as there being none.~~
+
+**Withdrawn, the same afternoon, by CI.** There were three others and I had not
+found them: the Python and Go clients commit *generated* protobuf stubs, and
+pushing this commit turned both jobs red on stale ones. So the schema has four
+derivatives, not two.
+
+The distinction that matters is that the other three were already guarded —
+each generated stub has a freshness test that regenerates and compares bytes,
+and those are exactly what caught me. The TypeScript copy is the only *literal*
+copy, which is why nothing generated it, nothing regenerated it, and nothing
+compared it. The script's docstring now says that rather than "two files, one
+meaning", and the paragraph above stands only as a record of having looked
+badly: `grep`ping for `records.proto` found the copy and not the two
+`generate_proto.py` scripts that produce from it, because a generated file does
+not mention its source in the place I looked.
+
+The stubs are regenerated and committed here. `COPIES` is still one pair and
+still has no completeness check, which remains true.
 
 **`Row.windowed` is not carried by `JoinedRow`.** A joined read computes no
 windows, so there is nothing to carry, but that means a future window over a

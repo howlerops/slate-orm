@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """The TypeScript client's copy of the proto must match the canonical one.
 
-`crates/slate-server/proto/slate/v1/records.proto` is the schema; the copy under
-`clients/typescript/proto/` exists because `@grpc/proto-loader` reads the file at
-run time and an npm package cannot reach into a sibling crate. Two files, one
-meaning, and **nothing checked that they agreed** — which is the shape of defect
-this repository has closed four times under other names (the decoder rosters, the
-generated declarations, the `EXPECTED_REFUSALS` lists).
+`crates/slate-server/proto/slate/v1/records.proto` is the schema. **Four things
+derive from it and only one of them was unchecked**, which is the whole reason
+this script is narrow:
+
+- `clients/python/src/slate/_proto/…` and `clients/go/internal/pb/…` are
+  *generated* stubs, committed rather than built at install time, and each has
+  its own freshness test that regenerates and compares bytes. Those caught a
+  stale stub the same afternoon this script was written — see the ledger entry
+  for 2026-09-21 about windows on the wire, where they caught mine.
+- `clients/typescript/proto/…` is a *literal copy*, because `@grpc/proto-loader`
+  reads the file at run time and an npm package cannot reach into a sibling
+  crate. Nothing generated it, so nothing regenerated it, so nothing compared
+  it. That is the gap here.
+
+It is the shape of defect this repository has closed several times under other
+names (the decoder rosters, the generated declarations, the `EXPECTED_REFUSALS`
+lists): a second statement of one fact, with no check that the two agree.
 
 What a drift costs is worse than a stale comment: the TypeScript client would
 build a request against a schema the server does not have. A field added only to

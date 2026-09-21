@@ -291,6 +291,48 @@ would collide in an index.
 """
 Global___AggregateFunction: _TypeAlias = AggregateFunction  # noqa: Y015
 
+class _WindowFunction:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _WindowFunctionEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_WindowFunction.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    WINDOW_FUNCTION_UNSPECIFIED: _WindowFunction.ValueType  # 0
+    WINDOW_FUNCTION_ROW_NUMBER: _WindowFunction.ValueType  # 1
+    """The row's position in its partition, from 1."""
+    WINDOW_FUNCTION_RANK: _WindowFunction.ValueType  # 2
+    """Peers share a rank and the next rank skips the gap: 1, 1, 3."""
+    WINDOW_FUNCTION_DENSE_RANK: _WindowFunction.ValueType  # 3
+    """The same with no gaps: 1, 1, 2."""
+    WINDOW_FUNCTION_LAG: _WindowFunction.ValueType  # 4
+    """The value `offset` rows earlier in the partition's order, or null."""
+    WINDOW_FUNCTION_LEAD: _WindowFunction.ValueType  # 5
+    """The value `offset` rows later, or null."""
+    WINDOW_FUNCTION_AGGREGATE: _WindowFunction.ValueType  # 6
+    """An ordinary aggregate over the frame; `aggregate` says which one."""
+
+class WindowFunction(_WindowFunction, metaclass=_WindowFunctionEnumTypeWrapper):
+    """── Windows ──────────────────────────────────────────────────────────────────
+
+    Refused when unspecified, for the reason `AggregateFunction` is: every one
+    of these returns a number and a defaulted one would return a plausible one.
+    """
+
+WINDOW_FUNCTION_UNSPECIFIED: WindowFunction.ValueType  # 0
+WINDOW_FUNCTION_ROW_NUMBER: WindowFunction.ValueType  # 1
+"""The row's position in its partition, from 1."""
+WINDOW_FUNCTION_RANK: WindowFunction.ValueType  # 2
+"""Peers share a rank and the next rank skips the gap: 1, 1, 3."""
+WINDOW_FUNCTION_DENSE_RANK: WindowFunction.ValueType  # 3
+"""The same with no gaps: 1, 1, 2."""
+WINDOW_FUNCTION_LAG: WindowFunction.ValueType  # 4
+"""The value `offset` rows earlier in the partition's order, or null."""
+WINDOW_FUNCTION_LEAD: WindowFunction.ValueType  # 5
+"""The value `offset` rows later, or null."""
+WINDOW_FUNCTION_AGGREGATE: WindowFunction.ValueType  # 6
+"""An ordinary aggregate over the frame; `aggregate` says which one."""
+Global___WindowFunction: _TypeAlias = WindowFunction  # noqa: Y015
+
 class _ScanOrder:
     ValueType = _typing.NewType("ValueType", _builtins.int)
     V: _TypeAlias = ValueType  # noqa: Y015
@@ -601,19 +643,32 @@ class Row(_message.Message):
 
     VALUES_FIELD_NUMBER: _builtins.int
     COMPUTED_FIELD_NUMBER: _builtins.int
+    WINDOWED_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def values(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]: ...
     @_builtins.property
     def computed(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]: ...
+    @_builtins.property
+    def windowed(self) -> _containers.RepeatedCompositeFieldContainer[Global___Value]:
+        """The values the query's windows produced, in the order they were requested.
+
+        A third list rather than more `computed`, for the reason `computed` is not
+        more `values`: the split is what stops the client doing the arithmetic. A
+        window sits past every computed value in the kernel's flat row, so folding
+        the two together would make "the second computed value" mean different
+        ordinals depending on how many windows the query asked for.
+        """
+
     def __init__(
         self,
         *,
         values: _abc.Iterable[Global___Value] | None = ...,
         computed: _abc.Iterable[Global___Value] | None = ...,
+        windowed: _abc.Iterable[Global___Value] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["computed", b"computed", "values", b"values"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["computed", b"computed", "values", b"values", "windowed", b"windowed"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -818,6 +873,7 @@ class ColumnRef(_message.Message):
     GROUP_KEY_FIELD_NUMBER: _builtins.int
     AGGREGATE_FIELD_NUMBER: _builtins.int
     JOINED_COMPUTED_FIELD_NUMBER: _builtins.int
+    WINDOWED_FIELD_NUMBER: _builtins.int
     input: _builtins.int
     """Which input of the request, counting from zero in the order the request
     declares them. Always zero for a single-table read, which is why a client
@@ -848,6 +904,15 @@ class ColumnRef(_message.Message):
     request rather than to one of its tables, for the same reason `group_key`
     and `aggregate` set it to zero.
     """
+    windowed: _builtins.int
+    """The nth value the query's windows produce, counting from zero.
+
+    Nameable from a `SortKey` and from nothing else, which is SQL's own
+    rule: a window is computed after `WHERE` and before `ORDER BY`, so a
+    filter cannot see one (that is what `QUALIFY` is for, and there is no
+    `QUALIFY` here) and a sort can. Naming one anywhere else is refused
+    rather than resolved to a plausible ordinal.
+    """
     def __init__(
         self,
         *,
@@ -857,12 +922,13 @@ class ColumnRef(_message.Message):
         group_key: _builtins.int = ...,
         aggregate: _builtins.int = ...,
         joined_computed: _builtins.int = ...,
+        windowed: _builtins.int = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "joined_computed", b"joined_computed", "of", b"of"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "joined_computed", b"joined_computed", "of", b"of", "windowed", b"windowed"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "input", b"input", "joined_computed", b"joined_computed", "of", b"of"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "computed", b"computed", "group_key", b"group_key", "input", b"input", "joined_computed", b"joined_computed", "of", b"of", "windowed", b"windowed"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["column", "computed", "group_key", "aggregate", "joined_computed"]  # noqa: Y015
+    _WhichOneofReturnType_of: _TypeAlias = _typing.Literal["column", "computed", "group_key", "aggregate", "joined_computed", "windowed"]  # noqa: Y015
     _WhichOneofArgType_of: _TypeAlias = _typing.Literal["of", b"of"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_of) -> _WhichOneofReturnType_of | None: ...
 
@@ -1567,6 +1633,92 @@ class Group(_message.Message):
 Global___Group: _TypeAlias = Group  # noqa: Y015
 
 @_typing.final
+class Window(_message.Message):
+    """A value computed over a partition, one per input row.
+
+    **Not an `Aggregate`, and the difference is the cardinality.** A grouped
+    request folds each row into its group and returns one row per group; a
+    window returns one value per *input* row. So this cannot be another
+    `AggregateFunction` however the enum is widened, and a request carrying one
+    still returns `Row`s rather than `Group`s.
+
+    # The frame
+
+    There is no frame clause, and the absence is a decision rather than an
+    omission. SQL's default frame is the whole partition without an `ORDER BY`
+    and `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` with one, and this
+    follows it exactly: an aggregate with no `order` is the partition's total on
+    every row, and one with an `order` is a running value through the current
+    row's **peer group** — every row tied on the order columns sees the value
+    that includes all of them. Explicit frames (`ROWS BETWEEN 3 PRECEDING …`)
+    are a larger feature and are not offered; see `docs/orm-comparison.md`.
+
+    # Which fields apply
+
+    Flat rather than a `oneof`, matching `Aggregate`, and each function names
+    exactly what it needs. Setting a field a function does not use is **refused**
+    rather than ignored: a `LAG` carrying an `aggregate` is a client that has
+    misunderstood the message, and serving it would hide that.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    FUNCTION_FIELD_NUMBER: _builtins.int
+    AGGREGATE_FIELD_NUMBER: _builtins.int
+    COLUMN_FIELD_NUMBER: _builtins.int
+    OFFSET_FIELD_NUMBER: _builtins.int
+    PARTITION_BY_FIELD_NUMBER: _builtins.int
+    ORDER_FIELD_NUMBER: _builtins.int
+    function: Global___WindowFunction.ValueType
+    offset: _builtins.int
+    """How far back or forward, for `LAG` and `LEAD`. Zero is refused: it is the
+    current row spelled obscurely, and far likelier a bug than an intention.
+    """
+    @_builtins.property
+    def aggregate(self) -> Global___Aggregate:
+        """Required for `WINDOW_FUNCTION_AGGREGATE` and refused for every other
+        function. Carries its own column exactly as an ordinary aggregate does.
+        """
+
+    @_builtins.property
+    def column(self) -> Global___ColumnRef:
+        """Required for `LAG` and `LEAD`, refused otherwise."""
+
+    @_builtins.property
+    def partition_by(self) -> _containers.RepeatedCompositeFieldContainer[Global___ColumnRef]:
+        """`PARTITION BY`. Empty is one partition over the whole result, which is
+        what SQL means by omitting the clause — not one partition per row.
+        """
+
+    @_builtins.property
+    def order(self) -> _containers.RepeatedCompositeFieldContainer[Global___SortKey]:
+        """The window's own `ORDER BY`, which is not the query's. It decides peer
+        groups and turns an aggregate's frame into a running one.
+
+        Required for every function except `AGGREGATE`: an unordered `RANK` is 1
+        on every row and an unordered `ROW_NUMBER` numbers whichever order the
+        access path happened to produce, so both are refused rather than answered.
+        """
+
+    def __init__(
+        self,
+        *,
+        function: Global___WindowFunction.ValueType = ...,
+        aggregate: Global___Aggregate | None = ...,
+        column: Global___ColumnRef | None = ...,
+        offset: _builtins.int = ...,
+        partition_by: _abc.Iterable[Global___ColumnRef] | None = ...,
+        order: _abc.Iterable[Global___SortKey] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["aggregate", b"aggregate", "column", b"column", "function", b"function", "offset", b"offset", "order", b"order", "partition_by", b"partition_by"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___Window: _TypeAlias = Window  # noqa: Y015
+
+@_typing.final
 class SortKey(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -1670,6 +1822,7 @@ class Query(_message.Message):
     AFTER_FIELD_NUMBER: _builtins.int
     PAGED_FIELD_NUMBER: _builtins.int
     INCLUDE_DELETED_FIELD_NUMBER: _builtins.int
+    WINDOW_FIELD_NUMBER: _builtins.int
     table: _builtins.str
     """Table name, resolved against the server's catalog."""
     order: Global___ScanOrder.ValueType
@@ -1765,6 +1918,22 @@ class Query(_message.Message):
         the kernel's and say which of those happened.
         """
 
+    @_builtins.property
+    def window(self) -> _containers.RepeatedCompositeFieldContainer[Global___Window]:
+        """Values computed over a partition, returned in `Row.windowed`.
+        `ColumnRef.windowed` names one, from a `SortKey`.
+
+        What this costs, because it is not obvious from the request: a window has
+        to see every selected row before it can answer for any of them, so a query
+        carrying one does not stream and is bounded by the server's
+        `max_window_rows` rather than by its `limit`. The limit cannot help —
+        `ROW_NUMBER() OVER (…) … LIMIT 10` must number every row before it can
+        know which ten — and the refusal says so rather than suggesting one.
+
+        Refused together with `paged` and `after`: a window over a page is
+        computed over the wrong set, and would restart on every page.
+        """
+
     def __init__(
         self,
         *,
@@ -1781,10 +1950,11 @@ class Query(_message.Message):
         after: _abc.Iterable[Global___Value] | None = ...,
         paged: _builtins.bool = ...,
         include_deleted: _builtins.bool = ...,
+        window: _abc.Iterable[Global___Window] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "filter", b"filter", "hint", b"hint", "limit", b"limit", "projection", b"projection", "schema", b"schema"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "after", b"after", "compute", b"compute", "filter", b"filter", "hint", b"hint", "include_deleted", b"include_deleted", "limit", b"limit", "offset", b"offset", "order", b"order", "paged", b"paged", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_limit", b"_limit", "after", b"after", "compute", b"compute", "filter", b"filter", "hint", b"hint", "include_deleted", b"include_deleted", "limit", b"limit", "offset", b"offset", "order", b"order", "paged", b"paged", "projection", b"projection", "schema", b"schema", "sort", b"sort", "table", b"table", "window", b"window"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__limit: _TypeAlias = _typing.Literal["limit"]  # noqa: Y015
     _WhichOneofArgType__limit: _TypeAlias = _typing.Literal["_limit", b"_limit"]  # noqa: Y015

@@ -504,6 +504,75 @@ func (AggregateFunction) EnumDescriptor() ([]byte, []int) {
 	return file_slate_v1_records_proto_rawDescGZIP(), []int{7}
 }
 
+// Refused when unspecified, for the reason `AggregateFunction` is: every one
+// of these returns a number and a defaulted one would return a plausible one.
+type WindowFunction int32
+
+const (
+	WindowFunction_WINDOW_FUNCTION_UNSPECIFIED WindowFunction = 0
+	// The row's position in its partition, from 1.
+	WindowFunction_WINDOW_FUNCTION_ROW_NUMBER WindowFunction = 1
+	// Peers share a rank and the next rank skips the gap: 1, 1, 3.
+	WindowFunction_WINDOW_FUNCTION_RANK WindowFunction = 2
+	// The same with no gaps: 1, 1, 2.
+	WindowFunction_WINDOW_FUNCTION_DENSE_RANK WindowFunction = 3
+	// The value `offset` rows earlier in the partition's order, or null.
+	WindowFunction_WINDOW_FUNCTION_LAG WindowFunction = 4
+	// The value `offset` rows later, or null.
+	WindowFunction_WINDOW_FUNCTION_LEAD WindowFunction = 5
+	// An ordinary aggregate over the frame; `aggregate` says which one.
+	WindowFunction_WINDOW_FUNCTION_AGGREGATE WindowFunction = 6
+)
+
+// Enum value maps for WindowFunction.
+var (
+	WindowFunction_name = map[int32]string{
+		0: "WINDOW_FUNCTION_UNSPECIFIED",
+		1: "WINDOW_FUNCTION_ROW_NUMBER",
+		2: "WINDOW_FUNCTION_RANK",
+		3: "WINDOW_FUNCTION_DENSE_RANK",
+		4: "WINDOW_FUNCTION_LAG",
+		5: "WINDOW_FUNCTION_LEAD",
+		6: "WINDOW_FUNCTION_AGGREGATE",
+	}
+	WindowFunction_value = map[string]int32{
+		"WINDOW_FUNCTION_UNSPECIFIED": 0,
+		"WINDOW_FUNCTION_ROW_NUMBER":  1,
+		"WINDOW_FUNCTION_RANK":        2,
+		"WINDOW_FUNCTION_DENSE_RANK":  3,
+		"WINDOW_FUNCTION_LAG":         4,
+		"WINDOW_FUNCTION_LEAD":        5,
+		"WINDOW_FUNCTION_AGGREGATE":   6,
+	}
+)
+
+func (x WindowFunction) Enum() *WindowFunction {
+	p := new(WindowFunction)
+	*p = x
+	return p
+}
+
+func (x WindowFunction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WindowFunction) Descriptor() protoreflect.EnumDescriptor {
+	return file_slate_v1_records_proto_enumTypes[8].Descriptor()
+}
+
+func (WindowFunction) Type() protoreflect.EnumType {
+	return &file_slate_v1_records_proto_enumTypes[8]
+}
+
+func (x WindowFunction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WindowFunction.Descriptor instead.
+func (WindowFunction) EnumDescriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{8}
+}
+
 type ScanOrder int32
 
 const (
@@ -534,11 +603,11 @@ func (x ScanOrder) String() string {
 }
 
 func (ScanOrder) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[8].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[9].Descriptor()
 }
 
 func (ScanOrder) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[8]
+	return &file_slate_v1_records_proto_enumTypes[9]
 }
 
 func (x ScanOrder) Number() protoreflect.EnumNumber {
@@ -547,7 +616,7 @@ func (x ScanOrder) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ScanOrder.Descriptor instead.
 func (ScanOrder) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{8}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{9}
 }
 
 type SortDirection int32
@@ -580,11 +649,11 @@ func (x SortDirection) String() string {
 }
 
 func (SortDirection) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[9].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[10].Descriptor()
 }
 
 func (SortDirection) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[9]
+	return &file_slate_v1_records_proto_enumTypes[10]
 }
 
 func (x SortDirection) Number() protoreflect.EnumNumber {
@@ -593,7 +662,7 @@ func (x SortDirection) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SortDirection.Descriptor instead.
 func (SortDirection) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{9}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{10}
 }
 
 // Where nulls go in a sort. Unspecified means the direction's natural place —
@@ -632,11 +701,11 @@ func (x NullsOrder) String() string {
 }
 
 func (NullsOrder) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[10].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[11].Descriptor()
 }
 
 func (NullsOrder) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[10]
+	return &file_slate_v1_records_proto_enumTypes[11]
 }
 
 func (x NullsOrder) Number() protoreflect.EnumNumber {
@@ -645,7 +714,7 @@ func (x NullsOrder) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NullsOrder.Descriptor instead.
 func (NullsOrder) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{10}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{11}
 }
 
 // Which rows survive a join.
@@ -693,11 +762,11 @@ func (x JoinType) String() string {
 }
 
 func (JoinType) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[11].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[12].Descriptor()
 }
 
 func (JoinType) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[11]
+	return &file_slate_v1_records_proto_enumTypes[12]
 }
 
 func (x JoinType) Number() protoreflect.EnumNumber {
@@ -706,7 +775,7 @@ func (x JoinType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JoinType.Descriptor instead.
 func (JoinType) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{11}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{12}
 }
 
 type Side int32
@@ -739,11 +808,11 @@ func (x Side) String() string {
 }
 
 func (Side) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[12].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[13].Descriptor()
 }
 
 func (Side) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[12]
+	return &file_slate_v1_records_proto_enumTypes[13]
 }
 
 func (x Side) Number() protoreflect.EnumNumber {
@@ -752,7 +821,7 @@ func (x Side) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Side.Descriptor instead.
 func (Side) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{12}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{13}
 }
 
 // Whether a batch's operations stand alone or land together.
@@ -804,11 +873,11 @@ func (x Atomicity) String() string {
 }
 
 func (Atomicity) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[13].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[14].Descriptor()
 }
 
 func (Atomicity) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[13]
+	return &file_slate_v1_records_proto_enumTypes[14]
 }
 
 func (x Atomicity) Number() protoreflect.EnumNumber {
@@ -817,7 +886,7 @@ func (x Atomicity) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Atomicity.Descriptor instead.
 func (Atomicity) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{13}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{14}
 }
 
 type LeadershipStatus_Standing int32
@@ -860,11 +929,11 @@ func (x LeadershipStatus_Standing) String() string {
 }
 
 func (LeadershipStatus_Standing) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[14].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[15].Descriptor()
 }
 
 func (LeadershipStatus_Standing) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[14]
+	return &file_slate_v1_records_proto_enumTypes[15]
 }
 
 func (x LeadershipStatus_Standing) Number() protoreflect.EnumNumber {
@@ -873,7 +942,7 @@ func (x LeadershipStatus_Standing) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LeadershipStatus_Standing.Descriptor instead.
 func (LeadershipStatus_Standing) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{75, 0}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{76, 0}
 }
 
 type Relation_Direction int32
@@ -913,11 +982,11 @@ func (x Relation_Direction) String() string {
 }
 
 func (Relation_Direction) Descriptor() protoreflect.EnumDescriptor {
-	return file_slate_v1_records_proto_enumTypes[15].Descriptor()
+	return file_slate_v1_records_proto_enumTypes[16].Descriptor()
 }
 
 func (Relation_Direction) Type() protoreflect.EnumType {
-	return &file_slate_v1_records_proto_enumTypes[15]
+	return &file_slate_v1_records_proto_enumTypes[16]
 }
 
 func (x Relation_Direction) Number() protoreflect.EnumNumber {
@@ -926,7 +995,7 @@ func (x Relation_Direction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Relation_Direction.Descriptor instead.
 func (Relation_Direction) EnumDescriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{76, 0}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{77, 0}
 }
 
 // One element of a row or a predicate, mirroring `slate_tuple::Value`.
@@ -1296,9 +1365,17 @@ func (x *ArrayValue) GetElements() []*Value {
 // update, a primary key — and a request that sets it is refused rather than
 // having it dropped: a computed value is not something a client can store.
 type Row struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Values        []*Value               `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
-	Computed      []*Value               `protobuf:"bytes,2,rep,name=computed,proto3" json:"computed,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Values   []*Value               `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
+	Computed []*Value               `protobuf:"bytes,2,rep,name=computed,proto3" json:"computed,omitempty"`
+	// The values the query's windows produced, in the order they were requested.
+	//
+	// A third list rather than more `computed`, for the reason `computed` is not
+	// more `values`: the split is what stops the client doing the arithmetic. A
+	// window sits past every computed value in the kernel's flat row, so folding
+	// the two together would make "the second computed value" mean different
+	// ordinals depending on how many windows the query asked for.
+	Windowed      []*Value `protobuf:"bytes,3,rep,name=windowed,proto3" json:"windowed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1343,6 +1420,13 @@ func (x *Row) GetValues() []*Value {
 func (x *Row) GetComputed() []*Value {
 	if x != nil {
 		return x.Computed
+	}
+	return nil
+}
+
+func (x *Row) GetWindowed() []*Value {
+	if x != nil {
+		return x.Windowed
 	}
 	return nil
 }
@@ -1579,6 +1663,7 @@ type ColumnRef struct {
 	//	*ColumnRef_GroupKey
 	//	*ColumnRef_Aggregate
 	//	*ColumnRef_JoinedComputed
+	//	*ColumnRef_Windowed
 	Of            isColumnRef_Of `protobuf_oneof:"of"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1673,6 +1758,15 @@ func (x *ColumnRef) GetJoinedComputed() uint32 {
 	return 0
 }
 
+func (x *ColumnRef) GetWindowed() uint32 {
+	if x != nil {
+		if x, ok := x.Of.(*ColumnRef_Windowed); ok {
+			return x.Windowed
+		}
+	}
+	return 0
+}
+
 type isColumnRef_Of interface {
 	isColumnRef_Of()
 }
@@ -1715,6 +1809,17 @@ type ColumnRef_JoinedComputed struct {
 	JoinedComputed uint32 `protobuf:"varint,6,opt,name=joined_computed,json=joinedComputed,proto3,oneof"`
 }
 
+type ColumnRef_Windowed struct {
+	// The nth value the query's windows produce, counting from zero.
+	//
+	// Nameable from a `SortKey` and from nothing else, which is SQL's own
+	// rule: a window is computed after `WHERE` and before `ORDER BY`, so a
+	// filter cannot see one (that is what `QUALIFY` is for, and there is no
+	// `QUALIFY` here) and a sort can. Naming one anywhere else is refused
+	// rather than resolved to a plausible ordinal.
+	Windowed uint32 `protobuf:"varint,7,opt,name=windowed,proto3,oneof"`
+}
+
 func (*ColumnRef_Column) isColumnRef_Of() {}
 
 func (*ColumnRef_Computed) isColumnRef_Of() {}
@@ -1724,6 +1829,8 @@ func (*ColumnRef_GroupKey) isColumnRef_Of() {}
 func (*ColumnRef_Aggregate) isColumnRef_Of() {}
 
 func (*ColumnRef_JoinedComputed) isColumnRef_Of() {}
+
+func (*ColumnRef_Windowed) isColumnRef_Of() {}
 
 // A predicate, mirroring `slate_kernel::Expr`.
 //
@@ -3401,6 +3508,128 @@ func (x *Group) GetValues() []*Value {
 	return nil
 }
 
+// A value computed over a partition, one per input row.
+//
+// **Not an `Aggregate`, and the difference is the cardinality.** A grouped
+// request folds each row into its group and returns one row per group; a
+// window returns one value per *input* row. So this cannot be another
+// `AggregateFunction` however the enum is widened, and a request carrying one
+// still returns `Row`s rather than `Group`s.
+//
+// # The frame
+//
+// There is no frame clause, and the absence is a decision rather than an
+// omission. SQL's default frame is the whole partition without an `ORDER BY`
+// and `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` with one, and this
+// follows it exactly: an aggregate with no `order` is the partition's total on
+// every row, and one with an `order` is a running value through the current
+// row's **peer group** — every row tied on the order columns sees the value
+// that includes all of them. Explicit frames (`ROWS BETWEEN 3 PRECEDING …`)
+// are a larger feature and are not offered; see `docs/orm-comparison.md`.
+//
+// # Which fields apply
+//
+// Flat rather than a `oneof`, matching `Aggregate`, and each function names
+// exactly what it needs. Setting a field a function does not use is **refused**
+// rather than ignored: a `LAG` carrying an `aggregate` is a client that has
+// misunderstood the message, and serving it would hide that.
+type Window struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Function WindowFunction         `protobuf:"varint,1,opt,name=function,proto3,enum=slate.v1.WindowFunction" json:"function,omitempty"`
+	// Required for `WINDOW_FUNCTION_AGGREGATE` and refused for every other
+	// function. Carries its own column exactly as an ordinary aggregate does.
+	Aggregate *Aggregate `protobuf:"bytes,2,opt,name=aggregate,proto3" json:"aggregate,omitempty"`
+	// Required for `LAG` and `LEAD`, refused otherwise.
+	Column *ColumnRef `protobuf:"bytes,3,opt,name=column,proto3" json:"column,omitempty"`
+	// How far back or forward, for `LAG` and `LEAD`. Zero is refused: it is the
+	// current row spelled obscurely, and far likelier a bug than an intention.
+	Offset uint64 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	// `PARTITION BY`. Empty is one partition over the whole result, which is
+	// what SQL means by omitting the clause — not one partition per row.
+	PartitionBy []*ColumnRef `protobuf:"bytes,5,rep,name=partition_by,json=partitionBy,proto3" json:"partition_by,omitempty"`
+	// The window's own `ORDER BY`, which is not the query's. It decides peer
+	// groups and turns an aggregate's frame into a running one.
+	//
+	// Required for every function except `AGGREGATE`: an unordered `RANK` is 1
+	// on every row and an unordered `ROW_NUMBER` numbers whichever order the
+	// access path happened to produce, so both are refused rather than answered.
+	Order         []*SortKey `protobuf:"bytes,6,rep,name=order,proto3" json:"order,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Window) Reset() {
+	*x = Window{}
+	mi := &file_slate_v1_records_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Window) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Window) ProtoMessage() {}
+
+func (x *Window) ProtoReflect() protoreflect.Message {
+	mi := &file_slate_v1_records_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Window.ProtoReflect.Descriptor instead.
+func (*Window) Descriptor() ([]byte, []int) {
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *Window) GetFunction() WindowFunction {
+	if x != nil {
+		return x.Function
+	}
+	return WindowFunction_WINDOW_FUNCTION_UNSPECIFIED
+}
+
+func (x *Window) GetAggregate() *Aggregate {
+	if x != nil {
+		return x.Aggregate
+	}
+	return nil
+}
+
+func (x *Window) GetColumn() *ColumnRef {
+	if x != nil {
+		return x.Column
+	}
+	return nil
+}
+
+func (x *Window) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *Window) GetPartitionBy() []*ColumnRef {
+	if x != nil {
+		return x.PartitionBy
+	}
+	return nil
+}
+
+func (x *Window) GetOrder() []*SortKey {
+	if x != nil {
+		return x.Order
+	}
+	return nil
+}
+
 type SortKey struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// A column of the query's own input, or one of its computed values.
@@ -3413,7 +3642,7 @@ type SortKey struct {
 
 func (x *SortKey) Reset() {
 	*x = SortKey{}
-	mi := &file_slate_v1_records_proto_msgTypes[27]
+	mi := &file_slate_v1_records_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3425,7 +3654,7 @@ func (x *SortKey) String() string {
 func (*SortKey) ProtoMessage() {}
 
 func (x *SortKey) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[27]
+	mi := &file_slate_v1_records_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3438,7 +3667,7 @@ func (x *SortKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SortKey.ProtoReflect.Descriptor instead.
 func (*SortKey) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{27}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SortKey) GetColumn() *ColumnRef {
@@ -3478,7 +3707,7 @@ type Projection struct {
 
 func (x *Projection) Reset() {
 	*x = Projection{}
-	mi := &file_slate_v1_records_proto_msgTypes[28]
+	mi := &file_slate_v1_records_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3490,7 +3719,7 @@ func (x *Projection) String() string {
 func (*Projection) ProtoMessage() {}
 
 func (x *Projection) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[28]
+	mi := &file_slate_v1_records_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3503,7 +3732,7 @@ func (x *Projection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Projection.ProtoReflect.Descriptor instead.
 func (*Projection) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{28}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Projection) GetAllColumns() bool {
@@ -3535,7 +3764,7 @@ type AccessHint struct {
 
 func (x *AccessHint) Reset() {
 	*x = AccessHint{}
-	mi := &file_slate_v1_records_proto_msgTypes[29]
+	mi := &file_slate_v1_records_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3547,7 +3776,7 @@ func (x *AccessHint) String() string {
 func (*AccessHint) ProtoMessage() {}
 
 func (x *AccessHint) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[29]
+	mi := &file_slate_v1_records_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3560,7 +3789,7 @@ func (x *AccessHint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccessHint.ProtoReflect.Descriptor instead.
 func (*AccessHint) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{29}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AccessHint) GetPath() isAccessHint_Path {
@@ -3682,13 +3911,26 @@ type Query struct {
 	// Ignored on a table that does not soft-delete, where there is nothing to
 	// reveal and so nothing to grant.
 	IncludeDeleted bool `protobuf:"varint,13,opt,name=include_deleted,json=includeDeleted,proto3" json:"include_deleted,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Values computed over a partition, returned in `Row.windowed`.
+	// `ColumnRef.windowed` names one, from a `SortKey`.
+	//
+	// What this costs, because it is not obvious from the request: a window has
+	// to see every selected row before it can answer for any of them, so a query
+	// carrying one does not stream and is bounded by the server's
+	// `max_window_rows` rather than by its `limit`. The limit cannot help —
+	// `ROW_NUMBER() OVER (…) … LIMIT 10` must number every row before it can
+	// know which ten — and the refusal says so rather than suggesting one.
+	//
+	// Refused together with `paged` and `after`: a window over a page is
+	// computed over the wrong set, and would restart on every page.
+	Window        []*Window `protobuf:"bytes,14,rep,name=window,proto3" json:"window,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Query) Reset() {
 	*x = Query{}
-	mi := &file_slate_v1_records_proto_msgTypes[30]
+	mi := &file_slate_v1_records_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3700,7 +3942,7 @@ func (x *Query) String() string {
 func (*Query) ProtoMessage() {}
 
 func (x *Query) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[30]
+	mi := &file_slate_v1_records_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3713,7 +3955,7 @@ func (x *Query) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Query.ProtoReflect.Descriptor instead.
 func (*Query) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{30}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Query) GetTable() string {
@@ -3807,6 +4049,13 @@ func (x *Query) GetIncludeDeleted() bool {
 	return false
 }
 
+func (x *Query) GetWindow() []*Window {
+	if x != nil {
+		return x.Window
+	}
+	return nil
+}
+
 // An algorithm to run instead of the cheapest one.
 //
 // Unlike `AccessHint`, this is not advice. An index hint chooses between plans
@@ -3827,7 +4076,7 @@ type JoinAlgorithm struct {
 
 func (x *JoinAlgorithm) Reset() {
 	*x = JoinAlgorithm{}
-	mi := &file_slate_v1_records_proto_msgTypes[31]
+	mi := &file_slate_v1_records_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3839,7 +4088,7 @@ func (x *JoinAlgorithm) String() string {
 func (*JoinAlgorithm) ProtoMessage() {}
 
 func (x *JoinAlgorithm) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[31]
+	mi := &file_slate_v1_records_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3852,7 +4101,7 @@ func (x *JoinAlgorithm) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinAlgorithm.ProtoReflect.Descriptor instead.
 func (*JoinAlgorithm) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{31}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *JoinAlgorithm) GetAlgorithm() isJoinAlgorithm_Algorithm {
@@ -3918,7 +4167,7 @@ type JoinOn struct {
 
 func (x *JoinOn) Reset() {
 	*x = JoinOn{}
-	mi := &file_slate_v1_records_proto_msgTypes[32]
+	mi := &file_slate_v1_records_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3930,7 +4179,7 @@ func (x *JoinOn) String() string {
 func (*JoinOn) ProtoMessage() {}
 
 func (x *JoinOn) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[32]
+	mi := &file_slate_v1_records_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3943,7 +4192,7 @@ func (x *JoinOn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinOn.ProtoReflect.Descriptor instead.
 func (*JoinOn) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{32}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *JoinOn) GetEarlier() *ColumnRef {
@@ -4011,7 +4260,7 @@ type JoinInput struct {
 
 func (x *JoinInput) Reset() {
 	*x = JoinInput{}
-	mi := &file_slate_v1_records_proto_msgTypes[33]
+	mi := &file_slate_v1_records_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4023,7 +4272,7 @@ func (x *JoinInput) String() string {
 func (*JoinInput) ProtoMessage() {}
 
 func (x *JoinInput) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[33]
+	mi := &file_slate_v1_records_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4036,7 +4285,7 @@ func (x *JoinInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinInput.ProtoReflect.Descriptor instead.
 func (*JoinInput) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{33}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *JoinInput) GetQuery() *Query {
@@ -4177,7 +4426,7 @@ type JoinQuery struct {
 
 func (x *JoinQuery) Reset() {
 	*x = JoinQuery{}
-	mi := &file_slate_v1_records_proto_msgTypes[34]
+	mi := &file_slate_v1_records_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4189,7 +4438,7 @@ func (x *JoinQuery) String() string {
 func (*JoinQuery) ProtoMessage() {}
 
 func (x *JoinQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[34]
+	mi := &file_slate_v1_records_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4202,7 +4451,7 @@ func (x *JoinQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinQuery.ProtoReflect.Descriptor instead.
 func (*JoinQuery) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{34}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *JoinQuery) GetInputs() []*JoinInput {
@@ -4277,7 +4526,7 @@ type JoinedRow struct {
 
 func (x *JoinedRow) Reset() {
 	*x = JoinedRow{}
-	mi := &file_slate_v1_records_proto_msgTypes[35]
+	mi := &file_slate_v1_records_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4289,7 +4538,7 @@ func (x *JoinedRow) String() string {
 func (*JoinedRow) ProtoMessage() {}
 
 func (x *JoinedRow) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[35]
+	mi := &file_slate_v1_records_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4302,7 +4551,7 @@ func (x *JoinedRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinedRow.ProtoReflect.Descriptor instead.
 func (*JoinedRow) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{35}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *JoinedRow) GetInputs() []*JoinedInput {
@@ -4331,7 +4580,7 @@ type JoinedInput struct {
 
 func (x *JoinedInput) Reset() {
 	*x = JoinedInput{}
-	mi := &file_slate_v1_records_proto_msgTypes[36]
+	mi := &file_slate_v1_records_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4343,7 +4592,7 @@ func (x *JoinedInput) String() string {
 func (*JoinedInput) ProtoMessage() {}
 
 func (x *JoinedInput) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[36]
+	mi := &file_slate_v1_records_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4356,7 +4605,7 @@ func (x *JoinedInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinedInput.ProtoReflect.Descriptor instead.
 func (*JoinedInput) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{36}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *JoinedInput) GetRow() *Row {
@@ -4381,7 +4630,7 @@ type Freshness struct {
 
 func (x *Freshness) Reset() {
 	*x = Freshness{}
-	mi := &file_slate_v1_records_proto_msgTypes[37]
+	mi := &file_slate_v1_records_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4393,7 +4642,7 @@ func (x *Freshness) String() string {
 func (*Freshness) ProtoMessage() {}
 
 func (x *Freshness) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[37]
+	mi := &file_slate_v1_records_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4406,7 +4655,7 @@ func (x *Freshness) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Freshness.ProtoReflect.Descriptor instead.
 func (*Freshness) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{37}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *Freshness) GetLevel() isFreshness_Level {
@@ -4492,7 +4741,7 @@ type ServedBy struct {
 
 func (x *ServedBy) Reset() {
 	*x = ServedBy{}
-	mi := &file_slate_v1_records_proto_msgTypes[38]
+	mi := &file_slate_v1_records_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4504,7 +4753,7 @@ func (x *ServedBy) String() string {
 func (*ServedBy) ProtoMessage() {}
 
 func (x *ServedBy) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[38]
+	mi := &file_slate_v1_records_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4517,7 +4766,7 @@ func (x *ServedBy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServedBy.ProtoReflect.Descriptor instead.
 func (*ServedBy) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{38}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ServedBy) GetReplica() string {
@@ -4542,7 +4791,7 @@ type BeginRequest struct {
 
 func (x *BeginRequest) Reset() {
 	*x = BeginRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[39]
+	mi := &file_slate_v1_records_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4554,7 +4803,7 @@ func (x *BeginRequest) String() string {
 func (*BeginRequest) ProtoMessage() {}
 
 func (x *BeginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[39]
+	mi := &file_slate_v1_records_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4567,7 +4816,7 @@ func (x *BeginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginRequest.ProtoReflect.Descriptor instead.
 func (*BeginRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{39}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{40}
 }
 
 type BeginResponse struct {
@@ -4582,7 +4831,7 @@ type BeginResponse struct {
 
 func (x *BeginResponse) Reset() {
 	*x = BeginResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[40]
+	mi := &file_slate_v1_records_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4594,7 +4843,7 @@ func (x *BeginResponse) String() string {
 func (*BeginResponse) ProtoMessage() {}
 
 func (x *BeginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[40]
+	mi := &file_slate_v1_records_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4607,7 +4856,7 @@ func (x *BeginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginResponse.ProtoReflect.Descriptor instead.
 func (*BeginResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{40}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *BeginResponse) GetTransaction() string {
@@ -4626,7 +4875,7 @@ type CommitRequest struct {
 
 func (x *CommitRequest) Reset() {
 	*x = CommitRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[41]
+	mi := &file_slate_v1_records_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4638,7 +4887,7 @@ func (x *CommitRequest) String() string {
 func (*CommitRequest) ProtoMessage() {}
 
 func (x *CommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[41]
+	mi := &file_slate_v1_records_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4651,7 +4900,7 @@ func (x *CommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitRequest.ProtoReflect.Descriptor instead.
 func (*CommitRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{41}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CommitRequest) GetTransaction() string {
@@ -4672,7 +4921,7 @@ type CommitResponse struct {
 
 func (x *CommitResponse) Reset() {
 	*x = CommitResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[42]
+	mi := &file_slate_v1_records_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4684,7 +4933,7 @@ func (x *CommitResponse) String() string {
 func (*CommitResponse) ProtoMessage() {}
 
 func (x *CommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[42]
+	mi := &file_slate_v1_records_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4697,7 +4946,7 @@ func (x *CommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitResponse.ProtoReflect.Descriptor instead.
 func (*CommitResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{42}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CommitResponse) GetSequence() uint64 {
@@ -4716,7 +4965,7 @@ type RollbackRequest struct {
 
 func (x *RollbackRequest) Reset() {
 	*x = RollbackRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[43]
+	mi := &file_slate_v1_records_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4728,7 +4977,7 @@ func (x *RollbackRequest) String() string {
 func (*RollbackRequest) ProtoMessage() {}
 
 func (x *RollbackRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[43]
+	mi := &file_slate_v1_records_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4741,7 +4990,7 @@ func (x *RollbackRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackRequest.ProtoReflect.Descriptor instead.
 func (*RollbackRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{43}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *RollbackRequest) GetTransaction() string {
@@ -4759,7 +5008,7 @@ type RollbackResponse struct {
 
 func (x *RollbackResponse) Reset() {
 	*x = RollbackResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[44]
+	mi := &file_slate_v1_records_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4771,7 +5020,7 @@ func (x *RollbackResponse) String() string {
 func (*RollbackResponse) ProtoMessage() {}
 
 func (x *RollbackResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[44]
+	mi := &file_slate_v1_records_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4784,7 +5033,7 @@ func (x *RollbackResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackResponse.ProtoReflect.Descriptor instead.
 func (*RollbackResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{44}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{45}
 }
 
 // A transaction handle, or empty for a single-statement transaction the server
@@ -4810,7 +5059,7 @@ type InsertRequest struct {
 
 func (x *InsertRequest) Reset() {
 	*x = InsertRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[45]
+	mi := &file_slate_v1_records_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4822,7 +5071,7 @@ func (x *InsertRequest) String() string {
 func (*InsertRequest) ProtoMessage() {}
 
 func (x *InsertRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[45]
+	mi := &file_slate_v1_records_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4835,7 +5084,7 @@ func (x *InsertRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertRequest.ProtoReflect.Descriptor instead.
 func (*InsertRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{45}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *InsertRequest) GetTransaction() string {
@@ -4927,7 +5176,7 @@ type UpdateRequest struct {
 
 func (x *UpdateRequest) Reset() {
 	*x = UpdateRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[46]
+	mi := &file_slate_v1_records_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4939,7 +5188,7 @@ func (x *UpdateRequest) String() string {
 func (*UpdateRequest) ProtoMessage() {}
 
 func (x *UpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[46]
+	mi := &file_slate_v1_records_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4952,7 +5201,7 @@ func (x *UpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{46}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *UpdateRequest) GetTransaction() string {
@@ -5033,7 +5282,7 @@ type DeleteRequest struct {
 
 func (x *DeleteRequest) Reset() {
 	*x = DeleteRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[47]
+	mi := &file_slate_v1_records_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5045,7 +5294,7 @@ func (x *DeleteRequest) String() string {
 func (*DeleteRequest) ProtoMessage() {}
 
 func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[47]
+	mi := &file_slate_v1_records_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5058,7 +5307,7 @@ func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{47}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DeleteRequest) GetTransaction() string {
@@ -5145,7 +5394,7 @@ type WriteResponse struct {
 
 func (x *WriteResponse) Reset() {
 	*x = WriteResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[48]
+	mi := &file_slate_v1_records_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5157,7 +5406,7 @@ func (x *WriteResponse) String() string {
 func (*WriteResponse) ProtoMessage() {}
 
 func (x *WriteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[48]
+	mi := &file_slate_v1_records_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5170,7 +5419,7 @@ func (x *WriteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteResponse.ProtoReflect.Descriptor instead.
 func (*WriteResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{48}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *WriteResponse) GetSequence() uint64 {
@@ -5214,7 +5463,7 @@ type Assignment struct {
 
 func (x *Assignment) Reset() {
 	*x = Assignment{}
-	mi := &file_slate_v1_records_proto_msgTypes[49]
+	mi := &file_slate_v1_records_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5226,7 +5475,7 @@ func (x *Assignment) String() string {
 func (*Assignment) ProtoMessage() {}
 
 func (x *Assignment) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[49]
+	mi := &file_slate_v1_records_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5239,7 +5488,7 @@ func (x *Assignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Assignment.ProtoReflect.Descriptor instead.
 func (*Assignment) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{49}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *Assignment) GetColumn() *ColumnRef {
@@ -5304,7 +5553,7 @@ type PurgeDeletedRequest struct {
 
 func (x *PurgeDeletedRequest) Reset() {
 	*x = PurgeDeletedRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[50]
+	mi := &file_slate_v1_records_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5316,7 +5565,7 @@ func (x *PurgeDeletedRequest) String() string {
 func (*PurgeDeletedRequest) ProtoMessage() {}
 
 func (x *PurgeDeletedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[50]
+	mi := &file_slate_v1_records_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5329,7 +5578,7 @@ func (x *PurgeDeletedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurgeDeletedRequest.ProtoReflect.Descriptor instead.
 func (*PurgeDeletedRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{50}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *PurgeDeletedRequest) GetTransaction() string {
@@ -5386,7 +5635,7 @@ type DeleteWhereRequest struct {
 
 func (x *DeleteWhereRequest) Reset() {
 	*x = DeleteWhereRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[51]
+	mi := &file_slate_v1_records_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5398,7 +5647,7 @@ func (x *DeleteWhereRequest) String() string {
 func (*DeleteWhereRequest) ProtoMessage() {}
 
 func (x *DeleteWhereRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[51]
+	mi := &file_slate_v1_records_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5411,7 +5660,7 @@ func (x *DeleteWhereRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteWhereRequest.ProtoReflect.Descriptor instead.
 func (*DeleteWhereRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{51}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *DeleteWhereRequest) GetTransaction() string {
@@ -5467,7 +5716,7 @@ type UpdateWhereRequest struct {
 
 func (x *UpdateWhereRequest) Reset() {
 	*x = UpdateWhereRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[52]
+	mi := &file_slate_v1_records_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5479,7 +5728,7 @@ func (x *UpdateWhereRequest) String() string {
 func (*UpdateWhereRequest) ProtoMessage() {}
 
 func (x *UpdateWhereRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[52]
+	mi := &file_slate_v1_records_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5492,7 +5741,7 @@ func (x *UpdateWhereRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateWhereRequest.ProtoReflect.Descriptor instead.
 func (*UpdateWhereRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{52}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *UpdateWhereRequest) GetTransaction() string {
@@ -5561,7 +5810,7 @@ type BatchOperation struct {
 
 func (x *BatchOperation) Reset() {
 	*x = BatchOperation{}
-	mi := &file_slate_v1_records_proto_msgTypes[53]
+	mi := &file_slate_v1_records_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5573,7 +5822,7 @@ func (x *BatchOperation) String() string {
 func (*BatchOperation) ProtoMessage() {}
 
 func (x *BatchOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[53]
+	mi := &file_slate_v1_records_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5586,7 +5835,7 @@ func (x *BatchOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchOperation.ProtoReflect.Descriptor instead.
 func (*BatchOperation) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{53}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *BatchOperation) GetOf() isBatchOperation_Of {
@@ -5697,7 +5946,7 @@ type BatchRequest struct {
 
 func (x *BatchRequest) Reset() {
 	*x = BatchRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[54]
+	mi := &file_slate_v1_records_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5709,7 +5958,7 @@ func (x *BatchRequest) String() string {
 func (*BatchRequest) ProtoMessage() {}
 
 func (x *BatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[54]
+	mi := &file_slate_v1_records_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5722,7 +5971,7 @@ func (x *BatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchRequest.ProtoReflect.Descriptor instead.
 func (*BatchRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{54}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *BatchRequest) GetOperations() []*BatchOperation {
@@ -5766,7 +6015,7 @@ type BatchResponse struct {
 
 func (x *BatchResponse) Reset() {
 	*x = BatchResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[55]
+	mi := &file_slate_v1_records_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5778,7 +6027,7 @@ func (x *BatchResponse) String() string {
 func (*BatchResponse) ProtoMessage() {}
 
 func (x *BatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[55]
+	mi := &file_slate_v1_records_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5791,7 +6040,7 @@ func (x *BatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchResponse.ProtoReflect.Descriptor instead.
 func (*BatchResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{55}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *BatchResponse) GetResults() []*BatchResult {
@@ -5826,7 +6075,7 @@ type BatchResult struct {
 
 func (x *BatchResult) Reset() {
 	*x = BatchResult{}
-	mi := &file_slate_v1_records_proto_msgTypes[56]
+	mi := &file_slate_v1_records_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5838,7 +6087,7 @@ func (x *BatchResult) String() string {
 func (*BatchResult) ProtoMessage() {}
 
 func (x *BatchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[56]
+	mi := &file_slate_v1_records_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5851,7 +6100,7 @@ func (x *BatchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchResult.ProtoReflect.Descriptor instead.
 func (*BatchResult) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{56}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *BatchResult) GetOf() isBatchResult_Of {
@@ -5933,7 +6182,7 @@ type BatchError struct {
 
 func (x *BatchError) Reset() {
 	*x = BatchError{}
-	mi := &file_slate_v1_records_proto_msgTypes[57]
+	mi := &file_slate_v1_records_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5945,7 +6194,7 @@ func (x *BatchError) String() string {
 func (*BatchError) ProtoMessage() {}
 
 func (x *BatchError) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[57]
+	mi := &file_slate_v1_records_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5958,7 +6207,7 @@ func (x *BatchError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchError.ProtoReflect.Descriptor instead.
 func (*BatchError) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{57}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *BatchError) GetCode() int32 {
@@ -6026,7 +6275,7 @@ type GetRequest struct {
 
 func (x *GetRequest) Reset() {
 	*x = GetRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[58]
+	mi := &file_slate_v1_records_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6038,7 +6287,7 @@ func (x *GetRequest) String() string {
 func (*GetRequest) ProtoMessage() {}
 
 func (x *GetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[58]
+	mi := &file_slate_v1_records_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6051,7 +6300,7 @@ func (x *GetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequest.ProtoReflect.Descriptor instead.
 func (*GetRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{58}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *GetRequest) GetTransaction() string {
@@ -6102,7 +6351,7 @@ type GetResponse struct {
 
 func (x *GetResponse) Reset() {
 	*x = GetResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[59]
+	mi := &file_slate_v1_records_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6114,7 +6363,7 @@ func (x *GetResponse) String() string {
 func (*GetResponse) ProtoMessage() {}
 
 func (x *GetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[59]
+	mi := &file_slate_v1_records_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6127,7 +6376,7 @@ func (x *GetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResponse.ProtoReflect.Descriptor instead.
 func (*GetResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{59}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *GetResponse) GetRow() *Row {
@@ -6179,7 +6428,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[60]
+	mi := &file_slate_v1_records_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6191,7 +6440,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[60]
+	mi := &file_slate_v1_records_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6204,7 +6453,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{60}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *QueryRequest) GetTransaction() string {
@@ -6268,7 +6517,7 @@ type QueryResponse struct {
 
 func (x *QueryResponse) Reset() {
 	*x = QueryResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[61]
+	mi := &file_slate_v1_records_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6280,7 +6529,7 @@ func (x *QueryResponse) String() string {
 func (*QueryResponse) ProtoMessage() {}
 
 func (x *QueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[61]
+	mi := &file_slate_v1_records_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6293,7 +6542,7 @@ func (x *QueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResponse.ProtoReflect.Descriptor instead.
 func (*QueryResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{61}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *QueryResponse) GetRows() []*Row {
@@ -6335,7 +6584,7 @@ type JoinRequest struct {
 
 func (x *JoinRequest) Reset() {
 	*x = JoinRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[62]
+	mi := &file_slate_v1_records_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6347,7 +6596,7 @@ func (x *JoinRequest) String() string {
 func (*JoinRequest) ProtoMessage() {}
 
 func (x *JoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[62]
+	mi := &file_slate_v1_records_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6360,7 +6609,7 @@ func (x *JoinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
 func (*JoinRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{62}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *JoinRequest) GetTransaction() string {
@@ -6411,7 +6660,7 @@ type JoinResponse struct {
 
 func (x *JoinResponse) Reset() {
 	*x = JoinResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[63]
+	mi := &file_slate_v1_records_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6423,7 +6672,7 @@ func (x *JoinResponse) String() string {
 func (*JoinResponse) ProtoMessage() {}
 
 func (x *JoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[63]
+	mi := &file_slate_v1_records_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6436,7 +6685,7 @@ func (x *JoinResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
 func (*JoinResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{63}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *JoinResponse) GetRows() []*JoinedRow {
@@ -6532,7 +6781,7 @@ type AggregateQuery struct {
 
 func (x *AggregateQuery) Reset() {
 	*x = AggregateQuery{}
-	mi := &file_slate_v1_records_proto_msgTypes[64]
+	mi := &file_slate_v1_records_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6544,7 +6793,7 @@ func (x *AggregateQuery) String() string {
 func (*AggregateQuery) ProtoMessage() {}
 
 func (x *AggregateQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[64]
+	mi := &file_slate_v1_records_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6557,7 +6806,7 @@ func (x *AggregateQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateQuery.ProtoReflect.Descriptor instead.
 func (*AggregateQuery) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{64}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *AggregateQuery) GetInput() *Query {
@@ -6627,7 +6876,7 @@ type AggregateRequest struct {
 
 func (x *AggregateRequest) Reset() {
 	*x = AggregateRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[65]
+	mi := &file_slate_v1_records_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6639,7 +6888,7 @@ func (x *AggregateRequest) String() string {
 func (*AggregateRequest) ProtoMessage() {}
 
 func (x *AggregateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[65]
+	mi := &file_slate_v1_records_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6652,7 +6901,7 @@ func (x *AggregateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateRequest.ProtoReflect.Descriptor instead.
 func (*AggregateRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{65}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *AggregateRequest) GetTransaction() string {
@@ -6692,7 +6941,7 @@ type AggregateResponse struct {
 
 func (x *AggregateResponse) Reset() {
 	*x = AggregateResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[66]
+	mi := &file_slate_v1_records_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6704,7 +6953,7 @@ func (x *AggregateResponse) String() string {
 func (*AggregateResponse) ProtoMessage() {}
 
 func (x *AggregateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[66]
+	mi := &file_slate_v1_records_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6717,7 +6966,7 @@ func (x *AggregateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateResponse.ProtoReflect.Descriptor instead.
 func (*AggregateResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{66}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *AggregateResponse) GetGroups() []*Group {
@@ -6752,7 +7001,7 @@ type ExplainRequest struct {
 
 func (x *ExplainRequest) Reset() {
 	*x = ExplainRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[67]
+	mi := &file_slate_v1_records_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6764,7 +7013,7 @@ func (x *ExplainRequest) String() string {
 func (*ExplainRequest) ProtoMessage() {}
 
 func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[67]
+	mi := &file_slate_v1_records_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6777,7 +7026,7 @@ func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainRequest.ProtoReflect.Descriptor instead.
 func (*ExplainRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{67}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ExplainRequest) GetTransaction() string {
@@ -6844,7 +7093,7 @@ type ExplainResponse struct {
 
 func (x *ExplainResponse) Reset() {
 	*x = ExplainResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[68]
+	mi := &file_slate_v1_records_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6856,7 +7105,7 @@ func (x *ExplainResponse) String() string {
 func (*ExplainResponse) ProtoMessage() {}
 
 func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[68]
+	mi := &file_slate_v1_records_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6869,7 +7118,7 @@ func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainResponse.ProtoReflect.Descriptor instead.
 func (*ExplainResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{68}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *ExplainResponse) GetTable() string {
@@ -6981,7 +7230,7 @@ type ExplainJoinRequest struct {
 
 func (x *ExplainJoinRequest) Reset() {
 	*x = ExplainJoinRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[69]
+	mi := &file_slate_v1_records_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6993,7 +7242,7 @@ func (x *ExplainJoinRequest) String() string {
 func (*ExplainJoinRequest) ProtoMessage() {}
 
 func (x *ExplainJoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[69]
+	mi := &file_slate_v1_records_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7006,7 +7255,7 @@ func (x *ExplainJoinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainJoinRequest.ProtoReflect.Descriptor instead.
 func (*ExplainJoinRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{69}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *ExplainJoinRequest) GetTransaction() string {
@@ -7052,7 +7301,7 @@ type ExplainAggregateRequest struct {
 
 func (x *ExplainAggregateRequest) Reset() {
 	*x = ExplainAggregateRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[70]
+	mi := &file_slate_v1_records_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7064,7 +7313,7 @@ func (x *ExplainAggregateRequest) String() string {
 func (*ExplainAggregateRequest) ProtoMessage() {}
 
 func (x *ExplainAggregateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[70]
+	mi := &file_slate_v1_records_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7077,7 +7326,7 @@ func (x *ExplainAggregateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainAggregateRequest.ProtoReflect.Descriptor instead.
 func (*ExplainAggregateRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{70}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ExplainAggregateRequest) GetTransaction() string {
@@ -7121,7 +7370,7 @@ type AggregateExplainResponse struct {
 
 func (x *AggregateExplainResponse) Reset() {
 	*x = AggregateExplainResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[71]
+	mi := &file_slate_v1_records_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7133,7 +7382,7 @@ func (x *AggregateExplainResponse) String() string {
 func (*AggregateExplainResponse) ProtoMessage() {}
 
 func (x *AggregateExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[71]
+	mi := &file_slate_v1_records_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7146,7 +7395,7 @@ func (x *AggregateExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregateExplainResponse.ProtoReflect.Descriptor instead.
 func (*AggregateExplainResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{71}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *AggregateExplainResponse) GetInput() *ExplainResponse {
@@ -7206,7 +7455,7 @@ type JoinExplainResponse struct {
 
 func (x *JoinExplainResponse) Reset() {
 	*x = JoinExplainResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[72]
+	mi := &file_slate_v1_records_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7218,7 +7467,7 @@ func (x *JoinExplainResponse) String() string {
 func (*JoinExplainResponse) ProtoMessage() {}
 
 func (x *JoinExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[72]
+	mi := &file_slate_v1_records_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7231,7 +7480,7 @@ func (x *JoinExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinExplainResponse.ProtoReflect.Descriptor instead.
 func (*JoinExplainResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{72}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *JoinExplainResponse) GetInputs() []*JoinInputPlan {
@@ -7293,7 +7542,7 @@ type JoinInputPlan struct {
 
 func (x *JoinInputPlan) Reset() {
 	*x = JoinInputPlan{}
-	mi := &file_slate_v1_records_proto_msgTypes[73]
+	mi := &file_slate_v1_records_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7305,7 +7554,7 @@ func (x *JoinInputPlan) String() string {
 func (*JoinInputPlan) ProtoMessage() {}
 
 func (x *JoinInputPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[73]
+	mi := &file_slate_v1_records_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7318,7 +7567,7 @@ func (x *JoinInputPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinInputPlan.ProtoReflect.Descriptor instead.
 func (*JoinInputPlan) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{73}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *JoinInputPlan) GetPlan() *ExplainResponse {
@@ -7364,7 +7613,7 @@ type LeadershipRequest struct {
 
 func (x *LeadershipRequest) Reset() {
 	*x = LeadershipRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[74]
+	mi := &file_slate_v1_records_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7376,7 +7625,7 @@ func (x *LeadershipRequest) String() string {
 func (*LeadershipRequest) ProtoMessage() {}
 
 func (x *LeadershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[74]
+	mi := &file_slate_v1_records_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7389,7 +7638,7 @@ func (x *LeadershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeadershipRequest.ProtoReflect.Descriptor instead.
 func (*LeadershipRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{74}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{75}
 }
 
 // What this node believes about who may write. Believes, not knows: see the
@@ -7412,7 +7661,7 @@ type LeadershipStatus struct {
 
 func (x *LeadershipStatus) Reset() {
 	*x = LeadershipStatus{}
-	mi := &file_slate_v1_records_proto_msgTypes[75]
+	mi := &file_slate_v1_records_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7424,7 +7673,7 @@ func (x *LeadershipStatus) String() string {
 func (*LeadershipStatus) ProtoMessage() {}
 
 func (x *LeadershipStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[75]
+	mi := &file_slate_v1_records_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7437,7 +7686,7 @@ func (x *LeadershipStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeadershipStatus.ProtoReflect.Descriptor instead.
 func (*LeadershipStatus) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{75}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *LeadershipStatus) GetStanding() LeadershipStatus_Standing {
@@ -7504,7 +7753,7 @@ type Relation struct {
 
 func (x *Relation) Reset() {
 	*x = Relation{}
-	mi := &file_slate_v1_records_proto_msgTypes[76]
+	mi := &file_slate_v1_records_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7516,7 +7765,7 @@ func (x *Relation) String() string {
 func (*Relation) ProtoMessage() {}
 
 func (x *Relation) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[76]
+	mi := &file_slate_v1_records_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7529,7 +7778,7 @@ func (x *Relation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Relation.ProtoReflect.Descriptor instead.
 func (*Relation) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{76}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *Relation) GetTable() string {
@@ -7571,7 +7820,7 @@ type RelatedStep struct {
 
 func (x *RelatedStep) Reset() {
 	*x = RelatedStep{}
-	mi := &file_slate_v1_records_proto_msgTypes[77]
+	mi := &file_slate_v1_records_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7583,7 +7832,7 @@ func (x *RelatedStep) String() string {
 func (*RelatedStep) ProtoMessage() {}
 
 func (x *RelatedStep) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[77]
+	mi := &file_slate_v1_records_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7596,7 +7845,7 @@ func (x *RelatedStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedStep.ProtoReflect.Descriptor instead.
 func (*RelatedStep) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{77}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *RelatedStep) GetRelation() *Relation {
@@ -7662,7 +7911,7 @@ type RelatedRequest struct {
 
 func (x *RelatedRequest) Reset() {
 	*x = RelatedRequest{}
-	mi := &file_slate_v1_records_proto_msgTypes[78]
+	mi := &file_slate_v1_records_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7674,7 +7923,7 @@ func (x *RelatedRequest) String() string {
 func (*RelatedRequest) ProtoMessage() {}
 
 func (x *RelatedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[78]
+	mi := &file_slate_v1_records_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7687,7 +7936,7 @@ func (x *RelatedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedRequest.ProtoReflect.Descriptor instead.
 func (*RelatedRequest) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{78}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *RelatedRequest) GetTransaction() string {
@@ -7764,7 +8013,7 @@ type RelatedResponse struct {
 
 func (x *RelatedResponse) Reset() {
 	*x = RelatedResponse{}
-	mi := &file_slate_v1_records_proto_msgTypes[79]
+	mi := &file_slate_v1_records_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7776,7 +8025,7 @@ func (x *RelatedResponse) String() string {
 func (*RelatedResponse) ProtoMessage() {}
 
 func (x *RelatedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[79]
+	mi := &file_slate_v1_records_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7789,7 +8038,7 @@ func (x *RelatedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedResponse.ProtoReflect.Descriptor instead.
 func (*RelatedResponse) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{79}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *RelatedResponse) GetGroups() []*RelatedResponse_Group {
@@ -7832,7 +8081,7 @@ type RelatedResponse_Group struct {
 
 func (x *RelatedResponse_Group) Reset() {
 	*x = RelatedResponse_Group{}
-	mi := &file_slate_v1_records_proto_msgTypes[80]
+	mi := &file_slate_v1_records_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7844,7 +8093,7 @@ func (x *RelatedResponse_Group) String() string {
 func (*RelatedResponse_Group) ProtoMessage() {}
 
 func (x *RelatedResponse_Group) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[80]
+	mi := &file_slate_v1_records_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7857,7 +8106,7 @@ func (x *RelatedResponse_Group) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedResponse_Group.ProtoReflect.Descriptor instead.
 func (*RelatedResponse_Group) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{79, 0}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{80, 0}
 }
 
 func (x *RelatedResponse_Group) GetKey() *Value {
@@ -7901,7 +8150,7 @@ type RelatedResponse_Level struct {
 
 func (x *RelatedResponse_Level) Reset() {
 	*x = RelatedResponse_Level{}
-	mi := &file_slate_v1_records_proto_msgTypes[81]
+	mi := &file_slate_v1_records_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7913,7 +8162,7 @@ func (x *RelatedResponse_Level) String() string {
 func (*RelatedResponse_Level) ProtoMessage() {}
 
 func (x *RelatedResponse_Level) ProtoReflect() protoreflect.Message {
-	mi := &file_slate_v1_records_proto_msgTypes[81]
+	mi := &file_slate_v1_records_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7926,7 +8175,7 @@ func (x *RelatedResponse_Level) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelatedResponse_Level.ProtoReflect.Descriptor instead.
 func (*RelatedResponse_Level) Descriptor() ([]byte, []int) {
-	return file_slate_v1_records_proto_rawDescGZIP(), []int{79, 1}
+	return file_slate_v1_records_proto_rawDescGZIP(), []int{80, 1}
 }
 
 func (x *RelatedResponse_Level) GetKeyOrdinal() uint32 {
@@ -7972,20 +8221,22 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\belements\x18\x01 \x03(\x02R\belements\"9\n" +
 	"\n" +
 	"ArrayValue\x12+\n" +
-	"\belements\x18\x01 \x03(\v2\x0f.slate.v1.ValueR\belements\"[\n" +
+	"\belements\x18\x01 \x03(\v2\x0f.slate.v1.ValueR\belements\"\x88\x01\n" +
 	"\x03Row\x12'\n" +
 	"\x06values\x18\x01 \x03(\v2\x0f.slate.v1.ValueR\x06values\x12+\n" +
-	"\bcomputed\x18\x02 \x03(\v2\x0f.slate.v1.ValueR\bcomputed\"I\n" +
+	"\bcomputed\x18\x02 \x03(\v2\x0f.slate.v1.ValueR\bcomputed\x12+\n" +
+	"\bwindowed\x18\x03 \x03(\v2\x0f.slate.v1.ValueR\bwindowed\"I\n" +
 	"\vSchemaCheck\x12\x18\n" +
 	"\acolumns\x18\x01 \x01(\rR\acolumns\x12 \n" +
-	"\vfingerprint\x18\x02 \x01(\x06R\vfingerprint\"\xc9\x01\n" +
+	"\vfingerprint\x18\x02 \x01(\x06R\vfingerprint\"\xe7\x01\n" +
 	"\tColumnRef\x12\x14\n" +
 	"\x05input\x18\x01 \x01(\rR\x05input\x12\x18\n" +
 	"\x06column\x18\x02 \x01(\rH\x00R\x06column\x12\x1c\n" +
 	"\bcomputed\x18\x03 \x01(\rH\x00R\bcomputed\x12\x1d\n" +
 	"\tgroup_key\x18\x04 \x01(\rH\x00R\bgroupKey\x12\x1e\n" +
 	"\taggregate\x18\x05 \x01(\rH\x00R\taggregate\x12)\n" +
-	"\x0fjoined_computed\x18\x06 \x01(\rH\x00R\x0ejoinedComputedB\x04\n" +
+	"\x0fjoined_computed\x18\x06 \x01(\rH\x00R\x0ejoinedComputed\x12\x1c\n" +
+	"\bwindowed\x18\a \x01(\rH\x00R\bwindowedB\x04\n" +
 	"\x02of\"\xeb\x03\n" +
 	"\x04Expr\x12\x1a\n" +
 	"\aliteral\x18\x01 \x01(\bH\x00R\aliteral\x12-\n" +
@@ -8090,7 +8341,14 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x06column\x18\x02 \x01(\v2\x13.slate.v1.ColumnRefR\x06column\"S\n" +
 	"\x05Group\x12!\n" +
 	"\x03key\x18\x01 \x03(\v2\x0f.slate.v1.ValueR\x03key\x12'\n" +
-	"\x06values\x18\x02 \x03(\v2\x0f.slate.v1.ValueR\x06values\"\x9f\x01\n" +
+	"\x06values\x18\x02 \x03(\v2\x0f.slate.v1.ValueR\x06values\"\x97\x02\n" +
+	"\x06Window\x124\n" +
+	"\bfunction\x18\x01 \x01(\x0e2\x18.slate.v1.WindowFunctionR\bfunction\x121\n" +
+	"\taggregate\x18\x02 \x01(\v2\x13.slate.v1.AggregateR\taggregate\x12+\n" +
+	"\x06column\x18\x03 \x01(\v2\x13.slate.v1.ColumnRefR\x06column\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x04R\x06offset\x126\n" +
+	"\fpartition_by\x18\x05 \x03(\v2\x13.slate.v1.ColumnRefR\vpartitionBy\x12'\n" +
+	"\x05order\x18\x06 \x03(\v2\x11.slate.v1.SortKeyR\x05order\"\x9f\x01\n" +
 	"\aSortKey\x12+\n" +
 	"\x06column\x18\x04 \x01(\v2\x13.slate.v1.ColumnRefR\x06column\x125\n" +
 	"\tdirection\x18\x02 \x01(\x0e2\x17.slate.v1.SortDirectionR\tdirection\x12*\n" +
@@ -8105,7 +8363,7 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x05index\x18\x02 \x01(\tH\x00R\x05index\x12/\n" +
 	"\n" +
 	"table_scan\x18\x03 \x01(\x0e2\x0e.slate.v1.UnitH\x00R\ttableScanB\x06\n" +
-	"\x04pathJ\x04\b\x01\x10\x02\"\xf5\x03\n" +
+	"\x04pathJ\x04\b\x01\x10\x02\"\x9f\x04\n" +
 	"\x05Query\x12\x14\n" +
 	"\x05table\x18\x01 \x01(\tR\x05table\x12&\n" +
 	"\x06filter\x18\x02 \x01(\v2\x0e.slate.v1.ExprR\x06filter\x12)\n" +
@@ -8122,7 +8380,8 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	" \x01(\v2\x15.slate.v1.SchemaCheckR\x06schema\x12%\n" +
 	"\x05after\x18\v \x03(\v2\x0f.slate.v1.ValueR\x05after\x12\x14\n" +
 	"\x05paged\x18\f \x01(\bR\x05paged\x12'\n" +
-	"\x0finclude_deleted\x18\r \x01(\bR\x0eincludeDeletedB\b\n" +
+	"\x0finclude_deleted\x18\r \x01(\bR\x0eincludeDeleted\x12(\n" +
+	"\x06window\x18\x0e \x03(\v2\x10.slate.v1.WindowR\x06windowB\b\n" +
 	"\x06_limit\"\x86\x01\n" +
 	"\rJoinAlgorithm\x12/\n" +
 	"\n" +
@@ -8438,7 +8697,15 @@ const file_slate_v1_records_proto_rawDesc = "" +
 	"\x16AGGREGATE_FUNCTION_MAX\x10\x04\x12\x1a\n" +
 	"\x16AGGREGATE_FUNCTION_SUM\x10\x05\x12\x1a\n" +
 	"\x16AGGREGATE_FUNCTION_AVG\x10\x06\x12%\n" +
-	"!AGGREGATE_FUNCTION_COUNT_DISTINCT\x10\a*@\n" +
+	"!AGGREGATE_FUNCTION_COUNT_DISTINCT\x10\a*\xdd\x01\n" +
+	"\x0eWindowFunction\x12\x1f\n" +
+	"\x1bWINDOW_FUNCTION_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aWINDOW_FUNCTION_ROW_NUMBER\x10\x01\x12\x18\n" +
+	"\x14WINDOW_FUNCTION_RANK\x10\x02\x12\x1e\n" +
+	"\x1aWINDOW_FUNCTION_DENSE_RANK\x10\x03\x12\x17\n" +
+	"\x13WINDOW_FUNCTION_LAG\x10\x04\x12\x18\n" +
+	"\x14WINDOW_FUNCTION_LEAD\x10\x05\x12\x1d\n" +
+	"\x19WINDOW_FUNCTION_AGGREGATE\x10\x06*@\n" +
 	"\tScanOrder\x12\x18\n" +
 	"\x14SCAN_ORDER_ASCENDING\x10\x00\x12\x19\n" +
 	"\x15SCAN_ORDER_DESCENDING\x10\x01*@\n" +
@@ -8497,8 +8764,8 @@ func file_slate_v1_records_proto_rawDescGZIP() []byte {
 	return file_slate_v1_records_proto_rawDescData
 }
 
-var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
-var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 82)
+var file_slate_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 17)
+var file_slate_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 83)
 var file_slate_v1_records_proto_goTypes = []any{
 	(NullValue)(0),                   // 0: slate.v1.NullValue
 	(Unit)(0),                        // 1: slate.v1.Unit
@@ -8508,322 +8775,331 @@ var file_slate_v1_records_proto_goTypes = []any{
 	(CalendarUnit)(0),                // 5: slate.v1.CalendarUnit
 	(Metric)(0),                      // 6: slate.v1.Metric
 	(AggregateFunction)(0),           // 7: slate.v1.AggregateFunction
-	(ScanOrder)(0),                   // 8: slate.v1.ScanOrder
-	(SortDirection)(0),               // 9: slate.v1.SortDirection
-	(NullsOrder)(0),                  // 10: slate.v1.NullsOrder
-	(JoinType)(0),                    // 11: slate.v1.JoinType
-	(Side)(0),                        // 12: slate.v1.Side
-	(Atomicity)(0),                   // 13: slate.v1.Atomicity
-	(LeadershipStatus_Standing)(0),   // 14: slate.v1.LeadershipStatus.Standing
-	(Relation_Direction)(0),          // 15: slate.v1.Relation.Direction
-	(*Value)(nil),                    // 16: slate.v1.Value
-	(*Vector)(nil),                   // 17: slate.v1.Vector
-	(*ArrayValue)(nil),               // 18: slate.v1.ArrayValue
-	(*Row)(nil),                      // 19: slate.v1.Row
-	(*SchemaCheck)(nil),              // 20: slate.v1.SchemaCheck
-	(*ColumnRef)(nil),                // 21: slate.v1.ColumnRef
-	(*Expr)(nil),                     // 22: slate.v1.Expr
-	(*ExprList)(nil),                 // 23: slate.v1.ExprList
-	(*Compare)(nil),                  // 24: slate.v1.Compare
-	(*CompareColumns)(nil),           // 25: slate.v1.CompareColumns
-	(*IsNull)(nil),                   // 26: slate.v1.IsNull
-	(*Like)(nil),                     // 27: slate.v1.Like
-	(*Matches)(nil),                  // 28: slate.v1.Matches
-	(*InList)(nil),                   // 29: slate.v1.InList
-	(*Scalar)(nil),                   // 30: slate.v1.Scalar
-	(*ScalarPair)(nil),               // 31: slate.v1.ScalarPair
-	(*ScalarList)(nil),               // 32: slate.v1.ScalarList
-	(*TimePart)(nil),                 // 33: slate.v1.TimePart
-	(*CalendarField)(nil),            // 34: slate.v1.CalendarField
-	(*CalendarTrunc)(nil),            // 35: slate.v1.CalendarTrunc
-	(*ZoneShift)(nil),                // 36: slate.v1.ZoneShift
-	(*Case)(nil),                     // 37: slate.v1.Case
-	(*CaseBranch)(nil),               // 38: slate.v1.CaseBranch
-	(*Distance)(nil),                 // 39: slate.v1.Distance
-	(*RegexpReplace)(nil),            // 40: slate.v1.RegexpReplace
-	(*Aggregate)(nil),                // 41: slate.v1.Aggregate
-	(*Group)(nil),                    // 42: slate.v1.Group
-	(*SortKey)(nil),                  // 43: slate.v1.SortKey
-	(*Projection)(nil),               // 44: slate.v1.Projection
-	(*AccessHint)(nil),               // 45: slate.v1.AccessHint
-	(*Query)(nil),                    // 46: slate.v1.Query
-	(*JoinAlgorithm)(nil),            // 47: slate.v1.JoinAlgorithm
-	(*JoinOn)(nil),                   // 48: slate.v1.JoinOn
-	(*JoinInput)(nil),                // 49: slate.v1.JoinInput
-	(*JoinQuery)(nil),                // 50: slate.v1.JoinQuery
-	(*JoinedRow)(nil),                // 51: slate.v1.JoinedRow
-	(*JoinedInput)(nil),              // 52: slate.v1.JoinedInput
-	(*Freshness)(nil),                // 53: slate.v1.Freshness
-	(*ServedBy)(nil),                 // 54: slate.v1.ServedBy
-	(*BeginRequest)(nil),             // 55: slate.v1.BeginRequest
-	(*BeginResponse)(nil),            // 56: slate.v1.BeginResponse
-	(*CommitRequest)(nil),            // 57: slate.v1.CommitRequest
-	(*CommitResponse)(nil),           // 58: slate.v1.CommitResponse
-	(*RollbackRequest)(nil),          // 59: slate.v1.RollbackRequest
-	(*RollbackResponse)(nil),         // 60: slate.v1.RollbackResponse
-	(*InsertRequest)(nil),            // 61: slate.v1.InsertRequest
-	(*UpdateRequest)(nil),            // 62: slate.v1.UpdateRequest
-	(*DeleteRequest)(nil),            // 63: slate.v1.DeleteRequest
-	(*WriteResponse)(nil),            // 64: slate.v1.WriteResponse
-	(*Assignment)(nil),               // 65: slate.v1.Assignment
-	(*PurgeDeletedRequest)(nil),      // 66: slate.v1.PurgeDeletedRequest
-	(*DeleteWhereRequest)(nil),       // 67: slate.v1.DeleteWhereRequest
-	(*UpdateWhereRequest)(nil),       // 68: slate.v1.UpdateWhereRequest
-	(*BatchOperation)(nil),           // 69: slate.v1.BatchOperation
-	(*BatchRequest)(nil),             // 70: slate.v1.BatchRequest
-	(*BatchResponse)(nil),            // 71: slate.v1.BatchResponse
-	(*BatchResult)(nil),              // 72: slate.v1.BatchResult
-	(*BatchError)(nil),               // 73: slate.v1.BatchError
-	(*GetRequest)(nil),               // 74: slate.v1.GetRequest
-	(*GetResponse)(nil),              // 75: slate.v1.GetResponse
-	(*QueryRequest)(nil),             // 76: slate.v1.QueryRequest
-	(*QueryResponse)(nil),            // 77: slate.v1.QueryResponse
-	(*JoinRequest)(nil),              // 78: slate.v1.JoinRequest
-	(*JoinResponse)(nil),             // 79: slate.v1.JoinResponse
-	(*AggregateQuery)(nil),           // 80: slate.v1.AggregateQuery
-	(*AggregateRequest)(nil),         // 81: slate.v1.AggregateRequest
-	(*AggregateResponse)(nil),        // 82: slate.v1.AggregateResponse
-	(*ExplainRequest)(nil),           // 83: slate.v1.ExplainRequest
-	(*ExplainResponse)(nil),          // 84: slate.v1.ExplainResponse
-	(*ExplainJoinRequest)(nil),       // 85: slate.v1.ExplainJoinRequest
-	(*ExplainAggregateRequest)(nil),  // 86: slate.v1.ExplainAggregateRequest
-	(*AggregateExplainResponse)(nil), // 87: slate.v1.AggregateExplainResponse
-	(*JoinExplainResponse)(nil),      // 88: slate.v1.JoinExplainResponse
-	(*JoinInputPlan)(nil),            // 89: slate.v1.JoinInputPlan
-	(*LeadershipRequest)(nil),        // 90: slate.v1.LeadershipRequest
-	(*LeadershipStatus)(nil),         // 91: slate.v1.LeadershipStatus
-	(*Relation)(nil),                 // 92: slate.v1.Relation
-	(*RelatedStep)(nil),              // 93: slate.v1.RelatedStep
-	(*RelatedRequest)(nil),           // 94: slate.v1.RelatedRequest
-	(*RelatedResponse)(nil),          // 95: slate.v1.RelatedResponse
-	(*RelatedResponse_Group)(nil),    // 96: slate.v1.RelatedResponse.Group
-	(*RelatedResponse_Level)(nil),    // 97: slate.v1.RelatedResponse.Level
+	(WindowFunction)(0),              // 8: slate.v1.WindowFunction
+	(ScanOrder)(0),                   // 9: slate.v1.ScanOrder
+	(SortDirection)(0),               // 10: slate.v1.SortDirection
+	(NullsOrder)(0),                  // 11: slate.v1.NullsOrder
+	(JoinType)(0),                    // 12: slate.v1.JoinType
+	(Side)(0),                        // 13: slate.v1.Side
+	(Atomicity)(0),                   // 14: slate.v1.Atomicity
+	(LeadershipStatus_Standing)(0),   // 15: slate.v1.LeadershipStatus.Standing
+	(Relation_Direction)(0),          // 16: slate.v1.Relation.Direction
+	(*Value)(nil),                    // 17: slate.v1.Value
+	(*Vector)(nil),                   // 18: slate.v1.Vector
+	(*ArrayValue)(nil),               // 19: slate.v1.ArrayValue
+	(*Row)(nil),                      // 20: slate.v1.Row
+	(*SchemaCheck)(nil),              // 21: slate.v1.SchemaCheck
+	(*ColumnRef)(nil),                // 22: slate.v1.ColumnRef
+	(*Expr)(nil),                     // 23: slate.v1.Expr
+	(*ExprList)(nil),                 // 24: slate.v1.ExprList
+	(*Compare)(nil),                  // 25: slate.v1.Compare
+	(*CompareColumns)(nil),           // 26: slate.v1.CompareColumns
+	(*IsNull)(nil),                   // 27: slate.v1.IsNull
+	(*Like)(nil),                     // 28: slate.v1.Like
+	(*Matches)(nil),                  // 29: slate.v1.Matches
+	(*InList)(nil),                   // 30: slate.v1.InList
+	(*Scalar)(nil),                   // 31: slate.v1.Scalar
+	(*ScalarPair)(nil),               // 32: slate.v1.ScalarPair
+	(*ScalarList)(nil),               // 33: slate.v1.ScalarList
+	(*TimePart)(nil),                 // 34: slate.v1.TimePart
+	(*CalendarField)(nil),            // 35: slate.v1.CalendarField
+	(*CalendarTrunc)(nil),            // 36: slate.v1.CalendarTrunc
+	(*ZoneShift)(nil),                // 37: slate.v1.ZoneShift
+	(*Case)(nil),                     // 38: slate.v1.Case
+	(*CaseBranch)(nil),               // 39: slate.v1.CaseBranch
+	(*Distance)(nil),                 // 40: slate.v1.Distance
+	(*RegexpReplace)(nil),            // 41: slate.v1.RegexpReplace
+	(*Aggregate)(nil),                // 42: slate.v1.Aggregate
+	(*Group)(nil),                    // 43: slate.v1.Group
+	(*Window)(nil),                   // 44: slate.v1.Window
+	(*SortKey)(nil),                  // 45: slate.v1.SortKey
+	(*Projection)(nil),               // 46: slate.v1.Projection
+	(*AccessHint)(nil),               // 47: slate.v1.AccessHint
+	(*Query)(nil),                    // 48: slate.v1.Query
+	(*JoinAlgorithm)(nil),            // 49: slate.v1.JoinAlgorithm
+	(*JoinOn)(nil),                   // 50: slate.v1.JoinOn
+	(*JoinInput)(nil),                // 51: slate.v1.JoinInput
+	(*JoinQuery)(nil),                // 52: slate.v1.JoinQuery
+	(*JoinedRow)(nil),                // 53: slate.v1.JoinedRow
+	(*JoinedInput)(nil),              // 54: slate.v1.JoinedInput
+	(*Freshness)(nil),                // 55: slate.v1.Freshness
+	(*ServedBy)(nil),                 // 56: slate.v1.ServedBy
+	(*BeginRequest)(nil),             // 57: slate.v1.BeginRequest
+	(*BeginResponse)(nil),            // 58: slate.v1.BeginResponse
+	(*CommitRequest)(nil),            // 59: slate.v1.CommitRequest
+	(*CommitResponse)(nil),           // 60: slate.v1.CommitResponse
+	(*RollbackRequest)(nil),          // 61: slate.v1.RollbackRequest
+	(*RollbackResponse)(nil),         // 62: slate.v1.RollbackResponse
+	(*InsertRequest)(nil),            // 63: slate.v1.InsertRequest
+	(*UpdateRequest)(nil),            // 64: slate.v1.UpdateRequest
+	(*DeleteRequest)(nil),            // 65: slate.v1.DeleteRequest
+	(*WriteResponse)(nil),            // 66: slate.v1.WriteResponse
+	(*Assignment)(nil),               // 67: slate.v1.Assignment
+	(*PurgeDeletedRequest)(nil),      // 68: slate.v1.PurgeDeletedRequest
+	(*DeleteWhereRequest)(nil),       // 69: slate.v1.DeleteWhereRequest
+	(*UpdateWhereRequest)(nil),       // 70: slate.v1.UpdateWhereRequest
+	(*BatchOperation)(nil),           // 71: slate.v1.BatchOperation
+	(*BatchRequest)(nil),             // 72: slate.v1.BatchRequest
+	(*BatchResponse)(nil),            // 73: slate.v1.BatchResponse
+	(*BatchResult)(nil),              // 74: slate.v1.BatchResult
+	(*BatchError)(nil),               // 75: slate.v1.BatchError
+	(*GetRequest)(nil),               // 76: slate.v1.GetRequest
+	(*GetResponse)(nil),              // 77: slate.v1.GetResponse
+	(*QueryRequest)(nil),             // 78: slate.v1.QueryRequest
+	(*QueryResponse)(nil),            // 79: slate.v1.QueryResponse
+	(*JoinRequest)(nil),              // 80: slate.v1.JoinRequest
+	(*JoinResponse)(nil),             // 81: slate.v1.JoinResponse
+	(*AggregateQuery)(nil),           // 82: slate.v1.AggregateQuery
+	(*AggregateRequest)(nil),         // 83: slate.v1.AggregateRequest
+	(*AggregateResponse)(nil),        // 84: slate.v1.AggregateResponse
+	(*ExplainRequest)(nil),           // 85: slate.v1.ExplainRequest
+	(*ExplainResponse)(nil),          // 86: slate.v1.ExplainResponse
+	(*ExplainJoinRequest)(nil),       // 87: slate.v1.ExplainJoinRequest
+	(*ExplainAggregateRequest)(nil),  // 88: slate.v1.ExplainAggregateRequest
+	(*AggregateExplainResponse)(nil), // 89: slate.v1.AggregateExplainResponse
+	(*JoinExplainResponse)(nil),      // 90: slate.v1.JoinExplainResponse
+	(*JoinInputPlan)(nil),            // 91: slate.v1.JoinInputPlan
+	(*LeadershipRequest)(nil),        // 92: slate.v1.LeadershipRequest
+	(*LeadershipStatus)(nil),         // 93: slate.v1.LeadershipStatus
+	(*Relation)(nil),                 // 94: slate.v1.Relation
+	(*RelatedStep)(nil),              // 95: slate.v1.RelatedStep
+	(*RelatedRequest)(nil),           // 96: slate.v1.RelatedRequest
+	(*RelatedResponse)(nil),          // 97: slate.v1.RelatedResponse
+	(*RelatedResponse_Group)(nil),    // 98: slate.v1.RelatedResponse.Group
+	(*RelatedResponse_Level)(nil),    // 99: slate.v1.RelatedResponse.Level
 }
 var file_slate_v1_records_proto_depIdxs = []int32{
 	0,   // 0: slate.v1.Value.null_value:type_name -> slate.v1.NullValue
-	17,  // 1: slate.v1.Value.vector_value:type_name -> slate.v1.Vector
-	18,  // 2: slate.v1.Value.array_value:type_name -> slate.v1.ArrayValue
-	16,  // 3: slate.v1.ArrayValue.elements:type_name -> slate.v1.Value
-	16,  // 4: slate.v1.Row.values:type_name -> slate.v1.Value
-	16,  // 5: slate.v1.Row.computed:type_name -> slate.v1.Value
-	24,  // 6: slate.v1.Expr.compare:type_name -> slate.v1.Compare
-	25,  // 7: slate.v1.Expr.compare_columns:type_name -> slate.v1.CompareColumns
-	26,  // 8: slate.v1.Expr.is_null:type_name -> slate.v1.IsNull
-	27,  // 9: slate.v1.Expr.like:type_name -> slate.v1.Like
-	28,  // 10: slate.v1.Expr.matches:type_name -> slate.v1.Matches
-	29,  // 11: slate.v1.Expr.in_list:type_name -> slate.v1.InList
-	23,  // 12: slate.v1.Expr.conjunction:type_name -> slate.v1.ExprList
-	23,  // 13: slate.v1.Expr.disjunction:type_name -> slate.v1.ExprList
-	22,  // 14: slate.v1.Expr.negation:type_name -> slate.v1.Expr
-	22,  // 15: slate.v1.ExprList.exprs:type_name -> slate.v1.Expr
-	21,  // 16: slate.v1.Compare.column:type_name -> slate.v1.ColumnRef
-	2,   // 17: slate.v1.Compare.op:type_name -> slate.v1.CmpOp
-	16,  // 18: slate.v1.Compare.value:type_name -> slate.v1.Value
-	21,  // 19: slate.v1.CompareColumns.left:type_name -> slate.v1.ColumnRef
-	2,   // 20: slate.v1.CompareColumns.op:type_name -> slate.v1.CmpOp
-	21,  // 21: slate.v1.CompareColumns.right:type_name -> slate.v1.ColumnRef
-	21,  // 22: slate.v1.IsNull.column:type_name -> slate.v1.ColumnRef
-	21,  // 23: slate.v1.Like.column:type_name -> slate.v1.ColumnRef
-	21,  // 24: slate.v1.Matches.column:type_name -> slate.v1.ColumnRef
-	21,  // 25: slate.v1.InList.column:type_name -> slate.v1.ColumnRef
-	16,  // 26: slate.v1.InList.values:type_name -> slate.v1.Value
-	21,  // 27: slate.v1.Scalar.column:type_name -> slate.v1.ColumnRef
-	16,  // 28: slate.v1.Scalar.literal:type_name -> slate.v1.Value
-	31,  // 29: slate.v1.Scalar.add:type_name -> slate.v1.ScalarPair
-	31,  // 30: slate.v1.Scalar.sub:type_name -> slate.v1.ScalarPair
-	31,  // 31: slate.v1.Scalar.mul:type_name -> slate.v1.ScalarPair
-	31,  // 32: slate.v1.Scalar.div:type_name -> slate.v1.ScalarPair
-	30,  // 33: slate.v1.Scalar.length:type_name -> slate.v1.Scalar
-	32,  // 34: slate.v1.Scalar.concat:type_name -> slate.v1.ScalarList
-	30,  // 35: slate.v1.Scalar.lower:type_name -> slate.v1.Scalar
-	30,  // 36: slate.v1.Scalar.upper:type_name -> slate.v1.Scalar
-	33,  // 37: slate.v1.Scalar.extract:type_name -> slate.v1.TimePart
-	33,  // 38: slate.v1.Scalar.date_trunc:type_name -> slate.v1.TimePart
-	37,  // 39: slate.v1.Scalar.case:type_name -> slate.v1.Case
-	32,  // 40: slate.v1.Scalar.coalesce:type_name -> slate.v1.ScalarList
-	39,  // 41: slate.v1.Scalar.distance:type_name -> slate.v1.Distance
-	40,  // 42: slate.v1.Scalar.regexp_replace:type_name -> slate.v1.RegexpReplace
-	34,  // 43: slate.v1.Scalar.calendar_part:type_name -> slate.v1.CalendarField
-	30,  // 44: slate.v1.Scalar.round:type_name -> slate.v1.Scalar
-	35,  // 45: slate.v1.Scalar.calendar_trunc:type_name -> slate.v1.CalendarTrunc
-	36,  // 46: slate.v1.Scalar.zone_shift:type_name -> slate.v1.ZoneShift
-	30,  // 47: slate.v1.ScalarPair.left:type_name -> slate.v1.Scalar
-	30,  // 48: slate.v1.ScalarPair.right:type_name -> slate.v1.Scalar
-	30,  // 49: slate.v1.ScalarList.scalars:type_name -> slate.v1.Scalar
-	3,   // 50: slate.v1.TimePart.unit:type_name -> slate.v1.TimeUnit
-	30,  // 51: slate.v1.TimePart.value:type_name -> slate.v1.Scalar
-	4,   // 52: slate.v1.CalendarField.part:type_name -> slate.v1.CalendarPart
-	30,  // 53: slate.v1.CalendarField.value:type_name -> slate.v1.Scalar
-	5,   // 54: slate.v1.CalendarTrunc.unit:type_name -> slate.v1.CalendarUnit
-	30,  // 55: slate.v1.CalendarTrunc.value:type_name -> slate.v1.Scalar
-	30,  // 56: slate.v1.ZoneShift.value:type_name -> slate.v1.Scalar
-	38,  // 57: slate.v1.Case.branches:type_name -> slate.v1.CaseBranch
-	30,  // 58: slate.v1.Case.otherwise:type_name -> slate.v1.Scalar
-	22,  // 59: slate.v1.CaseBranch.when:type_name -> slate.v1.Expr
-	30,  // 60: slate.v1.CaseBranch.then:type_name -> slate.v1.Scalar
-	30,  // 61: slate.v1.Distance.left:type_name -> slate.v1.Scalar
-	30,  // 62: slate.v1.Distance.right:type_name -> slate.v1.Scalar
-	6,   // 63: slate.v1.Distance.metric:type_name -> slate.v1.Metric
-	30,  // 64: slate.v1.RegexpReplace.value:type_name -> slate.v1.Scalar
-	7,   // 65: slate.v1.Aggregate.function:type_name -> slate.v1.AggregateFunction
-	21,  // 66: slate.v1.Aggregate.column:type_name -> slate.v1.ColumnRef
-	16,  // 67: slate.v1.Group.key:type_name -> slate.v1.Value
-	16,  // 68: slate.v1.Group.values:type_name -> slate.v1.Value
-	21,  // 69: slate.v1.SortKey.column:type_name -> slate.v1.ColumnRef
-	9,   // 70: slate.v1.SortKey.direction:type_name -> slate.v1.SortDirection
-	10,  // 71: slate.v1.SortKey.nulls:type_name -> slate.v1.NullsOrder
-	21,  // 72: slate.v1.Projection.columns:type_name -> slate.v1.ColumnRef
-	1,   // 73: slate.v1.AccessHint.table_scan:type_name -> slate.v1.Unit
-	22,  // 74: slate.v1.Query.filter:type_name -> slate.v1.Expr
-	8,   // 75: slate.v1.Query.order:type_name -> slate.v1.ScanOrder
-	44,  // 76: slate.v1.Query.projection:type_name -> slate.v1.Projection
-	43,  // 77: slate.v1.Query.sort:type_name -> slate.v1.SortKey
-	45,  // 78: slate.v1.Query.hint:type_name -> slate.v1.AccessHint
-	30,  // 79: slate.v1.Query.compute:type_name -> slate.v1.Scalar
-	20,  // 80: slate.v1.Query.schema:type_name -> slate.v1.SchemaCheck
-	16,  // 81: slate.v1.Query.after:type_name -> slate.v1.Value
-	12,  // 82: slate.v1.JoinAlgorithm.hash_build:type_name -> slate.v1.Side
-	1,   // 83: slate.v1.JoinAlgorithm.nested_loop:type_name -> slate.v1.Unit
-	21,  // 84: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
-	21,  // 85: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
-	46,  // 86: slate.v1.JoinInput.query:type_name -> slate.v1.Query
-	48,  // 87: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
-	11,  // 88: slate.v1.JoinInput.join_type:type_name -> slate.v1.JoinType
-	22,  // 89: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
-	47,  // 90: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
-	49,  // 91: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
-	16,  // 92: slate.v1.JoinQuery.after:type_name -> slate.v1.Value
-	30,  // 93: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
-	52,  // 94: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
-	16,  // 95: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
-	19,  // 96: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
-	1,   // 97: slate.v1.Freshness.any:type_name -> slate.v1.Unit
-	1,   // 98: slate.v1.Freshness.latest:type_name -> slate.v1.Unit
-	19,  // 99: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
-	20,  // 100: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
-	19,  // 101: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
-	20,  // 102: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
-	19,  // 103: slate.v1.UpdateRequest.expected:type_name -> slate.v1.Row
-	19,  // 104: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
-	20,  // 105: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
-	19,  // 106: slate.v1.DeleteRequest.expected:type_name -> slate.v1.Row
-	19,  // 107: slate.v1.WriteResponse.rows:type_name -> slate.v1.Row
-	21,  // 108: slate.v1.Assignment.column:type_name -> slate.v1.ColumnRef
-	30,  // 109: slate.v1.Assignment.value:type_name -> slate.v1.Scalar
-	20,  // 110: slate.v1.PurgeDeletedRequest.schema:type_name -> slate.v1.SchemaCheck
-	22,  // 111: slate.v1.DeleteWhereRequest.filter:type_name -> slate.v1.Expr
-	20,  // 112: slate.v1.DeleteWhereRequest.schema:type_name -> slate.v1.SchemaCheck
-	22,  // 113: slate.v1.UpdateWhereRequest.filter:type_name -> slate.v1.Expr
-	65,  // 114: slate.v1.UpdateWhereRequest.assignments:type_name -> slate.v1.Assignment
-	20,  // 115: slate.v1.UpdateWhereRequest.schema:type_name -> slate.v1.SchemaCheck
-	61,  // 116: slate.v1.BatchOperation.insert:type_name -> slate.v1.InsertRequest
-	62,  // 117: slate.v1.BatchOperation.update:type_name -> slate.v1.UpdateRequest
-	63,  // 118: slate.v1.BatchOperation.delete:type_name -> slate.v1.DeleteRequest
-	67,  // 119: slate.v1.BatchOperation.delete_where:type_name -> slate.v1.DeleteWhereRequest
-	68,  // 120: slate.v1.BatchOperation.update_where:type_name -> slate.v1.UpdateWhereRequest
-	69,  // 121: slate.v1.BatchRequest.operations:type_name -> slate.v1.BatchOperation
-	13,  // 122: slate.v1.BatchRequest.atomicity:type_name -> slate.v1.Atomicity
-	72,  // 123: slate.v1.BatchResponse.results:type_name -> slate.v1.BatchResult
-	64,  // 124: slate.v1.BatchResult.ok:type_name -> slate.v1.WriteResponse
-	73,  // 125: slate.v1.BatchResult.error:type_name -> slate.v1.BatchError
-	19,  // 126: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
-	53,  // 127: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
-	20,  // 128: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
-	19,  // 129: slate.v1.GetResponse.row:type_name -> slate.v1.Row
-	54,  // 130: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
-	46,  // 131: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
-	53,  // 132: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
-	19,  // 133: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
-	54,  // 134: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
-	16,  // 135: slate.v1.QueryResponse.next_cursor:type_name -> slate.v1.Value
-	50,  // 136: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
-	53,  // 137: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
-	51,  // 138: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
-	54,  // 139: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
-	16,  // 140: slate.v1.JoinResponse.next_cursor:type_name -> slate.v1.Value
-	46,  // 141: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
-	21,  // 142: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
-	41,  // 143: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
-	22,  // 144: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
-	50,  // 145: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
-	43,  // 146: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
-	80,  // 147: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	53,  // 148: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
-	42,  // 149: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
-	54,  // 150: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
-	46,  // 151: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
-	53,  // 152: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
-	54,  // 153: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	50,  // 154: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
-	53,  // 155: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
-	80,  // 156: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
-	53,  // 157: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
-	84,  // 158: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
-	88,  // 159: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
-	54,  // 160: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	89,  // 161: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
-	54,  // 162: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
-	84,  // 163: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
-	11,  // 164: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
-	47,  // 165: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
-	14,  // 166: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
-	15,  // 167: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
-	92,  // 168: slate.v1.RelatedStep.relation:type_name -> slate.v1.Relation
-	20,  // 169: slate.v1.RelatedStep.schema:type_name -> slate.v1.SchemaCheck
-	92,  // 170: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
-	16,  // 171: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
-	53,  // 172: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
-	20,  // 173: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
-	93,  // 174: slate.v1.RelatedRequest.path:type_name -> slate.v1.RelatedStep
-	96,  // 175: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
-	54,  // 176: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
-	97,  // 177: slate.v1.RelatedResponse.levels:type_name -> slate.v1.RelatedResponse.Level
-	16,  // 178: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
-	19,  // 179: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
-	96,  // 180: slate.v1.RelatedResponse.Level.groups:type_name -> slate.v1.RelatedResponse.Group
-	55,  // 181: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
-	57,  // 182: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
-	59,  // 183: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
-	61,  // 184: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
-	62,  // 185: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
-	63,  // 186: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
-	67,  // 187: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
-	68,  // 188: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
-	66,  // 189: slate.v1.Records.PurgeDeleted:input_type -> slate.v1.PurgeDeletedRequest
-	70,  // 190: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
-	74,  // 191: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
-	76,  // 192: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
-	78,  // 193: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
-	81,  // 194: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
-	94,  // 195: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
-	83,  // 196: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
-	85,  // 197: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
-	86,  // 198: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
-	90,  // 199: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
-	56,  // 200: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
-	58,  // 201: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
-	60,  // 202: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
-	64,  // 203: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
-	64,  // 204: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
-	64,  // 205: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
-	64,  // 206: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
-	64,  // 207: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
-	64,  // 208: slate.v1.Records.PurgeDeleted:output_type -> slate.v1.WriteResponse
-	71,  // 209: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
-	75,  // 210: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
-	77,  // 211: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
-	79,  // 212: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
-	82,  // 213: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
-	95,  // 214: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
-	84,  // 215: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
-	88,  // 216: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
-	87,  // 217: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
-	91,  // 218: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
-	200, // [200:219] is the sub-list for method output_type
-	181, // [181:200] is the sub-list for method input_type
-	181, // [181:181] is the sub-list for extension type_name
-	181, // [181:181] is the sub-list for extension extendee
-	0,   // [0:181] is the sub-list for field type_name
+	18,  // 1: slate.v1.Value.vector_value:type_name -> slate.v1.Vector
+	19,  // 2: slate.v1.Value.array_value:type_name -> slate.v1.ArrayValue
+	17,  // 3: slate.v1.ArrayValue.elements:type_name -> slate.v1.Value
+	17,  // 4: slate.v1.Row.values:type_name -> slate.v1.Value
+	17,  // 5: slate.v1.Row.computed:type_name -> slate.v1.Value
+	17,  // 6: slate.v1.Row.windowed:type_name -> slate.v1.Value
+	25,  // 7: slate.v1.Expr.compare:type_name -> slate.v1.Compare
+	26,  // 8: slate.v1.Expr.compare_columns:type_name -> slate.v1.CompareColumns
+	27,  // 9: slate.v1.Expr.is_null:type_name -> slate.v1.IsNull
+	28,  // 10: slate.v1.Expr.like:type_name -> slate.v1.Like
+	29,  // 11: slate.v1.Expr.matches:type_name -> slate.v1.Matches
+	30,  // 12: slate.v1.Expr.in_list:type_name -> slate.v1.InList
+	24,  // 13: slate.v1.Expr.conjunction:type_name -> slate.v1.ExprList
+	24,  // 14: slate.v1.Expr.disjunction:type_name -> slate.v1.ExprList
+	23,  // 15: slate.v1.Expr.negation:type_name -> slate.v1.Expr
+	23,  // 16: slate.v1.ExprList.exprs:type_name -> slate.v1.Expr
+	22,  // 17: slate.v1.Compare.column:type_name -> slate.v1.ColumnRef
+	2,   // 18: slate.v1.Compare.op:type_name -> slate.v1.CmpOp
+	17,  // 19: slate.v1.Compare.value:type_name -> slate.v1.Value
+	22,  // 20: slate.v1.CompareColumns.left:type_name -> slate.v1.ColumnRef
+	2,   // 21: slate.v1.CompareColumns.op:type_name -> slate.v1.CmpOp
+	22,  // 22: slate.v1.CompareColumns.right:type_name -> slate.v1.ColumnRef
+	22,  // 23: slate.v1.IsNull.column:type_name -> slate.v1.ColumnRef
+	22,  // 24: slate.v1.Like.column:type_name -> slate.v1.ColumnRef
+	22,  // 25: slate.v1.Matches.column:type_name -> slate.v1.ColumnRef
+	22,  // 26: slate.v1.InList.column:type_name -> slate.v1.ColumnRef
+	17,  // 27: slate.v1.InList.values:type_name -> slate.v1.Value
+	22,  // 28: slate.v1.Scalar.column:type_name -> slate.v1.ColumnRef
+	17,  // 29: slate.v1.Scalar.literal:type_name -> slate.v1.Value
+	32,  // 30: slate.v1.Scalar.add:type_name -> slate.v1.ScalarPair
+	32,  // 31: slate.v1.Scalar.sub:type_name -> slate.v1.ScalarPair
+	32,  // 32: slate.v1.Scalar.mul:type_name -> slate.v1.ScalarPair
+	32,  // 33: slate.v1.Scalar.div:type_name -> slate.v1.ScalarPair
+	31,  // 34: slate.v1.Scalar.length:type_name -> slate.v1.Scalar
+	33,  // 35: slate.v1.Scalar.concat:type_name -> slate.v1.ScalarList
+	31,  // 36: slate.v1.Scalar.lower:type_name -> slate.v1.Scalar
+	31,  // 37: slate.v1.Scalar.upper:type_name -> slate.v1.Scalar
+	34,  // 38: slate.v1.Scalar.extract:type_name -> slate.v1.TimePart
+	34,  // 39: slate.v1.Scalar.date_trunc:type_name -> slate.v1.TimePart
+	38,  // 40: slate.v1.Scalar.case:type_name -> slate.v1.Case
+	33,  // 41: slate.v1.Scalar.coalesce:type_name -> slate.v1.ScalarList
+	40,  // 42: slate.v1.Scalar.distance:type_name -> slate.v1.Distance
+	41,  // 43: slate.v1.Scalar.regexp_replace:type_name -> slate.v1.RegexpReplace
+	35,  // 44: slate.v1.Scalar.calendar_part:type_name -> slate.v1.CalendarField
+	31,  // 45: slate.v1.Scalar.round:type_name -> slate.v1.Scalar
+	36,  // 46: slate.v1.Scalar.calendar_trunc:type_name -> slate.v1.CalendarTrunc
+	37,  // 47: slate.v1.Scalar.zone_shift:type_name -> slate.v1.ZoneShift
+	31,  // 48: slate.v1.ScalarPair.left:type_name -> slate.v1.Scalar
+	31,  // 49: slate.v1.ScalarPair.right:type_name -> slate.v1.Scalar
+	31,  // 50: slate.v1.ScalarList.scalars:type_name -> slate.v1.Scalar
+	3,   // 51: slate.v1.TimePart.unit:type_name -> slate.v1.TimeUnit
+	31,  // 52: slate.v1.TimePart.value:type_name -> slate.v1.Scalar
+	4,   // 53: slate.v1.CalendarField.part:type_name -> slate.v1.CalendarPart
+	31,  // 54: slate.v1.CalendarField.value:type_name -> slate.v1.Scalar
+	5,   // 55: slate.v1.CalendarTrunc.unit:type_name -> slate.v1.CalendarUnit
+	31,  // 56: slate.v1.CalendarTrunc.value:type_name -> slate.v1.Scalar
+	31,  // 57: slate.v1.ZoneShift.value:type_name -> slate.v1.Scalar
+	39,  // 58: slate.v1.Case.branches:type_name -> slate.v1.CaseBranch
+	31,  // 59: slate.v1.Case.otherwise:type_name -> slate.v1.Scalar
+	23,  // 60: slate.v1.CaseBranch.when:type_name -> slate.v1.Expr
+	31,  // 61: slate.v1.CaseBranch.then:type_name -> slate.v1.Scalar
+	31,  // 62: slate.v1.Distance.left:type_name -> slate.v1.Scalar
+	31,  // 63: slate.v1.Distance.right:type_name -> slate.v1.Scalar
+	6,   // 64: slate.v1.Distance.metric:type_name -> slate.v1.Metric
+	31,  // 65: slate.v1.RegexpReplace.value:type_name -> slate.v1.Scalar
+	7,   // 66: slate.v1.Aggregate.function:type_name -> slate.v1.AggregateFunction
+	22,  // 67: slate.v1.Aggregate.column:type_name -> slate.v1.ColumnRef
+	17,  // 68: slate.v1.Group.key:type_name -> slate.v1.Value
+	17,  // 69: slate.v1.Group.values:type_name -> slate.v1.Value
+	8,   // 70: slate.v1.Window.function:type_name -> slate.v1.WindowFunction
+	42,  // 71: slate.v1.Window.aggregate:type_name -> slate.v1.Aggregate
+	22,  // 72: slate.v1.Window.column:type_name -> slate.v1.ColumnRef
+	22,  // 73: slate.v1.Window.partition_by:type_name -> slate.v1.ColumnRef
+	45,  // 74: slate.v1.Window.order:type_name -> slate.v1.SortKey
+	22,  // 75: slate.v1.SortKey.column:type_name -> slate.v1.ColumnRef
+	10,  // 76: slate.v1.SortKey.direction:type_name -> slate.v1.SortDirection
+	11,  // 77: slate.v1.SortKey.nulls:type_name -> slate.v1.NullsOrder
+	22,  // 78: slate.v1.Projection.columns:type_name -> slate.v1.ColumnRef
+	1,   // 79: slate.v1.AccessHint.table_scan:type_name -> slate.v1.Unit
+	23,  // 80: slate.v1.Query.filter:type_name -> slate.v1.Expr
+	9,   // 81: slate.v1.Query.order:type_name -> slate.v1.ScanOrder
+	46,  // 82: slate.v1.Query.projection:type_name -> slate.v1.Projection
+	45,  // 83: slate.v1.Query.sort:type_name -> slate.v1.SortKey
+	47,  // 84: slate.v1.Query.hint:type_name -> slate.v1.AccessHint
+	31,  // 85: slate.v1.Query.compute:type_name -> slate.v1.Scalar
+	21,  // 86: slate.v1.Query.schema:type_name -> slate.v1.SchemaCheck
+	17,  // 87: slate.v1.Query.after:type_name -> slate.v1.Value
+	44,  // 88: slate.v1.Query.window:type_name -> slate.v1.Window
+	13,  // 89: slate.v1.JoinAlgorithm.hash_build:type_name -> slate.v1.Side
+	1,   // 90: slate.v1.JoinAlgorithm.nested_loop:type_name -> slate.v1.Unit
+	22,  // 91: slate.v1.JoinOn.earlier:type_name -> slate.v1.ColumnRef
+	22,  // 92: slate.v1.JoinOn.own:type_name -> slate.v1.ColumnRef
+	48,  // 93: slate.v1.JoinInput.query:type_name -> slate.v1.Query
+	50,  // 94: slate.v1.JoinInput.on:type_name -> slate.v1.JoinOn
+	12,  // 95: slate.v1.JoinInput.join_type:type_name -> slate.v1.JoinType
+	23,  // 96: slate.v1.JoinInput.having:type_name -> slate.v1.Expr
+	49,  // 97: slate.v1.JoinInput.force:type_name -> slate.v1.JoinAlgorithm
+	51,  // 98: slate.v1.JoinQuery.inputs:type_name -> slate.v1.JoinInput
+	17,  // 99: slate.v1.JoinQuery.after:type_name -> slate.v1.Value
+	31,  // 100: slate.v1.JoinQuery.compute:type_name -> slate.v1.Scalar
+	54,  // 101: slate.v1.JoinedRow.inputs:type_name -> slate.v1.JoinedInput
+	17,  // 102: slate.v1.JoinedRow.computed:type_name -> slate.v1.Value
+	20,  // 103: slate.v1.JoinedInput.row:type_name -> slate.v1.Row
+	1,   // 104: slate.v1.Freshness.any:type_name -> slate.v1.Unit
+	1,   // 105: slate.v1.Freshness.latest:type_name -> slate.v1.Unit
+	20,  // 106: slate.v1.InsertRequest.rows:type_name -> slate.v1.Row
+	21,  // 107: slate.v1.InsertRequest.schema:type_name -> slate.v1.SchemaCheck
+	20,  // 108: slate.v1.UpdateRequest.rows:type_name -> slate.v1.Row
+	21,  // 109: slate.v1.UpdateRequest.schema:type_name -> slate.v1.SchemaCheck
+	20,  // 110: slate.v1.UpdateRequest.expected:type_name -> slate.v1.Row
+	20,  // 111: slate.v1.DeleteRequest.primary_keys:type_name -> slate.v1.Row
+	21,  // 112: slate.v1.DeleteRequest.schema:type_name -> slate.v1.SchemaCheck
+	20,  // 113: slate.v1.DeleteRequest.expected:type_name -> slate.v1.Row
+	20,  // 114: slate.v1.WriteResponse.rows:type_name -> slate.v1.Row
+	22,  // 115: slate.v1.Assignment.column:type_name -> slate.v1.ColumnRef
+	31,  // 116: slate.v1.Assignment.value:type_name -> slate.v1.Scalar
+	21,  // 117: slate.v1.PurgeDeletedRequest.schema:type_name -> slate.v1.SchemaCheck
+	23,  // 118: slate.v1.DeleteWhereRequest.filter:type_name -> slate.v1.Expr
+	21,  // 119: slate.v1.DeleteWhereRequest.schema:type_name -> slate.v1.SchemaCheck
+	23,  // 120: slate.v1.UpdateWhereRequest.filter:type_name -> slate.v1.Expr
+	67,  // 121: slate.v1.UpdateWhereRequest.assignments:type_name -> slate.v1.Assignment
+	21,  // 122: slate.v1.UpdateWhereRequest.schema:type_name -> slate.v1.SchemaCheck
+	63,  // 123: slate.v1.BatchOperation.insert:type_name -> slate.v1.InsertRequest
+	64,  // 124: slate.v1.BatchOperation.update:type_name -> slate.v1.UpdateRequest
+	65,  // 125: slate.v1.BatchOperation.delete:type_name -> slate.v1.DeleteRequest
+	69,  // 126: slate.v1.BatchOperation.delete_where:type_name -> slate.v1.DeleteWhereRequest
+	70,  // 127: slate.v1.BatchOperation.update_where:type_name -> slate.v1.UpdateWhereRequest
+	71,  // 128: slate.v1.BatchRequest.operations:type_name -> slate.v1.BatchOperation
+	14,  // 129: slate.v1.BatchRequest.atomicity:type_name -> slate.v1.Atomicity
+	74,  // 130: slate.v1.BatchResponse.results:type_name -> slate.v1.BatchResult
+	66,  // 131: slate.v1.BatchResult.ok:type_name -> slate.v1.WriteResponse
+	75,  // 132: slate.v1.BatchResult.error:type_name -> slate.v1.BatchError
+	20,  // 133: slate.v1.GetRequest.primary_key:type_name -> slate.v1.Row
+	55,  // 134: slate.v1.GetRequest.freshness:type_name -> slate.v1.Freshness
+	21,  // 135: slate.v1.GetRequest.schema:type_name -> slate.v1.SchemaCheck
+	20,  // 136: slate.v1.GetResponse.row:type_name -> slate.v1.Row
+	56,  // 137: slate.v1.GetResponse.served_by:type_name -> slate.v1.ServedBy
+	48,  // 138: slate.v1.QueryRequest.query:type_name -> slate.v1.Query
+	55,  // 139: slate.v1.QueryRequest.freshness:type_name -> slate.v1.Freshness
+	20,  // 140: slate.v1.QueryResponse.rows:type_name -> slate.v1.Row
+	56,  // 141: slate.v1.QueryResponse.served_by:type_name -> slate.v1.ServedBy
+	17,  // 142: slate.v1.QueryResponse.next_cursor:type_name -> slate.v1.Value
+	52,  // 143: slate.v1.JoinRequest.join:type_name -> slate.v1.JoinQuery
+	55,  // 144: slate.v1.JoinRequest.freshness:type_name -> slate.v1.Freshness
+	53,  // 145: slate.v1.JoinResponse.rows:type_name -> slate.v1.JoinedRow
+	56,  // 146: slate.v1.JoinResponse.served_by:type_name -> slate.v1.ServedBy
+	17,  // 147: slate.v1.JoinResponse.next_cursor:type_name -> slate.v1.Value
+	48,  // 148: slate.v1.AggregateQuery.input:type_name -> slate.v1.Query
+	22,  // 149: slate.v1.AggregateQuery.group_by:type_name -> slate.v1.ColumnRef
+	42,  // 150: slate.v1.AggregateQuery.aggregates:type_name -> slate.v1.Aggregate
+	23,  // 151: slate.v1.AggregateQuery.having:type_name -> slate.v1.Expr
+	52,  // 152: slate.v1.AggregateQuery.join:type_name -> slate.v1.JoinQuery
+	45,  // 153: slate.v1.AggregateQuery.sort:type_name -> slate.v1.SortKey
+	82,  // 154: slate.v1.AggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	55,  // 155: slate.v1.AggregateRequest.freshness:type_name -> slate.v1.Freshness
+	43,  // 156: slate.v1.AggregateResponse.groups:type_name -> slate.v1.Group
+	56,  // 157: slate.v1.AggregateResponse.served_by:type_name -> slate.v1.ServedBy
+	48,  // 158: slate.v1.ExplainRequest.query:type_name -> slate.v1.Query
+	55,  // 159: slate.v1.ExplainRequest.freshness:type_name -> slate.v1.Freshness
+	56,  // 160: slate.v1.ExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	52,  // 161: slate.v1.ExplainJoinRequest.join:type_name -> slate.v1.JoinQuery
+	55,  // 162: slate.v1.ExplainJoinRequest.freshness:type_name -> slate.v1.Freshness
+	82,  // 163: slate.v1.ExplainAggregateRequest.aggregate:type_name -> slate.v1.AggregateQuery
+	55,  // 164: slate.v1.ExplainAggregateRequest.freshness:type_name -> slate.v1.Freshness
+	86,  // 165: slate.v1.AggregateExplainResponse.input:type_name -> slate.v1.ExplainResponse
+	90,  // 166: slate.v1.AggregateExplainResponse.join:type_name -> slate.v1.JoinExplainResponse
+	56,  // 167: slate.v1.AggregateExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	91,  // 168: slate.v1.JoinExplainResponse.inputs:type_name -> slate.v1.JoinInputPlan
+	56,  // 169: slate.v1.JoinExplainResponse.served_by:type_name -> slate.v1.ServedBy
+	86,  // 170: slate.v1.JoinInputPlan.plan:type_name -> slate.v1.ExplainResponse
+	12,  // 171: slate.v1.JoinInputPlan.join_type:type_name -> slate.v1.JoinType
+	49,  // 172: slate.v1.JoinInputPlan.algorithm:type_name -> slate.v1.JoinAlgorithm
+	15,  // 173: slate.v1.LeadershipStatus.standing:type_name -> slate.v1.LeadershipStatus.Standing
+	16,  // 174: slate.v1.Relation.direction:type_name -> slate.v1.Relation.Direction
+	94,  // 175: slate.v1.RelatedStep.relation:type_name -> slate.v1.Relation
+	21,  // 176: slate.v1.RelatedStep.schema:type_name -> slate.v1.SchemaCheck
+	94,  // 177: slate.v1.RelatedRequest.relation:type_name -> slate.v1.Relation
+	17,  // 178: slate.v1.RelatedRequest.keys:type_name -> slate.v1.Value
+	55,  // 179: slate.v1.RelatedRequest.freshness:type_name -> slate.v1.Freshness
+	21,  // 180: slate.v1.RelatedRequest.schema:type_name -> slate.v1.SchemaCheck
+	95,  // 181: slate.v1.RelatedRequest.path:type_name -> slate.v1.RelatedStep
+	98,  // 182: slate.v1.RelatedResponse.groups:type_name -> slate.v1.RelatedResponse.Group
+	56,  // 183: slate.v1.RelatedResponse.served_by:type_name -> slate.v1.ServedBy
+	99,  // 184: slate.v1.RelatedResponse.levels:type_name -> slate.v1.RelatedResponse.Level
+	17,  // 185: slate.v1.RelatedResponse.Group.key:type_name -> slate.v1.Value
+	20,  // 186: slate.v1.RelatedResponse.Group.rows:type_name -> slate.v1.Row
+	98,  // 187: slate.v1.RelatedResponse.Level.groups:type_name -> slate.v1.RelatedResponse.Group
+	57,  // 188: slate.v1.Records.Begin:input_type -> slate.v1.BeginRequest
+	59,  // 189: slate.v1.Records.Commit:input_type -> slate.v1.CommitRequest
+	61,  // 190: slate.v1.Records.Rollback:input_type -> slate.v1.RollbackRequest
+	63,  // 191: slate.v1.Records.Insert:input_type -> slate.v1.InsertRequest
+	64,  // 192: slate.v1.Records.Update:input_type -> slate.v1.UpdateRequest
+	65,  // 193: slate.v1.Records.Delete:input_type -> slate.v1.DeleteRequest
+	69,  // 194: slate.v1.Records.DeleteWhere:input_type -> slate.v1.DeleteWhereRequest
+	70,  // 195: slate.v1.Records.UpdateWhere:input_type -> slate.v1.UpdateWhereRequest
+	68,  // 196: slate.v1.Records.PurgeDeleted:input_type -> slate.v1.PurgeDeletedRequest
+	72,  // 197: slate.v1.Records.Batch:input_type -> slate.v1.BatchRequest
+	76,  // 198: slate.v1.Records.Get:input_type -> slate.v1.GetRequest
+	78,  // 199: slate.v1.Records.Query:input_type -> slate.v1.QueryRequest
+	80,  // 200: slate.v1.Records.Join:input_type -> slate.v1.JoinRequest
+	83,  // 201: slate.v1.Records.Aggregate:input_type -> slate.v1.AggregateRequest
+	96,  // 202: slate.v1.Records.Related:input_type -> slate.v1.RelatedRequest
+	85,  // 203: slate.v1.Records.Explain:input_type -> slate.v1.ExplainRequest
+	87,  // 204: slate.v1.Records.ExplainJoin:input_type -> slate.v1.ExplainJoinRequest
+	88,  // 205: slate.v1.Records.ExplainAggregate:input_type -> slate.v1.ExplainAggregateRequest
+	92,  // 206: slate.v1.Records.Leadership:input_type -> slate.v1.LeadershipRequest
+	58,  // 207: slate.v1.Records.Begin:output_type -> slate.v1.BeginResponse
+	60,  // 208: slate.v1.Records.Commit:output_type -> slate.v1.CommitResponse
+	62,  // 209: slate.v1.Records.Rollback:output_type -> slate.v1.RollbackResponse
+	66,  // 210: slate.v1.Records.Insert:output_type -> slate.v1.WriteResponse
+	66,  // 211: slate.v1.Records.Update:output_type -> slate.v1.WriteResponse
+	66,  // 212: slate.v1.Records.Delete:output_type -> slate.v1.WriteResponse
+	66,  // 213: slate.v1.Records.DeleteWhere:output_type -> slate.v1.WriteResponse
+	66,  // 214: slate.v1.Records.UpdateWhere:output_type -> slate.v1.WriteResponse
+	66,  // 215: slate.v1.Records.PurgeDeleted:output_type -> slate.v1.WriteResponse
+	73,  // 216: slate.v1.Records.Batch:output_type -> slate.v1.BatchResponse
+	77,  // 217: slate.v1.Records.Get:output_type -> slate.v1.GetResponse
+	79,  // 218: slate.v1.Records.Query:output_type -> slate.v1.QueryResponse
+	81,  // 219: slate.v1.Records.Join:output_type -> slate.v1.JoinResponse
+	84,  // 220: slate.v1.Records.Aggregate:output_type -> slate.v1.AggregateResponse
+	97,  // 221: slate.v1.Records.Related:output_type -> slate.v1.RelatedResponse
+	86,  // 222: slate.v1.Records.Explain:output_type -> slate.v1.ExplainResponse
+	90,  // 223: slate.v1.Records.ExplainJoin:output_type -> slate.v1.JoinExplainResponse
+	89,  // 224: slate.v1.Records.ExplainAggregate:output_type -> slate.v1.AggregateExplainResponse
+	93,  // 225: slate.v1.Records.Leadership:output_type -> slate.v1.LeadershipStatus
+	207, // [207:226] is the sub-list for method output_type
+	188, // [188:207] is the sub-list for method input_type
+	188, // [188:188] is the sub-list for extension type_name
+	188, // [188:188] is the sub-list for extension extendee
+	0,   // [0:188] is the sub-list for field type_name
 }
 
 func init() { file_slate_v1_records_proto_init() }
@@ -8850,6 +9126,7 @@ func file_slate_v1_records_proto_init() {
 		(*ColumnRef_GroupKey)(nil),
 		(*ColumnRef_Aggregate)(nil),
 		(*ColumnRef_JoinedComputed)(nil),
+		(*ColumnRef_Windowed)(nil),
 	}
 	file_slate_v1_records_proto_msgTypes[6].OneofWrappers = []any{
 		(*Expr_Literal)(nil),
@@ -8885,45 +9162,45 @@ func file_slate_v1_records_proto_init() {
 		(*Scalar_CalendarTrunc)(nil),
 		(*Scalar_ZoneShift)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[29].OneofWrappers = []any{
+	file_slate_v1_records_proto_msgTypes[30].OneofWrappers = []any{
 		(*AccessHint_Index)(nil),
 		(*AccessHint_TableScan)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[30].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[31].OneofWrappers = []any{
+	file_slate_v1_records_proto_msgTypes[31].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[32].OneofWrappers = []any{
 		(*JoinAlgorithm_HashBuild)(nil),
 		(*JoinAlgorithm_NestedLoop)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[34].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[37].OneofWrappers = []any{
+	file_slate_v1_records_proto_msgTypes[35].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[38].OneofWrappers = []any{
 		(*Freshness_AtLeast)(nil),
 		(*Freshness_Any)(nil),
 		(*Freshness_Latest)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[42].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[48].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[53].OneofWrappers = []any{
+	file_slate_v1_records_proto_msgTypes[43].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[49].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[54].OneofWrappers = []any{
 		(*BatchOperation_Insert)(nil),
 		(*BatchOperation_Update)(nil),
 		(*BatchOperation_Delete)(nil),
 		(*BatchOperation_DeleteWhere)(nil),
 		(*BatchOperation_UpdateWhere)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[55].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[56].OneofWrappers = []any{
+	file_slate_v1_records_proto_msgTypes[56].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[57].OneofWrappers = []any{
 		(*BatchResult_Ok)(nil),
 		(*BatchResult_Error)(nil),
 	}
-	file_slate_v1_records_proto_msgTypes[64].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[68].OneofWrappers = []any{}
-	file_slate_v1_records_proto_msgTypes[75].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[65].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[69].OneofWrappers = []any{}
+	file_slate_v1_records_proto_msgTypes[76].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_slate_v1_records_proto_rawDesc), len(file_slate_v1_records_proto_rawDesc)),
-			NumEnums:      16,
-			NumMessages:   82,
+			NumEnums:      17,
+			NumMessages:   83,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
