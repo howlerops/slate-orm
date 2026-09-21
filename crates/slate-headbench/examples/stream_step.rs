@@ -428,7 +428,7 @@ async fn seed<S: KvStore + KvReadStore>(
 async fn warm(client: &mut RecordsClient<Channel>) {
     for _ in 0..2_000 {
         let _ = client
-            .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+            .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
             .await
             .expect("leadership");
     }

@@ -15,6 +15,7 @@
 //! | `commit` | autocommit or an explicit transaction? |
 //! | `routing` | what do routing and the freshness wait cost under a replica fleet? |
 //! | `lease` | what does a renewal cost, and is a fifteen-second term sensible? |
+//! | `views` | what does reading through a view cost, and what does declaring one cost a read that does not use it? |
 //!
 //! Everything is a median over repeated runs with the range printed beside it.
 //! Where two measurements' ranges overlap, the difference between them is
@@ -37,14 +38,14 @@ use slate_headbench::stats::{Measure, difference, duration};
 use slate_kernel::{
     Expr, Freshness, KvReadStore, KvStore, Query, ReadToken, RecordStore, ScanOrder,
 };
-use slate_schema::{Row, TableDef};
+use slate_schema::{Row, TableDef, TableId};
 use slate_server::convert::{query_to_proto, row_to_proto};
 use slate_server::leadership::{Cadence, Leadership, maintain};
 use slate_server::lease::{Lease, ObjectStoreLease};
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
-use slate_server::{Head, Limits};
-use slate_tuple::Value;
+use slate_server::{Head, Limits, View, Views};
+use slate_tuple::{Value, ValueType};
 use slatedb::object_store::ObjectStore;
 use slatedb::object_store::memory::InMemory;
 use std::sync::Arc;
@@ -132,6 +133,9 @@ async fn main() {
     }
     if wanted("lease") {
         section_lease().await;
+    }
+    if wanted("views") {
+        section_views().await;
     }
 }
 
@@ -297,9 +301,22 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
     // ordering is still contaminating everything between them.
     warm(&mut client).await;
 
-    let floor = measure!("Leadership RPC (no storage, no auth)", 200, {
+    // "no storage" still; not "no auth". `leadership` used to take `_request`
+    // and answer anybody who could reach the port — including under
+    // `mode = "deny-all"`, whose banner promises to refuse every request — and
+    // the fix gave it the same `self.context(&request)` every other handler
+    // has. So the floor includes authenticating a request, which is the right
+    // floor: no RPC here is cheaper than that.
+    //
+    // It also broke every benchmark in this crate, silently, for as long as
+    // nobody ran one. Three of the five sent a bare `LeadershipRequest` and
+    // panicked on `UNAUTHENTICATED` at the first warm-up call. `ci.yml` builds
+    // this crate and runs none of it, which is the "a check that never fires"
+    // note in `CLAUDE.md` pointed at a benchmark: an unrun benchmark is not
+    // slow to notice a regression, it is unable to.
+    let floor = measure!("Leadership RPC (no storage, authenticated)", 200, {
         client
-            .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+            .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
             .await
             .expect("leadership")
     });
@@ -454,7 +471,7 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
     // above has run.
     let floor_again = measure!("Leadership RPC, measured again at the end", 200, {
         client
-            .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+            .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
             .await
             .expect("leadership")
     });
@@ -474,7 +491,7 @@ async fn over_one_backend<S: KvStore + KvReadStore + 'static>(label: &str, write
 async fn warm(client: &mut RecordsClient<Channel>) {
     for _ in 0..2_000 {
         let _ = client
-            .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+            .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
             .await
             .expect("leadership");
     }
@@ -1284,4 +1301,205 @@ async fn section_lease() {
         "  → renewal's effect on a served read",
         difference(&renewing, &idle)
     );
+}
+
+// --- 6. views -------------------------------------------------------------
+
+/// What a view costs, against the prediction that it costs nothing.
+///
+/// `docs/views.md` step 2 shipped with this written down as a *prediction from
+/// reading the code*: a view adds one `BTreeMap` lookup per read and one
+/// `Expr::and`, and `and` folds `Expr::True` away, so a view's read should cost
+/// what the same predicate costs when the caller sends it, and a node that
+/// merely *declares* views should serve an ordinary read unchanged. That is the
+/// kind of claim this repository has been wrong about before, so it is measured
+/// here rather than left as prose.
+///
+/// Two comparisons, because the prediction has two halves and one of them is
+/// the one an operator actually pays:
+///
+/// 1. **A read through a view against the same predicate sent by the caller.**
+///    Same rows, same plan, same conjunct reaching the planner — the only
+///    difference is which side of the wire built the `Expr`. A gap here would
+///    mean the composition is doing work the caller's own filter does not.
+/// 2. **An ordinary read on a node with views against one without.** This is
+///    what every existing deployment pays for a feature it may never use, and
+///    it is a failed `BTreeMap::get` against a map of one.
+///
+/// Both are expected to land inside each other's range, which is a null result
+/// and is reported as one. `separated_from` is what decides, not the medians:
+/// this section is at the end of the report because it is the one most likely
+/// to be reporting noise, and saying so is the finding.
+async fn section_views() {
+    heading("6. Views: what the indirection costs");
+
+    println!("\nA view is a name bound to a predicate over one base table. Reading through");
+    println!("one resolves the name, authorises the *base* table, and ANDs the view's");
+    println!("predicate onto the caller's — so the kernel sees the same query it would");
+    println!("have seen if the caller had sent the predicate. Whether that is true of the");
+    println!("clock as well as of the plan is what this measures.\n");
+
+    let table = events();
+    let kind = table.ordinal_of("kind").expect("kind column");
+
+    // The view's predicate, and the caller's copy of it. One `Expr`, used two
+    // ways, so a difference cannot be a difference between two predicates.
+    let admits = Expr::eq(kind, Value::Str("kind-7".to_owned()));
+    let mut views = Views::new();
+    views.insert("recent".to_owned(), View::new("events", admits.clone()));
+
+    let backend = Backend::open().await;
+    let writer = backend.visible();
+
+    let with_views: Head<_> = slate_headbench::harness::head_serving_views(
+        catalog(),
+        security(),
+        Arc::clone(&writer),
+        Vec::new(),
+        leading().await,
+        Limits::default(),
+        views,
+    );
+    let without: Head<_> = slate_headbench::harness::head(
+        catalog(),
+        security(),
+        Arc::clone(&writer),
+        Vec::new(),
+        leading().await,
+        Limits::default(),
+    );
+
+    let inproc = InProcess::new(catalog(), security(), Arc::clone(&writer), Vec::new());
+    seed(&inproc.writer, &table, TENANT, 1, 2_000).await;
+
+    let serving_views = serve(with_views).await;
+    let serving_plain = serve(without).await;
+    let mut viewed = serving_views.client().await;
+    let mut plain = serving_plain.client().await;
+    warm(&mut viewed).await;
+    warm(&mut plain).await;
+
+    // The caller's own filter, against `events` — and the same read named
+    // through the view instead.
+    //
+    // The view request is built from a `TableDef` called `recent` carrying
+    // `events`' columns, which is not a detail: `query_to_proto` attaches a
+    // schema claim, the server verifies it *under the name the request used*,
+    // and a claim hashed as `events` is refused for a read of `recent`. The
+    // first version of this section renamed the table on the wire message and
+    // was refused by that check — which is the check doing its job, and is
+    // also exactly the declaration `scripts/codegen.py` emits for a view. A
+    // view may not narrow columns, so the two defs differ only in name and id.
+    let as_view = TableDef::builder("recent", TableId(2))
+        .column("tenant_id", ValueType::U64)
+        .column("id", ValueType::U64)
+        .column("kind", ValueType::Str)
+        .column("actor", ValueType::Str)
+        .column("at", ValueType::I64)
+        .nullable_column("note", ValueType::Str)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .build()
+        .expect("the view's declaration is valid");
+    let filtered = query_to_proto(&table, &Query::all().filter(admits.clone()));
+    let through_view = query_to_proto(&as_view, &Query::all());
+
+    // --- sanity: the two return the same rows -----------------------------
+    //
+    // Without this the section could be comparing a read of 80 rows against a
+    // read of none, and the faster one would win for the wrong reason. It has
+    // happened elsewhere in this report and the check is four lines.
+    let direct_rows = rows_of(&mut viewed, &filtered).await;
+    let view_rows = rows_of(&mut viewed, &through_view).await;
+    assert_eq!(
+        direct_rows, view_rows,
+        "the view and the caller's filter must admit the same rows, or the \
+         measurement below compares two different reads"
+    );
+    assert!(
+        direct_rows > 0 && direct_rows < 2_000,
+        "the predicate must admit some rows and not all of them; it admitted {direct_rows}"
+    );
+    println!(
+        "sanity: both reads returned {direct_rows} of 2,000 rows — the same predicate, \
+         reaching the\n        planner from two different sides.\n"
+    );
+
+    // --- 1. through a view, against the caller's own filter ---------------
+    let by_filter = measure!("caller sends the predicate", 100, {
+        rows_of(&mut viewed, &filtered).await
+    });
+    let by_view = measure!("the view carries it", 100, {
+        rows_of(&mut viewed, &through_view).await
+    });
+    show(&by_filter);
+    show(&by_view);
+    println!("  {}", difference(&by_view, &by_filter));
+
+    // --- 2. what declaring a view costs a read that does not use one ------
+    //
+    // Measured A-B-A, which section 1 already found it needs: the two halves
+    // run against *different nodes on different channels*, so anything that
+    // moves between them — a channel still settling, the machine drifting —
+    // lands entirely on the second. The first version reported 71 µs against
+    // a control measured once, and 71 µs is a preposterous price for one
+    // failed lookup in a `BTreeMap` of one. Re-measuring the control at the
+    // end is what tells a real 71 µs from a drift of 71 µs, and the two are
+    // printed side by side rather than averaged, because averaging them would
+    // hide exactly the thing this is checking for.
+    println!();
+    let plain_first = measure!("ordinary read, node declares no view", 100, {
+        rows_of(&mut plain, &filtered).await
+    });
+    let on_viewed = measure!("ordinary read, node declares one view", 100, {
+        rows_of(&mut viewed, &filtered).await
+    });
+    let plain_again = measure!("ordinary read, no view, measured again", 100, {
+        rows_of(&mut plain, &filtered).await
+    });
+    show(&plain_first);
+    show(&on_viewed);
+    show(&plain_again);
+    println!("  {}", difference(&on_viewed, &plain_first));
+    println!(
+        "  {:<44} {}",
+        "→ drift in the control across the pair",
+        duration((plain_again.median() - plain_first.median()).abs())
+    );
+    if (plain_again.median() - plain_first.median()).abs()
+        >= (on_viewed.median() - plain_first.median()).abs()
+    {
+        println!(
+            "  The control moved at least as much between its own two runs as the two\n               nodes differ from each other, so the difference above is the machine and\n               not the view registry."
+        );
+    }
+}
+
+/// Run a query to exhaustion and return how many rows came back.
+///
+/// The count is returned rather than dropped so the sanity check above can use
+/// the same function the measurement uses. A drain that silently returned
+/// nothing would otherwise be the fastest thing in the report.
+///
+/// Named apart from the section-2 `drain`, which takes an already-opened
+/// stream and reports messages and `served_by` as well. This one opens the
+/// call too, because opening it is part of what the view section is timing.
+async fn rows_of(client: &mut RecordsClient<Channel>, query: &pb::Query) -> usize {
+    let mut stream = client
+        .query(principal_request(
+            pb::QueryRequest {
+                transaction: String::new(),
+                query: Some(query.clone()),
+                freshness: wire_freshness(Freshness::Any),
+            },
+            TENANT,
+        ))
+        .await
+        .expect("query")
+        .into_inner();
+    let mut rows = 0;
+    while let Some(message) = stream.message().await.expect("stream") {
+        rows += message.rows.len();
+    }
+    rows
 }

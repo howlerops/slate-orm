@@ -246,7 +246,7 @@ async fn connect_many(address: std::net::SocketAddr, count: usize) -> Vec<Record
             tokio::spawn(async move {
                 for _ in 0..2_000 {
                     let _ = client
-                        .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+                        .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
                         .await
                         .expect("leadership");
                 }
@@ -553,7 +553,7 @@ fn section_scale(rt: &Runtimes) {
     for &level in &sweep {
         let repeated = sweep_point(rt, &clients, level, |mut client, _| async move {
             let ok = client
-                .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+                .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
                 .await
                 .is_ok();
             (client, ok)
