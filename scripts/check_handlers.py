@@ -47,6 +47,24 @@ loudly instead:
    the rule that makes a second view-resolving path a failure rather than a
    silence, and it is the same roster idiom as the rest.
 
+7. **Every "no table named" refusal** is built by a function listed in
+   `NAMES_A_MISSING_TABLE`. The claim it holds up is one a ledger entry made
+   and nothing checked: that teaching *one* function about views fixed the
+   refusal on six paths at once, because `Head::table` is the only place a
+   name-not-found `Status` is built for a handler. `convert.rs` builds two
+   more; they cannot fire for a view only because rule 3 puts an
+   authorisation above every converter call, and a fourth added somewhere
+   that authorises later would go back to calling a declared view a typo.
+
+8. **Every lookup that finds something by comparing `.name()`** is listed in
+   `FINDS_BY_NAME`. The step-1 entry's whole argument — that a view kept out
+   of the `Catalog` is refused by every path that exists, *without a line
+   written* — rests on `Catalog::table_by_name` being the only way a name
+   becomes a `TableDef`. A second one reopens every path at once, and there
+   is already one in `slate-serverd` resolving a view's base table at load,
+   which is exactly the kind of thing that should be named rather than
+   noticed.
+
 None is a proof. A handler can hold a `&TableDef` from one of the accounted
 sites and pass it along, and this will not see it. What they do is make adding
 a *new* unauthorised resolution a failure rather than a silence, which is the
@@ -216,6 +234,16 @@ AUTHORIZED = re.compile(r"authorized_table\(")
 AUTHORIZES = re.compile(r"authorize_\w+\(")
 #: Reading the view registry, which resolves a name the catalog does not hold.
 VIEWS = re.compile(r"self\.views")
+#: A refusal that says a table name is not in this catalog.
+MISSING_TABLE = re.compile(r'"no table named')
+#: A lookup that finds something by comparing its `name()`.
+#:
+#: Matched on the closure rather than on the collection, because the thing that
+#: matters is *resolving by name* and the collection it walks is whatever the
+#: caller had — `tables`, `catalog.tables()`, a slice threaded through three
+#: functions. `find` and `any` both, because an `any` is a resolution whose
+#: answer happens to be a bool and can become a `find` in one edit.
+BY_NAME = re.compile(r"\.(?:find|any)\(\|\w+\|\s*\w+\.name\(\)\s*==")
 
 #: The functions allowed to read the view registry at all.
 #:
@@ -243,6 +271,56 @@ RESOLVES_VIEWS = {
         "the registry only to say a view is a view rather than a typo. Its "
         "return type is `Status`: it cannot hand a caller a `TableDef`, so "
         "widening it is not a way to reach a view"
+    ),
+}
+
+
+#: The functions allowed to build a "no table named" refusal.
+#:
+#: Three, and the shape of the roster is the argument: one of them knows about
+#: views and two cannot be reached with a view's name. A fourth is a decision
+#: about whether that stays true.
+NAMES_A_MISSING_TABLE = {
+    "no_such_table": (
+        "the one that knows about views; it answers `\u0060x\u0060 is a view over "
+        "\u0060y\u0060` for a declared name and this refusal for anything else"
+    ),
+    "join_from_proto": (
+        "a converter resolving each of a join's inputs, and rule 3 holds every "
+        "call to one to authorising first — so by the time it resolves a name, "
+        "that name is a table this caller may read, never a view"
+    ),
+    "aggregate_from_proto_query": "the same, for an aggregate's single input",
+}
+
+# Both converter entries were written from reading and one of them was wrong:
+# the second refusal is in `aggregate_from_proto_query`, not `join_from_proto`,
+# and this rule said so on its first run. That is the rule doing on its own
+# author what it exists to do on everyone else, and it is the reason a roster
+# of names is worth more than a paragraph claiming the same thing.
+
+#: The functions allowed to resolve something by comparing `name()`.
+#:
+#: `Catalog::table_by_name` is deliberately absent: it lives in `slate-schema`,
+#: outside the directories this reads, and it is the one this roster exists to
+#: keep singular. Everything here is a lookup in the *server* crates that had
+#: to be justified against it.
+FINDS_BY_NAME = {
+    "resolve_relation": (
+        "finds a foreign key by name, not a table — the `TableDef` it goes on "
+        "to use comes from `self.table`, which rule 1 already holds"
+    ),
+    "views": (
+        "checks whether a view's name shadows a table's, and produces no "
+        "`TableDef` at all: the answer is a bool and the branch it feeds "
+        "refuses to start"
+    ),
+    "lowered": (
+        "resolves a declared view's base table at load, once, against the "
+        "catalog's own table list — before any request exists and with no "
+        "caller to authorise. It is a second name-to-`TableDef` lookup and it "
+        "is here so that it is a named one; a third would have to argue the "
+        "same case"
     ),
 }
 
@@ -422,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
     bare = 0
     checks = 0
     views = 0
+    missing = 0
+    by_name = 0
 
     for path in files:
         lines = path.read_text().splitlines()
@@ -453,6 +533,34 @@ def main(argv: list[str] | None = None) -> int:
                         f"`authorized_read_source`, or add `{owner}` to "
                         "RESOLVES_VIEWS with the reason it is safe — which is a "
                         "decision about `docs/views.md` §3a, not a formality."
+                    )
+            if MISSING_TABLE.search(line):
+                missing += 1
+                owner = names[at]
+                seen.add(owner)
+                if owner not in NAMES_A_MISSING_TABLE:
+                    problems.append(
+                        f"{path.name}:{at + 1}: `{owner}` builds a "
+                        '"no table named" refusal.\n'
+                        "  A declared view reaching this answers as though the "
+                        "operator mistyped a name they wrote themselves. Route it "
+                        "through `Head::no_such_table`, which consults the view "
+                        f"registry, or add `{owner}` to NAMES_A_MISSING_TABLE with "
+                        "the reason a view's name cannot reach it."
+                    )
+            if BY_NAME.search(line):
+                by_name += 1
+                owner = names[at]
+                seen.add(owner)
+                if owner not in FINDS_BY_NAME:
+                    problems.append(
+                        f"{path.name}:{at + 1}: `{owner}` resolves something by "
+                        "comparing `name()`.\n"
+                        "  `Catalog::table_by_name` is meant to be the only way a "
+                        "name becomes a `TableDef` — that is what makes a view kept "
+                        "out of the catalog refused by every path without a line "
+                        f"written. Use it, or add `{owner}` to FINDS_BY_NAME saying "
+                        "what it looks up and why it is not a second table resolver."
                     )
             if FINGERPRINT.search(line):
                 checks += 1
@@ -514,6 +622,25 @@ def main(argv: list[str] | None = None) -> int:
             "this rule and RESOLVES_VIEWS deliberately — or the field was "
             "renamed. Both need a person, not a pass."
         )
+    elif missing == 0:
+        # `"no table named` is a literal string, and a reworded refusal would
+        # leave this rule matching nothing while every path it guards kept
+        # working — until one of them stopped.
+        problems.append(
+            f"nothing builds a \"no table named\" refusal in {len(files)} file(s), "
+            "so rule 7 checked nothing. The wording moved, or the refusal did; "
+            "either way the roster below is describing something that is not "
+            "there."
+        )
+    elif by_name == 0:
+        # The same, for a spelling: a lookup written `filter(..).next()` or
+        # with a named closure argument matches nothing here.
+        problems.append(
+            f"nothing resolves anything by `name()` in {len(files)} file(s), so "
+            "rule 8 checked nothing. The three known lookups were rewritten into "
+            "a shape this pattern does not see, which is the shape a fourth "
+            "would be written in."
+        )
     elif not converters:
         # The same never-fires reasoning as above, and this rule needs it more.
         # `fingerprint::check` is one literal string; a converter is recognised
@@ -536,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
         (UNAUTHORIZED, "UNAUTHORIZED"),
         (FINGERPRINT_BY_CALLER, "FINGERPRINT_BY_CALLER"),
         (RESOLVES_VIEWS, "RESOLVES_VIEWS"),
+        (NAMES_A_MISSING_TABLE, "NAMES_A_MISSING_TABLE"),
+        (FINDS_BY_NAME, "FINDS_BY_NAME"),
     ):
         for name, reason in listed.items():
             if name not in seen:
@@ -557,7 +686,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(converters)} converters all called from authorised handlers, "
         f"{len(handlers)} wire handlers all authenticating, "
         f"{authenticators} authenticators all rostered, "
-        f"{views} view-registry reads all rostered"
+        f"{views} view-registry reads all rostered, "
+        f"{missing} missing-table refusals all rostered, "
+        f"{by_name} lookups by name all rostered"
     )
     return 0
 

@@ -22,11 +22,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import check_handlers
 
-#: The exemptions the real sources need, plus one converter and one view
-#: resolution. A case whose fixture omits one fails on the stale-entry check —
-#: or, for the converter and the view registry, on the never-fires check —
-#: rather than on what it is testing, so every fixture below defines all of
-#: them.
+#: One function for every entry on every roster in `check_handlers.py`, plus
+#: the two spellings — a converter and a wire handler — that its never-fires
+#: guards look for. A case whose fixture omits one fails on the stale-entry
+#: check, or on a never-fires guard, rather than on what it is testing, so
+#: every fixture below defines all of them.
+#:
+#: The *order* is load-bearing, because three cases below are built by cutting
+#: a slice out of this text: each trimmed function must sit inside the slice
+#: named for the rule it is meant to disarm, and nothing else may. See the
+#: comments on `NO_VIEWS` and `NO_CONVERTER` in `run`.
 PREAMBLE = """\
 impl Head {
     fn authorized_table(&self, name: &str) -> Result<&TableDef, Status> {
@@ -41,6 +46,18 @@ impl Head {
 
     fn query_from_proto_at(query: &Query, table: &TableDef) -> Result<(), Status> {
         fingerprint::check(table, query.schema.as_ref())?;
+        Ok(())
+    }
+
+    fn lowered(views: &Views, tables: &[TableDef]) -> Result<Serving, Fault> {
+        let table = tables.iter().find(|t| t.name() == view.table);
+        Ok(())
+    }
+
+    fn views(declared: &[config::View], tables: &[TableDef]) -> Started<Views> {
+        if tables.iter().any(|t| t.name() == view.name) {
+            return Err(shadowed);
+        }
         Ok(())
     }
 
@@ -68,6 +85,19 @@ impl Head {
         wire: &pb::JoinQuery,
         catalog: &Catalog,
     ) -> Result<Join, Status> {
+        let table = catalog
+            .table_by_name(&query.table)
+            .ok_or_else(|| Status::not_found(format!("no table named `{}`", query.table)))?;
+        Ok(())
+    }
+
+    fn aggregate_from_proto_query(
+        wire: &pb::AggregateQuery,
+        catalog: &Catalog,
+    ) -> Result<Grouped, Status> {
+        let table = catalog
+            .table_by_name(&wire.table)
+            .ok_or_else(|| Status::not_found(format!("no table named `{}`", wire.table)))?;
         Ok(())
     }
 
@@ -436,6 +466,114 @@ impl Authenticator for Known {}
         "RESOLVES_VIEWS lists `serving_views`",
     ),
     (
+        "a function building a missing-table refusal itself is reported",
+        # Rule 7's subject. The refusal is the one `Head::no_such_table` exists
+        # to intercept, and a fourth site building it by hand is how a declared
+        # view goes back to being reported as a name the operator mistyped.
+        """
+    fn step_for(&self, name: &str) -> Result<Step, Status> {
+        let table = self
+            .pool
+            .catalog()
+            .table_by_name(name)
+            .ok_or_else(|| Status::not_found(format!("no table named `{name}`")))?;
+        Ok(table)
+    }
+""",
+        1,
+        "add `step_for` to NAMES_A_MISSING_TABLE",
+    ),
+    (
+        "a tree that builds no missing-table refusal fails, rather than passing",
+        # Rule 7's never-fires guard, and the wording is the whole exposure: the
+        # rule is one literal string, so rewording the refusal — which is an
+        # ordinary, harmless-looking edit — would leave it matching nothing and
+        # printing `ok`. Reworded rather than deleted here, because that is the
+        # edit that actually happens.
+        #
+        # The two converters go stale in the same run and are reported too: they
+        # are on no other roster, so with the wording moved there is nothing
+        # left to see them by. That is the guard's design working, not noise to
+        # suppress — the assertion below names the never-fires message, which is
+        # the only place this case's string comes from.
+        {"a.rs": PREAMBLE.replace("no table named", "unknown table") + "}\n"},
+        1,
+        "so rule 7 checked nothing",
+    ),
+    (
+        "a stale NAMES_A_MISSING_TABLE entry is reported",
+        # One refusal survives so rule 7 still fires; the aggregate converter is
+        # gone, so the finding can only come from the staleness check.
+        {
+            "only.rs": PREAMBLE[
+                : PREAMBLE.index("    fn aggregate_from_proto_query(")
+            ]
+            + PREAMBLE[PREAMBLE.index("    async fn get(") :]
+            + "}\n",
+        },
+        1,
+        "NAMES_A_MISSING_TABLE lists `aggregate_from_proto_query`",
+    ),
+    (
+        "a lookup resolving by `name()` is reported",
+        # Rule 8's subject. `Catalog::table_by_name` being the only way a name
+        # becomes a `TableDef` is what makes a view kept out of the catalog
+        # refused everywhere without a line written; this is the shape that
+        # quietly ends that.
+        """
+    fn text_index(&self, name: &str) -> Option<&IndexDef> {
+        self.indexes.iter().find(|i| i.name() == name)
+    }
+""",
+        1,
+        "add `text_index` to FINDS_BY_NAME",
+    ),
+    (
+        "an `any` that resolves by `name()` is reported too",
+        # The `any` arm of rule 8's pattern, which has no case of its own
+        # otherwise: an `any` is a resolution whose answer happens to be a bool,
+        # and one edit away from a `find`. Dropping `any` from the pattern would
+        # be invisible here without this.
+        """
+    fn shadows(&self, name: &str) -> bool {
+        self.tables.iter().any(|t| t.name() == name)
+    }
+""",
+        1,
+        "add `shadows` to FINDS_BY_NAME",
+    ),
+    (
+        "a tree that resolves nothing by `name()` fails, rather than passing",
+        # Rule 8's never-fires guard. Rewritten into a shape the pattern does
+        # not see — a helper rather than a method call — which is both the way
+        # this rule stops firing and, per its own comment, the shape a fourth
+        # lookup would be written in.
+        {"a.rs": PREAMBLE.replace("|t| t.name()", "|t| name_of(t)") + "}\n"},
+        1,
+        "so rule 8 checked nothing",
+    ),
+    (
+        "a stale FINDS_BY_NAME entry is reported",
+        # `lowered` keeps rule 8 firing; `views` is gone, so the finding can
+        # only come from the staleness check.
+        {
+            "only.rs": PREAMBLE.replace(
+                """    fn views(declared: &[config::View], tables: &[TableDef]) -> Started<Views> {
+        if tables.iter().any(|t| t.name() == view.name) {
+            return Err(shadowed);
+        }
+        Ok(())
+    }
+
+""",
+                "",
+            )
+            + "}\n",
+        },
+        1,
+        "FINDS_BY_NAME lists `views`",
+    ),
+    (
         "a tree with no wire handler at all fails, rather than passing",
         # The never-fires case for rule 5: `Request<pb::` is a spelling, and a
         # crate that aliased the generated module would leave it matching
@@ -493,8 +631,11 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
             ]
             path.write_text(PREAMBLE.replace(converter, "") + "}\n")
         elif body == "NO_VIEWS":
-            # Only the three view functions are trimmed, so the case fails on
-            # rule 6 rather than on a rule it is not named for.
+            # Only the three functions that read `self.views` are trimmed, so
+            # the case fails on rule 6 rather than on a rule it is not named
+            # for. `lowered` and `views` are rule 8's subject and read no
+            # registry, which is why they sit above this slice rather than
+            # among the view functions they live beside in the real tree.
             views = PREAMBLE[
                 PREAMBLE.index("    fn authorized_read_source(") : PREAMBLE.index(
                     "    fn join_from_proto("
