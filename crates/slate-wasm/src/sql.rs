@@ -483,6 +483,26 @@ pub struct Parsed {
 
 /// Parse one statement.
 ///
+/// Where an `OVER (` appears, if one does.
+///
+/// Two tokens rather than the word alone: `over` is not reserved here and a
+/// column could plausibly be called that, while `over` immediately followed by
+/// an open paren is a window clause in every SQL dialect and is nothing else
+/// in this grammar.
+fn window_clause(toks: &[Spanned]) -> Option<usize> {
+    toks.windows(2).find_map(|pair| {
+        let [word, paren] = pair else { return None };
+        match (&word.tok, &paren.tok) {
+            (Tok::Word(name), Tok::Symbol(symbol))
+                if name.eq_ignore_ascii_case("over") && symbol == "(" =>
+            {
+                Some(word.at)
+            }
+            _ => None,
+        }
+    })
+}
+
 /// # Errors
 ///
 /// Returns the position and what was expected, for anything outside the
@@ -493,6 +513,26 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Parsed, SqlError> {
         return Err(SqlError {
             message: "there is nothing to run".to_owned(),
             at: 0,
+        });
+    }
+    // `OVER (` before parsing rather than after, because the word before it is
+    // a function name the grammar does not have — `ROW_NUMBER() OVER (…)`
+    // would otherwise fail at `ROW_NUMBER` with "unknown function", which is
+    // true and unhelpful: the answer is not that the name is wrong, it is that
+    // this front end cannot ask for a window.
+    //
+    // A refusal rather than a gap in the parser, and the distinction matters:
+    // the kernel *has* the operator (`slate_kernel::window`), with
+    // `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and any aggregate over
+    // a partition. What it does not have is a way to ask for one from here —
+    // `QuerySpec` has no window field and neither does the wire. Saying so is
+    // the difference between "not built" and "built, and you cannot reach it",
+    // which are different things to do about it.
+    if let Some(at) = window_clause(&toks) {
+        return Err(SqlError {
+            message: "OVER is not supported by this front end. The kernel does have window                  functions — ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD and any aggregate over                  a partition, with SQL's own frame rule — but nothing can ask for one from                  here: the query spec this compiles to has no window, and neither does the                  gRPC protocol the three clients speak. GROUP BY gives you one row per                  partition where a window gives you one per input row; if the aggregate is                  what you want rather than the per-row value, that is the clause to reach                  for"
+                .to_owned(),
+            at,
         });
     }
     let mut parser = Parser {

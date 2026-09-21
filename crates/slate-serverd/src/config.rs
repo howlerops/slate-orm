@@ -406,6 +406,11 @@ pub(crate) struct LimitSettings {
     /// Rows an `ORDER BY` with no `LIMIT` may materialise.
     #[serde(default)]
     pub(crate) max_sort_rows: Option<usize>,
+    /// Rows a window function may materialise. Separate from `max_sort_rows`
+    /// because no `LIMIT` bounds a window, so raising one says nothing about
+    /// the other.
+    #[serde(default)]
+    pub(crate) max_window_rows: Option<usize>,
 }
 
 /// What the planner is told about the data.

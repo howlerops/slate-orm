@@ -43,6 +43,12 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         offset: 0,
         hint: query.hint,
         compute: query.compute.clone(),
+        // Dropped, and the grouped entry points refuse one before they get
+        // here. A window emits one value per input row and a grouped read
+        // returns groups, so there would be nowhere to put the values — and
+        // `HAVING` and the group sort address the group's ordinal space, in
+        // which a window's ordinal names something else entirely.
+        window: Vec::new(),
         // Not carried, and not silently either: the grouped entry points refuse
         // a cursor before they get here. A cursor names a *row*, and what a
         // grouped read returns is groups — resuming after a row would drop
@@ -55,6 +61,27 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
         // which rows exist for this read at all, so an aggregate that dropped
         // it would count a different set than the scan beside it returns.
         include_deleted: query.include_deleted,
+    }
+}
+
+/// `projection` plus every column the windows read.
+///
+/// `Projection::All` is already everything, so it is returned unchanged rather
+/// than expanded into an explicit set — which would look identical and would
+/// stop `wanted` short-circuiting the decoder.
+fn widened(projection: &Projection, windows: &[crate::window::Window]) -> Projection {
+    if windows.is_empty() {
+        return projection.clone();
+    }
+    match projection.columns() {
+        None => projection.clone(),
+        Some(columns) => {
+            let mut wider: BTreeSet<Ordinal> = columns.iter().copied().collect();
+            for window in windows {
+                window.collect_columns(&mut wider);
+            }
+            Projection::Columns(wider.into_iter().collect())
+        }
     }
 }
 
@@ -545,12 +572,36 @@ impl<'a> SecuredReads<'a> {
         // that fails — so the caller learns on page two that page one was
         // never resumable, which is the worst moment to find out and the one
         // `Query::paging` exists to move earlier.
+        // A window reads columns the caller may not have asked to see — what
+        // it partitions by, what it orders by, and what it aggregates. Those
+        // have to be decoded, for the reason `plan_hinted` pins the sort keys:
+        // a column left out of the projection reads back as null on every row,
+        // which here would put the whole result in one partition and answer
+        // without saying so. Widening the projection rather than adding a
+        // parameter, because "these columns must come off the row" is exactly
+        // what a projection says, and because the widening must also stop a
+        // covering index that lacks them being chosen.
+        let projection = &widened(&query.projection, &query.window);
+        // A window over a page is a window over the wrong set. `ROW_NUMBER()`
+        // would restart at 1 on every page and a running total would restart
+        // at zero — both plausible-looking numbers computed over a partition
+        // the caller never asked about. The same argument as
+        // `no_cursor_on_groups`, and it holds for `paging` as well as for a
+        // cursor already in hand: a first page that answers and a second that
+        // refuses is the failure `Query::paging` exists to move earlier.
+        if (query.paging || query.after.is_some()) && !query.window.is_empty() {
+            return Err(KernelError::InvalidCursor {
+                table: table.name().to_owned(),
+                reason: "this read computes a window, which is defined over every selected row.                          A page is not every selected row, so the window would restart on each                          one and report a number for the page as if it were for the query"
+                    .to_owned(),
+            });
+        }
         if !query.paging {
             return Ok(plan_hinted(
                 table,
                 secured,
                 query.order,
-                &query.projection,
+                projection,
                 &self.statistics.table(table),
                 query.planning_limit(),
                 &query.sort,
@@ -1027,16 +1078,7 @@ impl<'a> SecuredReads<'a> {
         query: &Query,
     ) -> Result<QueryCursor<'a>> {
         let plan = self.plan(context, table, query)?;
-        let cursor = QueryCursor::open(
-            self.limits,
-            self.snapshot,
-            table,
-            plan,
-            query.limit,
-            query.offset,
-            query.compute.clone(),
-        )
-        .await?;
+        let cursor = QueryCursor::open(self.limits, self.snapshot, table, plan, query).await?;
         Ok(cursor.with_window(query.limit, query.offset))
     }
 }

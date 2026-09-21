@@ -212,6 +212,13 @@ fn any_query() -> impl Strategy<Value = Query> {
                     offset,
                     hint,
                     compute: Vec::new(),
+                    // Pinned empty because a window does not cross the wire:
+                    // generating one would make every case fail the round
+                    // trip, and reporting that as a protocol bug would be
+                    // wrong — there is no message for it to be lost from. It
+                    // becomes generated when there is, the way
+                    // `include_deleted` below did.
+                    window: Vec::new(),
                     // `paging` is implied by `after` on the way in and is set by
                     // `Query::after`, so a generated `after` must carry it or the
                     // round trip compares a value the builder cannot produce.

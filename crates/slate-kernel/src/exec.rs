@@ -26,7 +26,7 @@ use crate::error::{KernelError, Result};
 use crate::expr::Expr;
 use crate::limits::ExecutionLimits;
 use crate::plan::{Access, Plan};
-use crate::query::{NullsOrder, SortKey};
+use crate::query::{NullsOrder, Query, SortKey};
 use crate::read::{self, IndexCursor, RawRow, RowCursor};
 use crate::scalar::Scalar;
 use crate::store::{KeyRange, KvSnapshot, ScanOrder};
@@ -437,20 +437,26 @@ async fn next_index_entry<'a>(
 }
 
 impl<'a> QueryCursor<'a> {
-    /// Open a cursor for `plan` on `table`, returning at most `limit` rows
-    /// after discarding `offset`.
+    /// Open a cursor for `plan` on `table`.
     ///
-    /// The window is taken here rather than applied afterwards because a sort
-    /// needs it: sorting to return ten rows should not hold a million.
+    /// Takes the whole [`Query`] rather than the four fields it reads out of
+    /// it, which is how it stays under clippy's argument ceiling — and is the
+    /// better shape anyway: `limit` and `offset` are needed *here*, before the
+    /// caller trims, because a sort needs them (sorting to return ten rows
+    /// should not hold a million) and a window needs them **not** to be
+    /// applied (see below). Passing them separately invited a caller to pass a
+    /// different pair than the query carried.
     pub(crate) async fn open(
         limits: ExecutionLimits,
         snapshot: &'a dyn KvSnapshot,
         table: &'a TableDef,
         plan: Plan,
-        limit: Option<usize>,
-        offset: usize,
-        compute: Vec<Scalar>,
+        query: &Query,
     ) -> Result<Self> {
+        let limit: Option<usize> = query.limit;
+        let offset: usize = query.offset;
+        let compute: Vec<Scalar> = query.compute.clone();
+        let windows: &[crate::window::Window] = &query.window;
         // What has to come off the row, which is the answer's columns plus
         // whatever the computed values read. `plan.output_columns` is the
         // answer; the difference is put back to null once the computed values
@@ -470,6 +476,18 @@ impl<'a> QueryCursor<'a> {
                 transient.push(input);
             }
         }
+        // A window's own columns are *not* handled here, and the asymmetry
+        // with `compute` above is deliberate. A computed value's inputs are
+        // put back to null because an expression index can hold `lower(title)`
+        // without holding `title`, so a covering scan of it physically cannot
+        // return the column and no other path may either — the row's contents
+        // would otherwise depend on its plan. No index holds a window value,
+        // so every access path can produce what a window partitions by, and
+        // the rule that applies instead is the one already written for sort
+        // keys: a column the query needs is decoded and returned even when the
+        // projection did not name it. `SecuredReads::widened` is what puts
+        // them in the projection, one layer up, so the planner costs them and
+        // refuses a covering index that lacks them.
 
         // Which computed value the chosen index's entries hold outright, for a
         // covering scan of an expression index. Answered by the same function
@@ -553,6 +571,40 @@ impl<'a> QueryCursor<'a> {
             skipped: 0,
             yielded: 0,
         };
+
+        // A window has to see every selected row before it can answer for any
+        // of them, so it runs its own materialisation and the sort below is
+        // skipped — not reordered around, skipped, because the two disagree
+        // about the `limit`.
+        //
+        // `ORDER BY x LIMIT 10` keeps the best ten and throws the rest away.
+        // `ROW_NUMBER() OVER (…) … LIMIT 10` must number **every** row and
+        // return the first ten of the result, which is a different set
+        // whenever the window's order and the query's differ — and the same
+        // set for the wrong reason when they agree, which is worse, because
+        // the bug only shows up on the query nobody wrote yet. So the rows are
+        // collected in full, the windows are computed, the query's own sort is
+        // applied to the widened rows, and `with_window` trims afterwards.
+        if !windows.is_empty() {
+            let mut rows = Vec::new();
+            while let Some(row) = cursor.next_admitted().await? {
+                if rows.len() >= limits.max_window_rows {
+                    return Err(KernelError::WindowTooLarge {
+                        limit: limits.max_window_rows,
+                    });
+                }
+                rows.push(row);
+            }
+            let mut rows = crate::window::evaluate(windows, rows, limits)?;
+            // After the windows, so a query may order by a value one produced
+            // — `ORDER BY rank` — which is the whole point of computing it.
+            if let Some(keys) = &plan.sort {
+                rows.sort_by(|a, b| compare_rows(a, b, keys));
+            }
+            cursor.source = Source::Sorted(rows.into_iter());
+            cursor.residual = Arc::new(Expr::True);
+            return Ok(cursor);
+        }
 
         // No access path produced the requested order, so the rows have to be
         // collected and sorted. This is the one place the cursor stops being a

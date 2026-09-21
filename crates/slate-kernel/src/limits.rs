@@ -6,7 +6,7 @@
 //! state proportional to the data rather than to the answer, and until now
 //! nothing else had one.
 //!
-//! Three things do:
+//! Four things do:
 //!
 //! - `GROUP BY` holds one entry per distinct key. Grouping a large table by a
 //!   unique column is a request-sized copy of that table.
@@ -15,6 +15,12 @@
 //! - `ORDER BY` with no `LIMIT` materialises the whole result before the first
 //!   row. With a limit it uses a bounded heap, so the mitigation exists and
 //!   simply is not reachable without one.
+//! - A window function holds every selected row, and unlike the sort it holds
+//!   them whether or not there is a `LIMIT`: the window is computed before the
+//!   limit applies, because `ROW_NUMBER() OVER (…) … LIMIT 10` has to number
+//!   the rows before it can know which ten. There is no bounded form to fall
+//!   back to, which is why this one has its own ceiling rather than borrowing
+//!   the sort's.
 //!
 //! # Refused, not killed
 //!
@@ -51,6 +57,15 @@ pub const DEFAULT_DISTINCT_LIMIT: usize = 1_000_000;
 /// because a row here is the answer the caller asked for, not bookkeeping.
 pub const DEFAULT_SORT_LIMIT: usize = 5_000_000;
 
+/// Rows a window function may materialise.
+///
+/// The same order as [`DEFAULT_SORT_LIMIT`] and for the same reason — these
+/// are the caller's own rows rather than bookkeeping — but a separate number,
+/// because a deployment that raised the sort ceiling because its sorts are
+/// bounded by a `LIMIT` has said nothing about windows, which no `LIMIT`
+/// bounds.
+pub const DEFAULT_WINDOW_LIMIT: usize = 5_000_000;
+
 /// Per-request ceilings on the operators that hold unbounded state.
 ///
 /// [`Default`] is the three constants in this module. Every field is a hard
@@ -64,6 +79,8 @@ pub struct ExecutionLimits {
     pub max_distinct: usize,
     /// Rows an unlimited `ORDER BY` may hold. See [`DEFAULT_SORT_LIMIT`].
     pub max_sort_rows: usize,
+    /// Rows a window function may hold. See [`DEFAULT_WINDOW_LIMIT`].
+    pub max_window_rows: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -83,6 +100,7 @@ impl ExecutionLimits {
             max_groups: DEFAULT_GROUP_LIMIT,
             max_distinct: DEFAULT_DISTINCT_LIMIT,
             max_sort_rows: DEFAULT_SORT_LIMIT,
+            max_window_rows: DEFAULT_WINDOW_LIMIT,
         }
     }
 }
@@ -99,6 +117,7 @@ impl ExecutionLimits {
             max_groups: usize::MAX,
             max_distinct: usize::MAX,
             max_sort_rows: usize::MAX,
+            max_window_rows: usize::MAX,
         }
     }
 }

@@ -1563,6 +1563,12 @@ pub fn query_from_proto_at(
             offset: query.offset as usize,
             hint,
             compute,
+            // Not on the wire yet. A window is a kernel operator with no
+            // protocol message, so a client cannot ask for one and this is
+            // empty on every request rather than sometimes — which is what
+            // makes the omission a missing feature rather than a silently
+            // dropped field. See the `F2a` row in `docs/orm-comparison.md`.
+            window: Vec::new(),
             after,
             // The kernel raises every cursor refusal on a read that says it is
             // paging, cursor or not — so the first page of an unpageable read

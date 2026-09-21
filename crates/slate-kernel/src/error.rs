@@ -379,6 +379,45 @@ pub enum KernelError {
         /// The limit that was passed.
         limit: usize,
     },
+    #[error(
+        "a window function selected more than {limit} rows; \
+         filter first, or raise the limit — a LIMIT does not help, because \
+         the window is computed before it applies"
+    )]
+    /// A window function selected more rows than the node will materialise.
+    ///
+    /// Unlike [`KernelError::SortTooLarge`] there is no bounded alternative to
+    /// point the caller at: a window has to see its whole partition, and a
+    /// `LIMIT` cannot be pushed past it without changing the answer.
+    WindowTooLarge {
+        /// The limit that was passed.
+        limit: usize,
+    },
+    #[error(
+        "{function} needs an ORDER BY inside its OVER clause; \
+         without one there is no order to number, rank or step through"
+    )]
+    /// A window function that has no meaning without an order.
+    WindowNeedsOrder {
+        /// What was asked for.
+        function: &'static str,
+    },
+    #[error(
+        "COUNT(DISTINCT) cannot run over an ordered window; \
+         the running form would hold one copy of the value set per peer group"
+    )]
+    /// A running `COUNT(DISTINCT)`, which is quadratic in the partition.
+    ///
+    /// The whole-partition form — `OVER (PARTITION BY …)` with no `ORDER BY` —
+    /// is one set for the partition and is allowed.
+    RunningDistinctCount,
+    #[error("{function} needs a non-zero offset; zero is the current row")]
+    /// `LAG` or `LEAD` at offset zero, which is a column reference spelled
+    /// obscurely and is much more likely a mistake than an intention.
+    WindowOffsetZero {
+        /// What was asked for.
+        function: &'static str,
+    },
 
     /// A predicate write matched more rows than the caller allowed it to.
     ///

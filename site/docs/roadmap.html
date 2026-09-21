@@ -254,7 +254,20 @@
           <tr>
             <td>Window functions</td>
             <td>SQLAlchemy, Drizzle, Diesel</td>
-            <td><strong>Still missing.</strong> A new plan operator, not a new expression.</td>
+            <td>
+              <strong>Built in the kernel, not yet reachable.</strong>
+              <code>ROW_NUMBER</code>, <code>RANK</code>,
+              <code>DENSE_RANK</code>, <code>LAG</code>, <code>LEAD</code> and
+              any aggregate over a partition, following SQL&rsquo;s own frame
+              rule &mdash; the whole partition without an <code>ORDER BY</code>,
+              a running value through the current row&rsquo;s peers with one.
+              It had to be a new operator rather than a new aggregate:
+              <code>GROUP BY</code> folds a row into its group and drops it,
+              and a window keeps every row. What is left is the asking:
+              there is no message for a window in the protocol the three
+              clients speak, so the SQL front end refuses <code>OVER</code> by
+              name and says where the gap is.
+            </td>
           </tr>
           <tr>
             <td>CTEs and recursive queries</td>

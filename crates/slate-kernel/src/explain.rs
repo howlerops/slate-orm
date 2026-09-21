@@ -38,6 +38,15 @@ pub struct Explanation {
     /// The expensive part is not the comparison but the materialisation: a
     /// sorted plan cannot return its first row until it has found its last.
     pub sorts: bool,
+    /// How many window functions the executor computes.
+    ///
+    /// A count rather than a boolean, unlike `sorts`, because the number is
+    /// what an operator is deciding on: each one is a separate permutation of
+    /// the materialised rows unless it shares a specification with another,
+    /// and "this plan computes four windows" reads very differently from
+    /// "this plan computes one". A non-zero value also implies the whole
+    /// result is held — see [`Explanation::streams`], which reports that.
+    pub windows: usize,
     /// The columns this plan decodes: the projection, plus whatever the
     /// residual predicate reads, since those are decoded anyway.
     ///
@@ -166,6 +175,7 @@ impl Explanation {
             limit: query.limit,
             offset: query.offset,
             sorts: plan.sort.is_some(),
+            windows: query.window.len(),
             decodes: plan.output_columns.ordinals(),
         }
     }
@@ -177,16 +187,28 @@ impl Explanation {
     }
 
     /// Whether the plan streams, rather than buffering everything first.
+    ///
+    /// A window buffers unconditionally — it cannot answer for its first row
+    /// until it has seen its last — so a plan carrying one does not stream
+    /// even when the access path already gives the requested order and
+    /// `sorts` is therefore false.
     #[must_use]
     pub const fn streams(&self) -> bool {
-        !self.sorts
+        !self.sorts && self.windows == 0
     }
 }
 
 impl fmt::Display for Explanation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Outermost operator first, so the line reads right to left in the
+        // order things happen. A window is computed *before* the query's
+        // `ORDER BY` — that is SQL's order and it is why a `LIMIT` cannot be
+        // pushed past it — so the sort is the outer of the two.
         if self.sorts {
             f.write_str("Sort -> ")?;
+        }
+        if self.windows > 0 {
+            write!(f, "Window x{} -> ", self.windows)?;
         }
         write!(
             f,
