@@ -23,7 +23,13 @@ changed the answer to the last of them.
 > searching unhinted, for the reason §6 measures.
 > In the SQL front end: `WHERE title CONTAINS 'the heaven'`, infix, with a
 > text index on the workbench's `books`.
-> **No search box in the demo's web UI**, which is the last surface.
+> **No search box in the demo's web UI, and that is not a gap.** The UI calls
+> 11 of the adapters' 24 endpoints; windows, chains, nearest-neighbour,
+> relationships, paging and purge are all conformance-only too. Its job is the
+> SDK switcher and the identity switcher — same query three ways, and what the
+> *database* grants — while the conformance runner is what covers the surface.
+> A search box without a window panel beside it would make the UI less
+> coherent, not more.
 
 ## 1. One place decides how many entries a row writes
 
