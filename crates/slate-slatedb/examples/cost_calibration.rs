@@ -23,6 +23,19 @@
 //! *ratio*: whether a plan the model calls twice as expensive really does
 //! twice the work. That is the part the planner's decisions rest on, and it is
 //! measurable without a cloud account.
+//!
+//! **These GET counts are warm-cache counts, and that was not said until
+//! now.** The store is opened once below and never reopened, and `analyze`
+//! scans the whole table before the first case runs — so every case after it
+//! reads blocks SlateDB already holds. The effect is not small: the same
+//! 400-row index equality measured here at **27 GETs** costs **406** in
+//! `ascending_walk.rs`, which reopens the store before each arm. Whether the
+//! recorded `POINT_READ_COST` of 3.0, from "400 rows reached by index cost
+//! 1,217 requests", is a cold number, a warm one, or one from a fixture that
+//! no longer exists is not settled here; what is settled is that this file
+//! cannot be the thing that settles it. Nothing is changed in it for that
+//! reason: its numbers are quoted in `docs/performance.md` and re-measuring
+//! them properly is its own piece of work, named in the ledger.
 
 // Benchmark code, and meant to panic if an assumption about the fixture
 // breaks: a silently short result table would be worse than a stack trace.

@@ -232,13 +232,38 @@ say rather than a faster way to say an old one. What the access path costs is a
 separate question from what the predicate means, and conflating them is what
 the withdrawn argument did.
 
-2. **Whether `POINT_READ_COST` is right for this walk.** It was calibrated on
-   400 rows reached through an ordinary index, whose entries are in *column*
-   order, so the row keys are scattered. Under one term of an inverted index
-   the primary keys are ascending, and ascending reads may coalesce into far
-   fewer block fetches. That is a plausible reason the text path is cheaper
-   than the model says — and it is unmeasured, so the model is not told about
-   it.
+2. ~~**Whether `POINT_READ_COST` is right for this walk.** It was calibrated
+   on 400 rows reached through an ordinary index, whose entries are in
+   *column* order, so the row keys are scattered. Under one term of an
+   inverted index the primary keys are ascending, and ascending reads may
+   coalesce into far fewer block fetches.~~ **Measured, and the premise was
+   wrong.** An index entry is `0x02 <index id> <tenant?> <indexed tuple>
+   <primary key tuple>`, so under *one* indexed value an ordinary index's
+   primary keys already ascend — an equality and a term produce the same shape
+   of walk, and there was no difference for a second constant to capture.
+
+   `crates/slate-slatedb/examples/ascending_walk.rs` holds the two apart. Four
+   arms return the same 400 rows over 200,000, each from a freshly reopened
+   store so no arm reads what the one before it cached:
+
+   | arm | GETs per row |
+   | --- | --- |
+   | spread (every 500th row), ordinary index | 1.015, 1.015, 1.015 |
+   | spread, inverted index | 1.015, 1.015, 1.015 |
+   | dense (one contiguous run), ordinary index | 0.048, 0.048, 0.043 |
+   | dense, inverted index | 0.048, 0.043, 0.048 |
+
+   Three runs. **The index's kind changes nothing** — the spread arms are
+   identical to the request, and the dense arms differ by less than they
+   differ between runs of themselves. What moves the number is **density**,
+   how many table rows separate consecutive matches, by a factor of 21. That
+   is a property of the predicate, not of the index, and the model does not
+   know it for *either* kind: `POINT_READ_COST` is a constant where the
+   measurement is a range from 1.015 to 0.043.
+
+   So the text path needs no special constant, and the case for a
+   density-aware read cost — which would change ordinary index plans far more
+   often than text ones — is now a measurement rather than an intuition.
 
 ## What this does not do
 
