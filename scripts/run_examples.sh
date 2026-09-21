@@ -3,7 +3,7 @@
 #
 #     sh scripts/run_examples.sh <crate> [--smoke]
 #
-# Two crates here hold benchmarks that `cargo` builds and nothing runs.
+# Four crates here hold benchmarks that `cargo` builds and nothing ran.
 # `slate-headbench`'s five had four broken at once — three by `leadership`
 # gaining authentication, a fourth by `EXPLAIN` becoming privileged — and were
 # found only when #265 ran them. `slate-slatedb`'s eight are where the
@@ -56,9 +56,18 @@ binaries_dir=${BINARIES_DIR:-$root/target/debug/examples}
 # How many each crate should have, so moving one out is a failure rather than a
 # smaller green run. A number per crate rather than one shared floor, because
 # "at least one" would not catch the case this is for.
+#
+# `scripts/check_examples_roster.py` keeps these four numbers equal to what is
+# on disk, and requires a line here for every member that has an `examples/`
+# directory at all. That second rule is why there are four and not two: the
+# last two crates were added when the guard reported them, and they were in
+# the state `slate-headbench` was in before #265 — built by clippy, run by
+# nothing. Unlike that crate, all five of theirs already worked.
 case "$crate" in
     slate-headbench) least=5 ;;
     slate-slatedb) least=8 ;;
+    slate-kernel) least=4 ;;
+    slate-orm) least=1 ;;
     *) echo "no expected example count for $crate; add one to run_examples.sh" >&2; exit 2 ;;
 esac
 

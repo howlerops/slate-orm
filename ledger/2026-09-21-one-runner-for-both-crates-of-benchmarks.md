@@ -128,11 +128,28 @@ of #269 and #270 and is not closed by a smoke run.
 fixed here, because the fix is a guard on the *next* run — a marker file, or a
 `git status` check — and it belongs to that script's own task.
 
-**The handshake roster is one entry and cannot be checked for staleness.**
+~~**The handshake roster is one entry and cannot be checked for staleness.**
 `check_demo_surface.py` reports a roster entry naming something that no longer
 exists; this one would need to know that `slate-slatedb/s3_server` is still an
-example, which the floor already half-covers and nothing states directly.
+example, which the floor already half-covers and nothing states directly.~~
 
-**The floors are two numbers in a `case`.** Add a third crate and the script
+~~**The floors are two numbers in a `case`.** Add a third crate and the script
 refuses it by name, which is deliberate, and nothing tells you the number for
-an existing crate is still the right one beyond the directory disagreeing.
+an existing crate is still the right one beyond the directory disagreeing.~~
+
+> **Both closed, by #274, and the second one was wrong about the shape of the
+> risk.** `scripts/check_examples_roster.py` keeps every floor equal to the
+> directory's count and checks the handshake roster in both directions — an
+> example that never returns and is not rostered, and a rostered name that is
+> gone, runs to completion, or prints a different line.
+>
+> The paragraph above worried about *adding a third crate*, and said the
+> script refusing it by name was deliberate. It is, and it is not the
+> protection it sounds like: nothing ever calls the runner with a crate it
+> does not know, so the refusal fires for nobody. There were already **four**
+> crates with an `examples/` directory and the script named two —
+> `slate-kernel`'s four benchmarks and `slate-orm`'s one tour were built by
+> `cargo clippy --all-targets` and run by nothing, the same defect as #265 and
+> #271. The guard's first run reported them. Unlike `slate-headbench`, where
+> running five for the first time found four broken, all five of these
+> already worked.

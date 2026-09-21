@@ -99,6 +99,8 @@ conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
 demo-surface|.|python3 scripts/check_demo_surface.py
 demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
+example-roster|.|python3 scripts/check_examples_roster.py
+example-roster-guard|.|python3 scripts/test_check_examples_roster.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
 proto-copies|.|python3 scripts/check_proto_copies.py

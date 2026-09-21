@@ -82,6 +82,18 @@ ELSEWHERE = {
         "eight examples, most of them over a real S3 server in the process — "
         "minutes, and one of them is a server"
     ),
+    # These two are the fast ones — about thirty seconds between them in a
+    # debug build — and they are still not in `check.sh`, because the cost
+    # that matters is the *build*, not the run. `check.sh` needs no built
+    # binary, which is the whole reason it is worth running before every
+    # commit; `cargo build -p slate-kernel --examples` from cold is minutes.
+    "sh scripts/run_examples.sh slate-kernel --smoke": (
+        "four examples, and building them is a cargo build — `check.sh` "
+        "needs no built binary, which is what makes it cheap"
+    ),
+    "sh scripts/run_examples.sh slate-orm --smoke": (
+        "the same, for the ORM's one end-to-end tour"
+    ),
 }
 
 #: Multi-line `run: |` blocks, by the `name:` above them.
