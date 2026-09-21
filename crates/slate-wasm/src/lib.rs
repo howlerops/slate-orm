@@ -51,6 +51,7 @@ use slate_kernel::{
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
+    window::{Window as KernelWindow, WindowFunction},
 };
 use slate_schema::{Ordinal, Row, TableDef};
 use slate_tuple::Value;
@@ -145,6 +146,55 @@ pub struct QuerySpec {
     /// having cannot — the group it tests does not exist until every row is in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub having: Vec<FilterSpec>,
+    /// Values computed over a partition, one per input row, appended after the
+    /// computed ones — so the `i`th sits at ordinal
+    /// `columns().len() + compute.len() + i` and everything downstream, a sort
+    /// key included, addresses it the ordinary way.
+    ///
+    /// **After** the computed values rather than before, because a window may
+    /// partition by or order on one and a computed value may not read a
+    /// window. The dependency runs one way, so the layout does too.
+    ///
+    /// Mutually exclusive with a grouping: `GROUP BY` folds rows away and a
+    /// window answers per row, so a spec carrying both is two answers to one
+    /// question. [`build`] refuses it rather than dropping one, which is what
+    /// the kernel's own `narrowed` does for the grouped path and is correct
+    /// there and silent here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub window: Vec<WindowSpec>,
+}
+
+/// One window function and the `OVER (…)` clause it is computed under.
+///
+/// The shape mirrors the gRPC `Window` rather than the kernel's enum, for the
+/// reason every other spec in this file mirrors the wire: this is what a UI
+/// sends over JSON, and a tagged union is not something a hand-written panel
+/// or a JSON literal produces comfortably. The kernel's own refusals —
+/// an unordered `RANK`, a running `COUNT(DISTINCT)`, an offset of zero — are
+/// left to `Window::new`, so there is one statement of each rule.
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WindowSpec {
+    /// `row_number`, `rank`, `dense_rank`, `lag`, `lead`, or `aggregate`.
+    pub function: String,
+    /// What to aggregate, when `function` is `aggregate`. Its `input` is
+    /// ignored: a window here is over one table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<AggregateSpec>,
+    /// The column `lag` and `lead` read. Ignored by every other function,
+    /// and *not* skipped when zero, because ordinal 0 is a real column.
+    pub column: u32,
+    /// How many rows back (`lag`) or forward (`lead`). Zero is refused by the
+    /// kernel — it is the current row spelled obscurely.
+    pub offset: u64,
+    /// `PARTITION BY`. Empty is one partition over the whole result, which is
+    /// what SQL means by omitting the clause — not one partition per row.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub partition_by: Vec<u32>,
+    /// The window's own `ORDER BY`, which is not the query's: it decides peer
+    /// groups and turns an aggregate's frame into a running one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<SortSpec>,
 }
 
 /// For `skip_serializing_if`, which needs a path rather than a closure.
@@ -1695,7 +1745,14 @@ impl Playground {
                             // header has to cover the whole row either way.
                             let mut headers: Vec<String> =
                                 t.columns().iter().map(|c| c.name().to_owned()).collect();
-                            headers.extend((0..spec.compute.len()).map(|i| {
+                            // The computed values and then the windows, in
+                            // the order the row carries them — one `extend`
+                            // over both counts, because a header list that
+                            // stops short of the row's width leaves the last
+                            // columns unlabelled and one that overshoots
+                            // labels cells that are not there.
+                            let extra = spec.compute.len() + spec.window.len();
+                            headers.extend((0..extra).map(|i| {
                                 column_header(
                                     u32::try_from(t.columns().len() + i).unwrap_or(0),
                                     &t,
@@ -2257,6 +2314,26 @@ fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
         query = query.computing(computes(&spec.compute, table)?);
     }
 
+    // After the computed values, because a window may partition by or order on
+    // one and its own ordinal is counted past them. Refused beside a grouping
+    // rather than dropped: the kernel's `narrowed` drops a window on the way
+    // into a grouped read, which is right for the kernel — a window over the
+    // rows going *into* a fold is a value nobody sees — and would be silent
+    // here, where the reader wrote both and one of them just stopped
+    // happening.
+    if !spec.window.is_empty() {
+        if !spec.group_by.is_empty() || !spec.aggregates.is_empty() {
+            return Err(
+                "a window and a GROUP BY answer different questions: a grouping \
+                        returns one row per group and a window returns one value per input \
+                        row, so a query asking for both has nowhere to put the window's \
+                        answer. Keep one."
+                    .to_owned(),
+            );
+        }
+        query = query.windowing(windows(&spec.window, spec.compute.len(), table)?);
+    }
+
     // `filter` and `filters` are both accepted and both ANDed in. The single
     // form is not deprecated shorthand — it is what a one-condition panel
     // sends, and refusing it would break the shape this binding shipped with.
@@ -2791,6 +2868,117 @@ fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate
     Ok(out)
 }
 
+/// Lower the UI's window list onto the kernel's.
+///
+/// `computes` is how many computed values the query carries, which is what
+/// makes an ordinal past the table's own columns legal here: a window may
+/// partition by or order on `hour(pickup_time)`, and that column exists only
+/// because the query computes it. Checked rather than trusted, because an
+/// ordinal past the row's width reads a value that is not there — which the
+/// kernel answers as null rather than refusing, and a column of nulls is
+/// indistinguishable on screen from a partition that happened to be empty.
+fn windows(
+    specs: &[WindowSpec],
+    computes: usize,
+    table: &TableDef,
+) -> Result<Vec<KernelWindow>, String> {
+    let width = table.columns().len() + computes;
+    let check = |ordinal: u32, what: &str| -> Result<Ordinal, String> {
+        if ordinal as usize >= width {
+            return Err(format!(
+                "a window\'s {what} names ordinal {ordinal}, and this query is {width} \
+                 values wide"
+            ));
+        }
+        Ok(Ordinal(ordinal as usize))
+    };
+    let mut out = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let offset = usize::try_from(spec.offset).unwrap_or(usize::MAX);
+        let function = match spec.function.as_str() {
+            "row_number" => WindowFunction::RowNumber,
+            "rank" => WindowFunction::Rank,
+            "dense_rank" => WindowFunction::DenseRank,
+            "lag" => WindowFunction::Lag {
+                column: check(spec.column, "column")?,
+                offset,
+            },
+            "lead" => WindowFunction::Lead {
+                column: check(spec.column, "column")?,
+                offset,
+            },
+            "aggregate" => {
+                let Some(aggregate) = &spec.aggregate else {
+                    return Err(
+                        "a window aggregate has no aggregate: `aggregate` names the kind \
+                         and the column, and without it there is nothing to compute"
+                            .to_owned(),
+                    );
+                };
+                // Through the same lowering a `GROUP BY` uses, so `sum(x)`
+                // means one thing whichever clause asked for it and a new
+                // aggregate has one place to be added.
+                let mut one = aggregates(std::slice::from_ref(aggregate), table)?;
+                WindowFunction::Over(one.remove(0))
+            }
+            other => {
+                return Err(format!(
+                    "no such window function: `{other}` — this has row_number, rank, \
+                     dense_rank, lag, lead and aggregate"
+                ));
+            }
+        };
+        let mut partition = Vec::with_capacity(spec.partition_by.len());
+        for ordinal in &spec.partition_by {
+            partition.push(check(*ordinal, "PARTITION BY")?);
+        }
+        let mut order = Vec::with_capacity(spec.order.len());
+        for key in &spec.order {
+            let column = check(key.column, "ORDER BY")?;
+            order.push(if key.descending {
+                SortKey::desc(column)
+            } else {
+                SortKey::asc(column)
+            });
+        }
+        // The specifications with no meaning — an unordered rank, a running
+        // COUNT(DISTINCT), an offset of zero — are refused by `Window::new`
+        // rather than restated here. One statement of each rule, in the layer
+        // that has to enforce it anyway.
+        out.push(KernelWindow::new(function, partition, order).map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// What to print above a window's column.
+///
+/// The call, and the word `over`. Not the whole clause: a partition and an
+/// order can be several columns each, and a header wide enough to hold them
+/// pushes every other column off the screen — which is a worse answer to
+/// "which column is this" than the short form plus the spec panel, where the
+/// clause is printed in full.
+fn window_header(spec: &WindowSpec, table: &TableDef) -> String {
+    let named = |ordinal: u32| -> String {
+        table
+            .column(Ordinal(ordinal as usize))
+            .map_or_else(|| ordinal.to_string(), |c| c.name().to_owned())
+    };
+    let call = match spec.function.as_str() {
+        "lag" | "lead" => format!("{}({}, {})", spec.function, named(spec.column), spec.offset),
+        "aggregate" => spec.aggregate.as_ref().map_or_else(
+            || "aggregate()".to_owned(),
+            |a| match a.kind.as_str() {
+                "count" => "count(*)".to_owned(),
+                "count_column" => format!("count({})", named(a.column)),
+                "count_distinct" => format!("count(distinct {})", named(a.column)),
+                other => format!("{other}({})", named(a.column)),
+            },
+        ),
+        other => format!("{other}()"),
+    };
+    format!("{call} over")
+}
+
 /// The second argument a computed column was written with, if any.
 ///
 /// Part of the header because it is part of the identity: `hour(t)`,
@@ -2824,6 +3012,13 @@ fn zone_suffix(spec: &ComputeSpec) -> String {
 fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
     if let Some(column) = table.column(Ordinal(ordinal as usize)) {
         return column.name().to_owned();
+    }
+    // Past the table's own columns and past the computed ones is a window, in
+    // the order the query asked for them — the layout `WindowSpec` documents.
+    if let Some(i) = (ordinal as usize).checked_sub(table.columns().len() + spec.compute.len())
+        && let Some(window) = spec.window.get(i)
+    {
+        return window_header(window, table);
     }
     let computed = (ordinal as usize).checked_sub(table.columns().len());
     computed.and_then(|i| spec.compute.get(i)).map_or_else(

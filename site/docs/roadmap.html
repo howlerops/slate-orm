@@ -267,9 +267,11 @@
               and TypeScript can each ask for one &mdash; the value comes back
               in its own list per row, beside the stored columns and the
               computed ones, so a client does no ordinal arithmetic and adding
-              a column to a table moves nothing. What is left is this query
-              editor, whose own spec has no window field; it refuses
-              <code>OVER</code> by name and says why.
+              a column to a table moves nothing. The query editor writes it
+              too: <code>ROW_NUMBER() OVER (PARTITION BY author_id ORDER BY
+              id)</code> parses and comes back under a header naming the call.
+              What it still refuses, by name, is a window over a join or
+              beside a <code>GROUP BY</code>.
             </td>
           </tr>
           <tr>

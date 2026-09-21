@@ -141,6 +141,28 @@ const EXAMPLES = [
       "  ORDER BY hour(pickup_time, '-05:00')",
   ],
   [
+    "Where each trip ranks in its zone",
+    "-- A window function, which is not an aggregate and the difference is\n" +
+      "-- the cardinality: GROUP BY folds ten thousand rows into five, and\n" +
+      "-- this keeps every row and answers `where does this one rank among\n" +
+      "-- its peers`. Opposite shapes, so it could not be another aggregate.\n" +
+      "--\n" +
+      "-- The frame is SQL's own. With no ORDER BY inside OVER it is the whole\n" +
+      "-- partition -- the second column below is the same number on every row\n" +
+      "-- of a zone. With one, it runs to the end of the current row's *peer\n" +
+      "-- group*, so two trips of equal duration see the same running value\n" +
+      "-- rather than consecutive ones.\n" +
+      "--\n" +
+      "-- What it costs, which the query does not show: a window holds every\n" +
+      "-- selected row, so this plan does not stream. The LIMIT cannot help --\n" +
+      "-- the numbering has to finish before there is a tenth row to keep.\n" +
+      "SELECT pickup_zone, duration,\n" +
+      "       ROW_NUMBER() OVER (PARTITION BY pickup_zone ORDER BY duration),\n" +
+      "       COUNT(*) OVER (PARTITION BY pickup_zone)\n" +
+      "  FROM trips WHERE pickup_zone = 132\n" +
+      "  ORDER BY duration LIMIT 10",
+  ],
+  [
     "Manhattan's day, hour by hour",
     "-- A computed column on a join, which used to be refused outright. It is\n" +
       "-- evaluated over the joined row and lands after *both* tables'\n" +

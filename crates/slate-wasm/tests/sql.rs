@@ -265,6 +265,11 @@ prop_compose! {
             // renderer the call syntax and the find-or-add rule; the time
             // functions have their own suite in `datetime.rs`.
             compute: Vec::new(),
+            // And a window for the same reason, one step further out: its
+            // `OVER (…)` is a clause of its own and the ordinal it lands on is
+            // only known once every computed column is registered. The
+            // hand-written cases in `windows.rs` cover it.
+            window: Vec::new(),
         }
     }
 }
