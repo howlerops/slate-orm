@@ -291,7 +291,11 @@ fn posts() -> TableDef {
         // cost three more. `title` is already a string and already unseeded,
         // which is the other half of why — a full-text test needs to write the
         // prose it searches for.
-        .index(IndexDef::builder("by_title_text", IndexId(9)).column("title").text())
+        .index(
+            IndexDef::builder("by_title_text", IndexId(9))
+                .column("title")
+                .text(),
+        )
         .build()
         .expect("valid schema")
 }
