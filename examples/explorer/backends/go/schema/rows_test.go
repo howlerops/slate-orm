@@ -165,6 +165,12 @@ var decoders = map[string]func(*testing.T){
 	"Sales":     checkSales,
 	"Editions":  checkEditions,
 	"Shipments": checkShipments,
+	// The array table, covered three ways below; this entry is what the
+	// coverage check sees. Registering it is not optional bookkeeping — the
+	// check exists because a hand-written map beside a generated file is the
+	// thing this repository has watched drift, and it caught exactly that
+	// here: the three array tests were written and the map was not touched.
+	"Posts": func(t *testing.T) { TestAnArrayColumnDecodesElementByElement(t) },
 }
 
 func TestEveryGeneratedDecoderRuns(t *testing.T) {
@@ -446,6 +452,25 @@ var roundTrip = map[string]func(t *testing.T){
 		if err != nil || got.Id != want.Id || got.Status != want.Status ||
 			got.DeletedAt != nil {
 			t.Errorf("round trip: got %#v, %v; want %#v", got, err, want)
+		}
+	},
+	"Posts": func(t *testing.T) {
+		// Compared field by field rather than with `==`: a struct holding
+		// slices is not comparable, which is itself the difference an array
+		// column makes to this table.
+		want := Posts{Id: 1, Title: "a post", Tags: []string{"go"}, Sizes: []int64{7}}
+		got, err := ScanPosts(want.Row())
+		if err != nil {
+			t.Fatalf("round trip: %v", err)
+		}
+		if got.Id != want.Id || got.Title != want.Title {
+			t.Errorf("round trip: got %#v, want %#v", got, want)
+		}
+		if len(got.Tags) != 1 || got.Tags[0] != "go" {
+			t.Errorf("tags round trip: got %v", got.Tags)
+		}
+		if len(got.Sizes) != 1 || got.Sizes[0] != 7 {
+			t.Errorf("sizes round trip: got %v", got.Sizes)
 		}
 	},
 }
