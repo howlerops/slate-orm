@@ -50,14 +50,15 @@ SKIP_PARTS = frozenset(
     {"node_modules", "dist", "dist-test", "target", ".git", "_proto", "pb"}
 )
 
-#: Files whose `docs/…` strings are fixtures rather than claims, and why.
+#: Files whose `docs/…` or `ledger/…` strings are fixtures rather than claims.
 #:
 #: A list you are forced to edit is a list that stays true: adding a file here
 #: is a sentence somebody has to write, where a glob would be silent.
 FIXTURES: dict[str, str] = {
     "scripts/test_check_cited_tests.py": (
-        "writes a temporary tree containing `docs/d.md` and runs the cited-tests "
-        "checker over it; the path describes that tree, not this repository"
+        "writes a temporary tree containing `docs/d.md` and `ledger/e.md` and "
+        "runs the cited-tests checker over it; the paths describe that tree, "
+        "not this repository"
     ),
     "scripts/check_cited_docs.py": (
         "this file, whose docstring names the paths it deliberately does not check"
@@ -68,7 +69,18 @@ FIXTURES: dict[str, str] = {
     ),
 }
 
-CITATION = re.compile(r"docs/[A-Za-z0-9_][A-Za-z0-9_.-]*\.md")
+#: A citation is a path under `docs/` or `ledger/` ending in `.md`.
+#:
+#: `ledger/` was added after `stats.rs` cited an entry and nothing would have
+#: noticed if the name were typed wrong. Nine source files cite one, and the
+#: reason this guard exists — an error message sending a reader to a file that
+#: is not there — does not care which directory the file was in.
+#:
+#: This does not contradict the docstring's "never `docs/` or `ledger/`": that
+#: is about which files are *searched*, and remains true. A ledger entry's own
+#: citations are provenance and are still exempt. What is checked here is
+#: *source* naming an entry, which is a live pointer rather than a dated one.
+CITATION = re.compile(r"(?:docs|ledger)/[A-Za-z0-9_][A-Za-z0-9_.-]*\.md")
 
 
 def source_files(root: Path) -> list[Path]:
@@ -111,8 +123,13 @@ def check(root: Path) -> tuple[int, list[str]]:
     return seen, broken
 
 
-def main() -> int:
-    seen, broken = check(ROOT)
+def main(root: Path = ROOT) -> int:
+    # `root` is an argument so the never-fires guard below can be tested. It
+    # could not be: the tests call `check` directly, `main` read `ROOT`, and a
+    # mutation deleting the guard entirely changed no verdict — this tree
+    # always has citations, so the branch never ran in a test. Found by
+    # `scripts/mutate.py` while the ledger half was being added.
+    seen, broken = check(root)
     for problem in broken:
         print(problem)
     # The never-fires guard. A pattern that stopped matching — a rename of the
@@ -121,15 +138,15 @@ def main() -> int:
     # carries one of these for the same reason.
     if seen == 0:
         print(
-            "no `docs/*.md` citation was found anywhere in the source, which "
-            "means this check is looking in the wrong place rather than that "
-            "the code cites nothing"
+            "no `docs/*.md` or `ledger/*.md` citation was found anywhere in "
+            "the source, which means this check is looking in the wrong place "
+            "rather than that the code cites nothing"
         )
         return 1
     if broken:
         print(f"\n{len(broken)} broken of {seen} citations")
         return 1
-    print(f"ok    {seen} `docs/*.md` citations, all of them openable")
+    print(f"ok    {seen} `docs/*.md` and `ledger/*.md` citations, all openable")
     return 0
 
 

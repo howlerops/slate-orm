@@ -69,6 +69,30 @@ pub const SCAN_OPEN_COST: f64 = 1.0;
 /// It depends on row width, so it is an average rather than a constant of
 /// nature: wider rows fit fewer per block. Eight thousand is what this corpus
 /// gives with a realistic row and the default 1 MiB readahead.
+///
+/// **It also depends on the block cache, by 7×, and this number is the best
+/// case.** The same scan of the same 200,000 rows costs a different amount
+/// depending only on what the store read *before* it — a partially populated
+/// cache fragments one scan into many small ranged reads rather than serving
+/// it:
+///
+/// | the store had already | rows per request |
+/// | --- | ---: |
+/// | the whole table cached | 8,000 — this constant |
+/// | read nothing at all | 3,774 |
+/// | served 200 random point reads | 980 |
+/// | served `analyze` and 400 point reads | 542 |
+///
+/// So a scan is charged between 1× and 15× less than it costs, depending on a
+/// state nothing here represents. Nothing in [`TableStats`] carries it, and
+/// inventing a statistic for it is a design question rather than a
+/// calibration: what a *server* should assume about its own cache depends on
+/// its workload, not on its data. The four figures are one fixture, one row
+/// width, one scale.
+///
+/// `slate-slatedb`'s `cost_at_scale` example produces the last three; see
+/// `ledger/2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md`
+/// for why the two examples that looked like they disagreed did not.
 pub const SCAN_ROW_COST: f64 = 0.000_125;
 
 /// Cost of one point read.
@@ -103,11 +127,26 @@ pub const SCAN_ROW_COST: f64 = 0.000_125;
 /// shape is a function of how clustered a predicate's matches are, which the
 /// planner could know and does not. That is the next measurement, not this one.
 ///
-/// **The scan side is not settled and was not changed.** `cost_calibration`
+/// ~~**The scan side is not settled and was not changed.** `cost_calibration`
 /// and `cost_at_scale` disagree about what a cold full scan of the same
 /// 200,000-row fixture costs — 58 requests against 205 — and until that is
 /// understood, moving `SCAN_ROW_COST` would be calibrating against a
-/// measurement one of the two says is wrong.
+/// measurement one of the two says is wrong.~~
+///
+/// **The disagreement was understood and neither file was wrong**: the two
+/// scans ran against different cache states, and `SCAN_ROW_COST` above now
+/// carries all four. The scan side is still not settled, for a different and
+/// better-stated reason — there are now three measured values spanning 7×, and
+/// picking one is a decision about which cache state a planner should assume
+/// rather than a calibration.
+///
+/// That matters here because the two constants are compared against each
+/// other, and at 200,000 rows on this fixture the comparison now comes out
+/// wrong in a way the file says out loud: `cost_at_scale` prints `chose
+/// TableScan but Index is faster — WRONG at this scale`. The index issues 368
+/// requests against the scan's 370 — a tie in this unit — and finishes 11×
+/// sooner, while the model calls it 15× worse, because the scan is charged at
+/// the cached rate and measured at the fragmented one.
 pub const POINT_READ_COST: f64 = 1.0;
 
 /// What `n` point reads cost when issued `depth` at a time.
