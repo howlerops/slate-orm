@@ -283,6 +283,15 @@ fn posts() -> TableDef {
         .array_column("tags", ValueType::Str)
         .nullable_array_column("scores", ValueType::I64)
         .primary_key(["id"])
+        // A text index, so the three clients have a `contains` to send at a
+        // table that is actually indexed for one. On `posts` rather than a
+        // table of its own, because a text index adds no column: the
+        // fingerprint covers columns and not indexes, so this costs nothing in
+        // the three client declarations of `posts`, where a new table would
+        // cost three more. `title` is already a string and already unseeded,
+        // which is the other half of why — a full-text test needs to write the
+        // prose it searches for.
+        .index(IndexDef::builder("by_title_text", IndexId(9)).column("title").text())
         .build()
         .expect("valid schema")
 }

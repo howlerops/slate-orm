@@ -956,6 +956,7 @@ class Expr(_message.Message):
     CONJUNCTION_FIELD_NUMBER: _builtins.int
     DISJUNCTION_FIELD_NUMBER: _builtins.int
     NEGATION_FIELD_NUMBER: _builtins.int
+    CONTAINS_FIELD_NUMBER: _builtins.int
     literal: _builtins.bool
     """`Expr::True` when true, `Expr::False` when false."""
     @_builtins.property
@@ -976,6 +977,8 @@ class Expr(_message.Message):
     def disjunction(self) -> Global___ExprList: ...
     @_builtins.property
     def negation(self) -> Global___Expr: ...
+    @_builtins.property
+    def contains(self) -> Global___Contains: ...
     def __init__(
         self,
         *,
@@ -989,12 +992,13 @@ class Expr(_message.Message):
         conjunction: Global___ExprList | None = ...,
         disjunction: Global___ExprList | None = ...,
         negation: Global___Expr | None = ...,
+        contains: Global___Contains | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["compare", b"compare", "compare_columns", b"compare_columns", "conjunction", b"conjunction", "disjunction", b"disjunction", "in_list", b"in_list", "is_null", b"is_null", "like", b"like", "literal", b"literal", "matches", b"matches", "negation", b"negation", "node", b"node"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["compare", b"compare", "compare_columns", b"compare_columns", "conjunction", b"conjunction", "contains", b"contains", "disjunction", b"disjunction", "in_list", b"in_list", "is_null", b"is_null", "like", b"like", "literal", b"literal", "matches", b"matches", "negation", b"negation", "node", b"node"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["compare", b"compare", "compare_columns", b"compare_columns", "conjunction", b"conjunction", "disjunction", b"disjunction", "in_list", b"in_list", "is_null", b"is_null", "like", b"like", "literal", b"literal", "matches", b"matches", "negation", b"negation", "node", b"node"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["compare", b"compare", "compare_columns", b"compare_columns", "conjunction", b"conjunction", "contains", b"contains", "disjunction", b"disjunction", "in_list", b"in_list", "is_null", b"is_null", "like", b"like", "literal", b"literal", "matches", b"matches", "negation", b"negation", "node", b"node"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["literal", "compare", "compare_columns", "is_null", "like", "matches", "in_list", "conjunction", "disjunction", "negation"]  # noqa: Y015
+    _WhichOneofReturnType_node: _TypeAlias = _typing.Literal["literal", "compare", "compare_columns", "is_null", "like", "matches", "in_list", "conjunction", "disjunction", "negation", "contains"]  # noqa: Y015
     _WhichOneofArgType_node: _TypeAlias = _typing.Literal["node", b"node"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_node) -> _WhichOneofReturnType_node | None: ...
 
@@ -1184,6 +1188,44 @@ class InList(_message.Message):
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___InList: _TypeAlias = InList  # noqa: Y015
+
+@_typing.final
+class Contains(_message.Message):
+    """Every term of `text` is a term of the column: full-text search.
+
+    **The search is sent as the caller wrote it, not as a list of terms**, and
+    that is the whole of what keeps this correct across four languages. The
+    server tokenizes it with the same function its write path tokenized the
+    column with, so a query and the index it reads cannot disagree about where a
+    word ends. A field carrying terms would be four tokenizers, and a client
+    whose splitting differed would find fewer rows than the table holds — with
+    no error anywhere, and only a comparison against a table scan to say so.
+
+    Conjunctive: every term. A disjunction is two of these under `disjunction`.
+    Phrase search is not expressible, because an inverted index without
+    positions cannot answer it.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    COLUMN_FIELD_NUMBER: _builtins.int
+    TEXT_FIELD_NUMBER: _builtins.int
+    text: _builtins.str
+    @_builtins.property
+    def column(self) -> Global___ColumnRef: ...
+    def __init__(
+        self,
+        *,
+        column: Global___ColumnRef | None = ...,
+        text: _builtins.str = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["column", b"column"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["column", b"column", "text", b"text"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___Contains: _TypeAlias = Contains  # noqa: Y015
 
 @_typing.final
 class Scalar(_message.Message):

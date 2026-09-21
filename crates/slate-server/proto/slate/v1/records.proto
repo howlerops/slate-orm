@@ -399,6 +399,7 @@ message Expr {
     ExprList conjunction = 8;
     ExprList disjunction = 9;
     Expr negation = 10;
+    Contains contains = 11;
   }
 }
 
@@ -450,6 +451,24 @@ message InList {
   reserved 1;
   ColumnRef column = 3;
   repeated Value values = 2;
+}
+
+// Every term of `text` is a term of the column: full-text search.
+//
+// **The search is sent as the caller wrote it, not as a list of terms**, and
+// that is the whole of what keeps this correct across four languages. The
+// server tokenizes it with the same function its write path tokenized the
+// column with, so a query and the index it reads cannot disagree about where a
+// word ends. A field carrying terms would be four tokenizers, and a client
+// whose splitting differed would find fewer rows than the table holds — with
+// no error anywhere, and only a comparison against a table scan to say so.
+//
+// Conjunctive: every term. A disjunction is two of these under `disjunction`.
+// Phrase search is not expressible, because an inverted index without
+// positions cannot answer it.
+message Contains {
+  ColumnRef column = 1;
+  string text = 2;
 }
 
 // ── Computed values ──────────────────────────────────────────────────────────

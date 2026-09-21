@@ -11,12 +11,20 @@ index shape.
 This note records the six decisions that shape took, and one measurement that
 changed the answer to the last of them.
 
-> **Built, in the kernel.** `IndexBuilder::text()`, `IndexDef::key_sets`,
+> **Built.** In the kernel: `IndexBuilder::text()`, `IndexDef::key_sets`,
 > `Expr::Contains`, `slate_schema::tokenize`, and a planner branch that ranges
 > an inverted index on one term.
 > `crates/slate-kernel/tests/fulltext.rs` is the demonstration and its oracle.
-> **Nothing outside the kernel knows about it yet** — not the wire, not the
-> three clients, not `slate-serverd`'s TOML schema, not the SQL front end.
+> On the wire and outwards: `Expr.contains` in `records.proto`,
+> `ColumnRef.contains` / `slate.Contains` / `contains` in the Python, Go and
+> TypeScript clients, and `text = true` on an index in `slate-serverd`'s TOML
+> schema. Each client has a live test against a real node
+> (`clients/*/…/fulltext*`), and each of those hints onto the index rather than
+> searching unhinted, for the reason §6 measures.
+> **The SQL front end does not know about it** — there is no `CONTAINS`
+> keyword in `slate-wasm`'s parser and no search box in the demo. Neither is
+> reachable from a corpus that would show the index off, which is why both wait
+> for a follow-up rather than shipping as a scan with a nicer spelling.
 
 ## 1. One place decides how many entries a row writes
 
@@ -184,7 +192,12 @@ So the honest state of the feature is:
 - A `contains` *with* one is costed the ordinary way, and on a corpus where
   the average term is not vanishingly rare the planner prefers the scan. A
   caller who knows the term is rare says `using_index`, which is a first-class
-  hint the kernel and the wire already carry.
+  hint the kernel and the wire already carry — and which, since the clients
+  went in, all three of them can send: Python's `Query.using_index`, Go's
+  `Query.Hint` with `slate.UsingIndex`, TypeScript's `query.hint` with
+  `usingIndex`. The Go and TypeScript halves were added by this work, because
+  without them a full-text test in either language is a table scan wearing the
+  word `contains` and would pass with the index deleted.
 - `the_planner_costs_a_text_index_like_any_other` asserts exactly that
   equivalence, so a future change that costs the text path specially breaks a
   test rather than passing quietly.

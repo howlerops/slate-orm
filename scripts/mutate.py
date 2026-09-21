@@ -109,8 +109,17 @@ DIALECTS = {
     # failure mode in the docstring above, met while using the tool written
     # for it. The alternative was reading `4 passed` as a clean run under the
     # `python` dialect, which would have scored a real mutation as a survivor.
+    # `ERROR` and not only `FAILED`, because a fixture that raises is reported
+    # as `ERROR path::name` and summarised as `7 errors in 0.11s` — which the
+    # report pattern matches and the failure pattern did not, so a run where
+    # *every* test errored in setup scored as a clean pass and the mutation
+    # read as a survivor. Met on the first mutation run against the Python
+    # client's full-text tests, where a stale `SLATE_TESTSERVER` made the
+    # harness refuse to start. A survivor is supposed to mean "write a test",
+    # so this lie costs a test that should never have been written — the first
+    # failure mode in the docstring above, wearing a different hat.
     "pytest": (
-        re.compile(r"^FAILED (\S+)", re.MULTILINE),
+        re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE),
         re.compile(r"^\d+ (?:passed|failed|error)", re.MULTILINE),
     ),
     # `node --test`'s TAP output, which `clients/typescript` uses:
@@ -139,9 +148,19 @@ DIALECTS = {
     # so `^(?:ok|FAIL)\s+\S+` reads a bare `FAIL` plus whatever the compiler
     # printed on the next line as a package verdict. Written that way first,
     # and the case below caught it.
+    #
+    # And the `[build failed]` exclusion, which the paragraph above was wrong
+    # about: `go test` on a package that does not compile prints
+    # `FAIL\tgithub.com/x/y [build failed]` — a per-package line with a
+    # package name on it, matching the marker exactly. So a mutation that did
+    # not compile scored as a clean run and read as a survivor, which is the
+    # same lie the pytest `ERROR` hole told, met in the same session. `[setup
+    # failed]` is the other shape `go test` prints in that position.
     "go": (
         re.compile(r"^\s*--- FAIL: (\S+)", re.MULTILINE),
-        re.compile(r"^(?:ok|FAIL)[ \t]+\S+", re.MULTILINE),
+        re.compile(
+            r"^(?:ok|FAIL)[ \t]+\S+(?![^\n]*\[(?:build|setup) failed\])", re.MULTILINE
+        ),
     ),
 }
 

@@ -302,8 +302,12 @@
               index <em>cardinality</em> rather than a new expression. One
               function decides how many entries a row writes; the write path
               compares two sets of keys; the search text goes through the same
-              tokenizer the write path runs. Nothing outside the kernel reaches
-              it yet.
+              tokenizer the write path runs &mdash; on the server, because four
+              tokenizers would be four chances for a client to find fewer rows
+              than the table holds. It reaches outwards now: <code>contains</code>
+              on the wire, in all three clients against a real node, and
+              <code>text = true</code> on an index in the TOML schema. The SQL
+              front end still has no <code>CONTAINS</code>.
             </td>
           </tr>
           <tr>

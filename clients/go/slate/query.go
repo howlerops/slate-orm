@@ -91,6 +91,25 @@ func NotLike(col Ordinal, pattern string) Expr {
 	return like(col, pattern, true, false)
 }
 
+// Contains is `every term of text is a term of column`: full-text search.
+//
+// The search is sent as written and tokenized by the *server*, with the same
+// function its write path tokenized the column with. This client deliberately
+// does no splitting of its own: a client that split differently would find
+// fewer rows than the table holds, with no error anywhere to say so.
+//
+// Conjunctive — every term must appear. For a disjunction, [Or] two of these.
+// A phrase is not expressible: the index holds no positions.
+//
+// A text index makes this a lookup rather than a scan, but it does not have to
+// exist. Without one the server evaluates the same predicate row by row and
+// returns the same rows.
+func Contains(col Ordinal, text string) Expr {
+	return Expr{&pb.Expr{Node: &pb.Expr_Contains{Contains: &pb.Contains{
+		Column: columnRef(col), Text: text,
+	}}}}
+}
+
 func like(col Ordinal, pattern string, negated, insensitive bool) Expr {
 	return Expr{&pb.Expr{Node: &pb.Expr_Like{Like: &pb.Like{
 		Column:      columnRef(col),
@@ -450,6 +469,38 @@ type Query struct {
 	// On a table that does not soft-delete it does nothing and needs no grant
 	// — there is nothing to reveal.
 	IncludeDeleted bool
+	// Hint asks for a particular access path. Nil leaves the choice to the
+	// planner, which is right nearly always.
+	//
+	// Build it with [UsingIndex] or [UsingTableScan]. See either for why this
+	// is advice rather than an instruction.
+	Hint *AccessHint
+}
+
+// AccessHint is which access path a query asks for. Build one with
+// [UsingIndex] or [UsingTableScan]; the zero value asks for nothing.
+type AccessHint struct {
+	wire *pb.AccessHint
+}
+
+// UsingIndex asks the planner to take this index rather than the cheapest
+// path.
+//
+// Advice, not an instruction: an index the table does not have is ignored,
+// matching the kernel, because a query that stops working because an index was
+// renamed is worse than one that gets slower. The server records that it did
+// so in [Explanation.Warnings] — and *only* there, so a plain read cannot tell
+// you your hint did nothing.
+func UsingIndex(name string) *AccessHint {
+	return &AccessHint{&pb.AccessHint{Path: &pb.AccessHint_Index{Index: name}}}
+}
+
+// UsingTableScan asks the planner to read the table rather than any index.
+//
+// Chiefly for a test that wants to compare two access paths' answers: one of
+// them has to be the path that cannot be wrong.
+func UsingTableScan() *AccessHint {
+	return &AccessHint{&pb.AccessHint{Path: &pb.AccessHint_TableScan{TableScan: pb.Unit_UNIT}}}
 }
 
 // Limit is a convenience for setting [Query.Limit].
@@ -476,6 +527,9 @@ func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
 	}
 	if q.Filter != nil {
 		out.Filter = q.Filter.wire
+	}
+	if q.Hint != nil {
+		out.Hint = q.Hint.wire
 	}
 	if q.Limit != nil {
 		out.Limit = q.Limit

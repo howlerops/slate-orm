@@ -56,6 +56,25 @@ else:
 '''
 
 
+#: pytest again, this time with the mutation making a *fixture* raise.
+#:
+#: pytest calls that an ERROR rather than a FAILED, and summarises it as
+#: `1 error in 0.01s` — a line the report pattern matches. The dialect used to
+#: match only `FAILED`, so this shape scored as a clean run and the mutation
+#: read as a survivor. Met for real: a stale `SLATE_TESTSERVER` made the Python
+#: client's harness refuse to start, every test errored in setup, and two
+#: genuine mutations were reported as surviving.
+PYTEST_ERROR_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "MUTATED" in text:
+    print("ERROR tests/t.py::a_named_test")
+    print("1 error in 0.01s")
+else:
+    print("1 passed in 0.01s")
+'''
+
+
 #: The same stand-in, speaking `node --test`'s TAP.
 #:
 #: The wrapper line is the point: node reports the *file* as a failing test
@@ -86,6 +105,12 @@ import sys
 text = open(sys.argv[1]).read()
 if "WILL_NOT_BUILD" in text:
     print("./x.go:3:2: undefined: nope", file=sys.stderr)
+    print("FAIL")
+    sys.exit(1)
+if "WILL_NOT_BUILD_TAGGED" in text:
+    print("# example.com/pkg [example.com/pkg.test]", file=sys.stderr)
+    print("./x.go:3:2: undefined: nope", file=sys.stderr)
+    print("FAIL\texample.com/pkg [build failed]")
     print("FAIL")
     sys.exit(1)
 if "MUTATED" in text:
@@ -131,6 +156,8 @@ def case(
         fake.write_text(FAKE)
         pytest_fake = home / "pytest_fake.py"
         pytest_fake.write_text(PYTEST_FAKE)
+        pytest_error_fake = home / "pytest_error_fake.py"
+        pytest_error_fake.write_text(PYTEST_ERROR_FAKE)
         node_fake = home / "node_fake.py"
         node_fake.write_text(NODE_FAKE)
         go_fake = home / "go_fake.py"
@@ -139,6 +166,10 @@ def case(
             body.replace("__SUBJECT__", str(subject))
             .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
             .replace("__PYTEST__", f'"{sys.executable}", "{pytest_fake}", "{subject}"')
+            .replace(
+                "__PYTEST_ERROR__",
+                f'"{sys.executable}", "{pytest_error_fake}", "{subject}"',
+            )
             .replace("__NODE__", f'"{sys.executable}", "{node_fake}", "{subject}"')
             .replace("__GO__", f'"{sys.executable}", "{go_fake}", "{subject}"')
         )
@@ -329,6 +360,19 @@ def main() -> int:
             ["reported no test results at all"],
         ),
         case(
+            "a pytest ERROR counts as a catch, not as a clean run",
+            # A fixture that raises is an ERROR, not a FAILED, and pytest's
+            # summary line for it (`1 error in 0.01s`) matches the report
+            # pattern — so before this the run looked clean and the mutation
+            # looked like a survivor. Two real mutations were mis-scored that
+            # way before the dialect learned the word.
+            '{"file": "__SUBJECT__", "command": [__PYTEST_ERROR__], "dialect": "pytest",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "tests/t.py::a_named_test"],
+            ["SURVIVED"],
+        ),
+        case(
             "a node --test failure is read through the node dialect",
             '{"file": "__SUBJECT__", "command": [__NODE__], "dialect": "node",'
             ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
@@ -362,6 +406,22 @@ def main() -> int:
             ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
             0,
             ["ok   m", "TestANamedCase"],
+        ),
+        case(
+            "a go build failure with a package name is not a suite that reported",
+            # The shape the case below did not cover, and the one `go test`
+            # actually prints: `FAIL\texample.com/pkg [build failed]` — a
+            # per-package line, with a package name, matching a marker written
+            # to demand exactly that. So a mutation that did not compile scored
+            # as a clean run and read as a survivor. Met for real, on a Go
+            # mutation that used `strings.Split` in a file that does not import
+            # `strings`.
+            '{"file": "__SUBJECT__", "command": [__GO__], "dialect": "go",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL",'
+            '             "new": "WILL_NOT_BUILD_TAGGED"}]}',
+            1,
+            ["NOTHING RAN"],
+            ["SURVIVED"],
         ),
         case(
             "a go build error is not read as a suite that reported",

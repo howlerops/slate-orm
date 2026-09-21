@@ -353,6 +353,9 @@ fn one_index(index: &config::Index, shape: &TableDef) -> Started<slate_schema::I
     if index.unique {
         builder = builder.unique();
     }
+    if index.text {
+        builder = builder.text();
+    }
 
     match (&index.expression, index.columns.is_empty()) {
         (Some(_), false) => {
@@ -561,6 +564,62 @@ primary_key = ["id"]
         .unwrap_err()
         .to_string();
         assert!(error.contains("not both"), "{error}");
+    }
+
+    #[test]
+    fn a_text_index_holds_one_entry_per_term() {
+        // `key_sets` and not "the index exists": an inverted index declared by
+        // a schema that built it as an ordinary one is a schema whose searches
+        // quietly find only rows whose whole column equals the search, and
+        // nothing about the catalog's shape says which kind it is.
+        let catalog = tables(&format!(
+            "{DOCS}\n[[tables.indexes]]\nname = \"by_kind_text\"\nid = 1\ncolumns = [\"kind\"]\ntext = true\n"
+        ))
+        .unwrap();
+        let index = catalog
+            .table_by_name("docs")
+            .unwrap()
+            .index_by_name("by_kind_text")
+            .unwrap();
+        assert!(index.is_text());
+        let row = Row::new(vec![
+            Value::U64(1),
+            Value::Str("The Storage Engine".into()),
+            Value::I64(5),
+            Value::Null,
+        ]);
+        assert_eq!(
+            index.key_sets(&row),
+            vec![
+                vec![Value::Str("engine".into())],
+                vec![Value::Str("storage".into())],
+                vec![Value::Str("the".into())],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_text_index_that_is_also_unique_is_refused() {
+        // The schema layer refuses all four unholdable combinations; this
+        // checks one of them arrives through the TOML rather than being
+        // dropped on the way. `unique` is the one a configuration file is
+        // likeliest to carry by copy-and-paste.
+        let error = tables(&format!(
+            "{DOCS}\n[[tables.indexes]]\nname = \"x\"\nid = 1\ncolumns = [\"kind\"]\ntext = true\nunique = true\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("is also unique"), "{error}");
+    }
+
+    #[test]
+    fn a_text_index_on_a_column_that_is_not_a_string_is_refused() {
+        let error = tables(&format!(
+            "{DOCS}\n[[tables.indexes]]\nname = \"x\"\nid = 1\ncolumns = [\"size\"]\ntext = true\n"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("not a string"), "{error}");
     }
 
     #[test]

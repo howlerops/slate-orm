@@ -190,6 +190,24 @@ class ColumnRef:
         """`self NOT LIKE pattern`."""
         return _Like(self, pattern, negated=True, insensitive=insensitive)
 
+    def contains(self, text: str) -> Expr:
+        """Every term of `text` is a term of `self`: full-text search.
+
+        The search is sent as written and tokenized by the *server*, with the
+        same function its write path tokenized the column with. This client
+        deliberately does no splitting of its own: a client that split
+        differently would find fewer rows than the table holds, with no error
+        anywhere to say so.
+
+        Conjunctive — every term must appear. For a disjunction, `or_` two of
+        these. A phrase is not expressible: the index holds no positions.
+
+        A text index makes this a lookup rather than a scan, but it does not
+        have to exist. Without one the server evaluates the same predicate
+        row by row and returns the same rows.
+        """
+        return _Contains(self, text)
+
     def matches(self, pattern: str, *, insensitive: bool = False) -> Expr:
         """`self ~ pattern`, a regular-expression match.
 
@@ -343,6 +361,17 @@ class _Like(Expr):
                 negated=self.negated,
                 insensitive=self.insensitive,
             )
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Contains(Expr):
+    column: ColumnRef
+    text: str
+
+    def to_proto(self) -> pb.Expr:
+        return pb.Expr(
+            contains=pb.Contains(column=self.column.to_proto(), text=self.text)
         )
 
 

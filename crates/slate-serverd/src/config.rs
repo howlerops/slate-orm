@@ -615,6 +615,15 @@ pub(crate) struct Index {
     /// Whether the index is unique.
     #[serde(default)]
     pub(crate) unique: bool,
+    /// Whether the index holds one entry per *term* of its one string column
+    /// rather than one per row: an inverted index, which is what makes
+    /// `contains` a lookup rather than a scan.
+    ///
+    /// Mutually exclusive with `unique`, with `expression`, and with a second
+    /// column, and the column must be a string. All four are refused when the
+    /// schema is built, with the reason.
+    #[serde(default)]
+    pub(crate) text: bool,
     /// The rows the index holds. Absent means every row.
     #[serde(default, rename = "where")]
     pub(crate) predicate: Option<String>,

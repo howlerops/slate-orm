@@ -149,6 +149,14 @@ fn any_expr() -> impl Strategy<Value = Expr> {
         ),
         (any_ordinal(), prop::collection::vec(any_value(), 0..4))
             .prop_map(|(column, values)| Expr::In { column, values }),
+        // Built through `Expr::contains`, which tokenizes, rather than from a
+        // hand-made term list: the wire carries the search *text*, so the
+        // round trip is only faithful if tokenizing a join of the terms gives
+        // the terms back. A generator that produced terms directly would never
+        // put that to the test, and the alphabet below is punctuation-heavy on
+        // purpose so the tokenizer has separators to find.
+        (any_ordinal(), "[a-zA-Z0-9 ,.:-]{0,12}")
+            .prop_map(|(column, text): (Ordinal, String)| Expr::contains(column, &text)),
     ];
     leaf.prop_recursive(3, 12, 3, |inner| {
         prop_oneof![
@@ -339,6 +347,63 @@ proptest! {
     }
 }
 
+/// Every `Expr` variant the round trip could carry, generated.
+///
+/// The same argument as `the_value_generator_reaches_every_variant` below, one
+/// type over, and written because `Expr::Contains` arrived,
+/// `a_predicate_survives_the_round_trip` went on passing, and a mutation that
+/// sent an empty search text survived — the generator had never produced one.
+///
+/// The expected set is `Expr::NODE_NAMES` minus one, and the subtraction is
+/// the point: `NODE_NAMES` is pinned to the enum by a wildcard-free match
+/// inside `slate-kernel`, where a `#[non_exhaustive]` enum can be matched
+/// exhaustively and here it cannot. A fourteenth node fails *there*, and then
+/// fails here until the generator produces one.
+#[test]
+fn the_expression_generator_reaches_every_variant() {
+    /// `InSorted` is not a wire node.
+    ///
+    /// It is what `Expr::prepared` rewrites an `In` into for the executor —
+    /// values sorted behind an `Arc` so a row costs a binary search — and
+    /// `expr_to_proto` has no arm for it because nothing ever sends one. It is
+    /// named here rather than left out of `NODE_NAMES`, so that the list stays
+    /// the enum's and this file states its own exception.
+    const NOT_ON_THE_WIRE: [&str; 1] = ["in_sorted"];
+
+    // Recursive, because `and`, `or` and `not` only ever appear wrapping
+    // something and a top-level count would miss whichever leaf they hid.
+    fn walk(expr: &Expr, seen: &mut BTreeSet<&'static str>) {
+        seen.insert(expr.node_name());
+        match expr {
+            Expr::And(parts) | Expr::Or(parts) => {
+                for part in parts {
+                    walk(part, seen);
+                }
+            }
+            Expr::Not(inner) => walk(inner, seen),
+            _ => {}
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let strategy = any_expr();
+    for _ in 0..2_000 {
+        walk(
+            &strategy.new_tree(&mut runner).expect("an expr").current(),
+            &mut seen,
+        );
+    }
+    let expected: BTreeSet<&str> = Expr::NODE_NAMES
+        .into_iter()
+        .filter(|node| !NOT_ON_THE_WIRE.contains(node))
+        .collect();
+    assert_eq!(
+        seen, expected,
+        "the generator never produced some variants, so the round trip never tested them"
+    );
+}
+
 /// A property suite is only as good as what its generators reach.
 ///
 /// Written after the codec bug where a generator had never been extended to
@@ -421,81 +486,6 @@ fn a_nested_array_is_refused() {
         "the refusal should say why: {}",
         error.message()
     );
-}
-
-#[test]
-fn the_expression_generator_reaches_every_variant() {
-    let mut seen = BTreeSet::new();
-    let mut runner = proptest::test_runner::TestRunner::deterministic();
-    let strategy = any_expr();
-    for _ in 0..500 {
-        collect_variants(
-            &strategy.new_tree(&mut runner).expect("an expr").current(),
-            &mut seen,
-        );
-    }
-    let expected: BTreeSet<&str> = [
-        "true",
-        "false",
-        "compare",
-        "compare_columns",
-        "is_null",
-        "like",
-        "matches",
-        "in",
-        "and",
-        "or",
-        "not",
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(seen, expected, "some Expr variants were never generated");
-}
-
-fn collect_variants(expr: &Expr, into: &mut BTreeSet<&'static str>) {
-    match expr {
-        Expr::True => {
-            into.insert("true");
-        }
-        Expr::False => {
-            into.insert("false");
-        }
-        Expr::Compare { .. } => {
-            into.insert("compare");
-        }
-        Expr::CompareColumns { .. } => {
-            into.insert("compare_columns");
-        }
-        Expr::IsNull { .. } => {
-            into.insert("is_null");
-        }
-        Expr::Like { .. } => {
-            into.insert("like");
-        }
-        Expr::Matches { .. } => {
-            into.insert("matches");
-        }
-        Expr::In { .. } => {
-            into.insert("in");
-        }
-        Expr::And(parts) => {
-            into.insert("and");
-            for part in parts {
-                collect_variants(part, into);
-            }
-        }
-        Expr::Or(parts) => {
-            into.insert("or");
-            for part in parts {
-                collect_variants(part, into);
-            }
-        }
-        Expr::Not(inner) => {
-            into.insert("not");
-            collect_variants(inner, into);
-        }
-        other => panic!("a new Expr variant is not covered here: {other:?}"),
-    }
 }
 
 /// Proof that the round trip is sharp enough to see a dropped flag.

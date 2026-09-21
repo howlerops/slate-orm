@@ -879,6 +879,16 @@ pub fn expr_to_proto(space: &Space<'_>, expr: &Expr) -> pb::Expr {
             negated: *negated,
             insensitive: *insensitive,
         }),
+        Expr::Contains { column, terms } => Node::Contains(pb::Contains {
+            column: Some(space.unresolve(*column)),
+            // The terms joined by a space, which round-trips exactly: each one
+            // is already lowercase and holds no separator, so tokenizing the
+            // join gives the same list back. The original search text is not
+            // kept — `Expr::contains` tokenized it on the way in — and the only
+            // thing lost is the caller's punctuation and word order, neither of
+            // which this predicate means anything by.
+            text: terms.join(" "),
+        }),
         Expr::In { column, values } => Node::InList(pb::InList {
             column: Some(space.unresolve(*column)),
             values: values.iter().map(value_to_proto).collect(),
@@ -1005,6 +1015,14 @@ fn expr_at_depth(
             negated: matches.negated,
             insensitive: matches.insensitive,
         },
+        // Tokenized *here*, by the server, with the same function its write
+        // path used. That is why the wire carries the search text rather than
+        // a list of terms: four tokenizers is four chances for a client to
+        // find fewer rows than the table holds, silently.
+        Node::Contains(contains) => Expr::contains(
+            space.resolve(contains.column.as_ref(), what)?,
+            &contains.text,
+        ),
         Node::InList(in_list) => Expr::In {
             column: space.resolve(in_list.column.as_ref(), what)?,
             values: in_list
