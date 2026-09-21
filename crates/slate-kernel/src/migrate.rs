@@ -250,6 +250,27 @@ pub enum Step {
         /// The version the code declares.
         to: u32,
     },
+    /// Adopt a wider layout over rows that were written under a narrower one.
+    ///
+    /// **Nothing is rewritten and nothing is read.** `decode_row` already
+    /// reads a row's own schema version and skips a column that had not been
+    /// added when it was written, taking its default — so an old row is
+    /// readable under the wider schema and always was. All that changes is the
+    /// recorded fingerprint and layout, which is one key.
+    ///
+    /// This step could not exist before the schema was stored: the fingerprint
+    /// alone cannot tell an appended column from a retyped one, and this is
+    /// the half of that pair that is safe.
+    WidenSchema {
+        /// The table.
+        table: TableId,
+        /// Its name, for the report.
+        name: String,
+        /// Columns appended since, by name.
+        added: Vec<String>,
+        /// Columns retired since, by name.
+        retired: Vec<String>,
+    },
     /// Rewrite a record that predates stored schemas, so the next layout
     /// refusal can name the column rather than the hash.
     ///
@@ -387,7 +408,17 @@ pub fn layout_changes(stored: &StoredSchema, current: &StoredSchema) -> Vec<Layo
             stored: stored.columns.len(),
             current: current.columns.len(),
         });
-    } else {
+    }
+    {
+        // The common prefix is compared even when the counts differ, which the
+        // first version of this function did not do — it reported the count
+        // and stopped, on the argument that a count difference makes every
+        // later comparison meaningless. True of a *general* diff and wrong
+        // here: distinguishing "two columns were appended" from "two columns
+        // were appended and column 1 was retyped" is the whole question
+        // `evolution` asks, and `zip` already stops at the shorter side, so
+        // the comparison it does make is between columns that are genuinely at
+        // the same ordinal.
         for (ordinal, (was, now)) in stored.columns.iter().zip(&current.columns).enumerate() {
             // Everything *except* the name, which is the asymmetry
             // `StoredSchema` exists for: a rename moves no bytes and must not
@@ -420,6 +451,107 @@ pub fn layout_changes(stored: &StoredSchema, current: &StoredSchema) -> Vec<Layo
         });
     }
     out
+}
+
+/// What a layout difference means for rows that are already stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Evolution {
+    /// Every stored row still reads back correctly. Record the new layout and
+    /// move on; nothing is rewritten.
+    Compatible {
+        /// Columns appended since, by name, for the plan.
+        added: Vec<String>,
+        /// Columns retired since, by name, for the plan.
+        retired: Vec<String>,
+    },
+    /// At least one stored row would read back as something other than what
+    /// was written.
+    Incompatible(Vec<LayoutChange>),
+}
+
+/// Whether the declared layout can be adopted over rows written at
+/// `stored_version`.
+///
+/// # Why this can exist now and could not before
+///
+/// `adding_a_nullable_column_is_not_a_migration_but_it_is_a_new_layout` refused
+/// an appended column and its comment said why: *"the runner cannot tell an
+/// appended column from a retyped one and the safe answer to 'I cannot tell'
+/// is no"*, calling it the sharpest limitation of the fingerprint. The stored
+/// schema removes the "cannot tell" — an append is a `ColumnCount` with an
+/// unchanged prefix and a retype is a `Column`, and those are different
+/// answers now rather than the same hash.
+///
+/// # What makes an append safe
+///
+/// Nothing in the row format changes. `decode_row` already reads a row's own
+/// schema version and skips a column `present_at` says had not been added
+/// when it was written, taking its default — so an old row is *already*
+/// readable under the wider schema, and always was. The fingerprint was the
+/// only thing saying no.
+///
+/// The conditions are therefore about what the declaration promises, not about
+/// the bytes:
+///
+/// - the common prefix is unchanged, so no existing column is reinterpreted;
+/// - every new column is appended, never inserted, so no ordinal shifts;
+/// - every new column's `added_in` is **after** the version the stored rows
+///   were written at, so `present_at` skips it for all of them;
+/// - the same for a retired column's `dropped_in`;
+/// - the primary key and the tenant column are untouched, because both decide
+///   how a key is laid out rather than how a body is read.
+///
+/// A column added at or before `stored_version` is refused even though it
+/// looks additive: `present_at` would say it *was* present when those rows
+/// were written, and the decoder would read a value that is not there.
+///
+/// That a new column is nullable or defaulted is not checked here, because it
+/// is unrepresentable — `added_column` makes it nullable and
+/// `added_column_with_default` gives it a default, and there is no third way
+/// to declare one. `TableBuilder::check_evolution` says so.
+#[must_use]
+pub fn evolution(stored: &StoredSchema, table: &TableDef, stored_version: u32) -> Evolution {
+    let current = StoredSchema::of(table);
+    let changes = layout_changes(stored, &current);
+    let widened = current.columns.len() > stored.columns.len();
+
+    // Anything that is not the column count is a reinterpretation of a column
+    // that already exists, or of the key. Either is a no.
+    if changes
+        .iter()
+        .any(|change| !matches!(change, LayoutChange::ColumnCount { .. }))
+        || (!changes.is_empty() && !widened)
+    {
+        return Evolution::Incompatible(changes);
+    }
+
+    let mut added = Vec::new();
+    for column in table.columns().iter().skip(stored.columns.len()) {
+        if column.added_in() <= stored_version {
+            // Looks additive and is not: `present_at` would say this column
+            // was already there when those rows were written, and the decoder
+            // would read a value nobody wrote.
+            return Evolution::Incompatible(changes);
+        }
+        added.push(column.name().to_owned());
+    }
+
+    // A retirement is the other half of the same mechanism, and reaches here
+    // only when the prefix is otherwise unchanged — `is_dropped` is part of
+    // the per-column comparison, so a drop shows up as a `Column` change and
+    // is refused above. Collected for the plan's message rather than to decide
+    // anything, which is why this loop cannot make the answer incompatible.
+    let retired = table
+        .columns()
+        .iter()
+        .take(stored.columns.len())
+        .zip(&stored.columns)
+        .filter(|(now, was)| now.is_dropped() && !was.dropped)
+        .map(|(now, _)| now.name().to_owned())
+        .collect();
+
+    Evolution::Compatible { added, retired }
 }
 
 /// Something the runner will not do.
@@ -1013,15 +1145,45 @@ pub async fn plan_of(
         };
 
         if state.fingerprint != current {
-            out.refusals.push(Refusal::LayoutChanged {
-                table: table.name().to_owned(),
-                stored: state.fingerprint,
-                current,
-                changes: state.schema.as_ref().map_or_else(Vec::new, |schema| {
-                    layout_changes(schema, &StoredSchema::of(table))
-                }),
-            });
-            continue;
+            // An appended column is now told apart from a retyped one, which
+            // is what the stored schema bought. Before it, this was a refusal
+            // in every case and the test that pinned that said so: "the runner
+            // cannot tell an appended column from a retyped one and the safe
+            // answer to 'I cannot tell' is no". The answer is only no when it
+            // is still cannot-tell — a record with no stored schema — or when
+            // the difference genuinely reinterprets a stored row.
+            let verdict = state
+                .schema
+                .as_ref()
+                .map(|schema| evolution(schema, table, state.schema_version));
+            match verdict {
+                Some(Evolution::Compatible { added, retired }) => {
+                    out.steps.push(Step::WidenSchema {
+                        table: table.id(),
+                        name: table.name().to_owned(),
+                        added,
+                        retired,
+                    });
+                }
+                Some(Evolution::Incompatible(changes)) => {
+                    out.refusals.push(Refusal::LayoutChanged {
+                        table: table.name().to_owned(),
+                        stored: state.fingerprint,
+                        current,
+                        changes,
+                    });
+                    continue;
+                }
+                None => {
+                    out.refusals.push(Refusal::LayoutChanged {
+                        table: table.name().to_owned(),
+                        stored: state.fingerprint,
+                        current,
+                        changes: Vec::new(),
+                    });
+                    continue;
+                }
+            }
         }
 
         for index in table.indexes() {
@@ -1085,7 +1247,10 @@ pub async fn apply<S: KvStore + ?Sized>(
             // None of the three does work of its own: the state write at the
             // end of `apply` is what records a registration, a version and a
             // schema, and it happens for every table the plan touches.
-            Step::Register { .. } | Step::NoteVersion { .. } | Step::RecordSchema { .. } => {}
+            Step::Register { .. }
+            | Step::NoteVersion { .. }
+            | Step::RecordSchema { .. }
+            | Step::WidenSchema { .. } => {}
             Step::BuildIndex { table, index, .. } => {
                 let (table, index) = resolve(catalog, *table, *index)?;
                 report
@@ -1190,7 +1355,8 @@ fn touches(step: &Step, table: TableId) -> bool {
         | Step::BuildIndex { table: t, .. }
         | Step::DropIndex { table: t, .. }
         | Step::NoteVersion { table: t, .. }
-        | Step::RecordSchema { table: t, .. } => *t == table,
+        | Step::RecordSchema { table: t, .. }
+        | Step::WidenSchema { table: t, .. } => *t == table,
     }
 }
 

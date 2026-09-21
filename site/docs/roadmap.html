@@ -196,20 +196,106 @@
 
     <h2>The rest, in rough order of what a user notices</h2>
 
+    <p>
+      This table was a list of gaps and nothing else, which made it wrong the
+      moment any of them closed &mdash; and most of them have. The third column
+      is what it stands at now; the long form of each, with the reasoning, is in
+      <code>docs/orm-comparison.md</code> in the repository.
+    </p>
+
     <div class="doc-table">
       <table>
         <thead>
-          <tr><th>Gap</th><th>Who has it</th></tr>
+          <tr><th>Gap</th><th>Who has it</th><th>Where it stands</th></tr>
         </thead>
         <tbody>
-          <tr><td>Migrations generated from a schema diff</td><td>Drizzle Kit, Prisma Migrate, Alembic</td></tr>
-          <tr><td>Client code generated from the catalog</td><td>Drizzle, Prisma</td></tr>
-          <tr><td>Validations, changesets, lifecycle hooks</td><td>Ecto, ActiveRecord, SQLAlchemy</td></tr>
-          <tr><td>Automatic <code>created_at</code> / <code>updated_at</code></td><td>ActiveRecord, Ecto, Prisma</td></tr>
-          <tr><td>Window functions</td><td>SQLAlchemy, Drizzle, Diesel</td></tr>
-          <tr><td>CTEs and recursive queries</td><td>SQLAlchemy, Drizzle, Diesel</td></tr>
-          <tr><td>Set operations, views, arrays, full-text search</td><td>most</td></tr>
-          <tr><td>Seeding, fixtures, factories</td><td>Drizzle, Prisma, ActiveRecord</td></tr>
+          <tr>
+            <td>Migrations generated from a schema diff</td>
+            <td>Drizzle Kit, Prisma Migrate, Alembic</td>
+            <td>
+              <strong>Unblocked.</strong> The blocker was never the generator:
+              the keyspace held a one-way hash of a table&rsquo;s layout and not
+              the layout, so there was nothing to diff. It stores the layout
+              now, so a refusal names the column that moved and an
+              <em>additive</em> change &mdash; appending a nullable column
+              &mdash; is applied rather than refused, reading no row and
+              rewriting none. What is left is whether a generator means anything
+              here at all, since the catalog <em>is</em> the artifact and there
+              is no migration file to emit.
+            </td>
+          </tr>
+          <tr>
+            <td>Client code generated from the catalog</td>
+            <td>Drizzle, Prisma</td>
+            <td>
+              <strong>Built.</strong> Row types, decoders and encoders in
+              Python, Go and TypeScript, generated from
+              <code>--print-schema</code>; CI regenerates and diffs them.
+            </td>
+          </tr>
+          <tr>
+            <td>Validations, changesets, lifecycle hooks</td>
+            <td>Ecto, ActiveRecord, SQLAlchemy</td>
+            <td>
+              <strong>Two of three built, one refused.</strong> A
+              <code>CHECK</code> carries the column it is about and a message a
+              form can show, every failing check is reported rather than the
+              first, and all of it is published to clients. Lifecycle hooks are
+              <em>refused</em>: arbitrary code on the daemon would not run for
+              the Rust library embedding the kernel, so the rule would hold in
+              one of two deployments.
+            </td>
+          </tr>
+          <tr>
+            <td>Automatic <code>created_at</code> / <code>updated_at</code></td>
+            <td>ActiveRecord, Ecto, Prisma</td>
+            <td><strong>Built</strong>, in the store&rsquo;s one write choke point rather than as a column default &mdash; a default cannot fire on update.</td>
+          </tr>
+          <tr>
+            <td>Window functions</td>
+            <td>SQLAlchemy, Drizzle, Diesel</td>
+            <td><strong>Still missing.</strong> A new plan operator, not a new expression.</td>
+          </tr>
+          <tr>
+            <td>CTEs and recursive queries</td>
+            <td>SQLAlchemy, Drizzle, Diesel</td>
+            <td>
+              <strong>Answered: two thirds refused.</strong>
+              <code>WITH RECURSIVE</code> is a fixpoint loop and a statement is
+              one plan; a CTE read twice is the <code>UNION</code> argument
+              exactly. A non-recursive CTE read once is missing, and is the same
+              mechanism as views.
+            </td>
+          </tr>
+          <tr>
+            <td>Set operations, views, arrays, full-text search</td>
+            <td>most</td>
+            <td>
+              <strong>One built, one refused, two open.</strong> Arrays are
+              built &mdash; stored, compared, sorted, generated in three
+              languages and writable in a predicate. Set operations are refused,
+              because the hard half of <code>UNION</code> is deduplicating
+              across two independently planned statements. Views are designed
+              and not built, and the design&rsquo;s headline is that a view here
+              cannot be a privilege boundary the way it is in Postgres.
+              Full-text search is genuinely open, and larger than it looks:
+              every index here writes one entry per row and an inverted index
+              writes one per term, so it is a new index <em>cardinality</em>,
+              not a new index expression.
+            </td>
+          </tr>
+          <tr>
+            <td>Seeding, fixtures, factories</td>
+            <td>Drizzle, Prisma, ActiveRecord</td>
+            <td>
+              <strong>Built in Rust, refused from a client.</strong> A factory
+              generates rows from the table definition &mdash; types,
+              nullability, defaults, sequenced keys, unique columns &mdash; and
+              refuses by name what it cannot guess. It is not reachable from the
+              wire on purpose: seeding writes as a superuser, and a
+              client-reachable seed is a superuser write path from the network.
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>

@@ -140,6 +140,48 @@ likely means `--plan` naming the column-level changes it currently can only
 hash. The row should be re-read with that in mind before anyone writes a
 generator for a file format that does not exist.
 
+## 5. The second deliverable: telling an append from a retype
+
+The refusal in §4 was the cheap half. The expensive half is that a stored
+schema changes what can be *allowed*, not only how a refusal reads.
+
+Before it, the test pinning this behaviour was called
+`adding_a_nullable_column_is_not_a_migration` and asserted a refusal, with a
+comment giving the reason: "the runner cannot tell an appended column from a
+retyped one and the safe answer to 'I cannot tell' is no… **This is the
+sharpest limitation of the fingerprint and it is recorded rather than papered
+over: a genuinely additive change needs a hand.**"
+
+The fingerprint moves for both, identically, because it is one number. The
+stored schema removes the cannot-tell, and `evolution()` answers it:
+
+- Every change that is *not* the column count reinterprets a column that
+  already exists, or the key. Refused.
+- A count that went **down** is refused too. An append is safe because
+  `present_at(column, written_version)` reads the row's own written version and
+  hands back a default for a column that did not exist yet; a narrowing has no
+  such mechanism working for it, since every stored row was encoded with the
+  wider list and the trailing value is still in the bytes with nothing
+  declaring what it is.
+- A count that went **up**, with the prefix untouched, is an append — provided
+  every new column's `added_in` is *strictly after* the version rows were
+  written at. That proviso is the whole of what makes it safe, and it is where
+  a plausible-looking append is still wrong: a column declared `added_in = 2`
+  on a table whose rows were written at 2 would have `present_at` say it was
+  already there, and the decoder would read a value nobody wrote.
+
+Nothing is read and nothing is rewritten. `Step::WidenSchema` writes one key —
+the new stored schema — and names which columns it adds and which it retires,
+because a plan saying "3 columns changed" sends the operator to the config file
+to find out which.
+
+**This required one change to the differ that reads like a bug fix and is not.**
+`layout_changes` originally reported the column count and stopped, on the
+argument that a count difference makes every later comparison meaningless. That
+is true of a general diff and wrong here: "two columns were appended" and "two
+columns were appended *and* column 1 was retyped" are the two answers
+`evolution` exists to separate, and only the common prefix separates them.
+
 ## What this note does not do
 
 ~~**It does not decide the inner encoding's own versioning.**~~ **Decided: yes.**

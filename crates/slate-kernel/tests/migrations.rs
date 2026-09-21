@@ -462,16 +462,154 @@ async fn adding_a_nullable_column_is_not_a_migration_but_it_is_a_new_layout() {
         .build()
         .unwrap();
 
-    // It changes the fingerprint — the column count moved — and that is
-    // correct: the decoder reads a different number of columns. What matters
-    // is that it is *refused*, loudly, rather than silently accepted, because
-    // the runner cannot tell an appended column from a retyped one and the
-    // safe answer to "I cannot tell" is no.
-    //
-    // This is the sharpest limitation of the fingerprint and it is recorded
-    // rather than papered over: a genuinely additive change needs a hand.
+    // It changes the fingerprint — the column count moved — and it is no
+    // longer refused. **This assertion was the opposite until the schema was
+    // stored**, and the comment then said why: "the runner cannot tell an
+    // appended column from a retyped one and the safe answer to 'I cannot
+    // tell' is no", which it called the sharpest limitation of the
+    // fingerprint. It can tell now, so a genuinely additive change no longer
+    // needs a hand.
+    let plan = migrate::plan(&store, &catalog(widened.clone()))
+        .await
+        .unwrap();
+    assert!(!plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.steps
+            .iter()
+            .any(|step| matches!(step, Step::WidenSchema { added, .. } if added == &["nickname"])),
+        "{plan:?}"
+    );
+
+    // And the row written before the column existed still reads, with the new
+    // column null. This is the claim the whole change rests on: nothing is
+    // rewritten because nothing needs to be — `decode_row` reads the row's own
+    // schema version and skips a column that had not been added yet.
+    migrate::migrate(&store, &catalog(widened.clone()))
+        .await
+        .unwrap();
+    let records = RecordStore::new(store.clone(), catalog(widened.clone()), security());
+    let txn = records.begin().await.unwrap();
+    let stored = txn
+        .get(&context(), &widened, &[Value::U64(1)])
+        .await
+        .unwrap()
+        .expect("the row written before the widening is gone");
+    txn.rollback();
+    let nickname = widened.ordinal_of("nickname").unwrap();
+    assert_eq!(stored.get(nickname), Some(&Value::Null));
+    // The columns that were there still read as themselves, which is the half
+    // a wrong prefix comparison would break.
+    assert_eq!(
+        stored.get(widened.ordinal_of("email").unwrap()),
+        Some(&Value::Str("a@x".into()))
+    );
+}
+
+/// A retype is still refused, which is the other half of the pair.
+///
+/// Without this the change above would read as "layout refusals were
+/// weakened". They were narrowed: an append is told from a retype and only one
+/// of the two is let through.
+#[tokio::test]
+async fn a_retype_is_still_refused_after_an_append_is_allowed() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(false)))
+        .await
+        .unwrap();
+
+    let retyped = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::U64)
+        .added_column("nickname", ValueType::Str, 2)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+
+    // Appended *and* retyped, which is the case that makes the prefix
+    // comparison load-bearing: a differ that reported only the column count
+    // would call this additive and let a `string` column be read as `u64`.
+    let plan = migrate::plan(&store, &catalog(retyped)).await.unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.why_blocked().contains("column 1 `email`"),
+        "{}",
+        plan.why_blocked()
+    );
+}
+
+/// A column appended at a version rows were already written at is refused.
+///
+/// It looks additive and is not: `present_at` would say the column *was* there
+/// when those rows were written, so the decoder would read a value nobody
+/// wrote. The `added_in` is the whole of what makes an append safe, and this
+/// is the case where it is wrong.
+#[tokio::test]
+async fn a_column_appended_at_an_already_written_version_is_refused() {
+    let store = MemoryStore::new();
+    let versioned = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+    migrate::migrate(&store, &catalog(versioned)).await.unwrap();
+
+    // Added at 2, and rows have already been written at 2.
+    let widened = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .added_column("nickname", ValueType::Str, 2)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
     let plan = migrate::plan(&store, &catalog(widened)).await.unwrap();
     assert!(plan.is_blocked(), "{plan:?}");
+}
+
+/// A table that *loses* a column is refused, which the append rule does not
+/// cover by symmetry.
+///
+/// An append is safe because `present_at` reads the row's own written version
+/// and hands back a default for a column that did not exist yet. A narrowing
+/// has no such mechanism working for it: every stored row was encoded with the
+/// wider column list, so the trailing value is still in the bytes with nothing
+/// declaring what it is. Letting it through would either misread the row or
+/// silently orphan a value, and both are worse than a refusal at startup.
+///
+/// This test exists because a mutation that replaced the "and it did not get
+/// wider" half of the compatibility test with `false` survived the whole
+/// suite: every other case here either changes the prefix or adds a column, so
+/// nothing pinned the direction.
+#[tokio::test]
+async fn a_table_that_loses_a_column_is_refused() {
+    let store = MemoryStore::new();
+    let wide = members(None);
+    migrate::migrate(&store, &catalog(wide.clone()))
+        .await
+        .unwrap();
+    seed(&store, &wide, &[(1, "a@x", 7)]).await;
+
+    // The same table with `team` gone. The prefix is untouched, so the only
+    // layout change is the count — which is exactly the shape an append has,
+    // and is why the count alone cannot decide.
+    let narrowed = TableDef::builder("members", MEMBERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+
+    let plan = migrate::plan(&store, &catalog(narrowed)).await.unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.why_blocked().contains("had 3 columns and now has 2"),
+        "{}",
+        plan.why_blocked()
+    );
 }
 
 #[tokio::test]
@@ -1046,6 +1184,58 @@ async fn a_version_one_record_reads_and_a_version_two_one_round_trips() {
     // And the indexes still round trip beside it, which is what the record
     // held before and must keep holding.
     assert_eq!(state.built, vec![BY_EMAIL]);
+}
+
+/// Every field of a stored column survives the round trip, over a table that
+/// actually has one of each.
+///
+/// The test above round-trips `users`, whose two columns are non-null, plain
+/// `u64` and `str` with no scale, no element type, no droppedness and no
+/// tenant column — so four of `StoredColumn`'s six fields and the tenant tag
+/// were written, read and compared against zero on both sides. Four mutations
+/// that dropped a field from the encoder survived the whole suite.
+///
+/// What they would have cost is not an unreadable record: it is a table that
+/// migrates once and is **refused on every startup after**, because the
+/// decoded schema disagrees with the one computed from the catalog in a field
+/// that never reached the keyspace. That is the second assertion here, and it
+/// is the one an operator would have met.
+#[tokio::test]
+async fn every_stored_column_field_survives_the_round_trip() {
+    fn rich() -> TableDef {
+        TableDef::builder("rich", TableId(3))
+            .column("tenant", ValueType::U64)
+            .column("id", ValueType::U64)
+            // Nullability.
+            .nullable_column("note", ValueType::Str)
+            // A scale.
+            .decimal_column("price", 2)
+            // An element type.
+            .array_column("tags", ValueType::Str)
+            // And droppedness, which needs a column to have been there first.
+            .column("legacy", ValueType::Str)
+            .drop_column("legacy", 2)
+            .primary_key(["tenant", "id"])
+            .tenant_column("tenant")
+            .schema_version(2)
+            .build()
+            .unwrap()
+    }
+
+    let store = MemoryStore::new();
+    let catalog = Catalog::from_tables([rich()]).unwrap();
+    migrate::migrate(&store, &catalog).await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let state = states[0].1.as_ref().unwrap();
+    let schema = state.schema.as_ref().expect("a fresh migration writes one");
+    // The oracle: what came back is what the catalog says, field for field,
+    // rather than a list of assertions naming the fields somebody remembered.
+    assert_eq!(*schema, migrate::StoredSchema::of(&rich()));
+
+    // And the symptom, which is what a lost field actually costs.
+    let again = migrate::plan(&store, &catalog).await.unwrap();
+    assert!(again.is_empty(), "a second startup found work: {again:?}");
 }
 
 /// A record that says version 1 and carries more than a version 1 record is

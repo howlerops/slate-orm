@@ -872,6 +872,26 @@ fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -
                  change, so no row is rewritten",
                 named(*table)
             ),
+            // The one step that changes what the schema *is* rather than what
+            // the keyspace remembers about it, and the operator's question is
+            // which columns. Both lists, because a retirement reads very
+            // differently from an addition and a plan that said "3 columns
+            // changed" would send them to the config file to find out.
+            Step::WidenSchema {
+                name,
+                added,
+                retired,
+                ..
+            } => {
+                let mut line = format!("widen `{name}`: no row is read and none is rewritten");
+                if !added.is_empty() {
+                    line.push_str(&format!("\n    adds {}", added.join(", ")));
+                }
+                if !retired.is_empty() {
+                    line.push_str(&format!("\n    retires {}", retired.join(", ")));
+                }
+                line
+            }
             // Shown rather than done quietly, which is why it is a step at
             // all. It costs one key write and buys a refusal that can name a
             // column instead of printing two hashes — and it makes the record
@@ -1163,5 +1183,50 @@ where = "id > 0"
         assert!(rendered.contains("one key, no"), "{rendered}");
         assert!(rendered.contains("name the column"), "{rendered}");
         assert!(rendered.contains("older binary"), "{rendered}");
+    }
+
+    /// A widening names both lists, and a widening with nothing retired says
+    /// nothing about retirements.
+    ///
+    /// Unreachable from `tests/plan.rs` for the same reason as the test above
+    /// and one more: reaching it needs a store whose *stored schema* is
+    /// narrower than the catalog, which no single run of the binary can
+    /// produce.
+    #[test]
+    fn the_plan_names_which_columns_a_widening_adds_and_retires() {
+        let table = slate_schema::TableDef::builder("users", slate_schema::TableId(1))
+            .column("id", slate_tuple::ValueType::U64)
+            .primary_key(["id"])
+            .build()
+            .unwrap();
+        let catalog = Catalog::from_tables([table]).unwrap();
+        let widen = |added: Vec<String>, retired: Vec<String>| {
+            render_plan(
+                &slate_kernel::migrate::MigrationPlan {
+                    steps: vec![slate_kernel::migrate::Step::WidenSchema {
+                        table: slate_schema::TableId(1),
+                        name: "users".into(),
+                        added,
+                        retired,
+                    }],
+                    refusals: vec![],
+                },
+                &catalog,
+            )
+        };
+
+        let both = widen(vec!["nickname".into()], vec!["email".into()]);
+        assert!(both.contains("adds nickname"), "{both}");
+        assert!(both.contains("retires email"), "{both}");
+        // The cost, which is the number the operator is deciding on: an append
+        // is safe precisely because it reads nothing.
+        assert!(both.contains("none is rewritten"), "{both}");
+
+        // And the empty list is omitted rather than printed empty. `retires `
+        // with nothing after it reads as a bug in the plan, and an operator
+        // who sees it has to go and check.
+        let only_added = widen(vec!["nickname".into()], vec![]);
+        assert!(only_added.contains("adds nickname"), "{only_added}");
+        assert!(!only_added.contains("retires"), "{only_added}");
     }
 }
