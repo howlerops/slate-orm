@@ -36,6 +36,29 @@
 //! pseudo-random keys across the whole keyspace and the requests are divided by
 //! the batch.
 //!
+//! **A scan costs what the reads before it left behind.** The headline finding
+//! of this file is not a constant but a variable nothing models. The same full
+//! scan of the same 200,000 rows costs:
+//!
+//! | the store has already | GETs | rows/GET |
+//! | --- | ---: | ---: |
+//! | read nothing at all | 53 | 3,774 |
+//! | served 200 random point reads | 205, 207, 207 | 976 |
+//! | served `analyze` and 400 of them | 371 | 539 |
+//!
+//! Three consecutive scans give the middle row, so this is not "the first one
+//! paid and the rest are free" — a *partially* populated block cache
+//! fragments a scan into many small ranged reads instead of a few large ones,
+//! and more of it fragments it further. `SCAN_ROW_COST` says 8,000 rows per
+//! request, which is none of these; it is what a scan costs when the cache
+//! already holds the whole table, which is the state `cost_calibration`
+//! measures in and says so.
+//!
+//! This is also why that file and this one appeared to disagree by 8× about
+//! the same scan on a byte-identical fixture. They do not: one scans a store
+//! that has done nothing and the other one that has just done 200 point
+//! reads, and both numbers are right.
+//!
 //! The S3 server is `s3s` in this process over a loopback socket, the same
 //! fixture `cost_calibration` and `scan_tuning` use. The absolute wall times
 //! are not AWS's and no claim is made that they are; what transfers is request
@@ -210,8 +233,48 @@ async fn main() {
             continue;
         }
 
+        // A scan on a *pristine* store, before anything else touches it.
+        //
+        // This file measures a full scan at ~205 requests where
+        // `cost_calibration --cold` measures ~28 on a byte-identical fixture,
+        // and repeating the scan does not make it cheaper, so it is not a
+        // cache. The one difference left is that the scan there runs on a
+        // store that has done nothing, and here on one that has just done 200
+        // random point reads. This is that difference, measured.
+        {
+            let pristine = SlateStore::open_s3(path.clone(), server.config())
+                .await
+                .expect("reopen");
+            let catalog = Catalog::from_tables([events()]).expect("catalog");
+            let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
+            let store = RecordStore::new(pristine, catalog, security);
+            let root = SecurityContext::superuser();
+            counters.reset();
+            let counted = {
+                let txn = store.begin().await.unwrap();
+                txn.execute(&root, &events(), &Query::all())
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .len()
+            };
+            assert_eq!(counted as u64, rows);
+            println!(
+                "scan on a pristine store: {} GETs, {:.0} rows/GET",
+                counters.gets(),
+                rows as f64 / counters.gets().max(1) as f64
+            );
+            // Closed, not merely dropped. Two writers on one path fence each
+            // other, and leaving this one holding the lease made every later
+            // measurement fail with `WriterFenced` — which is the storage
+            // layer being right and this file being careless.
+            store.backend().close().await.unwrap();
+        }
+
         // --- reopen, so the data is in object storage and not a memtable ---
-        let backend = SlateStore::open_s3(path, server.config())
+        let backend = SlateStore::open_s3(path.clone(), server.config())
             .await
             .expect("reopen");
         let catalog = Catalog::from_tables([events()]).expect("catalog");
@@ -249,24 +312,45 @@ async fn main() {
             counters.gets()
         );
 
-        counters.reset();
-        let started = Instant::now();
-        let scanned = {
-            let txn = store.begin().await.unwrap();
-            txn.execute(&root, &events(), &Query::all())
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap()
-                .len()
-        };
-        let cold_scan_gets = counters.gets();
-        let cold_scan_seconds = started.elapsed().as_secs_f64();
+        // Three scans back to back, all reported.
+        //
+        // This file measured a *warm* scan costing more than a cold one, which
+        // no cache can do, so the first thing to establish was whether the
+        // count is even stable. It is — 205, 207, 207 — and repeating the scan
+        // does not make it cheaper, which rules out "the first one paid for
+        // the cache". Read with the pristine scan above, the three numbers say
+        // what the variable is: **how scattered the reads before this one
+        // were.** 53 on a store that has read nothing, ~206 after 200 random
+        // point reads, ~370 after `analyze` and 400 of them. A partially
+        // populated block cache fragments a scan'''s reads; it does not serve
+        // them.
+        let mut repeats = Vec::new();
+        let mut scanned = 0usize;
+        let mut cold_scan_seconds = 0.0;
+        for attempt in 0..3 {
+            counters.reset();
+            let started = Instant::now();
+            scanned = {
+                let txn = store.begin().await.unwrap();
+                txn.execute(&root, &events(), &Query::all())
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .len()
+            };
+            if attempt == 0 {
+                cold_scan_seconds = started.elapsed().as_secs_f64();
+            }
+            repeats.push(counters.gets());
+        }
+        let cold_scan_gets = repeats[0];
+        println!("full scan, three times:  {repeats:?} GETs");
         assert_eq!(scanned as u64, rows, "the scan must return every row");
         let cold_scan_rows_per_get = rows as f64 / cold_scan_gets.max(1) as f64;
         println!(
-            "cold full scan:    {rows} rows, {cold_scan_gets} GETs, \
+            "scan after probes: {rows} rows, {cold_scan_gets} GETs, \
              {cold_scan_rows_per_get:.0} rows/GET, {cold_scan_seconds:.2}s"
         );
 
@@ -325,7 +409,7 @@ async fn main() {
         assert_eq!(warm_scanned as u64, rows);
         let warm_scan_rows_per_get = rows as f64 / warm_scan_gets.max(1) as f64;
         println!(
-            "warm full scan:    {rows} rows, {warm_scan_gets} GETs, \
+            "scan after analyze:{rows} rows, {warm_scan_gets} GETs, \
              {warm_scan_rows_per_get:.0} rows/GET, {warm_scan_seconds:.2}s, \
              model predicted {scan_predicted:.1}"
         );

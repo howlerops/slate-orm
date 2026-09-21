@@ -1493,6 +1493,31 @@ Two independent runs, cold and warm, and the difference between the columns is
 smaller than the difference between the runs. **The cache is not what the
 calibration measured.**
 
+**Superseded: it is not the cache being warm, it is the cache being *partly*
+warm.** Re-measured later, the same full scan of the same 200,000 rows costs
+whatever the reads before it left behind:
+
+| the store has already | GETs | rows/GET |
+|---|---:|---:|
+| read nothing at all | 53 | 3,774 |
+| served 200 random point reads | 204, 208, 205 | 980 |
+| served `analyze` and 400 of them | 369 | 542 |
+
+Three consecutive scans give the middle row, so this is not "the first one
+paid and the rest are free". A *partially* populated block cache fragments a
+scan into many small ranged reads instead of a few large ones, and more of it
+fragments it further — which is why a scan measured after `analyze` costs
+*more* than one measured before, an ordering no cache can produce and the
+thing that gave this away.
+
+`SCAN_ROW_COST` says 8,000 rows per request, which is none of the three. It is
+what a scan costs when the cache already holds the whole table.
+
+This also explains a disagreement that looked like a defect: `cost_calibration
+--cold` measures that scan at 58 requests and `cost_at_scale` at 205, on a
+byte-identical fixture. Both are right — the first scans a store that has done
+nothing, the second one that has just walked 200 random keys.
+
 #### The two constants at 200,000 rows
 
 | | the model says | measured |
@@ -1500,7 +1525,7 @@ calibration measured.**
 | `SCAN_ROW_COST` → rows per request on a scan | 8,000 | **8,000 – 10,526** |
 | `POINT_READ_COST` → requests per point read | 3.0 | **3.40 – 3.57** |
 
-The scan constant is right, on the conservative side of right. The point-read
+~~The scan constant is right, on the conservative side of right. The point-read
 constant is **13–19% low** — a read really costs about three and a half
 requests, not three. Both errors point the same way (the model slightly
 under-charges reads relative to scans, which makes an index look marginally
@@ -1510,7 +1535,23 @@ requests. Adjusting `POINT_READ_COST` from 3.0 to 3.5 is not proposed here,
 because it is a 17% change to a constant whose own spread across two runs is 5%
 and which is a property of the row width and the deployment rather than of
 anything in this repository — the same argument `SCAN_ROW_COST` was left alone
-under, one section up.
+under, one section up.~~
+
+**Both halves withdrawn.** The point-read figure does not reproduce: four
+measurements across three benchmarks and two fixtures give 1.02, 1.09,
+1.16/0.96 and 1.015 requests per row, and `POINT_READ_COST` is now **1.0** —
+see [`correctness.md`](correctness.md). The scan figure is not a constant at
+all: it is 3,774 rows per request on a store that has read nothing, 980 after
+200 random point reads and 542 after `analyze`, per the table above.
+`SCAN_ROW_COST` is unchanged at 8,000 rows per request, which is the
+fully-cached case, because choosing among three measurements eight times apart
+is a modelling decision and not a calibration.
+
+The sentence that has aged worst is "at this scale neither is close to changing
+a decision". `cost_at_scale`'s own verdict line now reads **chose TableScan but
+Index is faster — WRONG at this scale**: at 200,000 rows the index does 368
+requests against the scan's 370 and finishes 11× sooner, while the model calls
+it 15× worse.
 
 #### Where this stops, and it is not the model
 
