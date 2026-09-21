@@ -93,6 +93,39 @@ pub const SCAN_OPEN_COST: f64 = 1.0;
 /// `slate-slatedb`'s `cost_at_scale` example produces the last three; see
 /// `ledger/2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md`
 /// for why the two examples that looked like they disagreed did not.
+///
+/// # What moving it costs, measured
+///
+/// Every candidate above flips plan decisions this crate has named tests for.
+/// Each value was set and `cargo test -p slate-kernel --no-fail-fast` run
+/// against 689 passing tests; the failures nest, so a dearer scan is strictly
+/// more disruptive:
+///
+/// | rows per request | tests that fail | the new ones |
+/// | ---: | ---: | --- |
+/// | 8,000 — this constant | 0 | |
+/// | 3,774 | 4 | `a_large_set_goes_back_to_a_scan`, `the_planner_picks_a_loop_only_for_a_small_outer_side`, `plans_match_the_committed_snapshot`, `the_fixture_and_the_cost_model_agree_on_rows_per_block` |
+/// | 980 | 5 | `a_wide_in_loses_to_a_table_scan` |
+/// | 542 | 6 | `the_planner_picks_a_loop_when_the_accumulated_side_is_small` |
+///
+/// Two of those are mechanical — the snapshot, and the latency fixture that
+/// holds the same rows-per-block figure and has its own test saying to change
+/// both together. The other four are access-path choices.
+///
+/// **The headroom is about 1.3×, bisected.**
+/// `a_large_set_goes_back_to_a_scan` holds at `0.000_150` and has flipped by
+/// `0.000_180`, against the `0.000_125` here. So the constant sits closer to
+/// flipping a named decision than the spread of its own calibration — 7× —
+/// and the mildest honest recalibration, the completely cold store, is 2.1×
+/// away and past the edge.
+///
+/// That is the argument for leaving it rather than a reason it is right:
+/// there is no single value, because the measurement depends on a cache state
+/// the model has no input for. Under-charging a scan is how
+/// `cost_at_scale` comes to pick one that is 11× slower at 200,000 rows.
+/// Over-charging it turns a four-hundred-key `IN` into four hundred point
+/// reads on a table that is entirely cached, which is the other direction and
+/// no better. Both are wrong; only one is the status quo.
 pub const SCAN_ROW_COST: f64 = 0.000_125;
 
 /// Cost of one point read.

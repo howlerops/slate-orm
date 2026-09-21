@@ -101,6 +101,8 @@ demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
+cost-prose|.|python3 scripts/check_cost_prose.py
+cost-prose-guard|.|python3 scripts/test_check_cost_prose.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
 proto-copies|.|python3 scripts/check_proto_copies.py

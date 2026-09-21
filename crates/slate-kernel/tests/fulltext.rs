@@ -330,9 +330,10 @@ fn a_search_makes_the_index_a_candidate_and_nothing_else_does() {
 ///
 /// The differential, and the reason there is no assertion here that the
 /// planner *chooses* it: on this cost model a non-covering index is chosen
-/// only when it is expected to return about one row, because following an
-/// entry to its row costs `POINT_READ_COST` — three requests, measured — and a
-/// scan costs `SCAN_ROW_COST`, a eight-thousandth of one. That is true of
+/// only when it is expected to return very few rows, because following an
+/// entry to its row costs `POINT_READ_COST` — one request, re-measured in #269
+/// after four measurements contradicted the 3.0 this sentence was written
+/// against — and a scan costs `SCAN_ROW_COST`, a eight-thousandth of one. That is true of
 /// every secondary index here and has nothing to do with text.
 ///
 /// So what is asserted is that a `contains` and an equality of the *same*

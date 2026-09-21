@@ -329,6 +329,13 @@ jobs:
       # third and fourth time.
       - run: python3 scripts/check_examples_roster.py
       - run: python3 scripts/test_check_examples_roster.py
+      # …and that no comment states a cost constant's old value. The
+      # planner's reasoning lives in prose around three numbers, and when
+      # `POINT_READ_COST` was re-measured from 3.0 to 1.0 eight files went
+      # on saying three — five of them deriving a crossover that had moved
+      # by the same factor.
+      - run: python3 scripts/check_cost_prose.py
+      - run: python3 scripts/test_check_cost_prose.py
       # The TypeScript client carries its own copy of the proto, because
       # `@grpc/proto-loader` reads the file at run time and an npm package
       # cannot reach into a sibling crate. Nothing checked the two agreed:

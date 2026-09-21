@@ -186,15 +186,17 @@ async fn a_selective_range_uses_the_index_and_a_broad_one_does_not() {
 
     // The narrow range no longer goes through the index, and that is correct
     // rather than a regression. On object storage a scan returns about eight
-    // thousand rows per request and a point read costs about three, so an index
-    // only pays off when it saves scanning some twenty-four thousand rows *per
-    // row fetched*. Against a two-thousand-row table nothing clears that bar.
+    // thousand rows per request and a point read costs one, so an index only
+    // pays off when it saves scanning some eight thousand rows *per row
+    // fetched*. Against a two-thousand-row table nothing clears that bar — and
+    // that conclusion survived `POINT_READ_COST` moving from 3.0 to 1.0 in
+    // #269, which is what turned twenty-four thousand into eight.
     //
     // The consequence is worth stating because it is counter-intuitive:
     // usefulness of an index here is about the *absolute* number of rows
     // fetched, not the percentage. Half a percent of a table is never selective
     // enough by itself, at any table size — fetching `k` rows beats scanning
-    // `n` only when `n > 24000k`, and `k = 0.005n` never satisfies that.
+    // `n` only when `n > 8000k`, and `k = 0.005n` never satisfies that.
     assert!(
         matches!(narrow.access, AccessSummary::TableScan),
         "a two-thousand-row table is cheaper to scan whole, got {narrow}"

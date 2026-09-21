@@ -86,11 +86,17 @@ async fn store(
         let mut stats = txn.analyze(&root, &notes()).await.unwrap();
         // The seeded corpus is small, and a small table is cheaper to scan
         // whole than to fetch a handful of rows out of: a scan returns ~8000
-        // rows per object-store request while a point read costs ~3, so point
+        // rows per object-store request while a point read costs 1, so point
         // gets only win once the table is large. That crossover is
         // `planner.rs`'s subject; this file is about whether an `IN` over the
         // key becomes point gets *when it should*, so the row count is set to
         // a size where it should.
+        //
+        // Five million is well past it and deliberately so — but it is also
+        // why `a_large_set_goes_back_to_a_scan` below sits close to the edge:
+        // measured by bisection, that assertion holds up to a `SCAN_ROW_COST`
+        // of about 1.5e-4 and flips by 1.8e-4, against the 1.25e-4 the model
+        // uses. See `stats.rs`, which records what that headroom means.
         stats.row_count = 5_000_000;
         stats
     };
