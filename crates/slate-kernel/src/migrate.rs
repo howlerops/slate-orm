@@ -76,6 +76,32 @@ use slate_tuple::{Value, ValueType};
 /// project would rather not repeat.
 const STATE_FORMAT_V1: u64 = 1;
 
+/// The state record format that also carries the table's stored schema.
+///
+/// **Read both, write this one.** A flag day was the obvious alternative and
+/// is unacceptable for a store that already holds rows: `decode_state` refuses
+/// a format it does not know, so bumping the only version would make every
+/// existing table unreadable and every deployment a dump and reload. A V1
+/// record decodes as it always did and yields a state with no stored schema; a
+/// table is rewritten as V2 the next time it is migrated, which is already a
+/// transaction that writes the record. No separate step, no downtime, and the
+/// upgrade arrives per table rather than all at once.
+///
+/// **A downgrade is one-way per table.** An older binary meeting a V2 record
+/// gets `UnknownFormat` and refuses to start — fail-closed and correct, and
+/// worth a release note rather than a discovery.
+const STATE_FORMAT_V2: u64 = 2;
+
+/// Version byte of the *nested* schema blob, inside a V2 state record.
+///
+/// Its own version rather than leaning on the outer one, which
+/// `docs/persisting-the-schema.md` left as "probably yes". Yes: the outer
+/// format says how the record is laid out and the inner says what a column
+/// record holds, and those change for different reasons. Adding a per-column
+/// property with only an outer version would need `STATE_FORMAT_V3` and a
+/// third branch in `decode_state`, where with this it is one branch here.
+const SCHEMA_FORMAT_V1: u64 = 1;
+
 /// How many rows one backfill transaction writes before committing.
 ///
 /// A backfill of a large table cannot be one transaction: the write set is
@@ -103,6 +129,83 @@ pub struct TableState {
     /// or partial, and querying through it is the defect this module opens
     /// with.
     pub built: Vec<IndexId>,
+    /// The layout the fingerprint above was computed from, when the record
+    /// carries one.
+    ///
+    /// `None` is **permanent, not a transition**: a table registered by an
+    /// older binary, a restored backup, a table nobody has migrated since the
+    /// upgrade. Every reader has to handle "I do not know this table's
+    /// previous shape" for ever, so it is a first-class answer rather than a
+    /// case to tolerate — [`FingerprintChange::describe`] falls back to the
+    /// old hash-only refusal and says which of the two situations the reader
+    /// is in.
+    pub schema: Option<StoredSchema>,
+}
+
+/// A table's layout, as the keyspace remembers it.
+///
+/// **Exactly the fingerprint's inputs, plus names.** Stopping precisely there
+/// is the decision, and `docs/persisting-the-schema.md` argues both halves:
+/// anything omitted is a difference the fingerprint can detect and this cannot
+/// explain, and anything added is a difference this can report that is *not* a
+/// migration — a `CHECK` or a foreign key moved, announced at startup, in a
+/// refusal path, about something needing no action.
+///
+/// Names are the one addition to the hash's inputs and are deliberately **not**
+/// hashed. The fingerprint covers a column's type and position and not its
+/// name, because a rename moves no bytes and must not look like a migration —
+/// but a diff that cannot say `email` is a diff that says "column 3". That
+/// asymmetry is the whole point of storing rather than widening the hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredSchema {
+    /// Every column, live and dropped, in ordinal order.
+    pub columns: Vec<StoredColumn>,
+    /// The primary key, as ordinals.
+    pub primary_key: Vec<usize>,
+    /// The tenant column's ordinal, if the table is tenant-scoped.
+    pub tenant_column: Option<usize>,
+}
+
+/// One column, as the keyspace remembers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredColumn {
+    /// The column's name. Not hashed; see [`StoredSchema`].
+    pub name: String,
+    /// [`type_code`] of what it holds. A code rather than a name, for the same
+    /// reason the fingerprint hashes one: renaming a `ValueType` variant
+    /// upstream must not invalidate a stored record.
+    pub type_code: u64,
+    /// Whether it accepts null.
+    pub nullable: bool,
+    /// Whether a migration has retired it.
+    pub dropped: bool,
+    /// A decimal's scale, and `0` for every other type.
+    pub scale: u8,
+    /// [`type_code`] of an array's elements, and `0` for every other type.
+    pub element_code: u64,
+}
+
+impl StoredSchema {
+    /// What the keyspace would remember about `table` if it were written now.
+    #[must_use]
+    pub fn of(table: &TableDef) -> Self {
+        Self {
+            columns: table
+                .columns()
+                .iter()
+                .map(|column| StoredColumn {
+                    name: column.name().to_owned(),
+                    type_code: type_code(column.value_type()),
+                    nullable: column.is_nullable(),
+                    dropped: column.is_dropped(),
+                    scale: column.scale().unwrap_or(0),
+                    element_code: column.element_type().map_or(0, type_code),
+                })
+                .collect(),
+            primary_key: table.primary_key().iter().map(|o| o.0).collect(),
+            tenant_column: table.tenant_column().map(|o| o.0),
+        }
+    }
 }
 
 /// One thing a migration would do.
@@ -147,6 +250,176 @@ pub enum Step {
         /// The version the code declares.
         to: u32,
     },
+    /// Rewrite a record that predates stored schemas, so the next layout
+    /// refusal can name the column rather than the hash.
+    ///
+    /// **This step exists because the lazy upgrade did not happen without it.**
+    /// The design said a table's record is rewritten "the next time it is
+    /// migrated, which is already a transaction that writes the record" — true
+    /// of a table that has something to do, and false of every other one:
+    /// `apply` skips a table with no steps, so a table nobody ever changes
+    /// would keep a version 1 record for ever and its refusals would keep
+    /// being two hex numbers. A test caught it.
+    ///
+    /// A step rather than a silent rewrite in `apply`, so `--plan` shows it.
+    /// Everything this module does is a step a reader can see beforehand, and
+    /// a storage format upgrade is exactly the sort of thing an operator would
+    /// rather be told about than have happen.
+    RecordSchema {
+        /// The table.
+        table: TableId,
+        /// Its name, for the report.
+        name: String,
+    },
+}
+
+/// One way a stored layout differs from the declared one.
+///
+/// Every variant is a difference the *fingerprint* detects, and every
+/// difference the fingerprint detects is one of these. That correspondence is
+/// the point of storing exactly the hash's inputs, and
+/// `every_layout_change_moves_the_fingerprint` holds it in both directions
+/// rather than leaving it as a claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LayoutChange {
+    /// The table has a different number of columns.
+    ColumnCount {
+        /// How many the keyspace recorded.
+        stored: usize,
+        /// How many the code declares.
+        current: usize,
+    },
+    /// A column holds something else, or its nullability, droppedness, scale
+    /// or element type moved.
+    Column {
+        /// Its ordinal, which is what the fingerprint is keyed by.
+        ordinal: usize,
+        /// The stored name. Not the current one: a rename is not a layout
+        /// change, so the two can differ here while nothing is wrong, and the
+        /// name a *reader* is looking for is the one the database has.
+        name: String,
+        /// What it was.
+        was: String,
+        /// What it is now.
+        now: String,
+    },
+    /// The primary key is over different columns, or in a different order.
+    PrimaryKey {
+        /// The ordinals recorded.
+        stored: Vec<usize>,
+        /// The ordinals declared.
+        current: Vec<usize>,
+    },
+    /// The table gained, lost or moved its tenant column.
+    TenantColumn {
+        /// The ordinal recorded.
+        stored: Option<usize>,
+        /// The ordinal declared.
+        current: Option<usize>,
+    },
+}
+
+impl core::fmt::Display for LayoutChange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ColumnCount { stored, current } => {
+                write!(f, "had {stored} columns and now has {current}")
+            }
+            Self::Column {
+                ordinal,
+                name,
+                was,
+                now,
+            } => write!(f, "column {ordinal} `{name}` was {was} and is now {now}"),
+            Self::PrimaryKey { stored, current } => {
+                write!(f, "the primary key was {stored:?} and is now {current:?}")
+            }
+            Self::TenantColumn { stored, current } => match (stored, current) {
+                (None, Some(at)) => write!(f, "the table gained a tenant column at {at}"),
+                (Some(at), None) => write!(f, "the table lost its tenant column at {at}"),
+                (a, b) => write!(f, "the tenant column moved from {a:?} to {b:?}"),
+            },
+        }
+    }
+}
+
+/// How a column reads in a refusal: its type, and whatever qualifies it.
+///
+/// Built from codes rather than from `ValueType`, because the stored side has
+/// only codes — and a code this binary has no name for is printed as a code
+/// rather than guessed at, which is the case a downgrade or a corrupt record
+/// produces.
+fn describe_column(column: &StoredColumn) -> String {
+    let named = |code: u64| {
+        ValueType::ALL
+            .iter()
+            .find(|ty| type_code(**ty) == code)
+            .map_or_else(|| format!("type code {code}"), |ty| ty.name().to_owned())
+    };
+    let mut out = named(column.type_code);
+    if column.element_code != 0 {
+        out = format!("{out} of {}", named(column.element_code));
+    }
+    if column.scale != 0 {
+        out = format!("{out} at scale {}", column.scale);
+    }
+    if column.nullable {
+        out = format!("nullable {out}");
+    }
+    if column.dropped {
+        out = format!("a dropped {out}");
+    }
+    out
+}
+
+/// Every way `stored` differs from `current`, in the order a reader scans.
+///
+/// Column count first, because a count difference makes every per-column
+/// comparison after it meaningless — and reporting "column 4 changed" when the
+/// real answer is "there is no column 4 any more" is worse than reporting
+/// nothing.
+#[must_use]
+pub fn layout_changes(stored: &StoredSchema, current: &StoredSchema) -> Vec<LayoutChange> {
+    let mut out = Vec::new();
+    if stored.columns.len() != current.columns.len() {
+        out.push(LayoutChange::ColumnCount {
+            stored: stored.columns.len(),
+            current: current.columns.len(),
+        });
+    } else {
+        for (ordinal, (was, now)) in stored.columns.iter().zip(&current.columns).enumerate() {
+            // Everything *except* the name, which is the asymmetry
+            // `StoredSchema` exists for: a rename moves no bytes and must not
+            // read as a migration.
+            let moved = was.type_code != now.type_code
+                || was.nullable != now.nullable
+                || was.dropped != now.dropped
+                || was.scale != now.scale
+                || was.element_code != now.element_code;
+            if moved {
+                out.push(LayoutChange::Column {
+                    ordinal,
+                    name: was.name.clone(),
+                    was: describe_column(was),
+                    now: describe_column(now),
+                });
+            }
+        }
+    }
+    if stored.primary_key != current.primary_key {
+        out.push(LayoutChange::PrimaryKey {
+            stored: stored.primary_key.clone(),
+            current: current.primary_key.clone(),
+        });
+    }
+    if stored.tenant_column != current.tenant_column {
+        out.push(LayoutChange::TenantColumn {
+            stored: stored.tenant_column,
+            current: current.tenant_column,
+        });
+    }
+    out
 }
 
 /// Something the runner will not do.
@@ -160,6 +433,15 @@ pub enum Refusal {
         stored: u64,
         /// What the code declares.
         current: u64,
+        /// Which columns moved, when the record was written by a binary that
+        /// stored the schema.
+        ///
+        /// Empty means one of two different things and the message says
+        /// which: either the record predates stored schemas — permanently
+        /// possible, see [`TableState::schema`] — or the two schemas agree
+        /// and only the hash does not, which is a contradiction worth naming
+        /// rather than rendering as silence.
+        changes: Vec<LayoutChange>,
     },
     /// The state record is in a format this binary does not know.
     UnknownFormat {
@@ -184,13 +466,41 @@ impl core::fmt::Display for Refusal {
                 table,
                 stored,
                 current,
+                changes,
+            } if !changes.is_empty() => {
+                // The whole point of storing the schema: two hex numbers and a
+                // list of six things one of which moved, replaced by the one
+                // that did. Every line here is a difference the stored schema
+                // actually holds, so the message cannot claim more than it
+                // knows.
+                write!(
+                    f,
+                    "`{table}`: the column layout changed under rows that are already stored"
+                )?;
+                for change in changes {
+                    write!(f, "; {change}")?;
+                }
+                write!(
+                    f,
+                    ". Renames, CHECKs and foreign keys are not covered and are not this."
+                )
+            }
+            Self::LayoutChanged {
+                table,
+                stored,
+                current,
+                ..
             } => write!(
                 f,
                 "`{table}`: the column layout changed under rows that are already stored \
-                 (recorded {stored:#x}, code declares {current:#x}). The fingerprint covers the \
-                 number of columns, each one's type and nullability, which columns are dropped, \
-                 the primary key and the tenant column — one of those is not what it was. \
-                 Renames, CHECKs and foreign keys are not covered and are not this."
+                 (recorded {stored:#x}, code declares {current:#x}). This record predates stored \
+                 schemas — or holds one that agrees with the code, which would mean the record \
+                 is inconsistent with its own hash — so all that can be said is that the \
+                 fingerprint covers the number of columns, each one's type and nullability, \
+                 which columns are dropped, the primary key and the tenant column, and one of \
+                 those is not what it was. Migrating this table once rewrites the record and \
+                 the next such refusal will name the column. Renames, CHECKs and foreign keys \
+                 are not covered and are not this."
             ),
             Self::UnknownFormat { table, format } => write!(
                 f,
@@ -352,17 +662,179 @@ const fn type_code(ty: ValueType) -> u64 {
     }
 }
 
-fn encode_state(state: &TableState) -> Vec<u8> {
+/// The bytes of a state record.
+///
+/// `pub` for one reason, stated so it is not mistaken for an API: a test has
+/// to be able to write a record *this binary would not write* — specifically a
+/// version 1 one — to exercise the path where an older binary's record is read
+/// by this one. Building those bytes by hand in the test would be a second
+/// copy of the format, which is the thing most likely to drift and the least
+/// likely to be noticed when it does.
+#[must_use]
+pub fn encode_state(state: &TableState) -> Vec<u8> {
     let mut ids = Vec::with_capacity(state.built.len() * 4);
     for id in &state.built {
         ids.extend_from_slice(&id.0.to_be_bytes());
     }
-    slate_tuple::encode(&[
-        Value::U64(STATE_FORMAT_V1),
+    // The V1 prefix, always, followed by the schema blob when there is one.
+    // Appending an encoded tuple to an encoded tuple is the composition
+    // `decode_prefix` documents as safe, and it is what lets `decode_state`
+    // read the format *before* deciding how much more there is — rather than
+    // guessing a shape and falling back, which would report a V2 record's
+    // error for a corrupt V1 one.
+    let mut out = slate_tuple::encode(&[
+        Value::U64(if state.schema.is_some() {
+            STATE_FORMAT_V2
+        } else {
+            STATE_FORMAT_V1
+        }),
         Value::U64(u64::from(state.schema_version)),
         Value::U64(state.fingerprint),
         Value::Bytes(ids.into()),
-    ])
+    ]);
+    if let Some(schema) = &state.schema {
+        out.extend_from_slice(&encode_schema(schema));
+    }
+    out
+}
+
+/// The nested schema blob: a version, a column count, then the columns.
+///
+/// Nested rather than flattened into the outer record because the outer decode
+/// is a fixed type list and a variable column count does not fit one. One
+/// record rather than a second key beside it: both would be written inside the
+/// migration's transaction so atomicity is not the argument — the argument is
+/// that two records are two things that can disagree, silently.
+fn encode_schema(schema: &StoredSchema) -> Vec<u8> {
+    let mut out = slate_tuple::encode(&[
+        Value::U64(SCHEMA_FORMAT_V1),
+        Value::U64(schema.columns.len() as u64),
+    ]);
+    for column in &schema.columns {
+        out.extend_from_slice(&slate_tuple::encode(&[
+            Value::Str(column.name.clone()),
+            Value::U64(column.type_code),
+            // One packed byte rather than two booleans, because `Value` has no
+            // bool-sized encoding and two `U64`s would be sixteen bytes to say
+            // two bits.
+            Value::U64(u64::from(column.nullable) | (u64::from(column.dropped) << 1)),
+            Value::U64(u64::from(column.scale)),
+            Value::U64(column.element_code),
+        ]));
+    }
+    out.extend_from_slice(&slate_tuple::encode(&[Value::U64(
+        schema.primary_key.len() as u64,
+    )]));
+    for ordinal in &schema.primary_key {
+        out.extend_from_slice(&slate_tuple::encode(&[Value::U64(*ordinal as u64)]));
+    }
+    // Tagged rather than a sentinel ordinal, for the reason the fingerprint
+    // tags it: there is no ordinal that cannot be a real one.
+    match schema.tenant_column {
+        None => out.extend_from_slice(&slate_tuple::encode(&[Value::U64(0)])),
+        Some(ordinal) => out.extend_from_slice(&slate_tuple::encode(&[
+            Value::U64(1),
+            Value::U64(ordinal as u64),
+        ])),
+    }
+    out
+}
+
+/// Read a schema blob, or say what is wrong with it.
+fn decode_schema(bytes: &[u8]) -> core::result::Result<StoredSchema, String> {
+    let read = |buf: &[u8],
+                types: &[ValueType]|
+     -> core::result::Result<(Vec<Value>, usize), String> {
+        let (values, rest) = slate_tuple::decode_prefix(buf, types).map_err(|e| e.to_string())?;
+        Ok((values, buf.len() - rest.len()))
+    };
+    let mut at = 0usize;
+    let slice = |at: usize| bytes.get(at..).ok_or_else(|| "truncated".to_owned());
+
+    let (header, used) = read(slice(at)?, &[ValueType::U64, ValueType::U64])?;
+    at += used;
+    let [Value::U64(version), Value::U64(count)] = &header[..] else {
+        return Err("the schema header is not two numbers".to_owned());
+    };
+    if *version != SCHEMA_FORMAT_V1 {
+        return Err(format!(
+            "schema blob version {version} is not one this binary reads"
+        ));
+    }
+
+    let mut columns = Vec::new();
+    for index in 0..*count {
+        let (values, used) = read(
+            slice(at)?,
+            &[
+                ValueType::Str,
+                ValueType::U64,
+                ValueType::U64,
+                ValueType::U64,
+                ValueType::U64,
+            ],
+        )?;
+        at += used;
+        let [
+            Value::Str(name),
+            Value::U64(type_code),
+            Value::U64(flags),
+            Value::U64(scale),
+            Value::U64(element_code),
+        ] = &values[..]
+        else {
+            return Err(format!("column {index} is not of the expected shape"));
+        };
+        columns.push(StoredColumn {
+            name: name.clone(),
+            type_code: *type_code,
+            nullable: flags & 1 == 1,
+            dropped: flags & 2 == 2,
+            scale: u8::try_from(*scale)
+                .map_err(|_| format!("column {index} scale out of range"))?,
+            element_code: *element_code,
+        });
+    }
+
+    let (key_count, used) = read(slice(at)?, &[ValueType::U64])?;
+    at += used;
+    let [Value::U64(key_len)] = &key_count[..] else {
+        return Err("the primary key length is not a number".to_owned());
+    };
+    let mut primary_key = Vec::new();
+    for _ in 0..*key_len {
+        let (ordinal, used) = read(slice(at)?, &[ValueType::U64])?;
+        at += used;
+        let [Value::U64(o)] = &ordinal[..] else {
+            return Err("a primary key ordinal is not a number".to_owned());
+        };
+        primary_key.push(usize::try_from(*o).map_err(|_| "ordinal out of range".to_owned())?);
+    }
+
+    let (tag, used) = read(slice(at)?, &[ValueType::U64])?;
+    at += used;
+    let [Value::U64(tagged)] = &tag[..] else {
+        return Err("the tenant tag is not a number".to_owned());
+    };
+    let tenant_column = if *tagged == 0 {
+        None
+    } else {
+        let (ordinal, used) = read(slice(at)?, &[ValueType::U64])?;
+        at += used;
+        let [Value::U64(o)] = &ordinal[..] else {
+            return Err("the tenant ordinal is not a number".to_owned());
+        };
+        Some(usize::try_from(*o).map_err(|_| "ordinal out of range".to_owned())?)
+    };
+
+    if at != bytes.len() {
+        return Err(format!("{} bytes after the schema", bytes.len() - at));
+    }
+    Ok(StoredSchema {
+        columns,
+        primary_key,
+        tenant_column,
+    })
 }
 
 /// Decode a state record, or say why not.
@@ -371,7 +843,12 @@ fn encode_state(state: &TableState) -> Vec<u8> {
 /// fails is a thing the plan should report beside the others, not an
 /// exception that hides the rest of the tables.
 fn decode_state(table: &TableDef, bytes: &[u8]) -> core::result::Result<TableState, Refusal> {
-    let values = slate_tuple::decode(
+    // `decode_prefix` rather than `decode`: a V2 record is the V1 four
+    // followed by the schema blob, and reading the prefix lets the *format*
+    // decide how much more to expect. Trying one shape and falling back to the
+    // other would work and would report a V2 parse error for a corrupt V1
+    // record, which is a worse message for the more likely failure.
+    let (values, rest) = slate_tuple::decode_prefix(
         bytes,
         &[
             ValueType::U64,
@@ -398,12 +875,24 @@ fn decode_state(table: &TableDef, bytes: &[u8]) -> core::result::Result<TableSta
     else {
         return Err(bad("not four values of the expected types"));
     };
-    if *format != STATE_FORMAT_V1 {
-        return Err(Refusal::UnknownFormat {
+    let schema = match *format {
+        STATE_FORMAT_V1 => {
+            if !rest.is_empty() {
+                return Err(bad("a version 1 record has bytes after it"));
+            }
+            None
+        }
+        STATE_FORMAT_V2 => Some(decode_schema(rest).map_err(|detail| Refusal::Corrupt {
             table: table.name().to_owned(),
-            format: *format,
-        });
-    }
+            detail,
+        })?),
+        other => {
+            return Err(Refusal::UnknownFormat {
+                table: table.name().to_owned(),
+                format: other,
+            });
+        }
+    };
     // `split_first_chunk` rather than `chunks_exact`: it hands back a `[u8; 4]`
     // by value, so there is no copy into a scratch array and no slice index,
     // and what is left over at the end *is* the remainder — which turns the
@@ -423,6 +912,7 @@ fn decode_state(table: &TableDef, bytes: &[u8]) -> core::result::Result<TableSta
         schema_version: u32::try_from(*version).map_err(|_| bad("schema version out of range"))?,
         fingerprint: *fingerprint,
         built,
+        schema,
     })
 }
 
@@ -527,6 +1017,9 @@ pub async fn plan_of(
                 table: table.name().to_owned(),
                 stored: state.fingerprint,
                 current,
+                changes: state.schema.as_ref().map_or_else(Vec::new, |schema| {
+                    layout_changes(schema, &StoredSchema::of(table))
+                }),
             });
             continue;
         }
@@ -553,6 +1046,12 @@ pub async fn plan_of(
                 table: table.id(),
                 from: state.schema_version,
                 to: table.schema_version(),
+            });
+        }
+        if state.schema.is_none() {
+            out.steps.push(Step::RecordSchema {
+                table: table.id(),
+                name: table.name().to_owned(),
             });
         }
     }
@@ -583,7 +1082,10 @@ pub async fn apply<S: KvStore + ?Sized>(
     let mut report = Report::default();
     for step in &plan.steps {
         match step {
-            Step::Register { .. } | Step::NoteVersion { .. } => {}
+            // None of the three does work of its own: the state write at the
+            // end of `apply` is what records a registration, a version and a
+            // schema, and it happens for every table the plan touches.
+            Step::Register { .. } | Step::NoteVersion { .. } | Step::RecordSchema { .. } => {}
             Step::BuildIndex { table, index, .. } => {
                 let (table, index) = resolve(catalog, *table, *index)?;
                 report
@@ -612,6 +1114,11 @@ pub async fn apply<S: KvStore + ?Sized>(
                 schema_version: table.schema_version(),
                 fingerprint: fingerprint(table),
                 built: table.indexes().iter().map(IndexDef::id).collect(),
+                // Every write is a version 2 record. This is the whole of the
+                // lazy upgrade: a table gets its stored schema the next time
+                // it is migrated, which is already the transaction that
+                // rewrites this key.
+                schema: Some(StoredSchema::of(table)),
             }),
         )?;
     }
@@ -682,7 +1189,8 @@ fn touches(step: &Step, table: TableId) -> bool {
         Step::Register { table: t, .. }
         | Step::BuildIndex { table: t, .. }
         | Step::DropIndex { table: t, .. }
-        | Step::NoteVersion { table: t, .. } => *t == table,
+        | Step::NoteVersion { table: t, .. }
+        | Step::RecordSchema { table: t, .. } => *t == table,
     }
 }
 

@@ -12,6 +12,13 @@ So the work is *"persist the schema, not only its fingerprint"* — a storage
 format change with its own migration. This note settles what to store, how the
 change migrates itself, and what it buys **before** any generator exists.
 
+> **Built.** `TableState::schema`, `STATE_FORMAT_V2`, `StoredSchema`,
+> `layout_changes` and a refusal that names the column are in `migrate.rs`, and
+> `crates/slate-kernel/tests/migrations.rs` is the demonstration. Three things
+> this note left open or got wrong are marked inline below; the largest is §2,
+> where the lazy upgrade it describes did not happen and needed a step of its
+> own.
+
 It concludes that the right amount to store is exactly the fingerprint's
 inputs, that the format change should be lazy and per table rather than a
 flag day, and that the first deliverable is not the generator at all.
@@ -79,6 +86,16 @@ rewritten as V2 the next time it is migrated, which is already a transaction
 that writes the record. The upgrade needs no separate step and no downtime, and
 it arrives per table rather than all at once.
 
+> **"Needs no separate step" was wrong, and a test caught it.** `apply` writes
+> a table's record only when the plan has a step for that table — so a table
+> with nothing to do, which is every table on most deploys, kept a version 1
+> record for ever and kept refusing with two hex numbers. The upgrade is now
+> `Step::RecordSchema`, planned whenever a record carries no schema. A step
+> rather than a silent rewrite inside `apply`, because everything else this
+> module does is visible in `--plan` beforehand, and a format change that makes
+> the record unreadable to an older binary is exactly what an operator would
+> rather be told about than discover.
+
 **The unknown-schema case is permanent, not a transition.** That is the part
 worth designing for rather than tolerating: a table registered by an older
 binary, a restored backup, a table nobody has migrated since the upgrade. The
@@ -125,10 +142,14 @@ generator for a file format that does not exist.
 
 ## What this note does not do
 
-**It does not decide the inner encoding's own versioning.** The outer record
-gets `STATE_FORMAT_V2`; the nested schema blob would want its own version byte
-so a column property can be added without a third outer format. Probably yes,
-and "probably" is not a decision.
+~~**It does not decide the inner encoding's own versioning.**~~ **Decided: yes.**
+The outer format says how the record is laid out and the inner says what a
+column record holds, and those change for different reasons — adding a
+per-column property with only an outer version would need `STATE_FORMAT_V3`
+and a third branch in `decode_state`, where with `SCHEMA_FORMAT_V1` it is one
+branch in `decode_schema`. A blob claiming a version this binary does not know
+is refused rather than misread, which is the outer format byte's own argument
+one level down.
 
 **It does not size anything.** A state record is read once per table at
 startup, so a few dozen bytes per column is very likely irrelevant — and that
@@ -142,11 +163,14 @@ that recomputing the fingerprint from the stored schema and comparing is cheap
 and would turn an impossible state into a `Corrupt` refusal — and that is a
 suggestion, not a settled design.
 
-**It does not examine the wasm or in-memory backends.** `MemoryStore` holds the
-same records through the same code, so it should follow — that part is
-unverified. What *is* checked: `TableState { … }` is constructed in exactly two
-places, both inside `migrate.rs`, and no test anywhere builds one, so a new
-field breaks two in-module sites and nothing else.
+~~**It does not examine the wasm or in-memory backends.**~~ `MemoryStore` does
+follow, and every test here runs against it. The count was right and the
+conclusion was not: `TableState { … }` was constructed in exactly two places
+inside `migrate.rs` and adding the field broke exactly those two — but `Step`
+is a public enum that `slate-serverd`'s `--plan` renderer matches exhaustively,
+so the new *variant* broke a third site this note did not think to look for.
+The compiler found it, which is the right outcome and is the reason neither
+enum is `#[non_exhaustive]`.
 
 **It resolves nothing about the comparison row's wording.** §4 argues the row
 may be asking for the wrong artifact. Confirming that means re-reading what

@@ -178,9 +178,33 @@ function tablesInConfig(): Record<string, string[]> {
   return found;
 }
 
+/** Tables in `head.toml` that the UI deliberately does not show, and why.
+ *
+ * The `EXPECTED_REFUSALS` idiom this repository uses elsewhere: a list you are
+ * forced to edit is a list that stays true. A table added to the catalog fails
+ * the test below until somebody either puts it in the UI or says here why it
+ * is not there — which is the decision, made once, rather than never.
+ */
+const NOT_IN_THE_UI: Record<string, string> = {
+  posts: "it exists so the generated array decoders have something to decode; \
+nothing seeds it and the UI has no way to render a list cell",
+};
+
 test("the UI's column names match head.toml, in order", () => {
   // A copy of the schema like every client holds. The server's fingerprint
   // check catches a disagreement at query time; this catches it at test time,
   // and names the table rather than printing two hashes.
-  assert.deepEqual(TABLES, tablesInConfig());
+  //
+  // Subset rather than equality, with the difference named above. Equality was
+  // the first version and was right while the UI showed everything; it stopped
+  // being right the moment the catalog gained a table for a reason that has
+  // nothing to do with the UI, and the choice then is to show an empty table
+  // nobody can do anything with or to say so. This says so.
+  const config = tablesInConfig();
+  for (const [name, reason] of Object.entries(NOT_IN_THE_UI)) {
+    assert.ok(name in config, `NOT_IN_THE_UI names ${name}, which head.toml no longer has`);
+    assert.ok(!(name in TABLES), `${name} is in the UI, so it is not ${reason}`);
+    delete config[name];
+  }
+  assert.deepEqual(TABLES, config);
 });

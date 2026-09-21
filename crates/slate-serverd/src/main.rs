@@ -872,6 +872,16 @@ fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -
                  change, so no row is rewritten",
                 named(*table)
             ),
+            // Shown rather than done quietly, which is why it is a step at
+            // all. It costs one key write and buys a refusal that can name a
+            // column instead of printing two hashes — and it makes the record
+            // unreadable to an older binary, which is the part an operator
+            // would rather read here than discover on a rollback.
+            Step::RecordSchema { name, .. } => format!(
+                "store `{name}`'s column layout beside its fingerprint — one key, no\n    \
+                 rows read. A later layout change will then name the column that moved.\n    \
+                 An older binary cannot read the rewritten record",
+            ),
         };
         let _ = writeln!(out, "  - {line}");
     }
@@ -1123,5 +1133,35 @@ where = "id > 0"
         assert!(json.contains("\"ordinal\": 1"), "{json}");
         assert!(json.contains("\"kind\""), "{json}");
         assert!(json.contains("\"partial\": true"), "{json}");
+    }
+
+    /// `--plan` says a storage-format upgrade is coming, and what it costs.
+    ///
+    /// `tests/plan.rs` runs the binary and covers the other four steps, and it
+    /// cannot reach this one: every store it makes is written by *this* binary,
+    /// so every record already carries a schema and the step is never planned.
+    /// The line would otherwise be code the compiler required and nobody read.
+    #[test]
+    fn the_plan_names_a_schema_record_upgrade_and_what_it_costs() {
+        let table = slate_schema::TableDef::builder("users", slate_schema::TableId(1))
+            .column("id", slate_tuple::ValueType::U64)
+            .primary_key(["id"])
+            .build()
+            .unwrap();
+        let catalog = Catalog::from_tables([table]).unwrap();
+        let plan = slate_kernel::migrate::MigrationPlan {
+            steps: vec![slate_kernel::migrate::Step::RecordSchema {
+                table: slate_schema::TableId(1),
+                name: "users".into(),
+            }],
+            refusals: vec![],
+        };
+        let rendered = render_plan(&plan, &catalog);
+        assert!(rendered.contains("`users`"), "{rendered}");
+        // The three things an operator is deciding on: what it writes, what it
+        // buys, and what it costs on a rollback.
+        assert!(rendered.contains("one key, no"), "{rendered}");
+        assert!(rendered.contains("name the column"), "{rendered}");
+        assert!(rendered.contains("older binary"), "{rendered}");
     }
 }

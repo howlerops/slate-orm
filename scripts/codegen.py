@@ -672,6 +672,12 @@ def python_rows(tables: list[dict]) -> list[str]:
         '            f"not the declared {kind}"',
         "        )",
         "    return value",
+    ]
+    # Emitted only for a catalog that has an array column, because it refers to
+    # `Array` and the import list is derived from the same predicate — see
+    # `has_array_column`, and the defect that made it one function.
+    if has_array_column(tables):
+        out.extend([
         "",
         "",
         "def _elements(values: Sequence[object], at: int, table: str, column: str,",
@@ -700,8 +706,8 @@ def python_rows(tables: list[dict]) -> list[str]:
         '                f"not the declared {kind}"',
         "            )",
         "    return value",
-        "",
-    ]
+        ])
+    out.append("")
     for table in tables:
         name = type_name(table)
         fields = row_columns(table)
@@ -1158,6 +1164,20 @@ def typescript_rows(tables: list[dict]) -> list[str]:
     return out
 
 
+def has_array_column(tables: list[dict]) -> bool:
+    """Whether any live column in this catalog is an array.
+
+    One predicate, consulted by both the import list and the helper that needs
+    the import, because gating them separately is what went wrong: `_elements`
+    was emitted unconditionally and `Array` was imported only when a catalog
+    had an array column. The demo has one, so the two conditions coincided
+    there and its generated file was fine; the retention example has none, and
+    its file referred to a name it had not imported. `ruff` found it, in CI, on
+    a file nobody had touched — which is the whole argument for one predicate.
+    """
+    return any(column["type"] == "array" for table in tables for _, column in row_columns(table))
+
+
 def python_value_imports(tables: list[dict]) -> str:
     """The `slate.values` names this catalog's generated code refers to.
 
@@ -1400,36 +1420,43 @@ def typescript_module(tables: list[dict]) -> str:
         '  return "value" in value ? value.value : undefined;',
         "}",
         "",
-        "/**",
-        " * One array column, with every element checked against its declared type.",
-        " *",
-        " * `field` above stops at the array: its value is a `Value[]`, whose members",
-        " * still carry their own tags, so a cast to `string[]` at the call site would",
-        " * be a lie nothing can see. The element type is not on the wire either, so",
-        " * this is the only place on this side that can notice — and the error names",
-        " * the position, because `tags[2]` is findable and `tags` is not.",
-        " */",
-        "function elements(",
-        "  row: Value[],",
-        "  at: number,",
-        "  table: string,",
-        "  column: string,",
-        "  kind: string,",
-        "  nullable: boolean,",
-        "): unknown {",
-        '  const value = field(row, at, table, column, "array", nullable);',
-        "  if (value === null) return null;",
-        "  return (value as Value[]).map((element, index) => {",
-        "    if (element.kind !== kind) {",
-        "      throw new Error(",
-        "        `${table}.${column}[${index}] is ${element.kind}, not the declared ${kind}`,",
-        "      );",
-        "    }",
-        '    return "value" in element ? element.value : undefined;',
-        "  });",
-        "}",
-        "",
     ]
+    # Same gate as Python's `_elements`, and for a weaker reason that is still
+    # a reason: an unused function is not a TypeScript error today, and a
+    # generated file full of code no catalog needs is one `noUnusedLocals`
+    # away from being one.
+    if has_array_column(tables):
+        out.extend([
+            "/**",
+            " * One array column, with every element checked against its declared type.",
+            " *",
+            " * `field` above stops at the array: its value is a `Value[]`, whose members",
+            " * still carry their own tags, so a cast to `string[]` at the call site would",
+            " * be a lie nothing can see. The element type is not on the wire either, so",
+            " * this is the only place on this side that can notice — and the error names",
+            " * the position, because `tags[2]` is findable and `tags` is not.",
+            " */",
+            "function elements(",
+            "  row: Value[],",
+            "  at: number,",
+            "  table: string,",
+            "  column: string,",
+            "  kind: string,",
+            "  nullable: boolean,",
+            "): unknown {",
+            '  const value = field(row, at, table, column, "array", nullable);',
+            "  if (value === null) return null;",
+            "  return (value as Value[]).map((element, index) => {",
+            "    if (element.kind !== kind) {",
+            "      throw new Error(",
+            "        `${table}.${column}[${index}] is ${element.kind}, not the declared ${kind}`,",
+            "      );",
+            "    }",
+            '    return "value" in element ? element.value : undefined;',
+            "  });",
+        "}",
+        ])
+    out.append("")
     names = []
     for table in tables:
         columns = live_columns(table)

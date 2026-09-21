@@ -715,6 +715,30 @@ def test_a_generated_array_column_decodes_and_encodes_element_by_element() -> No
         raise AssertionError("a wrongly typed element decoded without complaint")
 
 
+def test_a_catalog_with_no_array_column_gets_no_array_helper() -> None:
+    """The helper and the import it needs are gated on one predicate.
+
+    They were gated separately, and the demo's catalog has an array column so
+    the two conditions coincided and its generated file was fine. The retention
+    example has none: its file referred to `Array` without importing it, which
+    `ruff` found in CI on a file nobody had touched. One predicate now, and
+    this is the case that had no coverage — a catalog *without* the feature.
+    """
+    plain = [table("docs", [column("id", "u64", 0), column("title", "string", 1)], [0])]
+    python = codegen.python_module(plain)
+    assert "_elements" not in python, python
+    assert "Array" not in python, python
+    typescript = codegen.typescript_module(plain)
+    assert "function elements(" not in typescript, typescript
+
+    # And the positive half, so a gate that refused everything would fail too.
+    with_array = [
+        table("posts", [column("id", "u64", 0), array_column("tags", "string", 1)], [0])
+    ]
+    assert "_elements" in codegen.python_module(with_array)
+    assert "function elements(" in codegen.typescript_module(with_array)
+
+
 def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> None:
     """Two shapes no catalog can hold, refused rather than half-generated.
 
