@@ -27,6 +27,11 @@ func (s *server) meta(ctx context.Context, session *slate.Session, _ json.RawMes
 		// `/api/query` served four — and the conformance `meta` case caught
 		// it because the node adapter had already been deriving its list.
 		"tables": knownTables(),
+		// Beside the tables and not among them, for the reason `views` in
+		// `query.go` gives: a view has no id, no index and no write path, and
+		// a client that treated one as a table would generate a row type for
+		// something it cannot write.
+		"views": viewNames(),
 	}, nil
 }
 

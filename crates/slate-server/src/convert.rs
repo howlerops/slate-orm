@@ -1751,7 +1751,14 @@ pub fn query_from_proto_at(
     // relative to a declaration, so checking the declaration first is the only
     // order in which the refusal means anything: a reference that resolves
     // against the wrong schema resolves perfectly well.
-    fingerprint::check(table, query.schema.as_ref())?;
+    //
+    // Checked under `query.table` rather than under `table.name()`, which are
+    // the same string on every path but one: a read through a view says
+    // `classics` and arrives here holding `books`'s `TableDef`. The client's
+    // claim is a claim about the thing it named, so that is what it has to be
+    // verified against — see `fingerprint::check_named`, which has the whole
+    // argument and how the case was found.
+    fingerprint::check_named(table, &query.table, query.schema.as_ref())?;
 
     let mut warnings = Vec::new();
 

@@ -111,6 +111,23 @@ CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
         "no `authorized_table`",
     ),
     (
+        # The spelling case. `check_named` is the same check under a
+        # caller-supplied name, and it arrived by renaming the call in
+        # `query_from_proto_at` — which made the old pattern match nothing
+        # there and silently dropped rule 2's cover from the converter every
+        # read goes through. The only symptom was a roster entry reported as
+        # stale, which is a thin thread to hang a security rule on.
+        "a check_named with no authorisation above it fails too",
+        """
+    async fn insert(&self) -> Result<(), Status> {
+        let table = something_else(&r.table)?;
+        fingerprint::check_named(table, &r.table, r.schema.as_ref())?;
+    }
+""",
+        1,
+        "no `authorized_table`",
+    ),
+    (
         "an authorisation too far above the fingerprint does not count",
         """
     async fn insert(&self) -> Result<(), Status> {

@@ -142,6 +142,24 @@ const IDENTITIES: Record<string, Identity> = {
 
 const TABLES = ["authors", "books", "sales", "shipments"];
 
+/**
+ * The demo's one view, held apart from `TABLES` rather than added to it.
+ *
+ * Only `/api/query` accepts one, which is exactly the handler the server opted
+ * in: everything else answers "`classics` is a view over `books`, and only a
+ * plain query can read through one".
+ *
+ * This adapter needs no declaration for it, and the other two do — a real
+ * asymmetry rather than an oversight. `claimFor` returns undefined for a name
+ * with no schema and the request goes out with no claim, which is right here:
+ * `query` sends no fingerprint anyway, and a claim that `classics` is a table
+ * would be a claim about something the catalog does not hold. The Python
+ * adapter builds a `Table` because its `Query` takes one, and it builds it
+ * from `BOOKS` for the reason `docs/views.md` gives — a view may not narrow
+ * columns, so a view's ordinals are its base table's.
+ */
+const VIEWS = ["classics"];
+
 interface FilterSpec {
   op: string;
   column?: Ordinal;
@@ -213,7 +231,7 @@ interface QuerySpec {
 }
 
 function buildQuery(spec: QuerySpec): Query {
-  if (!spec.table || !TABLES.includes(spec.table)) {
+  if (!spec.table || !(TABLES.includes(spec.table) || VIEWS.includes(spec.table))) {
     throw new Error(`no such table: ${spec.table}`);
   }
   const filter = buildFilter(spec.filter);
@@ -251,7 +269,8 @@ class Adapter {
 
   async meta(): Promise<unknown> {
     const status = await this.clients["app"]!.leadership();
-    return { sdk: "node", leader: status.leader, tables: TABLES };
+    // `views` beside `tables` and not among them; see `VIEWS`.
+    return { sdk: "node", leader: status.leader, tables: TABLES, views: VIEWS };
   }
 
   async query(session: Session, body: QuerySpec): Promise<unknown> {

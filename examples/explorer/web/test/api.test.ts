@@ -21,6 +21,7 @@ import {
   render,
   TABLES,
   type Tagged,
+  VIEWS,
 } from "../src/api.js";
 
 test("with nothing in the environment, the adapters are the demo's ports", () => {
@@ -189,6 +190,47 @@ const NOT_IN_THE_UI: Record<string, string> = {
   posts: "it exists so the generated array decoders have something to decode; \
 nothing seeds it and the UI has no way to render a list cell",
 };
+
+/** The `[[views]]` blocks of head.toml, as view name -> base table name.
+ *
+ * The base table is read out of the `FROM` rather than out of a second field,
+ * because that is where the config says it — a view is a `SELECT` and the
+ * server resolves its table by parsing one. Strict in the same way
+ * `tablesInConfig` is: no blocks at all throws, so a parser that stops
+ * matching fails this test instead of agreeing with an empty expectation.
+ */
+function viewsInConfig(): Record<string, string> {
+  const toml = readFileSync(findUp("head.toml"), "utf8");
+  const found: Record<string, string> = {};
+  for (const block of toml.split(/^\[\[views\]\]$/m).slice(1)) {
+    const name = /^name = "([^"]+)"/m.exec(block)?.[1];
+    const base = /^query = "[^"]*\bFROM\s+(\w+)/m.exec(block)?.[1];
+    if (!name || !base) continue;
+    found[name] = base;
+  }
+  if (Object.keys(found).length === 0) {
+    throw new Error("parsed no views out of head.toml; the parser, not the config, is wrong");
+  }
+  return found;
+}
+
+test("every view the UI offers reads a table, with that table's columns", () => {
+  // Not a column list of its own, which is the point: `docs/views.md` refuses
+  // a projection in a view, so a view's ordinals are its base table's and the
+  // UI has nothing separate to get wrong. This asserts that `VIEWS` really is
+  // built that way rather than out of a copied literal that happens to agree
+  // today — an identity check on the array, so a copy fails it.
+  const config = viewsInConfig();
+  assert.deepEqual(Object.keys(VIEWS).sort(), Object.keys(config).sort());
+  for (const [name, base] of Object.entries(config)) {
+    assert.ok(base in TABLES, `view ${name} reads ${base}, which the UI does not know`);
+    assert.strictEqual(
+      VIEWS[name],
+      TABLES[base],
+      `view ${name} should be ${base}'s column list, not a copy of it`,
+    );
+  }
+});
 
 test("the UI's column names match head.toml, in order", () => {
   // A copy of the schema like every client holds. The server's fingerprint

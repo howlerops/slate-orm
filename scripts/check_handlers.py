@@ -200,7 +200,17 @@ AUTHENTICATES = re.compile(r"self\.context\(")
 
 FUNCTION = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+([a-z_][a-z0-9_]*)")
 BARE = re.compile(r"self\.table\(")
-FINGERPRINT = re.compile(r"fingerprint::check\(")
+#: A schema check, however it is spelled.
+#:
+#: `check_named` is the same check under a caller-supplied name, for a read
+#: through a view. It is matched here rather than left out because the rule is
+#: about *where a fingerprint is verified relative to authorisation*, which is
+#: the same obligation whichever name the check goes by — and because leaving
+#: it out is not a neutral omission. This guard found that itself: renaming the
+#: call in `query_from_proto_at` made the old pattern match nothing there, so
+#: rule 2 stopped covering the converter every read goes through, and the only
+#: symptom was a roster entry reported as stale.
+FINGERPRINT = re.compile(r"fingerprint::check(?:_named)?\(")
 AUTHORIZED = re.compile(r"authorized_table\(")
 #: The multi-table helpers, which authorise a whole request's inputs at once.
 AUTHORIZES = re.compile(r"authorize_\w+\(")

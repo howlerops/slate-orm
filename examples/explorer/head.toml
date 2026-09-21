@@ -314,3 +314,31 @@ table = "books"
 actions = ["read", "insert", "update", "delete"]
 roles = ["app"]
 using = "true"
+
+# The demo's one view, and the reason it is over `books` rather than over a
+# table with no policy.
+#
+# A view here is a name for a `WHERE` and nothing else — no projection, no
+# sort, no limit; `docs/views.md` argues each refusal and the short version is
+# that a projection would make the caller's ordinals *view* ordinals. So the
+# only thing a view can demonstrate is which rows it admits, and the
+# interesting version of that is a view whose answer **depends on who asks**.
+#
+# `year < 1980` admits eight of the eleven seeded books. The `reader` role's
+# row policy above admits `year >= 1960`, so a reader reading this same view
+# gets six: 1955 and 1951 are inside the view and outside the policy. That is
+# §1's whole argument made visible — the view is substituted away before
+# planning, the *base* table's `TableId` reaches `row_filter_with`, and the
+# policy that runs is `books`'s. A view with its own id would have had no
+# policy at all and would have handed a reader all eight.
+#
+# The conformance runner reads it as both identities for exactly that reason;
+# a single-identity case would have passed against a view that was a privilege
+# escalation.
+#
+# Not a second view over a table with no policy. Nothing would be learned that
+# `crates/slate-serverd/tests/views.rs` does not already assert against a real
+# binary, and this file is read by people deciding whether to use the feature.
+[[views]]
+name = "classics"
+query = "SELECT * FROM books WHERE year < 1980"

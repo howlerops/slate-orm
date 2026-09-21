@@ -305,3 +305,20 @@ export const TABLES: Record<string, string[]> = {
   editions: ["id", "book_id", "format"],
   shipments: ["id", "book_id", "status", "deleted_at"],
 };
+
+/** The demo's views, as name -> the columns a read through one returns.
+ *
+ * Each maps to its **base table's** column list rather than to a list of its
+ * own, and that is the design rather than a shortcut: `docs/views.md` refuses a
+ * projection in a view, so a view's ordinals *are* its base table's. A view
+ * that could narrow columns would need a list here, and a second list is what
+ * drifts.
+ *
+ * Separate from `TABLES` because a view is not a table. `/api/meta` reports
+ * the two separately for the same reason, and only `/api/query` accepts a view
+ * — the plan panel asks for one anyway, deliberately, so the refusal is
+ * visible rather than described.
+ */
+export const VIEWS: Record<string, string[]> = {
+  classics: TABLES["books"]!,
+};

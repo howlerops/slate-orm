@@ -111,6 +111,29 @@ var known = map[string]bool{
 	"authors": true, "books": true, "sales": true, "shipments": true,
 }
 
+// views the demo serves, held apart from `known` rather than added to it.
+//
+// A view is not a table and `/api/meta` must not say it is: the other two
+// adapters hold a `Table` per name and a generator reading the catalog emits a
+// row type per table, so a view listed among them would be described as
+// something it has no id, no index and no write path to be.
+//
+// Only `/api/query` accepts one. Every other endpoint here names its tables
+// itself, which matches the server: `query` is the single handler that reads
+// through a view, and the rest answer "`classics` is a view over `books`, and
+// only a plain query can read through one".
+var views = map[string]bool{"classics": true}
+
+// viewNames is `views` sorted, for `/api/meta`, for the reason knownTables is.
+func viewNames() []string {
+	out := make([]string, 0, len(views))
+	for name := range views {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // knownTables is `known` as a sorted slice, for `/api/meta`.
 //
 // Sorted because a map's iteration order is deliberately random in Go, and
@@ -127,7 +150,7 @@ func knownTables() []string {
 }
 
 func (q *querySpec) build() (slate.Query, error) {
-	if !known[q.Table] {
+	if !known[q.Table] && !views[q.Table] {
 		return slate.Query{}, fmt.Errorf("no such table: %s", q.Table)
 	}
 	out := slate.Query{

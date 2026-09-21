@@ -192,6 +192,70 @@ try {
     }
   });
 
+  await check("a view narrows the rows, and the policy narrows them again", async () => {
+    // The whole of `docs/views.md` §1, in a browser: a view is substituted
+    // away before planning, so the *base* table's row policy is the one that
+    // runs. A view carrying its own `TableId` — the design §1 refuses — would
+    // have no policy at all and hand a reader every row the view admits, and
+    // this is the check that would see it.
+    const rows = page.locator(".panel:has(h2:text-is('Rows'))");
+    const pick = (name) =>
+      rows.locator('.field:has(span:text-is("table")) select').selectOption(name);
+    const count = (body) => body.trim().split("\n").length;
+
+    const seen = {};
+    for (const [key, identity, table] of [
+      ["books", "app", "books"],
+      ["view", "app", "classics"],
+      ["reader", "reader", "classics"],
+    ]) {
+      await at(page, { identity, panel: "rows" });
+      await pick(table);
+      await rows.locator('.field:has(span:text-is("value")) input').fill("");
+      await settled(page);
+      seen[key] = await rows.locator("tbody").innerText();
+    }
+
+    if (!(count(seen.view) < count(seen.books))) {
+      throw new Error(
+        `the view did not narrow: ${count(seen.books)} rows from books, ${count(seen.view)} through it`,
+      );
+    }
+    if (!(count(seen.reader) < count(seen.view))) {
+      throw new Error(
+        `the row policy did not narrow the view: ${count(seen.view)} rows as app, ${count(seen.reader)} as reader`,
+      );
+    }
+    // `classics` is `year < 1980` and `modern_only` is `year >= 1960`, so the
+    // 1950s books are inside the view and outside the policy. Asserting the
+    // decade rather than only the counts, because two arbitrary numbers
+    // shrinking proves less than the right rows disappearing.
+    if (!/19[0-5]\d/.test(seen.view)) {
+      throw new Error("the view shows no pre-1960 book, so the next assertion proves nothing");
+    }
+    if (/19[0-5]\d/.test(seen.reader)) {
+      throw new Error("a reader can see a pre-1960 book through the view");
+    }
+    if (/19[89]\d|199\d/.test(seen.view)) {
+      throw new Error("the view shows a book from 1980 or later, so its own predicate did nothing");
+    }
+
+    // And the plan panel refuses, because `explain` is not a path that reads
+    // through a view. Lowercased for the reason the reader-plan check below
+    // gives: the stylesheet renders the kind in caps.
+    const plan = page.locator(".panel:has(h2:text-is('The plan'))");
+    const refusal = (await plan.innerText()).toLowerCase();
+    if (!refusal.includes("is a view over")) {
+      throw new Error(`the plan panel did not name the view: ${refusal.slice(0, 200)}`);
+    }
+
+    // Put the switcher back, so the checks after this one open on `books`
+    // as they always have.
+    await at(page, { identity: "app", panel: "rows" });
+    await pick("books");
+    await settled(page);
+  });
+
   await check("a reader is refused a plan, and told it is the database refusing", async () => {
     await at(page, { identity: "reader", panel: "rows" });
     const plan = page.locator(".panel:has(h2:text-is('The plan'))");

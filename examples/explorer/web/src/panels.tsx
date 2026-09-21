@@ -6,6 +6,7 @@ import {
   api,
   render,
   TABLES,
+  VIEWS,
   type Persona,
   type QuerySpec,
   type Answer,
@@ -30,7 +31,7 @@ export function Explore(props: Context): JSX.Element {
   const [descending, setDescending] = createSignal(false);
   const [limit, setLimit] = createSignal(25);
 
-  const columns = () => TABLES[table()] ?? [];
+  const columns = () => TABLES[table()] ?? VIEWS[table()] ?? [];
 
   /** The filter, typed the way the column is declared.
    *
@@ -94,7 +95,9 @@ export function Explore(props: Context): JSX.Element {
                 setSortColumn(0);
               }}
             >
-              <For each={Object.keys(TABLES)}>{(name) => <option>{name}</option>}</For>
+              <For each={[...Object.keys(TABLES), ...Object.keys(VIEWS)]}>
+                {(name) => <option>{name}</option>}
+              </For>
             </select>
           </label>
           <label class="field">
@@ -170,6 +173,13 @@ export function Explore(props: Context): JSX.Element {
           Asking is its own privilege: a plan is costed against statistics
           describing rows a policy may hide, so <code>reader</code> is refused
           here while still being allowed to read.
+        </p>
+        <p class="why">
+          Pick <code>classics</code> above and this panel refuses too, for a
+          different reason: it is a view, and only a plain read may go through
+          one. The rows still come back — and fewer of them as{" "}
+          <code>reader</code>, because the view is substituted away before
+          planning and it is <em>books</em>&apos; row policy that runs.
         </p>
         <Result answer={plan.data} pending={plan.isPending}>
           {(value) => (

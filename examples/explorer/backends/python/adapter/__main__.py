@@ -35,6 +35,7 @@ from slate import (
     Query,
     SlateError,
     Step,
+    Table,
     TimeUnit,
     Units,
     UpdateWhere,
@@ -148,10 +149,29 @@ def build_filter(query, table, spec: dict[str, Any] | None):
 #: different databases. The conformance `meta` case is what reported it.
 QUERYABLE = ("authors", "books", "sales", "shipments")
 
+#: The demo's one view, and the `Table` a client needs in order to name it.
+#:
+#: Built from `BOOKS` rather than written out, and that is not a convenience —
+#: it is the second thing `docs/views.md`'s no-projection rule buys. A view may
+#: not narrow columns, so a view's ordinals *are* its base table's, so a client
+#: declaring one has nothing of its own to get wrong: the name and the base
+#: table are the whole declaration, and they are the two things `head.toml`
+#: says. A view that could project would need a column list here, and a column
+#: list here is the drift this file has been bitten by twice.
+#:
+#: `query` sends no fingerprint — a read is checked by the planner, not by a
+#: schema comparison — so nothing asks the server to agree that `classics` is a
+#: table. It is not one, and `/api/meta` reports it separately for that reason.
+#:
+#: Not in `BY_NAME` and not in `QUERYABLE`: those are tables, and every other
+#: endpoint here reads them. Only `/api/query` accepts a view, which is exactly
+#: which handler the server opted in.
+VIEWS = {"classics": Table("classics", BOOKS.columns, BOOKS.primary_key)}
+
 
 def build_query(spec: dict[str, Any]) -> Query:
     name = spec.get("table", "")
-    table = BY_NAME.get(name) if name in QUERYABLE else None
+    table = BY_NAME.get(name) if name in QUERYABLE else VIEWS.get(name)
     if table is None:
         # Caught here rather than by the server, because two of the three
         # clients hold a schema and cannot build a request without one. The
@@ -192,6 +212,8 @@ class Adapter:
             "sdk": "python",
             "leader": self.clients["app"].session().leadership().is_leader,
             "tables": list(QUERYABLE),
+            # Beside the tables and not among them; see `VIEWS`.
+            "views": sorted(VIEWS),
         }
 
     def query(self, session, body):

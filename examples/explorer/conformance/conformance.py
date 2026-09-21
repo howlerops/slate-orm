@@ -135,6 +135,49 @@ CASES: list[tuple[str, str, Any, str]] = [
      {"table": "books", "sort": [{"column": 0, "direction": "asc"}],
       "limit": 3, "offset": 5}, "app"),
 
+    # Reading through a view, which is the only thing a view can demonstrate:
+    # `docs/views.md` refuses a projection, a sort and a limit, so a view is a
+    # name for a `WHERE` and the question is which rows it admits.
+    #
+    # `classics` is `year < 1980`, which is eight of eleven books. `app` holds
+    # a policy that admits everything, so this is the view's own answer.
+    ("a read through a view", "/api/query",
+     {"table": "classics", "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
+    # The same view, the same request, a different caller — and a different
+    # answer, which is the case worth having.
+    #
+    # `reader`'s row policy on `books` admits `year >= 1960`, so the two books
+    # from 1955 and 1951 are inside the view and outside the policy and this
+    # returns six rows rather than eight. That is `docs/views.md` §1: the view
+    # is substituted away before planning, the *base* table's `TableId` reaches
+    # `row_filter_with`, and the policy that runs is `books`'s. A view carrying
+    # its own id would have had no policy at all and handed a reader all eight,
+    # so a single-identity case would have passed against a privilege
+    # escalation.
+    ("a reader's read through the same view", "/api/query",
+     {"table": "classics", "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
+
+    # And the caller's own filter, which composes with the view's rather than
+    # replacing it: `year >= 1970` over a view of `year < 1980` is the decade
+    # between, not the whole of either. An `OR` here would return everything
+    # from 1970 on, which is how a client that got the composition backwards
+    # would look.
+    ("a filter composed with a view's", "/api/query",
+     {"table": "classics", "filter": {"op": "ge", "column": 3, "value": {"i64": "1970"}},
+      "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
+    # A view is not a table, and every path but `query` says so.
+    #
+    # All three adapters share their query builder with `/api/explain`, so all
+    # three accept the name locally and the *server* refuses — which makes this
+    # the cross-SDK check of that refusal's wording as well as of its kind.
+    # It reads "`classics` is a view over `books`, and only a plain query can
+    # read through one", which is the message `Head::no_such_table` produces
+    # and the reason it exists: "no table named `classics`" would send an
+    # operator to check a spelling that is correct.
+    ("explain cannot name a view", "/api/explain", {"table": "classics"}, "app"),
+
     # The four join types, where the outer cases are the ones a client can get
     # subtly wrong: an unmatched side must be null, not a row of nulls.
     *[(f"a {kind} join", "/api/join", {"type": kind}, "app")
@@ -684,6 +727,12 @@ EXPECTED_REFUSALS = {
     # back either way, because unlike the CHECK above this one had to retire a
     # row to have something to write back.
     "the soft-delete column is not the caller's to write",
+    # `classics` exists; `explain` is not a path that may read through it.
+    # Refused by the *server* rather than by any adapter's allowlist — all
+    # three share their query builder with `/api/explain`, so all three send
+    # the name — which makes this the cross-SDK check of the refusal's
+    # wording as well as of its kind.
+    "explain cannot name a view",
 }
 
 
@@ -701,6 +750,25 @@ EXPECTED_REFUSALS = {
 #: comparison lives.
 MUST_DIFFER: list[tuple[str, str]] = [
     ("a read that cannot see a retired row", "a read that asks for retired rows too"),
+    # A view has the same shape as `includeDeleted` and it is the shape that
+    # matters most: "the view returned eight rows" proves nothing about the
+    # row policy, because a view carrying its own `TableId` — the design
+    # `docs/views.md` §1 spends four paragraphs refusing — has no policy at all
+    # and returns *the same eight* to a reader. Three clients would agree
+    # about it perfectly.
+    #
+    # The evidence that the base table's policy ran is that a different caller
+    # gets a different answer, which needs two cases and this comparison. Six
+    # rows against eight; the two books from 1955 and 1951 are inside the view
+    # and outside `modern_only`.
+    ("a reader's read through the same view", "a read through a view"),
+    # And that the caller's filter *composed* rather than being dropped: a
+    # server that ignored it would return the view's own eight rows, which is
+    # what this pair forbids. The other direction — a composition that widened
+    # to an `OR` — is not visible here, because `year >= 1970` over an `OR`
+    # returns more than either, and `crates/slate-serverd/tests/views.rs`
+    # asserts that one against a running server instead.
+    ("a filter composed with a view's", "a read through a view"),
     # `returning` has the same shape and was demonstrated to have the same
     # hole: every `Returning` in all three clients set to false — twelve call
     # sites — and the run stayed green at 96 cases agreeing. These two cases

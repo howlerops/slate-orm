@@ -37,11 +37,17 @@ repository that compares the clients to each other.
 ### `GET /api/meta`
 
 ```json
-{"sdk": "go", "leader": true, "tables": ["authors", "books", "sales"]}
+{"sdk": "go", "leader": true, "tables": ["authors", "books", "sales"],
+ "views": ["classics"]}
 ```
 
 `sdk` is the only field that legitimately differs between adapters, and the
 conformance runner excludes it.
+
+`views` is a separate list and not part of `tables`, because a view is not a
+table: it has no id, no index and no write path, and a generator reading a
+catalog emits a row type per table. A view named among them would be described
+as something it cannot be.
 
 ### `POST /api/query`
 
@@ -57,6 +63,20 @@ conformance runner excludes it.
 ```
 
 → `{"rows": [[{"u64":"10"}, ...], ...], "servedBy": "writer"}`
+
+`table` may name a view as well as a table. `/api/query` is the only endpoint
+that accepts one — that is not an adapter convention but the server's: exactly
+one handler reads through a view, and every other answers *"`classics` is a
+view over `books`, and only a plain query can read through one"*. All three
+adapters therefore send a view name on `/api/explain` too, and all three
+surface that same refusal; the conformance runner has a case for it.
+
+A view returns its base table's columns, in its base table's order, because a
+view may not narrow them (`docs/views.md`). So a client that holds a schema
+declares a view as its base table's columns under the view's name, and the
+server verifies exactly that — the fingerprint is checked under the name the
+request used. Nothing about the response shape differs from a read of the
+table.
 
 `filter` is `null`, or one of:
 
