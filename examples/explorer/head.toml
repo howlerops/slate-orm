@@ -58,6 +58,43 @@ columns = [
 ]
 primary_key = ["id"]
 
+# The demo's one index, and it is an inverted one: `by_title_text` holds an
+# entry per *term* of `title` rather than one per row, which is what makes
+# `contains` a lookup instead of a scan.
+#
+# A text index rather than an ordinary one on `author_id`, even though the
+# joins would have used that, because this catalog had no index at all and the
+# one it gains should be the one the adapters cannot demonstrate any other way.
+# A join's access path is already visible in the plan panel; an inverted index
+# is a *shape* — one row, many entries — that nothing else here shows.
+#
+# It adds no column, so the fingerprint is unchanged and none of the three
+# adapters' declarations of `books` had to move. That is deliberate and it is
+# why the index went on an existing table rather than a new one.
+#
+# The planner will not choose it at eleven books: a non-covering index is worth
+# taking at about one row in 24,000 (`docs/full-text.md` measures it), so
+# `/api/search` hints. Both paths are served, and the conformance runner
+# requires their plans to differ.
+#
+# **What the demo cannot show, measured rather than assumed.** Delete `text =
+# true` below and `/api/search` answers *identically*: `Index Scan using
+# by_title_text`, the same six rows, every conformance case still green. An
+# ordinary index on `title` accepts the same hint, and the plan summary carries
+# the index's name but not its key range — so the difference between reading
+# six entries under one term and reading all eleven and filtering is real work
+# and invisible here. Nothing reachable over HTTP distinguishes the two, and no
+# cross-SDK comparison could: all three adapters would be equally wrong.
+#
+# The inverted shape is asserted where it can be — `key_sets` in
+# `slate-serverd`'s `schema.rs` tests, and the planner's range in the kernel's
+# `fulltext.rs`. This line is a demonstration of the wiring, not of the shape.
+[[tables.indexes]]
+name = "by_title_text"
+id = 1
+columns = ["title"]
+text = true
+
 # The demo's one CHECK, here so `--print-schema` publishes a real constraint
 # and the generated declarations carry one rather than an empty list nobody
 # has looked at. Deliberately weak — every seeded year is a real year — because

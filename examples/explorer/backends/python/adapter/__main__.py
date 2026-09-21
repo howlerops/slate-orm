@@ -31,6 +31,7 @@ from slate import (
     JoinQuery,
     JoinType,
     Metric,
+    PermissionDenied,
     Query,
     SlateError,
     Step,
@@ -251,6 +252,47 @@ class Adapter:
             for row in session.query(query)
         ]
         return {"rows": rows}
+
+    def search(self, session, body):
+        """Full-text over `books.title`, by index or by scan. See CONTRACT.md.
+
+        `body["text"]` goes across whole. Splitting it here would be a fourth
+        tokenizer beside the server's, and a client that split differently
+        finds fewer rows than the table holds with nothing anywhere reporting
+        it.
+        """
+        query = Query(BOOKS)
+        query.where(query.c.title.contains(body.get("text", "")))
+        query.sort(asc(query.c.id))
+        if body.get("limit") is not None:
+            query.limit(int(body["limit"]))
+
+        path = body.get("path")
+        if path == "index":
+            query.using_index("by_title_text")
+        elif path == "scan":
+            query.using_table_scan()
+        else:
+            raise ValueError(f"no such access path: {path}")
+
+        # Explained before it is run, because the access path is the only
+        # thing that tells the two requests apart: the rows are identical by
+        # construction and an adapter ignoring `path` would look correct.
+        #
+        # A caller without the `explain` grant gets `None` here rather than a
+        # refusal. EXPLAIN is privileged on purpose -- a plan is costed
+        # against statistics covering rows the caller's policy hides -- and
+        # the demo's `reader` role does not have it. Refusing the whole search
+        # over a diagnostic would make full-text the one feature a restricted
+        # reader cannot use at all, which is a bigger hole than an absent
+        # field. Only PermissionDenied is swallowed; every other failure is
+        # still the request's failure.
+        try:
+            access = session.explain(query).access
+        except PermissionDenied:
+            access = None
+        rows = [encode_row(list(row)) for row in session.query(query)]
+        return {"rows": rows, "access": access}
 
     def related(self, session, body):
         """One relationship, loaded for many parents in one read.
@@ -1259,6 +1301,7 @@ ROUTES = {
     "/api/meta": "meta",
     "/api/query": "query",
     "/api/window": "window",
+    "/api/search": "search",
     "/api/join": "join",
     "/api/aggregate": "aggregate",
     "/api/explain": "explain",

@@ -137,6 +137,57 @@ same year — so `rank` and `denseRank` agree on every row of it. The tie case
 is covered in each client's own suite and in the kernel's; this compares the
 three SDKs to each other.
 
+### `POST /api/search`
+
+```json
+{"text": "the games", "path": "index"|"scan", "limit": 20}
+```
+
+Full-text over `books.title`, sorted by `id` ascending and limited. The
+adapter sends the caller's `text` **unsplit**: the server tokenizes it with the
+same function its write path tokenized the column with, and an adapter that
+split it here would be a fourth tokenizer and a fourth chance to find fewer
+rows than the table holds.
+
+- `path` chooses the access path by hint. `index` asks for `by_title_text`,
+  `scan` asks for the table. Both must return the same rows — that is the
+  point of offering the choice — and their *plans* must differ.
+- The planner would take the scan either way at eleven books. A non-covering
+  index is worth taking at about one row in 24,000 (`docs/full-text.md`
+  measures it), so without the hint this endpoint could not reach the index at
+  all and would be demonstrating a table scan.
+
+→ `{"rows": [[tagged, ...], ...], "access": "<the plan's access path>" | null}`
+
+`access` comes from an `EXPLAIN` of the same query, and it is in the answer
+rather than the log because it is the only thing that distinguishes the two
+paths: the rows are identical by construction.
+
+**It is `null` for a caller without the `explain` grant**, which the demo's
+`reader` is. `EXPLAIN` is privileged deliberately — a plan is costed against
+statistics covering rows the caller's policy hides — so an endpoint that
+always explained would be one a restricted reader could not use at all, and
+full-text would be the only feature with that property. The rows are served
+either way. All three adapters swallow `PERMISSION_DENIED` from the explain
+and nothing else; a search that fails for any other reason still fails. An adapter that ignored `path`
+would agree with the others on every row and disagree here, which is why the
+conformance runner requires the two to differ.
+
+The terms are conjunctive: `"the games"` finds only *The Player of Games*,
+because it is the one title holding both words. `"the"` finds six — counted
+from the running demo, not from the seed file by eye, which is how the first
+draft of this paragraph said five. A term is a whole word — `"game"` finds
+nothing — which is the line between this and `LIKE '%game%'`, and the reason
+both exist.
+
+**This endpoint cannot show that the index is inverted.** Declaring
+`by_title_text` without `text = true` answers identically, down to the plan
+summary: an ordinary index on `title` takes the same hint and the summary
+names the index but not its key range. That the entries are per-term is
+asserted in `slate-serverd`'s schema tests and the kernel's, which is where a
+claim about a storage shape belongs; a comparison of three SDKs to each other
+could never catch it, because all three would be equally wrong.
+
 ### `POST /api/aggregate`
 
 ```json

@@ -20,11 +20,13 @@ import {
   caseWhen,
   add,
   and,
+  type AccessHint,
   type Atomicity,
   col,
   computed0,
   compare,
   concat,
+  contains,
   count,
   Client,
   distance,
@@ -89,6 +91,8 @@ import {
   type Value,
   type Window,
   answers,
+  usingIndex,
+  usingTableScan,
 } from "@slate-orm/client";
 
 import {
@@ -119,6 +123,7 @@ const restoreId = 8301n;
 // moves one literal rather than five.
 const BOOK_ID = 0;
 const BOOK_AUTHOR_ID = 1;
+const BOOK_TITLE = 2;
 const BOOK_YEAR = 3;
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
@@ -328,6 +333,66 @@ class Adapter {
       });
     }
     return { rows };
+  }
+
+  /**
+   * Full-text over `books.title`, by index or by scan. See CONTRACT.md.
+   *
+   * `body.text` goes across whole. Splitting it here would be a fourth
+   * tokenizer beside the server's, and a client that split differently finds
+   * fewer rows than the table holds with nothing anywhere reporting it.
+   */
+  async search(
+    session: Session,
+    body: { text?: string; path?: string; limit?: number },
+  ): Promise<unknown> {
+    let hint: AccessHint;
+    switch (body.path) {
+      case "index":
+        hint = usingIndex("by_title_text");
+        break;
+      case "scan":
+        hint = usingTableScan();
+        break;
+      default:
+        throw new Error(`no such access path: ${body.path}`);
+    }
+
+    const query: Query = {
+      table: "books",
+      filter: contains(BOOK_TITLE, body.text ?? ""),
+      sort: [{ column: BOOK_ID, direction: "asc" }],
+      // Spread rather than `limit: body.limit`, for the reason `window` gives:
+      // `exactOptionalPropertyTypes` makes an explicit `undefined` a different
+      // thing from an absent field.
+      ...(body.limit === undefined ? {} : { limit: body.limit }),
+      hint,
+    };
+
+    // Explained before it is run, because the access path is the only thing
+    // that tells the two requests apart: the rows are identical by
+    // construction and an adapter ignoring `path` would look correct.
+    //
+    // A caller without the `explain` grant gets `null` here rather than a
+    // refusal. EXPLAIN is privileged on purpose — a plan is costed against
+    // statistics covering rows the caller's policy hides — and the demo's
+    // `reader` role does not have it. Refusing the whole search over a
+    // diagnostic would make full-text the one feature a restricted reader
+    // cannot use at all, which is a bigger hole than an absent field. Only
+    // `permission-denied` is swallowed; every other failure is still the
+    // request's failure.
+    let access: string | null = null;
+    try {
+      access = (await session.explain(query)).access;
+    } catch (error) {
+      if (!(error instanceof SlateError) || error.kind !== "permission-denied") throw error;
+    }
+
+    const rows: unknown[] = [];
+    for await (const row of session.query(query)) {
+      rows.push(encodeRow(row));
+    }
+    return { rows, access };
   }
 
   /**
@@ -1425,6 +1490,7 @@ async function main(): Promise<void> {
     "/api/meta": () => adapter.meta(),
     "/api/query": (s, b) => adapter.query(s, b),
     "/api/window": (s, b) => adapter.window(s, b),
+    "/api/search": (s, b) => adapter.search(s, b),
     "/api/join": (s, b) => adapter.join(s, b),
     "/api/aggregate": (s, b) => adapter.aggregate(s, b),
     "/api/explain": (s, b) => adapter.explain(s, b),

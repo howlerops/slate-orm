@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/api/query", s.handle(s.query))
 	mux.HandleFunc("/api/join", s.handle(s.join))
 	mux.HandleFunc("/api/window", s.handle(s.window))
+	mux.HandleFunc("/api/search", s.handle(s.search))
 	mux.HandleFunc("/api/aggregate", s.handle(s.aggregate))
 	mux.HandleFunc("/api/explain", s.handle(s.explain))
 	mux.HandleFunc("/api/explain-aggregate", s.handle(s.explainAggregate))

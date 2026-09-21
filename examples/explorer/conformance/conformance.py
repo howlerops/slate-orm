@@ -190,6 +190,52 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a reader's window", "/api/window",
      {"function": "rowNumber", "partition": True, "limit": 20}, "reader"),
 
+    # Full-text, by index and by scan. Both must return the same rows — that
+    # is what an access path *is* — so the rows alone would agree across three
+    # SDKs even if one ignored the hint entirely. `access` is in the answer for
+    # that reason, and the MUST_DIFFER pairs below compare the two.
+    #
+    # Three searches, each testing a different property of the tokenizer, and
+    # each run down both paths:
+    #
+    # - "the" is five titles, which is the ordinary case.
+    # - "the games" is one — *The Player of Games* — because the terms are
+    #   conjunctive. A client that sent only the first term, or that turned
+    #   the search into a disjunction, answers five here.
+    # - "GAMES" is the same one title, written in the other case. A client
+    #   that folded case itself would agree; a client that did not fold at all
+    #   answers nothing. Neither is distinguishable from the correct answer
+    #   without this case, because the *server* is what folds.
+    *[(f"a search for {text!r} by {path}", "/api/search",
+       {"text": text, "path": path, "limit": 20}, "app")
+      for text in ("the", "the games", "GAMES")
+      for path in ("index", "scan")],
+
+    # A term that is a prefix of a real one and not a term itself. `LIKE
+    # '%game%'` finds *The Player of Games*; this finds nothing, and the
+    # difference is the whole reason both predicates exist. An adapter that
+    # quietly lowered `contains` to a `like` would pass every case above and
+    # fail this one.
+    #
+    # What none of these cases catches, established by trying it: removing
+    # `text = true` from the demo's catalog leaves every one of them green and
+    # the MUST_DIFFER pairs satisfied. An ordinary index on `title` accepts the
+    # same hint and the plan summary names the index without its key range, so
+    # the two are indistinguishable over HTTP. That is not a hole to plug here
+    # — three SDKs compared to each other cannot see it, because all three
+    # would be equally wrong — and it is asserted in `slate-serverd`'s
+    # `schema.rs` tests and the kernel's `fulltext.rs` instead.
+    ("a search for a word that is only a prefix", "/api/search",
+     {"text": "game", "path": "index", "limit": 20}, "app"),
+
+    # As a reader, whose row policy hides `The Astronauts` (1951). It holds
+    # "the", so the policy has to cut the five down to four — through the
+    # *index*, which is the path where a policy is easiest to lose: the
+    # entries are read before any row is, and a filter applied only to a table
+    # scan would show up here and nowhere else in this corpus.
+    ("a reader's search", "/api/search",
+     {"text": "the", "path": "index", "limit": 20}, "reader"),
+
     # `decade` is the only case here whose group key is not a column: it is a
     # value the *join* computes, `books.year / 10 * 10`. Every SDK builds that
     # expression itself, so this is the one case that compares three
@@ -679,6 +725,14 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # nowhere else.
     ("a running sum window", "a sum window per author"),
     ("a running count window", "a count window per author"),
+    # And the access path, which has exactly this weakness in its purest form:
+    # the two requests are *required* to return the same rows, so an adapter
+    # that ignored `path` agrees with two others doing the same on every row of
+    # every search above. `access` is the only field that can differ, and
+    # nothing refuses a query whose hint went missing — a hint is advice, so
+    # `EXPECTED_REFUSALS` cannot cover this either.
+    ("a search for 'the' by index", "a search for 'the' by scan"),
+    ("a search for 'the games' by index", "a search for 'the games' by scan"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.

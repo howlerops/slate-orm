@@ -59,6 +59,7 @@ func (s *server) query(ctx context.Context, session *slate.Session, body json.Ra
 const (
 	bookID       = slate.Ordinal(0)
 	bookAuthorID = slate.Ordinal(1)
+	bookTitle    = slate.Ordinal(2)
 	bookYear     = slate.Ordinal(3)
 )
 
@@ -150,6 +151,81 @@ func (s *server) window(ctx context.Context, session *slate.Session, body json.R
 		return nil, err
 	}
 	return map[string]any{"rows": out}, nil
+}
+
+// searchSpec is the fixed shape `/api/search` takes. See CONTRACT.md.
+type searchSpec struct {
+	Text string `json:"text"`
+	// "index" or "scan". Which access path to ask the planner for — not a
+	// filter, and not something that may change the rows.
+	Path  string  `json:"path"`
+	Limit *uint64 `json:"limit"`
+}
+
+func (s *server) search(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec searchSpec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the search: %w", err)
+	}
+
+	var hint *slate.AccessHint
+	switch spec.Path {
+	case "index":
+		hint = slate.UsingIndex("by_title_text")
+	case "scan":
+		hint = slate.UsingTableScan()
+	default:
+		return nil, fmt.Errorf("no such access path: %s", spec.Path)
+	}
+
+	// `spec.Text` goes across whole. Splitting it here would be a fourth
+	// tokenizer beside the server's, and a client that split differently finds
+	// fewer rows than the table holds with nothing anywhere reporting it.
+	filter := slate.Contains(bookTitle, spec.Text)
+	query := slate.Query{
+		Table:  "books",
+		Filter: &filter,
+		Sort:   []slate.SortKey{{Column: bookID, Direction: slate.Asc}},
+		Limit:  spec.Limit,
+		Hint:   hint,
+	}
+
+	// Explained before it is run, because the access path is the only thing
+	// that tells the two requests apart: the rows are identical by
+	// construction and an adapter ignoring `path` would look correct.
+	//
+	// A caller without the `explain` grant gets `null` here rather than a
+	// refusal. EXPLAIN is privileged on purpose — a plan is costed against
+	// statistics covering rows the caller's policy hides — and the demo's
+	// `reader` role does not have it. Refusing the whole search over a
+	// diagnostic would make full-text the one feature a restricted reader
+	// cannot use at all, which is a bigger hole than an absent field. Only
+	// PERMISSION_DENIED is swallowed; every other failure is still the
+	// request's failure.
+	var access any
+	plan, err := session.Explain(ctx, query)
+	switch {
+	case err == nil:
+		access = plan.Access
+	case slate.IsKind(err, slate.KindPermissionDenied):
+		access = nil
+	default:
+		return nil, err
+	}
+
+	stream, err := session.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	rows := make([][]tagged, 0, 16)
+	for stream.Next() {
+		rows = append(rows, encodeRow(stream.Row()))
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"rows": rows, "access": access}, nil
 }
 
 func (s *server) join(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
