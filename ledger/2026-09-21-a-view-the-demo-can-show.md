@@ -149,14 +149,22 @@ Frontend mutations, three, all caught by
 column list replaced by a copy of the same literal, the view pointed at
 `authors`, and a view the UI offers that `head.toml` does not declare.
 
-`scripts/mutate.py` could not score those: the demo frontend's suite is `node
+~~`scripts/mutate.py` could not score those: the demo frontend's suite is `node
 --test`, whose output is TAP, and the script reads libtest, this repository's
 own guards and pytest. It refused the run rather than guessing, which is
-correct. They were run through a scratch script applying the same four
-protections — anchor must occur exactly once, restore in a `finally`, zero
-cases reported is a hard error, spec as JSON with no shell — and the working
-tree was never left mutated. Teaching `mutate.py` the TAP dialect is the better
-answer and is not in this commit.
+correct.~~ **False, and not even observed.** `mutate.py` has had a `node`
+dialect for weeks; its *docstring* stops at `pytest`, and this paragraph was
+written from the docstring rather than from a run. The script was never given
+the spec it is now recorded as having refused. Re-run properly afterwards —
+`{"dialect": "node", "command": ["npm", "--prefix", "examples/explorer/web",
+"test"]}` — and both mutations are caught and named. The scratch script
+reimplemented four protections that were already there, for want of reading a
+table instead of the prose above it.
+
+The lesson is the ordinary one and it is the whole reason this repository
+writes evidence down: *a tool's documentation is not a measurement of the
+tool*. The docstring is now generated from the dialect table and
+`scripts/test_mutate.py` asserts it stays that way.
 
 ## What this does not do
 

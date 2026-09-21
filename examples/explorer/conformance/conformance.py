@@ -862,7 +862,7 @@ def main() -> int:
         down = [sdk for sdk, a in answers.items()
                 if isinstance(a, dict) and "__transport__" in a]
         if down:
-            failures.append(f"{name}: adapters unreachable: {', '.join(down)}")
+            failures.append(f"FAIL  {name}: adapters unreachable: {', '.join(down)}")
             for sdk in down:
                 failures.append(f"    {sdk}: {answers[sdk]['__transport__']}")
             continue
@@ -874,15 +874,15 @@ def main() -> int:
             refused = isinstance(agreed, dict) and "error" in agreed
             if refused and name not in EXPECTED_REFUSALS:
                 failures.append(
-                    f"{name} ({identity}): all three refused it, and this case "
-                    f"is supposed to return an answer"
+                    f"FAIL  {name} ({identity}): all three refused it, and this "
+                    f"case is supposed to return an answer"
                 )
                 failures.append(f"    {json.dumps(agreed)[:400]}")
                 continue
             if not refused and name in EXPECTED_REFUSALS:
                 failures.append(
-                    f"{name} ({identity}): listed as a refusal and all three "
-                    f"answered it; the list is stale"
+                    f"FAIL  {name} ({identity}): listed as a refusal and all "
+                    f"three answered it; the list is stale"
                 )
                 continue
             agreed_by_name[name] = rendered[next(iter(rendered))]
@@ -890,7 +890,7 @@ def main() -> int:
                 print(f"  ok    {name}")
             continue
 
-        failures.append(f"{name} ({identity}): the adapters disagree")
+        failures.append(f"FAIL  {name} ({identity}): the adapters disagree")
         for sdk, text in rendered.items():
             failures.append(f"    {sdk:7} {text[:400]}")
 
@@ -901,26 +901,48 @@ def main() -> int:
             # otherwise turn this check off silently.
             missing = [n for n in (quiet, loud) if n not in agreed_by_name]
             failures.append(
-                f"the must-differ pair ({quiet!r}, {loud!r}) is not comparable: "
-                f"{', '.join(repr(n) for n in missing)} produced no agreed answer"
+                f"FAIL  the must-differ pair ({quiet!r}, {loud!r}) is not "
+                f"comparable: {', '.join(repr(n) for n in missing)} produced no "
+                f"agreed answer"
             )
             continue
         if agreed_by_name[quiet] == agreed_by_name[loud]:
             failures.append(
-                f"{quiet!r} and {loud!r} returned the same answer, so whatever "
-                f"separates them was dropped by all three clients or ignored by "
-                f"the server"
+                f"FAIL  {quiet!r} and {loud!r} returned the same answer, so "
+                f"whatever separates them was dropped by all three clients or "
+                f"ignored by the server"
             )
             failures.append(f"    {agreed_by_name[quiet][:400]}")
 
     print()
+    # `FAIL  <what>` per finding and a closing `N passed, M failed`, which is
+    # the house style every `scripts/test_*.py` prints and `scripts/mutate.py`'s
+    # `python` dialect reads.
+    #
+    # This runner had a format of its own — a bare headline per finding and
+    # `130 cases: the three SDKs agree on all of them` — and the cost showed up
+    # the first time somebody pointed `mutate.py` at it: the script reported
+    # "no test results at all" and refused to score the run, correctly, because
+    # neither line matched anything it knew. `test_codegen.py` had the identical
+    # problem and its entry settled how to fix it: the summary line rather than
+    # another dialect. A runner nobody can mutation-test is a runner whose own
+    # correctness is taken on trust, and this one decides whether three SDKs
+    # agree.
+    #
+    # The human-facing line stays, because "130 cases: the three SDKs agree on
+    # all of them" says something the counts do not.
+    broken = sum(1 for line in failures if line.startswith("FAIL"))
     if failures:
         print(f"{len(CASES)} cases, disagreements:")
         print()
         for line in failures:
             print(line)
+        print()
+        print(f"{max(len(CASES) - broken, 0)} passed, {broken} failed")
         return 1
     print(f"{len(CASES)} cases: the three SDKs agree on all of them")
+    print()
+    print(f"{len(CASES)} passed, 0 failed")
     return 0
 
 

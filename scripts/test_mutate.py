@@ -18,6 +18,7 @@ Run directly: `python3 scripts/test_mutate.py`.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -224,6 +225,61 @@ elif subject.VALUE == 3:
 else:
     print("test result: ok. 1 passed; 0 failed; 0 ignored")
 '''
+
+
+def case_help_lists_every_dialect() -> bool:
+    """`--help` names every dialect the table holds, and nothing it does not.
+
+    The hand-written list in the docstring went stale twice — it stopped at
+    `pytest` while `node` and `go` were added under it — and the cost was
+    somebody reading it, concluding their suite was unsupported, and writing a
+    throwaway harness that reimplemented the four protections against a dialect
+    that already existed. `--help` now prints the table, so the only way to
+    have an undocumented dialect is to have no dialect.
+
+    Asserted in both directions. A help text that printed *more* names than the
+    table holds would send the next reader to a dialect that is not there,
+    which is the same failure walking the other way.
+    """
+    name = "--help lists exactly the dialects the table holds"
+    spelled = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "mutate.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    # `^` is what makes this precise rather than "an indented line with a
+    # space in it". The docstring above the list contains an indented JSON
+    # example, and the loose version parsed `{"name":` and `"file":` as
+    # dialects — so the equality below could never have been asserted, and the
+    # first draft quietly checked one direction while claiming two.
+    rows = [
+        line.strip().split(None, 1)
+        for line in spelled.splitlines()
+        if re.match(r"^    \w+\s+\^", line)
+    ]
+    listed = {name for name, _ in rows}
+    known = set(mutate.DIALECTS)
+    # The pattern each row shows must be the one that dialect will actually
+    # look for, not merely something non-empty. "Non-empty" was the first
+    # version and a mutation printing a bare `^` for every dialect walked
+    # through it — a help text that lists five names and five wrong patterns
+    # is worse than one that lists nothing, because it reads as specific.
+    ok = listed == known and all(
+        pattern == mutate.DIALECTS[name][1].pattern for name, pattern in rows
+    )
+    print(
+        f"{'ok  ' if ok else 'FAIL'}  {name}"
+        + (
+            ""
+            if ok
+            else f" (missing {sorted(known - listed)}, invented {sorted(listed - known)})"
+        )
+    )
+    return ok
 
 
 def case_fresh_bytecode() -> bool:
@@ -442,6 +498,7 @@ def main() -> int:
             ["NOTHING RAN"],
         ),
         case_fresh_bytecode(),
+        case_help_lists_every_dialect(),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

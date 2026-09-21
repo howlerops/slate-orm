@@ -59,10 +59,14 @@ Usage:
 that case: it then fails if the mutation *is* caught, because the reason has
 stopped being true.
 
-`"dialect": "python"` reads the `ok    name` / `FAIL  name` / `N passed, M
-failed` output of this repository's own `scripts/test_*.py` guards instead of
-libtest's; `"pytest"` reads pytest's, for `clients/python`. It defaults to
-`"rust"`.
+`"dialect"` says whose output to read. It defaults to `"rust"`, and `--help`
+lists every one this script knows — **generated from the table rather than
+written out**, because the hand-written list went stale the moment a fourth
+dialect was added and stayed stale through a fifth. The cost of that is not
+hypothetical: a session read this docstring, concluded `node` was unsupported,
+and wrote a throwaway harness reimplementing the four protections above against
+a dialect that had been here for weeks. A list of what a tool supports is the
+one thing a tool should never be asked to keep in sync by hand.
 """
 
 from __future__ import annotations
@@ -313,6 +317,10 @@ def check(spec: dict) -> int:
 def main(argv: list[str]) -> int:
     if argv and argv[0] in {"-h", "--help"}:
         print(__doc__)
+        print("Dialects, with the line each reads as proof a suite ran:\n")
+        for name, (_, reported) in sorted(DIALECTS.items()):
+            print(f"    {name:<12} {reported.pattern}")
+        print()
         return 0
     text = sys.stdin.read()
     if not text.strip():

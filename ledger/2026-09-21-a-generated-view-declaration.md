@@ -82,15 +82,20 @@ by the three-SDK conformance runner disagreeing:
 Before this commit all three of those would have passed, because two of the
 three clients sent no claim at all.
 
-`scripts/mutate.py` could not score those either: the conformance runner prints
-`130 cases: the three SDKs agree on all of them`, which is not libtest, not
-this repository's `test_*.py` format and not pytest, so the script refused the
-run. A second scratch harness applies the same four protections — anchor occurs
-exactly once, restore in a `finally`, a run reporting no case count is a hard
-error rather than a pass, spec as JSON so nothing touches a shell — and the
-working tree was never left mutated. That is now two dialects `mutate.py`
-cannot read (node's TAP, from F5c, and this); teaching it both is the better
-answer and is a task rather than a line.
+`scripts/mutate.py` could not score those, and this one is true: the conformance
+runner printed `130 cases: the three SDKs agree on all of them`, which is not
+libtest, not this repository's `test_*.py` format and not pytest, so the script
+reported "no test results at all" and refused — observed, unlike the claim
+about the frontend in the F5c entry, which has been withdrawn there. A second
+scratch harness applied the same four protections and the working tree was
+never left mutated.
+
+**Fixed immediately afterwards, and not by a dialect.** The runner now prints
+`FAIL  <what>` per finding and a closing `N passed, M failed`, which is the
+house style `mutate.py`'s existing `python` dialect already reads —
+the same fix `test_codegen.py`'s entry settled on, for the same reason. The
+mutation above re-ran through `mutate.py` proper and is caught, naming all
+three disagreeing cases and the must-differ pair.
 
 `python3 scripts/test_codegen.py`: 33 passed, four new —
 
