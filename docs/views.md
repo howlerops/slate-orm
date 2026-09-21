@@ -103,6 +103,49 @@ filter is part of the *system*. If a view's predicate and a policy contradict,
 the answer is no rows, and that is correct — a view is not permitted to widen
 what a policy admits, and an `AND` cannot.
 
+## 3a. Refusing everything else is free, and that decides the build order
+
+Decision 1 says a view must not be a `TableDef`. Tracing what that *already*
+buys, before any code:
+
+```rust
+pub fn table_by_name(&self, name: &str) -> Option<&TableDef> {
+    self.tables.iter().find(|t| t.name() == name)
+}
+```
+
+Every path that turns a request's table name into a `TableDef` goes through
+that function — `service.rs`'s `table`, and the two converters in
+`convert.rs` — and `scripts/check_handlers.py` rule 1 already holds every
+handler to one of them. So **a view held outside the `Catalog` is refused by
+every path that exists, without a line being written.** Not by a check
+somebody added: by there being nothing to find.
+
+That is decision 4 (writes refused) delivered by construction rather than by
+vigilance, and it also refuses joins, chains, aggregates, paging and every
+other surface — which is the correct default for all of them today.
+
+**So the build order is: declare first, read last.**
+
+1. `[[views]]` in the TOML, parsed and validated at load, stored in a registry
+   beside the `Catalog` and not in it. At this point a view can be declared
+   and every use of one is refused. That state is complete and safe, not a
+   half-feature.
+2. Opt *one* read path in, deliberately, by resolving the name to the view's
+   **base** `TableDef` and `AND`ing the view's predicate onto the caller's.
+   Authorisation and RLS then see the base table, which is decision 1's whole
+   point.
+
+Doing it the other way round — teaching the reader about views and then
+remembering to refuse the writers — is the shape every finding in
+`security-review.md` has: a fix that covered one path of several. This order
+has no such intermediate state.
+
+**The one thing it costs** is the refusal's wording. A declared-but-unusable
+view answers "no table named `recent_books`", which is wrong — it exists, and
+it is not usable *there*. That is a message to improve, not a hole, and
+improving it means naming views in a place that can afford to know about them.
+
 ## 4. Writes through a view are refused
 
 An updatable view needs a rule for mapping a written row back onto base rows,
