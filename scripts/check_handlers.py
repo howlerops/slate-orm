@@ -37,6 +37,16 @@ loudly instead:
    answered anybody who could reach the port, including under
    `mode = "deny-all"`, whose banner promises to "refuse every request".
 
+6. **Every read of the view registry** — `self.views` — is inside a function
+   listed in `RESOLVES_VIEWS`. A view is a name the catalog does not hold, so
+   `Catalog::table_by_name` refuses one everywhere by finding nothing; that
+   is `docs/views.md` §3a, and it is a property of *nothing looking in the
+   other map*. A handler that read `self.views` itself would have a
+   `&TableDef` for a base table the caller was never authorised against, and
+   rules 1 and 3 would both see an ordinary authorised resolution. This is
+   the rule that makes a second view-resolving path a failure rather than a
+   silence, and it is the same roster idiom as the rest.
+
 None is a proof. A handler can hold a `&TableDef` from one of the accounted
 sites and pass it along, and this will not see it. What they do is make adding
 a *new* unauthorised resolution a failure rather than a silence, which is the
@@ -194,6 +204,24 @@ FINGERPRINT = re.compile(r"fingerprint::check\(")
 AUTHORIZED = re.compile(r"authorized_table\(")
 #: The multi-table helpers, which authorise a whole request's inputs at once.
 AUTHORIZES = re.compile(r"authorize_\w+\(")
+#: Reading the view registry, which resolves a name the catalog does not hold.
+VIEWS = re.compile(r"self\.views")
+
+#: The functions allowed to turn a view's name into its base table.
+#:
+#: One, and the narrowness is the feature: `docs/views.md` §3a's build order is
+#: "opt *one* read path in, deliberately", and a roster of one is what makes
+#: the second arrive as a diff somebody has to justify rather than as a line
+#: nobody notices. Widening this is a decision about which handlers may read
+#: through a view, and §4 already says writes may not.
+RESOLVES_VIEWS = {
+    "authorized_read_source": (
+        "the opt-in resolver itself; it authorises the base table through "
+        "`authorized_table` with the action the kernel will check, so RLS and "
+        "the grant both see the base table — `docs/views.md` §1"
+    ),
+    "serving_views": "the constructor that installs the registry; it resolves nothing",
+}
 
 
 def enclosing_functions(lines: list[str]) -> list[str]:
@@ -370,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
     seen: set[str] = set()
     bare = 0
     checks = 0
+    views = 0
 
     for path in files:
         lines = path.read_text().splitlines()
@@ -387,6 +416,21 @@ def main(argv: list[str] | None = None) -> int:
                         "the action the kernel will check, or add it to "
                         "UNAUTHORIZED with a reason it is safe."
                     )
+            if VIEWS.search(line):
+                views += 1
+                owner = names[at]
+                seen.add(owner)
+                if owner not in RESOLVES_VIEWS:
+                    problems.append(
+                        f"{path.name}:{at + 1}: `{owner}` reads the view registry, "
+                        "which resolves a name the catalog does not hold.\n"
+                        "  A view's base table must be authorised through "
+                        "`authorized_table` before the caller sees a row of it, and "
+                        "only one read path has opted in. Call "
+                        f"`authorized_read_source`, or add `{owner}` to "
+                        "RESOLVES_VIEWS with the reason it is safe — which is a "
+                        "decision about `docs/views.md` §3a, not a formality."
+                    )
             if FINGERPRINT.search(line):
                 checks += 1
                 owner = names[at]
@@ -402,8 +446,8 @@ def main(argv: list[str] | None = None) -> int:
                         "  Fingerprinting before authorising is security finding "
                         "8: a caller with no grant confirms a guessed schema one "
                         "fingerprint at a time. If the table arrives already "
-                        "authorised, add `{owner}` to FINGERPRINT_BY_CALLER with "
-                        "the callers that check it."
+                        f"authorised, add `{owner}` to FINGERPRINT_BY_CALLER "
+                        "with the callers that check it."
                     )
 
     problems.extend(unrostered_authenticators(files))
@@ -436,6 +480,17 @@ def main(argv: list[str] | None = None) -> int:
             "generated proto module is no longer spelled `pb` — both need a "
             "person, not a pass."
         )
+    elif views == 0:
+        # The same never-fires reasoning as the others. `self.views` is a
+        # spelling; a rename of the field would leave this rule matching
+        # nothing and printing `ok` over a tree where any handler may resolve a
+        # view unauthorised.
+        problems.append(
+            f"nothing reads `self.views` in {len(files)} file(s), so rule 6 "
+            "checked nothing. Either views were removed — in which case delete "
+            "this rule and RESOLVES_VIEWS deliberately — or the field was "
+            "renamed. Both need a person, not a pass."
+        )
     elif not converters:
         # The same never-fires reasoning as above, and this rule needs it more.
         # `fingerprint::check` is one literal string; a converter is recognised
@@ -454,7 +509,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # A stale exemption is its own defect: it reads as a live hazard somebody
     # accepted, and the next person weighs a decision nobody is making.
-    for listed, where in ((UNAUTHORIZED, "UNAUTHORIZED"), (FINGERPRINT_BY_CALLER, "FINGERPRINT_BY_CALLER")):
+    for listed, where in (
+        (UNAUTHORIZED, "UNAUTHORIZED"),
+        (FINGERPRINT_BY_CALLER, "FINGERPRINT_BY_CALLER"),
+        (RESOLVES_VIEWS, "RESOLVES_VIEWS"),
+    ):
         for name, reason in listed.items():
             if name not in seen:
                 problems.append(
@@ -474,7 +533,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{checks} fingerprint checks all authorised first, "
         f"{len(converters)} converters all called from authorised handlers, "
         f"{len(handlers)} wire handlers all authenticating, "
-        f"{authenticators} authenticators all rostered"
+        f"{authenticators} authenticators all rostered, "
+        f"{views} view-registry reads all rostered"
     )
     return 0
 

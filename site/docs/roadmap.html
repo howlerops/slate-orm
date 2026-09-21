@@ -293,13 +293,16 @@
               are built &mdash; stored, compared, sorted, generated in three
               languages and writable in a predicate. Set operations are refused,
               because the hard half of <code>UNION</code> is deduplicating
-              across two independently planned statements. Views are half built:
-              a <code>[[views]]</code> section declares one, the server
-              resolves and validates it at startup, and every read path
-              refuses it &mdash; deliberately, because a view held outside the
-              catalog is refused by construction rather than by a check
-              somebody remembered. The design&rsquo;s headline stands: a view
-              here cannot be a privilege boundary the way it is in Postgres.
+              across two independently planned statements. Views are built,
+              narrowly: a <code>[[views]]</code> section declares a name for a
+              <code>WHERE</code> over one table, and a plain query may read
+              through it. Everything else &mdash; writes, joins, chains,
+              aggregates, explain &mdash; still refuses the name, because a
+              view is held outside the catalog and only one read path has
+              opted in. The design&rsquo;s headline stands: a view here cannot
+              be a privilege boundary the way it is in Postgres, because the
+              caller needs the grant on the base table and holding it can read
+              past the view.
               Full-text search is built in the kernel, and the row above was
               right about where the work was: every index wrote one entry per
               row and an inverted index writes one per term, so it was a new

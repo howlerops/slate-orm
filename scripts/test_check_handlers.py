@@ -22,10 +22,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import check_handlers
 
-#: The three exemptions the real sources need, plus one converter. A case whose
-#: fixture omits one fails on the stale-entry check — or, for the converter, on
-#: the never-fires check — rather than on what it is testing, so every fixture
-#: below defines all four.
+#: The exemptions the real sources need, plus one converter and one view
+#: resolution. A case whose fixture omits one fails on the stale-entry check —
+#: or, for the converter and the view registry, on the never-fires check —
+#: rather than on what it is testing, so every fixture below defines all of
+#: them.
 PREAMBLE = """\
 impl Head {
     fn authorized_table(&self, name: &str) -> Result<&TableDef, Status> {
@@ -41,6 +42,19 @@ impl Head {
     fn query_from_proto_at(query: &Query, table: &TableDef) -> Result<(), Status> {
         fingerprint::check(table, query.schema.as_ref())?;
         Ok(())
+    }
+
+    fn authorized_read_source(&self, name: &str) -> Result<(&TableDef, Expr), Status> {
+        if let Some(view) = self.views.get(name) {
+            let table = self.authorized_table(&view.table)?;
+            return Ok((table, view.predicate.clone()));
+        }
+        Ok((self.authorized_table(name)?, Expr::True))
+    }
+
+    fn serving_views(mut self, views: Views) -> Self {
+        self.views = views;
+        self
     }
 
     fn join_from_proto(
@@ -336,6 +350,68 @@ impl Authenticator for Known {}
         "",
     ),
     (
+        "a handler that reads the view registry itself is reported",
+        # Rule 6. The handler authenticates and never touches `self.table`, so
+        # rules 1 and 5 are both satisfied — which is the point: a view
+        # resolved outside `authorized_read_source` looks like an ordinary
+        # authorised read to every other rule.
+        """
+    async fn sneaky(&self, request: Request<pb::SneakyRequest>) -> Result<(), Status> {
+        let context = self.context(&request)?;
+        let view = self.views.get("recent");
+        Ok(())
+    }
+""",
+        1,
+        "`sneaky` reads the view registry",
+    ),
+    (
+        "the refusal names the offending function rather than a placeholder",
+        # The literal `{owner}` shipped in rule 2's message for as long as that
+        # rule existed, because the interpolation sat on a continuation line
+        # that was not an f-string. It cost nothing but a grep, and it is
+        # exactly the kind of thing nobody notices in a message they hope never
+        # to read.
+        """
+    async fn sneaky(&self, request: Request<pb::SneakyRequest>) -> Result<(), Status> {
+        let context = self.context(&request)?;
+        let view = self.views.get("recent");
+        Ok(())
+    }
+""",
+        1,
+        "add `sneaky` to RESOLVES_VIEWS",
+    ),
+    (
+        "a tree that reads the view registry nowhere fails, rather than passing",
+        # The never-fires case for rule 6, on the same reasoning as rules 3 and
+        # 5: `self.views` is a spelling, and renaming the field would leave the
+        # rule matching nothing and printing `ok` over a tree where any handler
+        # may resolve a view unauthorised.
+        "NO_VIEWS",
+        1,
+        "so rule 6 checked nothing",
+    ),
+    (
+        "a stale RESOLVES_VIEWS entry is reported",
+        # One roster entry survives so rule 6 still fires; the other is stale,
+        # so the finding can only come from the staleness check.
+        {
+            "only.rs": PREAMBLE.replace(
+                """    fn serving_views(mut self, views: Views) -> Self {
+        self.views = views;
+        self
+    }
+
+""",
+                "",
+            )
+            + "}\n",
+        },
+        1,
+        "RESOLVES_VIEWS lists `serving_views`",
+    ),
+    (
         "a tree with no wire handler at all fails, rather than passing",
         # The never-fires case for rule 5: `Request<pb::` is a spelling, and a
         # crate that aliased the generated module would leave it matching
@@ -392,6 +468,15 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
                 )
             ]
             path.write_text(PREAMBLE.replace(converter, "") + "}\n")
+        elif body == "NO_VIEWS":
+            # Only the two view functions are trimmed, so the case fails on
+            # rule 6 rather than on a rule it is not named for.
+            views = PREAMBLE[
+                PREAMBLE.index("    fn authorized_read_source(") : PREAMBLE.index(
+                    "    fn join_from_proto("
+                )
+            ]
+            path.write_text(PREAMBLE.replace(views, "") + "}\n")
         elif body == "NO_PREAMBLE":
             # Resolutions and exemptions present, no fingerprint anywhere.
             path.write_text(

@@ -415,6 +415,11 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 
     let common = Common {
         execution,
+        // Lowered here, where the `TableDef`s the catalog was built from are
+        // still in hand, and carried rather than recomputed: both start paths
+        // serve the same views, and a follower that served fewer would answer
+        // a read the leader answers with `NOT_FOUND`.
+        views: views::lowered(&views, catalog.tables())?,
         serving: serve::Serving {
             grace,
             concurrency,
@@ -455,6 +460,8 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 /// Everything that does not depend on which backend is in use.
 struct Common {
     catalog: Catalog,
+    /// Names a read may go through, already compiled. See [`crate::views`].
+    views: slate_server::Views,
     security: slate_kernel::SecurityCatalog,
     limits: Limits,
     /// The kernel's per-request ceilings. See [`ExecutionLimits`].
@@ -479,6 +486,7 @@ async fn start<S: KvStore + KvReadStore>(
     let Common {
         execution,
         serving,
+        views,
         catalog,
         security,
         limits,
@@ -517,7 +525,8 @@ async fn start<S: KvStore + KvReadStore>(
         replicas,
         Arc::clone(&leadership),
         authenticator,
-    );
+    )
+    .serving_views(views);
 
     announce_and_serve(head, listener, bound, leadership, serving).await?;
 
@@ -551,6 +560,7 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
     let Common {
         execution,
         serving,
+        views,
         catalog,
         security,
         limits,
@@ -573,6 +583,8 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
         );
     }
 
+    // The same views the writer serves. `topology.md`'s follower "answers
+    // every read a leader answers", and a view is a read.
     let head = Head::<S>::read_only(
         HeadConfig::new(catalog, security)
             .with_routing(routing)
@@ -581,7 +593,8 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
         replicas,
         Arc::clone(&leadership),
         authenticator,
-    );
+    )
+    .serving_views(views);
 
     announce_and_serve(head, listener, bound, leadership, serving).await
 }

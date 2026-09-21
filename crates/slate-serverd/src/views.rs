@@ -42,7 +42,9 @@
 use crate::config;
 use crate::error::{Fault, Started};
 use slate_schema::TableDef;
+use slate_server::{View as Served, Views as Serving};
 use slate_sql::QuerySpec;
+use slate_sql::lower;
 use slate_sql::sql::{Schema, Statement, parse};
 use std::collections::BTreeMap;
 
@@ -219,6 +221,41 @@ fn beyond_a_where(spec: &QuerySpec) -> Option<String> {
          nothing else. See `docs/views.md`",
         extra.join("`, `")
     ))
+}
+
+/// Lower every resolved view to the `Expr` a read path composes with.
+///
+/// The predicate and nothing else. A view may carry only a `WHERE` — the whole
+/// point of [`unsupported`] — so `lower::build` over its spec produces a
+/// `Query` whose only non-default field is `filter`, and that field is the
+/// view. Taking `filter` off a `Query` rather than lowering the conditions
+/// directly is deliberate: `lower::build` is the same function the workbench
+/// and the SQL front end use, so a view's predicate means exactly what the
+/// same `WHERE` means anywhere else, including the parts of that lowering
+/// nobody would think to reimplement here.
+///
+/// Fails at startup, like every other resolution in this module. A predicate
+/// that cannot be lowered — a column of the wrong type for its comparison, say
+/// — is a configuration error, and the operator should hear about it while
+/// they are still looking at the file.
+pub(crate) fn lowered(views: &Views, tables: &[TableDef]) -> Started<Serving> {
+    let mut out = Serving::new();
+    for (name, view) in views {
+        // Present by construction: `views` resolved `spec.table` against these
+        // same tables. Refused rather than unwrapped, because "by
+        // construction" is a property of the call order and this function is
+        // separately callable.
+        let Some(table) = tables.iter().find(|t| t.name() == view.table) else {
+            return Err(Fault::new(format!(
+                "view `{name}` reads table `{}`, which is not in the catalog",
+                view.table
+            )));
+        };
+        let query = lower::build(&view.spec, table)
+            .map_err(|why| Fault::new(format!("view `{name}` cannot be compiled: {why}")))?;
+        out.insert(name.clone(), Served::new(view.table.clone(), query.filter));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -55,6 +55,7 @@ use crate::session::{
 };
 use crate::status::reason_of;
 use crate::status::{from_kernel, redirect};
+use crate::views::Views;
 use slate_kernel::{
     Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
     ReadToken, RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, Scalar,
@@ -223,6 +224,13 @@ pub struct Head<S> {
     /// field would break each of them for something all but one of them wants
     /// to leave unset.
     writes: Option<Arc<dyn WriteObserver>>,
+    /// Names bound to a predicate over a base table; see [`crate::views`].
+    ///
+    /// Beside the catalog and never in it, which is what makes every read path
+    /// that has not opted in refuse a view by finding nothing rather than by
+    /// carrying a check. Empty on a node that declares none, and a
+    /// post-construction field for the reason [`Head::writes`] is one.
+    views: Views,
 }
 
 impl<S> Head<S> {
@@ -235,6 +243,24 @@ impl<S> Head<S> {
     #[must_use]
     pub fn observing_writes(mut self, observer: Arc<dyn WriteObserver>) -> Self {
         self.writes = Some(observer);
+        self
+    }
+
+    /// Serve `views` as names a read may go through.
+    ///
+    /// Consuming, for the reason [`Head::observing_writes`] is: a view that
+    /// appeared halfway through a node's life would make "which requests saw
+    /// it" a question somebody has to answer.
+    ///
+    /// A view resolved here is **not** added to the catalog. Only the handlers
+    /// that call [`Head::authorized_read_source`] can reach one, and today
+    /// that is `query` alone — every write, join, chain, aggregate, explain
+    /// and relation still resolves through `Catalog::table_by_name` and so
+    /// still answers `NOT_FOUND`. That is `docs/views.md` §3a's build order,
+    /// and the narrowness is the design rather than an unfinished edge.
+    #[must_use]
+    pub fn serving_views(mut self, views: Views) -> Self {
+        self.views = views;
         self
     }
 }
@@ -318,6 +344,7 @@ impl<S> Head<S> {
             sessions: Arc::new(Sessions::new(limits)),
             limits,
             writes: None,
+            views: Views::new(),
         }
     }
 
@@ -378,6 +405,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
             sessions: Arc::new(Sessions::new(limits)),
             limits,
             writes: None,
+            views: Views::new(),
         }
     }
 
@@ -462,6 +490,55 @@ impl<S: KvStore + KvReadStore> Head<S> {
             .authorize(context, table, action)
             .map_err(|error| from_kernel(&error))?;
         Ok(table)
+    }
+
+    /// Resolve a read's source name, which may be a table or a view.
+    ///
+    /// Returns the **base** `TableDef` and the predicate to `AND` onto the
+    /// caller's filter — `Expr::True` when the name was an ordinary table, so
+    /// a caller composes unconditionally and there is no branch to forget.
+    ///
+    /// # Why this is a second resolver rather than a change to the first
+    ///
+    /// `docs/views.md` §3a's build order is *declare first, read last*, and
+    /// the reason is that widening `authorized_table` would opt **every**
+    /// handler in at once — writes included, which §4 refuses, and joins and
+    /// aggregates, which §1 has no answer for because a joined row has no
+    /// single base table to authorise against. A separate function that one
+    /// handler calls is the opt-in: everything still on `authorized_table`
+    /// keeps answering `NOT_FOUND` for a view, by construction.
+    ///
+    /// The shape every finding in `security-review.md` has is a fix that
+    /// covered one path of several. This is the same shape run the other way —
+    /// a *capability* that covers one path of several — and the difference is
+    /// that here the uncovered paths are the safe ones.
+    ///
+    /// # What the caller is authorised against
+    ///
+    /// The base table, through `authorized_table`, with the same action the
+    /// kernel will check. So RLS keys on the base table's `TableId` and its
+    /// policy is the one that runs — §1's whole point — and a caller with no
+    /// grant on the base table cannot read through a view onto it. §2 is the
+    /// other half of that and is not a bug: holding the grant, they can read
+    /// the same rows by naming the table.
+    ///
+    /// A view whose base table has since left the catalog answers `NOT_FOUND`
+    /// naming the *table*. It cannot happen today — `views::views` resolves
+    /// every view against the catalog at startup and the catalog is immutable
+    /// afterwards — and the arm exists because "cannot happen" is a property
+    /// of today's wiring rather than of this function.
+    fn authorized_read_source(
+        &self,
+        context: &SecurityContext,
+        name: &str,
+        action: Action,
+    ) -> Result<(&TableDef, Expr), Status> {
+        if let Some(view) = self.views.get(name) {
+            let table = self.authorized_table(context, &view.table, action)?;
+            return Ok((table, view.predicate.clone()));
+        }
+        let table = self.authorized_table(context, name, action)?;
+        Ok((table, Expr::True))
     }
 
     /// Authorise every table a multi-table read names, before it is converted.
@@ -2345,13 +2422,33 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         //
         // `Action::Read` because that is what the planner will check; see
         // `authorized_table` on why the action is passed rather than inferred.
-        let table = self.authorized_table(&context, &wire.table, Action::Read)?;
+        //
+        // `authorized_read_source` rather than `authorized_table`: this is the
+        // one handler that may read through a view, and the opt-in is the
+        // call. See that function for why widening the shared resolver would
+        // have opted every other handler in too. `admits` is `Expr::True` for
+        // an ordinary table, so the composition below is unconditional.
+        let (table, admits) = self.authorized_read_source(&context, &wire.table, Action::Read)?;
         // Kept, not dropped. An ignored index hint used to be reported by
         // `Explain` alone, so a caller whose hint did nothing had to issue a
         // *different* request and trust the planner had decided the same way
         // on it. The first message of the stream is always sent and already
         // carries `served_by`, so there was a header to put this in all along.
-        let (query, warnings) = query_from_proto(&wire, table)?;
+        let (mut query, warnings) = query_from_proto(&wire, table)?;
+        // The view's rows AND the caller's, which is the composition
+        // `docs/views.md` settled on and the only one that cannot widen what a
+        // view admits: an `OR` would let a caller reach rows the view excludes
+        // by asking for them.
+        //
+        // Both sides carry the *base table's* ordinals — the caller's because
+        // `query_from_proto` resolved it against this same `TableDef`, the
+        // view's because a view may not narrow columns — so this is a plain
+        // conjunction and not a rewrite. That is the whole reason a projection
+        // is refused at load.
+        //
+        // Before `check_paged`, so a paged read through a view is checked
+        // against the query it will actually run.
+        query.filter = admits.and(query.filter);
         if wire.paged {
             crate::convert::check_paged(&query, table)?;
         }

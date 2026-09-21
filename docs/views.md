@@ -163,7 +163,29 @@ refuses any key outside `table`, `filter`, `filters`, so a field added to
 `QuerySpec` later is refused rather than silently accepted; the named list only
 picks the better sentence for the cases somebody has thought about.
 
-Step 2 is open, and the wording cost above is still unpaid.
+### Where step 2 landed
+
+`Head::serving_views` installs the registry and `Head::authorized_read_source`
+is the opt-in: it resolves a name in the views map first, authorises the
+**base** table through the same `authorized_table` every other read uses, and
+hands back the predicate. `query` calls it. Nothing else does, and
+`scripts/check_handlers.py` rule 6 is what keeps that true — every read of
+`self.views` must be in a function on the `RESOLVES_VIEWS` roster, so a second
+view-resolving path arrives as a diff somebody has to justify.
+
+The composition is `view.and(caller)`. An `OR` would let a caller reach rows
+the view excludes by asking for them, which would make a view a suggestion
+rather than a bound; `crates/slate-serverd/tests/views.rs` asserts exactly that
+against a running server. Both sides carry base-table ordinals — the caller's
+because the query was resolved against the same `TableDef`, the view's because
+a view may not narrow columns — so the conjunction needs no rewriting. That is
+the second place the no-projection rule pays for itself.
+
+**The wording cost is still unpaid**, and is now narrower than this section
+predicted: `query` no longer answers "no table named `recent`" for a declared
+view, but every other handler still does. That is the correct answer for a
+write (§4) and a misleading one for a join, where the honest refusal would be
+"`recent` is a view, and a join cannot read through one yet".
 
 ## 4. Writes through a view are refused
 
