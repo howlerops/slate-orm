@@ -587,48 +587,186 @@ def test_a_key_pointing_at_a_table_that_is_not_here_is_refused() -> None:
             raise AssertionError("a dangling parent was generated rather than refused")
 
 
-def test_an_array_column_is_refused_once_and_says_what_is_missing() -> None:
-    """One refusal, before anything is emitted, naming the table and column.
+def array_column(name: str, element: str, ordinal: int, *, null: bool = False) -> dict:
+    """An array column of `element`, for the tests below."""
+    made = column(name, "array", ordinal)
+    made["element_type"] = element
+    made["nullable"] = null
+    return made
 
-    The state this replaced was worse than either half looked: the three
-    *declaration* emitters looked the type up with `.get()` and raised a
-    readable `Unknown`, while the *row* emitters indexed the same tables
-    directly and raised `KeyError`. Which one a caller got depended on the
-    order the emitters ran in, and one of the two answers was unreadable.
 
-    Refused rather than generated because an array needs more than a row in
-    the type tables — see `codegen.UNSUPPORTED` — and a declaration that
-    omitted the element type would *compile* and hash to a fingerprint the
-    server refuses, which is the failure `Unknown` exists to prevent.
+def test_an_array_column_declares_its_element_type_in_every_language() -> None:
+    """The element type reaches the declaration, which is what the hash needs.
+
+    The fingerprint hashes an array's element type, so a declaration carrying
+    only `ARRAY` is refused by the server on the first request. This was the
+    reason the generator used to refuse arrays outright: the type tables are
+    keyed by the column's own type and cannot say what its elements are. The
+    resolution is one more level of indirection, per column rather than per
+    type, and the tables are untouched.
     """
     spec = [
-        {
-            "name": "posts",
-            "columns": [
-                {"name": "id", "type": "u64", "nullable": False, "scale": None},
-                {
-                    "name": "tags",
-                    "type": "array",
-                    "element_type": "string",
-                    "nullable": False,
-                    "scale": None,
-                },
-            ],
-            "primary_key": ["id"],
-        }
+        table(
+            "posts",
+            [column("id", "u64", 0), array_column("tags", "string", 1)],
+            [0],
+        )
     ]
+    python = codegen.python_module(spec)
+    assert 'Column("tags", ValueType.ARRAY, element=ValueType.STR)' in python, python
+
+    go = codegen.go_file(spec, "schema")
+    assert '{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString}' in go, go
+
+    typescript = codegen.typescript_module(spec)
+    assert '{ name: "tags", type: "array", element: "string" }' in typescript, typescript
+
+
+def test_the_go_and_typescript_decoders_check_an_array_element_by_element() -> None:
+    """The element check reaches Go and TypeScript, not only Python.
+
+    Asserted on the emitted source rather than by running it, and that is the
+    weakness worth naming: the Python case above is executed, these two are
+    read. The suites that *execute* generated Go and TypeScript are the demo's
+    own, and the demo's schema has no array column, so nothing runs this yet.
+    Mutation testing is what made the gap visible — removing the element check
+    from both emitters broke nothing until these assertions existed.
+    """
+    spec = [
+        table(
+            "posts",
+            [column("id", "u64", 0), array_column("tags", "string", 1)],
+            [0],
+        )
+    ]
+
+    go = codegen.go_file(spec, "schema")
+    assert "Tags []string" in go.replace("  ", " "), go
+    # The element is asserted to its own wire type, not to `slate.Value`: a
+    # `slate.Array` is a `[]slate.Value`, so asserting the interface always
+    # succeeds and the cast that follows would be wrong for every element.
+    assert "ev, ok := e.(slate.String)" in go, go
+    # And the error names the position, because `tags[2]` is findable.
+    assert 'posts.tags[%d]: expected slate.String' in go, go
+    # The write side wraps each element in its own type.
+    assert "append(tagsElements, slate.String(e))" in go, go
+
+    typescript = codegen.typescript_module(spec)
+    assert "tags: string[]" in typescript, typescript
+    assert 'elements(row, 1, "posts", "tags", "string", false) as string[]' in typescript, (
+        typescript
+    )
+    assert 'row.tags.map((e) => ({ kind: "string", value: e }))' in typescript, typescript
+
+
+def test_a_generated_array_column_decodes_and_encodes_element_by_element() -> None:
+    """The generated Python runs, and the elements survive the round trip.
+
+    Executed rather than pattern-matched, for the reason the transposition
+    test above gives. The element check is the part worth running: an array's
+    elements arrive already decoded to native Python, so a wrong element type
+    in the declaration produces a list that *looks* right at the call site and
+    is refused by the server instead.
+    """
+    spec = [
+        table(
+            "posts",
+            [
+                column("id", "u64", 0),
+                array_column("tags", "string", 1),
+                array_column("sizes", "i64", 2),
+            ],
+            [0],
+        )
+    ]
+    body = codegen.python_module(spec)
+
+    try:
+        from slate import i64
+        from slate.values import Array
+    except ImportError:
+        print("  (skipped: the `slate` client is not installed)")
+        return
+
+    namespace: dict[str, object] = {}
+    exec(compile(body, "<generated>", "exec"), namespace)
+    row_type: Any = namespace["Posts"]
+
+    decoded = row_type.from_row([1, Array(("a", "b")), Array((i64(2), i64(3)))])
+    assert decoded.tags == ("a", "b"), decoded.tags
+    assert decoded.sizes == (2, 3), decoded.sizes
+    # Empty is a value, not a null — the distinction `docs/arrays.md` makes
+    # load-bearing in the kernel, and the one a generated decoder could lose.
+    assert row_type.from_row([1, Array(()), Array(())]).tags == ()
+
+    # The encoder wraps each element in its own tag. `i64` and `u64` are both
+    # a plain `int` after decoding, so a list of them carries nothing to tell
+    # them apart and the server would be the first to notice.
+    encoded = row_type(id=1, tags=("a",), sizes=(7,)).to_row()
+    assert isinstance(encoded[1], Array), encoded
+    assert isinstance(encoded[2][0], i64), f"the element lost its tag: {encoded[2]!r}"
+
+    # And an element of the wrong type is named with its position.
+    try:
+        row_type.from_row([1, Array((1,)), Array((i64(2),))])
+    except TypeError as why:
+        assert "posts.tags[0]" in str(why), why
+    else:
+        raise AssertionError("a wrongly typed element decoded without complaint")
+
+
+def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> None:
+    """Two shapes no catalog can hold, refused rather than half-generated.
+
+    Neither reaches here through a catalog `slate-serverd` printed — the schema
+    layer refuses an array column with no element type at build time, and there
+    is no array-of-arrays column at all. They are checked anyway for the reason
+    the unreachable refusals elsewhere in this repository are: the guarantee is
+    one edit away from weakening, and the failure then would be generated code
+    that compiles and decodes every element as the wrong type.
+    """
+    missing = column("tags", "array", 1)
+    missing.pop("element_type", None)
+    for bad, expected in [
+        (missing, "element type"),
+        (array_column("tags", "array", 1), "array of arrays"),
+    ]:
+        spec = [table("posts", [column("id", "u64", 0), bad], [0])]
+        try:
+            codegen.python_module(spec)
+        except codegen.Unknown as why:
+            assert "tags" in str(why), why
+            assert expected in str(why), why
+        else:
+            raise AssertionError(f"`{expected}` was generated rather than refused")
+
+
+def test_refuse_unsupported_fires_and_does_not_over_fire() -> None:
+    """`UNSUPPORTED` is empty, and the mechanism is still exercised.
+
+    Every type has a generator now, so the dict has nothing in it — and an
+    empty roster means the code that reads it never runs, which is the "a
+    check that never fires is a check nobody has debugged" shape this
+    repository keeps meeting. So the test puts an entry in, checks the refusal
+    names the table, the column and the reason, and takes it out again.
+
+    The mechanism is kept rather than deleted because the next type that
+    cannot be generated should be one line and a sentence, not a rediscovery
+    of why the declaration emitters and the row emitters used to fail
+    differently on the same catalog.
+    """
+    spec = [table("posts", [column("id", "u64", 0), column("when", "instant", 1)], [0])]
+    codegen.UNSUPPORTED["instant"] = "there is no such type; this entry is a test fixture"
     try:
         codegen.refuse_unsupported(spec)
     except codegen.Unknown as why:
-        # The table and the column, because a catalog has many and "an array
-        # column" is not something a reader can act on.
         assert "posts" in str(why), why
-        assert "tags" in str(why), why
-        # And what is missing, so the message is a description of the work
-        # rather than a wall.
-        assert "element type" in str(why), why
+        assert "when" in str(why), why
+        assert "test fixture" in str(why), why
     else:
-        raise AssertionError("an array column was accepted by the generator")
+        raise AssertionError("a listed type was accepted")
+    finally:
+        del codegen.UNSUPPORTED["instant"]
 
 
 def test_an_ordinary_catalog_is_not_refused() -> None:

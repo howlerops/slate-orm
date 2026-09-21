@@ -64,6 +64,7 @@ import os
 import re
 import subprocess
 import sys
+import typing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,6 +86,7 @@ PYTHON_TYPES = {
     "uuid": "ValueType.UUID",
     "vector": "ValueType.VECTOR",
     "decimal": "ValueType.DECIMAL",
+    "array": "ValueType.ARRAY",
 }
 
 GO_TYPES = {
@@ -97,6 +99,7 @@ GO_TYPES = {
     "uuid": "slate.TypeUUID",
     "vector": "slate.TypeVector",
     "decimal": "slate.TypeDecimal",
+    "array": "slate.TypeArray",
 }
 
 TYPESCRIPT_TYPES = {
@@ -109,7 +112,110 @@ TYPESCRIPT_TYPES = {
     "uuid": '"uuid"',
     "vector": '"vector"',
     "decimal": '"decimal"',
+    "array": '"array"',
 }
+
+#: An array column's element type is not in `type` — it is a second field on
+#: the column, the way a decimal's scale is, for the reason `docs/arrays.md`
+#: gives: `ValueType` stays fieldless so that it stays `Copy`, `const`, and
+#: finitely enumerable. So every table above is keyed by a *scalar* type name
+#: and an array is resolved through here instead.
+#:
+#: This is what the `UNSUPPORTED` entry used to say could not be expressed, and
+#: the resolution is that it cannot be expressed *in the tables* — one more
+#: level of indirection, applied per column rather than per type, is enough.
+
+
+def element_of(column: dict) -> str:
+    """The element type of an array column, as a scalar type name.
+
+    # Errors
+
+    Refuses an array column with no element type, and an array of arrays.
+    Neither can reach here through a catalog `slate-serverd` printed — the
+    schema layer refuses both at build time — so this is the same shape as the
+    unreachable refusals elsewhere: the guarantee is one edit away from
+    weakening, and the failure then would be generated code that compiles and
+    decodes every element as the wrong type.
+    """
+    element = column.get("element_type")
+    if element is None:
+        raise Unknown(
+            f"column `{column['name']}` is an array and the catalog gives it no "
+            f"element type; the fingerprint hashes that, so a declaration "
+            f"without it would be refused by the server"
+        )
+    if element == "array":
+        raise Unknown(
+            f"column `{column['name']}` is an array of arrays, which no schema "
+            f"this generator can be given contains: an element type is a single "
+            f"type and cannot name an element type of its own"
+        )
+    return element
+
+
+def declared(column: dict, types: dict[str, str], element_keyword: str) -> str:
+    """The declaration a client's `Column` takes: the type, plus what it needs.
+
+    `element_keyword` is how the language spells the second argument — Python
+    takes `element=`, Go `Element:`, TypeScript `element:` — and the empty
+    string means the caller assembles it itself.
+    """
+    kind = types.get(column["type"])
+    if kind is None:
+        raise Unknown(f"no spelling for `{column['type']}`")
+    if column["type"] != "array":
+        return kind
+    return f"{kind}{element_keyword}{types[element_of(column)]}"
+
+
+def field_of(column: dict, fields: dict[str, tuple[str, str]], shape: str) -> tuple[str, str]:
+    """The decoded field's native type and its runtime check, per column.
+
+    `shape` is how the language spells "a list of these" — `Sequence[{}]`,
+    `[]{}`, `{}[]` — and the runtime half of the pair becomes the *element's*
+    check for an array, because an array's own check is the same in every case
+    and the element's is what differs.
+    """
+    if column["type"] != "array":
+        return fields[column["type"]]
+    native, runtime = fields[element_of(column)]
+    return shape.format(native), runtime
+
+
+def python_encode(column: dict, expression: str) -> str:
+    """The Python expression that turns a decoded field back into a wire value.
+
+    An array needs its *elements* wrapped, not itself: `u64` and `i64` are both
+    a plain `int` after decoding, so a list of them carries no tag and the
+    server would be the first to notice. Where the element needs no wrapping —
+    a `str`, a `bool` — the comprehension would be noise, so the list passes
+    through `Array` alone.
+    """
+    if column["type"] != "array":
+        return PYTHON_ENCODE[column["type"]].format(expression)
+    inner = PYTHON_ENCODE[element_of(column)]
+    if inner == "{}":
+        return f"Array({expression})"
+    return f"Array({inner.format('_e')} for _e in {expression})"
+
+
+class GoElement(typing.NamedTuple):
+    """What Go needs to build one array column's elements."""
+
+    #: The local variable the loop fills. Suffixed rather than bare, because a
+    #: column called `out`, `row`, `v` or `i` would otherwise shadow something
+    #: the generated function already uses.
+    var: str
+    #: The native element type, for the conversion out of the wire type.
+    native: str
+
+
+def go_element(column: dict) -> GoElement:
+    native, _ = GO_FIELDS[element_of(column)]
+    lowered = go_field(column["name"])
+    return GoElement(var=lowered[:1].lower() + lowered[1:] + "Elements", native=native)
+
 
 BANNER = "Generated by scripts/codegen.py. Do not edit."
 
@@ -311,14 +417,7 @@ class Unknown(Exception):
 #: tables cannot express because they are keyed by the column's type alone.
 #: Each language also needs a per-element encode, since `u64` and `i64` are
 #: different wire arms and a list of them cannot pass through unwrapped.
-UNSUPPORTED = {
-    "array": (
-        "an array column's declaration has to carry its element type (the "
-        "fingerprint hashes it) and its decoded form is element-typed in all "
-        "three languages, neither of which the type tables in this file can "
-        "express — they are keyed by the column's type alone"
-    ),
-}
+UNSUPPORTED: dict[str, str] = {}
 
 
 def refuse_unsupported(tables: list[dict]) -> None:
@@ -570,6 +669,29 @@ def python_rows(tables: list[dict]) -> list[str]:
         "        )",
         "    return value",
         "",
+        "",
+        "def _elements(values: Sequence[object], at: int, table: str, column: str,",
+        "              kind: type | tuple[type, ...], nullable: bool) -> object:",
+        '    """One array column, with every element checked.',
+        "",
+        "    `_field` stops at the list. Its elements arrive already decoded to",
+        "    native Python — an `Array` of `str`, not of tagged values — so a",
+        "    caller reading one *looks* right whatever the column declared, and a",
+        "    declaration naming the wrong element type would be found by the",
+        "    server rather than here. The element type is not on the wire, so",
+        "    this is the only place on this side that can notice.",
+        '    """',
+        '    value = _field(values, at, table, column, Array, nullable)',
+        "    if value is None:",
+        "        return None",
+        "    for index, element in enumerate(value):  # type: ignore[call-overload]",
+        "        if not isinstance(element, kind):",
+        "            raise TypeError(",
+        '                f"{table}.{column}[{index}] is {type(element).__name__}, "',
+        '                f"not the declared {kind}"',
+        "            )",
+        "    return value",
+        "",
     ]
     for table in tables:
         name = type_name(table)
@@ -585,7 +707,7 @@ def python_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for _, column in fields:
-            native, _ = PYTHON_FIELDS[column["type"]]
+            native, _ = field_of(column, PYTHON_FIELDS, "Sequence[{}]")
             # A `CHECK` restricting the column to a set of strings is an
             # enumeration, and the server already refuses anything outside it,
             # so the narrower type states a rule rather than inventing one.
@@ -608,9 +730,12 @@ def python_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for at, column in fields:
-            _, runtime = PYTHON_FIELDS[column["type"]]
+            native, runtime = field_of(column, PYTHON_FIELDS, "Sequence[{}]")
             nullable = "True" if column["nullable"] else "False"
-            native = PYTHON_FIELDS[column["type"]][0]
+            # An array goes through `_elements`, which checks every element
+            # against the *element* type rather than the column's own; see the
+            # helper's docstring for why that is the only place it can happen.
+            reader = "_elements" if column["type"] == "array" else "_field"
             if column["name"] in enums:
                 # **Single** quotes, because this hint goes inside the
                 # double-quoted cast target below and a `Literal["a"]` closes
@@ -634,7 +759,7 @@ def python_rows(tables: list[dict]) -> list[str]:
             # file, and a generated file a linter edits is drift by Tuesday.
             out.append(
                 f'            {column["name"]}=cast("{hint}", '
-                f'_field(values, {at}, "{table["name"]}", "{column["name"]}", '
+                f'{reader}(values, {at}, "{table["name"]}", "{column["name"]}", '
                 f"{runtime}, {nullable})),"
             )
         out.extend(["        )", ""])
@@ -652,7 +777,7 @@ def python_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for _, column in fields:
-            wrapped = PYTHON_ENCODE[column["type"]].format(f"self.{column['name']}")
+            wrapped = python_encode(column, f"self.{column['name']}")
             if column["nullable"]:
                 out.append(
                     f"            NULL if self.{column['name']} is None "
@@ -739,7 +864,7 @@ def go_rows(tables: list[dict]) -> list[str]:
         # generator someone will reformat by hand and then regenerate over.
         widest = max((len(go_field(c["name"])) for _, c in fields), default=0)
         for _, column in fields:
-            native, _ = GO_FIELDS[column["type"]]
+            native, _ = field_of(column, GO_FIELDS, "[]{}")
             # A nullable column is a pointer: Go has no other shape that can
             # hold "absent" for an int64, and a zero would be a real value.
             hint = f"*{native}" if column["nullable"] else native
@@ -762,7 +887,11 @@ def go_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for at, column in fields:
-            native, wire = GO_FIELDS[column["type"]]
+            native, element_wire = field_of(column, GO_FIELDS, "[]{}")
+            # An array asserts `slate.Array` and then each element separately;
+            # `field_of` gave the *element's* wire type for that second step.
+            array = column["type"] == "array"
+            wire = "slate.Array" if array else element_wire
             field = go_field(column["name"])
             out.append(f"\tif _, null := row[{at}].(slate.Null); !null {{")
             out.append(f"\t\tv, ok := row[{at}].({wire})")
@@ -772,7 +901,29 @@ def go_rows(tables: list[dict]) -> list[str]:
                 f'expected {wire}, got %T", row[{at}])'
             )
             out.append("\t\t}")
-            if column["nullable"]:
+            if array:
+                # A `slate.Array` is a `[]slate.Value`, so its members still
+                # carry their own types and a cast to `[]string` would be a
+                # lie the compiler cannot see. Checked one at a time, and the
+                # error names the position: "tags[2]" is findable, "tags" is
+                # not.
+                element = go_element(column)
+                out.append(f"\t\t{element.var} := make({native}, len(v))")
+                out.append("\t\tfor i, e := range v {")
+                out.append(f"\t\t\tev, ok := e.({element_wire})")
+                out.append("\t\t\tif !ok {")
+                out.append(
+                    f'\t\t\t\treturn out, fmt.Errorf("{table["name"]}.{column["name"]}[%d]: '
+                    f'expected {element_wire}, got %T", i, e)'
+                )
+                out.append("\t\t\t}")
+                out.append(f"\t\t\t{element.var}[i] = {element.native}(ev)")
+                out.append("\t\t}")
+                if column["nullable"]:
+                    out.append(f"\t\tout.{field} = &{element.var}")
+                else:
+                    out.append(f"\t\tout.{field} = {element.var}")
+            elif column["nullable"]:
                 out.append(f"\t\tvalue := {native}(v)")
                 out.append(f"\t\tout.{field} = &value")
             else:
@@ -805,7 +956,33 @@ def go_rows(tables: list[dict]) -> list[str]:
         )
         for _, column in fields:
             field = go_field(column["name"])
-            if column["nullable"]:
+            if column["type"] == "array":
+                # A loop rather than a format string, because `slate.Array` is
+                # a `[]slate.Value` and every element has to be wrapped in its
+                # own type on the way out. Written inline instead of as a
+                # generated helper per element type: one helper would be
+                # shared by two columns of different element types and would
+                # need a type parameter for no gain, and `gofmt` is happy with
+                # either.
+                element = go_element(column)
+                inner = GO_ENCODE[element_of(column)]
+                source = f"*r.{field}" if column["nullable"] else f"r.{field}"
+                body = [
+                    f"\t{element.var} := make(slate.Array, 0, len({source}))",
+                    f"\tfor _, e := range {source} {{",
+                    f"\t\t{element.var} = append({element.var}, {inner.format('e')})",
+                    "\t}",
+                    f"\tout = append(out, {element.var})",
+                ]
+                if column["nullable"]:
+                    out.append(f"\tif r.{field} == nil {{")
+                    out.append("\t\tout = append(out, slate.Null{})")
+                    out.append("\t} else {")
+                    out.extend("\t" + line for line in body)
+                    out.append("\t}")
+                else:
+                    out.extend(body)
+            elif column["nullable"]:
                 encoded = GO_ENCODE[column["type"]].format(f"*r.{field}")
                 out.extend(
                     [
@@ -867,7 +1044,7 @@ def typescript_rows(tables: list[dict]) -> list[str]:
         out.extend(typescript_foreign_keys(table, name, parents))
         out.extend([f"/** A row of `{table['name']}`, decoded. */", f"export interface {name} {{"])
         for _, column in fields:
-            native, _ = TYPESCRIPT_FIELDS[column["type"]]
+            native, _ = field_of(column, TYPESCRIPT_FIELDS, "{}[]")
             if column["name"] in enums:
                 native = " | ".join(f'"{value}"' for value in enums[column["name"]])
             hint = f"{native} | null" if column["nullable"] else native
@@ -892,12 +1069,16 @@ def typescript_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for at, column in fields:
-            native, tag = TYPESCRIPT_FIELDS[column["type"]]
+            native, tag = field_of(column, TYPESCRIPT_FIELDS, "{}[]")
             if column["name"] in enums:
                 native = " | ".join(f'"{value}"' for value in enums[column["name"]])
             nullable = "true" if column["nullable"] else "false"
+            # `elements` for an array, and the tag it is given is the
+            # *element's* — the array's own is `"array"` and is spelled inside
+            # the helper, because there is only one thing it can be.
+            reader = "elements" if column["type"] == "array" else "field"
             out.append(
-                f'    {column["name"]}: field(row, {at}, "{table["name"]}", '
+                f'    {column["name"]}: {reader}(row, {at}, "{table["name"]}", '
                 f'"{column["name"]}", "{tag}", {nullable}) as {native}'
                 + (" | null," if column["nullable"] else ",")
             )
@@ -919,9 +1100,19 @@ def typescript_rows(tables: list[dict]) -> list[str]:
             ]
         )
         for _, column in fields:
-            _, tag = TYPESCRIPT_FIELDS[column["type"]]
+            _, tag = field_of(column, TYPESCRIPT_FIELDS, "{}[]")
             ref = f"row.{column['name']}"
-            live = f'{{ kind: "{tag}", value: {ref} }}'
+            if column["type"] == "array":
+                # Each element wrapped in its own tag, which is what the
+                # decoder's `elements` unwrapped. `int` and `uint` are both
+                # `bigint` here, so a list of them carries nothing to tell
+                # them apart until the server refuses it.
+                live = (
+                    f'{{ kind: "array", value: {ref}.map((e) => '
+                    f'({{ kind: "{tag}", value: e }})) }}'
+                )
+            else:
+                live = f'{{ kind: "{tag}", value: {ref} }}'
             if column["nullable"]:
                 out.append(f'    {ref} === null ? {{ kind: "null" }} : {live},')
             else:
@@ -966,15 +1157,28 @@ def python_value_imports(tables: list[dict]) -> str:
     types actually present.
     """
     needed = {"Null", "NULL"}
+
+    def wants(kind: str) -> None:
+        if kind in ("i64", "u64"):
+            needed.add(kind)
+        elif kind == "decimal":
+            needed.add("Units")
+        elif kind == "vector":
+            needed.add("Vector")
+
     for table in tables:
         for _, column in row_columns(table):
             kind = column["type"]
-            if kind in ("i64", "u64"):
-                needed.add(kind)
-            elif kind == "decimal":
-                needed.add("Units")
-            elif kind == "vector":
-                needed.add("Vector")
+            if kind == "array":
+                # The list itself and, separately, whatever its elements need:
+                # an `array<i64>` encodes as `Array(i64(e) for e in …)` and so
+                # refers to both. Missed at first, and the generated module was
+                # a `NameError` at import — which `ty` and `ruff` do not see,
+                # because neither is given a file that does not exist yet.
+                needed.add("Array")
+                wants(element_of(column))
+            else:
+                wants(kind)
     return ", ".join(sorted(needed))
 
 
@@ -1045,9 +1249,7 @@ def python_module(tables: list[dict]) -> str:
         out.append(f'    "{table["name"]}",')
         out.append("    [")
         for column in columns:
-            kind = PYTHON_TYPES.get(column["type"])
-            if kind is None:
-                raise Unknown(f"python has no spelling for `{column['type']}`")
+            kind = declared(column, PYTHON_TYPES, ", element=")
             scale = "" if column["scale"] is None else f", scale={column['scale']}"
             out.append(f'        Column("{column["name"]}", {kind}{scale}),')
         out.append("    ],")
@@ -1118,9 +1320,7 @@ def go_file(tables: list[dict], package: str) -> str:
         out.append(f'\t\tName: "{table["name"]}",')
         out.append("\t\tColumns: []slate.ColumnDef{")
         for column in columns:
-            kind = GO_TYPES.get(column["type"])
-            if kind is None:
-                raise Unknown(f"go has no spelling for `{column['type']}`")
+            kind = declared(column, GO_TYPES, ", Element: ")
             scale = "" if column["scale"] is None else f", Scale: {column['scale']}"
             out.append(f'\t\t\t{{Name: "{column["name"]}", Type: {kind}{scale}}},')
         out.append("\t\t},")
@@ -1173,6 +1373,35 @@ def typescript_module(tables: list[dict]) -> str:
         '  return "value" in value ? value.value : undefined;',
         "}",
         "",
+        "/**",
+        " * One array column, with every element checked against its declared type.",
+        " *",
+        " * `field` above stops at the array: its value is a `Value[]`, whose members",
+        " * still carry their own tags, so a cast to `string[]` at the call site would",
+        " * be a lie nothing can see. The element type is not on the wire either, so",
+        " * this is the only place on this side that can notice — and the error names",
+        " * the position, because `tags[2]` is findable and `tags` is not.",
+        " */",
+        "function elements(",
+        "  row: Value[],",
+        "  at: number,",
+        "  table: string,",
+        "  column: string,",
+        "  kind: string,",
+        "  nullable: boolean,",
+        "): unknown {",
+        '  const value = field(row, at, table, column, "array", nullable);',
+        "  if (value === null) return null;",
+        "  return (value as Value[]).map((element, index) => {",
+        "    if (element.kind !== kind) {",
+        "      throw new Error(",
+        "        `${table}.${column}[${index}] is ${element.kind}, not the declared ${kind}`,",
+        "      );",
+        "    }",
+        '    return "value" in element ? element.value : undefined;',
+        "  });",
+        "}",
+        "",
     ]
     names = []
     for table in tables:
@@ -1183,9 +1412,7 @@ def typescript_module(tables: list[dict]) -> str:
         out.append(f'  name: "{table["name"]}",')
         out.append("  columns: [")
         for column in columns:
-            kind = TYPESCRIPT_TYPES.get(column["type"])
-            if kind is None:
-                raise Unknown(f"typescript has no spelling for `{column['type']}`")
+            kind = declared(column, TYPESCRIPT_TYPES, ", element: ")
             scale = "" if column["scale"] is None else f", scale: {column['scale']}"
             out.append(f'    {{ name: "{column["name"]}", type: {kind}{scale} }},')
         out.append("  ],")

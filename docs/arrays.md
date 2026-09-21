@@ -209,13 +209,23 @@ outside the kernel, and this note is entirely about the kernel.
 > whose idea of an element type is wrong — it reads the *right* column and
 > decodes every element as the wrong type.
 >
-> One thing is genuinely left. `scripts/codegen.py` refuses an array column
-> rather than generating one, deliberately and with a message saying what it
-> would need: the declaration must carry the element type, and the decoded form
-> is element-typed in all three languages, neither of which its type tables can
-> express since they are keyed by the column's type alone.
+> **The generator emits an array column too**, which was the other of the two.
+> The reason it could not was real and the resolution turned out to be small:
+> the type tables are keyed by the column's own type and cannot say what its
+> elements are, so an array resolves through one more level of indirection,
+> applied per *column* rather than per type. The tables are untouched.
 >
-> **The predicate parser now has an array literal**: `tags = ['a', 'b']`, with
+> What each language needed was different, and only Python's was cheap. A
+> Python array decodes to native elements already, so the field type is
+> `Sequence[str]` with no unwrapping — but then a wrong element type in the
+> declaration produces a list that looks right at the call site and is refused
+> by the server instead, so the generated decoder checks each element anyway.
+> Go's `slate.Array` and TypeScript's `Value[]` hold *tagged* elements, so both
+> have to unwrap one at a time, and a cast to `[]string` without that is a lie
+> the compiler cannot see. All three name the position in the error, because
+> `tags[2]` is findable and `tags` is not.
+>
+> **And the predicate parser has an array literal**: `tags = ['a', 'b']`, with
 > the *column* deciding the element type exactly as it decides a scalar
 > literal's type, so `[1, 2]` is a list of `u64` opposite `array<u64>` and of
 > `i64` opposite `array<i64>` and neither needs saying in the text. `[]` is
