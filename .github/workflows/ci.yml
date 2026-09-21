@@ -591,6 +591,27 @@ jobs:
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
+  # The head-node benchmarks, run rather than asserted.
+  #
+  # Same argument as `batchbench` above, learned the hard way twice over. This
+  # crate's five benchmarks were built by `cargo clippy --all-targets` and run
+  # by nothing, and four of them were broken — three when `leadership` gained
+  # authentication, a fourth when `EXPLAIN` became privileged. Both are
+  # security fixes to `slate-server` that nobody would think to run a benchmark
+  # after, which is exactly why a machine has to.
+  #
+  # `--smoke` asks each one for the smallest fixture it accepts and checks
+  # nothing but the exit code. No threshold: a wall-clock assertion on a shared
+  # runner is a flake waiting for a slow morning, and the recorded numbers in
+  # `docs/performance.md` come from a quiet machine and say so.
+  headbench:
+    name: head-node benchmarks, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: crates/slate-headbench/run.sh --smoke
+
   # The release build, called rather than copied.
   #
   # Compiles `slate-serverd` for both release targets, installs the aarch64

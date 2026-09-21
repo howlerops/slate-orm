@@ -131,6 +131,14 @@ fixed here by inspection — their leadership calls now carry an identity, and
 neither was executed end to end afterwards, because each takes minutes.
 `head_report`'s `views` section is the only one this session actually ran.
 
+> **Closed, and the caveat was right about what it would cost.** #265 added
+> `crates/slate-headbench/run.sh --smoke` and a CI job that runs all five. The
+> first run found a *fourth* broken benchmark: `head_report` panicked on
+> `PERMISSION_DENIED` at its explain call, because the fixture granted
+> `Action::ALL` — four data actions, deliberately excluding `Explain` — and
+> `EXPLAIN` had become privileged. A different security fix, the same shape,
+> and invisible to both tests above exactly as this paragraph says.
+
 **The 71 µs is not explained, only shown to be an artefact.** It reproduced as
 "the second node measured is slower" and vanished under A-B-A. Whether that is
 the channel settling, the allocator, or something about standing up a second

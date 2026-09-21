@@ -74,6 +74,10 @@ ELSEWHERE = {
     "./run.sh --conformance": "three SDKs and a server",
     "./run.sh --e2e": "a browser",
     "./run.sh --rows 20 --runs 2": "a benchmark, against a server",
+    "crates/slate-headbench/run.sh --smoke": (
+        "five benchmarks, each standing up a head node — minutes, and "
+        "`check.sh` promises seconds"
+    ),
 }
 
 #: Multi-line `run: |` blocks, by the `name:` above them.

@@ -554,6 +554,15 @@ holds, called the way its handlers call them, with no protobuf type constructed
 anywhere. The difference between the two is the head node.
 
 ```sh
+# Every benchmark in the crate, at its recorded size. `--smoke` runs the same
+# five at the smallest fixture each accepts: worthless numbers, seconds rather
+# than minutes, and the only thing that catches a benchmark that has stopped
+# working. CI runs `--smoke` on every push, which is new — for weeks nothing
+# ran any of them and four were broken, twice over, by security fixes
+# elsewhere in the tree.
+crates/slate-headbench/run.sh
+crates/slate-headbench/run.sh --smoke
+
 cargo run --release -p slate-headbench --example head_report
 cargo run --release -p slate-headbench --example head_report -- stream lease
 
@@ -570,6 +579,11 @@ cargo run --release -p slate-headbench --example s3_nodelay
 HEADBENCH_POLL_MS=10000 cargo run --release -p slate-headbench \
     --example head_report -- routing
 ```
+
+`HEADBENCH_ROWS` overrides the 20,000-row fixture in all five; it used to work
+in three, and the two that hard-coded it were the two a smoke run had to wait
+two minutes for. The default is unchanged, so every number below still
+describes 20,000 rows.
 
 ### Conditions, and why they are stated first
 

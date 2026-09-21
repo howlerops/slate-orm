@@ -10,8 +10,15 @@
 //! --all-targets` kept saying the examples compiled — which was true, and not
 //! the question.
 //!
-//! These two tests are the smallest thing that would have caught it, and they
-//! run under `cargo test --workspace` like everything else.
+//! These two tests are the smallest thing that would have caught *that*, and
+//! they run under `cargo test --workspace` like everything else. They are not
+//! the smallest thing that would have caught the next one, and saying so cost
+//! nothing at the time and turned out to be the important sentence: a fourth
+//! benchmark was broken by `EXPLAIN` becoming privileged, both tests passed
+//! over it, and only running `head_report` found it. `run.sh --smoke` does
+//! that now, in CI, and is what actually guards this crate — these two stay
+//! because they are seconds rather than minutes and they name the specific
+//! shape rather than reporting an exit code.
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 

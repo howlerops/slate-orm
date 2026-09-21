@@ -57,7 +57,20 @@ const EVENTS: TableId = TableId(1);
 
 /// Rows in the fixture. The same count `scan_tuning` uses, so the numbers here
 /// can be read against the table in `docs/performance.md`.
+///
+/// The default is that count and is unchanged. `HEADBENCH_ROWS` overrides it
+/// only so `run.sh` can prove this still runs in seconds; at a smoke size the
+/// comparison between the two servers is meaningless, which is why the small
+/// size is asked for explicitly and never defaulted to.
 const ROWS: u64 = 20_000;
+
+fn rows() -> u64 {
+    std::env::var("HEADBENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
 
 fn runs() -> usize {
     std::env::var("HEADBENCH_RUNS")
@@ -209,7 +222,7 @@ async fn load(path: &str, config: S3Config) {
         .expect("open");
     let store = RecordStore::new(backend.clone(), catalog(), security());
     let root = SecurityContext::superuser();
-    for chunk in (0..ROWS).collect::<Vec<_>>().chunks(1_000) {
+    for chunk in (0..rows()).collect::<Vec<_>>().chunks(1_000) {
         let rows: Vec<Row> = chunk.iter().map(|id| row(*id)).collect();
         let txn = store.begin().await.expect("begin");
         txn.insert_many(&root, &events(), &rows)
@@ -238,7 +251,7 @@ async fn scan_once(path: &str, config: S3Config, tuning: ScanTuning) -> f64 {
         .await
         .expect("count");
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-    assert_eq!(counted as u64, ROWS, "a scan lost rows");
+    assert_eq!(counted as u64, rows(), "a scan lost rows");
     drop(txn);
     backend.close().await.expect("close");
     elapsed
@@ -281,9 +294,10 @@ async fn arm(label: &str, nodelay: bool, tuning: ScanTuning) -> Result_ {
 async fn main() {
     println!("# The in-process S3 server's socket\n");
     println!(
-        "{ROWS} rows, scanned end to end over a real S3 server in this process.\n\
+        "{} rows, scanned end to end over a real S3 server in this process.\n\
          Two servers, identical but for `set_nodelay(true)` on each accepted\n\
          connection. Runs: {}, `median [min – max]`.\n",
+        rows(),
         runs()
     );
 
