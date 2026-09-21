@@ -699,6 +699,7 @@ pub fn doc_ids(rows: &[pb::Row]) -> Vec<u64> {
 /// about the check itself sets `schema` to something else.
 pub fn plain_query(table: &str) -> pb::Query {
     pb::Query {
+        window: Vec::new(),
         table: table.to_owned(),
         filter: None,
         order: pb::ScanOrder::Ascending as i32,
@@ -736,6 +737,7 @@ pub fn wire_row(values: Vec<pb::Value>) -> pb::Row {
     pb::Row {
         values,
         computed: Vec::new(),
+        windowed: Vec::new(),
     }
 }
 

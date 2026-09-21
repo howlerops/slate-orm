@@ -43,7 +43,7 @@ use slate_kernel::{
     Freshness, Group, Grouping, Join, JoinAlgorithm, JoinExplanation, JoinKey, JoinStep, JoinType,
     Metric, Projection, ReadToken, ScanOrder, Side, TimeUnit,
 };
-use slate_kernel::{Chain, ChainPlan, ChainRow, JoinSchema, Scalar};
+use slate_kernel::{Chain, ChainPlan, ChainRow, JoinSchema, Scalar, Window, WindowFunction};
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::{Direction, Value};
 use tonic::Status;
@@ -173,6 +173,7 @@ pub fn row_to_proto(row: &Row) -> pb::Row {
     pb::Row {
         values: row.values().iter().map(value_to_proto).collect(),
         computed: Vec::new(),
+        windowed: Vec::new(),
     }
 }
 
@@ -195,12 +196,27 @@ pub fn row_to_proto(row: &Row) -> pb::Row {
 /// by a row it can describe.
 #[must_use]
 pub fn row_to_proto_split(row: &Row, stored: usize) -> pb::Row {
+    row_to_proto_split_windowed(row, stored, 0)
+}
+
+/// [`row_to_proto_split`] for a row that also carries window values.
+///
+/// The kernel's row is columns, then computed values, then windows. Two cuts
+/// rather than one, and the second is taken from the *end* — `windowed` is
+/// what the request asked for, so it is the length that is known exactly,
+/// where the middle section is "whatever is left". Cutting from the front
+/// twice would put a short row's missing values in the wrong list.
+#[must_use]
+pub fn row_to_proto_split_windowed(row: &Row, stored: usize, windows: usize) -> pb::Row {
     let values = row.values();
-    let at = stored.min(values.len());
-    let (columns, computed) = values.split_at(at);
+    let windows = windows.min(values.len());
+    let (head, windowed) = values.split_at(values.len() - windows);
+    let at = stored.min(head.len());
+    let (columns, computed) = head.split_at(at);
     pb::Row {
         values: columns.iter().map(value_to_proto).collect(),
         computed: computed.iter().map(value_to_proto).collect(),
+        windowed: windowed.iter().map(value_to_proto).collect(),
     }
 }
 
@@ -216,6 +232,16 @@ pub fn values_from_proto(row: &pb::Row) -> Result<Vec<Value>, Status> {
             "a row in this request carries {} computed value(s); computed values are \
              produced by a read and cannot be written or looked up by",
             row.computed.len()
+        )));
+    }
+    // The same argument one list over, and a separate check so the message
+    // names which list: a window value is produced by a read over a *set* of
+    // rows, so it is even less writable than a computed one.
+    if !row.windowed.is_empty() {
+        return Err(bad(format!(
+            "a row in this request carries {} window value(s); a window is computed \
+             over every selected row and cannot be written or looked up by",
+            row.windowed.len()
         )));
     }
     row.values.iter().map(value_from_proto).collect()
@@ -314,13 +340,32 @@ fn key_columns(table: &TableDef) -> String {
 pub struct Input<'t> {
     table: &'t TableDef,
     computed: usize,
+    /// How many window values this input produces, which sit past the computed
+    /// ones. Zero everywhere but a single-table read's sort keys: a window is
+    /// computed after the filter and before the sort, so those are the only
+    /// references that can name one.
+    windowed: usize,
 }
 
 impl<'t> Input<'t> {
     /// An input reading `table` and computing `computed` extra values.
     #[must_use]
     pub const fn new(table: &'t TableDef, computed: usize) -> Self {
-        Self { table, computed }
+        Self {
+            table,
+            computed,
+            windowed: 0,
+        }
+    }
+
+    /// The same, also producing `windowed` window values.
+    #[must_use]
+    pub const fn windowing(table: &'t TableDef, computed: usize, windowed: usize) -> Self {
+        Self {
+            table,
+            computed,
+            windowed,
+        }
     }
 
     fn width(self) -> usize {
@@ -385,6 +430,23 @@ impl<'t> Space<'t> {
             shape: Shape::Local {
                 input: Input::new(table, computed),
                 index,
+            },
+        }
+    }
+
+    /// A single-table query computing `computed` values and `windowed`
+    /// windows, for converting its sort keys.
+    ///
+    /// Separate from [`Space::input`] because it is the only place a window is
+    /// nameable: SQL evaluates a window after `WHERE` and before `ORDER BY`,
+    /// so a filter converted in the ordinary space naming one lands on the
+    /// refusal rather than on an ordinal.
+    #[must_use]
+    pub const fn windowing(table: &'t TableDef, computed: usize, windowed: usize) -> Self {
+        Self {
+            shape: Shape::Local {
+                input: Input::windowing(table, computed, windowed),
+                index: 0,
             },
         }
     }
@@ -486,6 +548,27 @@ impl<'t> Space<'t> {
                     }
                     Ok(Ordinal(input.width() + at))
                 }
+                Of::Windowed(at) => {
+                    Self::check_input(asked, *index, what)?;
+                    let at = *at as usize;
+                    if at >= input.windowed {
+                        // Zero here covers two different mistakes with one
+                        // message, and the message has to serve both: a query
+                        // that declares no windows, and a *filter* on a query
+                        // that does. The second is the interesting one — a
+                        // window is computed after the filter runs, so there
+                        // is nothing for it to name yet, which is SQL's own
+                        // rule and the reason `QUALIFY` exists as a separate
+                        // clause elsewhere.
+                        return Err(bad(format!(
+                            "{what} names window value {at}, and {} are available at \
+                             that point. A window is computed after the filter and \
+                             before the sort, so only a sort key can name one",
+                            input.windowed
+                        )));
+                    }
+                    Ok(Ordinal(input.width() + input.computed + at))
+                }
                 Of::GroupKey(_) | Of::Aggregate(_) => Err(bad(format!(
                     "{what} names a group key or an aggregate, but it is evaluated \
                      over rows rather than over groups"
@@ -556,6 +639,13 @@ impl<'t> Space<'t> {
                     "{what} names a group key or an aggregate, but it is evaluated \
                      over joined rows rather than over groups"
                 ))),
+                // A window belongs to a single-table read. The joined readers
+                // have their own ordinal space and no window operator in it,
+                // so this is refused rather than resolved — the alternative is
+                // an ordinal that lands on a column.
+                Of::Windowed(at) => Err(bad(format!(
+                    "{what} names window value {at}, and a join computes no windows"
+                ))),
             },
             Shape::Groups { keys, aggregates } => match of {
                 Of::GroupKey(at) => {
@@ -581,11 +671,15 @@ impl<'t> Space<'t> {
                 // SQL's "column must appear in the GROUP BY clause", and the
                 // reason `ColumnRef` distinguishes kinds at all: a flat
                 // ordinal here would have been a legitimate group key.
-                Of::Column(_) | Of::Computed(_) | Of::JoinedComputed(_) => Err(bad(format!(
-                    "{what} names a column that is not grouped; a condition over groups \
-                     may only name a group key or an aggregate — a computed value of the \
-                     join included, which becomes a group key by appearing in `group_by`"
-                ))),
+                Of::Column(_) | Of::Computed(_) | Of::JoinedComputed(_) | Of::Windowed(_) => {
+                    Err(bad(format!(
+                        "{what} names a column that is not grouped; a condition over groups \
+                         may only name a group key or an aggregate — a computed value of \
+                         the join included, which becomes a group key by appearing in \
+                         `group_by`. A window is not available at all here: it produces one \
+                         value per input row and a group is not one"
+                    )))
+                }
             },
         }
     }
@@ -1363,6 +1457,166 @@ pub fn group_to_proto(group: &Group) -> pb::Group {
     }
 }
 
+/// One sort key in its wire form, over `space`.
+///
+/// Extracted when windows arrived and needed the same conversion for their own
+/// `ORDER BY`. Two copies of a three-way enum mapping is two places for a
+/// direction to be written backwards.
+#[must_use]
+pub fn sort_key_to_proto(space: &Space<'_>, key: &SortKey) -> pb::SortKey {
+    pb::SortKey {
+        column: Some(space.unresolve(key.column)),
+        direction: match key.direction {
+            Direction::Asc => pb::SortDirection::Asc as i32,
+            Direction::Desc => pb::SortDirection::Desc as i32,
+        },
+        nulls: match key.nulls {
+            NullsOrder::First => pb::NullsOrder::First as i32,
+            NullsOrder::Last => pb::NullsOrder::Last as i32,
+        },
+    }
+}
+
+// --- windows --------------------------------------------------------------
+
+/// A window in its wire form, over `space`.
+#[must_use]
+pub fn window_to_proto(space: &Space<'_>, window: &Window) -> pb::Window {
+    use pb::WindowFunction as F;
+    let (function, aggregate, column, offset) = match window.function {
+        WindowFunction::RowNumber => (F::RowNumber, None, None, 0),
+        WindowFunction::Rank => (F::Rank, None, None, 0),
+        WindowFunction::DenseRank => (F::DenseRank, None, None, 0),
+        WindowFunction::Over(aggregate) => (
+            F::Aggregate,
+            Some(aggregate_to_proto(space, aggregate)),
+            None,
+            0,
+        ),
+        WindowFunction::Lag { column, offset } => {
+            (F::Lag, None, Some(space.unresolve(column)), offset as u64)
+        }
+        WindowFunction::Lead { column, offset } => {
+            (F::Lead, None, Some(space.unresolve(column)), offset as u64)
+        }
+    };
+    pb::Window {
+        function: function as i32,
+        aggregate,
+        column,
+        offset,
+        partition_by: window
+            .partition
+            .iter()
+            .map(|ordinal| space.unresolve(*ordinal))
+            .collect(),
+        order: window
+            .order
+            .iter()
+            .map(|key| sort_key_to_proto(space, key))
+            .collect(),
+    }
+}
+
+/// A wire window as the kernel's, or the reason it is not one.
+///
+/// Every function names exactly the fields it uses, and a field set that the
+/// function does not use is **refused** rather than ignored — the argument
+/// `aggregate_from_proto` already makes for `COUNT(*)` with a column. A `LAG`
+/// carrying an aggregate is a client that has misunderstood the message, and
+/// serving it hides that from whoever has to debug the answer.
+pub fn window_from_proto(space: &Space<'_>, window: &pb::Window) -> Result<Window, Status> {
+    use pb::WindowFunction as F;
+    let function = pb::WindowFunction::try_from(window.function).map_err(|_| {
+        bad(format!(
+            "window function {} is not one this server knows",
+            window.function
+        ))
+    })?;
+
+    let refuse_aggregate = |name: &str| -> Result<(), Status> {
+        if window.aggregate.is_some() {
+            return Err(bad(format!(
+                "{name} carries an aggregate, and reads no aggregate"
+            )));
+        }
+        Ok(())
+    };
+    let refuse_offset = |name: &str| -> Result<(), Status> {
+        if window.column.is_some() || window.offset != 0 {
+            return Err(bad(format!(
+                "{name} carries a column or an offset, and takes neither"
+            )));
+        }
+        Ok(())
+    };
+
+    let partition = window
+        .partition_by
+        .iter()
+        .map(|reference| space.resolve(Some(reference), "a window's PARTITION BY"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order = sort_from_proto(space, &window.order, "a window's ORDER BY")?;
+
+    let function = match function {
+        F::RowNumber | F::Rank | F::DenseRank => {
+            let name = match function {
+                F::RowNumber => "ROW_NUMBER",
+                F::Rank => "RANK",
+                _ => "DENSE_RANK",
+            };
+            refuse_aggregate(name)?;
+            refuse_offset(name)?;
+            match function {
+                F::RowNumber => WindowFunction::RowNumber,
+                F::Rank => WindowFunction::Rank,
+                _ => WindowFunction::DenseRank,
+            }
+        }
+        F::Lag | F::Lead => {
+            let name = if matches!(function, F::Lag) {
+                "LAG"
+            } else {
+                "LEAD"
+            };
+            refuse_aggregate(name)?;
+            let column = space.resolve(window.column.as_ref(), &format!("{name}'s column"))?;
+            // Narrowed here rather than at the kernel, because the wire type
+            // is wider than the kernel's: a `u64` offset on a 32-bit target
+            // would truncate into a `usize` and step to a different row.
+            let offset = usize::try_from(window.offset).map_err(|_| {
+                bad(format!(
+                    "{name}'s offset {} is larger than this server can address",
+                    window.offset
+                ))
+            })?;
+            if matches!(function, F::Lag) {
+                WindowFunction::Lag { column, offset }
+            } else {
+                WindowFunction::Lead { column, offset }
+            }
+        }
+        F::Aggregate => {
+            refuse_offset("a window aggregate")?;
+            let Some(aggregate) = &window.aggregate else {
+                return Err(bad(
+                    "a window aggregate arrived with no aggregate; say which one it computes",
+                ));
+            };
+            WindowFunction::Over(aggregate_from_proto(space, aggregate)?)
+        }
+        // Defaulting would compute a plausible number for a question nobody
+        // asked, which is the argument `AggregateFunction` already makes.
+        F::Unspecified => return Err(bad("a window arrived with no function set")),
+    };
+
+    // The kernel owns the rest of the rules — an unordered rank, a running
+    // distinct count, an offset of zero — and states them once. Repeating them
+    // here would be a second copy that can drift; mapping the refusal is what
+    // keeps one.
+    Window::new(function, partition, order).map_err(|error| crate::status::from_kernel(&error))
+}
+
 // --- queries --------------------------------------------------------------
 
 /// A query in its wire form, over `table`.
@@ -1390,8 +1644,19 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
         .map(|(at, scalar)| scalar_to_proto(&Space::input(table, at, index), scalar))
         .collect();
     let space = Space::input(table, query.compute.len(), index);
+    // Written in the space *without* the windows, because a window's own
+    // partition and order name columns and computed values — never another
+    // window. Only the query's own sort can name one, and it is written in the
+    // wider space below.
+    let window: Vec<pb::Window> = query
+        .window
+        .iter()
+        .map(|window| window_to_proto(&space, window))
+        .collect();
+    let sorting = Space::windowing(table, query.compute.len(), query.window.len());
     pb::Query {
         table: table.name().to_owned(),
+        window,
         after: query
             .after
             .as_ref()
@@ -1420,17 +1685,7 @@ pub fn query_to_proto_at(table: &TableDef, query: &Query, index: usize) -> pb::Q
         sort: query
             .sort
             .iter()
-            .map(|key| pb::SortKey {
-                column: Some(space.unresolve(key.column)),
-                direction: match key.direction {
-                    Direction::Asc => pb::SortDirection::Asc as i32,
-                    Direction::Desc => pb::SortDirection::Desc as i32,
-                },
-                nulls: match key.nulls {
-                    NullsOrder::First => pb::NullsOrder::First as i32,
-                    NullsOrder::Last => pb::NullsOrder::Last as i32,
-                },
-            })
+            .map(|key| sort_key_to_proto(&sorting, key))
             .collect(),
         limit: query.limit.map(|limit| limit as u64),
         offset: query.offset as u64,
@@ -1525,7 +1780,18 @@ pub fn query_from_proto_at(
         }
     };
 
-    let sort = sort_from_proto(&space, &query.sort, "the sort")?;
+    // Before the sort, and in the narrower space: a window's partition and
+    // order name a column or a computed value, and a window naming another
+    // window is a cycle the kernel has no way to evaluate.
+    let mut window = Vec::with_capacity(query.window.len());
+    for one in &query.window {
+        window.push(window_from_proto(&space, one)?);
+    }
+    // And the sort in the wider one, because `ORDER BY rank` is the point of
+    // computing a rank. This is the only reference kind that can name a
+    // window; every other conversion above used `space`.
+    let sorting = Space::windowing(table, compute.len(), window.len());
+    let sort = sort_from_proto(&sorting, &query.sort, "the sort")?;
 
     // A cursor is a whole primary key, and the kernel says so too — but it
     // says it against a decoded key, and the decode is here. Empty means the
@@ -1563,12 +1829,7 @@ pub fn query_from_proto_at(
             offset: query.offset as usize,
             hint,
             compute,
-            // Not on the wire yet. A window is a kernel operator with no
-            // protocol message, so a client cannot ask for one and this is
-            // empty on every request rather than sometimes — which is what
-            // makes the omission a missing feature rather than a silently
-            // dropped field. See the `F2a` row in `docs/orm-comparison.md`.
-            window: Vec::new(),
+            window,
             after,
             // The kernel raises every cursor refusal on a read that says it is
             // paging, cursor or not — so the first page of an unpageable read
@@ -1712,6 +1973,19 @@ fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Sta
         return Err(bad(format!(
             "{what} has a cursor, which names a row of the result rather than one of its \
              inputs; {instead}"
+        )));
+    }
+    // A window over an input is a window over the wrong set, and there is
+    // nowhere for its values to go: a grouped read returns groups and a joined
+    // read returns joined rows, and neither carries a per-input window list.
+    // Unlike the four above, this one has no "put it on the request instead" —
+    // the joined and grouped readers have no window operator at all — so the
+    // message says that rather than redirecting to nothing.
+    if !query.window.is_empty() {
+        return Err(bad(format!(
+            "{what} computes a window, which produces one value per input row; this \
+             request does not return input rows, and neither a join nor a grouped read \
+             computes windows"
         )));
     }
     Ok(())

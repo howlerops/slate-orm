@@ -5,3 +5,9 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 2b2077309f8f0b25cc8a2005fe1254aa95f342dd668e116421b7cad14d7ae4b8 # shrinks to query = Query { filter: True, order: Ascending, projection: All, sort: [], limit: None, offset: 0, hint: None, compute: [], after: None, paging: false, include_deleted: true }
+# The seed below was saved by a *mutation* run, not by a defect: `mutate.py`
+# broke the window conversion on purpose, proptest shrank the failure and
+# persisted it. Kept rather than deleted — it is a valid one-window query that
+# passes, and replaying it means the suite always covers that shape even if the
+# generator changes — but it records no bug, and the line above this one does.
+cc 30c1343f0713746fbf468180089728902de61372528ec2706139798bca4451e3 # shrinks to query = Query { filter: True, order: Ascending, projection: All, sort: [], limit: None, offset: 0, hint: None, compute: [], window: [Window { function: RowNumber, partition: [], order: [SortKey { column: Ordinal(0), direction: Asc, nulls: First }] }], after: None, paging: false, include_deleted: false }

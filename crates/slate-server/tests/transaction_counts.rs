@@ -455,6 +455,7 @@ async fn a_statement_that_failed_having_applied_nothing_contributes_no_series() 
             primary_key: Some(pb::Row {
                 values: vec![slate_server::convert::value_to_proto(&Value::U64(2))],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }),
             freshness: None,
             schema: Some(common::claim("docs")),
@@ -606,6 +607,7 @@ async fn a_refused_conditional_delete_that_applied_nothing_contributes_no_series
             primary_keys: vec![pb::Row {
                 values: vec![slate_server::convert::value_to_proto(&Value::U64(1))],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }],
             // Not what is stored, so the first and only key is refused.
             expected: vec![slate_server::convert::row_to_proto(&doc(

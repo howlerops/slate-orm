@@ -149,6 +149,7 @@ fn show(measure: &Measure) {
 fn wire_key(tenant: u64, id: u64) -> pb::Row {
     pb::Row {
         computed: Vec::new(),
+        windowed: Vec::new(),
         values: vec![
             slate_server::convert::value_to_proto(&Value::U64(tenant)),
             slate_server::convert::value_to_proto(&Value::U64(id)),

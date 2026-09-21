@@ -264,6 +264,7 @@ async fn a_point_read_honours_its_token_too() {
         primary_key: Some(pb::Row {
             values: vec![value_to_proto(&Value::U64(4))],
             computed: Vec::new(),
+            windowed: Vec::new(),
         }),
         freshness,
         schema: Some(common::claim("docs")),
@@ -658,6 +659,7 @@ async fn a_response_names_the_replica_whose_rows_it_returned() {
                 primary_key: Some(pb::Row {
                     values: vec![value_to_proto(&Value::U64(1))],
                     computed: Vec::new(),
+                    windowed: Vec::new(),
                 }),
                 freshness: None,
                 schema: Some(common::claim("docs")),

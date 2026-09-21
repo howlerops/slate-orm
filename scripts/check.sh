@@ -97,6 +97,8 @@ handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
+proto-copies|.|python3 scripts/check_proto_copies.py
+proto-copies-guard|.|python3 scripts/test_check_proto_copies.py
 client-identity|.|python3 scripts/check_client_identity.py
 client-identity-guard|.|python3 scripts/test_check_client_identity.py
 go-client-fmt|clients/go|gofmt -l .

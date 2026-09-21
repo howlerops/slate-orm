@@ -524,13 +524,14 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Parsed, SqlError> {
     // A refusal rather than a gap in the parser, and the distinction matters:
     // the kernel *has* the operator (`slate_kernel::window`), with
     // `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and any aggregate over
-    // a partition. What it does not have is a way to ask for one from here —
-    // `QuerySpec` has no window field and neither does the wire. Saying so is
-    // the difference between "not built" and "built, and you cannot reach it",
-    // which are different things to do about it.
+    // a partition, and the gRPC protocol carries one. What is missing is only
+    // the part between: `QuerySpec` — the shape this front end compiles to —
+    // has no window field, so a parse would have nowhere to put the result.
+    // Saying that is the difference between "not built" and "built, and this
+    // one surface cannot reach it".
     if let Some(at) = window_clause(&toks) {
         return Err(SqlError {
-            message: "OVER is not supported by this front end. The kernel does have window                  functions — ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD and any aggregate over                  a partition, with SQL's own frame rule — but nothing can ask for one from                  here: the query spec this compiles to has no window, and neither does the                  gRPC protocol the three clients speak. GROUP BY gives you one row per                  partition where a window gives you one per input row; if the aggregate is                  what you want rather than the per-row value, that is the clause to reach                  for"
+            message: "OVER is not supported by this front end. The kernel does have window functions — ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD and any aggregate over a partition, with SQL's own frame rule — and the gRPC clients can ask for one. What cannot is this editor: the query spec it compiles to has no window field, so a parse would have nowhere to put the result. GROUP BY gives you one row per partition where a window gives you one per input row; if the aggregate is what you want rather than the per-row value, that is the clause to reach for"
                 .to_owned(),
             at,
         });

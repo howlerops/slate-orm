@@ -525,6 +525,7 @@ async fn a_single_statement_write_commits_and_returns_its_sequence() {
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }),
             freshness: Some(pb::Freshness {
                 level: Some(pb::freshness::Level::AtLeast(sequence)),
@@ -568,6 +569,7 @@ async fn a_rolled_back_transaction_leaves_nothing() {
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }),
             freshness: None,
             schema: Some(common::claim("docs")),
@@ -591,6 +593,7 @@ async fn a_rolled_back_transaction_leaves_nothing() {
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }),
             freshness: None,
             schema: Some(common::claim("docs")),
@@ -771,6 +774,7 @@ async fn deleting_reports_how_many_rows_were_there() {
     let key = |id: u64| pb::Row {
         values: vec![value_to_proto(&Value::U64(id))],
         computed: Vec::new(),
+        windowed: Vec::new(),
     };
     let deleted = client
         .delete(app(pb::DeleteRequest {
@@ -978,6 +982,7 @@ async fn a_value_with_no_kind_is_refused_at_the_boundary() {
             primary_key: Some(pb::Row {
                 values: vec![pb::Value { kind: None }],
                 computed: Vec::new(),
+                windowed: Vec::new(),
             }),
             freshness: None,
             schema: Some(common::claim("docs")),
@@ -1231,6 +1236,7 @@ async fn a_row_that_carries_computed_values_cannot_be_written_or_looked_up_by() 
             primary_key: Some(pb::Row {
                 values: vec![value_to_proto(&Value::U64(1))],
                 computed: vec![value_to_proto(&Value::I64(7))],
+                windowed: Vec::new(),
             }),
             freshness: None,
             schema: Some(common::claim("docs")),

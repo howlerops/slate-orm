@@ -263,10 +263,12 @@
               a running value through the current row&rsquo;s peers with one.
               It had to be a new operator rather than a new aggregate:
               <code>GROUP BY</code> folds a row into its group and drops it,
-              and a window keeps every row. What is left is the asking:
-              there is no message for a window in the protocol the three
-              clients speak, so the SQL front end refuses <code>OVER</code> by
-              name and says where the gap is.
+              and a window keeps every row. <strong>It crosses the wire too</strong>
+              &mdash; the value comes back in its own list, so a client does no
+              ordinal arithmetic. What is left is the three client SDKs, which
+              have no surface for it yet, and the query editor, whose own spec
+              has no window field; it refuses <code>OVER</code> by name and
+              says so.
             </td>
           </tr>
           <tr>

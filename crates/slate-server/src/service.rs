@@ -42,8 +42,8 @@ use crate::convert::{
     GroupedSource, MultiRead, aggregate_from_proto_query, chain_plan_to_proto,
     explanation_to_proto, freshness_from_proto, group_to_proto, grouped_explanation_to_proto,
     join_explanation_to_proto, join_from_proto, multi_row_to_proto, primary_key_from_proto,
-    query_from_proto, row_from_proto, row_to_proto, row_to_proto_split, two_tables,
-    value_from_proto, value_to_proto,
+    query_from_proto, row_from_proto, row_to_proto, row_to_proto_split,
+    row_to_proto_split_windowed, two_tables, value_from_proto, value_to_proto,
 };
 use crate::convert::{Space, assignments_from_proto, expr_named};
 use crate::fingerprint;
@@ -2382,6 +2382,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             return Ok(Response::new(replay(
                 rows,
                 stored,
+                wire.window.len(),
                 in_transaction(),
                 warnings,
                 batch_size,
@@ -2847,14 +2848,16 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
 /// Turn rows already in memory into the same stream shape a live query gives.
 ///
-/// `stored` is the table's declared width, so a computed value goes in
-/// `Row.computed` here exactly as it does on the streaming path. The two
-/// shapes have to be identical: a client cannot see which one it got, and the
-/// only thing worse than the arithmetic this removes would be it applying to
-/// one of the two.
+/// `stored` is the table's declared width and `windows` is how many the
+/// request asked for, so a computed value goes in `Row.computed` and a window
+/// value in `Row.windowed` here exactly as they do on the streaming path. The
+/// two shapes have to be identical: a client cannot see which one it got, and
+/// the only thing worse than the arithmetic this removes would be it applying
+/// to one of the two.
 fn replay(
     rows: Vec<Row>,
     stored: usize,
+    windows: usize,
     served_by: pb::ServedBy,
     warnings: Vec<String>,
     batch_size: usize,
@@ -2870,7 +2873,7 @@ fn replay(
         messages.push(Ok(pb::QueryResponse {
             rows: batch
                 .iter()
-                .map(|row| row_to_proto_split(row, stored))
+                .map(|row| row_to_proto_split_windowed(row, stored, windows))
                 .collect(),
             served_by: None,
             warnings: Vec::new(),
@@ -2969,6 +2972,11 @@ impl Scan {
         }
 
         let stored = definition.columns().len();
+        // Taken from the request rather than from the row, for the reason
+        // `stored` is: it is the length that is *known*, and a row that came
+        // back shorter than expected should lose values from the middle list
+        // rather than silently relabel a column as a window.
+        let windows = self.query.window.len();
         let mut batch = Vec::with_capacity(self.batch_size);
         // The last row and how many went out, for the cursor.
         //
@@ -2983,7 +2991,7 @@ impl Scan {
             match cursor.next().await {
                 Ok(Some(row)) => {
                     sent += 1;
-                    batch.push(row_to_proto_split(&row, stored));
+                    batch.push(row_to_proto_split_windowed(&row, stored, windows));
                     last = Some(row);
                 }
                 Ok(None) => break,

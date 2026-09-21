@@ -33,7 +33,7 @@ use proptest::strategy::ValueTree as _;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
     Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar,
-    ScanOrder, TimeUnit,
+    ScanOrder, TimeUnit, Window, WindowFunction,
 };
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
@@ -159,6 +159,60 @@ fn any_expr() -> impl Strategy<Value = Expr> {
     })
 }
 
+/// One sort key over the `docs` fixture's columns.
+fn any_sort_key() -> impl Strategy<Value = SortKey> {
+    (
+        any_ordinal(),
+        prop_oneof![Just(Direction::Asc), Just(Direction::Desc)],
+        prop_oneof![Just(NullsOrder::First), Just(NullsOrder::Last)],
+    )
+        .prop_map(|(column, direction, nulls)| SortKey {
+            column,
+            direction,
+            nulls,
+        })
+}
+
+/// A window the kernel would accept.
+///
+/// Two arms rather than one, because the `ORDER BY` is not free-floating: a
+/// ranking function refuses without one and a running `COUNT(DISTINCT)`
+/// refuses *with* one, so generating the order independently of the function
+/// would spend most cases on inputs `Window::new` rejects — and `expect` below
+/// would then be testing the generator rather than the round trip.
+fn any_window() -> impl Strategy<Value = Window> {
+    let ordered = (
+        prop_oneof![
+            Just(WindowFunction::RowNumber),
+            Just(WindowFunction::Rank),
+            Just(WindowFunction::DenseRank),
+            (any_ordinal(), 1_usize..4)
+                .prop_map(|(column, offset)| WindowFunction::Lag { column, offset }),
+            (any_ordinal(), 1_usize..4)
+                .prop_map(|(column, offset)| WindowFunction::Lead { column, offset }),
+            Just(WindowFunction::Over(Aggregate::Count)),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Sum(c))),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Max(c))),
+        ],
+        prop::collection::vec(any_ordinal(), 0..3),
+        prop::collection::vec(any_sort_key(), 1..3),
+    );
+    // The unordered half, which is the *only* place a whole-partition frame
+    // and a windowed `COUNT(DISTINCT)` are reachable.
+    let unordered = (
+        prop_oneof![
+            Just(WindowFunction::Over(Aggregate::Count)),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Avg(c))),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::CountDistinct(c))),
+        ],
+        prop::collection::vec(any_ordinal(), 0..3),
+        Just(Vec::new()),
+    );
+    prop_oneof![ordered, unordered].prop_map(|(function, partition, order)| {
+        Window::new(function, partition, order).expect("the generator only builds valid windows")
+    })
+}
+
 fn any_query() -> impl Strategy<Value = Query> {
     (
         any_expr(),
@@ -199,10 +253,24 @@ fn any_query() -> impl Strategy<Value = Query> {
         ],
     )
         // A second tuple because `prop::strategy` tuples stop at twelve arms
-        // and the first is full; `any::<bool>()` is the whole of it.
-        .prop_flat_map(|first| (Just(first), any::<bool>()))
+        // and the first is full.
+        .prop_flat_map(|first| {
+            (
+                Just(first),
+                any::<bool>(),
+                // Two at most, and that is deliberate rather than a cost
+                // saving: one window cannot catch a converter that drops the
+                // *second*, and the two also exercise the path where a pair
+                // shares a specification.
+                prop::collection::vec(any_window(), 0..3),
+            )
+        })
         .prop_map(
-            |((filter, order, projection, sort, limit, offset, hint, after), include_deleted)| {
+            |(
+                (filter, order, projection, sort, limit, offset, hint, after),
+                include_deleted,
+                window,
+            )| {
                 Query {
                     filter,
                     order,
@@ -212,13 +280,11 @@ fn any_query() -> impl Strategy<Value = Query> {
                     offset,
                     hint,
                     compute: Vec::new(),
-                    // Pinned empty because a window does not cross the wire:
-                    // generating one would make every case fail the round
-                    // trip, and reporting that as a protocol bug would be
-                    // wrong — there is no message for it to be lost from. It
-                    // becomes generated when there is, the way
-                    // `include_deleted` below did.
-                    window: Vec::new(),
+                    // Generated now that there is a message for it to survive.
+                    // The comment this replaces said it would become generated
+                    // when there was one — which is what happened, and is the
+                    // second time this file has recorded that transition.
+                    window,
                     // `paging` is implied by `after` on the way in and is set by
                     // `Query::after`, so a generated `after` must carry it or the
                     // round trip compares a value the builder cannot produce.

@@ -178,6 +178,7 @@ async fn paging_visits_every_row_exactly_once_under_concurrent_writes() {
                         kind: Some(pb::value::Kind::Uint64Value(behind)),
                     }],
                     computed: Vec::new(),
+                    windowed: Vec::new(),
                 }],
                 schema: Some(common::claim("docs")),
                 expected: Vec::new(),

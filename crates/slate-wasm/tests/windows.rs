@@ -1,13 +1,13 @@
 //! `OVER`, which this front end refuses — and the refusal is unusual.
 //!
 //! Every other named refusal here (`WITH`, `UNION`, `CREATE`) says the thing
-//! cannot be *done*. This one says the opposite: the kernel has the operator,
-//! with `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and any aggregate
-//! over a partition — what it has no way of doing is being *asked*, because
-//! neither `QuerySpec` nor the gRPC protocol has a window. "Built and
-//! unreachable" and "not built" are different facts with different next steps,
-//! and a message that blurred them would send a reader to write the operator
-//! that already exists.
+//! cannot be *done*. This one says the opposite: the kernel has the operator —
+//! `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and any aggregate over a
+//! partition — and the gRPC clients can ask for one. What cannot is this
+//! editor, because `QuerySpec` has no window field for a parse to produce.
+//! "Built and unreachable from here" and "not built" are different facts with
+//! different next steps, and a message that blurred them would send a reader
+//! to write the operator that already exists.
 //!
 //! Without this the failure is `unknown function ROW_NUMBER` at the wrong
 //! token — true, and it answers a question nobody asked.
@@ -78,10 +78,12 @@ fn the_refusal_says_the_kernel_has_it_and_what_is_missing() {
     // among them without reading the kernel.
     assert!(message.contains("ROW_NUMBER"), "{message}");
     assert!(message.contains("LAG"), "{message}");
-    // Where the gap actually is — both halves, because fixing one leaves it
-    // unreachable.
+    // Where the gap actually is, and where it is *not*: the protocol carries a
+    // window now, so a message still blaming it would send a reader to widen
+    // something that is already wide enough. This assertion is what turns that
+    // from a comment into a thing that breaks when it stops being true.
     assert!(message.contains("query spec"), "{message}");
-    assert!(message.contains("protocol"), "{message}");
+    assert!(message.contains("gRPC clients can ask for"), "{message}");
     // And the thing to reach for instead, with the difference that decides it.
     assert!(message.contains("GROUP BY"), "{message}");
     assert!(message.contains("one per input row"), "{message}");
