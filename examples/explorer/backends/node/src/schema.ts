@@ -36,6 +36,35 @@ function field(
   return "value" in value ? value.value : undefined;
 }
 
+/**
+ * One array column, with every element checked against its declared type.
+ *
+ * `field` above stops at the array: its value is a `Value[]`, whose members
+ * still carry their own tags, so a cast to `string[]` at the call site would
+ * be a lie nothing can see. The element type is not on the wire either, so
+ * this is the only place on this side that can notice — and the error names
+ * the position, because `tags[2]` is findable and `tags` is not.
+ */
+function elements(
+  row: Value[],
+  at: number,
+  table: string,
+  column: string,
+  kind: string,
+  nullable: boolean,
+): unknown {
+  const value = field(row, at, table, column, "array", nullable);
+  if (value === null) return null;
+  return (value as Value[]).map((element, index) => {
+    if (element.kind !== kind) {
+      throw new Error(
+        `${table}.${column}[${index}] is ${element.kind}, not the declared ${kind}`,
+      );
+    }
+    return "value" in element ? element.value : undefined;
+  });
+}
+
 export const AUTHORS: TableDef = {
   name: "authors",
   columns: [
@@ -82,6 +111,17 @@ export const EDITIONS: TableDef = {
   primaryKey: ["id"],
 };
 
+export const POSTS: TableDef = {
+  name: "posts",
+  columns: [
+    { name: "id", type: "u64" },
+    { name: "title", type: "string" },
+    { name: "tags", type: "array", element: "string" },
+    { name: "sizes", type: "array", element: "i64" },
+  ],
+  primaryKey: ["id"],
+};
+
 export const SHIPMENTS: TableDef = {
   name: "shipments",
   columns: [
@@ -99,6 +139,7 @@ export const TABLES: Schemas = {
   [BOOKS.name]: BOOKS,
   [SALES.name]: SALES,
   [EDITIONS.name]: EDITIONS,
+  [POSTS.name]: POSTS,
   [SHIPMENTS.name]: SHIPMENTS,
 };
 
@@ -313,6 +354,48 @@ export function encodeEditions(row: Editions): Value[] {
     { kind: "uint", value: row.id },
     { kind: "uint", value: row.book_id },
     { kind: "string", value: row.format },
+  ];
+}
+
+/** A row of `posts`, decoded. */
+export interface Posts {
+  id: bigint;
+  title: string;
+  tags: string[];
+  sizes: bigint[];
+}
+
+/**
+ * Decode one row of `posts`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodePosts(row: Value[]): Posts {
+  if (row.length !== 4) {
+    throw new Error(`posts has 4 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "posts", "id", "uint", false) as bigint,
+    title: field(row, 1, "posts", "title", "string", false) as string,
+    tags: elements(row, 2, "posts", "tags", "string", false) as string[],
+    sizes: elements(row, 3, "posts", "sizes", "int", false) as bigint[],
+  };
+}
+
+/**
+ * Encode one row of `posts` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodePosts(row: Posts): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "string", value: row.title },
+    { kind: "array", value: row.tags.map((e) => ({ kind: "string", value: e })) },
+    { kind: "array", value: row.sizes.map((e) => ({ kind: "int", value: e })) },
   ];
 }
 

@@ -547,3 +547,88 @@ func TestOnlyASoftDeletingTableGetsRestored(t *testing.T) {
 		t.Errorf("Restored() is generated for %v; only Shipments soft-deletes", declared)
 	}
 }
+
+// An array column's elements are checked one at a time, both ways.
+//
+// The generated Go for an array was compiled and read and never run: `posts`
+// exists in the catalog for exactly this reason. A `slate.Array` is a
+// `[]slate.Value`, so its members still carry their own types and the
+// generator has to unwrap each one — and a generator that asserted the
+// interface instead would compile, decode every element, and hand back
+// `[]string` full of whatever was there.
+func TestAnArrayColumnDecodesElementByElement(t *testing.T) {
+	row := []slate.Value{
+		slate.Uint(1),
+		slate.String("a post"),
+		slate.Array{slate.String("go"), slate.String("arrays")},
+		slate.Array{slate.Int(2), slate.Int(3)},
+	}
+	post, err := ScanPosts(row)
+	if err != nil {
+		t.Fatalf("ScanPosts: %v", err)
+	}
+	if got := strings.Join(post.Tags, ","); got != "go,arrays" {
+		t.Errorf("Tags = %q, want \"go,arrays\"", got)
+	}
+	if len(post.Sizes) != 2 || post.Sizes[0] != 2 || post.Sizes[1] != 3 {
+		t.Errorf("Sizes = %v, want [2 3]", post.Sizes)
+	}
+
+	// Empty is a value, not a null. The kernel makes that distinction
+	// load-bearing and a decoder is where it would quietly be lost.
+	empty, err := ScanPosts([]slate.Value{
+		slate.Uint(2), slate.String("quiet"), slate.Array{}, slate.Array{},
+	})
+	if err != nil {
+		t.Fatalf("ScanPosts on empty arrays: %v", err)
+	}
+	if empty.Tags == nil || len(empty.Tags) != 0 {
+		t.Errorf("Tags = %v, want an empty slice rather than nil", empty.Tags)
+	}
+}
+
+func TestAnArrayElementOfTheWrongTypeIsRefusedWithItsPosition(t *testing.T) {
+	// `tags` holds strings and this one holds an int at position 1. The
+	// position is the point: a message naming only `tags` sends a reader to
+	// re-read a list they have already looked at.
+	row := []slate.Value{
+		slate.Uint(1),
+		slate.String("a post"),
+		slate.Array{slate.String("go"), slate.Int(7)},
+		slate.Array{},
+	}
+	_, err := ScanPosts(row)
+	if err == nil {
+		t.Fatal("an int in a string array decoded without complaint")
+	}
+	if !strings.Contains(err.Error(), "posts.tags[1]") {
+		t.Errorf("error = %q, want it to name posts.tags[1]", err)
+	}
+}
+
+func TestAnArrayRoundTripsThroughRow(t *testing.T) {
+	// The write side. Every element is wrapped in its own type, which is what
+	// the decoder above unwrapped — and `slate.Int` versus `slate.Uint` is a
+	// distinction a `[]int64` carries nowhere else.
+	post := Posts{Id: 1, Title: "a post", Tags: []string{"go"}, Sizes: []int64{7}}
+	encoded := post.Row()
+	tags, ok := encoded[2].(slate.Array)
+	if !ok {
+		t.Fatalf("Row()[2] = %T, want slate.Array", encoded[2])
+	}
+	if _, ok := tags[0].(slate.String); !ok {
+		t.Errorf("the element lost its type: %T", tags[0])
+	}
+	sizes := encoded[3].(slate.Array)
+	if _, ok := sizes[0].(slate.Int); !ok {
+		t.Errorf("a size element is %T, want slate.Int", sizes[0])
+	}
+
+	back, err := ScanPosts(encoded)
+	if err != nil {
+		t.Fatalf("ScanPosts on its own output: %v", err)
+	}
+	if back.Tags[0] != "go" || back.Sizes[0] != 7 {
+		t.Errorf("round trip = %+v, want the same values", back)
+	}
+}

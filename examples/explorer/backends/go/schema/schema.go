@@ -58,6 +58,16 @@ var Tables = slate.Schemas{
 		},
 		PrimaryKey: []string{"id"},
 	},
+	"posts": {
+		Name: "posts",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "title", Type: slate.TypeString},
+			{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString},
+			{Name: "sizes", Type: slate.TypeArray, Element: slate.TypeInt},
+		},
+		PrimaryKey: []string{"id"},
+	},
 	"shipments": {
 		Name: "shipments",
 		Columns: []slate.ColumnDef{
@@ -409,6 +419,101 @@ func (r Editions) Row() []slate.Value {
 	out = append(out, slate.Uint(r.Id))
 	out = append(out, slate.Uint(r.BookId))
 	out = append(out, slate.String(r.Format))
+	return out
+}
+
+// Posts is a row of `posts`, decoded.
+type Posts struct {
+	Id    uint64
+	Title string
+	Tags  []string
+	Sizes []int64
+}
+
+// ScanPosts decodes one row of `posts`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanPosts(row []slate.Value) (Posts, error) {
+	var out Posts
+	if len(row) != 4 {
+		return out, fmt.Errorf("posts has 4 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("posts.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("posts.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("posts.title: expected slate.String, got %T", row[1])
+		}
+		out.Title = string(v)
+	} else {
+		return out, fmt.Errorf("posts.title is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.Array)
+		if !ok {
+			return out, fmt.Errorf("posts.tags: expected slate.Array, got %T", row[2])
+		}
+		tagsElements := make([]string, len(v))
+		for i, e := range v {
+			ev, ok := e.(slate.String)
+			if !ok {
+				return out, fmt.Errorf("posts.tags[%d]: expected slate.String, got %T", i, e)
+			}
+			tagsElements[i] = string(ev)
+		}
+		out.Tags = tagsElements
+	} else {
+		return out, fmt.Errorf("posts.tags is not nullable and came back null")
+	}
+	if _, null := row[3].(slate.Null); !null {
+		v, ok := row[3].(slate.Array)
+		if !ok {
+			return out, fmt.Errorf("posts.sizes: expected slate.Array, got %T", row[3])
+		}
+		sizesElements := make([]int64, len(v))
+		for i, e := range v {
+			ev, ok := e.(slate.Int)
+			if !ok {
+				return out, fmt.Errorf("posts.sizes[%d]: expected slate.Int, got %T", i, e)
+			}
+			sizesElements[i] = int64(ev)
+		}
+		out.Sizes = sizesElements
+	} else {
+		return out, fmt.Errorf("posts.sizes is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// Row encodes r in the column order of `posts`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Posts) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.String(r.Title))
+	tagsElements := make(slate.Array, 0, len(r.Tags))
+	for _, e := range r.Tags {
+		tagsElements = append(tagsElements, slate.String(e))
+	}
+	out = append(out, tagsElements)
+	sizesElements := make(slate.Array, 0, len(r.Sizes))
+	for _, e := range r.Sizes {
+		sizesElements = append(sizesElements, slate.Int(e))
+	}
+	out = append(out, sizesElements)
 	return out
 }
 

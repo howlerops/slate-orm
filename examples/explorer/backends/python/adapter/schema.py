@@ -16,18 +16,20 @@ from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from slate import Column, Table, ValueType
-from slate.values import NULL, Null, Units, Vector, i64, u64
+from slate.values import NULL, Array, Null, Units, Vector, i64, u64
 
 __all__ = [
     "AUTHORS",
     "BOOKS",
     "BY_NAME",
     "EDITIONS",
+    "POSTS",
     "SALES",
     "SHIPMENTS",
     "Authors",
     "Books",
     "Editions",
+    "Posts",
     "Sales",
     "Shipments",
 ]
@@ -104,6 +106,17 @@ EDITIONS_FOREIGN_KEYS = {
     },
 }
 
+POSTS = Table(
+    "posts",
+    [
+        Column("id", ValueType.U64),
+        Column("title", ValueType.STR),
+        Column("tags", ValueType.ARRAY, element=ValueType.STR),
+        Column("sizes", ValueType.ARRAY, element=ValueType.I64),
+    ],
+    primary_key=["id"],
+)
+
 SHIPMENTS = Table(
     "shipments",
     [
@@ -137,7 +150,7 @@ SHIPMENTS_FOREIGN_KEYS = {
     },
 }
 
-BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, SHIPMENTS,)}
+BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, POSTS, SHIPMENTS,)}
 
 
 def _field(values: Sequence[object], at: int, table: str, column: str,
@@ -162,6 +175,34 @@ def _field(values: Sequence[object], at: int, table: str, column: str,
             f"{table}.{column} is {type(value).__name__}, "
             f"not the declared {kind}"
         )
+    return value
+
+
+def _elements(values: Sequence[object], at: int, table: str, column: str,
+              kind: type | tuple[type, ...], nullable: bool) -> object:
+    """One array column, with every element checked.
+
+    `_field` stops at the list. Its elements arrive already decoded to
+    native Python — an `Array` of `str`, not of tagged values — so a
+    caller reading one *looks* right whatever the column declared, and a
+    declaration naming the wrong element type would be found by the
+    server rather than here. The element type is not on the wire, so
+    this is the only place on this side that can notice.
+    """
+    value = _field(values, at, table, column, Array, nullable)
+    if not isinstance(value, Array):
+        # `_field` returns `None` exactly when the column was null and
+        # nullable; it has already refused anything that is neither.
+        # Spelled as the `isinstance` rather than `is None` because a
+        # checker cannot narrow `object` minus `None` to something
+        # iterable, and the loop below needs it to.
+        return value
+    for index, element in enumerate(value):
+        if not isinstance(element, kind):
+            raise TypeError(
+                f"{table}.{column}[{index}] is {type(element).__name__}, "
+                f"not the declared {kind}"
+            )
     return value
 
 
@@ -300,6 +341,39 @@ class Editions:
             u64(self.id),
             u64(self.book_id),
             self.format,
+        ]
+
+
+@dataclass(frozen=True)
+class Posts:
+    """A row of `posts`, decoded."""
+
+    id: int
+    title: str
+    tags: Sequence[str]
+    sizes: Sequence[int]
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Posts:
+        """Decode a row of `posts`, by ordinal."""
+        if len(values) != 4:
+            raise ValueError(
+                f"posts has 4 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "posts", "id", int, False)),
+            title=cast("str", _field(values, 1, "posts", "title", str, False)),
+            tags=cast("Sequence[str]", _elements(values, 2, "posts", "tags", str, False)),
+            sizes=cast("Sequence[int]", _elements(values, 3, "posts", "sizes", int, False)),
+        )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `posts`."""
+        return [
+            u64(self.id),
+            self.title,
+            Array(self.tags),
+            Array([i64(_e) for _e in self.sizes]),
         ]
 
 

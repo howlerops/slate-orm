@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from slate.values import NULL, Null, Units
+from slate.values import NULL, Array, Null, Units, i64
 
 from .schema import (
     BOOKS_CHECKS,
@@ -32,6 +32,7 @@ from .schema import (
     Authors,
     Books,
     Editions,
+    Posts,
     Sales,
     Shipments,
 )
@@ -121,7 +122,34 @@ DECODERS: dict[str, Callable[[], None]] = {
     "Sales": lambda: _sales(),
     "Editions": lambda: _editions(),
     "Shipments": lambda: _shipments(),
+    "Posts": lambda: _posts(),
 }
+
+
+def _posts() -> None:
+    """The only generated decoder here with an array column.
+
+    Two element types, because one could be satisfied by a generator that
+    hard-coded `str`. Python's array elements arrive already decoded to native
+    values, so the field type needs no unwrapping — and that is exactly why the
+    generated decoder checks them anyway: a declaration naming the wrong
+    element type produces a list that looks right here and is refused by the
+    server, a long way from the mistake.
+    """
+    post = Posts.from_row([1, "a post", Array(("py", "arrays")), Array((i64(2),))])
+    assert post == Posts(id=1, title="a post", tags=("py", "arrays"), sizes=(2,))
+
+    # Empty is a value, not a null — the distinction the kernel makes
+    # load-bearing, and a decoder is where it would quietly be lost.
+    empty = Posts.from_row([2, "quiet", Array(()), Array(())])
+    assert empty.tags == ()
+    assert empty.tags is not None
+
+    # An element of the wrong type is named with its position: a message
+    # naming only `tags` sends a reader to re-read a list they have already
+    # looked at.
+    with pytest.raises(TypeError, match=r"posts\.tags\[1\]"):
+        Posts.from_row([1, "a post", Array(("py", 7)), Array(())])
 
 
 def _authors() -> None:
@@ -283,6 +311,7 @@ ROUND_TRIP = {
     "Sales": Sales(id=11, book_id=7, units=430),
     "Editions": Editions(id=5, book_id=7, format="paperback"),
     "Shipments": Shipments(id=9, book_id=7, status="shipped", deleted_at=None),
+    "Posts": Posts(id=1, title="a post", tags=("py",), sizes=(7,)),
 }
 
 

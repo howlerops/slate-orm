@@ -126,6 +126,35 @@ name = "edition_book"
 parent = "books"
 columns = ["book_id"]
 
+# A table whose only reason to exist is an array column, and two of them
+# because one element type proves less than it looks.
+#
+# **Not a column on `books`.** That was the first plan and it is worse: `books`
+# is named in the Node adapter's table allowlist, the frontend's column map,
+# the conformance cases and three decoder suites, so widening it moves a
+# fingerprint that four things restate. A new table is additive — the adapters
+# already expose a subset of the catalog (`editions` is in neither allowlist),
+# so nothing existing changes.
+#
+# It is here because the *generated* array decoder and encoder had nowhere to
+# run. `scripts/test_codegen.py` executes the generated Python, but the suites
+# that execute generated Go and TypeScript are the demo's own, and until this
+# table there was no array column for them to execute. Generated code nothing
+# calls is the gap this repository closed as CG1 and G5 for other types, and
+# it would have been reopened by a feature rather than by neglect.
+[[tables]]
+name = "posts"
+id = 6
+columns = [
+  { name = "id",    type = "u64" },
+  { name = "title", type = "str" },
+  # Two element types, because a single one cannot show that the element type
+  # is read from the column: a generator that hard-coded `str` would pass.
+  { name = "tags",  type = "array", element = "str" },
+  { name = "sizes", type = "array", element = "i64" },
+]
+primary_key = ["id"]
+
 [[tables]]
 name = "shipments"
 id = 5
@@ -187,9 +216,14 @@ parent = "books"
 columns = ["book_id"]
 
 # `app` can do everything, including EXPLAIN.
+#
+# `posts` is here and deliberately *not* in the `reader` grant below: nothing
+# in the demo reads it, and a table reachable by a role no demonstration uses
+# would read as an oversight. It exists so the generated array decoder has a
+# row type to be, and the suites that exercise that build their own rows.
 [[security.grants]]
 role = "app"
-tables = ["authors", "books", "sales", "editions", "shipments"]
+tables = ["authors", "books", "sales", "editions", "shipments", "posts"]
 actions = ["everything"]
 
 # `reader` can read and nothing else — notably not EXPLAIN, which is its own

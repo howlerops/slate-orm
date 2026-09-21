@@ -197,7 +197,11 @@ def python_encode(column: dict, expression: str) -> str:
     inner = PYTHON_ENCODE[element_of(column)]
     if inner == "{}":
         return f"Array({expression})"
-    return f"Array({inner.format('_e')} for _e in {expression})"
+    # A list comprehension rather than a generator expression: `Array.__new__`
+    # takes a `Sequence`, and a generator is not one. It works at run time —
+    # `tuple.__new__` consumes any iterable — and `ty` refuses it, which is the
+    # check finding something the tests could not.
+    return f"Array([{inner.format('_e')} for _e in {expression}])"
 
 
 class GoElement(typing.NamedTuple):
@@ -682,9 +686,14 @@ def python_rows(tables: list[dict]) -> list[str]:
         "    this is the only place on this side that can notice.",
         '    """',
         '    value = _field(values, at, table, column, Array, nullable)',
-        "    if value is None:",
-        "        return None",
-        "    for index, element in enumerate(value):  # type: ignore[call-overload]",
+        "    if not isinstance(value, Array):",
+        "        # `_field` returns `None` exactly when the column was null and",
+        "        # nullable; it has already refused anything that is neither.",
+        "        # Spelled as the `isinstance` rather than `is None` because a",
+        "        # checker cannot narrow `object` minus `None` to something",
+        "        # iterable, and the loop below needs it to.",
+        "        return value",
+        "    for index, element in enumerate(value):",
         "        if not isinstance(element, kind):",
         "            raise TypeError(",
         '                f"{table}.{column}[{index}] is {type(element).__name__}, "',
@@ -1179,7 +1188,25 @@ def python_value_imports(tables: list[dict]) -> str:
                 wants(element_of(column))
             else:
                 wants(kind)
-    return ", ".join(sorted(needed))
+    return ", ".join(sorted(needed, key=import_order))
+
+
+def import_order(name: str) -> tuple[int, str]:
+    """`ruff`'s isort order for a `from … import a, b, c` list.
+
+    Not plain alphabetical: with `order-by-type` — ruff's default — the names
+    are grouped by what their *spelling* says they are, constants first, then
+    classes, then everything else. Sorting flat happened to agree while the
+    list was `NULL, Null, Units, Vector, i64, u64`, and stopped agreeing the
+    moment `Array` was added, because `Array` sorts before `NULL` and is a
+    class rather than a constant. `ruff check` on the generated file said so;
+    nothing else would have, since a generated file is not read by hand.
+    """
+    if name.isupper():
+        return (0, name)
+    if name[:1].isupper():
+        return (1, name)
+    return (2, name)
 
 
 def python_module(tables: list[dict]) -> str:

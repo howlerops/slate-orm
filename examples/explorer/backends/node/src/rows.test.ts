@@ -27,11 +27,13 @@ import {
   decodeAuthors,
   decodeBooks,
   decodeEditions,
+  decodePosts,
   decodeSales,
   decodeShipments,
   encodeAuthors,
   encodeBooks,
   encodeEditions,
+  encodePosts,
   encodeSales,
   encodeShipments,
   isRetiredShipments,
@@ -177,6 +179,31 @@ const DECODERS: Record<string, () => void> = {
     ]);
     assert.equal(retired.deleted_at, 1_700_000_042n);
   },
+  decodePosts: () => {
+    // The only generated decoder with an array column, and the reason `posts`
+    // is in the catalog at all: `field` stops at the array, whose value is a
+    // `Value[]` with its members still tagged, so a cast to `string[]` without
+    // unwrapping each one would be a lie nothing can see. Two element types,
+    // because one could be satisfied by a generator that hard-coded `string`.
+    const post = decodePosts([
+      { kind: "uint", value: 1n },
+      { kind: "string", value: "a post" },
+      {
+        kind: "array",
+        value: [
+          { kind: "string", value: "ts" },
+          { kind: "string", value: "arrays" },
+        ],
+      },
+      { kind: "array", value: [{ kind: "int", value: 2n }] },
+    ]);
+    assert.deepEqual(post, {
+      id: 1n,
+      title: "a post",
+      tags: ["ts", "arrays"],
+      sizes: [2n],
+    });
+  },
 };
 
 for (const [name, run] of Object.entries(DECODERS)) {
@@ -303,6 +330,10 @@ const ROUND_TRIP: Record<string, () => void> = {
     const row = { id: 9n, book_id: 7n, status: "shipped" as const, deleted_at: null };
     assert.deepEqual(decodeShipments(encodeShipments(row)), row);
   },
+  encodePosts: () => {
+    const row = { id: 1n, title: "a post", tags: ["ts"], sizes: [7n] };
+    assert.deepEqual(decodePosts(encodePosts(row)), row);
+  },
 };
 
 for (const [name, run] of Object.entries(ROUND_TRIP)) {
@@ -370,4 +401,56 @@ test("only a soft-deleting table gets a restored helper", () => {
   const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
   const declared = [...source.matchAll(/^export function restored(\w+)\(/gm)].map((m) => m[1]!);
   assert.deepEqual(declared, ["Shipments"]);
+});
+
+test("an empty array decodes to an empty list rather than a null", () => {
+  // The distinction the kernel makes load-bearing, and a decoder is where it
+  // would quietly be lost. Separate from the roster entry above, which is
+  // about ordinals and element types; this is about one value.
+  const empty = decodePosts([
+    { kind: "uint", value: 2n },
+    { kind: "string", value: "quiet" },
+    { kind: "array", value: [] },
+    { kind: "array", value: [] },
+  ]);
+  assert.deepEqual(empty.tags, []);
+  assert.notEqual(empty.tags, null);
+});
+
+test("an array element of the wrong type is refused with its position", () => {
+  // The position is the point: a message naming only `tags` sends a reader to
+  // re-read a list they have already looked at.
+  assert.throws(
+    () =>
+      decodePosts([
+        { kind: "uint", value: 1n },
+        { kind: "string", value: "a post" },
+        {
+          kind: "array",
+          value: [
+            { kind: "string", value: "ts" },
+            { kind: "int", value: 7n },
+          ],
+        },
+        { kind: "array", value: [] },
+      ]),
+    /posts\.tags\[1\]/,
+  );
+});
+
+test("an encoded array's elements each carry their own tag", () => {
+  // The round trip is in ROUND_TRIP above and is an oracle; this is the fixed
+  // expectation beside it, and it is the half that catches both sides being
+  // wrong the same way. `int` and `uint` are both `bigint` here, so a list of
+  // them carries nothing to tell them apart until the server refuses it.
+  const post = { id: 1n, title: "a post", tags: ["ts"], sizes: [7n] };
+  const encoded = encodePosts(post);
+  assert.deepEqual(encoded[2], {
+    kind: "array",
+    value: [{ kind: "string", value: "ts" }],
+  });
+  assert.deepEqual(encoded[3], {
+    kind: "array",
+    value: [{ kind: "int", value: 7n }],
+  });
 });
