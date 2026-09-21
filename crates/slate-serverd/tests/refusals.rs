@@ -620,6 +620,46 @@ fn a_view_named_after_a_table_will_not_start() {
     assert!(output.contains("same name as a table"), "{output}");
 }
 
+/// A view over a view is refused, in both declaration orders, and by name.
+///
+/// `docs/views.md` §5 is the decision; this is the refusal enforcing it. The
+/// message matters as much as the refusal: resolving the name against the
+/// catalog reports a declared view as *an unknown table*, which is the one
+/// thing it certainly is not, and that is what an operator would have read
+/// before this.
+#[test]
+fn a_view_over_a_view_will_not_start_in_either_order() {
+    let output = refused(&format!(
+        "{GOOD}\n\
+         [[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 1\"\n\
+         [[views]]\nname = \"bigger\"\nquery = \"SELECT * FROM big WHERE size > 2\"\n"
+    ));
+    assert!(output.contains("which is another view"), "{output}");
+    assert!(output.contains("`bigger`"), "{output}");
+
+    // Declared the other way round, because the check reads the whole list
+    // rather than the part of it already resolved. A version that only looked
+    // backwards would accept this one.
+    let output = refused(&format!(
+        "{GOOD}\n\
+         [[views]]\nname = \"bigger\"\nquery = \"SELECT * FROM big WHERE size > 2\"\n\
+         [[views]]\nname = \"big\"\nquery = \"SELECT * FROM docs WHERE size > 1\"\n"
+    ));
+    assert!(output.contains("which is another view"), "{output}");
+}
+
+/// And a view that reads itself, which is the cycle of length one.
+///
+/// Separate from the case above because it is the one a person actually
+/// writes: a view named after what it selects, with the name typed twice.
+#[test]
+fn a_view_that_reads_itself_will_not_start() {
+    let output = refused(&format!(
+        "{GOOD}\n[[views]]\nname = \"ring\"\nquery = \"SELECT * FROM ring WHERE size > 1\"\n"
+    ));
+    assert!(output.contains("reads itself"), "{output}");
+}
+
 #[test]
 fn two_views_with_one_name_will_not_start() {
     let output = refused(&format!(

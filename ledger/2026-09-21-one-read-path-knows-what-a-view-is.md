@@ -144,8 +144,13 @@ do.
 
 **No view over a view.** A view's base name is resolved against the catalog,
 not against the registry, so naming one view inside another is refused at load
-as an unknown table. Not argued for, just not built; the composition would be
-an `and` of two predicates and the loop would need a cycle check.
+as an unknown table. ~~Not argued for, just not built~~ — argued for the same
+day, in `docs/views.md` §5, and **refused** rather than left missing: two views
+composed are `WHERE a AND b`, which one view already says, while letting one
+name another turns the base table into a traversal that `--print-schema`,
+`codegen.py` and every client declaring a view would have to make too. The
+refusal now happens by name, before the parser, so it stops calling a declared
+view an unknown table.
 
 **Nothing measures the cost.** A view adds one `BTreeMap` lookup per read and
 one `Expr::and`, which simplifies `True` away — so an ordinary table's read

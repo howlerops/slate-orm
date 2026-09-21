@@ -219,6 +219,44 @@ deliberately — so there is nothing to offer.
 Refused, and the refusal should name the base table, because the useful next
 step is to write to that.
 
+## 5. A view over a view is refused, and composition is what replaces it
+
+**Refused**, not missing. The distinction is the one `docs/ctes.md` insisted on
+for CTEs and it matters the same way here: a limit nobody decided is a limit
+reported by an error that describes it wrongly, and a reader cannot tell a
+decision from an omission.
+
+Two views composed mean `WHERE a AND b`, and **one view already says that**.
+That is the whole of what the feature would buy, because a view here is a name
+for a `WHERE` over one table — §1 — so there is no projection to inherit, no
+join to flatten and no ordering to compose. The nesting Postgres users reach
+for is a way of building up a *shape*; the shape here is fixed at "one table,
+one predicate", and `AND` composes predicates already.
+
+What it would cost is not symmetric with that. The moment a view may name a
+view:
+
+- the base table stops being a field and becomes the answer to a traversal,
+  with a cycle check and a depth bound, and the failure mode of getting either
+  wrong is a server that will not start — or one that will not finish starting;
+- `--print-schema`'s `views` key stops being a list and becomes a graph;
+- `scripts/codegen.py` has to resolve transitively to find the columns, and so
+  does **every client that declares a view**, because the property they all
+  rely on — *a view's declaration is its base table's under the view's name* —
+  is stated in terms of a base table that would no longer be one hop away.
+
+So the refusal is at load, by name, before the parser is asked: resolving the
+name against the catalog would report a declared view as an *unknown table*,
+which is the one thing it certainly is not. A view that reads itself is refused
+separately, because it is the case a person actually writes — a view named
+after what it selects, with the name typed twice.
+
+**What to do instead.** Write the conjunction. `WHERE kind = 'note' AND year >
+2000` is the view that two nested ones would have produced, and it is one
+lookup rather than a walk. If the two predicates genuinely belong to different
+owners — one a policy, one a convenience — that is what row-level security is,
+and §3 already composes it with the view's predicate by `AND`.
+
 ## Open, and deliberately not decided here
 
 **Where a view is declared — answered, and the answer dissolves the

@@ -92,6 +92,30 @@ pub(crate) fn views(declared: &[config::View], tables: &[TableDef]) -> Started<V
             return Err(Fault::new(format!("two views are named `{}`", view.name)));
         }
 
+        // Refused before the parser sees it, because the parser resolves names
+        // against the *catalog* and would report a declared view as an unknown
+        // table — which is the one thing it certainly is not. `docs/views.md`
+        // §5 is the decision this enforces, and it is a refusal rather than a
+        // gap: a view over a view is `WHERE a AND b`, which one view already
+        // says.
+        if let Some(source) = from_table(&view.query) {
+            if source.eq_ignore_ascii_case(&view.name) {
+                return Err(Fault::new(format!(
+                    "view `{}` reads itself. See `docs/views.md` §5",
+                    view.name
+                )));
+            }
+            if let Some(other) = declared
+                .iter()
+                .find(|other| other.name.eq_ignore_ascii_case(source))
+            {
+                return Err(Fault::new(format!(
+                    "view `{}` reads `{}`, which is another view. A view here reads one                      *table*: two views composed are `WHERE a AND b`, which a single                      view already says, and letting one name another would make the                      base table a question with a graph behind it — which every client                      that declares a view would then have to answer too. See                      `docs/views.md` §5",
+                    view.name, other.name
+                )));
+            }
+        }
+
         let parsed = parse(&view.query, &Schema(tables)).map_err(|why| {
             Fault::new(format!(
                 "view `{}` is not a statement this server can parse: {} (at byte {})",
@@ -143,6 +167,30 @@ pub(crate) fn views(declared: &[config::View], tables: &[TableDef]) -> Started<V
 /// workbench's spec panel, which is a happy accident this leans on — so a
 /// field that is set is a key that appears, including a field added next year.
 /// The named list runs first only so the common cases get the better sentence.
+/// The word after the first `FROM`, if the statement has one.
+///
+/// Ten lines rather than the parser, because this runs *before* the parser: a
+/// view naming another view has to be refused by name, and by the time
+/// `parse` has an opinion it has already decided the name is an unknown table.
+/// `slate_sql::Schema` is a concrete type whose lookup is private, so there is
+/// nothing to observe the resolution through.
+///
+/// Deliberately allowed to be wrong. A statement whose select list contains
+/// the word `from` inside a string literal would scan to the wrong word — and
+/// the only consequence is that the caller falls through to the parser's own
+/// message, because the scanned word is used for nothing except an equality
+/// test against a declared view's name. It can make a refusal *more* specific
+/// and cannot make one wrong.
+fn from_table(sql: &str) -> Option<&str> {
+    let mut words = sql.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')');
+    while let Some(word) = words.next() {
+        if word.eq_ignore_ascii_case("from") {
+            return words.find(|w| !w.is_empty());
+        }
+    }
+    None
+}
+
 fn unsupported(spec: &QuerySpec) -> Option<String> {
     let named = if !spec.columns.is_empty() {
         Some(
