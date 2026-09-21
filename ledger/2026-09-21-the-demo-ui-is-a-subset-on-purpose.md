@@ -85,5 +85,14 @@ The count in this entry was already stale when the guard was written — it is
 feature later and the sentence in `docs/full-text.md` did not. That is the
 drift, one more time, and it is what the guard stops.
 
-The README half is still open: nothing checks that *What the UI shows* still
-describes `web/src/`.
+~~The README half is still open: nothing checks that *What the UI shows* still
+describes `web/src/`.~~
+
+**Narrowed, by #273.** The same guard now recomputes the section's two numbers
+— `sees 9 of 11 books`, `before 1960` — from `backends/go/seed.go` and
+`head.toml`, so the falsifiable sentence in that section cannot go stale
+silently. The rest of the section is prose naming panels and is still
+unchecked; see
+`ledger/2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md`, which says
+why matching prose against a UI is either a grep that passes on a deleted
+panel or a rewrite of the README into data.

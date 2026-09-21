@@ -32,6 +32,12 @@ LEFT_OUT = sorted(check_demo_surface.NOT_IN_THE_UI)[:2]
 #: One the UI really does call.
 REACHED = "/api/query"
 
+#: The clause the summary adds when it has read the README.
+README_SUMMARY = "the README's counts agree"
+
+#: A problem nothing else produces, to prove `main` asks for the README's.
+STAND_IN = "a stand-in problem, to prove main asks"
+
 
 def run(
     ui_calls: list[str],
@@ -80,6 +86,106 @@ def run(
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = check_demo_surface.main([str(adapter), str(ui)])
         return code, out.getvalue()
+
+
+#: A seed, a policy and a README that agree, as the real three do.
+#:
+#: The cutoff year is one a book is published *exactly on*, which the real
+#: seed has none of — and that absence is why `year > cutoff` survived a
+#: mutation against the tree. A fixture can put a row on the boundary; the
+#: tree cannot be asked to.
+SEED = """\
+func seed() {
+\tbook(1, 1, "Before", 1959, 4.0),
+\tbook(2, 1, "Exactly On", 1960, 4.1),
+\tbook(3, 1, "After", 1961, 4.2),
+}
+"""
+CONFIG = 'using = "year >= 1960"\n'
+README = "- `reader` sees 2 of 3 books — a row policy hides everything\n  published before 1960, and no adapter is involved.\n"
+
+
+def prose(
+    seed: str = SEED, config: str = CONFIG, readme: str = README
+) -> list[str]:
+    """Run the real `readme_counts` over three files this writes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        (root / "seed.go").write_text(seed)
+        (root / "head.toml").write_text(config)
+        (root / "README.md").write_text(readme)
+        return check_demo_surface.readme_counts(
+            root / "README.md", root / "seed.go", root / "head.toml"
+        )
+
+
+#: name, the three fixture files, and the text the one problem must contain.
+#: An empty `wanted` means the three agree and nothing is reported.
+PROSE_CASES: list[tuple[str, str, str, str, str]] = [
+    (
+        # This is also what catches `>=` written as `>`: the fixture has a
+        # book published exactly on the cutoff, so under `>` the visible
+        # count is 1, the README's correct `2 of 3` is reported as wrong, and
+        # this case fails. The real seed has no book on the boundary, which
+        # is why that mutation survived against the tree.
+        "three files that agree report nothing",
+        SEED,
+        CONFIG,
+        README,
+        "",
+    ),
+    (
+        # The survivor that started this. With the paths fixed, replacing this
+        # whole function's body with `[]` changed no test's verdict.
+        "a README naming a book count the seed does not have is reported",
+        SEED,
+        CONFIG,
+        README.replace("2 of 3", "2 of 4"),
+        "the seed has 3",
+    ),
+    (
+        "a README naming a visible count the policy does not admit is reported",
+        SEED,
+        CONFIG,
+        README.replace("2 of 3", "1 of 3"),
+        "admits 2",
+    ),
+    (
+        "a README naming a cutoff the policy does not use is reported",
+        SEED,
+        CONFIG,
+        README.replace("before 1960", "before 1950"),
+        "`head.toml` says `year >= 1960`",
+    ),
+    (
+        "a seed with no book rows is reported, not counted as zero",
+        "func seed() {}\n",
+        CONFIG,
+        README,
+        "checked nothing",
+    ),
+    (
+        "a policy spelled some other way is reported",
+        SEED,
+        'using = "year > 1959"\n',
+        README,
+        "spelled some other way",
+    ),
+    (
+        "a README that no longer says `sees N of M` is reported",
+        SEED,
+        CONFIG,
+        README.replace("sees 2 of 3 books", "sees two of the three books"),
+        "delete this check deliberately",
+    ),
+    (
+        "a README that no longer names a cutoff is reported",
+        SEED,
+        CONFIG,
+        README.replace("published before 1960", "published too long ago"),
+        "for the same reason",
+    ),
+]
 
 
 #: name, the endpoints the UI calls, extra served, dropped, exit, wanted text.
@@ -192,21 +298,66 @@ def main() -> int:
             for line in said.splitlines():
                 print(f"      {line}")
 
+    for name, seed, config, readme, wanted in PROSE_CASES:
+        # A crash is a failure with a name, not a dead suite. Three of these
+        # mutate a never-fires guard away, after which a `None` reaches the
+        # narrowing `assert` below it and raises — and an unguarded call here
+        # killed the run before it printed its summary, which `mutate.py`
+        # could only report as "NOTHING RAN". That is the second of its five
+        # lies: no test failed and no test ran look identical.
+        try:
+            found = prose(seed, config, readme)
+        except Exception as raised:  # noqa: BLE001 - any crash is this failure
+            found = [f"raised {raised!r} instead of reporting a problem"]
+        ok = (not found) if not wanted else any(wanted in one for one in found)
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected {wanted!r}, got {found}")
+
+    # `main` actually calls the README check, which none of the cases above
+    # can see: they call `readme_counts` directly, and the real three files
+    # agree, so deleting the call from `main` changed no verdict at all. A
+    # surviving mutation said so. Standing in a problem nothing else produces
+    # is the smallest thing that proves the wiring.
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        code = check_demo_surface.main([], lambda: [STAND_IN])
+    said = out.getvalue()
+    ok = code == 1 and STAND_IN in said
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a real run reports what the README check found")
+    if not ok:
+        print(f"        exit {code}, and the report did not carry it:\n      {said}")
+
+    # The summary names the README half only when it ran, and the two halves
+    # are checked together because either alone passes for the wrong reason: a
+    # summary that always names it is a check reporting work it did not do
+    # (`CLAUDE.md`'s "a skip is green", one level up), and a summary that never
+    # names it hides the README check going away entirely.
+    _, said = run([REACHED])
+    ok = README_SUMMARY not in said
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a fixture run does not claim the README")
+    if not ok:
+        print(f"      it ran over files that have no README:\n      {said}")
+
     # The guard against the real tree, which is the thing it is for. Kept last
     # so a failure here reads as "the tree drifted" rather than as a broken
     # test.
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         code = check_demo_surface.main([])
-    ok = code == 0
+    said = out.getvalue()
+    ok = code == 0 and README_SUMMARY in said
     failed += not ok
-    print(f"{'ok  ' if ok else 'FAIL'}  the real adapter and the real UI agree")
+    print(f"{'ok  ' if ok else 'FAIL'}  the real adapter, UI and README agree")
     if not ok:
-        for line in out.getvalue().splitlines():
+        for line in said.splitlines():
             print(f"      {line}")
 
     print()
-    print(f"{len(CASES) + 1 - failed} passed, {failed} failed")
+    print(f"{len(CASES) + len(PROSE_CASES) + 3 - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

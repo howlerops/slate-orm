@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +52,30 @@ UI = ROOT / "examples/explorer/web/src"
 
 ROUTE = re.compile(r'^\s*"(/api/[a-z-]+)":', re.MULTILINE)
 CALLED = re.compile(r"/api/[a-z-]+")
+
+#: The demo's README, and the two files whose contents it counts.
+#:
+#: The endpoint roster above is one half of "does the demo's description match
+#: the demo"; this is the other, and it is the half that goes stale *quietly*.
+#: An endpoint nobody calls is at least visible in a diff; `sees 9 of 11 books`
+#: is a sentence that stays grammatical when somebody adds a twelfth.
+README = ROOT / "examples/explorer/README.md"
+SEED = ROOT / "examples/explorer/backends/go/seed.go"
+CONFIG = ROOT / "examples/explorer/head.toml"
+
+#: One seeded book: `book(id, author, "title", year, ...)`.
+BOOK = re.compile(r'^\s*book\(\d+,\s*\d+,\s*"[^"]*",\s*(\d{4}),', re.MULTILINE)
+#: The README's claim about what the row policy hides.
+#:
+#: `\s+` rather than a space in both: the README is wrapped prose and both
+#: sentences straddle a line break today. A pattern that assumed one line
+#: matched nothing and reported the sentence missing, which is the never-fires
+#: branch firing correctly on the check's own bug.
+SEES = re.compile(r"sees\s+(\d+)\s+of\s+(\d+)\s+books")
+#: The README's claim about which year it hides before.
+BEFORE = re.compile(r"hides\s+everything\s+published\s+before\s+(\d{4})")
+#: The policy itself.
+POLICY = re.compile(r'using = "year >= (\d{4})"')
 
 #: Endpoints the adapters serve and the UI deliberately does not call.
 #:
@@ -96,7 +121,102 @@ def called(ui: Path = UI) -> set[str]:
     return found
 
 
-def main(argv: list[str] | None = None) -> int:
+def named(path: Path) -> str:
+    """A path as a reader of the repository would name it.
+
+    A fixture's path is under `/tmp` and `relative_to(ROOT)` raises on it, so
+    this is not cosmetic — the messages below name their file, and a guard
+    whose failure path crashes in the tests is a guard whose failure path is
+    untested.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def readme_counts(
+    readme_at: Path = README,
+    seed_at: Path = SEED,
+    config_at: Path = CONFIG,
+) -> list[str]:
+    """The README's `sees N of M books` agrees with the seed and the policy.
+
+    Three files have to say the same thing: `seed.go` decides how many books
+    there are and what years they carry, `head.toml` decides which of them a
+    reader may see, and the README tells a visitor the answer. Adding a book
+    published in 1975 changes the answer and none of the other two files, so
+    nothing but this notices.
+
+    The numbers are recomputed rather than compared to a constant here: a
+    roster of expected counts would be a third place to update.
+
+    The three paths are arguments for the same reason `routes` and `called`
+    take theirs, and the reason is a measured one rather than symmetry: with
+    them fixed, `scripts/mutate.py` replaced this whole function's body with
+    `[]` and **nothing failed**, because the only test was the real tree,
+    which agrees. Two survivors from one run — that one, and computing the
+    visible count as `year > cutoff`, which no seeded book is published
+    exactly on. Both are caught by a fixture and neither by the tree.
+    """
+    years = [int(year) for year in BOOK.findall(seed_at.read_text(encoding="utf-8"))]
+    policy = POLICY.search(config_at.read_text(encoding="utf-8"))
+    readme = readme_at.read_text(encoding="utf-8")
+    sees = SEES.search(readme)
+    before = BEFORE.search(readme)
+
+    problems = []
+    # The never-fires halves. Every one of these is a pattern over somebody
+    # else's file, and each would match nothing after an ordinary edit —
+    # `book(` renamed, the policy rewritten as `year > 1959`, the sentence
+    # rephrased — leaving this printing `ok` over three files it did not read.
+    if not years:
+        problems.append(
+            f"no `book(id, author, \"title\", year, ...)` rows in "
+            f"{named(seed_at)}, so the counts below checked nothing."
+        )
+    if policy is None:
+        problems.append(
+            f'no `using = "year >= NNNN"` in {named(config_at)}, so the '
+            "reader's row policy is spelled some other way and this cannot "
+            "read it."
+        )
+    if sees is None:
+        problems.append(
+            f"no `sees N of M books` in {named(readme_at)}. If the "
+            "sentence moved, move this pattern with it; if the claim went "
+            "away, delete this check deliberately."
+        )
+    if before is None:
+        problems.append(
+            f"no `hides everything published before NNNN` in "
+            f"{named(readme_at)}, for the same reason."
+        )
+    if problems:
+        return problems
+
+    assert policy and sees and before  # narrowed by the guards above
+    cutoff = int(policy.group(1))
+    visible = sum(1 for year in years if year >= cutoff)
+    if (int(sees.group(1)), int(sees.group(2))) != (visible, len(years)):
+        problems.append(
+            f"the README says a reader sees {sees.group(1)} of "
+            f"{sees.group(2)} books; the seed has {len(years)} and the policy "
+            f"`year >= {cutoff}` admits {visible}.\n"
+            "  Whichever moved, the sentence a visitor reads is now wrong."
+        )
+    if int(before.group(1)) != cutoff:
+        problems.append(
+            f"the README says the policy hides everything before "
+            f"{before.group(1)}; `head.toml` says `year >= {cutoff}`."
+        )
+    return problems
+
+
+def main(
+    argv: list[str] | None = None,
+    prose_check: Callable[[], list[str]] = readme_counts,
+) -> int:
     # The two subjects are arguments so the tests beside this file can run the
     # real checks over files they wrote. Run only against the tree, a check
     # that had stopped checking would pass for as long as the tree stayed
@@ -135,6 +255,20 @@ def main(argv: list[str] | None = None) -> int:
             "with one line saying what a panel for it would fail to show."
         )
 
+    # Only against the real tree: `readme_counts` takes its own three paths,
+    # so a fixture tests it directly rather than through here.
+    #
+    # It arrives as an argument because the alternative could not be tested.
+    # A test that calls `readme_counts` itself cannot see whether *this*
+    # still calls it, and the real three files agree — so deleting this call
+    # changed no verdict, and `scripts/mutate.py` reported the survivor.
+    # Rebinding the module attribute was the first fix and `ty` refuses it:
+    # a module-level `def` is declared as that one function, and no other is
+    # assignable to it.
+    prose = not argv
+    if prose:
+        problems.extend(prose_check())
+
     for endpoint, reason in sorted(NOT_IN_THE_UI.items()):
         if endpoint not in served:
             problems.append(
@@ -154,9 +288,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{len(problems)} problem(s)", file=sys.stderr)
         return 1
 
+    # The README half is named only when it ran. Printing it unconditionally
+    # would make a fixture run — which never reads the README — claim it, and
+    # a summary that says more than it checked is the same lie as a skip that
+    # reports green.
     print(
         f"ok    {len(reached)} of {len(served)} adapter endpoints in the UI, "
         f"{len(NOT_IN_THE_UI)} left out on purpose"
+        + (
+            "; the README's counts agree with the seed and the policy"
+            if prose
+            else ""
+        )
     )
     return 0
 
