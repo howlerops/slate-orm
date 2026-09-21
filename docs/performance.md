@@ -22,6 +22,14 @@ SCALE_ROWS=200000,600000,1200000 \
   cargo run --release -p slate-slatedb --example cost_at_scale
 ```
 
+Every command above runs at the size the figures on this page were taken at.
+Three environment variables shrink them — `KERNELBENCH_ROWS` for the kernel's
+examples, `HEADBENCH_*` for the head node's, `SCALE_ROWS` for the storage ones
+— and `scripts/run_examples.sh --smoke` sets all of them, which is how CI runs
+every benchmark in seconds. **A smoke run's numbers are not the numbers on this
+page and are not comparable to them**; each example prints the size it ran at,
+so a pasted line says which it was.
+
 Two profiles are used. `free` charges nothing and isolates CPU. `io` charges
 object-storage round trips — a millisecond per point read, one per scan and one
 per 256-row block. Prefer the **I/O counts** over the clock: "this removed 500

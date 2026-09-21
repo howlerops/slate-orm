@@ -104,11 +104,16 @@ fi
 
 if [ -n "$smoke" ]; then
     # Every knob at its smallest, both crates' spellings exported together.
-    # Two names, one per crate — `HEADBENCH_*` and `SCALE_ROWS` — because each
-    # is documented where its benchmarks are, and setting the union is cheaper
-    # than renaming one and chasing the docs that quote it. An example that
-    # reads neither runs at its recorded size, which is why the floors below
-    # are the ones that matter for how long this takes.
+    # Three names, one per crate — `HEADBENCH_*`, `SCALE_ROWS` and
+    # `KERNELBENCH_ROWS` — because each is documented where its benchmarks are,
+    # and setting the union is cheaper than renaming one and chasing the docs
+    # that quote it.
+    #
+    # An example that reads none of them runs at its recorded size. Two still
+    # do — `concurrency_probe` and `multi_tenant` — and neither was given a
+    # knob, because each already finishes in under a second and a knob whose
+    # only effect is to make a fast thing faster is a second thing to keep
+    # true. Every example that takes measurable time reads one.
     HEADBENCH_RUNS=1
     HEADBENCH_ROWS=500
     HEADBENCH_BATCHES=64
@@ -116,8 +121,14 @@ if [ -n "$smoke" ]; then
     HEADBENCH_WINDOW_MS=100
     HEADBENCH_DURABLE_MS=200
     SCALE_ROWS=2000
+    KERNELBENCH_ROWS=500
     export HEADBENCH_RUNS HEADBENCH_ROWS HEADBENCH_BATCHES HEADBENCH_LEVELS \
-           HEADBENCH_WINDOW_MS HEADBENCH_DURABLE_MS SCALE_ROWS
+           HEADBENCH_WINDOW_MS HEADBENCH_DURABLE_MS SCALE_ROWS KERNELBENCH_ROWS
+    # At the smallest fixture, two minutes is already generous. An example
+    # still running then is stuck, not slow. Not exported: the loop reads it
+    # directly, and an `EXAMPLE_SECONDS` already in the environment wins, which
+    # is what the tests beside this file rely on.
+    [ -n "${EXAMPLE_SECONDS:-}" ] || EXAMPLE_SECONDS=120
 fi
 
 # Examples that are *servers*, and the line each prints once it is up.
@@ -142,6 +153,24 @@ handshake() {
 
 # How long to wait for a server's handshake before calling it broken.
 HANDSHAKE_SECONDS=${HANDSHAKE_SECONDS:-30}
+
+# How long any one example may run before it is called broken.
+#
+# This is the structural half of the roster above, and the more important one.
+# `scripts/check_examples_roster.py` warns about an example that *looks* like a
+# server — it matches `future::pending` or `signal::ctrl_c` in the source — and
+# a third way of never returning would slip past it: a `recv()` nothing sends
+# to, a joined thread that never exits, a retry loop with no ceiling. Without a
+# budget the loop below then waits for that example forever, and in CI "forever"
+# means the job's own six-hour limit, with no line saying which example did it.
+#
+# Fifteen minutes is deliberately far above any of these: the slowest at its
+# recorded size is `slate-headbench`'s minutes, and `--smoke` lowers it to two
+# because at the smallest fixture nothing should take that long either. The
+# point is not to be a threshold — a wall-clock assertion on a shared runner is
+# the flake this file already refuses to write — it is to turn a hang into a
+# named failure.
+EXAMPLE_SECONDS=${EXAMPLE_SECONDS:-900}
 
 lines=""
 failed=0
@@ -175,11 +204,24 @@ for name in $examples; do
 "
         continue
     fi
-    if "$binaries_dir/$name"; then
+    # `code` is captured once, in the `else`. Reading `$?` in an `elif` test
+    # and again in the branch after it does not work: by then `$?` is the
+    # *test's* status, so every non-timeout failure would report exit 1. It
+    # did, for one edit.
+    if timeout "$EXAMPLE_SECONDS" "$binaries_dir/$name"; then
         result=$(printf 'ok    %s, %ss' "$name" "$(( $(date +%s) - started ))")
     else
         code=$?
-        result=$(printf 'FAIL  %s, exit %s' "$name" "$code")
+        if [ "$code" -eq 124 ]; then
+            # `timeout` says 124 for "I killed it". Named rather than reported
+            # as an exit code, because the two causes want different fixes: an
+            # example that hangs on a bug is a bug, and one that never returns
+            # *by design* wants a line in `handshake()` above.
+            result=$(printf 'FAIL  %s, still running after %ss' "$name" "$EXAMPLE_SECONDS")
+            echo "    If it never returns by design, give it a handshake line above." >&2
+        else
+            result=$(printf 'FAIL  %s, exit %s' "$name" "$code")
+        fi
         # Not `exit` — the point of running all of them is knowing how many are
         # broken, and `cargo test`'s fail-fast is named in `CLAUDE.md` as a way
         # to be wrong about exactly that. Four of one crate's five were broken.

@@ -29,6 +29,24 @@ const ACTORS: TableId = TableId(2);
 const TEAMS: TableId = TableId(3);
 const TENANTS: u128 = 4;
 const ROWS_PER_TENANT: u64 = 2_500;
+
+/// Rows per tenant, overridable with `KERNELBENCH_ROWS`.
+///
+/// Per tenant rather than in total, because the tenant count is part of what
+/// this measures — a prefix boundary — and dividing a total by four would make
+/// the knob change two things at once.
+///
+/// `scripts/run_examples.sh --smoke` sets it small. The numbers a smoke run
+/// prints are worthless and it says so; what it proves is that every query
+/// shape here still executes. A run with the variable unset is the recorded
+/// size, which is what `docs/performance.md` quotes.
+fn rows_per_tenant() -> u64 {
+    std::env::var("KERNELBENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS_PER_TENANT)
+}
 const ACTOR_COUNT: u64 = 500;
 const TEAM_COUNT: u64 = 10;
 
@@ -129,7 +147,7 @@ async fn main() {
     let loader = RecordStore::new(backing.clone(), catalog.clone(), security.clone());
     for tenant in 0..TENANTS {
         let txn = loader.begin().await.expect("begin");
-        for id in 0..ROWS_PER_TENANT {
+        for id in 0..rows_per_tenant() {
             txn.insert(&root, &table, &row(tenant, id))
                 .await
                 .expect("insert");
@@ -195,6 +213,19 @@ async fn main() {
         projection: &'a Projection,
     }
 
+    // The two labels that name a row count are computed, not written.
+    //
+    // They were literals — `whole tenant (2500 rows)`, `indexed equality (~100
+    // rows)` — which was true while the size was a `const` and became a lie
+    // the moment `KERNELBENCH_ROWS` could change it: a smoke run printed
+    // `whole tenant (2500 rows)` beside a `rows` column reading 500. A label
+    // that disagrees with the number beside it is worse than no label.
+    //
+    // The `~` one divides by 25 because the seed writes `kind-{id % 25}` and
+    // this filter asks for one of them; it is an estimate in the same sense it
+    // always was.
+    let whole = format!("whole tenant ({} rows)", rows_per_tenant());
+    let indexed = format!("indexed equality (~{} rows)", rows_per_tenant() / 25);
     let cases = vec![
         Case {
             label: "point get by primary key",
@@ -203,13 +234,13 @@ async fn main() {
             projection: &all,
         },
         Case {
-            label: "whole tenant (2500 rows)",
+            label: &whole,
             filter: by_tenant(),
             limit: None,
             projection: &all,
         },
         Case {
-            label: "indexed equality (~100 rows)",
+            label: &indexed,
             filter: by_tenant().and(kind_7()),
             limit: None,
             projection: &all,
