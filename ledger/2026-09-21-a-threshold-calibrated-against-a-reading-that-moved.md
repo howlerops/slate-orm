@@ -1,4 +1,15 @@
-# A timing threshold turned CI red because the clean reading under it had moved 23%, not because the machine was busy.
+# ~~A timing threshold turned CI red because the clean reading under it had moved 23%, not because the machine was busy.~~ The threshold was never portable to this class of machine, and nothing had moved.
+
+> **Withdrawn the same day, by measurement.** The "23% shift" below is wrong.
+> It compared a number recorded on *another machine* in September against one
+> measured here, which is the mistake `CLAUDE.md` names outright — a ratio is
+> not as portable as I assumed it was. Checking out `af3c975`, the commit whose
+> entry recorded the small pair clean at **0.868**, and measuring it on this
+> four-core container gives **1.111 – 1.175, median 1.138**. Nothing drifted:
+> the pair reads about the same today as it did then, and if anything slightly
+> lower. See "The correction" below. The change itself — a bound per pair, set
+> from readings taken here — stands, and is better supported by this than by
+> what it was written on.
 
 - **Date:** 2026-09-21
 - **Author:** Claude Code, working #259 (F5e)
@@ -22,15 +33,44 @@ touching `slate-server`, `slate-serverd`, scripts and examples — none of which
 `slate-schema`, `slate-tuple`). The runs before and after were green on
 byte-identical `slate-wasm` code.
 
-The interesting part is *why* it was close enough to fail. The ledger entry of
+~~The interesting part is *why* it was close enough to fail. The ledger entry of
 2026-09-14 records the calibration: small pair clean at 11.2 vs 12.9 ms, a ratio
-of **0.868**, with the mutation worth 1.26×, and a threshold at 1.15×. Today the
-same pair reads **1.07** clean — the plain select has gone from 13% faster than
-its grouping to 7% slower. The threshold did not move; the thing under it did,
-until 1.15 was six percent above a clean reading. That is not slack.
+of 0.868, with the mutation worth 1.26×, and a threshold at 1.15×. Today the
+same pair reads 1.07 clean — the plain select has gone from 13% faster than its
+grouping to 7% slower. The threshold did not move; the thing under it did,
+until 1.15 was six percent above a clean reading.~~
 
-A threshold is a claim about a measurement, and a claim whose measurement has
-moved is stale documentation with a `cargo test` attached to it.
+## The correction
+
+**That was wrong, and the way it was wrong is worth more than the claim.** The
+0.868 was measured on whatever machine ran it in September; 1.07 was measured
+here. Comparing them is comparing two machines, and `CLAUDE.md` says not to
+report a number you did not observe — a *ratio* felt portable enough to compare
+across machines, and it is not.
+
+Measured instead: `git checkout af3c975`, the calibration commit itself, patched
+to print rather than assert, three runs on this four-core container —
+
+| pair | at `af3c975`, here | at HEAD, here |
+|---:|---|---|
+| 4,837 | 1.111 – 1.175 (median 1.138) | 1.045 – 1.092 |
+| 100,000 | 0.912 – 0.956 (median 0.915) | 0.888 – 0.920 |
+
+So the small pair reads *slightly lower* today than at the commit the threshold
+was set on. Nothing drifted. (The two columns are not perfectly comparable —
+that version sampled `best(..., 7)` per statement and this one alternates
+`paired(..., 9)`, and alternating with more samples should read lower — but no
+amount of sampling difference turns 0.868 into 1.14.)
+
+**What the measurement actually shows is worse than drift.** At the calibration
+commit, on this machine, the small pair's *maximum* was 1.175 — already past the
+1.15 bound that commit shipped. The threshold was never adequate here; it was
+adequate on the machine it was measured on. A single number measured once, on
+one box, is a claim about that box, and this one was read as a claim about the
+code.
+
+A threshold is a claim about a measurement, and a claim whose measurement was
+never portable is stale documentation with a `cargo test` attached to it.
 
 ## Alternatives rejected
 
@@ -56,10 +96,13 @@ the mutation first, at 1.597× against its bound, and it is the pair where
 rendering is a larger fraction of the work. Dropping it would have removed the
 sharper of the two detectors to avoid recalibrating it.
 
-**Chase why the ratio moved from 0.868 to 1.07.** Out of scope here and
-deliberately left open — see below. Absorbing a 23% shift silently into a new
-threshold would be the worse half of this change, so it is written down rather
-than smoothed over.
+~~**Chase why the ratio moved from 0.868 to 1.07.** Out of scope here and
+deliberately left open — see below.~~ Chased immediately afterwards, and there
+was no move to explain; see "The correction" above. Leaving it as an open
+question was still the right call at the time the entry was written — the
+alternative was to absorb an unexplained 23% into a new threshold — and the
+question turned out to be cheap to answer, which is an argument for answering
+rather than recording one.
 
 ## Evidence
 
@@ -107,19 +150,19 @@ tool doing its job on a badly chosen case.
 
 ## What this does not do
 
-**It does not explain the 23% shift.** Between 2026-09-14 and today the small
-pair's clean ratio moved from 0.868 to ~1.07: either the plain select got
-relatively slower or the grouping got relatively faster, over a period that
-includes the late-materialisation and grouped-path work. Nothing here
-bisected it, and it may be entirely intended — a grouping that got cheaper is
-good news. But a 23% move in a ratio two tests depend on is worth a look, and
-this entry is the record that nobody has had one.
+~~**It does not explain the 23% shift.**~~ There was no shift. Answered by
+measurement rather than by bisection, in one checkout: see "The correction".
+What remains true is the weaker and more useful statement — **nobody has ever
+measured this pair on more than one machine at a time**, and both the old
+threshold and the two new ones are numbers from a single box.
 
-**It does not make the test machine-independent.** The bounds are still numbers
-measured on one container, and CI's box is shared with tenants this one is not.
-The small pair's CI excursion of 1.252 now fits under 1.40 with room, but
-nothing proves a worse excursion is impossible — only that the margin went from
-0.06 to 0.31.
+**It does not make the test machine-independent, and that is now known to be
+the actual defect.** The bounds are still numbers measured on one container,
+and CI's box is shared with tenants this one is not. The small pair's CI
+excursion of 1.252 now fits under 1.40 with room, but nothing proves a worse
+excursion is impossible — only that the margin went from 0.06 to 0.31 on this
+machine. The correction above shows the previous bound failing on this machine
+*at the commit that set it*, which is the same failure one machine later.
 
 **Nothing re-runs the measurement automatically.** The table above is a comment,
 and a comment goes stale exactly the way the one it replaces did. A check that

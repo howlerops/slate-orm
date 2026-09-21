@@ -231,14 +231,19 @@ fn the_clock_stops_before_the_rows_are_rendered() {
         // by two pairs whose clean readings differ by 0.17 and whose signals
         // differ by 0.40.
         //
-        // **The single 1.15 was calibrated against a reading that no longer
-        // holds.** The ledger entry of 2026-09-14 recorded the small pair
-        // clean at 11.2 vs 12.9 ms — a ratio of 0.868 — and today it reads
-        // 1.07: the plain select has moved from 13% *faster* than its grouping
-        // to 7% slower. Nothing here chased why; the threshold was simply
-        // sitting 6% above a clean reading, which is not slack. It turned CI
-        // red on 2026-09-21 at 1.252, on a commit that touched no crate
-        // `slate-wasm` compiles.
+        // **The single 1.15 was never portable, which was worth finding out
+        // rather than guessing at.** It turned CI red on 2026-09-21 at 1.252,
+        // on a commit touching no crate `slate-wasm` compiles. The first
+        // explanation written here was that the reading under it had drifted
+        // — the 2026-09-14 entry records the small pair clean at 0.868 and it
+        // reads 1.07 today — and that was wrong: 0.868 was measured on another
+        // machine. Checking out that commit and measuring it *here* gives
+        // 1.111 – 1.175. Nothing drifted; the pair reads about the same now as
+        // then, and the 1.15 bound was already inside its range on this
+        // machine on the day it was set.
+        //
+        // So a bound is a claim about a machine as much as about the code, and
+        // these two are this container's. That is the honest limit of them.
         //
         // Not more samples. `paired` was measured at nine and at twenty-five
         // and the small pair did not move (1.048–1.080 against 1.046–1.078),
