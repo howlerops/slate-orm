@@ -145,9 +145,10 @@ generator for a file format that does not exist.
 The refusal in §4 was the cheap half. The expensive half is that a stored
 schema changes what can be *allowed*, not only how a refusal reads.
 
-Before it, the test pinning this behaviour was called
-`adding_a_nullable_column_is_not_a_migration` and asserted a refusal, with a
-comment giving the reason: "the runner cannot tell an appended column from a
+Before it, the test pinning this behaviour asserted a *refusal*. It is
+`adding_a_nullable_column_is_not_a_migration_but_it_is_a_new_layout` now and
+asserts the opposite; it was called `adding_a_nullable_column_is_not_a_migration`
+then, and its comment gave the reason: "the runner cannot tell an appended column from a
 retyped one and the safe answer to 'I cannot tell' is no… **This is the
 sharpest limitation of the fingerprint and it is recorded rather than papered
 over: a genuinely additive change needs a hand.**"
