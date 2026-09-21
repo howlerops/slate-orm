@@ -145,6 +145,8 @@ has no such intermediate state.
 view answers "no table named `recent_books`", which is wrong — it exists, and
 it is not usable *there*. That is a message to improve, not a hole, and
 improving it means naming views in a place that can afford to know about them.
+"Where step 2 landed" below records where that place turned out to be, and it
+is one function rather than the several this paragraph assumed.
 
 ### Where step 1 landed
 
@@ -181,11 +183,30 @@ because the query was resolved against the same `TableDef`, the view's because
 a view may not narrow columns — so the conjunction needs no rewriting. That is
 the second place the no-projection rule pays for itself.
 
-**The wording cost is still unpaid**, and is now narrower than this section
-predicted: `query` no longer answers "no table named `recent`" for a declared
-view, but every other handler still does. That is the correct answer for a
-write (§4) and a misleading one for a join, where the honest refusal would be
-"`recent` is a view, and a join cannot read through one yet".
+**The wording cost is paid, in one place.** `Head::table` is the single
+function that produces a `NOT_FOUND` for a name, and every handler but `query`
+reaches it, so teaching *it* about views gives the honest refusal —
+"`recent` is a view over `books`, and only a plain query can read through
+one" — to writes, joins, chains, aggregates, explains and relations at once.
+Nothing about which paths accept a view moved: `no_such_table` returns a
+`Status` and only a `Status`, so however it is called it cannot hand anybody a
+view. That is a structural guarantee rather than a promise in
+`check_handlers.py`'s roster, and it is why the roster's third entry is not a
+widening of step 2's one-read-path rule.
+
+It names the base table because §4 already said the write refusal should, and a
+join refusal saying less than the write refusal about the same view would be an
+inconsistency nobody could explain. §2 points the same way: the caller needs the
+grant on the base table regardless, so the design already sends them there.
+
+The disclosure was weighed and is small. The refusal is produced before any
+grant is checked, so it reaches a caller who may hold nothing — but table names
+are already enumerable to such a caller, because an unknown name answers
+`NOT_FOUND` and a known one with no grant answers `PERMISSION_DENIED`, a split
+`Head::authorized_table` documents as deliberate and Postgres-matching. What
+the message adds over that is one probe's worth of *linkage*: which of those
+tables this view reads. Withholding it would buy that one probe and cost every
+operator a refusal they cannot act on.
 
 ## 4. Writes through a view are refused
 

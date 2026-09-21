@@ -57,6 +57,13 @@ impl Head {
         self
     }
 
+    fn no_such_table(&self, name: &str) -> Status {
+        if self.views.contains_key(name) {
+            return Status::new(Code::NotFound, format!("`{name}` is a view"));
+        }
+        Status::new(Code::NotFound, format!("no table named `{name}`"))
+    }
+
     fn join_from_proto(
         wire: &pb::JoinQuery,
         catalog: &Catalog,
@@ -469,7 +476,7 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
             ]
             path.write_text(PREAMBLE.replace(converter, "") + "}\n")
         elif body == "NO_VIEWS":
-            # Only the two view functions are trimmed, so the case fails on
+            # Only the three view functions are trimmed, so the case fails on
             # rule 6 rather than on a rule it is not named for.
             views = PREAMBLE[
                 PREAMBLE.index("    fn authorized_read_source(") : PREAMBLE.index(

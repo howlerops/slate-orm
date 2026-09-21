@@ -451,11 +451,60 @@ impl<S: KvStore + KvReadStore> Head<S> {
     }
 
     fn table(&self, name: &str) -> Result<&TableDef, Status> {
-        self.pool.catalog().table_by_name(name).ok_or_else(|| {
-            // `NOT_FOUND` rather than `INVALID_ARGUMENT`: the request is
-            // well-formed, this catalog simply has no such table.
-            Status::new(Code::NotFound, format!("no table named `{name}`"))
-        })
+        self.pool
+            .catalog()
+            .table_by_name(name)
+            .ok_or_else(|| self.no_such_table(name))
+    }
+
+    /// The refusal for a name this catalog holds no table for.
+    ///
+    /// `NOT_FOUND` rather than `INVALID_ARGUMENT`: the request is well-formed,
+    /// this catalog simply has no such table.
+    ///
+    /// # Why a declared view gets a different sentence
+    ///
+    /// Every path but `query` resolves through here, so a caller who declared
+    /// `[[views]] name = "notes"` and then joined it used to be told *"no table
+    /// named `notes`"* — which reads as a typo and sends them to check a file
+    /// where the name is spelled correctly. `docs/views.md` §3a predicted that
+    /// message and called it the cost of the build order; this is the message
+    /// paying it back. Nothing about which paths accept a view changes: this
+    /// function returns a `Status` and only a `Status`, so however it is
+    /// called it cannot hand anybody a view. That is the guarantee, and it is
+    /// structural rather than a promise in `check_handlers.py`'s roster.
+    ///
+    /// # Why it names the base table
+    ///
+    /// `docs/views.md` §4 settled this for the write refusal — *"the refusal
+    /// should name the base table, because the useful next step is to write to
+    /// that"* — and a join refusal that said less than the write refusal about
+    /// the same view would be an inconsistency nobody could explain. §2 points
+    /// the same way: a view is not a privilege boundary, the caller needs the
+    /// grant on the base table anyway, and the whole design already sends them
+    /// there.
+    ///
+    /// It was nearly written the other way. This refusal is produced before any
+    /// grant is checked — `authorized_table` calls `table` first — so it is
+    /// said to a caller who may hold nothing, and a *link* between two names is
+    /// more than the table-existence disclosure `authorized_table` documents as
+    /// deliberate. What decided it is that the link is already derivable: an
+    /// unknown name answers `NOT_FOUND` and a known one with no grant answers
+    /// `PERMISSION_DENIED`, so a caller who can send two requests can already
+    /// enumerate table names, and the only thing withheld would be which of
+    /// them this view reads. That is one probe saved against an operator
+    /// reading a refusal they cannot act on.
+    fn no_such_table(&self, name: &str) -> Status {
+        if let Some(view) = self.views.get(name) {
+            return Status::new(
+                Code::NotFound,
+                format!(
+                    "`{name}` is a view over `{}`, and only a plain query can read through one",
+                    view.table
+                ),
+            );
+        }
+        Status::new(Code::NotFound, format!("no table named `{name}`"))
     }
 
     /// The table, if this caller holds a grant for `action` on it.

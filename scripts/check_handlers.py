@@ -207,13 +207,20 @@ AUTHORIZES = re.compile(r"authorize_\w+\(")
 #: Reading the view registry, which resolves a name the catalog does not hold.
 VIEWS = re.compile(r"self\.views")
 
-#: The functions allowed to turn a view's name into its base table.
+#: The functions allowed to read the view registry at all.
 #:
-#: One, and the narrowness is the feature: `docs/views.md` §3a's build order is
-#: "opt *one* read path in, deliberately", and a roster of one is what makes
-#: the second arrive as a diff somebody has to justify rather than as a line
-#: nobody notices. Widening this is a decision about which handlers may read
+#: Exactly one of them turns a view's name into its base table, and that
+#: narrowness is the feature: `docs/views.md` §3a's build order is "opt *one*
+#: read path in, deliberately", and a roster with one resolver on it is what
+#: makes the second arrive as a diff somebody has to justify rather than as a
+#: line nobody notices. Widening it is a decision about which handlers may read
 #: through a view, and §4 already says writes may not.
+#:
+#: The other two are here because the rule is written on the *read*, not on
+#: what the read is for — a rule that tried to tell "resolving" from "merely
+#: looking" would be guessing at intent from a regex. Each entry's reason says
+#: which it is, and for both non-resolvers the return type settles it: a
+#: `Self` and a `Status` are not a `&TableDef`.
 RESOLVES_VIEWS = {
     "authorized_read_source": (
         "the opt-in resolver itself; it authorises the base table through "
@@ -221,6 +228,12 @@ RESOLVES_VIEWS = {
         "the grant both see the base table — `docs/views.md` §1"
     ),
     "serving_views": "the constructor that installs the registry; it resolves nothing",
+    "no_such_table": (
+        "builds the refusal for a name the catalog has no table for, and reads "
+        "the registry only to say a view is a view rather than a typo. Its "
+        "return type is `Status`: it cannot hand a caller a `TableDef`, so "
+        "widening it is not a way to reach a view"
+    ),
 }
 
 

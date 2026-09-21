@@ -193,13 +193,19 @@ async fn the_callers_ordinals_are_the_base_tables() {
     assert!(none.is_empty(), "{none:?}");
 }
 
-/// Every path that has not opted in still refuses the name.
+/// Every path that has not opted in still refuses the name, and says why.
 ///
-/// This is `docs/views.md` §3a asserted rather than argued. A write, a join, an
-/// aggregate and an explain all resolve through `Catalog::table_by_name`, so a
-/// view is not there to find — and the day one of them starts resolving views
-/// too, this fails instead of silently accepting a write through one, which
-/// §4 refuses.
+/// This is `docs/views.md` §3a asserted rather than argued. An insert, a
+/// predicate delete, a point get, a join, an aggregate and an explain all
+/// resolve through `Catalog::table_by_name`, so a view is not there to find —
+/// and the day one of them starts resolving views too, this fails instead of
+/// silently accepting a write through one, which §4 refuses.
+///
+/// Six of the paths, not all of them: `chain` shares `authorize_join_inputs`
+/// with `join`, and the relation steps share `Head::table` with everything
+/// else, so the argument that covers them is structural and the sample is what
+/// is asserted. The structural half is that every one of them reaches
+/// `Head::table`, which is the only function producing this refusal.
 #[tokio::test]
 async fn only_the_query_path_knows_what_a_view_is() {
     let files = Files::new();
@@ -234,6 +240,64 @@ async fn only_the_query_path_knows_what_a_view_is() {
         .expect_err("explain has not opted in");
     assert_eq!(explained.code(), tonic::Code::NotFound, "{explained:?}");
 
+    let joined = client
+        .join(APP.on(proto::JoinRequest {
+            join: Some(proto::JoinQuery {
+                inputs: vec![
+                    proto::JoinInput {
+                        query: Some(query("docs")),
+                        ..Default::default()
+                    },
+                    proto::JoinInput {
+                        query: Some(query("notes")),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        .await
+        .expect_err("a join naming a view is refused; `views.md` §1 has no answer for one");
+    assert_eq!(joined.code(), tonic::Code::NotFound, "{joined:?}");
+
+    let got = client
+        .get(APP.on(proto::GetRequest {
+            table: "notes".to_owned(),
+            primary_key: Some(row(vec![u64_value(1)])),
+            ..Default::default()
+        }))
+        .await
+        .expect_err("a point get through a view is refused");
+    assert_eq!(got.code(), tonic::Code::NotFound, "{got:?}");
+
+    let grouped = client
+        .aggregate(APP.on(proto::AggregateRequest {
+            aggregate: Some(proto::AggregateQuery {
+                input: Some(query("notes")),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        .await
+        .expect_err("an aggregate over a view is refused");
+    assert_eq!(grouped.code(), tonic::Code::NotFound, "{grouped:?}");
+
+    // Every refusal above says *view*, not "no such table".
+    //
+    // Asserted on the message and not only on the code, because the code
+    // cannot tell the two apart and the difference is the whole of what this
+    // costs an operator: a name they declared themselves, reported as though
+    // they had mistyped it. This is also the step-2 lesson applied — a test
+    // that asserts a status code cannot see a change in what the status
+    // code's message contains.
+    for refusal in [&insert, &delete, &explained, &joined, &got, &grouped] {
+        assert!(
+            refusal.message().contains("`notes` is a view over `docs`"),
+            "a declared view should be named as one, over its base table: {refusal:?}"
+        );
+    }
+
     // The table itself still explains, so the refusals above are about the
     // *name* and not about the handler being broken.
     client
@@ -243,6 +307,36 @@ async fn only_the_query_path_knows_what_a_view_is() {
         }))
         .await
         .expect("explain answers for a table");
+}
+
+/// A name that is neither a table nor a view still reads as a typo.
+///
+/// The contrast case for the test above, and the reason it is separate: the
+/// two messages are one `if` apart, so a fixture asserting only "a view says
+/// view" would pass just as well if *every* unknown name said it. What an
+/// operator needs is the discrimination, not either half of it.
+#[tokio::test]
+async fn a_name_that_is_neither_gets_the_ordinary_refusal() {
+    let files = Files::new();
+    let serving = serving(&files);
+    let mut client = connect(&serving).await;
+
+    let refused = rows(&mut client, &APP, query("nowhere"))
+        .await
+        .expect_err("an unknown name is refused");
+    assert_eq!(refused.code(), tonic::Code::NotFound, "{refused:?}");
+    assert!(
+        refused.message().contains("no table named `nowhere`"),
+        "an unknown name is a typo, not a view: {refused:?}"
+    );
+    assert!(
+        !refused.message().contains("is a view"),
+        "and it must not be described as one: {refused:?}"
+    );
+    assert!(
+        !refused.message().contains("docs"),
+        "nor point at a table it has nothing to do with: {refused:?}"
+    );
 }
 
 /// A caller with no grant on the base table cannot read through a view.
