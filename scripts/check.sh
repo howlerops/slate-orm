@@ -95,6 +95,7 @@ cited-docs|.|python3 scripts/check_cited_docs.py
 cited-docs-guard|.|python3 scripts/test_check_cited_docs.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
+conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
 proto-copies|.|python3 scripts/check_proto_copies.py

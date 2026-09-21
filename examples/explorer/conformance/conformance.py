@@ -32,7 +32,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, NamedTuple
 
 # The demo's default ports. Overridable, because `./run.sh --conformance`
 # starts the whole stack on ports the kernel picked: a suite that can only run
@@ -838,6 +838,72 @@ def normalise(answer: Any) -> Any:
     return answer
 
 
+class Finding(NamedTuple):
+    """One thing that went wrong, and which case (if any) it belongs to.
+
+    `case` is the name of the case that failed, or `None` for a finding that
+    is not about a single case — a `MUST_DIFFER` pair is a relationship
+    *between* two cases and can fail while both of them pass.
+
+    A list of display strings was what this held before, and the tally counted
+    the lines beginning `FAIL`. That gets both numbers wrong the moment a
+    finding is not one-to-one with a case: a `MUST_DIFFER` pair returning the
+    same answer when all 130 cases agreed printed `129 passed, 1 failed`,
+    where the truth is 130 passed and one finding that is not a case at all.
+    """
+
+    case: str | None
+    lines: list[str]
+
+
+def tally(cases: int, findings: list[Finding]) -> tuple[int, int]:
+    """How many cases passed, and how many findings there are.
+
+    Separate counts because they count different things, which is the whole
+    defect this replaces. A case that produces two findings is still one case
+    that failed; a finding about no case subtracts from nothing.
+    """
+    broken = {f.case for f in findings if f.case is not None}
+    return cases - len(broken), len(findings)
+
+
+def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
+    """Every `MUST_DIFFER` pair that did not, as findings about no case.
+
+    Lifted out of `main` so it can be tested: it takes the agreed answers and
+    returns findings, with no adapter anywhere, which is the only reason the
+    `case=None` below is checked by anything. It was not, and a mutation that
+    attributed these to one of the pair's cases survived a suite that tested
+    the arithmetic and not what fed it.
+
+    `case=None` because a pair is a relationship *between* two cases. Both can
+    agree across the three SDKs — both pass — and still fail this, because
+    what fails is that they agree with each *other*. Blaming either would take
+    a passing case off the count.
+    """
+    findings: list[Finding] = []
+    for quiet, loud in MUST_DIFFER:
+        if quiet not in agreed_by_name or loud not in agreed_by_name:
+            # One of them already failed, or is missing from CASES entirely —
+            # the second is worth saying out loud, because a renamed case would
+            # otherwise turn this check off silently.
+            missing = [n for n in (quiet, loud) if n not in agreed_by_name]
+            findings.append(Finding(None, [
+                f"FAIL  the must-differ pair ({quiet!r}, {loud!r}) is not "
+                f"comparable: {', '.join(repr(n) for n in missing)} produced no "
+                f"agreed answer"
+            ]))
+            continue
+        if agreed_by_name[quiet] == agreed_by_name[loud]:
+            findings.append(Finding(None, [
+                f"FAIL  {quiet!r} and {loud!r} returned the same answer, so "
+                f"whatever separates them was dropped by all three clients or "
+                f"ignored by the server",
+                f"    {agreed_by_name[quiet][:400]}",
+            ]))
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verbose", action="store_true", help="print every case")
@@ -848,7 +914,7 @@ def main() -> int:
 
     adapters = {sdk: getattr(args, sdk) for sdk in DEFAULTS}
 
-    failures: list[str] = []
+    findings: list[Finding] = []
     # Every case's agreed answer, for the `MUST_DIFFER` check below. Only the
     # cases where all three agreed are recorded: a disagreement is already a
     # failure and comparing one of three answers to another case would say
@@ -862,9 +928,10 @@ def main() -> int:
         down = [sdk for sdk, a in answers.items()
                 if isinstance(a, dict) and "__transport__" in a]
         if down:
-            failures.append(f"FAIL  {name}: adapters unreachable: {', '.join(down)}")
-            for sdk in down:
-                failures.append(f"    {sdk}: {answers[sdk]['__transport__']}")
+            findings.append(Finding(name, [
+                f"FAIL  {name}: adapters unreachable: {', '.join(down)}",
+                *(f"    {sdk}: {answers[sdk]['__transport__']}" for sdk in down),
+            ]))
             continue
 
         rendered = {sdk: json.dumps(a, sort_keys=True) for sdk, a in answers.items()}
@@ -873,46 +940,29 @@ def main() -> int:
             agreed = next(iter(answers.values()))
             refused = isinstance(agreed, dict) and "error" in agreed
             if refused and name not in EXPECTED_REFUSALS:
-                failures.append(
+                findings.append(Finding(name, [
                     f"FAIL  {name} ({identity}): all three refused it, and this "
-                    f"case is supposed to return an answer"
-                )
-                failures.append(f"    {json.dumps(agreed)[:400]}")
+                    f"case is supposed to return an answer",
+                    f"    {json.dumps(agreed)[:400]}",
+                ]))
                 continue
             if not refused and name in EXPECTED_REFUSALS:
-                failures.append(
+                findings.append(Finding(name, [
                     f"FAIL  {name} ({identity}): listed as a refusal and all "
                     f"three answered it; the list is stale"
-                )
+                ]))
                 continue
             agreed_by_name[name] = rendered[next(iter(rendered))]
             if args.verbose:
                 print(f"  ok    {name}")
             continue
 
-        failures.append(f"FAIL  {name} ({identity}): the adapters disagree")
-        for sdk, text in rendered.items():
-            failures.append(f"    {sdk:7} {text[:400]}")
+        findings.append(Finding(name, [
+            f"FAIL  {name} ({identity}): the adapters disagree",
+            *(f"    {sdk:7} {text[:400]}" for sdk, text in rendered.items()),
+        ]))
 
-    for quiet, loud in MUST_DIFFER:
-        if quiet not in agreed_by_name or loud not in agreed_by_name:
-            # One of them already failed, or is missing from CASES entirely —
-            # the second is worth saying out loud, because a renamed case would
-            # otherwise turn this check off silently.
-            missing = [n for n in (quiet, loud) if n not in agreed_by_name]
-            failures.append(
-                f"FAIL  the must-differ pair ({quiet!r}, {loud!r}) is not "
-                f"comparable: {', '.join(repr(n) for n in missing)} produced no "
-                f"agreed answer"
-            )
-            continue
-        if agreed_by_name[quiet] == agreed_by_name[loud]:
-            failures.append(
-                f"FAIL  {quiet!r} and {loud!r} returned the same answer, so "
-                f"whatever separates them was dropped by all three clients or "
-                f"ignored by the server"
-            )
-            failures.append(f"    {agreed_by_name[quiet][:400]}")
+    findings.extend(must_differ_findings(agreed_by_name))
 
     print()
     # `FAIL  <what>` per finding and a closing `N passed, M failed`, which is
@@ -931,18 +981,19 @@ def main() -> int:
     #
     # The human-facing line stays, because "130 cases: the three SDKs agree on
     # all of them" says something the counts do not.
-    broken = sum(1 for line in failures if line.startswith("FAIL"))
-    if failures:
+    passed, failed = tally(len(CASES), findings)
+    if findings:
         print(f"{len(CASES)} cases, disagreements:")
         print()
-        for line in failures:
-            print(line)
+        for finding in findings:
+            for line in finding.lines:
+                print(line)
         print()
-        print(f"{max(len(CASES) - broken, 0)} passed, {broken} failed")
+        print(f"{passed} passed, {failed} failed")
         return 1
     print(f"{len(CASES)} cases: the three SDKs agree on all of them")
     print()
-    print(f"{len(CASES)} passed, 0 failed")
+    print(f"{passed} passed, {failed} failed")
     return 0
 
 
