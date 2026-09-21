@@ -1,4 +1,4 @@
-import { type Column, columnWire } from "./join.js";
+import { type Column, columnWire, type Window, windowWire } from "./join.js";
 import { type Scalar, scalarsToWire } from "./scalar.js";
 import { rowToWire, type Value, valueToWire } from "./value.js";
 
@@ -226,7 +226,33 @@ export interface Query {
    * tail of it, so an ordinal still means a column.
    */
   readonly compute?: Scalar[];
+  /**
+   * Values computed over a partition, one per row, named from a sort key with
+   * `windowed`.
+   *
+   * They come back in each row's `windowed` list — a third list beside
+   * `values` and `computed`, because a window sits past every computed value
+   * and folding them together would make "the second computed value" mean a
+   * different position depending on how many windows were asked for.
+   *
+   * See {@link Window} for what a window costs, which the request does not
+   * show: a query carrying one does not stream, and no `limit` bounds it.
+   */
+  readonly window?: Window[];
 }
+
+/**
+ * One sort key in its wire form.
+ *
+ * Extracted when windows arrived and needed the same conversion for their own
+ * `ORDER BY`: two copies of a direction mapping is two places for a direction
+ * to be written backwards.
+ */
+export const sortKeyWire = (key: SortKey): Record<string, unknown> => ({
+  column: key.ref ? columnWire(key.ref) : columnRef(key.column),
+  direction:
+    key.direction === "desc" ? "SORT_DIRECTION_DESC" : "SORT_DIRECTION_ASC",
+});
 
 /**
  * A query in its wire form.
@@ -248,12 +274,13 @@ export function queryToWire(
   if (query.columns && query.columns.length > 0) {
     out["projection"] = { columns: query.columns.map(columnRef) };
   }
+  // Before the sort, here and in the message, because a sort key may name a
+  // window and nothing a window names may be a window.
+  if (query.window && query.window.length > 0) {
+    out["window"] = query.window.map(windowWire);
+  }
   if (query.sort && query.sort.length > 0) {
-    out["sort"] = query.sort.map((key) => ({
-      column: key.ref ? columnWire(key.ref) : columnRef(key.column),
-      direction:
-        key.direction === "desc" ? "SORT_DIRECTION_DESC" : "SORT_DIRECTION_ASC",
-    }));
+    out["sort"] = query.sort.map(sortKeyWire);
   }
   if (query.compute && query.compute.length > 0) {
     out["compute"] = scalarsToWire(query.compute);

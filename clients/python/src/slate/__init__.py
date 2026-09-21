@@ -86,6 +86,7 @@ from .query import (
     ScanOrder,
     SortKey,
     UpdateWhere,
+    Window,
     asc,
     desc,
 )
@@ -199,6 +200,7 @@ __all__ = [
     "UpdateWhere",
     "ValueType",
     "Vector",
+    "Window",
     "WriteResult",
     "all_of",
     "any_of",

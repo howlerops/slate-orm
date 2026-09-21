@@ -42,17 +42,19 @@ class Row(Sequence[PyValue]):
     Indexable by position, and by name when the `Table` it came from is known.
     """
 
-    __slots__ = ("_computed", "_table", "_values")
+    __slots__ = ("_computed", "_table", "_values", "_windowed")
 
     def __init__(
         self,
         values: Sequence[PyValue],
         table: Table | None = None,
         computed: Sequence[PyValue] = (),
+        windowed: Sequence[PyValue] = (),
     ) -> None:
         self._values = tuple(values)
         self._table = table
         self._computed = tuple(computed)
+        self._windowed = tuple(windowed)
 
     @staticmethod
     def from_proto(wire: pb.Row, table: Table | None = None) -> Row:
@@ -60,6 +62,7 @@ class Row(Sequence[PyValue]):
             [from_value(v) for v in wire.values],
             table,
             [from_value(v) for v in wire.computed],
+            [from_value(v) for v in wire.windowed],
         )
 
     # There is deliberately no `to_proto` here. A `Row` that came back from a
@@ -160,6 +163,27 @@ class Row(Sequence[PyValue]):
                 f"one."
             )
         return self._computed[index]
+
+    @property
+    def window_values(self) -> tuple[PyValue, ...]:
+        """Every window value, in the order the query asked for them.
+
+        A third list beside `values` and `computed_values`, for the reason
+        those two are separate: a window sits past every computed value in the
+        server's own flat row, so folding them together would make "the second
+        computed value" mean a different position depending on how many windows
+        the query asked for. Finding 4 again, one list over.
+        """
+        return self._windowed
+
+    def windowed(self, index: int) -> PyValue:
+        """The `index`th window value of the query that produced this row."""
+        if index >= len(self._windowed):
+            raise IndexError(
+                f"the row carries {len(self._windowed)} window value(s), so "
+                f"there is no window {index}. The query did not compute one."
+            )
+        return self._windowed[index]
 
 
 class JoinedRow(Sequence["Row | None"]):

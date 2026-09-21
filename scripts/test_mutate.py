@@ -76,6 +76,27 @@ else:
 '''
 
 
+#: The same stand-in, speaking `go test`.
+#:
+#: The bare trailing `FAIL` is the point: `go test` prints it as its last line
+#: whether a test failed or the package would not build, so a dialect that took
+#: it as proof a suite reported would read a build error as a clean run.
+GO_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "WILL_NOT_BUILD" in text:
+    print("./x.go:3:2: undefined: nope", file=sys.stderr)
+    print("FAIL")
+    sys.exit(1)
+if "MUTATED" in text:
+    print("--- FAIL: TestANamedCase (0.00s)")
+    print("FAIL")
+    print("FAIL\texample.com/pkg\t0.4s")
+else:
+    print("ok  \texample.com/pkg\t0.4s")
+'''
+
+
 def run(spec: str, subject: Path, fake: Path) -> tuple[int, str]:
     """`mutate.py` over `spec`, with its command pointed at the fake."""
     finished = subprocess.run(
@@ -112,11 +133,14 @@ def case(
         pytest_fake.write_text(PYTEST_FAKE)
         node_fake = home / "node_fake.py"
         node_fake.write_text(NODE_FAKE)
+        go_fake = home / "go_fake.py"
+        go_fake.write_text(GO_FAKE)
         spec = (
             body.replace("__SUBJECT__", str(subject))
             .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
             .replace("__PYTEST__", f'"{sys.executable}", "{pytest_fake}", "{subject}"')
             .replace("__NODE__", f'"{sys.executable}", "{node_fake}", "{subject}"')
+            .replace("__GO__", f'"{sys.executable}", "{go_fake}", "{subject}"')
         )
         code, output = run(spec, subject, fake)
         problems = []
@@ -331,6 +355,31 @@ def main() -> int:
             ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
             1,
             ["reported no test results at all"],
+        ),
+        case(
+            "a go test failure is read through the go dialect",
+            '{"file": "__SUBJECT__", "command": [__GO__], "dialect": "go",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "TestANamedCase"],
+        ),
+        case(
+            "a go build error is not read as a suite that reported",
+            # `go test` prints a bare `FAIL` for a package that would not
+            # build, with no per-package line and no test names. Counting that
+            # bare line as a report is the difference between "the mutation was
+            # not caught" and "nothing ran", which the docstring calls failure
+            # mode 2 -- and the two look identical from the outside.
+            #
+            # This case earned its keep before it was ever committed: the
+            # marker was first written `^(?:ok|FAIL)\\s+\\S+`, and `\\s` matches
+            # the newline, so a bare `FAIL` followed by a compiler error on the
+            # next line parsed as a package verdict and the build failure was
+            # scored a survivor.
+            '{"file": "__SUBJECT__", "command": [__GO__], "dialect": "go",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "WILL_NOT_BUILD"}]}',
+            1,
+            ["NOTHING RAN"],
         ),
         case_fresh_bytecode(),
     ]

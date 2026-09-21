@@ -39,6 +39,7 @@ from .expr import (
     computed_ref,
     group_key_ref,
     joined_computed_ref,
+    windowed_ref,
 )
 from .scalar import Operand, Scalar, as_scalar
 from .schema import Table, fingerprint_of
@@ -200,6 +201,7 @@ class Query(_QueryBase):
         self._limit: int | None = None
         self._offset = 0
         self._after: list[PyValue] = []
+        self._window: list[Window] = []
 
     def where(self, filter: Expr) -> Query:
         """Keep only rows this admits. Replaces any earlier filter."""
@@ -240,8 +242,37 @@ class Query(_QueryBase):
         self._projection = pb.Projection()
         return self
 
+    def window(self, *windows: Window) -> Query:
+        """Append windows. `windowed(i)` names the `i`th, in a sort key.
+
+        What this costs, because the request does not show it: a window has to
+        see every selected row before it can answer for any of them, so a query
+        carrying one does not stream and is bounded by the server's
+        `max_window_rows` rather than by its `limit`. The limit cannot help —
+        `row_number()` numbers every row before anything knows which ten are
+        first — and the server's refusal says so rather than suggesting one.
+        """
+        self._window.extend(windows)
+        return self
+
+    def windowed(self, index: int) -> ColumnRef:
+        """The `index`th window value, for a sort key.
+
+        A method on `Query` rather than on `Columns`, because a window belongs
+        to the *query* and not to a table: two queries over one table can
+        compute different windows, and a reference that came from the table
+        would not know which.
+        """
+        return windowed_ref(index)
+
     def sort(self, *keys: SortKey) -> Query:
-        """Order the result. Replaces any earlier sort."""
+        """Order the result. Replaces any earlier sort.
+
+        The one place a `windowed(i)` reference may appear, and the reason is
+        SQL's own: a window is computed after the filter and before the sort,
+        so ordering by one is exactly what it is for. A filter naming one is
+        refused by the server.
+        """
         self._sort = list(keys)
         return self
 
@@ -290,6 +321,9 @@ class Query(_QueryBase):
         query = self._base_proto()
         if self._projection is not None:
             query.projection.CopyFrom(self._projection)
+        # Before the sort, here and in the message, because a sort key may name
+        # a window and nothing a window names may be a window.
+        query.window.extend(w.to_proto() for w in self._window)
         query.sort.extend(k.to_proto() for k in self._sort)
         if self._limit is not None:
             query.limit = self._limit
@@ -380,6 +414,108 @@ class Agg:
         if self.column is not None:
             aggregate.column.CopyFrom(self.column.to_proto())
         return aggregate
+
+
+@dataclasses.dataclass(frozen=True)
+class Window:
+    """One value computed over a partition, one per input row.
+
+    **Not an aggregate, and the difference is the cardinality.** `GROUP BY`
+    folds ten thousand rows into four; a window answers "what is this row's
+    rank among its peers", which has one answer per input row. So a query
+    carrying one still returns `Row`s, and the values arrive in
+    `Row.window_values` rather than in a `Group`.
+
+    # The frame, which is where SQL surprises people
+
+    `Window.aggregate_over(Agg.sum(x)).over(partition=[kind])` is the
+    partition's total, repeated on every row. Add an `order` and it becomes a
+    **running** total — that is SQL's own default frame changing, not a
+    different spelling, and the server follows the standard. Rows tied on the
+    order columns are *peers* and all see the value that includes all of them.
+
+    Built with the factories below rather than directly. The combinations the
+    server refuses — a ranking function, `lag` or `lead` with no order, a
+    running `count_distinct`, an offset of zero — are refused *there* rather
+    than duplicated here, so there is one statement of each rule; the
+    factories' signatures only make the common mistakes harder to write.
+    """
+
+    function: pb.WindowFunction.ValueType
+    aggregate: Agg | None = None
+    column: ColumnRef | None = None
+    offset: int = 0
+    partition: tuple[ColumnRef, ...] = ()
+    order: tuple[SortKey, ...] = ()
+
+    @staticmethod
+    def row_number() -> Window:
+        """The row's position in its partition, from 1. Needs an order."""
+        return Window(pb.WINDOW_FUNCTION_ROW_NUMBER)
+
+    @staticmethod
+    def rank() -> Window:
+        """Peers share a rank and the next one skips the gap: 1, 1, 3."""
+        return Window(pb.WINDOW_FUNCTION_RANK)
+
+    @staticmethod
+    def dense_rank() -> Window:
+        """The same with no gaps: 1, 1, 2."""
+        return Window(pb.WINDOW_FUNCTION_DENSE_RANK)
+
+    @staticmethod
+    def lag(column: ColumnRef, offset: int = 1) -> Window:
+        """The value `offset` rows earlier in the partition's order, or `None`.
+
+        Defaults to 1 because that is what `LAG(x)` means in SQL. Zero is
+        refused by the server: it is the current row spelled obscurely, and far
+        likelier a bug than an intention.
+        """
+        return Window(pb.WINDOW_FUNCTION_LAG, column=column, offset=offset)
+
+    @staticmethod
+    def lead(column: ColumnRef, offset: int = 1) -> Window:
+        """The value `offset` rows later, or `None`."""
+        return Window(pb.WINDOW_FUNCTION_LEAD, column=column, offset=offset)
+
+    @staticmethod
+    def aggregate_over(aggregate: Agg) -> Window:
+        """Any ordinary aggregate, over the frame.
+
+        Takes an `Agg` rather than repeating its seven factories, so that
+        `Agg.sum(c)` means the same thing grouped or windowed and a new
+        aggregate has one place to be added.
+        """
+        return Window(pb.WINDOW_FUNCTION_AGGREGATE, aggregate=aggregate)
+
+    def over(
+        self,
+        partition: Sequence[ColumnRef] = (),
+        order: Sequence[SortKey] = (),
+    ) -> Window:
+        """The `OVER (...)` clause.
+
+        An empty `partition` is one partition over the whole result, which is
+        what SQL means by omitting the clause — not one partition per row. An
+        `order` is the window's own and not the query's: it decides peer groups
+        and turns an aggregate's frame into a running one.
+        """
+        return dataclasses.replace(
+            self, partition=tuple(partition), order=tuple(order)
+        )
+
+    def to_proto(self) -> pb.Window:
+        window = pb.Window(
+            function=self.function,
+            offset=self.offset,
+            partition_by=[c.to_proto() for c in self.partition],
+            order=[k.to_proto() for k in self.order],
+        )
+        if self.aggregate is not None:
+            window.aggregate.CopyFrom(self.aggregate.to_proto())
+        if self.column is not None:
+            window.column.CopyFrom(self.column.to_proto())
+        return window
 
 
 class _Grouping:

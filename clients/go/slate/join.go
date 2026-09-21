@@ -102,6 +102,9 @@ const (
 	// refJoinedComputed is the nth value the *join* computes, which belongs to
 	// no input and sits past every input's columns.
 	refJoinedComputed
+	// refWindowed is the nth value the query's windows produce. Nameable from
+	// a sort key and nowhere else — see [Windowed].
+	refWindowed
 )
 
 // At names column `ordinal` of input `input`.
@@ -141,6 +144,19 @@ func JoinComputed(n uint32) Column {
 	return Column{Ordinal: Ordinal(n), kind: refJoinedComputed}
 }
 
+// Windowed names the `n`th value the query's windows produce.
+//
+// Usable in a sort key and nowhere else, which is SQL's own rule rather than a
+// limitation here: a window is computed after the filter and before the sort,
+// so a filter naming one would be asking for a value that does not exist yet.
+// The server refuses that by name; this sentence saves the round trip.
+//
+// No input index, for the reason [JoinComputed] has none: the value belongs to
+// the request rather than to one of its tables.
+func Windowed(n uint32) Column {
+	return Column{Ordinal: Ordinal(n), kind: refWindowed}
+}
+
 func (c Column) ref() *pb.ColumnRef {
 	switch c.kind {
 	case refComputed:
@@ -151,6 +167,10 @@ func (c Column) ref() *pb.ColumnRef {
 	case refJoinedComputed:
 		return &pb.ColumnRef{
 			Of: &pb.ColumnRef_JoinedComputed{JoinedComputed: uint32(c.Ordinal)},
+		}
+	case refWindowed:
+		return &pb.ColumnRef{
+			Of: &pb.ColumnRef_Windowed{Windowed: uint32(c.Ordinal)},
 		}
 	default:
 		return &pb.ColumnRef{

@@ -125,6 +125,24 @@ DIALECTS = {
         re.compile(r"^not ok \d+ - (?!.*\.ts$)(.+?)\s*$", re.MULTILINE),
         re.compile(r"^# fail \d+\s*$", re.MULTILINE),
     ),
+    # `go test`, which `clients/go` uses: `--- FAIL: TestName (0.00s)` per
+    # failure — indented for a subtest, hence the leading `\s*` — and one
+    # `ok   <package>  0.5s` or `FAIL <package>  0.5s` line per package.
+    #
+    # The report marker demands a package name after the verdict *on the same
+    # line*, because `go test` also prints a bare `FAIL` as its last word on a
+    # failing run. Matching that alone would read a build error — which prints
+    # `FAIL` and no per-package line — as a suite that reported, which is
+    # failure mode 2 in the docstring above wearing a green hat.
+    #
+    # `[ \t]+` and not `\s+`, which is not pedantry: `\s` matches the newline,
+    # so `^(?:ok|FAIL)\s+\S+` reads a bare `FAIL` plus whatever the compiler
+    # printed on the next line as a package verdict. Written that way first,
+    # and the case below caught it.
+    "go": (
+        re.compile(r"^\s*--- FAIL: (\S+)", re.MULTILINE),
+        re.compile(r"^(?:ok|FAIL)[ \t]+\S+", re.MULTILINE),
+    ),
 }
 
 

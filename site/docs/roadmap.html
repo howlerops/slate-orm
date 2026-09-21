@@ -255,7 +255,7 @@
             <td>Window functions</td>
             <td>SQLAlchemy, Drizzle, Diesel</td>
             <td>
-              <strong>Built in the kernel, not yet reachable.</strong>
+              <strong>Built, and reachable from every client.</strong>
               <code>ROW_NUMBER</code>, <code>RANK</code>,
               <code>DENSE_RANK</code>, <code>LAG</code>, <code>LEAD</code> and
               any aggregate over a partition, following SQL&rsquo;s own frame
@@ -263,12 +263,13 @@
               a running value through the current row&rsquo;s peers with one.
               It had to be a new operator rather than a new aggregate:
               <code>GROUP BY</code> folds a row into its group and drops it,
-              and a window keeps every row. <strong>It crosses the wire too</strong>
-              &mdash; the value comes back in its own list, so a client does no
-              ordinal arithmetic. What is left is the three client SDKs, which
-              have no surface for it yet, and the query editor, whose own spec
-              has no window field; it refuses <code>OVER</code> by name and
-              says so.
+              and a window keeps every row. It crosses the wire, and Python, Go
+              and TypeScript can each ask for one &mdash; the value comes back
+              in its own list per row, beside the stored columns and the
+              computed ones, so a client does no ordinal arithmetic and adding
+              a column to a table moves nothing. What is left is this query
+              editor, whose own spec has no window field; it refuses
+              <code>OVER</code> by name and says why.
             </td>
           </tr>
           <tr>

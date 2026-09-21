@@ -1,4 +1,12 @@
-import { type Expr, type Ordinal, type Direction, queryToWire, type Query } from "./query.js";
+import {
+  type Expr,
+  type Ordinal,
+  type Direction,
+  queryToWire,
+  type Query,
+  type SortKey,
+  sortKeyWire,
+} from "./query.js";
 import { type Scalar, scalarsToWire } from "./scalar.js";
 import { type Value, valueToWire } from "./value.js";
 
@@ -27,7 +35,7 @@ export interface Column {
    * because they live in different spaces and an ordinal that is in range in
    * the wrong one is a query about a different column.
    */
-  readonly kind?: "column" | "computed" | "joined-computed";
+  readonly kind?: "column" | "computed" | "joined-computed" | "windowed";
 }
 
 /** Names column `ordinal` of input `input`. */
@@ -75,6 +83,23 @@ export const joinComputed = (n: number): Column => ({
 });
 
 /**
+ * Names the `n`th value the query's windows produce.
+ *
+ * Usable in a sort key and nowhere else, which is SQL's own rule rather than a
+ * limitation here: a window is computed after the filter and before the sort,
+ * so a filter naming one would be asking for a value that does not exist yet.
+ * The server refuses that by name; this sentence saves the round trip.
+ *
+ * No input, for the reason `joinComputed` has none: the value belongs to the
+ * request rather than to one of its tables.
+ */
+export const windowed = (n: number): Column => ({
+  input: 0,
+  ordinal: n,
+  kind: "windowed",
+});
+
+/**
  * Names column `ordinal` of the only input, for grouping one table.
  *
  * `at(0, ordinal)` says the same thing; this reads better where there is no
@@ -91,6 +116,9 @@ export const columnWire = (c: Column): Record<string, unknown> => {
       // No input: the value belongs to the request rather than to one of its
       // tables, and the server refuses a non-zero one here.
       return { joinedComputed: c.ordinal };
+    case "windowed":
+      // No input either, and for the same reason.
+      return { windowed: c.ordinal };
     default:
       return { input: c.input, column: c.ordinal };
   }
@@ -353,6 +381,131 @@ export const maxOf = (column: Column): Aggregate => ({ function: "max", column }
 export const sumOf = (column: Column): Aggregate => ({ function: "sum", column });
 /** `AVG(column)`. */
 export const avgOf = (column: Column): Aggregate => ({ function: "avg", column });
+
+/** What a {@link Window} computes for each row of its partition. */
+export type WindowFunction =
+  | "row-number"
+  | "rank"
+  | "dense-rank"
+  | "lag"
+  | "lead"
+  | "aggregate";
+
+const WINDOW_FUNCTIONS: Record<WindowFunction, string> = {
+  "row-number": "WINDOW_FUNCTION_ROW_NUMBER",
+  rank: "WINDOW_FUNCTION_RANK",
+  "dense-rank": "WINDOW_FUNCTION_DENSE_RANK",
+  lag: "WINDOW_FUNCTION_LAG",
+  lead: "WINDOW_FUNCTION_LEAD",
+  aggregate: "WINDOW_FUNCTION_AGGREGATE",
+};
+
+/**
+ * One value computed over a partition, one per input row.
+ *
+ * Not an {@link Aggregate}, and the difference is the cardinality: a grouped
+ * read folds ten thousand rows into four, and a window answers "what is this
+ * row's rank among its peers", which has one answer per input row. So a query
+ * carrying one still returns rows, and the values arrive in each row's
+ * `windowed` list rather than as groups.
+ *
+ * ## The frame
+ *
+ * `over(aggregateOver(sumOf(c)), { partition: [k] })` is the partition's total,
+ * repeated on every row. Add an `order` and it becomes a *running* total —
+ * SQL's own default frame changing, not a different spelling, and the server
+ * follows the standard. Rows tied on the order columns are peers and all see
+ * the value that includes all of them.
+ *
+ * ## What it costs
+ *
+ * A window has to see every selected row before it can answer for any of them,
+ * so a query carrying one does not stream and is bounded by the server's
+ * `max_window_rows` rather than by its `limit`. The limit cannot help:
+ * `row-number` numbers every row before anything knows which ten are first.
+ */
+export interface Window {
+  readonly function: WindowFunction;
+  /** What `aggregate` computes. Absent for every other function. */
+  readonly aggregate?: Aggregate;
+  /** What `lag` and `lead` read. Absent for the rest. */
+  readonly column?: Column;
+  /**
+   * How far `lag` and `lead` step. Zero is refused by the server: it is the
+   * current row spelled obscurely.
+   */
+  readonly offset?: number;
+  /**
+   * `PARTITION BY`. Absent or empty is one partition over the whole result,
+   * which is what SQL means by omitting the clause — not one per row.
+   */
+  readonly partition?: Column[];
+  /**
+   * The window's own `ORDER BY`, which is not the query's. It decides peer
+   * groups and turns an aggregate's frame into a running one. Required by
+   * every function except `aggregate`: the server refuses an unordered rank
+   * rather than answering 1 on every row.
+   */
+  readonly order?: SortKey[];
+}
+
+/** `ROW_NUMBER()`: the row's position in its partition, from 1. */
+export const rowNumber = (): Window => ({ function: "row-number" });
+/** `RANK()`: peers share a rank and the next one skips the gap — 1, 1, 3. */
+export const rank = (): Window => ({ function: "rank" });
+/** `DENSE_RANK()`: the same with no gaps — 1, 1, 2. */
+export const denseRank = (): Window => ({ function: "dense-rank" });
+/**
+ * `LAG(column, offset)`: the value `offset` rows earlier, or null.
+ *
+ * One is what `LAG(x)` means in SQL and is the default here for that reason.
+ */
+export const lag = (column: Column, offset = 1): Window => ({
+  function: "lag",
+  column,
+  offset,
+});
+/** `LEAD(column, offset)`: the value `offset` rows later, or null. */
+export const lead = (column: Column, offset = 1): Window => ({
+  function: "lead",
+  column,
+  offset,
+});
+/**
+ * Any ordinary {@link Aggregate}, over the frame.
+ *
+ * Takes an `Aggregate` rather than repeating its seven constructors, so that
+ * `sumOf(c)` means the same thing grouped or windowed and a new aggregate has
+ * one place to be added.
+ */
+export const aggregateOver = (aggregate: Aggregate): Window => ({
+  function: "aggregate",
+  aggregate,
+});
+
+/** Sets the `OVER (...)` clause on a window. */
+export const over = (
+  window: Window,
+  clause: { partition?: Column[]; order?: SortKey[] } = {},
+): Window => ({ ...window, ...clause });
+
+/** A window in its wire form. Exported for `query.ts`. */
+export function windowWire(w: Window): Record<string, unknown> {
+  const out: Record<string, unknown> = { function: WINDOW_FUNCTIONS[w.function] };
+  // Only the field the function uses: the server refuses a rank carrying an
+  // aggregate rather than ignoring it, which is what makes a mistake visible
+  // instead of silently changing what was computed.
+  if (w.function === "aggregate" && w.aggregate) {
+    out["aggregate"] = aggregateWire(w.aggregate);
+  }
+  if ((w.function === "lag" || w.function === "lead") && w.column) {
+    out["column"] = columnWire(w.column);
+    if (w.offset !== undefined) out["offset"] = String(w.offset);
+  }
+  if (w.partition?.length) out["partitionBy"] = w.partition.map(columnWire);
+  if (w.order?.length) out["order"] = w.order.map(sortKeyWire);
+  return out;
+}
 
 function aggregateWire(a: Aggregate): Record<string, unknown> {
   const out: Record<string, unknown> = { function: FUNCTIONS[a.function] };

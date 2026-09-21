@@ -235,6 +235,148 @@ func (k SortKey) ref() *pb.ColumnRef {
 	return columnRef(k.Column)
 }
 
+// toProto renders one key. Extracted when windows arrived and needed the same
+// conversion for their own ORDER BY: two copies of a direction mapping is two
+// places for a direction to be written backwards.
+func (k SortKey) toProto() *pb.SortKey {
+	direction := pb.SortDirection_SORT_DIRECTION_ASC
+	if k.Direction == Desc {
+		direction = pb.SortDirection_SORT_DIRECTION_DESC
+	}
+	return &pb.SortKey{Column: k.ref(), Direction: direction}
+}
+
+// WindowFunction is what a [Window] computes for each row of its partition.
+type WindowFunction int
+
+// The window functions.
+const (
+	// RowNumber is the row's position in its partition, from 1.
+	RowNumber WindowFunction = iota
+	// Rank has peers share a rank and the next one skip the gap: 1, 1, 3.
+	Rank
+	// DenseRank is the same with no gaps: 1, 1, 2.
+	DenseRank
+	// Lag is the value Offset rows earlier in the partition's order.
+	Lag
+	// Lead is the value Offset rows later.
+	Lead
+	// AggregateOver is an ordinary [Aggregate] over the frame.
+	AggregateOver
+)
+
+// Window is one value computed over a partition, one per input row.
+//
+// Not an [Aggregate], and the difference is the cardinality: a grouped read
+// folds ten thousand rows into four, and a window answers "what is this row's
+// rank among its peers", which has one answer per input row. So a query
+// carrying one still returns rows, and the values arrive in
+// [RowStream.Windowed] rather than as groups.
+//
+// # The frame
+//
+// SumOver(c).Over(...) with no Order is the partition's total, repeated on
+// every row. Add an Order and it becomes a *running* total — SQL's own default
+// frame changing, not a different spelling, and the server follows the
+// standard. Rows tied on the order columns are peers and all see the value
+// that includes all of them.
+//
+// # What it costs
+//
+// A window has to see every selected row before it can answer for any of them,
+// so a query carrying one does not stream and is bounded by the server's
+// max_window_rows rather than by its Limit. The limit cannot help: RowNumber
+// numbers every row before anything knows which ten are first.
+type Window struct {
+	Function WindowFunction
+	// Aggregate is what [AggregateOver] computes. Ignored by the rest, and
+	// setting it on one of them is refused by the server rather than dropped.
+	Aggregate Aggregate
+	// Column is what [Lag] and [Lead] read. Ignored by the rest.
+	Column Column
+	// Offset is how far [Lag] and [Lead] step. Zero is refused: it is the
+	// current row spelled obscurely.
+	Offset uint64
+	// Partition is PARTITION BY. Empty is one partition over the whole
+	// result, which is what SQL means by omitting the clause — not one
+	// partition per row.
+	Partition []Column
+	// Order is the window's own ORDER BY, which is not the query's. It decides
+	// peer groups and turns an aggregate's frame into a running one. Required
+	// by every function except [AggregateOver]; the server refuses an
+	// unordered rank rather than answering 1 on every row.
+	Order []SortKey
+}
+
+// RowNumberOver is a [Window] computing [RowNumber]. Add the clause with Over.
+func RowNumberOver() Window { return Window{Function: RowNumber} }
+
+// RankOver is a [Window] computing [Rank].
+func RankOver() Window { return Window{Function: Rank} }
+
+// DenseRankOver is a [Window] computing [DenseRank].
+func DenseRankOver() Window { return Window{Function: DenseRank} }
+
+// LagOver is a [Window] reading `c` from `offset` rows earlier.
+//
+// One is what LAG(x) means in SQL, and is what to pass unless you mean
+// otherwise; zero is refused by the server.
+func LagOver(c Column, offset uint64) Window {
+	return Window{Function: Lag, Column: c, Offset: offset}
+}
+
+// LeadOver is a [Window] reading `c` from `offset` rows later.
+func LeadOver(c Column, offset uint64) Window {
+	return Window{Function: Lead, Column: c, Offset: offset}
+}
+
+// Over is any ordinary [Aggregate], over the frame.
+//
+// Takes an [Aggregate] rather than repeating its seven constructors, so that
+// SumOf(c) means the same thing grouped or windowed and a new aggregate has
+// one place to be added.
+func Over(a Aggregate) Window {
+	return Window{Function: AggregateOver, Aggregate: a}
+}
+
+// Over sets the OVER (...) clause and returns the window.
+//
+// A method rather than two more fields on every constructor: the clause is the
+// same for all six functions, and a chain reads the way the SQL does.
+func (w Window) Over(partition []Column, order []SortKey) Window {
+	w.Partition = partition
+	w.Order = order
+	return w
+}
+
+func (w Window) toProto() *pb.Window {
+	functions := map[WindowFunction]pb.WindowFunction{
+		RowNumber:     pb.WindowFunction_WINDOW_FUNCTION_ROW_NUMBER,
+		Rank:          pb.WindowFunction_WINDOW_FUNCTION_RANK,
+		DenseRank:     pb.WindowFunction_WINDOW_FUNCTION_DENSE_RANK,
+		Lag:           pb.WindowFunction_WINDOW_FUNCTION_LAG,
+		Lead:          pb.WindowFunction_WINDOW_FUNCTION_LEAD,
+		AggregateOver: pb.WindowFunction_WINDOW_FUNCTION_AGGREGATE,
+	}
+	out := &pb.Window{Function: functions[w.Function], Offset: w.Offset}
+	// Only the field the function uses, because the server refuses a rank
+	// carrying an aggregate rather than ignoring it — and a zero-valued
+	// Aggregate is COUNT(*), which would be sent as a real one.
+	switch w.Function {
+	case AggregateOver:
+		out.Aggregate = w.Aggregate.toProto()
+	case Lag, Lead:
+		out.Column = w.Column.ref()
+	}
+	for _, c := range w.Partition {
+		out.PartitionBy = append(out.PartitionBy, c.ref())
+	}
+	for _, key := range w.Order {
+		out.Order = append(out.Order, key.toProto())
+	}
+	return out
+}
+
 // Query selects rows from one table.
 //
 // A struct with exported fields rather than a chain of builder methods: Go
@@ -290,6 +432,12 @@ type Query struct {
 	// (no limit, or a projection dropping a key column) rather than serving it
 	// without one, which it can only do if it knows one was wanted.
 	Paged bool
+	// Window is values computed over a partition, one per row, returned in
+	// [RowStream.Windowed] and named from a sort key with [Windowed].
+	//
+	// See [Window] for what a window costs, which the request does not show:
+	// a query carrying one does not stream, and no Limit bounds it.
+	Window []Window
 	// IncludeDeleted also returns rows a soft delete has retired.
 	//
 	// Needs the `read_deleted` action on the table, which `read` does not
@@ -342,15 +490,13 @@ func (q Query) toProto(claim *pb.SchemaCheck) *pb.Query {
 		}
 		out.Projection = &pb.Projection{Columns: refs}
 	}
+	// Before the sort, here and in the message, because a sort key may name a
+	// window and nothing a window names may be a window.
+	for _, w := range q.Window {
+		out.Window = append(out.Window, w.toProto())
+	}
 	for _, key := range q.Sort {
-		direction := pb.SortDirection_SORT_DIRECTION_ASC
-		if key.Direction == Desc {
-			direction = pb.SortDirection_SORT_DIRECTION_DESC
-		}
-		out.Sort = append(out.Sort, &pb.SortKey{
-			Column:    key.ref(),
-			Direction: direction,
-		})
+		out.Sort = append(out.Sort, key.toProto())
 	}
 	return out
 }
