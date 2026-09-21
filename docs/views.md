@@ -116,13 +116,41 @@ step is to write to that.
 
 ## Open, and deliberately not decided here
 
-**Where a view is declared.** The catalog is built from TOML in
-`slate-serverd` and from a builder in Rust; a view is a query, and neither
-surface has a way to write one down. A `[[views]]` block holding SQL would make
-the daemon's schema loader depend on the SQL front end, which lives in
-`slate-wasm` — a dependency direction nothing has needed yet. The alternative,
-a `QuerySpec` written out in TOML, is unreadable. This is the question that
-blocks building, and it is a packaging question rather than a security one.
+**Where a view is declared — answered, and the answer dissolves the
+objection.** The paragraph this replaces said a `[[views]]` block holding SQL
+would make the daemon's schema loader depend on the SQL front end "which lives
+in `slate-wasm` — a dependency direction nothing has needed yet", and that the
+alternative of a `QuerySpec` in TOML is unreadable. The second half still
+holds. The first half was true as stated and wrong in what it implied, because
+it took the crate's *name* for a fact about its contents.
+
+Measured:
+
+| | lines |
+| --- | --- |
+| `crates/slate-wasm/src/` | 7,384 |
+| lines mentioning `wasm_bindgen` | **5** |
+
+Those five are one `use`, one `inline_js` shim for `performance.now()`, and
+two attributes on `Playground` and its constructor. `sql.rs` — 3,402 lines,
+the whole parser — mentions none: it imports `QuerySpec` and its neighbours
+from the crate root, `TableDef` from `slate-schema` and `ValueType` from
+`slate-tuple`, and nothing else. The only genuinely wasm-specific thing in the
+manifest is a target-scoped `uuid` feature, already commented as such.
+
+So the SQL front end is not browser code that a daemon would be reaching
+*into*. It is portable Rust that happens to be housed in the binding crate
+because the binding is what needed it first. Extracting a `slate-sql` crate —
+the parser, the spec types, the lowering — leaves `slate-wasm` as the thin
+`#[wasm_bindgen]` shell it nearly already is, and lets `slate-serverd` depend
+on the parser exactly as the browser does. There is no new direction: both
+become peers over a shared crate.
+
+That is a refactor of some size and it is not free. But it is ordinary work
+with a known shape, rather than the architectural objection this section
+recorded, and calling it blocking was wrong. `[[views]]` holding SQL is the
+readable surface, and the way to get there is to move the parser to where both
+callers can see it.
 
 **What `EXPLAIN` shows.** The expanded plan mentions the base table, which
 tells a caller what the view is made of. `EXPLAIN` is already privileged
