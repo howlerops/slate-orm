@@ -34,6 +34,7 @@
 
 pub mod error;
 pub mod ext;
+pub mod factory;
 pub mod field;
 #[cfg(feature = "json")]
 pub mod json;
@@ -42,6 +43,7 @@ pub mod relation;
 
 pub use error::{OrmError, Result};
 pub use ext::{Page, Records};
+pub use factory::{Factory, FactoryError, seeding_context};
 pub use field::{Field, FieldError, Timestamp, Units};
 #[cfg(feature = "json")]
 pub use json::{Json, JsonError};
@@ -464,8 +466,14 @@ pub use slate_kernel::{
     SecurityContext, Side, SortKey, Statistics, TableState, TableStats, TimeUnit, Truth, latency,
     memory, migrate,
 };
+// `CheckDef`, `ForeignKeyDef` and `ReferentialAction` are re-exported for the
+// same reason the rest of this list is: a caller who builds a `TableDef`
+// through `slate-orm` — which `factory.rs` and every test here do — would
+// otherwise have to add `slate-schema` as a direct dependency to declare a
+// check or a foreign key on it, for two types out of a module they already
+// have most of.
 pub use slate_schema::{
-    Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Managed, Ordinal, Row, SchemaError,
-    TableDef, TableId,
+    Catalog, CheckDef, ColumnDef, ForeignKeyDef, IndexColumn, IndexDef, IndexId, Managed, Ordinal,
+    ReferentialAction, Row, SchemaError, TableDef, TableId,
 };
 pub use slate_tuple::{Direction, Value, ValueType};
