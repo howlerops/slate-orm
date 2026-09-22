@@ -18,6 +18,7 @@ Run directly: `python3 scripts/test_mutate.py`.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -141,17 +142,29 @@ else:
 
 
 def run(
-    spec: str, subject: Path, fake: Path, marker: Path | None = None
+    spec: str,
+    subject: Path,
+    fake: Path,
+    marker: Path | None = None,
+    records: Path | None = None,
 ) -> tuple[int, str]:
     """`mutate.py` over `spec`, with its command pointed at the fake.
 
     `marker` gives the child its own in-flight marker. Without one it shares
     the repository's with whatever is driving this suite — and when that is
     `mutate.py` mutating `mutate.py`, the two recover each other.
+
+    `records` does the same for the run record #287 added, and it is not
+    optional in practice: without it every case in this file would write a
+    real record into `ledger/mutations/`, so running the suite would dirty the
+    repository with dozens of fake runs against `/tmp` subjects. A test
+    fixture that writes into the tree it is testing is the #281 failure
+    pointed the other way.
     """
     import os
 
     environment = dict(os.environ)
+    environment["MUTATE_RECORDS"] = str(records or Path(str(subject) + ".records"))
     if marker is not None:
         environment["MUTATE_MARKER"] = str(marker)
     else:
@@ -320,6 +333,91 @@ def case_help_lists_every_dialect() -> bool:
         )
     )
     return ok
+
+
+def case_records_every_run() -> list[bool]:
+    """A run leaves a record, and so does a run that cannot score.
+
+    The second half is the whole point of #287. When the `-q` defect was found
+    in #285, the question "which earlier runs did this spoil?" had no answer,
+    because a run that scores nothing left nothing behind — not even the
+    command that made it unscoreable. A record written only on success would
+    have reproduced that exactly.
+    """
+    results = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        subject = root / "subject.py"
+        subject.write_text("ORIGINAL\n")
+        fake = root / "fake.py"
+        fake.write_text(FAKE)
+        records = root / "records"
+
+        code, _ = run(
+            # `FAKE` speaks the rust dialect; the dialect is not what this
+            # case is about, only that the run leaves a record behind.
+            ('{"file": "__SUBJECT__", "command": [__FAKE__], "dialect": "rust",'
+             ' "cases": [{"name": "a named case", "old": "ORIGINAL",'
+             '             "new": "MUTATED"}]}')
+            .replace("__SUBJECT__", str(subject))
+            .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"'),
+            subject, fake, records=records,
+        )
+        written = sorted(records.glob("*.json")) if records.is_dir() else []
+        entry = json.loads(written[0].read_text()) if written else {}
+        # `bool(...)`, not the bare chain: `a and b` yields the last operand,
+        # and `caught_by` is a list, so `ok` came out a list and the summary
+        # died on `sum()`. The suite caught it; the lesson is that a truthy
+        # chain is not a predicate.
+        ok = bool(
+            code == 0
+            and len(written) == 1
+            and entry.get("outcome") == "clean"
+            and entry.get("command")
+            and [one["verdict"] for one in entry.get("cases", [])] == ["caught"]
+            and entry["cases"][0]["name"] == "a named case"
+            and entry["cases"][0]["caught_by"]
+        )
+        results.append(ok)
+        print(f"{'ok  ' if ok else 'FAIL'}  a run records itself, with its command and verdicts")
+        if not ok:
+            print(f"        exit {code}, wrote {len(written)}: {entry}")
+
+    # And the unscoreable one: a command whose output the dialect cannot read.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        subject = root / "subject.py"
+        subject.write_text("ORIGINAL\n")
+        fake = root / "quiet.py"
+        # The `-q` fake #285 already keeps here: what `cargo test -q` prints
+        # on a failure, a suite result with no test named. Reused rather than
+        # rewritten, so if that output is ever corrected both cases move.
+        fake.write_text(QUIET_CARGO_FAKE)
+        # A red baseline, so the run is unreadable from its first command.
+        subject.write_text("MUTATED\n")
+        records = root / "records"
+        code, _ = run(
+            ('{"file": "__SUBJECT__", "command": [__FAKE__], "dialect": "rust",'
+             ' "cases": [{"name": "never reached", "old": "MUTATED",'
+             '             "new": "OTHER"}]}')
+            .replace("__SUBJECT__", str(subject))
+            .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"'),
+            subject, fake, records=records,
+        )
+        written = sorted(records.glob("*.json")) if records.is_dir() else []
+        entry = json.loads(written[0].read_text()) if written else {}
+        ok = bool(
+            code == 1
+            and len(written) == 1
+            and entry.get("outcome") == "baseline-unreadable"
+            and entry.get("command")
+            and entry.get("cases") == []
+        )
+        results.append(ok)
+        print(f"{'ok  ' if ok else 'FAIL'}  a run that cannot score is recorded as such")
+        if not ok:
+            print(f"        exit {code}, wrote {len(written)}: {entry}")
+    return results
 
 
 def case_fresh_bytecode() -> bool:
@@ -670,6 +768,7 @@ def main() -> int:
             1,
             ["NOTHING RAN"],
         ),
+        *case_records_every_run(),
         case_fresh_bytecode(),
         *case_recovers_from_a_kill(),
         case_help_lists_every_dialect(),

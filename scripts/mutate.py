@@ -42,7 +42,14 @@ Each is caught here rather than trusted to a reader's attention:
   hard error that says so rather than a quiet pass;
 - the spec arrives as JSON on stdin, so no replacement ever touches a shell;
 - every run compiles into a fresh bytecode cache, so a same-size mutation
-  cannot be scored against the previous one.
+  cannot be scored against the previous one;
+- **every run records itself** under `ledger/mutations/`, one file per run,
+  including the runs that could not score. #285 found the `-q` defect above and
+  then could not say which earlier runs it had spoiled, because a spec is
+  written per run and stored nowhere — the only trace one could leave was a
+  command line somebody happened to quote in a ledger entry, and none had. A
+  defect in this script is only as expensive as the runs it silently ruined,
+  and that number was unknowable.
 
 **A surviving mutation exits non-zero.** That is the point: a survival is a
 finding — a missing test, or code that is redundant — and it should interrupt
@@ -86,6 +93,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -115,6 +123,27 @@ ROOT = Path(__file__).resolve().parent.parent
 #: state — which is not a hypothetical: it made a mutation of the restore path
 #: read as a survivor when running the suite by hand caught it twice.
 MARKER = Path(os.environ.get("MUTATE_MARKER", ROOT / ".mutate-in-flight.json"))
+
+#: Where a finished run records itself. One file per run, never a shared log.
+#:
+#: #285 found a defect in this script — `cargo test -q` suppresses the lines
+#: the `rust` dialect matches, so every mutation scored as a survivor — and
+#: then could not answer the only question that mattered: which earlier runs
+#: had it spoiled? Specs are written per run and passed on stdin, so the only
+#: trace one could leave was a command line somebody happened to quote in a
+#: ledger entry. None had. The blast radius was unmeasurable, and the entry
+#: guessed at it, wrongly, until it was audited.
+#:
+#: One file per run rather than an appended log, for the reason `ledger/README`
+#: gives for entries: several agents work here at once and a shared file
+#: conflicts on every commit. The name carries the time and the mutated file,
+#: so a directory listing is already the index.
+#:
+#: These sit under `ledger/` deliberately. The pre-commit hook's entry pattern
+#: is `ledger/<date>-*.md` anchored at that directory, so a record is never
+#: mistaken for an entry — but it *is* inside `ledger/`, so a commit carrying
+#: only records still counts as ledger-only and needs no entry of its own.
+RECORDS = Path(os.environ.get("MUTATE_RECORDS", ROOT / "ledger" / "mutations"))
 
 #: How to read a suite's output: which lines name a failure, and which line
 #: proves a suite reported at all.
@@ -398,6 +427,61 @@ def unreadable(failures: list[str], reported: int, status: int) -> bool:
     return status != 0 and reported > 0 and not failures
 
 
+def describe_tree() -> str:
+    """The commit a run was made against, or why it could not be read.
+
+    Recorded because a verdict is about a tree, not about a file: "this
+    mutation survived" means nothing without knowing what it survived against.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT, capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as why:
+        return f"unknown ({why})"
+    return done.stdout.strip() or "unknown (no HEAD)"
+
+
+def write_record(entry: dict) -> None:
+    """Write one run's record, and never fail a run over it.
+
+    A mutation run that dies because it could not write its own diary would be
+    a sixth way for this script to lie, so every failure here is reported and
+    swallowed. The verdict on the screen is the verdict.
+    """
+    try:
+        RECORDS.mkdir(parents=True, exist_ok=True)
+        stamp = entry["at"].replace(":", "").replace("-", "")[:15]
+        slug = re.sub(r"[^a-z0-9]+", "-", entry["file"].lower()).strip("-")[:60]
+        (RECORDS / f"{stamp}-{slug}.json").write_text(
+            json.dumps(entry, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as why:
+        # Never fail a run over its own record.
+        print(f"  (could not record this run: {why})")
+
+
+def note(entry: dict, mutation, verdict: str, failures: list[str], reported: int) -> None:
+    """Record one case's verdict, with the tests that named it.
+
+    `caught_by` is the point: "survived" and "caught" are the headline, but the
+    *names* are what make a verdict re-checkable later. A run whose cases were
+    all caught by a test that no longer exists is a run worth re-reading.
+    """
+    entry["cases"].append(
+        {
+            "name": mutation.name,
+            "old": mutation.old,
+            "new": mutation.new,
+            "verdict": verdict,
+            "caught_by": failures[:8],
+            "suites_reported": reported,
+            "expect_survivor": mutation.expect_survivor,
+        }
+    )
+
+
 def check(spec: dict) -> int:
     if recover():
         return 1
@@ -413,12 +497,41 @@ def check(spec: dict) -> int:
         )
     cases = [Mutation(case) for case in spec["cases"]]
 
+    # Begun before the baseline, and written in a `finally`, so the runs that
+    # *cannot score* are recorded too. Those are the ones worth having: the
+    # `-q` run #285 found scored nothing, and left nothing behind saying so.
+    entry: dict = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "file": spec["file"],
+        "dialect": dialect,
+        "command": command,
+        "commit": describe_tree(),
+        "python": sys.version.split()[0],
+        "outcome": "interrupted",
+        "cases": [],
+    }
+    try:
+        return scored(spec, entry, path, command, dialect, cases)
+    finally:
+        write_record(entry)
+
+
+def scored(
+    spec: dict,
+    entry: dict,
+    path: Path,
+    command: list[str],
+    dialect: str,
+    cases: list,
+) -> int:
+    """The run itself. Split out so `check` can record it whatever happens."""
     # A baseline, because a mutation run says nothing if the suite was already
     # red. This is the check a hand-run mutation always skips and the one that
     # makes every result below mean something.
     failures, reported, output, status = run(command, dialect)
     if reported == 0:
         print(f"the command reported no test results at all:\n{output[-2000:]}")
+        entry["outcome"] = "baseline-reported-nothing"
         return 1
     if unreadable(failures, reported, status):
         print(
@@ -429,9 +542,11 @@ def check(spec: dict) -> int:
             f"  it suppresses the per-test `... FAILED` lines this reads, and "
             f"every mutation then scores as a survivor.\n{output[-1500:]}"
         )
+        entry["outcome"] = "baseline-unreadable"
         return 1
     if failures:
         print(f"the suite is red before any mutation: {failures[:5]}")
+        entry["outcome"] = "baseline-red"
         return 1
     print(f"baseline: {reported} suites reported, none failing")
 
@@ -454,12 +569,14 @@ def check(spec: dict) -> int:
                 f"       per-test `... FAILED` lines this reads, and every "
                 f"mutation then scores as a survivor."
             )
+            note(entry, mutation, "unreadable", failures, reported)
             problems += 1
             continue
 
         if reported == 0:
             errors = [x for x in output.splitlines() if x.startswith("error")][:3]
             print(f"  !! {mutation.name}: NOTHING RAN — {errors}")
+            note(entry, mutation, "nothing-ran", failures, reported)
             problems += 1
             continue
 
@@ -467,6 +584,7 @@ def check(spec: dict) -> int:
         if mutation.expect_survivor is None:
             if failures:
                 print(f"  ok   {mutation.name}  ->  {caught}")
+                note(entry, mutation, "caught", failures, reported)
             else:
                 print(
                     f"  !!   {mutation.name}: SURVIVED ({reported} suites ran).\n"
@@ -474,6 +592,7 @@ def check(spec: dict) -> int:
                     "code. Write the test, or record why it cannot be caught\n"
                     "       with `expect_survivor`."
                 )
+                note(entry, mutation, "survived", failures, reported)
                 problems += 1
         elif failures:
             print(
@@ -482,9 +601,11 @@ def check(spec: dict) -> int:
                 f"       The recorded reason has stopped being true: "
                 f"{mutation.expect_survivor}"
             )
+            note(entry, mutation, "caught-but-expected-to-survive", failures, reported)
             problems += 1
         else:
             print(f"  ok   {mutation.name}  ->  survived, as recorded")
+            note(entry, mutation, "survived-as-recorded", failures, reported)
 
     # Restored and re-verified, which is the step `CLAUDE.md` names and which is
     # skipped most often: a mutation run that leaves the tree broken makes every
@@ -492,9 +613,12 @@ def check(spec: dict) -> int:
     failures, reported, _, status = run(command, dialect)
     if failures or reported == 0 or unreadable(failures, reported, status):
         print(f"  !! the tree did not come back clean: {failures[:5]}")
+        entry["restored_clean"] = False
         problems += 1
     else:
         print(f"restored: {reported} suites reported, none failing")
+        entry["restored_clean"] = True
+    entry["outcome"] = "problems" if problems else "clean"
     return 1 if problems else 0
 
 

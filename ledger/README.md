@@ -6,6 +6,24 @@ does not survive in a diff.
 A commit that touches anything outside `ledger/` needs an entry. The
 `pre-commit` hook enforces it; see [Enforcement](#enforcement).
 
+## `mutations/`
+
+`scripts/mutate.py` writes one JSON file per run here, automatically. They are
+not entries and the pre-commit hook does not read them as entries — its pattern
+is `ledger/<date>-*.md`, anchored at this directory — but they are inside
+`ledger/`, so a commit carrying only records still counts as ledger-only.
+
+Each holds the command, the dialect, the commit, and every case's verdict with
+the tests that named it. **Runs that could not score are recorded too**, which
+is the point: #285 found that `cargo test -q` suppresses the lines the `rust`
+dialect matches, so every mutation scored as a survivor — and then could not
+answer which earlier runs that had ruined, because nothing kept them. The
+entry written at the time guessed, wrongly, and had to be corrected.
+
+One file per run rather than an appended log, for the same reason entries are
+one file each: several agents work here at once and a shared file conflicts on
+every commit.
+
 ## Why this exists
 
 A diff says what a line became. It does not say what the alternatives were,
