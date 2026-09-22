@@ -40,12 +40,15 @@ pub struct LatencyProfile {
     /// Cost of a point read.
     ///
     /// One *latency* — the time spent waiting — not one request. A point read
-    /// costs about three object-store requests, which is what
-    /// [`crate::stats::POINT_READ_COST`] counts, but they overlap so the wait
-    /// is closer to one round trip. The two numbers measure different things
-    /// on purpose: this fixture models time, the cost model models work, and
-    /// conflating them is what made the planner prefer a plan doing 58x the
-    /// requests.
+    /// costs about one object-store request, which is what
+    /// [`crate::stats::POINT_READ_COST`] counts. ~~About three, but they
+    /// overlap, so the wait is closer to one round trip.~~ The overlap
+    /// argument was written when the figure was three; #278 found that three
+    /// was a build with SlateDB's block cache compiled out, and #269 had
+    /// already re-measured it at one. The two numbers still measure different
+    /// things on purpose: this fixture models time, the cost model models
+    /// work, and conflating them is what made the planner prefer a plan doing
+    /// 58x the requests.
     pub get: Duration,
     /// Cost of opening a scan.
     pub scan_open: Duration,

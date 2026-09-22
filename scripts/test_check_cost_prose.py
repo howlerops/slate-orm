@@ -63,11 +63,14 @@ CASES: list[tuple[str, str, int, int]] = [
     # `ledger/README.md` asks for a withdrawn figure to stay legible. A line
     # carrying one is history, not a claim about today, and the corrected
     # passages in `chain.rs` and `join.rs` depend on this.
-    # Two lines, so this proves the skip is per *line* rather than the file
-    # going unread: the struck-through figure is ignored and the current claim
-    # beneath it is still counted. Without the exemption this is 2 claims and
-    # 1 stale, which is what the corrected passages in `chain.rs` and
-    # `join.rs` would report.
+    # Two lines, so this proves the exemption is per *span* rather than the
+    # file going unread: the struck-through figure is ignored and the current
+    # claim beneath it is still counted. Without the exemption this is 2
+    # claims and 1 stale, which is what the corrected passages in `chain.rs`
+    # and `join.rs` would report. It was per line until #279 joined a comment
+    # run into one chunk; per span is strictly finer, and `stats.rs` needs it
+    # — it strikes two sentences through and states the current figure in the
+    # third, all in one paragraph.
     ("a struck-through figure is history, not a stale claim",
      "// ~~a point read costs about three~~ requests.\n"
      "// a point read costs one request.\n", 1, 0),
@@ -78,6 +81,49 @@ CASES: list[tuple[str, str, int, int]] = [
      "// it saves scanning 8 thousand rows per row fetched.\n", 1, 0),
     ("and a stale one in digits is reported",
      "// it saves scanning 24 thousand rows per row fetched.\n", 1, 1),
+    # #279. A claim that wraps across a doc-comment line break. `rustfmt` and
+    # a 100-column margin produce this constantly, and reading line by line
+    # sees neither half: "costs about" has no figure, "**three requests**"
+    # has no subject. This is how the stale bullet in `cost_at_scale`'s
+    # module doc survived #278's widening, which was aimed at that very file.
+    ("a claim wrapped across a comment line break is one claim",
+     "//! - `POINT_READ_COST`, which is the claim that a point read costs\n"
+     "//!   about **three requests**.\n", 1, 1),
+    ("and the same claim, current, is accepted",
+     "//! a point read costs\n//!   about **one request**.\n", 1, 0),
+    # Two comment runs with code between them do not merge: joining those
+    # would invent a sentence nobody wrote, and the figure would be scored
+    # against the wrong subject.
+    ("a run is broken by a line of code",
+     "// a point read costs one request.\nlet x = 1;\n"
+     "// it saves scanning eight thousand rows.\n", 2, 0),
+    # #279. The form that actually went stale. `cost_at_scale` printed
+    # `POINT_READ_COST = 3.0` in its header for nine tasks; the English
+    # clause beside it is what the guard caught, and a restatement with no
+    # clause — a bullet, a header, a table cell — was invisible.
+    ("a literal restatement of a constant is a claim",
+     "// - `POINT_READ_COST = 3.0`, measured at 200,000 rows.\n", 1, 1),
+    ("and a current restatement is accepted",
+     "// - `SCAN_ROW_COST = 0.000125`, measured at 200,000 rows.\n", 1, 0),
+    # The declaration is the one copy that is not a restatement, and what
+    # separates it is the type annotation: `NAME: f64 = 1.0` against the
+    # `NAME = 1.0` the pattern wants. An explicit `pub const` skip stood here
+    # for an hour and a mutation deleting it survived, because the pattern
+    # had already excluded the form. This case now covers the real mechanism.
+    ("the declaration in stats.rs is not a restatement",
+     "pub const POINT_READ_COST: f64 = 1.0;\n", 0, 0),
+    # A joined run flushed by the *code* after it, not by end of file. Every
+    # other fixture here ends on a comment, which exercised only the second
+    # of two flush paths — a mutation to the first survived all of them.
+    ("a wrapped claim is joined when code follows it",
+     "// a point read costs\n// about three requests.\nlet x = 1;\n", 1, 1),
+    # #279. The third derived figure: 1 / SCAN_ROW_COST. Nothing checked it,
+    # and `stats.rs` records that this constant has open headroom (#277), so
+    # it is the next one that will move under prose that quotes it.
+    ("a rows-per-request claim is read against SCAN_ROW_COST",
+     "// a scan returns about eight thousand rows per request.\n", 1, 0),
+    ("a stale rows-per-request claim is reported",
+     "// a scan returns about 100 rows per object-store request.\n", 1, 1),
     ("a comment with no figure in it is not a claim",
      "// a point read costs whatever the constant says.\n", 0, 0),
     # Both directions: the arithmetic has to come from the constants, not from

@@ -93,6 +93,18 @@ read `crates/slate-kernel` only. The defect and the blind spot were the same
 shape: a guard scoped to where the constant is *decided* rather than to where
 it is *quoted*.
 
+> **Corrected by #279, the next day.** That mutation is caught, but it is
+> caught by the *English clause* in the old header — "a point read costs ~3
+> requests" — and not by the literal `POINT_READ_COST = 3.0` beside it, which
+> this entry implies. The distinction was not academic: **the same file still
+> held two stale claims** after the widening described here, in two forms the
+> guard could not see, and neither was found by this mutation. The sentence
+> below about `cost_at_scale` printing its constants was true of the one line
+> I changed and wrong about the file. #279 has the two survivors, a ninth
+> stale claim in `latency.rs` that fell out of fixing them, and the lesson:
+> widening *which tree* a guard reads is not the same as widening *what it
+> recognizes as a claim*.
+
 ### A withdrawal of my own, which is the part worth reading
 
 In #277, a few hours before this, I struck through the 1,221 figure in

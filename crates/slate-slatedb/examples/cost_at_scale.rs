@@ -9,10 +9,15 @@
 //! `cost_calibration` measured two constants against a real S3 server at
 //! **200,000 rows** and nothing above it has been measured:
 //!
-//! - `SCAN_ROW_COST = 0.000125`, which is the claim that a scan returns about
+//! - `SCAN_ROW_COST`, which is the claim that a scan returns about
 //!   **8,000 rows per object-store request**;
-//! - `POINT_READ_COST = 3.0`, which is the claim that a point read costs about
-//!   **three requests**.
+//! - `POINT_READ_COST`, which is the claim that a point read costs about
+//!   **one request**.
+//!
+//! Their values are not restated here. This doc said ~~`POINT_READ_COST = 3.0`~~
+//! for nine tasks after #269 measured 1.0, because a literal copy of a
+//! constant has nothing holding it to the constant. The English figures above
+//! are derived, so `check_cost_prose.py` can and does check them.
 //!
 //! Both are averages over a corpus, not constants of nature, and both could
 //! move with scale for reasons that have nothing to do with the model being
@@ -182,11 +187,11 @@ async fn main() {
     println!("Scales: {sizes:?}");
     println!();
     // Printed from the constants, not restated beside them. They were
-    // restated, and one went stale: this line said `POINT_READ_COST = 3.0`
-    // for as long as nobody ran the benchmark, which is every run between
-    // #269 changing it to 1.0 and #278 noticing. A benchmark whose header
-    // misreports the model it is measuring against is worse than one that
-    // prints nothing.
+    // restated, and one went stale: this line carried the old point-read
+    // figure for as long as nobody ran the benchmark, which is every run
+    // between #269 re-measuring it and #278 noticing. A benchmark whose
+    // header misreports the model it is measuring against is worse than one
+    // that prints nothing.
     println!("The two calibrated constants, read from `slate_kernel::stats` so the");
     println!("table below can be read against them:");
     println!(
@@ -615,9 +620,13 @@ async fn main() {
             point.analyze_seconds,
         );
     }
+    // Derived, for the reason the header above is derived: this line said
+    // "3 requests per read" from #269 until #278, in the summary a reader of
+    // the run actually reads.
     println!(
-        "\nSCAN_ROW_COST says 8,000 rows per request; POINT_READ_COST says 3 requests\n\
-         per read. Both were measured at 200,000 rows, warm."
+        "\nSCAN_ROW_COST says {:.0} rows per request; POINT_READ_COST says \
+         {POINT_READ_COST} request(s)\nper read. Both were measured at 200,000 rows, warm.",
+        1.0 / SCAN_ROW_COST
     );
 
     println!(

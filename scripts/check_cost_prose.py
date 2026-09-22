@@ -22,14 +22,23 @@ the numbers are derivable from the constants.
 
 WHAT IS CHECKED, AND WHY IT IS NARROW
 
-Two derived figures, both as they are actually written:
+Three derived figures and one restatement, all as they are actually written:
 
 * **what a point read costs**, against `POINT_READ_COST`;
+* **what a scan returns per request**, against `1 / SCAN_ROW_COST`;
 * **the crossover** — how many rows a scan must save per row fetched before an
-  index pays — against `POINT_READ_COST / SCAN_ROW_COST`.
+  index pays — against `POINT_READ_COST / SCAN_ROW_COST`;
+* **a literal copy of either constant** — `POINT_READ_COST = 3.0` in a comment
+  or a printed header — against the constant itself. `stats.rs`'s own `pub
+  const` line is the one copy that is not a restatement.
 
 Numbers are matched as digits *and* as the English words this repository
-writes them in, because it writes them both ways in the same paragraph.
+writes them in, because it writes them both ways in the same paragraph, and
+through the markdown emphasis it wraps them in.
+
+A run of consecutive comment lines is read as one chunk, because a sentence
+in a doc comment wraps and the claim wraps with it. Reading line by line saw
+neither half of `a point read costs about` / `**three requests**`.
 
 **Every crate is read, not only `slate-kernel`.** It was only the kernel for
 about an hour, on the reasoning that the constants are decided there and the
@@ -38,6 +47,15 @@ reasoning lives there. That was wrong by one file and the file mattered:
 its header, "restated so the table below can be read against them" — a
 benchmark misreporting the model it exists to measure, in output a reader sees
 rather than in a comment they might not. It prints the constants now.
+
+**And widening the tree was not enough, which is the more useful half.** The
+same file still held two stale claims after that widening, because neither was
+in a form this could see: a bullet whose figure sat past a line break, and a
+summary line printing `3 requests` with no "a point read costs" clause beside
+it. Widening *what counts as a claim* — the three forms above — found a ninth
+stale sentence in `latency.rs`, a file eight rounds of sweeping by hand had
+never flagged. A guard aimed at the right tree and the wrong shape reads as
+thorough and is not.
 
 `docs/` is still out of scope, and deliberately: `correctness.md` narrates the
 history of these numbers at length, and a guard that cannot tell "it costs
@@ -80,10 +98,35 @@ THOUSANDS = {
     "twenty-four": 24_000.0, "forty-eight": 48_000.0,
 }
 
-#: "a point read costs about three" / "a point read costs 1"
+#: Markdown emphasis between the verb and the figure: this repository writes
+#: **8,000 rows per request** and **three requests** in bold, and `1` in
+#: backticks. Not cosmetic — `**` between "costs about" and "three" is what
+#: hid the one stale bullet in `cost_at_scale`'s module doc from the widening
+#: in #278 that was aimed at that file, and hid the corrected bullet from
+#: being checked at all.
+MARKUP = r"[*`_]{0,2}"
+
+#: "a point read costs about three" / "a point read costs 1" /
+#: "POINT_READ_COST says 3 requests"
 PER_READ = re.compile(
-    r"point reads? costs? (?:about |roughly |~)?([0-9.]+|[a-z]+)\b", re.IGNORECASE
+    r"(?:point reads? costs?|POINT_READ_COST says) "
+    r"(?:about |roughly |~)?" + MARKUP + r"([0-9.]+|[a-z]+)\b",
+    re.IGNORECASE,
 )
+#: "a scan returns about eight thousand rows per request", "~8000 rows per
+#: object-store request". Derived from `SCAN_ROW_COST` the same way.
+PER_REQUEST = re.compile(
+    r"(?:about |roughly |~)?" + MARKUP + r"([0-9,]+|[a-z-]+)(?: thousand)? "
+    r"rows per (?:object-store )?request",
+    re.IGNORECASE,
+)
+#: A literal copy of a constant: ``POINT_READ_COST = 3.0`` in a comment or a
+#: printed string. This is the form that actually went stale — the English
+#: clause beside it was what the guard happened to catch, and a restatement
+#: with no clause (a benchmark header, a bullet in a module doc) went unread
+#: for nine tasks. The declaration in `stats.rs` is the one copy that is not
+#: a restatement, so a `pub const` line is skipped.
+RESTATED = re.compile(r"\b(POINT_READ_COST|SCAN_ROW_COST)\s*=\s*([0-9._]+)")
 #: "saves scanning some twenty-four thousand rows" / "n > 8000k"
 CROSSOVER = re.compile(
     r"(?:saves? scanning (?:about |some |something like )?"
@@ -128,6 +171,77 @@ def named(path: Path) -> str:
         return str(path)
 
 
+#: A line that is only a comment, with its marker: `//`, `///`, `//!`.
+COMMENT = re.compile(r"^\s*//[!/]?\s?")
+#: A strikethrough span, which `ledger/README.md` asks for on a withdrawn
+#: figure. Spans lines, because the passages that use it do.
+STRUCK = re.compile(r"~~.*?~~", re.DOTALL)
+
+
+def paragraphs(text: str) -> list[tuple[int, str]]:
+    """The file as `(first line, text)` chunks a claim can be matched against.
+
+    A run of consecutive comment lines is joined into one chunk, because a
+    sentence in a doc comment wraps and the claim wraps with it. Reading line
+    by line — which this did until #279 — cannot see
+    `a point read costs about\n//!   **three requests**`, and that is not a
+    contrived split: it is what `rustfmt` and a 100-column margin produce, and
+    it is how the one stale claim in `cost_at_scale`'s module doc survived the
+    widening that was aimed at exactly that file.
+
+    Every other line is its own chunk. A claim split across a Rust string
+    literal's backslash-continuation is therefore still unseen; nothing splits
+    one today, and joining arbitrary adjacent code lines invents sentences
+    that were never written.
+    """
+    chunks: list[tuple[int, str]] = []
+    run: list[str] = []
+    start = 0
+    # The `None` sentinel closes a run that reaches the end of the file. A
+    # second copy of the flush after the loop is the obvious way to write
+    # this and was how it was written: every fixture here ends on a comment,
+    # so only that copy ran for a joined run, and a mutation to the in-loop
+    # copy survived with all tests green. One flush cannot drift from itself.
+    lines: list[tuple[int, str | None]] = [
+        (at, line) for at, line in enumerate(text.splitlines(), start=1)
+    ]
+    for at, line in [*lines, (len(lines) + 1, None)]:
+        marker = COMMENT.match(line) if line is not None else None
+        if marker and line is not None and line.strip().startswith("//"):
+            if not run:
+                start = at
+            run.append(line[marker.end():])
+            continue
+        if run:
+            chunks.append((start, " ".join(run)))
+            run = []
+        if line is not None:
+            chunks.append((at, line))
+    return chunks
+
+
+def live(text: str) -> str | None:
+    """`text` with withdrawn figures removed, or None if it is all history.
+
+    A struck-through figure is a record of what was believed, not a claim
+    about today. Removing the spans rather than skipping the whole chunk is
+    what lets one paragraph carry both — `stats.rs` strikes two sentences
+    through and then states the current figure in the third.
+    """
+    stripped = STRUCK.sub(" ", text)
+    # An unbalanced `~~` means the span is open across a boundary this cannot
+    # see. Skipping is the conservative read: a missed claim, never a false
+    # accusation against a passage that is marked as history.
+    if "~~" in stripped:
+        return None
+    # Whitespace is collapsed because a joined comment run carries the second
+    # line's indent into the middle of the sentence — `costs` and `about` end
+    # up three spaces apart, and every pattern here is written with the one
+    # space a reader sees. This cost the first two cases of the wrapped-claim
+    # test, which is the cheapest place to have found it.
+    return re.sub(r"\s+", " ", stripped)
+
+
 def sources(where: Path = WHERE) -> list[Path]:
     """Every Rust file under the kernel, in a stable order."""
     return [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
@@ -145,6 +259,8 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
     read = values["POINT_READ_COST"]
     crossover = values["POINT_READ_COST"] / values["SCAN_ROW_COST"]
 
+    per_request = 1.0 / values["SCAN_ROW_COST"]
+
     seen = 0
     wrong = []
     for path in sources(where):
@@ -152,11 +268,11 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for at, line in enumerate(text.splitlines(), start=1):
-            # A withdrawn figure kept legible is history, not a claim.
-            if "~~" in line:
+        for at, chunk in paragraphs(text):
+            current = live(chunk)
+            if current is None:
                 continue
-            for match in PER_READ.finditer(line):
+            for match in PER_READ.finditer(current):
                 value = number(match.group(1), thousands=False)
                 if value is None:
                     continue
@@ -166,7 +282,19 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                         f"{named(path)}:{at} says a point read "
                         f"costs {match.group(1)}; POINT_READ_COST is {read:g}."
                     )
-            for match in CROSSOVER.finditer(line):
+            for match in PER_REQUEST.finditer(current):
+                written = match.group(1)
+                value = number(written, thousands=" thousand" in match.group(0))
+                if value is None:
+                    continue
+                seen += 1
+                if abs(value - per_request) > 1.0:
+                    wrong.append(
+                        f"{named(path)}:{at} says a scan returns {written} "
+                        f"rows per request; 1 / SCAN_ROW_COST is "
+                        f"{per_request:g}."
+                    )
+            for match in CROSSOVER.finditer(current):
                 written = match.group(1) or match.group(2)
                 value = number(written, thousands=match.group(1) is not None)
                 if value is None:
@@ -177,6 +305,27 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                         f"{named(path)}:{at} puts the crossover at "
                         f"{written}; POINT_READ_COST / SCAN_ROW_COST is "
                         f"{crossover:g}."
+                    )
+            # A restatement of the constant itself, which is the form the
+            # English patterns above cannot see and the one that went stale.
+            # `stats.rs`'s own declarations are excluded by RESTATED itself:
+            # a declaration reads `NAME: f64 = 1.0`, and the pattern wants
+            # `NAME = 1.0`, so the type annotation is what separates the one
+            # authoritative copy from every restatement of it. There was an
+            # explicit `if "pub const" in chunk: continue` here for an hour;
+            # a mutation deleting it changed no verdict, because it had never
+            # excluded anything. A dead safety check is worse than none.
+            for match in RESTATED.finditer(current):
+                name, written = match.group(1), match.group(2)
+                value = number(written, thousands=False)
+                if value is None:
+                    continue
+                seen += 1
+                if abs(value - values[name]) > 1e-9:
+                    wrong.append(
+                        f"{named(path)}:{at} restates {name} as {written}; "
+                        f"it is {values[name]:g}. Print it from "
+                        f"`slate_kernel::stats` rather than copying it."
                     )
     return seen, wrong
 
