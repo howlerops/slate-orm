@@ -160,18 +160,18 @@ that is set and missing is a hard error, never a silent fall back to building.
 - Disk is tight and several builds run at once. A linker `Bus error`, an
   `rustc-LLVM ERROR: IO failure`, or a sudden burst of `E0463: can't find
   crate` is almost always ENOSPC or a damaged build cache, not your code.
-  Reclaim with the dedup snippet in `ledger/README.md`, and never delete
-  `target/debug/build` — that breaks build-script outputs and produces
-  hundreds of convincing, fictional compile errors.
+  Reclaim with `python3 scripts/reclaim.py` (`--dry-run` looks first). It
+  refuses to touch `target/debug/build` — deleting that breaks build-script
+  outputs and produces hundreds of convincing, fictional compile errors.
 - **`cargo test --workspace` does not fit on this disk.** Not "is slow" — it
   runs out of space partway through linking the test binaries, and the way it
   says so is `linking with \`cc\` failed`, `No space left on device (os error
   28)` on an incremental `dep-graph.part.bin`, or a crate that "could not
   compile" for no stated reason. Twice in one session, from a start with 11 GB
-  free. Run it a few crates at a time and reclaim between them with the dedup
-  snippet; `CARGO_INCREMENTAL=0` roughly halves what a run leaves behind, and
-  `rm -rf target/debug/{incremental,examples}` is safe (`target/debug/build` is
-  not — see above). Twelve members, in four or five groups, is one green run
+  free. Run it a few crates at a time and reclaim between them with
+  `scripts/reclaim.py`; `CARGO_INCREMENTAL=0` roughly halves what a run leaves
+  behind, and the script already removes `incremental/` and `examples/`
+  (`target/debug/build` it refuses to touch — see above). Twelve members, in four or five groups, is one green run
   rather than three false alarms about your code.
 - `cargo test` stops at the first failing binary. Use `--no-fail-fast` before
   concluding how much is broken.
