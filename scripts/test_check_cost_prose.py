@@ -31,13 +31,32 @@ STATS = (
 
 
 def run(prose: str, stats: str = STATS) -> tuple[int, list[str]]:
-    """Run the real guard over one source file and one `stats.rs`."""
+    """Run the real guard over one source file and one `stats.rs`.
+
+    `docs` is passed as `None`, never left to default. #283 gave `check` a
+    docs tree with a real default, and a fixture that let it default would
+    read the repository's own `docs/` alongside its one-line temporary file —
+    every case would then carry 24 extra claims it did not write, which is
+    the fixture-reaching-past-itself failure #281 was about.
+    """
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         (root / "a.rs").write_text(prose)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where)
+        return guard.check(root, where, None)
+
+
+def run_markdown(page: str, stats: str = STATS) -> tuple[int, list[str]]:
+    """The same, over one `docs/*.md` page and no Rust at all."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        docs = root / "docs"
+        docs.mkdir()
+        (docs / "perf.md").write_text(page)
+        where = root / "stats.rs"
+        where.write_text(stats)
+        return guard.check(root, where, docs)
 
 
 #: name, the comment, how many claims it should hold, how many are stale.
@@ -169,7 +188,9 @@ def reports_the_range_of_a_joined_run() -> tuple[bool, str]:
 
 def main() -> int:
     failed = 0
+    ran = 0
     for name, prose, claims, stale in CASES:
+        ran += 1
         # The last case redefines the constants so the crossover is 4,000.
         stats = STATS
         if "4000k" in prose:
@@ -192,7 +213,51 @@ def main() -> int:
             print(f"        wanted {claims} claim(s) and {stale} stale, "
                   f"got {seen} and {wrong}")
 
+    # #283. The markdown half: a claim in `docs/` is read, wrapping is joined
+    # the way a doc comment's is, and the three kinds of prose that trip these
+    # patterns without claiming anything current are each let through.
+    MARKDOWN: list[tuple[str, str, int, int]] = [
+        ("a current claim in a doc is read",
+         "A point read costs 1 request.\n", 1, 0),
+        ("a stale claim in a doc is reported",
+         "A point read costs about three requests.\n", 1, 1),
+        # The reason line-by-line matching is not enough, in the tree where
+        # every sentence wraps at 80 columns.
+        ("a claim wrapped across two lines is still one claim",
+         "A point read\ncosts about three requests.\n", 1, 1),
+        # Pasted benchmark output is a record of what a run printed.
+        ("a figure inside a fence is not a claim",
+         "```\na point read costs about three requests\n```\n", 0, 0),
+        ("the marker excuses the paragraph it sits in",
+         f"{guard.NOT_A_CLAIM}\nA point read costs about three requests.\n", 0, 0),
+        ("and the paragraph after it, when it stands alone",
+         f"{guard.NOT_A_CLAIM}\n\nA point read costs about three requests.\n", 0, 0),
+        # But not the one after that: an excuse that runs to the end of the
+        # file would quietly cover every claim below it.
+        ("but not the one after that",
+         f"{guard.NOT_A_CLAIM}\n\nHistory.\n\nA point read costs three.\n", 1, 1),
+        # Strikethrough still works in markdown, and is preferred where a
+        # paragraph states the current figure beside the old one — it keeps
+        # the live claim under the guard, which the marker cannot.
+        ("a struck figure beside a live one keeps the live one checked",
+         "It is now 1 request, rather than ~~3 requests~~. "
+         "A point read costs 1 request.\n", 1, 0),
+    ]
+    for name, page, claims, stale in MARKDOWN:
+        ran += 1
+        try:
+            seen, wrong = run_markdown(page)
+        except Exception as raised:  # noqa: BLE001 - a crash is this failure
+            seen, wrong = -1, [f"raised {raised!r}"]
+        ok = seen == claims and len(wrong) == stale
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        wanted {claims} claim(s) and {stale} stale, "
+                  f"got {seen} and {wrong}")
+
     ok, why = reports_the_range_of_a_joined_run()
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a joined run reports the lines it spans")
     if not ok:
@@ -203,6 +268,7 @@ def main() -> int:
     # "looking in the wrong place" lives in `main`, so both are exercised.
     seen, wrong = run("// nothing about costs here.\n")
     ok = seen == 0 and not wrong
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a tree with no claim reads none")
     if not ok:
@@ -215,8 +281,9 @@ def main() -> int:
         stats.write_text(STATS)
         out = io.StringIO()
         with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
-            code = guard.main(root, stats)
+            code = guard.main(root, stats, None)
     ok = code == 1 and "looking in the wrong place" in out.getvalue()
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  and a real run over it fails, rather than passing")
     if not ok:
@@ -230,6 +297,7 @@ def main() -> int:
     except Exception as raised:  # noqa: BLE001 - a crash is this case failing
         wrong = [f"raised {raised!r} instead of reporting the missing constant"]
     ok = any("no longer declares both" in one for one in wrong)
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a stats.rs without the constants fails")
     if not ok:
@@ -237,13 +305,14 @@ def main() -> int:
 
     seen, wrong = guard.check()
     ok = seen > 0 and not wrong
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  every claim in the real crates is current")
     for one in wrong:
         print(f"        {one}")
 
     print()
-    print(f"{len(CASES) + 4 - failed} passed, {failed} failed")
+    print(f"{ran - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

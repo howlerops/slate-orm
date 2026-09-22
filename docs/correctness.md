@@ -701,6 +701,8 @@ at once:
 | full scan, 200,000 rows | 2001 | 25 |
 | 400 rows via index | 30 | 1217 |
 
+<!-- not a cost-model claim -->
+
 Scans were overcharged about **eighty times** (`SCAN_ROW_COST` assumed 100 rows
 per request; readahead delivers ~8,000). Index lookups were undercharged about
 **forty times**: a point read cost ~3 requests rather than 1 *on the build
@@ -736,7 +738,7 @@ produces 3. What changed between then and now is not known — a SlateDB
 release, a block size, the readahead #34 turned on — so `POINT_READ_COST` is
 **1.0**, a bound with a meaning (one request for a row sharing its block with
 no neighbour) rather than a figure four measurements contradict. The crossover
-follows: `n > 8000k` rather than `n > 24000k`. The plan snapshot moved 13
+follows: `n > 8000k` rather than ~~`n > 24000k`~~. The plan snapshot moved 13
 costs and **no access path**, which is both the blast radius at fixture scale
 and the limit of what the suite could see.
 
@@ -749,7 +751,7 @@ above were made in the first place.
 
 The consequence is counter-intuitive enough to state plainly: **an index earns
 its keep on absolute rows fetched, not on percentage selectivity.** Fetching
-`k` rows beats scanning `n` only when `n > 8000k` — `n > 24000k` before the
+`k` rows beats scanning `n` only when `n > 8000k` — ~~`n > 24000k`~~ before the
 re-measurement above — so `k = 0.005n` never qualifies at any table size. Seven tests asserted the old rule — that a few
 percent was selective enough — and each was rewritten against the measurement
 rather than nudged: a nested loop now wins at a hundred million inner rows

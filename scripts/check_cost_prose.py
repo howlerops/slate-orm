@@ -20,6 +20,21 @@ That is `CLAUDE.md`'s "stale documentation is worse than none" pointed at the
 most load-bearing prose in the repository, and it is mechanically checkable:
 the numbers are derivable from the constants.
 
+**It reads `crates/` and `docs/`.** Code only, until #283. The page a reader
+actually reaches is `docs/performance.md`, and its "a point read costs about 3"
+outlived the constant by nine tasks — surviving #277's sweep precisely because
+that sweep could not see it. Prose in `docs/` is read as current whether or not
+a guard is pointed at it.
+
+Three kinds of sentence there trip these patterns without asserting anything
+current: history that names the old figure beside the new one, a withdrawal
+that quotes what is being withdrawn, and a measurement of a *different*
+quantity — "a point read costs three object-store GETs" is about GETs in a
+cacheless build, not about `POINT_READ_COST`. `~~strikethrough~~` handles the
+second and is preferred wherever a paragraph also states the live figure,
+because it leaves that figure under the guard. `NOT_A_CLAIM` handles the other
+two.
+
 WHAT IS CHECKED, AND WHY IT IS NARROW
 
 Three derived figures and one restatement, all as they are actually written:
@@ -78,6 +93,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "docs"
 STATS = ROOT / "crates/slate-kernel/src/stats.rs"
 WHERE = ROOT / "crates"
 
@@ -212,6 +228,58 @@ class Chunk(NamedTuple):
         return str(self.first) if self.first == self.last else f"{self.first}-{self.last}"
 
 
+#: Written above a paragraph in `docs/` to say it is not asserting what the
+#: constants are *now*.
+#:
+#: Three kinds of prose trip these patterns without claiming anything current,
+#: and all three are in `docs/` today: history that names the old figure beside
+#: the new one ("`n > 8000k` rather than `n > 24000k`"), a withdrawal that
+#: quotes the figure being withdrawn, and a measurement of a *different*
+#: quantity — "a point read costs three object-store GETs" is about GETs in a
+#: cacheless build, not about `POINT_READ_COST`, and the two are only
+#: coincidentally both about point reads.
+#:
+#: `~~strikethrough~~` already covers the second of those and is preferred
+#: where it fits, because a struck figure is legible to a reader as withdrawn.
+#: It does not fit the other two: a sentence contrasting old with new has to
+#: stay readable, and a measurement of GETs is not withdrawn at all.
+NOT_A_CLAIM = "<!-- not a cost-model claim -->"
+
+#: A markdown fence. Pasted benchmark output inside one is a record of what a
+#: run printed, not prose asserting a current value, so it is skipped — the
+#: same reasoning that keeps `check_table_provenance.py` out of fences.
+FENCE = re.compile(r"^\s*```")
+
+
+def prose(text: str) -> list[Chunk]:
+    """A markdown file as blank-line-separated paragraphs.
+
+    Markdown wraps a sentence across lines exactly as a doc comment does, so
+    the claim has to be matched against the joined paragraph rather than each
+    line — the same reason `paragraphs` joins comment runs.
+    """
+    chunks: list[Chunk] = []
+    run: list[str] = []
+    start = 0
+    fenced = False
+    lines = text.splitlines()
+    for at, line in enumerate([*lines, ""], start=1):
+        if FENCE.match(line):
+            fenced = not fenced
+            line = ""
+        if fenced:
+            continue
+        if line.strip():
+            if not run:
+                start = at
+            run.append(line)
+            continue
+        if run:
+            chunks.append(Chunk(start, at - 1, " ".join(run)))
+            run = []
+    return chunks
+
+
 def paragraphs(text: str) -> list[Chunk]:
     """The file as `(first line, text)` chunks a claim can be matched against.
 
@@ -278,17 +346,27 @@ def live(text: str) -> str | None:
     return re.sub(r"\s+", " ", stripped)
 
 
-def sources(where: Path = WHERE) -> list[Path]:
-    """Every Rust file under `where`, in a stable order.
+def sources(where: Path = WHERE, docs: Path | None = DOCS) -> list[Path]:
+    """Every Rust file under `where` and every doc under `docs`, in order.
 
     `where` is every crate, not the kernel, since #278 — the sentence that
     said "under the kernel" outlived that change by two tasks, in the file
     whose whole job is catching sentences that outlive a change.
+
+    `docs` arrived with #283. Excluding it was costing something real: the
+    prose a reader actually reaches said "a point read costs about 3" for
+    nine tasks after the constant became 1.0, and nothing could see it
+    because the guard read only code.
     """
-    return [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
+    found = [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
+    if docs is not None and docs.is_dir():
+        found += [path for path in sorted(docs.glob("*.md")) if path.is_file()]
+    return found
 
 
-def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
+def check(
+    where: Path = WHERE, stats: Path = STATS, docs: Path | None = DOCS
+) -> tuple[int, list[str]]:
     """Returns how many claims were read, and which disagree."""
     values = constants(stats)
     if len(values) != 2:
@@ -304,12 +382,25 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
 
     seen = 0
     wrong = []
-    for path in sources(where):
+    for path in sources(where, docs):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for chunk in paragraphs(text):
+        markdown = path.suffix == ".md"
+        chunks = prose(text) if markdown else paragraphs(text)
+        excused = False
+        for chunk in chunks:
+            if markdown:
+                # A marker covers the paragraph it is in, and — when it is a
+                # paragraph of its own, which is how it reads best above a
+                # long passage — the next one.
+                if NOT_A_CLAIM in chunk.text:
+                    excused = chunk.text.strip() == NOT_A_CLAIM
+                    continue
+                if excused:
+                    excused = False
+                    continue
             current = live(chunk.text)
             if current is None:
                 continue
@@ -371,13 +462,21 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
     return seen, wrong
 
 
-def main(where: Path = WHERE, stats: Path = STATS) -> int:
-    # Both are arguments so the never-fires guard below can be tested. It
+def main(
+    where: Path = WHERE, stats: Path = STATS, docs: Path | None = DOCS
+) -> int:
+    # All three are arguments so the never-fires guard below can be tested. It
     # could not be: the cases call `check` directly, `main` read the two
     # module constants, and a mutation deleting the guard changed no verdict
     # because this crate always has claims. That is the third guard this week
     # with the judgement in `main` and the tests one level under it.
-    seen, wrong = check(where, stats)
+    #
+    # `docs` joined them for a sharper reason: #283 gave it a real default, and
+    # the never-fires case — an empty tree, which must fail — began passing,
+    # because `main` was reading the repository's own five doc claims over the
+    # fixture's zero. A parameter that a test cannot override is a parameter
+    # the test is not really exercising.
+    seen, wrong = check(where, stats, docs)
     for problem in wrong:
         print(problem, file=sys.stderr)
         print(

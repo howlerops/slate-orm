@@ -505,9 +505,10 @@ Two things to carry into any reading of the numbers here:
   read costs about 1. ~~A point read costs about 3~~ — corrected on
   2026-09-22. It was 3 when this paragraph was written, and #269 re-measured
   it at 1.0; #278 then found that the 3 came from a build with SlateDB's
-  block cache compiled out (finding 8 below). This sentence is the last place
-  the old figure survived, because `scripts/check_cost_prose.py` reads
-  `crates/` and not `docs/`.
+  block cache compiled out (finding 8 below). This sentence was the last place
+  the old figure survived, because `scripts/check_cost_prose.py` read `crates/`
+  and not `docs/`. Since #283 it reads both, so a fourth place cannot open up
+  the way this one did.
 - Wall times below were derived as cost × 2.2 ms against the old constants.
   They are kept because the *relative* findings they record — late
   materialisation, the projection fix, hash grouping — were measured directly
@@ -1597,6 +1598,8 @@ and which is a property of the row width and the deployment rather than of
 anything in this repository — the same argument `SCAN_ROW_COST` was left alone
 under, one section up.~~
 
+<!-- not a cost-model claim -->
+
 **Both halves withdrawn.** The point-read figure does not reproduce: four
 measurements across three benchmarks and two fixtures give 1.02, 1.09,
 1.16/0.96 and 1.015 requests per row, and `POINT_READ_COST` is now **1.0** —
@@ -1949,6 +1952,8 @@ wrapped in a counting store, 21 runs, on a quiet box (load 1.3):
 | point read, one key | cache on | 3 | 0.00 | 69.34 µs [67.94 – 72.88] |
 | full scan of 20,000 | as shipped (default) | 2 | 2.00 | 34.79 ms [34.12 – 36.17] |
 | full scan of 20,000 | cache on | 2 | 1.00 | 34.90 ms [34.38 – 35.75] |
+
+<!-- not a cost-model claim -->
 
 **A point read costs three object-store GETs, every time, for ever.** With a
 cache installed it costs none once the metadata is loaded. The GET column
