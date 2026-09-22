@@ -83,6 +83,16 @@ pub struct Stamp {
     /// The `slatedb` version actually resolved, read from `Cargo.lock` at
     /// build time — not the range this crate asks for.
     pub slatedb: &'static str,
+
+    /// Every stamped dependency and its resolved version, as
+    /// `slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1`.
+    ///
+    /// Four rather than one since #285. #269 offered three guesses for the
+    /// 3.0 figure it could not explain — a SlateDB release, a block size, the
+    /// readahead — and the code behind all three lives in `slatedb` and
+    /// `foyer`. `foyer` is the cache whose *absence* was the whole of #278;
+    /// a different version of it is as worth recording as none of it.
+    pub deps: &'static str,
 }
 
 /// The build that produced this binary.
@@ -91,6 +101,7 @@ pub const fn stamp() -> Stamp {
         version: env!("CARGO_PKG_VERSION"),
         build: slate_kernel::build::build(),
         slatedb: env!("SLATE_BUILD_SLATEDB"),
+        deps: env!("SLATE_BUILD_DEPS"),
     }
 }
 
@@ -137,12 +148,12 @@ impl fmt::Display for Stamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "build: slate-slatedb {} | features {} | off {} | {} | slatedb {}",
+            "build: slate-slatedb {} | features {} | off {} | {} | {}",
             self.version,
             join(&self.on()),
             join(&self.off()),
             self.build,
-            self.slatedb,
+            self.deps,
         )
     }
 }
@@ -193,6 +204,11 @@ pub fn announce_to(out: &mut impl std::io::Write) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::expect_used,
+    reason = "a test asserts, and asserting panics"
+)]
 mod tests {
     use super::*;
 
@@ -217,6 +233,46 @@ mod tests {
             3,
             "want a resolved x.y.z, got {slatedb:?}"
         );
+    }
+
+    #[test]
+    fn every_stamped_dependency_resolves_to_a_version() {
+        // Not just "the string is non-empty". Each of the four has to name a
+        // real `x.y.z` from the lock, because the failure this guards against
+        // is a name silently resolving to `unknown` — which is what a typo in
+        // `STAMPED`, or a dependency renamed upstream, produces. An `unknown`
+        // is honest in the output and useless in a record.
+        let deps = stamp().deps;
+        for name in ["slatedb", "foyer", "object_store", "tokio"] {
+            let found = deps
+                .split(", ")
+                .find_map(|pair| pair.strip_prefix(&format!("{name} ")))
+                .unwrap_or_else(|| panic!("{name} is not in the stamp: {deps:?}"));
+            assert_ne!(found, "unknown", "{name} did not resolve in {deps:?}");
+            assert_eq!(
+                found.split('.').count(),
+                3,
+                "want a resolved x.y.z for {name}, got {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicated_dependency_is_reported_not_guessed_at() {
+        // Twenty-six packages in this lock resolve to two versions. None of
+        // the four does today, so this asserts the *rule* rather than the
+        // tree: the parser joins them, and nothing here silently takes the
+        // first. A version picked arbitrarily and presented as fact is the
+        // exact failure the build stamp exists to prevent.
+        let deps = stamp().deps;
+        for pair in deps.split(", ") {
+            let version = pair.split_once(' ').expect("`name version`").1;
+            assert!(
+                !version.is_empty(),
+                "an empty version in {deps:?} means a package block was read wrong"
+            );
+        }
+        assert_eq!(deps.split(", ").count(), 4, "want four deps, got {deps:?}");
     }
 
     #[test]

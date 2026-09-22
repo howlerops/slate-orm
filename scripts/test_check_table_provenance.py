@@ -23,7 +23,8 @@ import check_table_provenance as guard
 
 STAMP = (
     "build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | "
-    "release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0"
+    "release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | "
+    "slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1"
 )
 
 TIMED = "| query | wall |\n|---|---:|\n| point get | 16 ms |\n"

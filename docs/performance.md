@@ -28,7 +28,7 @@ Each command above prints a `build:` line before its first number, and a table
 recorded from one should carry that line with it:
 
 ```
-build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
 ```
 
 **This exists because a number without it cost nine tasks.** `POINT_READ_COST`
@@ -47,6 +47,16 @@ with the tables below*:
 
 `scripts/check_build_stamp.py` fails if a feature is added without the stamp
 reporting it, or if a program that measures something does not print it.
+
+Four dependencies are named rather than one. #269 offered three explanations
+for the point-read figure it could not reproduce — a SlateDB release, a block
+size, the readahead — and the code behind all of them is in `slatedb` and
+`foyer`. `foyer` is the cache whose *absence* was the whole of finding 8, so a
+different version of it is as worth recording as none of it; `object_store`
+issues the requests every GET count here counts, and `tokio` schedules the
+concurrency the pipelined-read costing is about. `rustls` and `aws-lc-rs` are
+under every S3 byte too and are deliberately left out: nothing here isolates a
+connection cost, and the line has to stay readable.
 
 **Tables on this page that predate 2026-09-22 have no build line**, and one
 cannot be reconstructed for them. `scripts/check_table_provenance.py` holds

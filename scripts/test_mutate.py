@@ -101,6 +101,23 @@ else:
 #: The bare trailing `FAIL` is the point: `go test` prints it as its last line
 #: whether a test failed or the package would not build, so a dialect that took
 #: it as proof a suite reported would read a build error as a clean run.
+#: What `cargo test -q` prints when a test fails: the summary line the
+#: `reported` pattern matches, **no** `test NAME ... FAILED` line for the
+#: `failed` pattern, and a non-zero exit.
+#:
+#: #285. `-q` suppresses the per-test results, so a real mutation caught by a
+#: real test scored as a survivor — silently, in the direction that reads as
+#: "your tests are weak" rather than "this tool is broken". Two were scored
+#: that way and two `expect_survivor` records were written against nothing.
+QUIET_CARGO_FAKE = """import sys
+subject = open(sys.argv[1]).read()
+print("running 8 tests")
+if "MUTATED" in subject:
+    print("test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured")
+    sys.exit(101)
+print("test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured")
+"""
+
 GO_FAKE = '''
 import sys
 text = open(sys.argv[1]).read()
@@ -180,6 +197,8 @@ def case(
         node_fake.write_text(NODE_FAKE)
         go_fake = home / "go_fake.py"
         go_fake.write_text(GO_FAKE)
+        quiet_cargo = home / "quiet_cargo.py"
+        quiet_cargo.write_text(QUIET_CARGO_FAKE)
         spec = (
             body.replace("__SUBJECT__", str(subject))
             .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
@@ -190,6 +209,10 @@ def case(
             )
             .replace("__NODE__", f'"{sys.executable}", "{node_fake}", "{subject}"')
             .replace("__GO__", f'"{sys.executable}", "{go_fake}", "{subject}"')
+            .replace(
+                "__QUIET_CARGO__",
+                f'"{sys.executable}", "{quiet_cargo}", "{subject}"',
+            )
         )
         code, output = run(spec, subject, fake)
         problems = []
@@ -496,6 +519,23 @@ def main() -> int:
             '{"name": "m", "old": "I", "new": "1"}]}',
             1,
             ["occurs 2 times"],
+        ),
+        case(
+            "a command whose failures cannot be read is refused, not scored",
+            '{"file": "__SUBJECT__", "dialect": "rust", "command": [__QUIET_CARGO__], '
+            '"cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            1,
+            ["UNREADABLE", "cannot score anything", "drop `-q`"],
+            # The whole point: it must never call this a survivor.
+            ["survived"],
+        ),
+        case(
+            "and a clean run through the same command still scores normally",
+            '{"file": "__SUBJECT__", "dialect": "rust", "command": [__QUIET_CARGO__], '
+            '"cases": [{"name": "m", "old": "ORIGINAL", "new": "UNTOUCHED", '
+            '"expect_survivor": true, "why": "the fake only fails on MUTATED"}]}',
+            0,
+            ["survived, as recorded"],
         ),
         case(
             "a mutation that does not build is not mistaken for a survivor",

@@ -327,8 +327,12 @@ def recover() -> int:
     return 1
 
 
-def run(command: list[str], dialect: str) -> tuple[list[str], int, str]:
-    """The command, its failing test names, and how many suites reported.
+def run(command: list[str], dialect: str) -> tuple[list[str], int, str, int]:
+    """The command, its failing test names, how many suites reported, and the
+    exit status.
+
+    The exit status is returned so that `unreadable` can compare it against
+    the names found. See that function for the failure it exists to catch.
 
     Every run gets a **fresh bytecode cache**, which is not housekeeping — it
     is the fourth way a mutation run lies, and the only one found by pointing
@@ -362,7 +366,36 @@ def run(command: list[str], dialect: str) -> tuple[list[str], int, str]:
             env=environment,
         )
     output = finished.stdout + finished.stderr
-    return failed.findall(output), len(reported.findall(output)), output
+    return (
+        failed.findall(output),
+        len(reported.findall(output)),
+        output,
+        finished.returncode,
+    )
+
+
+def unreadable(failures: list[str], reported: int, status: int) -> bool:
+    """Whether the command failed in a way this could not read.
+
+    **The fifth way a mutation run lies, and the worst so far**, because it
+    fails silently in the safe-looking direction: every mutation is scored a
+    survivor, which reads as "your tests are weak" rather than "this tool is
+    not working".
+
+    Met in #285, using this script. The `rust` dialect finds failing tests by
+    `^test NAME ... FAILED$`, and **`cargo test -q` never prints that line** —
+    `-q` suppresses the per-test results and leaves only `test result: FAILED.
+    7 passed; 1 failed`, which satisfies the "did anything run" check and
+    matches no name. A real mutation, one that a real test really caught,
+    scored as surviving. Two of them did, and two `expect_survivor` records
+    were written against results that meant nothing.
+
+    The signal is an inconsistency the dialect cannot explain: the command
+    exited non-zero, something reported, and no failing test was named. A
+    genuine survivor exits zero. A mutation that will not compile reports
+    nothing and is caught one branch earlier.
+    """
+    return status != 0 and reported > 0 and not failures
 
 
 def check(spec: dict) -> int:
@@ -383,9 +416,19 @@ def check(spec: dict) -> int:
     # A baseline, because a mutation run says nothing if the suite was already
     # red. This is the check a hand-run mutation always skips and the one that
     # makes every result below mean something.
-    failures, reported, output = run(command, dialect)
+    failures, reported, output, status = run(command, dialect)
     if reported == 0:
         print(f"the command reported no test results at all:\n{output[-2000:]}")
+        return 1
+    if unreadable(failures, reported, status):
+        print(
+            f"the command exited {status} but named no failing test, so this "
+            f"cannot score anything.\n"
+            f"  The {dialect!r} dialect does not match this command's output. "
+            f"For `cargo test`, drop `-q`:\n"
+            f"  it suppresses the per-test `... FAILED` lines this reads, and "
+            f"every mutation then scores as a survivor.\n{output[-1500:]}"
+        )
         return 1
     if failures:
         print(f"the suite is red before any mutation: {failures[:5]}")
@@ -396,9 +439,23 @@ def check(spec: dict) -> int:
     for mutation in cases:
         original = apply_once(path, mutation)
         try:
-            failures, reported, output = run(command, dialect)
+            failures, reported, output, status = run(command, dialect)
         finally:
             restore(path, original)
+
+        if unreadable(failures, reported, status):
+            print(
+                f"  !! {mutation.name}: UNREADABLE — the command exited "
+                f"{status}, something reported, and no failing test was "
+                f"named, so this cannot score anything.\n"
+                f"       The {dialect!r} dialect does not match this "
+                f"command's output. For `cargo test`, drop `-q`: it "
+                f"suppresses the\n"
+                f"       per-test `... FAILED` lines this reads, and every "
+                f"mutation then scores as a survivor."
+            )
+            problems += 1
+            continue
 
         if reported == 0:
             errors = [x for x in output.splitlines() if x.startswith("error")][:3]
@@ -432,8 +489,8 @@ def check(spec: dict) -> int:
     # Restored and re-verified, which is the step `CLAUDE.md` names and which is
     # skipped most often: a mutation run that leaves the tree broken makes every
     # later result a lie.
-    failures, reported, _ = run(command, dialect)
-    if failures or reported == 0:
+    failures, reported, _, status = run(command, dialect)
+    if failures or reported == 0 or unreadable(failures, reported, status):
         print(f"  !! the tree did not come back clean: {failures[:5]}")
         problems += 1
     else:
