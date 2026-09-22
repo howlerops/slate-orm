@@ -124,7 +124,23 @@ tested against a written lock, not observed in ours.
 pattern matching lines that are not failures would make every mutation look
 caught — the opposite error, equally silent, and nothing here detects it.
 
-**The `-q` defect invalidates earlier Rust mutation runs.** Any recorded in
-previous tasks with `cargo test -q` proved nothing. I have not audited which;
-they are in entries #241 onward wherever a `rust` dialect spec appears, and
-re-running them is not part of this task.
+**The `-q` defect is latent, not historical — and this paragraph replaces a
+wrong one.** As first committed, this entry said the defect "invalidates
+earlier Rust mutation runs", in "entries #241 onward". I then audited that
+claim and it is not supported. `mutate.py`'s own documented example has never
+carried `-q`:
+
+```json
+"command": ["cargo", "test", "-p", "slate-kernel", "--no-fail-fast"]
+```
+
+and no ledger entry in this repository records a `rust` run that used it. `-q`
+was my own habit, added this session, three lines below the example I was
+reading the spec format out of.
+
+What survives the audit is narrower and worth more: **a mutation run cannot be
+audited from this repository at all.** Specs are written per run, passed on
+stdin, and stored nowhere — so the only trace a past run could leave is a
+command line quoted in an entry, and quoting one is not a habit here. I could
+not have found an affected run if there had been one. That is the actual gap,
+and it is not closed by this task.
