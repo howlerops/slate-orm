@@ -196,11 +196,19 @@ async fn main() {
     println!("The two calibrated constants, read from `slate_kernel::stats` so the");
     println!("table below can be read against them:");
     println!(
-        "  SCAN_ROW_COST   = {SCAN_ROW_COST}  →  a scan returns ~{:.0} rows per request",
+        "  {:<16}= {:<10} →  a scan returns ~{:.0} rows per request",
+        "SCAN_ROW_COST",
+        SCAN_ROW_COST,
         1.0 / SCAN_ROW_COST
     );
+    // Width-padded rather than spaced by hand: the hand-written padding was
+    // measured against the old literals and left two characters out of line
+    // the moment the values became interpolated. A column that drifts when
+    // the value changes is the same defect as a header that says 3.0 when
+    // the constant says 1.0, one order of magnitude smaller.
     println!(
-        "  POINT_READ_COST = {POINT_READ_COST}       →  a point read costs {POINT_READ_COST} request(s)"
+        "  {:<16}= {:<10} →  a point read costs {POINT_READ_COST} request(s)",
+        "POINT_READ_COST", POINT_READ_COST
     );
     println!();
 

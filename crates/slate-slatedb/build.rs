@@ -16,6 +16,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// How far above this crate's manifest to look for the workspace lock.
+///
+/// Four would do for this repository (`crates/slate-slatedb` is one below the
+/// root). Twelve leaves room for a deeper checkout without letting a build
+/// with no lock of its own wander into an unrelated project's.
+const MAX_CLIMB: usize = 12;
+
 fn main() {
     let (version, lock) = slatedb_version();
     println!("cargo:rustc-env=SLATE_BUILD_SLATEDB={version}");
@@ -36,16 +43,32 @@ fn main() {
 fn slatedb_version() -> (String, Option<PathBuf>) {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let mut directory = Path::new(&manifest);
-    loop {
+    // Bounded, and a lock only counts beside a manifest. Walking freely to
+    // `/` meant a vendored or registry build of this crate — which has no
+    // lock of its own — could climb until it found *somebody's* Cargo.lock
+    // and stamp that workspace's `slatedb` as the one this was built
+    // against. A wrong version is worse than the documented `unknown`,
+    // because only one of the two is obviously not an answer.
+    //
+    // The first attempt at this bound stopped as soon as an ancestor had no
+    // `Cargo.toml`, which is wrong in the ordinary layout: `crates/` has
+    // none, so every build stamped `unknown` — a fix that broke the feature
+    // it was tightening. `the_resolved_slatedb_version_is_read_from_the_lock`
+    // caught it, which is why that test asserts a resolved `x.y.z` rather
+    // than merely "something".
+    for _ in 0..MAX_CLIMB {
         let candidate = directory.join("Cargo.lock");
-        if let Ok(text) = std::fs::read_to_string(&candidate) {
+        if directory.join("Cargo.toml").exists()
+            && let Ok(text) = std::fs::read_to_string(&candidate)
+        {
             return (parse_locked(&text, "slatedb"), Some(candidate));
         }
         match directory.parent() {
             Some(parent) => directory = parent,
-            None => return ("unknown".to_owned(), None),
+            None => break,
         }
     }
+    ("unknown".to_owned(), None)
 }
 
 /// The `version` of one `[[package]]` in a `Cargo.lock`.

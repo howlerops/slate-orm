@@ -75,6 +75,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 STATS = ROOT / "crates/slate-kernel/src/stats.rs"
@@ -107,10 +108,25 @@ THOUSANDS = {
 MARKUP = r"[*`_]{0,2}"
 
 #: "a point read costs about three" / "a point read costs 1" /
-#: "POINT_READ_COST says 3 requests"
+#: "POINT_READ_COST says 3 requests".
+#:
+#: The trailing `(?![,0-9])` refuses a figure that is part of a larger
+#: grouped number, because the sentences around here also state measured
+#: *totals*: `join.rs` says "four hundred point reads cost 1,221 requests",
+#: and without the lookahead that reads as "a point read costs 1". It passed
+#: only because 1,221 happens to begin with a 1 — mutate the total to 2,442
+#: and the guard accuses two correct files of saying a point read costs 2.
+#: A per-read claim and a per-400-rows total are different sentences, and
+#: only the first is this pattern's business.
+#:
+#: The `\b` in front of it is load-bearing for a second reason, found by
+#: dropping it: `stamp.rs` says a cacheless build "costs ~3x the object-store
+#: requests", and without the boundary that reads as a point read costing 3.
+#: A *ratio* is a third kind of sentence. Both guards are needed; neither
+#: alone is enough.
 PER_READ = re.compile(
     r"(?:point reads? costs?|POINT_READ_COST says) "
-    r"(?:about |roughly |~)?" + MARKUP + r"([0-9.]+|[a-z]+)\b",
+    r"(?:about |roughly |~)?" + MARKUP + r"([0-9.]+|[a-z]+)\b(?![,0-9])",
     re.IGNORECASE,
 )
 #: "a scan returns about eight thousand rows per request", "~8000 rows per
@@ -178,7 +194,25 @@ COMMENT = re.compile(r"^\s*//[!/]?\s?")
 STRUCK = re.compile(r"~~.*?~~", re.DOTALL)
 
 
-def paragraphs(text: str) -> list[tuple[int, str]]:
+class Chunk(NamedTuple):
+    """A run of text to match against, and the lines it came from.
+
+    `first` and `last` differ only for a joined comment run. Reporting the
+    range rather than `first` alone matters for a module doc, where every
+    violation in eighty lines of `//!` would otherwise be reported at line 1
+    — which reads as a guard that cannot find anything.
+    """
+
+    first: int
+    last: int
+    text: str
+
+    def where(self) -> str:
+        """`12` for a line, `12-19` for a run."""
+        return str(self.first) if self.first == self.last else f"{self.first}-{self.last}"
+
+
+def paragraphs(text: str) -> list[Chunk]:
     """The file as `(first line, text)` chunks a claim can be matched against.
 
     A run of consecutive comment lines is joined into one chunk, because a
@@ -194,9 +228,10 @@ def paragraphs(text: str) -> list[tuple[int, str]]:
     one today, and joining arbitrary adjacent code lines invents sentences
     that were never written.
     """
-    chunks: list[tuple[int, str]] = []
+    chunks: list[Chunk] = []
     run: list[str] = []
     start = 0
+    last = 0
     # The `None` sentinel closes a run that reaches the end of the file. A
     # second copy of the flush after the loop is the obvious way to write
     # this and was how it was written: every fixture here ends on a comment,
@@ -211,12 +246,13 @@ def paragraphs(text: str) -> list[tuple[int, str]]:
             if not run:
                 start = at
             run.append(line[marker.end():])
+            last = at
             continue
         if run:
-            chunks.append((start, " ".join(run)))
+            chunks.append(Chunk(start, last, " ".join(run)))
             run = []
         if line is not None:
-            chunks.append((at, line))
+            chunks.append(Chunk(at, at, line))
     return chunks
 
 
@@ -243,7 +279,12 @@ def live(text: str) -> str | None:
 
 
 def sources(where: Path = WHERE) -> list[Path]:
-    """Every Rust file under the kernel, in a stable order."""
+    """Every Rust file under `where`, in a stable order.
+
+    `where` is every crate, not the kernel, since #278 — the sentence that
+    said "under the kernel" outlived that change by two tasks, in the file
+    whose whole job is catching sentences that outlive a change.
+    """
     return [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
 
 
@@ -268,8 +309,8 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for at, chunk in paragraphs(text):
-            current = live(chunk)
+        for chunk in paragraphs(text):
+            current = live(chunk.text)
             if current is None:
                 continue
             for match in PER_READ.finditer(current):
@@ -279,7 +320,7 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                 seen += 1
                 if abs(value - read) > 0.01:
                     wrong.append(
-                        f"{named(path)}:{at} says a point read "
+                        f"{named(path)}:{chunk.where()} says a point read "
                         f"costs {match.group(1)}; POINT_READ_COST is {read:g}."
                     )
             for match in PER_REQUEST.finditer(current):
@@ -290,7 +331,7 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                 seen += 1
                 if abs(value - per_request) > 1.0:
                     wrong.append(
-                        f"{named(path)}:{at} says a scan returns {written} "
+                        f"{named(path)}:{chunk.where()} says a scan returns {written} "
                         f"rows per request; 1 / SCAN_ROW_COST is "
                         f"{per_request:g}."
                     )
@@ -302,7 +343,7 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                 seen += 1
                 if abs(value - crossover) > 1.0:
                     wrong.append(
-                        f"{named(path)}:{at} puts the crossover at "
+                        f"{named(path)}:{chunk.where()} puts the crossover at "
                         f"{written}; POINT_READ_COST / SCAN_ROW_COST is "
                         f"{crossover:g}."
                     )
@@ -323,7 +364,7 @@ def check(where: Path = WHERE, stats: Path = STATS) -> tuple[int, list[str]]:
                 seen += 1
                 if abs(value - values[name]) > 1e-9:
                     wrong.append(
-                        f"{named(path)}:{at} restates {name} as {written}; "
+                        f"{named(path)}:{chunk.where()} restates {name} as {written}; "
                         f"it is {values[name]:g}. Print it from "
                         f"`slate_kernel::stats` rather than copying it."
                     )

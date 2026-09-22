@@ -124,6 +124,23 @@ CASES: list[tuple[str, str, int, int]] = [
      "// a scan returns about eight thousand rows per request.\n", 1, 0),
     ("a stale rows-per-request claim is reported",
      "// a scan returns about 100 rows per object-store request.\n", 1, 1),
+    # #281. A measured *total* is not a per-read claim. `join.rs` and
+    # `chain.rs` both say "four hundred point reads cost 1,221 requests";
+    # this read that as "a point read costs 1" and passed only because 1,221
+    # begins with a 1. Mutate the total and the guard accuses two correct
+    # files of saying a point read costs 2.
+    ("a measured total is not a per-read claim",
+     "// four hundred point reads cost 1,221 requests.\n", 0, 0),
+    ("and neither is one whose first digit happens to be wrong",
+     "// four hundred point reads cost 2,442 requests.\n", 0, 0),
+    # #281. A ratio is a third kind of sentence. `stamp.rs` says a cacheless
+    # build "costs ~3x the object-store requests"; dropping the word boundary
+    # in front of the figure makes that a claim that a point read costs 3.
+    ("a ratio is not a per-read claim",
+     "// without it, point reads cost ~3x the object-store requests.\n", 0, 0),
+    # And the plain forms still read, so neither guard above ate them.
+    ("a bare per-read claim still reads",
+     "// a point read costs 1 request.\n", 1, 0),
     ("a comment with no figure in it is not a claim",
      "// a point read costs whatever the constant says.\n", 0, 0),
     # Both directions: the arithmetic has to come from the constants, not from
@@ -131,6 +148,23 @@ CASES: list[tuple[str, str, int, int]] = [
     ("the crossover follows the constants, not a literal",
      "// fetching `k` rows beats scanning `n` only when `n > 4000k`.\n", 1, 0),
 ]
+
+
+def reports_the_range_of_a_joined_run() -> tuple[bool, str]:
+    """A violation in a doc-comment run names the lines, not just the first.
+
+    #281. A module doc becomes one chunk once its lines are joined, so every
+    violation in it was reported at the run's first line — `file:1` for a
+    `//!` block, which reads as a guard that cannot locate anything. The
+    stale figure here is on the *second* line of a two-line run, so a report
+    naming only line 1 is visibly not pointing at it.
+    """
+    _, wrong = run("//! a point read\n//!   costs about three requests.\n")
+    if len(wrong) != 1:
+        return False, f"wanted one problem, got {wrong}"
+    if ":1-2 " not in wrong[0]:
+        return False, f"wanted the range 1-2 in {wrong[0]!r}"
+    return True, ""
 
 
 def main() -> int:
@@ -157,6 +191,12 @@ def main() -> int:
         if not ok:
             print(f"        wanted {claims} claim(s) and {stale} stale, "
                   f"got {seen} and {wrong}")
+
+    ok, why = reports_the_range_of_a_joined_run()
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a joined run reports the lines it spans")
+    if not ok:
+        print(f"        {why}")
 
     # The never-fires halves, both of them. `check` returning `(0, [])` for a
     # tree with no claim is the right answer; the judgement that zero means

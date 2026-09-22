@@ -129,8 +129,11 @@ impl Stamp {
 
 impl fmt::Display for Stamp {
     /// One line, prefixed `build:`, which is what
-    /// `scripts/check_measurement_provenance.py` looks for in a recorded
-    /// table and what a reader scans for in a wall of benchmark output.
+    /// `scripts/check_build_stamp.py` requires of a measuring program, and
+    /// what a reader scans for in a wall of benchmark output.
+    ///
+    /// Nothing checks that a *recorded* table kept the line. The guard
+    /// covers the programs that emit it, not the documents that quote it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -174,8 +177,7 @@ fn join(names: &[&str]) -> String {
 /// Print the stamp, and any load-bearing feature that is missing.
 ///
 /// Every program in this repository that measures something calls this before
-/// its first number; `scripts/check_measurement_provenance.py` fails if one
-/// does not.
+/// its first number; `scripts/check_build_stamp.py` fails if one does not.
 pub fn announce() {
     let mut out = std::io::stdout();
     announce_to(&mut out);

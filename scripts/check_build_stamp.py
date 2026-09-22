@@ -53,6 +53,11 @@ DECLARED = re.compile(r'cfg!\(feature\s*=\s*"([^"]+)"\)')
 BEARING = re.compile(r'^\s*\(\s*\n?\s*"([^"]+)",', re.MULTILINE)
 #: A `[features]` entry: `cache = ["slatedb/foyer"]`.
 FEATURE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*\[", re.MULTILINE)
+#: Returned in place of the load-bearing names when the anchors that delimit
+#: them can no longer be found, so a moved anchor is a failure rather than a
+#: silent pass over an empty slice.
+ANCHORS_MOVED = "<LOAD_BEARING could not be located>"
+
 #: Any announce call: `announce()` on stdout for a benchmark,
 #: `announce_to(&mut stderr())` for a daemon whose stdout is parsed.
 ANNOUNCES = re.compile(r"\bannounce(?:_to)?\s*\(")
@@ -106,24 +111,53 @@ def stamped(stamp: Path = STAMP) -> tuple[set[str], set[str]]:
         text = stamp.read_text(encoding="utf-8")
     except OSError:
         return set(), set()
-    bearing = text[text.find("LOAD_BEARING") : text.find("pub struct Stamp")]
-    return set(DECLARED.findall(text)), set(BEARING.findall(bearing))
+    opens, closes = text.find("LOAD_BEARING"), text.find("pub struct Stamp")
+    if opens < 0 or closes <= opens:
+        # Renaming either anchor used to make this half of the guard read an
+        # empty string and pass, which is the never-fires failure in
+        # miniature: a check that stops checking and says `ok`. The sentinel
+        # is picked up by `check()` and reported.
+        return set(DECLARED.findall(text)), {ANCHORS_MOVED}
+    return set(DECLARED.findall(text)), set(BEARING.findall(text[opens:closes]))
 
 
 def programs(crates: Path = CRATES) -> list[Path]:
-    """Every example, bench and binary under `crates/`, in a stable order."""
+    """Every example, bench and binary under `crates/`, in a stable order.
+
+    Every layout cargo will build as one, not only the three this happened to
+    start with.
+    """
     found = [
         path
-        for pattern in ("*/examples/*.rs", "*/benches/*.rs", "*/src/main.rs")
+        for pattern in (
+            "*/examples/*.rs",
+            "*/benches/*.rs",
+            "*/src/main.rs",
+            # Cargo takes three more layouts, and a benchmark written in any
+            # of them was invisible here — which defeats the whole point of
+            # an inverted roster, since the thing it is supposed to catch is
+            # exactly a program somebody added without thinking about this.
+            "*/src/bin/*.rs",
+            "*/examples/*/main.rs",
+            "*/benches/*/main.rs",
+        )
         for path in crates.glob(pattern)
     ]
     return sorted(found)
 
 
-def named(path: Path) -> str:
-    """A path as the roster spells it: `crate/examples/thing.rs`."""
+def named(path: Path, crates: Path = CRATES) -> str:
+    """A path as the roster spells it: `crate/examples/thing.rs`.
+
+    Takes the root rather than reading the module global, which it did until
+    #281: `check()` accepted a `crates` parameter and this ignored it, so over
+    any tree but the default every path fell through to the absolute-path
+    branch and matched no exemption. The tests did not catch it because they
+    patched the global *as well as* passing the parameter — a fixture that
+    papers over the bug it should expose.
+    """
     try:
-        return str(path.relative_to(CRATES))
+        return str(path.relative_to(crates))
     except ValueError:
         return str(path)
 
@@ -154,7 +188,13 @@ def check(
             f"{manifest.name}. `cfg!(feature = ...)` on an undeclared "
             "feature is always false, so the stamp would call it off for ever."
         )
-    for invented in sorted(bearing - declared):
+    if ANCHORS_MOVED in bearing:
+        wrong.append(
+            f"{stamp.name} no longer has both `LOAD_BEARING` and `pub struct "
+            "Stamp`, in that order, so the load-bearing half of this checked "
+            "nothing. Move the anchors with them."
+        )
+    for invented in sorted(bearing - declared - {ANCHORS_MOVED}):
         wrong.append(
             f"LOAD_BEARING names `{invented}`, which is not a feature. Its "
             "warning can never fire."
@@ -162,7 +202,7 @@ def check(
 
     seen = 0
     for path in programs(crates):
-        name = named(path)
+        name = named(path, crates)
         seen += 1
         try:
             text = path.read_text(encoding="utf-8")

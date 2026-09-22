@@ -94,8 +94,8 @@ impl fmt::Display for Build {
 ///
 /// Used directly by the crates that have no cargo features of their own;
 /// `slate_slatedb::stamp::announce` wraps this and adds the feature set.
-/// `scripts/check_measurement_provenance.py` fails if a program that measures
-/// something calls neither.
+/// `scripts/check_build_stamp.py` fails if a program that measures something
+/// calls neither.
 pub fn announce() {
     let mut out = std::io::stdout();
     announce_to(&mut out);
@@ -124,7 +124,7 @@ pub fn warnings() -> Vec<String> {
     let mut warnings = Vec::new();
     if !build().timings_are_meaningful() {
         warnings.push(format!(
-            "this is a {} build: wall-clock numbers below are not comparable \
+            "this is a {} build: its wall-clock numbers are not comparable \
              with anything recorded in docs/, which is measured at --release. \
              Request counts still are.",
             build().profile

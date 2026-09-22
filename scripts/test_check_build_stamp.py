@@ -81,8 +81,6 @@ def run(
             path.write_text(text)
         crates.mkdir(exist_ok=True)
         before = guard.NOT_A_MEASUREMENT.copy()
-        was = guard.CRATES
-        guard.CRATES = crates
         # Always replaced, never inherited. Leaving the real exemptions in
         # place made five fixture cases report the real repository's files as
         # missing from a temporary directory — a test harness failing in a way
@@ -90,9 +88,14 @@ def run(
         guard.NOT_A_MEASUREMENT.clear()
         guard.NOT_A_MEASUREMENT.update(excused or {})
         try:
+            # `guard.CRATES` is deliberately NOT patched. It was, and that is
+            # what hid a real defect for a day: `named()` read the global
+            # while `check()` took a parameter, so over any tree but the real
+            # one every path fell through to its absolute form and matched no
+            # exemption. Patching both made the fixture agree with the bug.
+            # Passing only the parameter is what a caller does.
             return guard.check(manifest_path, stamp_path, crates)
         finally:
-            guard.CRATES = was
             guard.NOT_A_MEASUREMENT.clear()
             guard.NOT_A_MEASUREMENT.update(before)
 
@@ -199,6 +202,34 @@ CASES: list[tuple[str, dict, int, int, str]] = [
         1,
         1,
         "prints no build stamp",
+    ),
+    # #281. Three more layouts cargo will build as a program. A benchmark in
+    # any of them was invisible to the sweep, which defeats an inverted
+    # roster: the case it exists for is somebody adding a program without
+    # thinking about this file.
+    (
+        "a binary under src/bin is read",
+        {"programs": {"a/src/bin/probe.rs": SILENT}, "excused": {}},
+        1,
+        1,
+        "prints no build stamp",
+    ),
+    (
+        "a multi-file example is read",
+        {"programs": {"a/examples/big/main.rs": SILENT}, "excused": {}},
+        1,
+        1,
+        "prints no build stamp",
+    ),
+    # #281. The load-bearing names are sliced between two anchors in the
+    # source. When either moved, the slice was empty and this half of the
+    # guard passed over nothing at all.
+    (
+        "a moved anchor fails instead of passing vacuously",
+        {"stamp": STAMP.replace("pub struct Stamp", "pub struct BuildStamp")},
+        1,
+        1,
+        "no longer has both",
     ),
 ]
 

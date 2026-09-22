@@ -13,7 +13,7 @@ A program that measures something prints one line before its first number:
 build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0
 ```
 
-Seventeen programs print it — every example, both criterion benches, the
+Nineteen programs print it — every example, both criterion benches, the
 ClickBench runner, and `slate-serverd` on stderr. `check_build_stamp.py` fails
 if a cargo feature is added without the stamp reporting it, or if any program
 under `crates/` neither prints the line nor is recorded as measuring nothing.
@@ -159,6 +159,15 @@ warnings in the new tests that CI's `-D warnings` would have failed on.
 `python3 scripts/test_check_build_stamp.py`: 13 passed, 0 failed.
 `sh scripts/run_examples.sh slate-kernel --smoke`: 4 passed, 0 failed.
 Unit tests: kernel 9, slate-slatedb 12, slate-tuple 2, all passing.
+
+> **Corrected by #281.** This entry said *seventeen* programs print the
+> stamp; it is **nineteen**, by the enumeration in the same sentence. An
+> adversarial review of the three commits found that and ten other defects,
+> among them a guard of mine that read a module global where it was handed a
+> parameter — hidden by a fixture that patched the global too — and three doc
+> comments citing `scripts/check_measurement_provenance.py`, a file that was
+> renamed to `check_build_stamp.py` before it ever existed under the first
+> name. All eleven are fixed; see that entry.
 
 ## What this does not do
 
