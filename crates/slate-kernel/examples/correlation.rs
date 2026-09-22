@@ -312,6 +312,7 @@ async fn count_matching(store: &RecordStore<MemoryStore>, filter: &Expr) -> usiz
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     println!(
         "Correlated-column estimates, {} rows. The planner assumes the two\n\
          columns are independent and multiplies their selectivities; the data\n\

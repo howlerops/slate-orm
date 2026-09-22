@@ -426,6 +426,7 @@ fn median(values: &[f64]) -> f64 {
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     println!("# Does SlateDB have a block cache in this build?\n");
     println!(
         "Fixture: {} rows of the `events` table, written, closed, reopened, over an\n\

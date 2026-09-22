@@ -22,6 +22,40 @@ SCALE_ROWS=200000,600000,1200000 \
   cargo run --release -p slate-slatedb --example cost_at_scale
 ```
 
+### Every run says what build it is
+
+Each command above prints a `build:` line before its first number, and a table
+recorded from one should carry that line with it:
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0
+```
+
+**This exists because a number without it cost nine tasks.** `POINT_READ_COST`
+was recorded at 3.0, re-measured at 1.0 by #269 with the change unexplained,
+and finally traced by #278 to a build with SlateDB's block cache compiled out
+— a cargo feature, three times the object-store requests, and nothing in any
+output that said so. The figures were right; the records were incomplete.
+
+Two lines are printed only when they apply, and both mean *do not compare this
+with the tables below*:
+
+- `!! this is a debug build` — wall clock in a debug build is a different
+  program, not a slower one. Note that `scripts/run_examples.sh` builds debug,
+  so a CI transcript says this and a `--release` run does not.
+- `` !! `cache` is OFF `` — the defect above, caught at the source.
+
+`scripts/check_build_stamp.py` fails if a feature is added without the stamp
+reporting it, or if a program that measures something does not print it.
+
+**Tables on this page that predate 2026-09-22 have no build line**, and one
+cannot be reconstructed for them. What is recorded about them is what their own
+prose says — fixture size, run count, machine load — plus the `--release` in
+the commands above. Finding 8 and the `POINT_READ_COST` history in
+[`docs/correctness.md`](correctness.md) are the only two places in this
+repository where the cargo features behind a measurement were written down
+before this existed, and both are write-ups of that defect.
+
 Every command above runs at the size the figures on this page were taken at.
 Three environment variables shrink them — `KERNELBENCH_ROWS` for the kernel's
 examples, `HEADBENCH_*` for the head node's, `SCALE_ROWS` for the storage ones
@@ -460,7 +494,12 @@ Two things to carry into any reading of the numbers here:
 
 - The unit is now **object-store requests**, measured, not round trips inferred
   from a latency fixture. A scan returns about 8,000 rows per request; a point
-  read costs about 3.
+  read costs about 1. ~~A point read costs about 3~~ — corrected on
+  2026-09-22. It was 3 when this paragraph was written, and #269 re-measured
+  it at 1.0; #278 then found that the 3 came from a build with SlateDB's
+  block cache compiled out (finding 8 below). This sentence is the last place
+  the old figure survived, because `scripts/check_cost_prose.py` reads
+  `crates/` and not `docs/`.
 - Wall times below were derived as cost × 2.2 ms against the old constants.
   They are kept because the *relative* findings they record — late
   materialisation, the projection fix, hash grouping — were measured directly

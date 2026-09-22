@@ -105,6 +105,7 @@ macro_rules! measure {
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     let requested: Vec<String> = std::env::args().skip(1).collect();
     let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
 

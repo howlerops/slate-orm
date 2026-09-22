@@ -43,10 +43,19 @@ import struct
 import sys
 
 #: How many trips the browser gets. The whole month is 2,964,619 and loads in
-#: 17.8 s in-process, but the in-memory store costs about 1.3 KB a row, so the
-#: month would want ~3.8 GB and a wasm32 tab has 4 GB of address space in
-#: theory and around 2 GB in practice. 100,000 is ~130 MB, which a tab holds
-#: without complaint, and ~1.1 MB gzipped on the wire.
+#: 17.8 s in-process. The in-memory store costs **403 bytes a row**, counted
+#: with an allocator in `docs/performance.md` §7c, so 100,000 is about 40 MB,
+#: which a tab holds without complaint, and ~1.1 MB gzipped on the wire.
+#:
+#: ~~about 1.3 KB a row, so the month would want ~3.8 GB … 100,000 is ~130
+#: MB~~ — both withdrawn by §7c and by `site/README.md`, and both survived
+#: here until #280 swept for measurements with no provenance. They were RSS
+#: readings attributed to the store.
+#:
+#: **The sample size was not revisited against the corrected figure.** At 403
+#: bytes the month is about 1.2 GB rather than 3.8 GB, which is a different
+#: argument about a wasm32 tab's ~2 GB of practical address space than the one
+#: this comment used to make. Nobody has measured whether it would hold.
 SAMPLE = 100_000
 #: Fixed, so the committed file is reproducible from this script.
 SEED = 20240101

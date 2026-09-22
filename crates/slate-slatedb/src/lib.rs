@@ -24,10 +24,12 @@
 pub mod reader;
 #[cfg(feature = "aws")]
 pub mod s3;
+pub mod stamp;
 
 pub use reader::{ReplicaMode, SlateReader};
 #[cfg(feature = "aws")]
 pub use s3::S3Config;
+pub use stamp::{Stamp, announce, announce_to, stamp};
 
 use async_trait::async_trait;
 use bytes::Bytes;

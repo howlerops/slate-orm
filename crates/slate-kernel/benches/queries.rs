@@ -9,7 +9,7 @@
 // A benchmark that cannot set itself up should stop, loudly.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 use slate_kernel::latency::{LatencyProfile, LatencyStore};
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{
@@ -290,7 +290,15 @@ fn writes(c: &mut Criterion) {
 }
 
 criterion_group!(benches, planning, scan_row_breakdown, reads, writes);
-criterion_main!(benches);
+/// Spelled out rather than `criterion_main!(benches)`, which is what this
+/// was: the generated main runs the group and prints criterion's summary,
+/// with nowhere to say what build produced the numbers. A bench whose output
+/// cannot be told apart from a debug run's is the defect #280 is about.
+fn main() {
+    slate_kernel::build::announce();
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}
 
 /// Where the time in a scanned row actually goes.
 ///

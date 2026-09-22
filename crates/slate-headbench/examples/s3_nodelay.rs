@@ -292,6 +292,7 @@ async fn arm(label: &str, nodelay: bool, tuning: ScanTuning) -> Result_ {
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     println!("# The in-process S3 server's socket\n");
     println!(
         "{} rows, scanned end to end over a real S3 server in this process.\n\

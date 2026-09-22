@@ -9,6 +9,7 @@
 #![warn(missing_docs)]
 
 pub mod aggregate;
+pub mod build;
 pub mod chain;
 pub mod clock;
 pub mod error;

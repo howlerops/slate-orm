@@ -52,12 +52,32 @@ const fn live() -> (usize, usize) {
     (0, 0)
 }
 
+/// Say that every allocation column below is a zero for want of an allocator.
+///
+/// Without this the run prints a full table of `0.00 MB` and `0 B` per row
+/// that is indistinguishable from a measurement of a program that allocates
+/// nothing — which is the shape of defect #278 was about, at the scale of one
+/// example. The build stamp above reports the feature as off; this says what
+/// off *does* here, which the stamp deliberately does not because the answer
+/// is specific to this program.
+fn warn_if_unmeasured() {
+    if !cfg!(feature = "dhat-heap") {
+        println!(
+            "!! no allocator: every byte and block column below is 0 because \
+             this was\n!! built without `--features dhat-heap`, not because \
+             nothing was allocated.\n!! The timings are still real."
+        );
+    }
+}
+
 fn mb(bytes: usize) -> String {
     format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    slate_slatedb::announce();
+    warn_if_unmeasured();
     // Held for the whole run: `HeapStats::get` reports nothing without it.
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();

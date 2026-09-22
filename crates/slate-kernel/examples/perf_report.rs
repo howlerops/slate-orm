@@ -132,6 +132,7 @@ fn row(tenant: u128, id: u64) -> Row {
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     let table = events();
     let actor_table = actors();
     let team_table = teams();

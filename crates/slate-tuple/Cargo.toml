@@ -16,6 +16,13 @@ uuid.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 criterion.workspace = true
+# For the build stamp in `benches/codec.rs`, so a recorded microbenchmark says
+# whether it came from a debug or a release build. A *dev*-dependency cycle:
+# `slate-kernel` depends on this crate normally, and cargo resolves the two
+# separately, so nothing here ships with the cycle. The alternative was a
+# fourth build script in the workspace's bottom crate to re-derive four
+# strings cargo already sets.
+slate-kernel.workspace = true
 
 [[bench]]
 name = "codec"

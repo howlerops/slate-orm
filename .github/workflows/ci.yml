@@ -336,6 +336,8 @@ jobs:
       # by the same factor.
       - run: python3 scripts/check_cost_prose.py
       - run: python3 scripts/test_check_cost_prose.py
+      - run: python3 scripts/check_build_stamp.py
+      - run: python3 scripts/test_check_build_stamp.py
       # The TypeScript client carries its own copy of the proto, because
       # `@grpc/proto-loader` reads the file at run time and an npm package
       # cannot reach into a sibling crate. Nothing checked the two agreed:

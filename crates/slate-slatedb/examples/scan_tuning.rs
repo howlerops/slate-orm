@@ -129,6 +129,7 @@ async fn scan_once(
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     let server = s3server::LocalS3::start("slate-orm").await;
     let counters = server.counters();
 

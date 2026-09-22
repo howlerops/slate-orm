@@ -70,6 +70,7 @@ fn right() -> TableDef {
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     let (l, r) = (left(), right());
     let catalog = Catalog::from_tables([l.clone(), r.clone()]).unwrap();
     let store = RecordStore::new(MemoryStore::new(), catalog, SecurityCatalog::new());

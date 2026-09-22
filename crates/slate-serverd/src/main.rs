@@ -389,6 +389,13 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         .local_addr()
         .map_err(|why| Fault::new(format!("cannot read the bound address: {why}")))?;
 
+    // On stderr, above the configuration banner: stdout is this binary's
+    // machine-readable channel — `LISTENING <addr>` is parsed by the Python,
+    // Go and TypeScript harnesses — and a build line there would be a new
+    // line those parsers have to skip. The head-node tables in
+    // `docs/performance.md` all measure *this* binary, so "which build is
+    // running" is the same question #280 is about, asked of a server.
+    slate_slatedb::announce_to(&mut std::io::stderr());
     for warning in &warnings {
         eprintln!("slate-serverd: warning: {warning}");
     }
