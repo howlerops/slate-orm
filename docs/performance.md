@@ -2065,6 +2065,53 @@ now bounded: it lives in one row and the run says which.
 10.860 ms per GET, against a loopback `s3s`; `docs/performance.md` uses 2.2 ms,
 a wide-area figure. The GET counts are what transfers.
 
+### 8c. Doubling the table does not double the requests — a scan gets cheaper per row as it grows
+
+Every cost measurement on this page until now was taken at 200,000 rows, and
+the README has carried "the constants at a million rows are still unmeasured"
+for as long as that has been true. The loader cliff between 500,000 and 600,000
+rows still blocks the million. **400,000 fits**, and it is the first second
+point this model has ever had.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example cost_at_scale`, with
+`SCALE_ROWS`. Two runs at 400,000; one at 200,000, which reproduces the
+three-state table recorded above (53 / 205 / 369 there, 51 / 199 / 365 here).
+
+| the store has already | 200,000 rows | 400,000 rows | requests, for 2× the rows |
+|---|---:|---:|---:|
+| read nothing at all | 51 GETs | 69 – 77 | **1.35 – 1.51×** |
+| served 200 random point reads | 199 – 201 | 228 | **1.14×** |
+| served `analyze` and 400 of them | 365 | 406 | **1.11×** |
+
+Per row, in the same three states: 3,922 → 5,195 – 5,797 rows/GET; 1,005 →
+1,754; 548 → 985.
+
+**A scan gets more efficient per row as the table grows**, in every cache
+state, and the effect is largest in the states a real deployment is actually
+in. Nothing here predicted that — the cost model charges a scan strictly
+linearly in rows, so it is the one direction the model cannot express.
+
+The stability is worth stating because it is what makes the comparison
+readable: `full scan, three times` printed `[228, 228, 228]` in both 400,000
+runs, and the two probe-state rows are **identical across runs**. The pristine
+scan is the only figure that moves at all (69 against 77), and it is the one
+measured before anything has touched the store.
+
+Cold point reads hold across the scale change: **1.14, 1.19 and 1.16 requests
+per read** at the two sizes, against `POINT_READ_COST`'s 1.0 — an independent
+confirmation of [§8b](#8b-the-same-measurement-with-the-cache-on-at-release--and-the-first-table-here-that-says-what-built-it)'s
+1.02, from a different example, a different fixture size and a colder store.
+
+**This does not move `SCAN_ROW_COST`.** It sharpens the reason not to: the
+constant's docstring says there is no single value because the cost depends on
+a cache state the model has no input for, and there is now a second axis it
+has no input for either. A model that charged scans sub-linearly would fit
+these six numbers better and would still be guessing at the cache.
+
 ### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
 
 **Fixed**: `crates/slate-slatedb/tests/common/s3server.rs` sets `TCP_NODELAY`

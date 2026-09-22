@@ -38,13 +38,16 @@ It has now been confirmed by one, and the run can say what it was.
 ## Alternatives rejected
 
 **Re-measure `SCAN_ROW_COST` and move it.** The full scan returns 9,524–10,000
-rows per request and the constant says 8,000, so there is a 20–25% argument for
-raising it. Rejected for the reason already written into `correctness.md`:
-`cost_at_scale` and `cost_calibration` disagree about what a cold full scan of
-this fixture costs — 58 requests against 205 — and calibrating against a
-measurement that another example contradicts is precisely how the errors this
-whole sequence has been unwinding were made. 10,000 is inside the 8,000–10,526
-band already recorded. A constant does not move on one warm-cache run.
+rows per GET and the constant says 8,000, so there is a 20–25% argument for
+raising it. Rejected — but **the reason given here was wrong, and #289
+corrected it.** This entry cited `correctness.md`: that `cost_at_scale` and
+`cost_calibration` *contradict* each other about a cold full scan, 58 requests
+against 205. They do not. `performance.md` had already established that both
+are right and measure different cache states, and the sentence in
+`correctness.md` was stale when I quoted it. The real reason is
+`SCAN_ROW_COST`'s own docstring: there is no single value, because the cost
+depends on a cache state the model has no input for — 548 to 3,922 rows per GET
+on one fixture. The conclusion stands; the argument for it did not.
 
 **Report the point-get row as the cost of a point read.** It says 22, and it is
 wrong. It is the first query against a freshly loaded store and pays for the

@@ -742,10 +742,22 @@ follows: `n > 8000k` rather than ~~`n > 24000k`~~. The plan snapshot moved 13
 costs and **no access path**, which is both the blast radius at fixture scale
 and the limit of what the suite could see.
 
-`SCAN_ROW_COST` was **not** changed, because the two examples disagree about
-what a cold full scan of this fixture costs — 58 requests against 205 — and
-calibrating against a measurement one of them contradicts is how the errors
-above were made in the first place.
+`SCAN_ROW_COST` was **not** changed. The reason first written here was that
+the two examples *contradict* each other about what a cold full scan of this
+fixture costs — 58 requests against 205. That reason is wrong and is corrected
+here: [`performance.md`](performance.md) later established that both are right,
+because they scan stores in different cache states, and a partially populated
+cache fragments a scan into many small ranged reads. Re-measured at `--release`
+with the cache on, the three states reproduce — 51, 199 and 365 requests over
+the same 200,000 rows.
+
+The real reason is the one in `SCAN_ROW_COST`'s own docstring, and it is
+stronger: **there is no single value to calibrate to.** A scan of this fixture
+costs between 548 and 3,922 rows per GET depending only on what was read
+before it, and the model has no input for cache state. Under-charging a scan is
+how `cost_at_scale` picks a plan 11× slower at 200,000 rows; over-charging one
+turns a four-hundred-key `IN` into four hundred point reads against a fully
+cached table. Both are wrong, and only one is the status quo.
 
 ### What that changes about indexes
 

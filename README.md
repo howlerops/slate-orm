@@ -1298,7 +1298,11 @@ Not built:
       primary-key reads across three runs, so a point read costs 1 request to
       about 2%. The loader still stops being linear somewhere between 500,000
       and 600,000 rows and four attempts past that never finished, so the
-      constants at a million rows remain unmeasured. This bullet used to cite
+      constants at a million rows remain unmeasured. 400,000 does fit, and is
+      the first second point this model has had: doubling the rows multiplies
+      the requests by only 1.11-1.51x depending on cache state, so a scan gets
+      *cheaper per row* as the table grows — a direction the model, which
+      charges scans linearly, cannot express. This bullet used to cite
       a 1,223-against-1,217 reproduction and conclude `POINT_READ_COST` was
       "13–19% low"; both belonged to a build with the cache compiled out, and
       went when that build did

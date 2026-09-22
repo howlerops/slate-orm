@@ -18,6 +18,12 @@ WHAT IT REMOVES, AND WHAT IT REFUSES TO
 * `target/*/deps` — every superseded build of each target, keeping the newest.
   This is where the gigabytes are.
 * `target/*/incremental` and `target/*/examples` — regenerated on demand.
+  **Including a `--release` example you are in the middle of measuring with.**
+  That is a real cost, not a hypothetical: #289 built
+  `target/release/examples/cost_at_scale`, reclaimed to make room for the
+  fixture it was about to write, and the next run exited 127. The binary is
+  cheap to rebuild once the dependencies are cached, but reclaim *between*
+  building a measurement binary and running it and you will rebuild it.
 
 It never touches `target/*/build`. Those are build-script outputs, and deleting
 them produces hundreds of convincing, fictional compile errors in dependencies
