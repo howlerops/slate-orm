@@ -59,7 +59,10 @@ under every S3 byte too and are deliberately left out: nothing here isolates a
 connection cost, and the line has to stay readable.
 
 **Tables on this page that predate 2026-09-22 have no build line**, and one
-cannot be reconstructed for them. `scripts/check_table_provenance.py` holds
+cannot be reconstructed for them. Exactly one does carry it — the re-measured
+cost model in [§8b](#8b-the-same-measurement-with-the-cache-on-at-release--and-the-first-table-here-that-says-what-built-it),
+which is the first table here recorded from a run that could say what built
+it. `scripts/check_table_provenance.py` holds
 that boundary rather than leaving it to this sentence: it finds every table in
 `docs/`, decides which record a measurement, and fails on one that is neither
 stamped, marked `<!-- not a measurement -->`, nor frozen in
@@ -2014,6 +2017,53 @@ knowing. The same line appears in `crates/slate-serverd/Cargo.toml`,
 dev-dependencies, all of which are pinned to the same version so that
 `Arc<dyn ObjectStore>` stays one type; features unify across them, so one of
 them enabling `foyer` is enough to turn the cache on everywhere.
+
+### 8b. The same measurement with the cache on, at `--release` — and the first table here that says what built it
+
+Finding 8 was measured on a build with SlateDB's block cache compiled out, and
+the `3.0` it produced sat in `POINT_READ_COST` for nine tasks. #278 fixed the
+manifest. Nothing had since re-run the calibration on a build with the cache
+**on**, at `--release`, and recorded the result beside the build that produced
+it. This is that run.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example cost_calibration`, three runs,
+200,000 rows through SlateDB over the in-process `s3s` server. The spread is
+across those three runs; where one figure is given it was identical in all
+three.
+
+| query | rows | predicted cost | GETs | rows per GET |
+|---|---:|---:|---:|---:|
+| point get by primary key | 1 | 1.0 | 19 – 25 | — (see below) |
+| index equality, one bucket | 400 | 26.0 | 33 – 38 | — |
+| narrow key range | 1,000 | 1.0 | 1 | 1,000 |
+| wide key range | 50,000 | 7.1 | 10 | 5,000 |
+| full scan | 200,000 | 26.0 | 20 – 21 | **9,524 – 10,000** |
+
+<!-- not a cost-model claim -->
+
+**Both constants hold.** The decisive arm is the forced index scan, which does
+400 primary-key reads and served **408 GETs in every one of the three runs** —
+1.02 requests per row, against `POINT_READ_COST = 1.0`. The full scan returns
+9,524–10,000 rows per request, against `SCAN_ROW_COST`'s 8,000; that is inside
+the 8,000–10,526 band already recorded above, and `SCAN_ROW_COST` is left
+alone for the reason given there.
+
+**The point-get row is warm-up, not the cost of a point read.** It is the
+first query issued against a freshly loaded store, so it pays for the manifest
+and the SST metadata the four rows under it then reuse — which is why it is
+the only row that moves between runs (19, 25, 19) while every other GET count
+is identical or within one. Read as a point read's cost it says 22; the
+forced-index arm in the same process says 1.02, and the forced-index arm is
+the one doing 400 of them. This is the confound #269 recorded, still present,
+now bounded: it lives in one row and the run says which.
+
+**The clock is not comparable with anything on this page.** 10.665, 10.930 and
+10.860 ms per GET, against a loopback `s3s`; `docs/performance.md` uses 2.2 ms,
+a wide-area figure. The GET counts are what transfers.
 
 ### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
 
