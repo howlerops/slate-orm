@@ -33,18 +33,25 @@ STATS = (
 def run(prose: str, stats: str = STATS) -> tuple[int, list[str]]:
     """Run the real guard over one source file and one `stats.rs`.
 
-    `docs` is passed as `None`, never left to default. #283 gave `check` a
-    docs tree with a real default, and a fixture that let it default would
-    read the repository's own `docs/` alongside its one-line temporary file —
-    every case would then carry 24 extra claims it did not write, which is
-    the fixture-reaching-past-itself failure #281 was about.
+    `docs` and `readmes` are both passed as `None`, never left to default.
+    #283 gave `check` a docs tree with a real default, and a fixture that let
+    it default would read the repository's own `docs/` alongside its one-line
+    temporary file — every case would then carry 24 extra claims it did not
+    write, which is the fixture-reaching-past-itself failure #281 was about.
+
+    #288 added `readmes` and proved the point by forgetting it: the parameter
+    landed with a real default, the fixtures still passed three positional
+    arguments, and 36 of 39 cases failed at once — each one carrying the
+    repository's own `README.md` claim on top of its fixture. The case named
+    "a tree with no claim reads none" is what says so out loud, and it is
+    worth keeping for exactly this.
     """
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         (root / "a.rs").write_text(prose)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where, None)
+        return guard.check(root, where, None, None)
 
 
 def run_markdown(page: str, stats: str = STATS) -> tuple[int, list[str]]:
@@ -56,7 +63,27 @@ def run_markdown(page: str, stats: str = STATS) -> tuple[int, list[str]]:
         (docs / "perf.md").write_text(page)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where, docs)
+        return guard.check(root, where, docs, None)
+
+
+def run_readme(
+    page: str, at: str = "README.md", stats: str = STATS
+) -> tuple[int, list[str]]:
+    """The same, over a README outside `docs/` and no docs tree at all.
+
+    `at` places the file, so one case can cover `clients/*/README.md` rather
+    than leaving the glob tuple's first entry as the only one exercised. That
+    is not hypothetical: with no case here at all, shrinking `README_GLOBS` to
+    just `("README.md",)` survived mutation.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        target = root / at
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(page)
+        where = root / "stats.rs"
+        where.write_text(stats)
+        return guard.check(root, where, None, root)
 
 
 #: name, the comment, how many claims it should hold, how many are stale.
@@ -281,11 +308,49 @@ def main() -> int:
         stats.write_text(STATS)
         out = io.StringIO()
         with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
-            code = guard.main(root, stats, None)
+            code = guard.main(root, stats, None, None)
     ok = code == 1 and "looking in the wrong place" in out.getvalue()
     ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  and a real run over it fails, rather than passing")
+    if not ok:
+        print(f"        exit {code}: {out.getvalue()}")
+
+    # The README tree (#288). Without these the whole `readmes` path was
+    # dead weight as far as the suite was concerned: disabling it outright,
+    # and dropping `main`'s threading of it, both survived mutation.
+    for name, page, at, want_seen, want_stale in [
+        ("a current claim in the root README is read",
+         "A point read costs 1 request.\n", "README.md", 1, 0),
+        ("a stale one there is reported",
+         "A point read costs three requests.\n", "README.md", 1, 1),
+        ("and a client README is read too, not just the root",
+         "A point read costs three requests.\n", "clients/go/README.md", 1, 1),
+        ("a struck claim in a README is history, as in docs/",
+         "~~A point read costs three requests.~~\n", "README.md", 0, 0),
+    ]:
+        seen, wrong = run_readme(page, at)
+        ok = seen == want_seen and len(wrong) == want_stale
+        ran += 1
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        wanted {want_seen} claim(s) and {want_stale} stale, "
+                  f"got {seen} and {wrong}")
+
+    # `main` must actually hand the tree on. It did not, for one commit.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        (root / "README.md").write_text("A point read costs three requests.\n")
+        stats = root / "stats.rs"
+        stats.write_text(STATS)
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
+            code = guard.main(root, stats, None, root)
+    ok = code == 1 and "costs three" in out.getvalue()
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a stale README fails a real run, through main")
     if not ok:
         print(f"        exit {code}: {out.getvalue()}")
 

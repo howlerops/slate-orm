@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import pathlib
 import sys
 import tempfile
@@ -36,10 +37,24 @@ PLAIN = "| shape | answer | why |\n|---|---|---|\n| `WITH RECURSIVE` | Refused |
 
 
 def run(body: str, roster: dict[str, str] | None = None) -> tuple[int, int, list[str]]:
+    """One table, in a tree of its own.
+
+    `readmes` is passed as `None`, never left to default. #288 widened this
+    guard past `docs/` and gave the new parameter a live default; every case
+    here then read the repository's own README tables on top of its one
+    fixture table, and 13 of 14 failed at once.
+
+    That default is still the right one, and this is the cheap half of the
+    trade. Defaulting it to `None` instead would make a fixture that forgets
+    silently correct and a *production* run that forgets silently check less —
+    and neither guard's never-fires case would notice, because `docs/` alone
+    always has tables. A loud failure in 13 fixtures beats a quiet hole in the
+    real run.
+    """
     with tempfile.TemporaryDirectory() as directory:
         docs = pathlib.Path(directory)
         (docs / "perf.md").write_text(body, encoding="utf-8")
-        return guard.check(docs, roster or {})
+        return guard.check(docs, roster or {}, None)
 
 
 CASES: list[tuple[str, str, int, int]] = [
@@ -80,6 +95,7 @@ CASES: list[tuple[str, str, int, int]] = [
 
 
 def main() -> int:
+    ran = 0
     failed = 0
     for name, body, seen_want, problems in CASES:
         try:
@@ -87,6 +103,7 @@ def main() -> int:
         except Exception as raised:  # noqa: BLE001 - a crash is this failure
             seen, wrong = -1, [f"raised {raised!r}"]
         ok = seen == seen_want and len(wrong) == problems
+        ran += 1
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
         if not ok:
@@ -99,6 +116,7 @@ def main() -> int:
     frozen = guard.digest(TIMED.splitlines())
     _, used, wrong = run(f"# H\n\n{TIMED}", {frozen: "perf.md"})
     ok = used == 1 and not wrong
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a frozen table is accounted for")
     if not ok:
@@ -107,6 +125,7 @@ def main() -> int:
     edited = TIMED.replace("16 ms", "17 ms")
     _, used, wrong = run(f"# H\n\n{edited}", {frozen: "perf.md"})
     ok = used == 0 and len(wrong) == 2  # the edited table, and the stale entry
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  editing a frozen table's number unfreezes it")
     if not ok:
@@ -117,6 +136,7 @@ def main() -> int:
     reflowed = "|  query  |  wall  |\n|---|---:|\n|  point get  |  16 ms  |\n"
     _, used, wrong = run(f"# H\n\n{reflowed}", {frozen: "perf.md"})
     ok = used == 1 and not wrong
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  but realigning its columns does not")
     if not ok:
@@ -124,6 +144,7 @@ def main() -> int:
 
     _, _, wrong = run(f"# H\n\n{STAMP}\n\n{TIMED}", {"deadbeefdeadbeef": "perf.md"})
     ok = len(wrong) == 1 and "no longer there" in wrong[0]
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a stale roster entry is reported")
     if not ok:
@@ -136,25 +157,82 @@ def main() -> int:
         (docs / "a.md").write_text(PLAIN, encoding="utf-8")
         out = io.StringIO()
         with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
-            code = guard.main(docs)
+            code = guard.main(docs, None)
     ok = code == 1 and "looking in the wrong place" in out.getvalue()
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a tree with no measurement fails, not passes")
     if not ok:
         print(f"        exit {code}: {out.getvalue()}")
+
+    # `freeze` writes the roster the rest of this depends on, and had no test
+    # at all until #288 — three mutations to it survived: the page sweep, the
+    # naming, and the duplicate rule.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        docs = root / "docs"
+        docs.mkdir()
+        (docs / "perf.md").write_text(TIMED, encoding="utf-8")
+        (root / "README.md").write_text(HEADER_UNIT, encoding="utf-8")
+        out = root / "roster.json"
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            guard.freeze(docs, root, out)
+        frozen = json.loads(out.read_text())["frozen"]
+    files = sorted(one["file"] for one in frozen)
+    ok = files == ["README.md", "perf.md"]
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  freeze sweeps the READMEs too, not only docs/")
+    if not ok:
+        print(f"        froze {files}")
+
+    # The same body in two files is one entry: the roster answers "does this
+    # table predate the stamp", and that is a property of the table.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        docs = root / "docs"
+        docs.mkdir()
+        (docs / "perf.md").write_text(TIMED, encoding="utf-8")
+        (root / "README.md").write_text(TIMED, encoding="utf-8")
+        out = root / "roster.json"
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            guard.freeze(docs, root, out)
+        frozen = json.loads(out.read_text())["frozen"]
+    ok = len(frozen) == 1
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  one table body in two files is frozen once")
+    if not ok:
+        print(f"        froze {len(frozen)}: {[one['file'] for one in frozen]}")
+
+    # A page under the repository root is named by its path, not its basename:
+    # once two trees are read, `performance.md` stops being unique.
+    named = guard.shown(guard.ROOT / "docs" / "performance.md")
+    ok = named == "docs/performance.md"
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a page is named by its path from the root")
+    if not ok:
+        print(f"        got {named!r}")
 
     # And the real tree, which is what CI actually runs.
     out = io.StringIO()
     with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
         code = guard.main()
     ok = code == 0
+    ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  the real docs/ tree is accounted for")
     if not ok:
         print(f"        exit {code}: {out.getvalue()}")
 
-    total = len(CASES) + 6
-    print(f"\n{total - failed} passed, {failed} failed")
+    # Counted, not asserted. This was `len(CASES) + 6`, a hand-kept constant
+    # one task after #268 found the same shape in the conformance runner: it
+    # cannot notice a case that stopped running, and it silently under-reported
+    # the three cases #288 added right beside it.
+    print(f"\n{ran - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

@@ -94,6 +94,29 @@ from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+#: Markdown outside `docs/` that talks about the cost model.
+#:
+#: `README.md` is why this exists. It carried "`POINT_READ_COST` is 13-19% low
+#: at 200k" as a live checklist item — the same sentence `docs/performance.md`
+#: had already struck through as history — for as long as it took somebody to
+#: read it, because the guard read `crates/` and `docs/` and the stale copy was
+#: in neither. #283 recorded that gap and did not close it.
+#:
+#: Be exact about what this buys, because the sentence that was actually wrong
+#: is one **none of these patterns can check**: "is 13-19% low" states an
+#: *error*, not a value, and checking it needs a measurement this guard does
+#: not have. Widening the tree guards the four checkable shapes in these files.
+#: It would not have caught the defect that motivated it — that one was found
+#: by reading, and a fifth pattern for it would have to invent the measurement
+#: it compares against, which is the failure mode this whole file exists to
+#: prevent.
+#:
+#: `site/` is deliberately absent. Every page there was read for the four
+#: shapes and for the constants by name: it restates neither. Its one `8,000
+#: rows` is a `RETURNING` ceiling in a roadmap bullet, not `SCAN_ROW_COST`.
+#: Widening to HTML would add a tag-stripper to protect nothing, so what is
+#: recorded instead is that it was checked.
+README_GLOBS = ("README.md", "clients/*/README.md", "examples/*/README.md")
 STATS = ROOT / "crates/slate-kernel/src/stats.rs"
 WHERE = ROOT / "crates"
 
@@ -346,7 +369,9 @@ def live(text: str) -> str | None:
     return re.sub(r"\s+", " ", stripped)
 
 
-def sources(where: Path = WHERE, docs: Path | None = DOCS) -> list[Path]:
+def sources(
+    where: Path = WHERE, docs: Path | None = DOCS, readmes: Path | None = ROOT
+) -> list[Path]:
     """Every Rust file under `where` and every doc under `docs`, in order.
 
     `where` is every crate, not the kernel, since #278 — the sentence that
@@ -357,15 +382,26 @@ def sources(where: Path = WHERE, docs: Path | None = DOCS) -> list[Path]:
     prose a reader actually reaches said "a point read costs about 3" for
     nine tasks after the constant became 1.0, and nothing could see it
     because the guard read only code.
+
+    `readmes` arrived with #288, for the same reason one tree over: `README.md`
+    is the first page a reader reaches and it was in neither tree. Passing
+    `None` is how a fixture keeps this from reaching the real repository —
+    see the note on `run` in the test file, and #281 for what that costs.
     """
     found = [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
     if docs is not None and docs.is_dir():
         found += [path for path in sorted(docs.glob("*.md")) if path.is_file()]
+    if readmes is not None:
+        for pattern in README_GLOBS:
+            found += [one for one in sorted(readmes.glob(pattern)) if one.is_file()]
     return found
 
 
 def check(
-    where: Path = WHERE, stats: Path = STATS, docs: Path | None = DOCS
+    where: Path = WHERE,
+    stats: Path = STATS,
+    docs: Path | None = DOCS,
+    readmes: Path | None = ROOT,
 ) -> tuple[int, list[str]]:
     """Returns how many claims were read, and which disagree."""
     values = constants(stats)
@@ -382,7 +418,7 @@ def check(
 
     seen = 0
     wrong = []
-    for path in sources(where, docs):
+    for path in sources(where, docs, readmes):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -463,9 +499,12 @@ def check(
 
 
 def main(
-    where: Path = WHERE, stats: Path = STATS, docs: Path | None = DOCS
+    where: Path = WHERE,
+    stats: Path = STATS,
+    docs: Path | None = DOCS,
+    readmes: Path | None = ROOT,
 ) -> int:
-    # All three are arguments so the never-fires guard below can be tested. It
+    # All four are arguments so the never-fires guard below can be tested. It
     # could not be: the cases call `check` directly, `main` read the two
     # module constants, and a mutation deleting the guard changed no verdict
     # because this crate always has claims. That is the third guard this week
@@ -476,7 +515,13 @@ def main(
     # because `main` was reading the repository's own five doc claims over the
     # fixture's zero. A parameter that a test cannot override is a parameter
     # the test is not really exercising.
-    seen, wrong = check(where, stats, docs)
+    #
+    # `readmes` is the third one, and it repeated the same failure in the same
+    # session it was warned about: added with a real default, it put the
+    # repository's own README claim into a fixture that had written none, and
+    # the never-fires case passed again. Whatever this function reads, the
+    # tests must be able to say "read nothing".
+    seen, wrong = check(where, stats, docs, readmes)
     for problem in wrong:
         print(problem, file=sys.stderr)
         print(

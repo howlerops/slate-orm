@@ -44,6 +44,43 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+#: Markdown outside `docs/` that records measurements.
+#:
+#: `README.md` carries two: the batched-write table and the join-plan table,
+#: both with wall times and neither with a build line. #283 recorded that the
+#: guards read `docs/` and `crates/` and stopped there; this is the other half
+#: of closing it. The client and example READMEs are swept for the same reason
+#: — `examples/deployed/README.md` is where a deployed run would land.
+#:
+#: Tables are keyed by their path from the repository root rather than by
+#: filename, because the moment this reads two trees a bare `performance.md`
+#: stops being unique and every message saying `docs/<name>` starts lying.
+README_GLOBS = ("README.md", "clients/*/README.md", "examples/*/README.md")
+
+
+def pages(docs: Path = DOCS, readmes: Path | None = ROOT) -> list[Path]:
+    """Every markdown page this guard reads, in a stable order.
+
+    `check` and `freeze` both call this. They used to hold one glob each, one
+    line apart, which is the shape that lets a widening land in the checker
+    and not in the freezer — and then the roster silently stops covering what
+    the checker reads.
+    """
+    found = [one for one in sorted(docs.glob("*.md")) if one.is_file()]
+    if readmes is not None:
+        for pattern in README_GLOBS:
+            found += [one for one in sorted(readmes.glob(pattern)) if one.is_file()]
+    return found
+
+
+def shown(path: Path) -> str:
+    """How a page is named in a message and in the roster."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        # A fixture's temporary tree is not under ROOT. Its own name is the
+        # most useful thing to print, and tests assert on it.
+        return path.name
 ROSTER = ROOT / "scripts" / "frozen_tables.json"
 
 #: The separator row under a markdown table's header: `|---|---:|`.
@@ -177,12 +214,20 @@ def load_roster() -> dict[str, str]:
     return {entry["digest"]: entry["file"] for entry in stored["frozen"]}
 
 
-def check(docs: Path, roster: dict[str, str]) -> tuple[int, int, list[str]]:
+def check(
+    docs: Path, roster: dict[str, str], readmes: Path | None = ROOT
+) -> tuple[int, int, list[str]]:
     """Returns (measurement tables seen, frozen ones used, problems)."""
     seen = 0
     used: set[str] = set()
+    # Occurrences covered, which is not `len(used)`: `docs/performance.md` and
+    # `examples/batchbench/README.md` hold the same batching table, and the
+    # roster is keyed by digest, so one entry covers both. Reporting the set's
+    # size made the summary say "74 tables, 72 predating" — inviting the reader
+    # to conclude two were stamped when one was.
+    covered = 0
     wrong: list[str] = []
-    for path in sorted(docs.glob("*.md")):
+    for path in pages(docs, readmes):
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
         for start, body in tables(text):
@@ -194,9 +239,10 @@ def check(docs: Path, roster: dict[str, str]) -> tuple[int, int, list[str]]:
             key = digest(body)
             if key in roster:
                 used.add(key)
+                covered += 1
                 continue
             wrong.append(
-                f"docs/{path.name}:{start} records a measurement with no build "
+                f"{shown(path)}:{start} records a measurement with no build "
                 f"line in its section.\n"
                 f"  Paste the `build:` line the run printed above the table, or "
                 f"write `{EXCUSE}`\n"
@@ -207,16 +253,22 @@ def check(docs: Path, roster: dict[str, str]) -> tuple[int, int, list[str]]:
     for key, name in sorted(roster.items(), key=lambda kv: (kv[1], kv[0])):
         if key not in used:
             wrong.append(
-                f"the roster freezes a table in docs/{name} that is no longer "
+                f"the roster freezes a table in {name} that is no longer "
                 f"there unstamped ({key}).\n"
                 f"  It was stamped, excused, edited or deleted — all good news. "
                 f"Run `--freeze` to drop it."
             )
-    return seen, len(used), wrong
+    return seen, covered, wrong
 
 
-def freeze(docs: Path) -> int:
+def freeze(docs: Path, readmes: Path | None = ROOT, out: Path = ROSTER) -> int:
     """Rewrite the roster from the tree as it stands.
+
+    `out` is a parameter for one reason: without it this function could only
+    be run against the checked-in roster, so testing it meant overwriting the
+    real one. It had no test at all until #288, and three mutations to it
+    survived — the page sweep, the naming, and the duplicate rule — because
+    nothing could call it safely.
 
     The hazard here is the `--no-verify` hazard: an escape hatch reached for
     reflexively stops being an escape hatch. It is mitigated by the roster
@@ -224,7 +276,7 @@ def freeze(docs: Path) -> int:
     and by this printing the count, not by anything the script can enforce.
     """
     entries = []
-    for path in sorted(docs.glob("*.md")):
+    for path in pages(docs, readmes):
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
         for start, body in tables(text):
@@ -232,19 +284,24 @@ def freeze(docs: Path) -> int:
                 continue
             if stamped(lines, start) or excused(lines, start):
                 continue
+            if digest(body) in {one["digest"] for one in entries}:
+                # Same table body, second file. One entry answers "does this
+                # predate the stamp", and a second would be a duplicate key
+                # that only `load_roster`'s dict would quietly swallow.
+                continue
             entries.append(
                 {
-                    "file": path.name,
+                    "file": shown(path),
                     "line_when_frozen": start,
                     "header": " ".join(body[0].split()),
                     "digest": digest(body),
                 }
             )
-    ROSTER.write_text(
+    out.write_text(
         json.dumps(
             {
                 "note": (
-                    "Measurement tables in docs/ that predate the build stamp "
+                    "Measurement tables that predate the build stamp "
                     "(#280, 2026-09-22). The runs behind them are gone and a "
                     "build line cannot be reconstructed. Entries leave this "
                     "list when a table is re-measured and stamped; nothing "
@@ -257,13 +314,13 @@ def freeze(docs: Path) -> int:
         + "\n",
         encoding="utf-8",
     )
-    print(f"froze {len(entries)} unstamped measurement tables into {ROSTER.name}")
+    print(f"froze {len(entries)} unstamped measurement tables into {out.name}")
     return 0
 
 
-def main(docs: Path = DOCS) -> int:
+def main(docs: Path = DOCS, readmes: Path | None = ROOT) -> int:
     roster = load_roster()
-    seen, used, wrong = check(docs, roster)
+    seen, used, wrong = check(docs, roster, readmes)
     if not seen:
         # The never-fires half. A run that finds no measurement table at all
         # is looking in the wrong place, and every other guard here has been
@@ -280,7 +337,7 @@ def main(docs: Path = DOCS) -> int:
     if wrong:
         print(f"\n{len(wrong)} problem(s) of {seen} measurement tables", file=sys.stderr)
         return 1
-    print(f"ok    {seen} measurement tables in docs/, {used} predating the stamp")
+    print(f"ok    {seen} measurement tables, {used} predating the stamp")
     return 0
 
 

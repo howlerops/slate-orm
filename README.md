@@ -1293,12 +1293,15 @@ Not built:
       budget covers an `Expr` and a `Scalar`, and a `CASE` condition carries it
       down rather than restarting — a limit whose real ceiling is the product
       of two limits is not the limit it says it is
-- [ ] The cost model above 200,000 rows. The 200k calibration reproduces
-      (1,223 GETs against 1,217 recorded) and is not an artefact of a warm
-      cache, but the loader stops being linear somewhere between 500,000 and
-      600,000 rows and four attempts past that never finished, so the
-      constants at a million rows are still unmeasured. `POINT_READ_COST` is
-      13–19% low at 200k — not enough to change a plan here
+- [ ] The cost model above 200,000 rows. At 200k it now checks out on a
+      release build with the block cache on: 408 requests served for 400
+      primary-key reads across three runs, so a point read costs 1 request to
+      about 2%. The loader still stops being linear somewhere between 500,000
+      and 600,000 rows and four attempts past that never finished, so the
+      constants at a million rows remain unmeasured. This bullet used to cite
+      a 1,223-against-1,217 reproduction and conclude `POINT_READ_COST` was
+      "13–19% low"; both belonged to a build with the cache compiled out, and
+      went when that build did
 - [ ] What that loader cliff is. The row width and SlateDB's default 64 MB
       `l0_sst_size_bytes` line up suspiciously well with where it happens, and
       it is not machine load (400k and 500k took the same time at load 8.6 as
