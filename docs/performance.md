@@ -49,7 +49,15 @@ with the tables below*:
 reporting it, or if a program that measures something does not print it.
 
 **Tables on this page that predate 2026-09-22 have no build line**, and one
-cannot be reconstructed for them. What is recorded about them is what their own
+cannot be reconstructed for them. `scripts/check_table_provenance.py` holds
+that boundary rather than leaving it to this sentence: it finds every table in
+`docs/`, decides which record a measurement, and fails on one that is neither
+stamped, marked `<!-- not a measurement -->`, nor frozen in
+[`scripts/frozen_tables.json`](../scripts/frozen_tables.json) as predating the
+rule. The roster pins table *contents*, so editing a number in one of those 70
+legacy tables takes it off the list and asks for the line — which is right,
+because a changed number means a run happened, and that run could say what
+built it. What is recorded about them is what their own
 prose says — fixture size, run count, machine load — plus the `--release` in
 the commands above. Finding 8 and the `POINT_READ_COST` history in
 [`docs/correctness.md`](correctness.md) are the only two places in this

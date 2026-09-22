@@ -105,6 +105,8 @@ cost-prose|.|python3 scripts/check_cost_prose.py
 cost-prose-guard|.|python3 scripts/test_check_cost_prose.py
 build-stamp|.|python3 scripts/check_build_stamp.py
 build-stamp-guard|.|python3 scripts/test_check_build_stamp.py
+table-provenance|.|python3 scripts/check_table_provenance.py
+table-provenance-guard|.|python3 scripts/test_check_table_provenance.py
 write-paths|.|python3 scripts/check_write_paths.py
 write-paths-guard|.|python3 scripts/test_check_write_paths.py
 proto-copies|.|python3 scripts/check_proto_copies.py
