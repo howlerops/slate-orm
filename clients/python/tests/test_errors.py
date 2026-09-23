@@ -279,3 +279,46 @@ def test_the_status_code_survives_on_the_exception(client: Client) -> None:
 def test_unknown_outcome_is_never_produced_by_this_fixture() -> None:
     """Named so the gap is visible rather than absent. See the module docstring."""
     assert issubclass(UnknownOutcome, SlateError)
+
+
+def test_every_error_class_accepts_every_keyword_the_base_takes() -> None:
+    """The guard for the mistake this file caught three times.
+
+    `NotLeader` used to override `__init__` to forward the base's keywords by
+    hand so it could set `leader`. Three times a keyword was added to the base,
+    the last being `violations`, and three times the override went stale — each
+    time surfacing as a `TypeError` on a redirect: loud, but only on a path a
+    suite has to happen to exercise.
+
+    The override is gone, so nothing can go stale today. This is here for the
+    next subclass that grows one, because the reasoning that produced it the
+    first time is perfectly good reasoning and will recur. It constructs every
+    error class with every keyword `from_rpc_error` passes, which is the real
+    contract: that function calls `kind(...)` with a fixed keyword set and has
+    no idea which class it picked.
+    """
+    # `SlateError` itself is included, because it is what the others must stay
+    # compatible with: constructing it proves the keyword list here has not
+    # drifted from the signature it is meant to mirror.
+    every = _descendants(SlateError)
+    assert len(every) > 10, "the walk found almost nothing; it is not walking"
+    for subclass in every:
+        error = subclass(
+            "a message",
+            code=grpc.StatusCode.UNAVAILABLE,
+            trailers={"slate-leader": "elsewhere:1"},
+            reason="A_TOKEN",
+            request_id="req-1",
+            violations=[],
+        )
+        assert error.reason == "A_TOKEN", subclass.__name__
+        assert error.request_id == "req-1", subclass.__name__
+        assert error.violations == [], subclass.__name__
+
+
+def _descendants(root: type) -> list[type]:
+    """`root` and every subclass of it, however deep."""
+    found = [root]
+    for subclass in root.__subclasses__():
+        found.extend(_descendants(subclass))
+    return found

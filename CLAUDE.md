@@ -50,6 +50,25 @@ missing test — write it rather than hide it. Several of this repository's wors
 bugs were found exactly this way, and several tests exist only because a
 mutation survived.
 
+**First check the mutation was a change.** `&x.clone()` for `&x`, or
+`if true { x } else { x }` for `x`, compile to the same behaviour and survive
+everything; `mutate.py` verifies the anchor occurs once, never that the
+replacement differs. Three in one session, and one was nearly written up as an
+untested cross-tenant guard. An equivalent mutation arrives looking exactly
+like a discovery.
+
+Use `scripts/mutate.py` rather than a hand-rolled `sed` and a grep for
+`FAILED`, because doing it by hand fails in three ways that all look like
+success, and all three were met in one session: the anchor string moves under
+`cargo fmt` so the patch silently matches nothing and the suite passes against
+*unmutated* code; the build dies — on this container, usually ENOSPC — so
+nothing runs and "no test failed" is the same empty output as "no test ran";
+or the shell eats a replacement containing a backtick or a `$`. The script
+refuses a pattern that does not occur exactly once, counts how many suites
+actually reported, takes its spec as JSON on stdin so nothing touches a shell,
+restores the file in a `finally`, and **exits non-zero on a survivor** so a
+finding interrupts you instead of scrolling past. `--help` has the shape.
+
 **Prefer an oracle to a hand-written case.** A test that agrees with an
 independent implementation catches the cases nobody thought of, which is the
 whole point. Hand-written differentials test the cases somebody thought of. Both
@@ -86,15 +105,30 @@ branch with no pull request. Turning it on found eleven real defects in one
 morning. **A check that never fires is a check nobody has debugged** — which
 applies to anything you add here too.
 
-Locally, the useful subset:
+Locally, **start with one command**:
 
 ```sh
-cargo fmt -p <the crates you touched>                   # CI checks --all; see below
+sh scripts/check.sh      # every static check CI runs: fmt, clippy, doc, ty,
+                         # ruff, gofmt, go vet, three typecheckers, the
+                         # workspace guard, the hook suite. `--list` names them.
+```
+
+It runs all of them and reports at the end rather than stopping at the first,
+because a session that fixes one and re-runs pays the whole cost again to find
+the second. It needs no built binary, no browser, no container and no network,
+which is what makes it worth running before every commit — and is exactly why
+it is not enough. `scripts/test_check_sh.py`, which CI runs, fails if a step is
+added to `ci.yml` and neither listed in the script nor written down as one it
+cannot run.
+
+Then the suites it cannot reach, whichever your change touches:
+
+```sh
 cargo test -p <the crates you touched> --no-fail-fast   # see the disk note below
-cargo clippy --workspace --all-targets                  # RUSTFLAGS=-D warnings in CI
-sh .githooks/test-pre-commit.sh                         # the hook's own suite
-ruff check . && ty check                                # the Python outside clients/; see below
-python3 scripts/check_workspace.py                      # every crate is a member
+cd clients/python && python3 -m pytest -q               # the whole suite, not one file
+cd clients/go && go test ./...                          # both need a built server
+cd clients/typescript && npm test
+cd examples/explorer/web && npm test                    # the demo's own; reads head.toml
 python3 site/check/docs.py                              # the docs site holds together
 python3 site/check/quickstarts.py                       # the docs' code, run
 python3 site/check/workbench.py                         # the kernel, in a browser
@@ -102,6 +136,10 @@ cd examples/explorer && ./run.sh --conformance          # the three SDKs agree
 cd examples/explorer && ./run.sh --e2e                  # the demo, in a browser
 cd examples/deployed && ./run.sh                        # the whole stack, for real
 ```
+
+**Running one file of a suite is not running the suite.** `pytest
+tests/test_one.py` passed on a change to a module every other test imports, and
+CI failed on two of them. If you changed something shared, run the suite.
 
 The client suites and the demo build `slate-serverd` with `cargo` by default.
 `SLATE_SERVERD=/path/to/slate-serverd` (and `SLATE_TESTSERVER` for the Python
@@ -115,15 +153,52 @@ that is set and missing is a hard error, never a silent fall back to building.
   `cargo fmt -p <your-crates>`, and actually run it: CI checks `--all`, and a
   session that formatted nothing turned that job red on nothing but line
   breaks. It is its own job now, so it no longer hides clippy and the tests
-  behind it, but red is still red.
+  behind it, but red is still red. `scripts/check.sh` runs `--all -- --check`,
+  which reports without writing, so it is safe beside another session's work.
+
+  **And CI's `rustfmt` is newer than yours, exactly as its clippy is.** A
+  hand-wrapped builder call that local `rustfmt 1.8.0` left alone was collapsed
+  onto one 97-character line by CI's, and the `formatting` job went red on a
+  file the local `--check` called clean. There is no local command that catches
+  this — the toolchain gap is the whole problem — so when that job fails, read
+  the diff out of its log and apply it verbatim rather than re-running `fmt`
+  here and concluding CI is wrong. Writing code the *newer* formatter would
+  produce (fewer manual line breaks; let it wrap) avoids most of it.
 - Disk is tight and several builds run at once. A linker `Bus error`, an
   `rustc-LLVM ERROR: IO failure`, or a sudden burst of `E0463: can't find
   crate` is almost always ENOSPC or a damaged build cache, not your code.
-  Reclaim with the dedup snippet in `ledger/README.md`, and never delete
-  `target/debug/build` — that breaks build-script outputs and produces
-  hundreds of convincing, fictional compile errors.
+  Reclaim with `python3 scripts/reclaim.py` (`--dry-run` looks first). It
+  refuses to touch `target/debug/build` — deleting that breaks build-script
+  outputs and produces hundreds of convincing, fictional compile errors.
+- **`cargo test --workspace` does not fit on this disk.** Not "is slow" — it
+  runs out of space partway through linking the test binaries, and the way it
+  says so is `linking with \`cc\` failed`, `No space left on device (os error
+  28)` on an incremental `dep-graph.part.bin`, or a crate that "could not
+  compile" for no stated reason. Twice in one session, from a start with 11 GB
+  free. Run it a few crates at a time and reclaim between them with
+  `scripts/reclaim.py`; `CARGO_INCREMENTAL=0` roughly halves what a run leaves
+  behind, and the script already removes `incremental/` and `examples/`
+  (`target/debug/build` it refuses to touch — see above). Twelve members, in four or five groups, is one green run
+  rather than three false alarms about your code.
 - `cargo test` stops at the first failing binary. Use `--no-fail-fast` before
   concluding how much is broken.
+- **`run_examples.sh` will not build its examples in debug on this container**,
+  and the failure is the ENOSPC-in-disguise above: `LLVM ERROR: IO failure on
+  output stream` and a linker `Bus error`, met three times in one session, once
+  with `df` reporting 8.0K free. Measured: the nine `slate-slatedb` examples are
+  **131 MB at `--release`** against well over 1.4 GB in debug, which is
+  `-C debuginfo=2` and nothing else. The script already takes both knobs it
+  needs, so build them yourself and point it at them:
+
+  ```sh
+  CARGO_INCREMENTAL=0 cargo build --release -p slate-slatedb --examples
+  SKIP_BUILD=1 BINARIES_DIR=$PWD/target/release/examples \
+      sh scripts/run_examples.sh slate-slatedb --smoke
+  ```
+
+  CI has room and builds in debug; this is for here. An earlier entry recorded
+  the suite as simply unrunnable on this container, which was true only of the
+  default profile.
 - **A skip is green.** The Python harness used to *skip* its whole suite when
   `cargo` was absent, which in CI reads as a passing suite that started no
   server and exercised nothing. Prefer a hard error to a skip whenever the
@@ -166,7 +241,22 @@ that is set and missing is a hard error, never a silent fall back to building.
   ```
 
   A bare `ty check` is necessary and not sufficient, the same way a green local
-  clippy is.
+  clippy is. `scripts/check.sh` builds that virtualenv on first use and runs
+  `ty` against it, so this is one of the things you no longer have to remember.
+- **CI's `ruff` is newer than yours too**, and the clippy note above applies
+  unchanged. `RUF036` — "`None` not at the end of the type union" — turned the
+  `scripts` job red on a file that `ruff 0.15.8` here called clean, twice in
+  one annotation. A green local `ruff check` is necessary and not sufficient,
+  the same way a green local clippy is, and the fix is the same: read the diff
+  out of the job's log and apply it rather than re-running `ruff` here and
+  concluding CI is wrong. Writing `str | dict[str, str] | None` rather than
+  `str | None | dict[str, str]` avoids this one; there is no local command
+  that finds the next.
+- **There are two `ruff` runs and two `ty` runs, over disjoint trees.** One
+  pair in `clients/python`, reading that package's own configuration; one pair
+  at the root for everything else. `ruff check .` at the root passed while the
+  client's failed, on a file in `clients/python/tests/`. `scripts/check.sh`
+  runs all four.
 - **Pin anything that generates committed code.** `grpcio-tools` was declared
   `>=`, so the test that regenerates the Python protobuf stubs and compares
   them byte for byte was pinned to upstream's release calendar. It went red

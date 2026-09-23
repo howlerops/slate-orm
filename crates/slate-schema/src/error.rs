@@ -186,6 +186,71 @@ pub enum SchemaError {
         column: String,
     },
 
+    /// An array column was used in a primary key or an index.
+    ///
+    /// Not for the vector's reason — an array's order *is* meaningful. The
+    /// question asked of an indexed array is containment, and one index entry
+    /// per element is a cardinality this store does not have.
+    #[error(
+        "`{key}` on table `{table}` uses array column `{column}`: an array \
+         sorts meaningfully but the question asked of one is containment, \
+         which needs one index entry per element and is not built"
+    )]
+    ArrayInKey {
+        /// The table being defined.
+        table: String,
+        /// Which key or index.
+        key: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An array column was declared without saying what its elements are.
+    #[error(
+        "column `{column}` on table `{table}` is an array and declares no \
+         element type; use `array_column(name, element)`"
+    )]
+    ArrayWithoutElementType {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An array column declared an array as its element type.
+    ///
+    /// `ValueType::Array` carries no element type of its own, so the inner
+    /// array would be a value the schema cannot describe.
+    #[error(
+        "column `{column}` on table `{table}` declares an array of arrays; \
+         the inner array could not say what *its* elements are, so nesting \
+         is refused rather than half-described"
+    )]
+    NestedArrayColumn {
+        /// The table being defined.
+        table: String,
+        /// The offending column.
+        column: String,
+    },
+
+    /// An element of an array value did not match the column's element type.
+    #[error(
+        "column `{column}` on table `{table}` is an array of {expected}, and \
+         element {index} is {actual}"
+    )]
+    ArrayElementTypeMismatch {
+        /// The table the row belongs to.
+        table: String,
+        /// The offending column.
+        column: String,
+        /// Which element, zero-based.
+        index: usize,
+        /// The declared element type.
+        expected: ValueType,
+        /// What the element actually was.
+        actual: &'static str,
+    },
+
     /// A table was defined without a primary key.
     #[error("table `{table}` has no primary key")]
     MissingPrimaryKey {
@@ -240,13 +305,41 @@ pub enum SchemaError {
         actual: &'static str,
     },
 
-    /// An index was defined with no columns.
-    #[error("index `{index}` on table `{table}` has no columns")]
+    /// An index keys on neither columns nor an expression, or on both.
+    ///
+    /// One variant for two opposite mistakes, because the rule is one rule: an
+    /// index's key comes from exactly one place. The message says both, since
+    /// the older wording — "has no columns" — was read by an author who had
+    /// given it columns *and* an expression and explained nothing.
+    #[error(
+        "index `{index}` on table `{table}` must key on columns or on an expression, and has \
+         either neither or both"
+    )]
     EmptyIndex {
         /// The table being defined.
         table: String,
         /// The offending index.
         index: String,
+    },
+
+    /// A full-text index was declared with something it cannot hold terms of.
+    ///
+    /// One error rather than four, carrying the reason, because all four are
+    /// the same mistake at the declaration and a caller fixing one wants to
+    /// read what an inverted index *is*: one entry per term of one string
+    /// column.
+    #[error(
+        "index `{index}` on table `{table}` is a full-text index and {reason}. It holds one \
+         entry per term of one string column, which is what makes `contains` a lookup rather \
+         than a scan"
+    )]
+    UnindexableText {
+        /// The table being defined.
+        table: String,
+        /// The offending index.
+        index: String,
+        /// What is wrong with it.
+        reason: &'static str,
     },
 
     /// The tenant column is not the first primary key column.
@@ -460,6 +553,28 @@ pub enum SchemaError {
         check: String,
     },
 
+    /// A `CHECK` carries a message that is empty or only whitespace.
+    ///
+    /// Refused rather than tolerated. The message is not decoration: it is
+    /// published to every client, generated into three languages, and rendered
+    /// beside a form field — so an empty one is a blank error message shown to
+    /// somebody trying to fix their input. It also renders the refusal as
+    /// ``check `year_is_positive`: `` with nothing after the colon.
+    ///
+    /// A check with *no* message is fine and common; this is only for one that
+    /// was given a message and given an empty one, which is never what the
+    /// author meant.
+    #[error(
+        "table `{table}` gives check `{check}` an empty message; \
+         omit the message rather than setting it to nothing"
+    )]
+    EmptyCheckMessage {
+        /// The table being defined.
+        table: String,
+        /// The check whose message is empty.
+        check: String,
+    },
+
     /// Two foreign keys on the same table share a name.
     #[error("table `{table}` declares foreign key `{foreign_key}` more than once")]
     DuplicateForeignKey {
@@ -595,9 +710,25 @@ pub enum SchemaError {
     },
 
     /// A delete was refused because rows still reference the row deleted.
+    ///
+    /// `retired` is the difference between a refusal an operator can act on and
+    /// one that reads as the database lying. A `RESTRICT` edge blocks on a
+    /// soft-deleted child — it is still a child, and its reference is still
+    /// there — but an ordinary read of that table returns nothing, so somebody
+    /// told only "rows still reference it" looks, finds an empty result, and
+    /// concludes the constraint is wrong. The message has to say which case it
+    /// is, because the two need opposite responses: delete the children, or
+    /// *purge* them.
     #[error(
-        "cannot delete from `{table}`: rows in `{child}` still reference it \
-         through foreign key `{foreign_key}`"
+        "cannot delete from `{table}`: {}rows in `{child}` still reference it \
+         through foreign key `{foreign_key}`{}",
+        if *retired { "soft-deleted " } else { "" },
+        if *retired {
+            ". A retired row still holds its reference and an ordinary read \
+             will not show it; purge it, or restore it and deal with it"
+        } else {
+            ""
+        }
     )]
     ForeignKeyRestricted {
         /// The table being deleted from.
@@ -606,6 +737,12 @@ pub enum SchemaError {
         child: String,
         /// The constraint that refused the delete.
         foreign_key: String,
+        /// Whether the rows that blocked it are ones a soft delete retired.
+        ///
+        /// True only when *every* blocker found was retired. A mixture reports
+        /// as the ordinary case, because the live ones are what the caller
+        /// should deal with first and they are the ones they can see.
+        retired: bool,
     },
 
     /// A cascading delete would remove more rows than the limit allows.

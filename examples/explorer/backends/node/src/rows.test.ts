@@ -11,11 +11,34 @@
  * for one file, and the compile is the same `tsc` the backend already does.
  */
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import type { Value } from "@slate-orm/client";
 
-import { BooksChecks, decodeBooks } from "./schema.js";
+import { answers } from "@slate-orm/client";
+
+import {
+  BooksChecks,
+  EditionsForeignKeys,
+  SalesForeignKeys,
+  ShipmentsChecks,
+  ShipmentsForeignKeys,
+  decodeAuthors,
+  decodeBooks,
+  decodeEditions,
+  decodePosts,
+  decodeSales,
+  decodeShipments,
+  encodeAuthors,
+  encodeBooks,
+  encodeEditions,
+  encodePosts,
+  encodeSales,
+  encodeShipments,
+  isRetiredShipments,
+  restoredShipments,
+} from "./schema.js";
 
 /** A well-formed `books` row: the ordinals the catalog declares, in order. */
 function bookRow(): Value[] {
@@ -78,4 +101,356 @@ test("BooksChecks carries the published rule", () => {
   assert.equal(rule.column, "year");
   assert.equal(rule.predicate, "year > 0");
   assert.ok(rule.message, "the check should carry the sentence a form shows");
+});
+
+// --- every other table -------------------------------------------------------
+//
+// `books` had all of the above and the other four had nothing: generated,
+// compiled, typechecked and never executed. The demo reads `authors`, `sales`,
+// `editions` and `shipments` through the client's untyped `Value`s, so a wrong
+// ordinal in any of their decoders would have been found by nobody.
+//
+// One case each rather than the six `books` gets, because what differs between
+// tables is the column list and not the decoder's shape — the generator emits
+// one shape. What each case asserts is that *this table's* ordinals are the
+// catalog's. The transposition, short-row and null cases stay on `books`,
+// which is where the shape is checked.
+
+/** Every generated decoder, with a row the catalog says is valid. */
+const DECODERS: Record<string, () => void> = {
+  decodeAuthors: () => {
+    const author = decodeAuthors([
+      { kind: "uint", value: 3n },
+      { kind: "string", value: "Ursula" },
+      { kind: "string", value: "US" },
+      { kind: "int", value: 1929n },
+    ]);
+    // `name` and `country` are both strings and adjacent, so the values differ
+    // on purpose: a decoder reading ordinal 2 for `name` would pass a test
+    // that used the same string for both.
+    assert.deepEqual(author, { id: 3n, name: "Ursula", country: "US", born: 1929n });
+  },
+
+  decodeBooks: () => {
+    // Covered six ways above; listed so the coverage check below sees it.
+    assert.equal(decodeBooks(bookRow()).title, "A Book In Flight");
+  },
+
+  decodeSales: () => {
+    assert.deepEqual(
+      decodeSales([
+        { kind: "uint", value: 11n },
+        { kind: "uint", value: 7n },
+        { kind: "int", value: 430n },
+      ]),
+      { id: 11n, book_id: 7n, units: 430n },
+    );
+  },
+
+  decodeEditions: () => {
+    assert.deepEqual(
+      decodeEditions([
+        { kind: "uint", value: 5n },
+        { kind: "uint", value: 7n },
+        { kind: "string", value: "paperback" },
+      ]),
+      { id: 5n, book_id: 7n, format: "paperback" },
+    );
+  },
+
+  decodeShipments: () => {
+    // The only generated decoder here with a nullable column, so this is the
+    // only place that branch runs at all. Both ways round, because "null
+    // becomes null" and "a value comes through" are two branches and a test of
+    // one says nothing about the other.
+    const live = decodeShipments([
+      { kind: "uint", value: 9n },
+      { kind: "uint", value: 7n },
+      { kind: "string", value: "shipped" },
+      { kind: "null" },
+    ]);
+    assert.deepEqual(live, { id: 9n, book_id: 7n, status: "shipped", deleted_at: null });
+
+    const retired = decodeShipments([
+      { kind: "uint", value: 9n },
+      { kind: "uint", value: 7n },
+      { kind: "string", value: "shipped" },
+      { kind: "int", value: 1_700_000_042n },
+    ]);
+    assert.equal(retired.deleted_at, 1_700_000_042n);
+  },
+  decodePosts: () => {
+    // The only generated decoder with an array column, and the reason `posts`
+    // is in the catalog at all: `field` stops at the array, whose value is a
+    // `Value[]` with its members still tagged, so a cast to `string[]` without
+    // unwrapping each one would be a lie nothing can see. Two element types,
+    // because one could be satisfied by a generator that hard-coded `string`.
+    const post = decodePosts([
+      { kind: "uint", value: 1n },
+      { kind: "string", value: "a post" },
+      {
+        kind: "array",
+        value: [
+          { kind: "string", value: "ts" },
+          { kind: "string", value: "arrays" },
+        ],
+      },
+      { kind: "array", value: [{ kind: "int", value: 2n }] },
+    ]);
+    assert.deepEqual(post, {
+      id: 1n,
+      title: "a post",
+      tags: ["ts", "arrays"],
+      sizes: [2n],
+    });
+  },
+};
+
+for (const [name, run] of Object.entries(DECODERS)) {
+  test(`${name} decodes its own ordinals`, run);
+}
+
+test("every generated decoder is exercised", () => {
+  // The table above is hand-written, which is the whole point — a test the
+  // generator emitted would agree with it by construction — and a hand-written
+  // list beside a generated file is the thing this repository has watched
+  // drift five times. Reading the source turns "somebody remembers" into a
+  // failure with the missing name in it.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function (decode\w+)\(/gm)].map((m) => m[1]!);
+  assert.ok(declared.length >= 5, `found ${declared.length} decoders; the pattern is not matching`);
+  for (const name of declared) {
+    assert.ok(name in DECODERS, `${name} is generated and nothing runs it; add it to DECODERS`);
+  }
+  for (const name of Object.keys(DECODERS)) {
+    assert.ok(declared.includes(name), `DECODERS names ${name}, which schema.ts no longer declares`);
+  }
+});
+
+test("ShipmentsChecks carries the enumeration codegen narrows from", () => {
+  // The second published constraint, and the one a *type* is generated from:
+  // `status` above is `"pending" | "shipped" | "delivered"` rather than
+  // `string`, and this is the rule that says so.
+  const rule = ShipmentsChecks["status_known"];
+  assert.ok(rule, `no such check, have ${Object.keys(ShipmentsChecks).join(", ")}`);
+  assert.equal(rule.column, "status");
+  // `predicate` is nullable in `CheckRule` — a check declared with no parsed
+  // text has none — and this one has it, which is the assertion.
+  const predicate = rule.predicate ?? "";
+  for (const value of ["pending", "shipped", "delivered"]) {
+    assert.ok(predicate.includes(value), `the predicate ${predicate} omits ${value}`);
+  }
+});
+
+// --- the generated foreign keys ----------------------------------------------
+
+test("the sales foreign key carries its parent", () => {
+  // The whole reason foreign keys are generated: `parent` is the table a
+  // `"parents"` read answers with, and it is the one fact a client holding a
+  // `Relation` cannot derive.
+  const key = SalesForeignKeys["sale_book"];
+  assert.ok(key, `no such key, have ${Object.keys(SalesForeignKeys).join(", ")}`);
+  assert.deepEqual(key, {
+    name: "sale_book",
+    child: "sales",
+    parent: "books",
+    onDelete: "restrict",
+  });
+  // The pair the adapter uses, and the pair a transposition breaks: swapping
+  // them claims one table's declaration for another, which the server's schema
+  // check refuses. Measured in Go, where it turned four conformance cases red.
+  assert.equal(answers(key, "parents"), "books");
+  assert.equal(answers(key, "children"), "sales");
+});
+
+test("every declared foreign key is generated", () => {
+  // Weaker than the decoder check above — the *set*, not each key's parent —
+  // and here for the same reason: the demo's three keys are spread over three
+  // tables, and a fourth added to `head.toml` should not be generated into a
+  // file nothing looks at.
+  const generated = {
+    ...SalesForeignKeys,
+    ...EditionsForeignKeys,
+    ...ShipmentsForeignKeys,
+  };
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export const (\w+)ForeignKeys:/gm)];
+  assert.equal(declared.length, 3, "three tables in this catalog declare a key");
+  assert.equal(Object.keys(generated).length, 3);
+  // All three point at `books`, which is what lets the demo show a *path* —
+  // two steps in opposite directions through one parent.
+  for (const [name, key] of Object.entries(generated)) {
+    assert.equal(key.parent, "books", `${name} points at ${key.parent}`);
+  }
+});
+
+// --- the write side ----------------------------------------------------------
+//
+// The encoders are the decoders' twin and arrived much later: until they
+// existed, a caller built a row to insert as a positional list with nothing
+// checking the order, which is the failure the decoders exist to catch, from
+// the other end. `int` and `uint` are both `bigint` here, so a hand-built row
+// can carry the wrong tag and typecheck perfectly.
+
+test("encodeBooks attaches the tag each column declares", () => {
+  // The assertion the decoder has no equivalent of. Both of these are `bigint`
+  // in the interface and only the schema says which is which.
+  const row = encodeBooks(decodeBooks(bookRow()));
+  assert.equal(row[0]!.kind, "uint", "books.id");
+  assert.equal(row[3]!.kind, "int", "books.year");
+  assert.equal(row[7]!.kind, "units", "books.price");
+});
+
+test("encodeShipments writes a null for an absent value", () => {
+  const absent = encodeShipments({ id: 9n, book_id: 7n, status: "shipped", deleted_at: null });
+  assert.equal(absent[3]!.kind, "null");
+  const present = encodeShipments({ id: 9n, book_id: 7n, status: "shipped", deleted_at: 42n });
+  assert.deepEqual(present[3], { kind: "int", value: 42n });
+});
+
+/** One well-formed instance of each generated type, for the round trip. */
+const ROUND_TRIP: Record<string, () => void> = {
+  encodeAuthors: () => {
+    const row = { id: 3n, name: "Ursula", country: "US", born: 1929n };
+    assert.deepEqual(decodeAuthors(encodeAuthors(row)), row);
+  },
+  encodeBooks: () => {
+    const row = decodeBooks(bookRow());
+    assert.deepEqual(decodeBooks(encodeBooks(row)), row);
+  },
+  encodeSales: () => {
+    const row = { id: 11n, book_id: 7n, units: 430n };
+    assert.deepEqual(decodeSales(encodeSales(row)), row);
+  },
+  encodeEditions: () => {
+    const row = { id: 5n, book_id: 7n, format: "paperback" };
+    assert.deepEqual(decodeEditions(encodeEditions(row)), row);
+  },
+  encodeShipments: () => {
+    const row = { id: 9n, book_id: 7n, status: "shipped" as const, deleted_at: null };
+    assert.deepEqual(decodeShipments(encodeShipments(row)), row);
+  },
+  encodePosts: () => {
+    const row = { id: 1n, title: "a post", tags: ["ts"], sizes: [7n] };
+    assert.deepEqual(decodePosts(encodePosts(row)), row);
+  },
+};
+
+for (const [name, run] of Object.entries(ROUND_TRIP)) {
+  // An oracle rather than a fixed expectation: it agrees with an independent
+  // implementation — the decoder — rather than with a list somebody typed, so
+  // it catches an encoder ordinal nobody thought to assert on. What it cannot
+  // catch is both being wrong the same way, which the fixed cases above are for.
+  test(`${name} round-trips through its decoder`, run);
+}
+
+test("every generated encoder is exercised", () => {
+  // The same guard the decoders have, for the same reason: a sixth table gets
+  // an encoder, this list is hand-written, and without a check the new one is
+  // covered by nobody and nobody finds out.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function (encode\w+)\(/gm)].map((m) => m[1]!);
+  assert.ok(declared.length >= 5, `found ${declared.length} encoders; the pattern is not matching`);
+  for (const name of declared) {
+    assert.ok(name in ROUND_TRIP, `${name} is generated and nothing runs it`);
+  }
+  for (const name of Object.keys(ROUND_TRIP)) {
+    assert.ok(declared.includes(name), `ROUND_TRIP names ${name}, which schema.ts no longer declares`);
+  }
+});
+
+// --- the published soft delete ------------------------------------------------
+
+test("isRetiredShipments follows the stamp", () => {
+  // `--print-schema` publishes which column carries the retirement stamp, so
+  // the generator knows `deleted_at` is not an ordinary nullable bigint.
+  const live = { id: 9n, book_id: 7n, status: "shipped" as const, deleted_at: null };
+  assert.equal(isRetiredShipments(live), false);
+  assert.equal(isRetiredShipments({ ...live, deleted_at: 1n }), true);
+});
+
+test("only a soft-deleting table gets a retired accessor", () => {
+  // The negative half, and the one that catches an emitter keying on a column
+  // *name*: `books` declares no soft delete and must not claim one.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function isRetired(\w+)\(/gm)].map((m) => m[1]!);
+  assert.deepEqual(declared, ["Shipments"]);
+});
+
+test("restoredShipments clears the stamp and leaves everything else", () => {
+  // The write-side twin, asserted through the encoder because clearing the
+  // stamp here buys nothing if `encodeShipments` then sends the old value.
+  const retired = {
+    id: 9n,
+    book_id: 7n,
+    status: "shipped" as const,
+    deleted_at: 1_700_000_042n,
+  };
+  const back = restoredShipments(retired);
+  assert.equal(back.deleted_at, null);
+  assert.equal(isRetiredShipments(back), false);
+  // Every other column carried through: a spread that dropped one would pass
+  // a check on `deleted_at` alone.
+  assert.deepEqual([back.id, back.book_id, back.status], [9n, 7n, "shipped"]);
+  assert.equal(retired.deleted_at, 1_700_000_042n, "the input is not mutated");
+  assert.deepEqual(encodeShipments(back)[3], { kind: "null" });
+});
+
+test("only a soft-deleting table gets a restored helper", () => {
+  // The negative half, matching the one above it.
+  const source = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
+  const declared = [...source.matchAll(/^export function restored(\w+)\(/gm)].map((m) => m[1]!);
+  assert.deepEqual(declared, ["Shipments"]);
+});
+
+test("an empty array decodes to an empty list rather than a null", () => {
+  // The distinction the kernel makes load-bearing, and a decoder is where it
+  // would quietly be lost. Separate from the roster entry above, which is
+  // about ordinals and element types; this is about one value.
+  const empty = decodePosts([
+    { kind: "uint", value: 2n },
+    { kind: "string", value: "quiet" },
+    { kind: "array", value: [] },
+    { kind: "array", value: [] },
+  ]);
+  assert.deepEqual(empty.tags, []);
+  assert.notEqual(empty.tags, null);
+});
+
+test("an array element of the wrong type is refused with its position", () => {
+  // The position is the point: a message naming only `tags` sends a reader to
+  // re-read a list they have already looked at.
+  assert.throws(
+    () =>
+      decodePosts([
+        { kind: "uint", value: 1n },
+        { kind: "string", value: "a post" },
+        {
+          kind: "array",
+          value: [
+            { kind: "string", value: "ts" },
+            { kind: "int", value: 7n },
+          ],
+        },
+        { kind: "array", value: [] },
+      ]),
+    /posts\.tags\[1\]/,
+  );
+});
+
+test("an encoded array's elements each carry their own tag", () => {
+  // The round trip is in ROUND_TRIP above and is an oracle; this is the fixed
+  // expectation beside it, and it is the half that catches both sides being
+  // wrong the same way. `int` and `uint` are both `bigint` here, so a list of
+  // them carries nothing to tell them apart until the server refuses it.
+  const post = { id: 1n, title: "a post", tags: ["ts"], sizes: [7n] };
+  const encoded = encodePosts(post);
+  assert.deepEqual(encoded[2], {
+    kind: "array",
+    value: [{ kind: "string", value: "ts" }],
+  });
+  assert.deepEqual(encoded[3], {
+    kind: "array",
+    value: [{ kind: "int", value: 7n }],
+  });
 });

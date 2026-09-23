@@ -179,6 +179,32 @@ async fn an_independent_batch_reports_a_failure_and_carries_on() {
             // The stable token survives the trip through a message body, which
             // is the half of this that a lone RPC gets from its trailers.
             assert_eq!(error.reason, "DUPLICATE_PRIMARY_KEY", "{error:?}");
+            // And the whole details blob beside it, which used to be the one
+            // thing a batched failure could not carry: there are no trailers,
+            // so `grpc-status-details-bin` had nowhere to go and a client got
+            // the token and nothing under it. A check violation's `check.N`
+            // and `message.N` live in here.
+            //
+            // Asserted as *the same bytes a lone call would carry* rather than
+            // as "non-empty", because the point is that one blob reaches both
+            // paths and the three clients decode it with one function.
+            let lone = client
+                .insert(app(pb::InsertRequest {
+                    table: "docs".to_owned(),
+                    rows: vec![slate_server::convert::row_to_proto(&doc(
+                        3, "batched", 3, None,
+                    ))],
+                    schema: Some(common::claim("docs")),
+                    ..Default::default()
+                }))
+                .await
+                .expect_err("the same row, sent alone, is refused the same way");
+            assert_eq!(
+                error.details,
+                lone.details(),
+                "a batched refusal should carry the blob a lone one does"
+            );
+            assert!(!error.details.is_empty(), "and it should not be empty");
         }
         other => panic!("expected an error, got {other:?}"),
     }

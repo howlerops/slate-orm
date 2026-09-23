@@ -41,12 +41,26 @@ pub fn catalog() -> Catalog {
 
 /// One role, with every action on the one table.
 ///
+/// `EVERYTHING` rather than `ALL`, and the difference is not cosmetic: `ALL`
+/// is the four *data* actions and deliberately excludes `Explain`, so a role
+/// holding it cannot run the `explain` this crate measures. It said `ALL` for
+/// as long as nothing ran `head_report`, whose `rpc` section panicked on
+/// `PERMISSION_DENIED` at the explain call — the same shape as the
+/// `leadership` breakage, from the commit that made `EXPLAIN` privileged
+/// rather than the one that made `leadership` authenticate.
+///
+/// Widening a *benchmark* fixture's grant is not the usual answer to a denial.
+/// It is the answer here because the grant is the subject of no measurement:
+/// this crate times the head node, and a role that cannot reach the call being
+/// timed measures nothing. `slate-server`'s own suites are where the narrow
+/// grants are asserted.
+///
 /// No row policy: a policy would add a predicate to every read, which is a
 /// cost of the security layer rather than of the head node, and this crate is
 /// measuring the head node.
 #[must_use]
 pub fn security() -> SecurityCatalog {
-    SecurityCatalog::new().grant(Grant::new("app", EVENTS, Action::ALL))
+    SecurityCatalog::new().grant(Grant::new("app", EVENTS, Action::EVERYTHING))
 }
 
 /// A row. `at` descends with `id` so the descending index is not written in

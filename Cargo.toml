@@ -11,6 +11,7 @@ members = [
     "crates/slate-server",
     "crates/slate-serverd",
     "crates/slate-headbench",
+    "crates/slate-sql",
     "crates/slate-wasm",
     # Not under `crates/`, because it is not part of the database: it is the
     # Python client's test fixture, and it lives beside the tests that need it.
@@ -37,6 +38,7 @@ slate-schema = { path = "crates/slate-schema", version = "0.0.1" }
 slate-kernel = { path = "crates/slate-kernel", version = "0.0.1" }
 slate-slatedb = { path = "crates/slate-slatedb", version = "0.0.1" }
 slate-derive = { path = "crates/slate-derive", version = "0.0.1" }
+slate-sql = { path = "crates/slate-sql", version = "0.0.1" }
 
 async-trait = "0.1"
 bytes = "1"

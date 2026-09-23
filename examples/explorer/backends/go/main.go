@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"time"
@@ -37,6 +38,22 @@ type server struct {
 	clients map[string]*slate.Client
 }
 
+// declared is the tables and the views in one map, which is what `Declaring`
+// takes.
+//
+// Both, not just the tables. A view is a name a read may use, and a client
+// that declares the tables alone sends a claim for a read of `books` and none
+// for a read of `classics` — so the view's read is the one that goes out
+// unchecked, which is the read most likely to have been written against a
+// stale idea of the base table's columns. The server verifies a view's claim
+// under the view's own name; there is nothing here to opt out of.
+func declared() slate.Schemas {
+	all := make(slate.Schemas, len(schema.Tables)+len(schema.Views))
+	maps.Copy(all, schema.Tables)
+	maps.Copy(all, schema.Views)
+	return all
+}
+
 func main() {
 	head := flag.String("head", "127.0.0.1:7421", "the head node")
 	listen := flag.String("listen", "127.0.0.1:7431", "where to serve")
@@ -54,7 +71,7 @@ func main() {
 		// `scripts/codegen.py`, so the check cannot be satisfied by a
 		// declaration that merely agrees with itself — which is what a
 		// hand-typed one would be.
-		s.clients[name] = client.Declaring(schema.Tables)
+		s.clients[name] = client.Declaring(declared())
 	}
 	defer func() {
 		for _, c := range s.clients {
@@ -74,6 +91,8 @@ func main() {
 	mux.HandleFunc("/api/meta", s.handle(s.meta))
 	mux.HandleFunc("/api/query", s.handle(s.query))
 	mux.HandleFunc("/api/join", s.handle(s.join))
+	mux.HandleFunc("/api/window", s.handle(s.window))
+	mux.HandleFunc("/api/search", s.handle(s.search))
 	mux.HandleFunc("/api/aggregate", s.handle(s.aggregate))
 	mux.HandleFunc("/api/explain", s.handle(s.explain))
 	mux.HandleFunc("/api/explain-aggregate", s.handle(s.explainAggregate))
@@ -87,6 +106,11 @@ func main() {
 	mux.HandleFunc("/api/conditional-update", s.handle(s.conditionalUpdate))
 	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
 	mux.HandleFunc("/api/purge", s.handle(s.purge))
+	mux.HandleFunc("/api/restore", s.handle(s.restore))
+	mux.HandleFunc("/api/restore-unchanged", s.handle(s.restoreUnchanged))
+	mux.HandleFunc("/api/bad-status", s.handle(s.badStatus))
+	mux.HandleFunc("/api/typed", s.handle(s.typed))
+	mux.HandleFunc("/api/bad-batch", s.handle(s.badBatch))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 
 	fmt.Printf("LISTENING %s\n", *listen)
@@ -138,7 +162,7 @@ func (s *server) handle(fn handler) http.HandlerFunc {
 			// fault and says so rather than borrowing a database kind.
 			var e *slate.Error
 			if errors.As(err, &e) {
-				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason)
+				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason, e.Violations)
 				return
 			}
 			writeError(w, http.StatusBadRequest, "adapter", err.Error())
@@ -210,9 +234,33 @@ func writeError(w http.ResponseWriter, status int, kind, message string) {
 // of the pair — kind is this adapter's word for a status code, the token is the
 // server's own and is finer than the code — so a client decoding the blob
 // differently from the other two disagrees here rather than in production.
-func writeSlateError(w http.ResponseWriter, kind, message, reason string) {
+//
+// violations is the same argument one level down. The token says *that* a row
+// broke a check; this says which ones, and it is the part each client decodes
+// by hand out of ErrorInfo.metadata. Three hand-written decoders is exactly the
+// shape of thing that drifts, and each client's own unit tests decode a
+// captured fixture — which proves each agrees with a recording, not that they
+// agree with each other against a live server. This is where that is checked.
+// Always present, [] included, for the reason reason is.
+func writeSlateError(
+	w http.ResponseWriter, kind, message, reason string, violations []slate.CheckViolation,
+) {
+	// Rendered rather than handed to the encoder, so the JSON is this
+	// adapter's shape and not Go's idea of a Go struct: the Python client
+	// spells an absent column None and this one spells it "", which is each
+	// language's own idiom and not a disagreement about what the server said.
+	// Flattening both to "" here is the same normalisation kindName already
+	// does for status codes.
+	broke := make([]map[string]string, 0, len(violations))
+	for _, one := range violations {
+		broke = append(broke, map[string]string{
+			"check": one.Check, "column": one.Column, "message": one.Message,
+		})
+	}
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, map[string]any{
-		"error": map[string]string{"kind": kind, "message": message, "reason": reason},
+		"error": map[string]any{
+			"kind": kind, "message": message, "reason": reason, "violations": broke,
+		},
 	})
 }

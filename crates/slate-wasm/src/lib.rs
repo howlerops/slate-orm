@@ -40,14 +40,33 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod fixture;
-pub mod sql;
 pub mod taxi;
 
+// The SQL front end and the spec types moved to `slate-sql` when the daemon
+// needed them too — see that crate's module docs, and `docs/views.md`, which
+// had recorded the move as impossible. Re-exported rather than referenced
+// through their new path so the binding's callers, the tests and the site all
+// keep the names they already use: this is a change of where the code lives,
+// not of what it is.
+pub use slate_sql::sql;
+pub use slate_sql::{
+    AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
+    QuerySpec, SortSpec, WindowSpec,
+};
+
+// The lowering — a spec onto the kernel's own types — went with them. What is
+// left here turns the same specs into strings for a grid, which is the line
+// the split was made on: see `slate_sql::lower`.
+use slate_sql::lower::{
+    aggregate_of, aggregates, build, chained_computes, chained_ordinal, conditions,
+    group_value_type, having, joined_computes, joined_ordinal, literal,
+};
+
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use slate_kernel::{
-    Aggregate, CalendarPart, CalendarUnit, Chain, CmpOp, Explanation, Expr, Grouping, Join,
-    JoinAlgorithm, JoinKey, JoinStep, Query, RecordStore, Scalar, ScanOrder, SortKey, TimeUnit,
+    Aggregate, Chain, Explanation, Grouping, Join, JoinAlgorithm, JoinKey, JoinStep, Query,
+    RecordStore, ScanOrder, SortKey,
     memory::MemoryStore,
     security::{Action, Grant, Principal, SecurityCatalog, SecurityContext},
     stats::Statistics,
@@ -77,175 +96,6 @@ struct ColumnInfo {
     #[serde(rename = "type")]
     kind: String,
     ordinal: u32,
-}
-
-/// What the UI sends. Every field optional, because the panel builds it up.
-///
-/// `Serialize` as well as `Deserialize` because the workbench shows the
-/// compiled spec beside the results: SQL typed in the editor is lowered onto
-/// this and the reader is shown what it became, which is the only honest way
-/// to offer SQL for a database that does not have any.
-///
-/// The `skip_serializing_if` attributes are for that panel rather than for
-/// the wire — a spec printed with six empty fields buries the two that the
-/// reader's query actually set.
-#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
-pub struct QuerySpec {
-    pub table: String,
-    /// One condition, kept for the shape the panel started with.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filter: Option<FilterSpec>,
-    /// Several, ANDed. Where this gets interesting is that the planner does
-    /// not treat them alike: one conjunct may become a scan bound and the
-    /// rest stay a residual predicate evaluated per row, and the plan says
-    /// which is which.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub filters: Vec<FilterSpec>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub sort: Vec<SortSpec>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub offset: u64,
-    /// Column ordinals to return. Empty means every column — which is also
-    /// what makes an index-only scan impossible, so the UI exposes it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub columns: Vec<u32>,
-    /// Group by these columns. Empty means return rows rather than groups.
-    ///
-    /// Grouping is not a filter applied after the fact: the kernel narrows the
-    /// projection to the group keys and the aggregates' columns, which is what
-    /// lets `count(*) per zone` be answered from an index without reading a
-    /// row. The plan says whether it managed to.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub group_by: Vec<u32>,
-    /// What to compute per group. Empty is not a shorthand for `count(*)`:
-    /// a grouping with keys and no aggregates is `SELECT DISTINCT` over those
-    /// keys, which is how the SQL front end lowers it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub aggregates: Vec<AggregateSpec>,
-    /// Values computed per row and appended after the table's own columns, so
-    /// the `i`th sits at ordinal `columns().len() + i`. Everything downstream
-    /// — a group key, a sort key, a HAVING — addresses one the ordinary way.
-    ///
-    /// This is how `hour(pickup_time)` becomes something the spec can hold:
-    /// the query spec has no expression language and is not getting one, and a
-    /// computed column is the kernel's own answer to that.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub compute: Vec<ComputeSpec>,
-    /// Which groups survive, ANDed. Ordinals are in *group* space —
-    /// `[keys..., aggregates...]` — the same space `sort` uses when there is a
-    /// grouping, and not the table's. `HAVING count(*) > 100` names ordinal
-    /// `group_by.len()`, not a column.
-    ///
-    /// A separate field from `filters` rather than a flag on it, because the
-    /// two are evaluated against different things at different times: a filter
-    /// can become a scan bound and skip rows before they are read, and a
-    /// having cannot — the group it tests does not exist until every row is in.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub having: Vec<FilterSpec>,
-}
-
-/// For `skip_serializing_if`, which needs a path rather than a closure.
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_zero(n: &u64) -> bool {
-    *n == 0
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct FilterSpec {
-    pub column: u32,
-    pub op: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub value: String,
-    /// The candidate list, when `op` is `in`.
-    ///
-    /// A separate field rather than `value` holding a comma-joined string,
-    /// because a string value can itself contain a comma and splitting one
-    /// would make `WHERE payment IN ('cash, tip')` two candidates instead of
-    /// one — silently, and only for the data that has a comma in it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub values: Vec<String>,
-    /// Where the candidate list comes from, when it comes from a query.
-    ///
-    /// `WHERE pickup_zone IN (SELECT id FROM zones WHERE borough = 'Queens')`
-    /// is *two* reads: the inner one runs first, its single column becomes
-    /// `values`, and the outer one is an ordinary `Expr::In` the planner can
-    /// already turn into point gets or an index range. That is the same
-    /// lowering `load_related` uses in the Rust layer, and the reason a
-    /// subquery needed no new kernel operator.
-    ///
-    /// Only an *uncorrelated* subquery fits: the inner query is run once,
-    /// before the outer one, so it cannot mention a column of the outer table.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subquery: Option<Box<QuerySpec>>,
-}
-
-/// One computed column: a function of one of the table's own columns.
-///
-/// A named function rather than a nested expression tree. The kernel's
-/// `Scalar` is a tree and could carry `hour(x) + 1`, but the SQL front end has
-/// no expression grammar to produce one — `WHERE` takes `col <op> literal` and
-/// nothing else — so a spec that could express more than the parser can parse
-/// would be a shape nobody produces and nobody tests.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ComputeSpec {
-    /// `hour`, `year`, `day_of_week`, and the rest of `compute_scalar`.
-    pub function: String,
-    /// Which side of the join the column is on: 0 for the left table, 1 for
-    /// the right. Zero on a single-table query, where there is only one.
-    ///
-    /// This used to be implicit and left-only. `Join::compute` is evaluated
-    /// over the *joined* row and has always been able to read either side; the
-    /// restriction was in this spec, which resolved every computed column's
-    /// name against the left table. So `hour(pickup_time)` worked on `trips`
-    /// and `hour(zones.updated_at)` was "not a column of trips".
-    #[serde(default)]
-    pub input: u32,
-    /// The column it reads, an ordinal within the table `input` names.
-    pub column: u32,
-    /// Seconds to add before reading the calendar out, so a timestamp stored
-    /// in UTC can be asked about at a fixed offset. Zero is UTC.
-    ///
-    /// This needs no kernel and no wire support, because it is already
-    /// expressible: shifting a timestamp is adding to it, and `Scalar::Add`
-    /// has been there since scalars arrived. `compute_scalar` wraps the column
-    /// rather than passing an offset down, so every path that already handles
-    /// `Add` — the planner, the wire, the covering scan — handles this one
-    /// with no change at all.
-    ///
-    /// Mutually exclusive with [`ComputeSpec::zone`]: a fixed offset and a
-    /// named zone are two answers to one question, and the parser produces at
-    /// most one of them. `compute_scalar` refuses both rather than picking.
-    #[serde(default)]
-    pub offset: i64,
-    /// An IANA zone name — `America/New_York` — whose offset *at each row's
-    /// instant* is added before the calendar is read out. Empty is "no zone".
-    ///
-    /// This used to be refused, with a reason that was true of a timezone
-    /// *database* and not of a timezone *table*: the kernel now ships the
-    /// transitions for a curated list of zones, a few kilobytes of sorted
-    /// integers, so daylight saving is looked up rather than guessed at. A
-    /// name outside the list is still refused, and the refusal names the ones
-    /// that are there.
-    ///
-    /// Unlike `offset`, this does need a kernel variant: the shift is not a
-    /// constant, so `Scalar::Add` cannot express it. `Scalar::ZoneShift`
-    /// composes the same way, so the same argument applies one level down —
-    /// the planner and the wire handle a nested scalar already.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub zone: String,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SortSpec {
-    pub column: u32,
-    #[serde(default)]
-    pub descending: bool,
 }
 
 /// What comes back: the rows, and the plan that produced them.
@@ -283,227 +133,6 @@ struct PlanInfo {
     residual: String,
     decodes: Vec<u32>,
     display: String,
-}
-
-/// What the UI sends for a join or a grouped join.
-///
-/// This used to hard-code `authors.id = books.author_id`, which was defensible
-/// while that was the only join in the database. With `trips` joining `zones`
-/// there are two, and a spec that can only express one of them would have made
-/// the zone names — the entire reason to carry a lookup table — unreachable.
-///
-/// The keys are still named explicitly rather than discovered: the parser
-/// checks the `ON` clause against the schema, so a pair of columns that would
-/// join to nothing is refused with a reason instead of returning an empty
-/// result.
-#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq)]
-#[serde(default, rename_all = "camelCase")]
-pub struct JoinSpec {
-    /// The left table's name. Its columns come first in a joined row.
-    pub left: String,
-    /// The right table's name.
-    pub right: String,
-    /// What this query calls the left table, when that is not its own name.
-    /// Empty means the table's name. See [`ChainInputSpec::alias`].
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub left_alias: String,
-    /// And the right. Two tables need aliases for the same reason n do:
-    /// `trips AS a JOIN trips AS b ON a.dropoff_zone = b.pickup_zone` is one
-    /// table twice, and the kernel joins it without complaint — this was
-    /// checked before the field was added rather than assumed.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub right_alias: String,
-    /// The join key's ordinal in the left table.
-    pub left_key: u32,
-    /// And in the right table.
-    pub right_key: u32,
-    /// Conditions on the left table, ANDed.
-    pub left_where: Vec<FilterSpec>,
-    /// Conditions on the right table, ANDed.
-    pub right_where: Vec<FilterSpec>,
-    /// Computed per joined row, appended after *both* tables' columns. See
-    /// `Join::compute`.
-    ///
-    /// Each names its side with `ComputeSpec::input`, so an expression may read
-    /// either table. It used to be able to read only the left, which was a
-    /// limitation of this spec rather than of the kernel.
-    pub compute: Vec<ComputeSpec>,
-    /// Group by these ordinals of the **joined row**: a left column keeps its
-    /// own ordinal, a right column sits at `left.columns() + n`, and a computed
-    /// column at `left.columns() + right.columns() + i`. Empty means return
-    /// joined rows rather than groups.
-    ///
-    /// A list rather than one key, matching [`QuerySpec::group_by`], which has
-    /// been a list since grouping arrived. The asymmetry was not a decision:
-    /// the single-table path grew a second key and the joined path was never
-    /// revisited, so `GROUP BY payment, passengers` worked on `trips` and was a
-    /// refusal the moment a join appeared — and the workbench's own "kitchen
-    /// sink" example said so in prose, splitting itself into two statements to
-    /// work around it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub group_by: Vec<u32>,
-    /// Computed per group. Each names its side with `AggregateSpec::input`.
-    pub aggregates: Vec<AggregateSpec>,
-    /// Conditions over the **groups**, ANDed, applied after grouping.
-    ///
-    /// `column` is a group-space ordinal — `[keys..., aggregates...]` — not a
-    /// joined-row one, because that is what a HAVING term names: `HAVING
-    /// count(*) > 300` is about the count this query computes, and a group
-    /// carries nothing else. The parser resolves it, which is the only place
-    /// that knows which aggregate the reader meant.
-    ///
-    /// Only meaningful with `group_by`, for the reason `sort` is: without
-    /// groups there is nothing to filter, and the parser says so rather than
-    /// accepting it into a field nothing reads.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub having: Vec<FilterSpec>,
-    /// How to order the **groups** of a grouped join. Empty leaves them in the
-    /// order the encoded key sorts them.
-    ///
-    /// A group is `[key, aggregates...]`, so `column: 0` is the key and
-    /// `column: 1` is the first aggregate — a space of its own with nothing to
-    /// do with either table's ordinals. That is `Grouping::sort`, and it is
-    /// what `ORDER BY count(*) DESC` on a grouped join lowers onto.
-    ///
-    /// Only meaningful with `group_by`. An *ungrouped* join has no sort,
-    /// because `Join` has no sort: the kernel orders groups and not joined
-    /// rows, and the parser refuses `ORDER BY` there with that reason rather
-    /// than accepting it into a field nothing reads.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sort: Vec<SortSpec>,
-    pub limit: Option<u64>,
-    /// Rows, or groups, to discard first.
-    ///
-    /// On a grouped join this is `Grouping::offset` and on an ungrouped one
-    /// `Join::offset`, both of which the kernel has always had. This spec did
-    /// not, so `LIMIT 3 OFFSET 5` was a parse error on a join and worked on a
-    /// single table — a difference in the *front end* that read as a
-    /// difference in the engine.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub offset: u64,
-}
-
-/// Three or more tables, chained.
-///
-/// Separate from [`JoinSpec`] rather than replacing it, and the split is the
-/// kernel's own: `Join` and `Chain` are two types with two entry points, and
-/// `group_by_join` narrows each side's projection in a way `group_by_chain`
-/// cannot. `slate-server`'s `MultiRead` and `GroupedSource` make the same
-/// split, with a comment saying that folding them would mean choosing at the
-/// call site anyway, one level further from the reason.
-///
-/// So: exactly two tables is a [`JoinSpec`] and runs through `Join`; three or
-/// more is this and runs through `Chain`. The parser decides, and never
-/// produces a two-input `ChainSpec` — that would be a second spec for a query
-/// the first already expresses, which is the drift this front end exists to
-/// avoid.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChainSpec {
-    /// The tables, in the order the chain reads them. At least three.
-    pub inputs: Vec<ChainInputSpec>,
-    /// Computed per chain row, appended after *every* table's columns. See
-    /// `Chain::compute`, and `ComputeSpec::input` for how each names its
-    /// table.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub compute: Vec<ComputeSpec>,
-    /// Group by these ordinals of the **chain row**: input `n`'s column `c` is
-    /// at the sum of the widths before `n`, plus `c`; a computed value is
-    /// past every table. Empty means return rows. See [`JoinSpec::group_by`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub group_by: Vec<u32>,
-    /// Computed per group. Each names its input with `AggregateSpec::input`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aggregates: Vec<AggregateSpec>,
-    /// Conditions over the **groups**, ANDed, applied after grouping.
-    ///
-    /// `column` is a group-space ordinal — `[keys..., aggregates...]` — not a
-    /// joined-row one, because that is what a HAVING term names: `HAVING
-    /// count(*) > 300` is about the count this query computes, and a group
-    /// carries nothing else. The parser resolves it, which is the only place
-    /// that knows which aggregate the reader meant.
-    ///
-    /// Only meaningful with `group_by`, for the reason `sort` is: without
-    /// groups there is nothing to filter, and the parser says so rather than
-    /// accepting it into a field nothing reads.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub having: Vec<FilterSpec>,
-    /// How to order the groups. `[keys..., aggregates...]`, as on [`JoinSpec`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sort: Vec<SortSpec>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub offset: u64,
-}
-
-/// One table of a chain.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChainInputSpec {
-    /// The table's name, as the catalog spells it.
-    pub table: String,
-    /// What this query calls the table, when that is not the table's own name.
-    ///
-    /// Empty means "the table's name", which is what makes a chain that uses no
-    /// alias serialise exactly as it did before aliases existed. The alias is
-    /// what a *qualifier* resolves against and what the header shows; the
-    /// binding still looks the table up by `table`, because an alias renames an
-    /// input and not a table.
-    ///
-    /// This is the field that lets one table appear twice. `trips` reaches
-    /// `zones` through both `pickup_zone` and `dropoff_zone`, and "the borough
-    /// it started in and the borough it ended in" is the three-table question
-    /// this dataset is for — inexpressible while every input was identified by
-    /// its table's name, because two `zones` made every column reference
-    /// ambiguous with no way to say which was meant.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub alias: String,
-    /// What this joins to. Absent on input 0, which joins to nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on: Option<ChainOnSpec>,
-    /// Conditions on this table alone, ANDed, so the planner can push each
-    /// into this table's own scan.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub filters: Vec<FilterSpec>,
-}
-
-/// Which earlier table a step joins to.
-///
-/// `input` and `column` name a column of an *earlier* input — any earlier one,
-/// not just the previous — and `own` is this table's own ordinal. That is
-/// exactly `JoinKey` in the joined space, which is what lets `a JOIN b JOIN c
-/// ON a.x = c.y` work rather than only a straight line.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChainOnSpec {
-    /// Which earlier input.
-    pub input: u32,
-    /// Its column, in that table's own ordinals.
-    pub column: u32,
-    /// This table's column.
-    pub own: u32,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AggregateSpec {
-    pub kind: String,
-    /// Which side of the join the column is on: 0 for the left table, 1 for
-    /// the right. Zero on a single-table query.
-    ///
-    /// Like `ComputeSpec::input`, this used to be implicit -- and implicitly
-    /// the *opposite* side: an aggregate's ordinal was shifted past every left
-    /// column unconditionally, so it could only name the right table. Between
-    /// the two defaults, "group by the hour and average the fare" over `trips
-    /// JOIN zones` was not expressible: the group key had to come from the left
-    /// and the aggregate from the right, and both of those columns are on
-    /// `trips`.
-    #[serde(default)]
-    pub input: u32,
-    /// Ordinal within the table `input` names, ignored by `count`.
-    #[serde(default)]
-    pub column: u32,
 }
 
 /// Joined rows, or groups, with the plan for either.
@@ -1695,7 +1324,14 @@ impl Playground {
                             // header has to cover the whole row either way.
                             let mut headers: Vec<String> =
                                 t.columns().iter().map(|c| c.name().to_owned()).collect();
-                            headers.extend((0..spec.compute.len()).map(|i| {
+                            // The computed values and then the windows, in
+                            // the order the row carries them — one `extend`
+                            // over both counts, because a header list that
+                            // stops short of the row's width leaves the last
+                            // columns unlabelled and one that overshoots
+                            // labels cells that are not there.
+                            let extra = spec.compute.len() + spec.window.len();
+                            headers.extend((0..extra).map(|i| {
                                 column_header(
                                     u32::try_from(t.columns().len() + i).unwrap_or(0),
                                     &t,
@@ -2246,179 +1882,6 @@ impl Playground {
     }
 }
 
-/// Turn the UI's description into a kernel `Query`.
-fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
-    let mut query = Query::all();
-
-    // First, because everything below may name a computed ordinal and the
-    // kernel only knows what those mean once the query carries the
-    // expressions that produce them.
-    if !spec.compute.is_empty() {
-        query = query.computing(computes(&spec.compute, table)?);
-    }
-
-    // `filter` and `filters` are both accepted and both ANDed in. The single
-    // form is not deprecated shorthand — it is what a one-condition panel
-    // sends, and refusing it would break the shape this binding shipped with.
-    let conditions: Vec<&FilterSpec> = spec.filter.iter().chain(spec.filters.iter()).collect();
-    if !conditions.is_empty() {
-        let mut parts = Vec::with_capacity(conditions.len());
-        for condition in conditions {
-            parts.push(comparison(condition, table)?);
-        }
-        // `Expr::all` rather than folding with `and`: it is the kernel's own
-        // constructor for a conjunction, and the planner reads conjuncts out
-        // of it to look for scan bounds. A hand-folded tree of nested `And`s
-        // is the same predicate and gives the planner more work to undo.
-        query = query.filter(Expr::all(parts));
-    }
-    if !spec.sort.is_empty() {
-        let keys: Vec<SortKey> = spec
-            .sort
-            .iter()
-            .map(|s| {
-                let column = Ordinal(s.column as usize);
-                if s.descending {
-                    SortKey::desc(column)
-                } else {
-                    SortKey::asc(column)
-                }
-            })
-            .collect();
-        query = query.sort_by(keys);
-    }
-    if !spec.columns.is_empty() {
-        query = query.select(spec.columns.iter().map(|c| Ordinal(*c as usize)));
-    }
-    if let Some(limit) = spec.limit {
-        query = query.limit(usize::try_from(limit).unwrap_or(usize::MAX));
-    }
-    if spec.offset > 0 {
-        query = query.offset(usize::try_from(spec.offset).unwrap_or(usize::MAX));
-    }
-    Ok(query)
-}
-
-/// One `column op literal`, with the literal parsed to the column's type.
-///
-/// Typed rather than coerced, because the kernel's value order is type-first —
-/// that is what makes the key encoding sortable — so handing a `Str` to a `U64`
-/// column would not fail, it would compare the *types* and match nothing.
-/// Getting this wrong is silent, so it is done once, here.
-fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
-    let column = Ordinal(filter.column as usize);
-    let def = table
-        .column(column)
-        .ok_or_else(|| format!("{} has no column {}", table.name(), filter.column))?;
-
-    if filter.op == "in" || filter.op == "notIn" {
-        // Typed one at a time against this column, like every other literal.
-        // The subquery form has already been run by `resolve_subqueries` and
-        // its rows rendered into `values`; by here the two are the same thing.
-        let mut values = Vec::with_capacity(filter.values.len());
-        for text in &filter.values {
-            values.push(literal(text, def.value_type(), def.scale()).map_err(|why| {
-                if filter.subquery.is_some() {
-                    // Without this the message is about a value the reader
-                    // never typed, and points at the outer column rather than
-                    // at the subquery that produced it.
-                    format!("the subquery produced a value this column cannot hold: {why}")
-                } else {
-                    why
-                }
-            })?);
-        }
-        let inside = Expr::In { column, values };
-        // `NOT IN` is the `IN` negated, and nothing more. `Truth::negate` maps
-        // unknown to unknown, so a null candidate makes this unknown exactly
-        // where the standard says it should — and `Expr::conjuncts` stops at a
-        // `Not`, so the planner never mistakes the complement of a point set
-        // for a range. See the long note in `sql.rs`, which is where this was
-        // refused until it was checked.
-        return Ok(if filter.op == "notIn" {
-            Expr::Not(Box::new(inside))
-        } else {
-            inside
-        });
-    }
-
-    // Patterns are strings whatever the column is.
-    match filter.op.as_str() {
-        "like" => return Ok(Expr::like(column, filter.value.clone())),
-        "ilike" => return Ok(Expr::ilike(column, filter.value.clone())),
-        "matches" => {
-            let expr = Expr::matches(column, filter.value.clone());
-            if let Some(bad) = expr.regex_error() {
-                return Err(format!("that regular expression is not valid: {bad}"));
-            }
-            return Ok(expr);
-        }
-        _ => {}
-    }
-
-    let value = literal(&filter.value, def.value_type(), def.scale())?;
-    // `Expr::compare` rather than the `eq`/`lt` shorthands: those names exist
-    // on `Expr` as *combinators over expressions*, not comparison
-    // constructors, and reaching for them here compiled into something else
-    // entirely.
-    let op = match filter.op.as_str() {
-        "eq" => CmpOp::Eq,
-        "ne" => CmpOp::Ne,
-        "lt" => CmpOp::Lt,
-        "le" => CmpOp::Le,
-        "gt" => CmpOp::Gt,
-        "ge" => CmpOp::Ge,
-        other => return Err(format!("no such operator: {other}")),
-    };
-    Ok(Expr::compare(column, op, value))
-}
-
-fn literal(text: &str, kind: slate_tuple::ValueType, scale: Option<u8>) -> Result<Value, String> {
-    use slate_tuple::ValueType as T;
-    match kind {
-        // `WHERE price > 19.99` used to fall through to the catch-all and
-        // become `Value::Str("19.99")`, which compares below every decimal in
-        // the cross-type order and so matched *nothing*, silently. A query
-        // that returns no rows for a reason nobody can see is the worst answer
-        // available, and it was the one this gave.
-        //
-        // The scale comes from the column, because it is the only thing that
-        // knows: `19.99` is 1999 units at scale 2 and 199900 at scale 4. A
-        // decimal column with no scale is impossible — `ColumnDef::scale`
-        // returns `Some` for every `Decimal` — so `None` here means the caller
-        // passed the wrong column, which is a bug rather than a bad query.
-        T::Decimal => {
-            let scale = scale.ok_or_else(|| {
-                "a decimal column with no scale — this is a bug in the front end, not in \
-                 the query"
-                    .to_owned()
-            })?;
-            Value::decimal_from_str(text, scale)
-        }
-        T::U64 => text
-            .trim()
-            .parse::<u64>()
-            .map(Value::U64)
-            .map_err(|_| format!("{text:?} is not a non-negative whole number")),
-        T::I64 => text
-            .trim()
-            .parse::<i64>()
-            .map(Value::I64)
-            .map_err(|_| format!("{text:?} is not a whole number")),
-        T::F64 => text
-            .trim()
-            .parse::<f64>()
-            .map(Value::F64)
-            .map_err(|_| format!("{text:?} is not a number")),
-        T::Bool => text
-            .trim()
-            .parse::<bool>()
-            .map(Value::Bool)
-            .map_err(|_| format!("{text:?} is not true or false")),
-        _ => Ok(Value::Str(text.to_owned())),
-    }
-}
-
 /// Measure every table, for the planner.
 ///
 /// One function rather than a list at each call site: the constructor and the
@@ -2757,38 +2220,33 @@ fn labels(specs: &[AggregateSpec], table: &TableDef) -> Vec<String> {
         .collect()
 }
 
-/// Lower the UI's aggregate list onto the kernel's, resolving ordinals
-/// against the table the aggregates read.
+/// What to print above a window's column.
 ///
-/// An empty list is empty. It used to mean `count(*)`, on the argument that a
-/// bare list of keys looks broken rather than minimal — which was a guess about
-/// what a reader wants, made in the one place that could not be overridden, and
-/// it is what `SELECT DISTINCT` needs to be able to ask for.
-fn aggregates(specs: &[AggregateSpec], table: &TableDef) -> Result<Vec<Aggregate>, String> {
-    // An empty list means no aggregates, not `count(*)`. See the note on the
-    // join path: the default made `SELECT author_id FROM books GROUP BY
-    // author_id` come back two columns wide, one of which the query does not
-    // mention, and made `SELECT DISTINCT` inexpressible.
-    let mut out = Vec::with_capacity(specs.len());
-    for spec in specs {
-        let column = Ordinal(spec.column as usize);
-        if !matches!(spec.kind.as_str(), "count") && table.column(column).is_none() {
-            return Err(format!("{} has no column {}", table.name(), spec.column));
-        }
-        out.push(match spec.kind.as_str() {
-            "count" => Aggregate::Count,
-            // `count(column)` is not `count(*)`: it skips nulls. Keeping them
-            // apart here is why the parser bothers to tell them apart.
-            "count_column" => Aggregate::CountColumn(column),
-            "min" => Aggregate::Min(column),
-            "max" => Aggregate::Max(column),
-            "sum" => Aggregate::Sum(column),
-            "avg" => Aggregate::Avg(column),
-            "count_distinct" => Aggregate::CountDistinct(column),
-            other => return Err(format!("no such aggregate: {other}")),
-        });
-    }
-    Ok(out)
+/// The call, and the word `over`. Not the whole clause: a partition and an
+/// order can be several columns each, and a header wide enough to hold them
+/// pushes every other column off the screen — which is a worse answer to
+/// "which column is this" than the short form plus the spec panel, where the
+/// clause is printed in full.
+fn window_header(spec: &WindowSpec, table: &TableDef) -> String {
+    let named = |ordinal: u32| -> String {
+        table
+            .column(Ordinal(ordinal as usize))
+            .map_or_else(|| ordinal.to_string(), |c| c.name().to_owned())
+    };
+    let call = match spec.function.as_str() {
+        "lag" | "lead" => format!("{}({}, {})", spec.function, named(spec.column), spec.offset),
+        "aggregate" => spec.aggregate.as_ref().map_or_else(
+            || "aggregate()".to_owned(),
+            |a| match a.kind.as_str() {
+                "count" => "count(*)".to_owned(),
+                "count_column" => format!("count({})", named(a.column)),
+                "count_distinct" => format!("count(distinct {})", named(a.column)),
+                other => format!("{other}({})", named(a.column)),
+            },
+        ),
+        other => format!("{other}()"),
+    };
+    format!("{call} over")
 }
 
 /// The second argument a computed column was written with, if any.
@@ -2825,6 +2283,13 @@ fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
     if let Some(column) = table.column(Ordinal(ordinal as usize)) {
         return column.name().to_owned();
     }
+    // Past the table's own columns and past the computed ones is a window, in
+    // the order the query asked for them — the layout `WindowSpec` documents.
+    if let Some(i) = (ordinal as usize).checked_sub(table.columns().len() + spec.compute.len())
+        && let Some(window) = spec.window.get(i)
+    {
+        return window_header(window, table);
+    }
     let computed = (ordinal as usize).checked_sub(table.columns().len());
     computed.and_then(|i| spec.compute.get(i)).map_or_else(
         || ordinal.to_string(),
@@ -2835,345 +2300,6 @@ fn column_header(ordinal: u32, table: &TableDef, spec: &QuerySpec) -> String {
             format!("{}({argument}{})", c.function, zone_suffix(c))
         },
     )
-}
-
-/// One `ComputeSpec` as the kernel's `Scalar`.
-///
-/// The names are SQL's where SQL has one — `EXTRACT(HOUR FROM t)` and
-/// `EXTRACT(DAY FROM t)` mean hour-of-day and day-of-*month*, so `day` here is
-/// the day of the month and not the day of the epoch, which is what
-/// `TimeUnit::Day` would give. Getting that backwards would be silent: both
-/// return an integer and both look plausible in a column.
-fn compute_scalar(spec: &ComputeSpec, table: &TableDef, base: usize) -> Result<Scalar, String> {
-    use slate_tuple::ValueType as T;
-    let column = Ordinal(spec.column as usize);
-    let def = table
-        .column(column)
-        .ok_or_else(|| format!("{} has no column {}", table.name(), spec.column))?;
-    let kind = def.value_type();
-    // The column is named in its own table's ordinals and read in the space the
-    // expression is evaluated in -- the same ordinals on one table or on a
-    // join's left side, shifted past every left column on its right side.
-    let mut value = Scalar::Column(Ordinal(base + column.0));
-
-    // The zone shift, if there is one. Adding seconds to a timestamp and then
-    // reading the calendar out of the result *is* what a fixed-offset
-    // conversion is, so this needs no new `Scalar` variant and no new wire
-    // field — see `ComputeSpec::offset`.
-    //
-    // `arithmetic` promotes two integers to `I64` and saturates rather than
-    // wrapping, so a `U64` column shifted below the epoch becomes a negative
-    // `I64` and `CalendarPart`'s floor division handles it, rather than
-    // wrapping to the year 584942417355.
-    if spec.offset != 0 || !spec.zone.is_empty() {
-        if spec.function == "round" {
-            return Err("round() takes no timezone: it is not a time function".to_owned());
-        }
-        if spec.offset != 0 && !spec.zone.is_empty() {
-            // Not reachable from the parser, which produces one or the other.
-            // Refused rather than given a precedence, because a spec built by
-            // hand with both set means the caller believes something untrue
-            // about which one wins, and answering either way confirms it.
-            return Err(format!(
-                "{}() was given both a fixed offset and the zone {:?}; they are two \
-                 answers to one question",
-                spec.function, spec.zone
-            ));
-        }
-        value = if spec.zone.is_empty() {
-            Scalar::Add(
-                Box::new(value),
-                Box::new(Scalar::Literal(slate_tuple::Value::I64(spec.offset))),
-            )
-        } else {
-            // Checked here as well as in the parser, because a spec can arrive
-            // from JavaScript without passing through the parser at all, and
-            // `ZoneShift` answers null for a zone it does not know — which on
-            // screen is indistinguishable from an empty column.
-            if !slate_kernel::zones::has(&spec.zone) {
-                return Err(format!(
-                    "no such timezone: {:?}. IANA names are case-sensitive, and \
-                     this has {}",
-                    spec.zone,
-                    slate_kernel::zones::listing()
-                ));
-            }
-            value.in_zone(spec.zone.clone())
-        };
-    }
-
-    // Checked per function rather than once, because they do not agree on what
-    // they take: a timestamp is an integer of seconds — there is no date type
-    // — and `round` is for the columns that are not. Refused here rather than
-    // left to the kernel, which would return null per row: right for a value
-    // of the wrong shape, wrong for a query that could never have worked, and
-    // indistinguishable on screen from a column that is genuinely empty.
-    let timestamp = |scalar: Scalar| {
-        if matches!(kind, T::I64 | T::U64) {
-            Ok(scalar)
-        } else {
-            Err(format!(
-                "{}() needs a timestamp, and {} is {:?} — timestamps here are \
-                 seconds since the epoch in an integer column",
-                spec.function,
-                def.name(),
-                kind
-            ))
-        }
-    };
-
-    match spec.function.as_str() {
-        "hour" => timestamp(value.extract(TimeUnit::Hour)),
-        "minute" => timestamp(value.extract(TimeUnit::Minute)),
-        "second" => timestamp(value.extract(TimeUnit::Second)),
-        "year" => timestamp(value.calendar_part(CalendarPart::Year)),
-        "month" => timestamp(value.calendar_part(CalendarPart::Month)),
-        // `day` is the day of the *month*, as `EXTRACT(DAY FROM t)` is in SQL
-        // — not `TimeUnit::Day`, which counts days since the epoch. Both
-        // return an integer and both look plausible in a column, so getting
-        // this backwards would be silent.
-        "day" => timestamp(value.calendar_part(CalendarPart::DayOfMonth)),
-        "day_of_week" => timestamp(value.calendar_part(CalendarPart::DayOfWeek)),
-        // Midnight of the day, as epoch seconds — so grouping by it gives one
-        // group per calendar day, ordered as the days are.
-        "date" => timestamp(value.date_trunc(TimeUnit::Day)),
-        // The first instant of the month or the year. `date()` is a division
-        // by 86,400; these are not, because neither a month nor a year has a
-        // fixed length — see `CalendarUnit`. Grouping by one gives a group per
-        // calendar month, ordered as the months are, which is what `year()`
-        // and `month()` cannot do on their own: those return 2024 and 2,
-        // so ordering by `month()` puts every January of every year together.
-        "month_start" => timestamp(value.calendar_trunc(CalendarUnit::Month)),
-        "year_start" => timestamp(value.calendar_trunc(CalendarUnit::Year)),
-        "round" => {
-            if matches!(kind, T::F64 | T::I64 | T::U64) {
-                Ok(value.round())
-            } else {
-                Err(format!(
-                    "round() needs a number, and {} is {kind:?}",
-                    def.name()
-                ))
-            }
-        }
-        other => Err(format!("no such function: {other}")),
-    }
-}
-
-/// Every computed column a spec asks for, in order.
-fn computes(specs: &[ComputeSpec], table: &TableDef) -> Result<Vec<Scalar>, String> {
-    specs.iter().map(|c| compute_scalar(c, table, 0)).collect()
-}
-
-/// The joined-space ordinal an `input`/`column` pair names.
-///
-/// Zero is the left table, whose ordinals are already the joined row's; one is
-/// the right, shifted past every left column. Any other input is refused rather
-/// than treated as one of the two -- a join here has exactly two sides, and
-/// guessing would turn a typo into a query about a different column.
-fn joined_ordinal(
-    input: u32,
-    column: u32,
-    left: &TableDef,
-    right: &TableDef,
-) -> Result<Ordinal, String> {
-    chained_ordinal(input, column, &[left, right])
-}
-
-/// The same, over any number of inputs.
-///
-/// A chain's joined space is every table's columns concatenated in order, so
-/// an input's base is the sum of the widths before it. Two tables is the
-/// degenerate case rather than a separate scheme, which is why
-/// [`joined_ordinal`] is one line.
-fn chained_ordinal(input: u32, column: u32, tables: &[&TableDef]) -> Result<Ordinal, String> {
-    let at = input as usize;
-    let table = tables.get(at).ok_or_else(|| {
-        format!(
-            "this read has {} input{}, 0 to {}; input {input} is outside that",
-            tables.len(),
-            if tables.len() == 1 { "" } else { "s" },
-            tables.len().saturating_sub(1)
-        )
-    })?;
-    if table.column(Ordinal(column as usize)).is_none() {
-        return Err(format!("{} has no column {column}", table.name()));
-    }
-    Ok(Ordinal(base_of(at, tables) + column as usize))
-}
-
-/// Where input `at`'s columns begin in the joined space.
-fn base_of(at: usize, tables: &[&TableDef]) -> usize {
-    tables
-        .iter()
-        .take(at)
-        .map(|table| table.columns().len())
-        .sum()
-}
-
-/// The join's computed values, each reading whichever side it names.
-fn joined_computes(
-    specs: &[ComputeSpec],
-    left: &TableDef,
-    right: &TableDef,
-) -> Result<Vec<Scalar>, String> {
-    chained_computes(specs, &[left, right])
-}
-
-/// The same, over any number of inputs.
-fn chained_computes(specs: &[ComputeSpec], tables: &[&TableDef]) -> Result<Vec<Scalar>, String> {
-    specs
-        .iter()
-        .map(|c| {
-            let at = c.input as usize;
-            let table = tables.get(at).ok_or_else(|| {
-                format!(
-                    "a computed value names input {}, and this read has {}",
-                    c.input,
-                    tables.len()
-                )
-            })?;
-            compute_scalar(c, table, base_of(at, tables))
-        })
-        .collect()
-}
-
-/// The type a group-space ordinal holds, for `HAVING`.
-///
-/// This exists because of one hazard, and it is a silent one. `Value` orders
-/// by *class* before it orders by magnitude, and `F64` ranks above the integer
-/// variants — so `F64(19.5) > I64(20)` is **true**, by rank, with the numbers
-/// playing no part. `I64` and `U64` share a rank and compare through `i128`,
-/// so they interoperate; a float against an integer does not.
-///
-/// `HAVING avg(fare) > 20` therefore has to parse `20` as `F64(20.0)`, and
-/// parsing it from the table column's type — as `WHERE` correctly does — would
-/// give `I64(20)` and admit every group. Nothing would error and the answer
-/// would be wrong, which is why the type comes from the aggregate rather than
-/// from the column it reads.
-fn group_value_type(
-    ordinal: u32,
-    keys: &[Ordinal],
-    aggregates: &[Aggregate],
-    inputs: &[&TableDef],
-) -> Result<(slate_tuple::ValueType, Option<u8>), String> {
-    use slate_tuple::ValueType as T;
-    let index = ordinal as usize;
-    // A slice of tables rather than one, so a *joined* key resolves: a group
-    // key on a join is an ordinal of the joined row, and which table it lands
-    // in is the sum of the widths before it. A single table is the one-input
-    // case of the same walk, which is why both paths share this rather than
-    // growing a second copy — the reason the joined path had no HAVING at all
-    // was that everything downstream of here took one `TableDef`.
-    let column_type = |c: Ordinal| {
-        let mut at = c.0;
-        for table in inputs {
-            let width = table.columns().len();
-            if at < width {
-                // The scale travels with the type, because a decimal literal
-                // in `HAVING` has to be read at the scale of whatever the
-                // aggregate produced — `having sum(price) > 100.00` is a
-                // count of the *column's* cents. `HAVING` over a decimal was
-                // comparing `I64(100)` to a `Decimal` before this, which
-                // admits nothing and says nothing.
-                return table
-                    .column(Ordinal(at))
-                    .map(|d| (d.value_type(), d.scale()))
-                    .ok_or_else(|| format!("{} has no column {}", table.name(), at));
-            }
-            at -= width;
-        }
-        Err(format!("no input holds joined column {}", c.0))
-    };
-    let width: usize = inputs.iter().map(|t| t.columns().len()).sum();
-    if let Some(key) = keys.get(index) {
-        // A group key past the table's own columns is a computed one, and
-        // every function `compute_scalar` offers returns an integer.
-        //
-        // No query can currently tell this branch from reading the *source*
-        // column's type, and a mutation replacing it with `if false` passes
-        // the whole suite — because `compute_scalar` refuses a non-integer
-        // source, so both readings land on `I64` or `U64`, which share a class
-        // rank and compare through `i128`. It is here for the first function
-        // that returns a double, where the two stop agreeing and the
-        // disagreement is silent (see `having`, which explains the rank
-        // hazard). Written down rather than deleted, and written down rather
-        // than covered by a test that does not exist.
-        if key.0 >= width {
-            return Ok((T::I64, None));
-        }
-        return column_type(*key);
-    }
-    let aggregate = aggregates.get(index - keys.len()).ok_or_else(|| {
-        format!(
-            "HAVING names position {index}, and the group has only {} columns",
-            keys.len() + aggregates.len()
-        )
-    })?;
-    Ok(match aggregate {
-        // A count is a cardinality: unsigned, whatever it counted.
-        Aggregate::Count | Aggregate::CountColumn(_) | Aggregate::CountDistinct(_) => {
-            (T::U64, None)
-        }
-        // A minimum is one of the values, so it is whatever they are — scale
-        // included.
-        Aggregate::Min(c) | Aggregate::Max(c) => column_type(*c)?,
-        // `Total::sum` returns `I64` for any integer column and `F64` for a
-        // real one, so a `U64` column's sum is compared as `I64` — same rank,
-        // so that is a distinction without a difference here. Over a decimal
-        // it returns a `Decimal` at the column's scale, which is the whole
-        // point of summing money, and is why this arm cannot just be "integer
-        // or float".
-        Aggregate::Sum(c) => match column_type(*c)? {
-            (T::F64, _) => (T::F64, None),
-            (T::Decimal, scale) => (T::Decimal, scale),
-            _ => (T::I64, None),
-        },
-        // Always a double, even over integers and decimals: `Total::average`
-        // divides, and an average of cents is not cents.
-        Aggregate::Avg(_) => (T::F64, None),
-    })
-}
-
-/// `HAVING`, as one `Expr` over the group.
-fn having(
-    specs: &[FilterSpec],
-    keys: &[Ordinal],
-    aggregates: &[Aggregate],
-    inputs: &[&TableDef],
-) -> Result<Expr, String> {
-    let mut out = Expr::True;
-    for spec in specs {
-        let (kind, scale) = group_value_type(spec.column, keys, aggregates, inputs)?;
-        let column = Ordinal(spec.column as usize);
-        let expr = match spec.op.as_str() {
-            "like" => Expr::like(column, spec.value.clone()),
-            "ilike" => Expr::ilike(column, spec.value.clone()),
-            "matches" => {
-                let expr = Expr::matches(column, spec.value.clone());
-                if let Some(bad) = expr.regex_error() {
-                    return Err(format!("that regular expression is not valid: {bad}"));
-                }
-                expr
-            }
-            other => {
-                let op = match other {
-                    "eq" => CmpOp::Eq,
-                    "ne" => CmpOp::Ne,
-                    "lt" => CmpOp::Lt,
-                    "le" => CmpOp::Le,
-                    "gt" => CmpOp::Gt,
-                    "ge" => CmpOp::Ge,
-                    _ => return Err(format!("no such operator: {other}")),
-                };
-                Expr::compare(column, op, literal(&spec.value, kind, scale)?)
-            }
-        };
-        out = match out {
-            Expr::True => expr,
-            existing => existing.and(expr),
-        };
-    }
-    Ok(out)
 }
 
 /// One side of a join: its conditions, ANDed, as a `Query`.
@@ -3189,37 +2315,6 @@ fn input_plan(explanation: &Explanation, algorithm: String) -> InputPlan {
         decodes: explanation.decodes.iter().map(|o| o.0 as u32).collect(),
         algorithm,
     }
-}
-
-/// One aggregate, by the name the spec uses, over an ordinal already resolved
-/// into the joined space.
-///
-/// Shared by the join and the chain paths. It was written out in the join path
-/// and copying it was the alternative, which is how two lists of aggregate
-/// names come to disagree about whether `count_column` is spelled with an
-/// underscore.
-fn aggregate_of(kind: &str, column: Ordinal) -> Result<Aggregate, String> {
-    Ok(match kind {
-        "count" => Aggregate::Count,
-        "count_column" => Aggregate::CountColumn(column),
-        "count_distinct" => Aggregate::CountDistinct(column),
-        "min" => Aggregate::Min(column),
-        "max" => Aggregate::Max(column),
-        "sum" => Aggregate::Sum(column),
-        "avg" => Aggregate::Avg(column),
-        other => return Err(format!("no such aggregate: {other}")),
-    })
-}
-
-fn conditions(specs: &[FilterSpec], table: &TableDef) -> Result<Query, String> {
-    if specs.is_empty() {
-        return Ok(Query::all());
-    }
-    let mut parts = Vec::with_capacity(specs.len());
-    for spec in specs {
-        parts.push(comparison(spec, table)?);
-    }
-    Ok(Query::all().filter(Expr::all(parts)))
 }
 
 /// One value as text.

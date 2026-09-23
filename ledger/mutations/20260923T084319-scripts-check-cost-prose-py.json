@@ -1,0 +1,72 @@
+{
+  "at": "2026-09-23T08:43:19+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "f1547ad",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an error-claim is never refused",
+      "old": "            for match in UNVERIFIABLE.finditer(current):",
+      "new": "            for match in []:",
+      "verdict": "caught",
+      "caught_by": [
+        "an error-claim about a constant is refused",
+        "an en dash in the range reads the same",
+        "so does a single figure, and the other constant"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal crosses a full stop",
+      "old": "    r\"(POINT_READ_COST|SCAN_ROW_COST)[^.\\n]{0,60}?\"",
+      "new": "    r\"(POINT_READ_COST|SCAN_ROW_COST)[\\s\\S]{0,60}?\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a full stop separates a real claim from a later percentage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only one of the two constants is guarded",
+      "old": "    r\"(POINT_READ_COST|SCAN_ROW_COST)[^.\\n]{0,60}?\"",
+      "new": "    r\"(POINT_READ_COST)[^.\\n]{0,60}?\"",
+      "verdict": "caught",
+      "caught_by": [
+        "so does a single figure, and the other constant"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an en dash is not read as a range",
+      "old": "    r\"([0-9]+(?:\\s*[\\u2013-]\\s*[0-9]+)?\\s*%)\\s*\"",
+      "new": "    r\"([0-9]+(?:\\s*[-]\\s*[0-9]+)?\\s*%)\\s*\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refused claim is also counted as verified",
+      "old": "            for match in UNVERIFIABLE.finditer(current):\n                wrong.append(",
+      "new": "            for match in UNVERIFIABLE.finditer(current):\n                seen += 1\n                wrong.append(",
+      "verdict": "caught",
+      "caught_by": [
+        "an error-claim about a constant is refused",
+        "an en dash in the range reads the same",
+        "so does a single figure, and the other constant"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

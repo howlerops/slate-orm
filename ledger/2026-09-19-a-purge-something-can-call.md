@@ -99,8 +99,11 @@ the Python stub-freshness test passing on regenerated stubs.
 
 ## What this does not do
 
-**No scheduler.** Nothing runs a purge periodically. A deployment wanting one
-needs an external cron calling the RPC, and there is no example of that here.
+~~**No scheduler.** Nothing runs a purge periodically. A deployment wanting one
+needs an external cron calling the RPC, and there is no example of that here.~~
+**Closed** — `examples/retention/` is that example, and a harness runs it. The
+"external cron" half stands and is now argued rather than assumed; see
+`2026-09-20-the-sweep-nobody-scheduled.md`.
 
 **No offline tool**, so a stopped node's keyspace cannot be purged at all.
 

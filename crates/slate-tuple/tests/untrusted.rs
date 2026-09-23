@@ -28,17 +28,20 @@
 use proptest::prelude::*;
 use slate_tuple::{Direction, TupleReader, Value, ValueType, decode, decode_dynamic, encode};
 
+/// Every `ValueType`, from the enum itself.
+///
+/// This was a hand-written `prop_oneof!` of eight `Just`s, and the enum has
+/// nine: `Decimal` arrived later and nothing said so, so the adversarial
+/// decoder suite never once told the decoder to expect one. A roster nothing
+/// forces you to edit is a roster that goes stale, which is the failure this
+/// repository met in four other places today.
+///
+/// `ValueType::ALL` is the fix, and it lives in `slate-tuple` rather than here
+/// because the enum is `#[non_exhaustive]`: the exhaustive, wildcard-free
+/// match that catches a tenth variant can only be written inside the defining
+/// crate. `value.rs`'s `all_lists_every_variant` is that match.
 fn any_type() -> impl Strategy<Value = ValueType> {
-    prop_oneof![
-        Just(ValueType::Bool),
-        Just(ValueType::Bytes),
-        Just(ValueType::Str),
-        Just(ValueType::I64),
-        Just(ValueType::U64),
-        Just(ValueType::F64),
-        Just(ValueType::Uuid),
-        Just(ValueType::Vector),
-    ]
+    proptest::sample::select(ValueType::ALL.to_vec())
 }
 
 /// Bytes biased towards the ones that mean something to the codec: type tags,
@@ -52,6 +55,12 @@ fn hostile_bytes() -> impl Strategy<Value = Vec<u8>> {
             2 => Just(0xFFu8),      // escape, and the top of every range
             2 => Just(0x01u8),      // the escape's partner
             1 => Just(0x23u8),      // VECTOR: a length-prefixed type
+            // ARRAY: the only tag whose body is other elements, so a run of
+            // them is the recursion bomb. The decoder refuses a nested array
+            // rather than bounding it, and this is what tries to catch it
+            // not doing so — see also
+            // `a_deeply_nested_array_is_refused_rather_than_recursed`.
+            2 => Just(0x24u8),
             1 => Just(0x0Cu8),      // BYTES
             1 => Just(0x02u8),      // STR
             1 => Just(0x21u8),      // F64
@@ -163,9 +172,104 @@ proptest! {
     }
 }
 
-/// Scalars only: a vector's encoding carries a length that random generation
-/// would rarely make interesting, and it is covered by the hostile-byte cases.
+/// The types `any_scalar` deliberately does not generate, and why.
+///
+/// An exclusion with no reason is indistinguishable from an omission, which is
+/// exactly how `Decimal` survived in `any_type` for as long as it did. These
+/// two are arguments; `Decimal` was an accident.
+const NOT_GENERATED: [(ValueType, &str); 2] = [
+    (
+        ValueType::Vector,
+        "a length prefix random generation would rarely make interesting; the \
+         hostile-byte cases reach it, and `a_huge_declared_vector_length_does_not_allocate` \
+         is the case that matters",
+    ),
+    (
+        ValueType::Uuid,
+        "sixteen fixed bytes with no structure for a truncation or a \
+         single-byte corruption to interact with",
+    ),
+];
+
+/// `any_scalar` generates every type but those, held to the enum.
+///
+/// The same defect as `any_type`'s, one level down, and the previous entry
+/// left it open: `Value` has no `ALL` to derive from, because its variants
+/// carry data. `Value::value_type` is the bridge — it is an exhaustive
+/// wildcard-free match inside the crate, so a new variant fails to compile
+/// there, and `ValueType::ALL` grows, and this fails until somebody either
+/// generates the new type or writes down why not.
+///
+/// Sampled rather than introspected, because a `prop_oneof!` cannot be asked
+/// what it can produce. 500 draws over 9 equally weighted outcomes leaves a
+/// miss at 9·(8/9)^500 ≈ 10^-25, and the runner is seeded deterministically,
+/// so this is not a flake waiting to happen.
+#[test]
+fn any_scalar_generates_every_type_it_does_not_exclude() {
+    use proptest::strategy::ValueTree as _;
+    use proptest::test_runner::TestRunner;
+
+    let strategy = any_scalar();
+    let mut runner = TestRunner::deterministic();
+    let mut seen: std::collections::BTreeSet<ValueType> = std::collections::BTreeSet::new();
+    let mut nulls = 0;
+    for _ in 0..500 {
+        match strategy.new_tree(&mut runner).expect("a value").current() {
+            Value::Null => nulls += 1,
+            other => {
+                seen.insert(other.value_type().expect("a typed value has a type"));
+            }
+        }
+    }
+
+    let excluded: std::collections::BTreeSet<ValueType> =
+        NOT_GENERATED.iter().map(|(kind, _)| *kind).collect();
+    let wanted: std::collections::BTreeSet<ValueType> = ValueType::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !excluded.contains(kind))
+        .collect();
+
+    assert_eq!(
+        seen, wanted,
+        "any_scalar and ValueType::ALL disagree; add the type or add it to \
+         NOT_GENERATED with a reason"
+    );
+    // `Null` has no `ValueType`, so the comparison above cannot see it, and a
+    // strategy that stopped producing it would lose the one value whose
+    // encoding is a bare tag.
+    assert!(nulls > 0, "any_scalar stopped generating Null");
+}
+
+/// Scalars, minus the two `NOT_GENERATED` argues for.
+///
+/// `Decimal` was missing by omission rather than by an argument, and is in
+/// now: it is an `i64` on the wire but a *distinct tag*, so the truncation and
+/// single-byte-corruption cases below never produced one.
+///
+/// `Array` is here for a sharper reason than coverage. Its encoding ends in a
+/// *single* byte with no length to cross-check it against, so a one-byte
+/// corruption at the terminator is the cheapest way to turn a valid array into
+/// one that runs off the end of the buffer — and a truncation that removes the
+/// terminator is the same input arriving by accident. Those two cases are the
+/// ones that would find it.
 fn any_scalar() -> impl Strategy<Value = Value> {
+    prop_oneof![
+        // Uniform over nine outcomes: the eight element kinds share weight 8
+        // between them, and an array takes the ninth. Weighting matters here
+        // because an array whose elements are themselves drawn would otherwise
+        // crowd out the flat values these cases were written for.
+        8 => any_element(),
+        1 => proptest::collection::vec(any_element(), 0..4).prop_map(Value::Array),
+    ]
+}
+
+/// What may appear *inside* an array, which is everything but an array.
+///
+/// Nesting is refused by the decoder rather than bounded, so generating it
+/// here would generate values this crate cannot round-trip. The refusal has
+/// its own case instead.
+fn any_element() -> impl Strategy<Value = Value> {
     prop_oneof![
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
@@ -175,6 +279,7 @@ fn any_scalar() -> impl Strategy<Value = Value> {
         any::<i64>().prop_map(Value::I64),
         any::<u64>().prop_map(Value::U64),
         any::<f64>().prop_map(Value::F64),
+        any::<i64>().prop_map(Value::Decimal),
     ]
 }
 
@@ -197,6 +302,58 @@ fn a_huge_declared_vector_length_does_not_allocate() {
     // And a merely large one, still far beyond the buffer.
     let bytes = [0x23, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00];
     assert!(decode(&bytes, &[ValueType::Vector]).is_err());
+}
+
+/// Nesting is refused, so a run of array tags cannot become a run of frames.
+///
+/// The decoder recursing once per `0x24` would blow the stack long before this
+/// many, and a stack overflow is an abort: no unwinding, no error path, the
+/// whole process. That is why nesting is refused outright rather than given a
+/// ceiling — a ceiling is a number somebody has to get right, and this is a
+/// property that holds at every depth.
+///
+/// Both entry points, because `skip` writes the refusal out a second time
+/// rather than sharing the decoder's.
+#[test]
+fn a_deeply_nested_array_is_refused_rather_than_recursed() {
+    // One level in, first and deliberately: an implementation that permits
+    // nesting fails *here*, as a named test with a readable message, rather
+    // than on the hundred-thousand-deep case below — which would overflow the
+    // stack and abort the process, and an aborted binary reports no test
+    // failure at all. The order is the difference between a finding and an
+    // empty log.
+    let one_deep = [0x24u8, 0x24, 0x00, 0x00];
+    assert!(decode(&one_deep, &[ValueType::Array]).is_err());
+    assert!(decode_dynamic(&one_deep).is_err());
+    assert!(TupleReader::new(&one_deep).skip(Direction::Asc).is_err());
+
+    // And at depth, which is what catches a *bounded* recursion rather than
+    // an outright refusal.
+    let bytes = vec![0x24u8; 100_000];
+    assert!(decode(&bytes, &[ValueType::Array]).is_err());
+    assert!(decode_dynamic(&bytes).is_err());
+    assert!(TupleReader::new(&bytes).skip(Direction::Asc).is_err());
+}
+
+/// An array with no terminator is an error, not a read past the end.
+///
+/// The terminator is one byte and there is no length to disagree with it, so
+/// losing it is the array's characteristic corruption: the decoder keeps
+/// asking for elements and has to stop when the buffer does.
+#[test]
+fn an_unterminated_array_stops_at_the_end_of_the_buffer() {
+    // Tag, one integer element, and then nothing where the terminator goes.
+    let bytes = [0x24u8, 0x16, 0x07];
+    assert!(decode(&bytes, &[ValueType::Array]).is_err());
+    assert!(TupleReader::new(&bytes).skip(Direction::Asc).is_err());
+
+    // The same bytes with the terminator do decode, so the case above is
+    // about the missing byte and not about the rest being malformed.
+    let bytes = [0x24u8, 0x16, 0x07, 0x00];
+    assert_eq!(
+        decode(&bytes, &[ValueType::Array]).unwrap(),
+        vec![Value::Array(vec![Value::I64(7)])]
+    );
 }
 
 /// An empty buffer is not a panic, at every entry point.

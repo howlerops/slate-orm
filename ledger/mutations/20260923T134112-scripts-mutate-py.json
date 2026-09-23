@@ -1,0 +1,35 @@
+{
+  "at": "2026-09-23T13:41:12+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "8ec0f33",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the should-panic suffix is dropped again, the original defect",
+      "old": "        re.compile(r\"^test (\\S+)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "new": "        re.compile(r\"^test (\\S+) \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a failing should_panic test is read as a catch, not as unreadable"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the suffix is swallowed into the reported test name",
+      "old": "        re.compile(r\"^test (\\S+)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "new": "        re.compile(r\"^test (\\S+(?: - should panic)?) \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

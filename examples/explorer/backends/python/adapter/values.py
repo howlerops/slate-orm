@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from slate import Units, Vector, i64, u64
+from slate import Array, Units, Vector, i64, u64
 
 
 def format_float(value: float) -> str:
@@ -70,6 +70,17 @@ def encode(value: Any) -> dict[str, Any]:
         # Node sent the real thing. A tag nobody had ever produced is a tag
         # nobody had ever checked.
         return {"vector": [format_float(float(element)) for element in value]}
+    if isinstance(value, Array):
+        # Each element tagged in turn, matching the testserver's own
+        # `value_json` and the other two adapters. A list of bare values would
+        # let an adapter that decoded `["1"]` as strings agree with one that
+        # decoded `[1]` as integers -- the confusion this tagging exists to
+        # stop, one level down.
+        #
+        # After `Vector`, which is also a tuple subclass, for the same reason
+        # the `Units` branch is before the plain `int`: the narrower type has
+        # to be tested first or the wider one claims its values.
+        return {"array": [encode(element) for element in value]}
     return {"unknown": type(value).__name__}
 
 

@@ -151,10 +151,10 @@ impl Fnv {
 ///
 /// More than one only where a column has been renamed: the client may be
 /// spelling it either way, and both are correct.
-fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
+fn accepted(table: &TableDef, name: &str, columns: usize) -> Vec<u64> {
     let mut start = Fnv::new();
     start.bytes(b"slate.v1.schema/1");
-    start.text(table.name());
+    start.text(name);
 
     let mut live = vec![start];
     for (ordinal, column) in table.columns().iter().take(columns).enumerate() {
@@ -198,6 +198,17 @@ fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
                 if let Some(scale) = column.scale() {
                     state.number(scale as usize);
                 }
+                // An array's element type, and only an array's, by exactly
+                // the argument above one type over. It addresses no column;
+                // a client that has it wrong reads the *right* column and
+                // decodes every element as the wrong type, with the wire
+                // carrying no element type to notice by. And it cannot change
+                // under a running client for the same reason a scale cannot:
+                // it is in the kernel's layout fingerprint too, so changing
+                // one is a refused migration rather than a silent one.
+                if let Some(element) = column.element_type() {
+                    state.text(element.name());
+                }
                 next.push(state);
             }
         }
@@ -227,7 +238,10 @@ fn accepted(table: &TableDef, columns: usize) -> Vec<u64> {
 pub fn of(table: &TableDef, columns: usize) -> u64 {
     // `accepted` puts the current-name spelling first, and there is always at
     // least one. The fallback keeps this total rather than indexing.
-    accepted(table, columns).first().copied().unwrap_or(0)
+    accepted(table, table.name(), columns)
+        .first()
+        .copied()
+        .unwrap_or(0)
 }
 
 /// The whole table's fingerprint, as a client declaring every column computes
@@ -242,6 +256,36 @@ pub fn of_table(table: &TableDef) -> u64 {
 /// `None` is not a failure: the check is optional, and a client that sends no
 /// claim is served as it always was.
 pub fn check(table: &TableDef, claim: Option<&pb::SchemaCheck>) -> Result<(), Status> {
+    check_named(table, table.name(), claim)
+}
+
+/// [`check`], for a request that reached `table` under a different name.
+///
+/// # Why a name is a parameter at all
+///
+/// The table's name is the first thing hashed, so a client's claim is a claim
+/// about *the thing it called X*. For every path but one, X is the table's own
+/// name and this is `check`. The exception is a read through a view: the
+/// request says `classics`, the server resolves `books`, and a client that
+/// declared `classics` — with the base table's columns, which is the only
+/// declaration a view permits, because a view may not narrow them — hashes
+/// under `classics` and could never match `books` however right it was.
+///
+/// Found by running the three-SDK conformance suite against a view rather than
+/// by reading: the two clients that send no claim read through it and the one
+/// that does was refused, so the disagreement reported itself as a client bug
+/// three times before it reported itself as this.
+///
+/// Verifying under the name the caller used keeps the whole of what the check
+/// is for. The alternative was to skip the check for a view, which would have
+/// dropped the ordinal protection at exactly the point it is still needed —
+/// a view's ordinals *are* the base table's, so a stale client declaration
+/// misreads a view's rows precisely as it would misread the table's.
+pub fn check_named(
+    table: &TableDef,
+    name: &str,
+    claim: Option<&pb::SchemaCheck>,
+) -> Result<(), Status> {
     let Some(claim) = claim else {
         return Ok(());
     };
@@ -255,7 +299,7 @@ pub fn check(table: &TableDef, claim: Option<&pb::SchemaCheck>) -> Result<(), St
                 "the schema check on table `{}` declares {declared} columns and this table \
                  has {actual}: the client is addressing columns this catalog does not have. \
                  A client newer than the server is deployed the wrong way round.",
-                table.name()
+                name
             ),
         ));
     }
@@ -273,13 +317,12 @@ pub fn check(table: &TableDef, claim: Option<&pb::SchemaCheck>) -> Result<(), St
                 "the schema check on table `{}` declares {declared} columns, which stops \
                  before the key column at ordinal {}: a declaration that short cannot name \
                  this table's primary key.",
-                table.name(),
-                key.0
+                name, key.0
             ),
         ));
     }
 
-    if accepted(table, declared).contains(&claim.fingerprint) {
+    if accepted(table, name, declared).contains(&claim.fingerprint) {
         return Ok(());
     }
 
@@ -303,7 +346,7 @@ pub fn check(table: &TableDef, claim: Option<&pb::SchemaCheck>) -> Result<(), St
              types or key positions the client declares are not this table's.{shorter} \
              Nothing was read or written. Fix the client's declaration; the ordinals it \
              would have sent name different columns here.",
-            table.name()
+            name
         ),
     ))
 }
@@ -329,7 +372,7 @@ mod tests {
     //! cut off.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{MAX_SPELLINGS, accepted, of_table};
+    use super::{MAX_SPELLINGS, accepted, check, check_named, claim, of_table};
     use slate_schema::{TableDef, TableId};
     use slate_tuple::ValueType;
 
@@ -358,10 +401,56 @@ mod tests {
         )
     }
 
+    /// A view's claim is verified against the base table, under the view's name.
+    ///
+    /// The case `check` alone cannot serve: a client reading through a view
+    /// declares the view's *name* with the base table's columns — the only
+    /// declaration a view permits, since a view may not narrow them — so it
+    /// hashes under `classics` while the server holds `books`. Two assertions,
+    /// because either alone is satisfied by a function that ignores the name.
+    #[test]
+    fn a_view_is_checked_under_the_name_the_caller_used() {
+        let base = TableDef::builder("books", TableId(1))
+            .column("id", ValueType::U64)
+            .column("title", ValueType::Str)
+            .primary_key(["id"])
+            .build()
+            .expect("valid schema");
+        // What a client declaring the *view* computes: the base table's
+        // columns, the view's name.
+        let as_view = TableDef::builder("classics", TableId(2))
+            .column("id", ValueType::U64)
+            .column("title", ValueType::Str)
+            .primary_key(["id"])
+            .build()
+            .expect("valid schema");
+        let declared = Some(claim(&as_view));
+
+        check_named(&base, "classics", declared.as_ref())
+            .expect("a view's claim matches its base table under the view's name");
+        let refused = check(&base, declared.as_ref())
+            .expect_err("and does not match under the base table's own name");
+        // The refusal names what the caller called it, not what it resolved
+        // to: `check` was given `books`, so `books` is what it reports.
+        assert!(refused.message().contains("`books`"), "{refused:?}");
+
+        // The control in the other direction: the check still discriminates
+        // under a view's name. A client declaring the wrong columns is refused
+        // however right the name is.
+        let wrong = TableDef::builder("classics", TableId(2))
+            .column("id", ValueType::U64)
+            .column("titel", ValueType::Str)
+            .primary_key(["id"])
+            .build()
+            .expect("valid schema");
+        check_named(&base, "classics", Some(claim(&wrong)).as_ref())
+            .expect_err("a misspelled column is still caught under a view's name");
+    }
+
     #[test]
     fn every_previous_spelling_of_a_column_is_accepted() {
         let table = table(&["category", "genre"]);
-        let ok = accepted(&table, table.columns().len());
+        let ok = accepted(&table, table.name(), table.columns().len());
 
         for spelling in ["kind", "category", "genre"] {
             assert!(
@@ -401,7 +490,7 @@ mod tests {
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
         let table = table(&names);
 
-        let ok = accepted(&table, table.columns().len());
+        let ok = accepted(&table, table.name(), table.columns().len());
         assert!(
             ok.len() <= MAX_SPELLINGS,
             "{} spellings enumerated, cap is {MAX_SPELLINGS}",
@@ -417,6 +506,9 @@ mod tests {
     #[test]
     fn two_renames_give_three_spellings_and_no_more() {
         let table = table(&["category", "genre"]);
-        assert_eq!(accepted(&table, table.columns().len()).len(), 3);
+        assert_eq!(
+            accepted(&table, table.name(), table.columns().len()).len(),
+            3
+        );
     }
 }

@@ -21,7 +21,8 @@ export type Value =
   | { kind: "float"; value: number }
   | { kind: "units"; value: bigint }
   | { kind: "uuid"; value: Uint8Array }
-  | { kind: "vector"; value: number[] };
+  | { kind: "vector"; value: number[] }
+  | { kind: "array"; value: Value[] };
 
 /** The absence of a value, which is not a zero. */
 export const nullValue: Value = { kind: "null" };
@@ -98,6 +99,21 @@ export function uuid(value: Uint8Array): Value {
 /** A dense f32 vector, for embeddings. */
 export const vector = (value: number[]): Value => ({ kind: "vector", value });
 
+/**
+ * A homogeneous list, for an array column.
+ *
+ * Homogeneous by the column's declaration rather than by this type: the
+ * element type lives on the column, the way a decimal's scale does, and a
+ * `Value[]` cannot express it. A mixed list type-checks and is refused by the
+ * server, naming the element that did not match — the same place a wrong
+ * scale is caught, and for the same reason.
+ *
+ * An array may not hold another array. The server refuses one, because a
+ * column's element type is a scalar type name and cannot say what an inner
+ * list would hold.
+ */
+export const array = (value: Value[]): Value => ({ kind: "array", value });
+
 /** The wire form of a value, as `@grpc/proto-loader` wants it. */
 export function valueToWire(value: Value): Record<string, unknown> {
   switch (value.kind) {
@@ -121,6 +137,8 @@ export function valueToWire(value: Value): Record<string, unknown> {
       return { uuidValue: Buffer.from(value.value) };
     case "vector":
       return { vectorValue: { elements: value.value } };
+    case "array":
+      return { arrayValue: { elements: value.value.map(valueToWire) } };
   }
 }
 
@@ -158,13 +176,22 @@ export function valueFromWire(wire: unknown): Value {
     case "uuidValue": {
       const raw = toBytes(w["uuidValue"]);
       if (raw.length !== 16) {
-        throw new TypeError(`slate: a uuid value carried ${raw.length} bytes, not 16`);
+        throw new TypeError(
+          `slate: a uuid value carried ${raw.length} bytes, not 16`,
+        );
       }
       return { kind: "uuid", value: raw };
     }
     case "vectorValue": {
       const v = w["vectorValue"] as { elements?: number[] } | undefined;
       return { kind: "vector", value: v?.elements ?? [] };
+    }
+    case "arrayValue": {
+      const v = w["arrayValue"] as { elements?: unknown[] } | undefined;
+      // Recursing rather than re-listing the scalar kinds, so the two cannot
+      // disagree about what a uuid's length must be; an element the server
+      // should never send throws the same way any other unreadable value does.
+      return { kind: "array", value: (v?.elements ?? []).map(valueFromWire) };
     }
     default:
       throw new TypeError(
@@ -188,11 +215,31 @@ export function valuesEqual(a: Value, b: Value): boolean {
     case "bytes":
     case "uuid": {
       const other = (b as { value: Uint8Array }).value;
-      return a.value.length === other.length && a.value.every((x, i) => x === other[i]);
+      return (
+        a.value.length === other.length &&
+        a.value.every((x, i) => x === other[i])
+      );
     }
     case "vector": {
       const other = (b as { value: number[] }).value;
-      return a.value.length === other.length && a.value.every((x, i) => x === other[i]);
+      return (
+        a.value.length === other.length &&
+        a.value.every((x, i) => x === other[i])
+      );
+    }
+    case "array": {
+      // Element-wise through `valuesEqual` rather than `===`, because an
+      // element is itself a tagged union and two structurally identical
+      // objects are not the same reference. `x === other[i]` would make every
+      // non-empty array unequal to every other, including to itself.
+      const other = (b as { value: Value[] }).value;
+      return (
+        a.value.length === other.length &&
+        a.value.every((x, i) => {
+          const y = other[i];
+          return y !== undefined && valuesEqual(x, y);
+        })
+      );
     }
     default:
       return a.value === (b as { value: unknown }).value;
@@ -232,6 +279,23 @@ export function valueKey(value: Value): string {
       return `${value.kind}:${Buffer.from(value.value).toString("hex")}`;
     case "vector":
       return `vector:${value.value.join(",")}`;
+    case "array":
+      // Each element's own key, **length-prefixed**, because no separator is
+      // safe. A string element's key is `string:` followed by the string, and
+      // a string can contain anything — so `["a|string:b"]` and `["a", "b"]`
+      // join to the same thing under any fixed delimiter. That is exactly the
+      // collision this function exists to prevent one level up, reintroduced
+      // one level down; the first version of this line had it, and the
+      // comment above it asserted it could not happen.
+      //
+      // With a length in front, the decomposition is unique: the reader knows
+      // how many bytes the next key occupies before reading it.
+      return `array:${value.value
+        .map((v) => {
+          const key = valueKey(v);
+          return `${key.length}:${key}`;
+        })
+        .join("")}`;
     default:
       return `${value.kind}:${String(value.value)}`;
   }

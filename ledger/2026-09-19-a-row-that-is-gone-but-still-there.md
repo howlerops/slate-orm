@@ -103,17 +103,21 @@ is the gap table's own claim about partial indexes, run for the first time.
 
 ## What this does not do
 
-It does not cross the wire. No client can ask for deleted rows and no client
-can restore one; `scripts/codegen.py` does not know the column is special,
-because `--print-schema` does not publish `soft_delete`.
+~~It does not cross the wire. No client can ask for deleted rows~~ (closed by
+`2026-09-19-asking-for-the-rows-that-are-gone.md`) ~~and no client can restore
+one; `scripts/codegen.py` does not know the column is special, because
+`--print-schema` does not publish `soft_delete`.~~ The publishing half is
+closed by `2026-09-20-the-column-the-catalog-knew-about.md`; `restore` remains
+open and is named there.
 
 There is no `restore` and no reaper. Un-deleting is an ordinary update, and
 nothing ever removes a retired row, so a soft-deleting table grows without
 bound. A reaper is a `delete_where` on a table temporarily declared without
 `soft_delete`, which works and is not a feature.
 
-`#[derive(Record)]` has no attribute for it, so the Rust library declares it
-through the builder only.
+~~`#[derive(Record)]` has no attribute for it, so the Rust library declares it
+through the builder only.~~ **Closed** — see
+`2026-09-20-the-attribute-the-builder-already-had.md`.
 
 Nothing measures the cost. Every read of a soft-deleting table carries one
 extra `IsNull` conjunct, and on a table with no partial index the retired rows

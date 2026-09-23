@@ -32,7 +32,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, NamedTuple
 
 # The demo's default ports. Overridable, because `./run.sh --conformance`
 # starts the whole stack on ports the kernel picked: a suite that can only run
@@ -135,6 +135,49 @@ CASES: list[tuple[str, str, Any, str]] = [
      {"table": "books", "sort": [{"column": 0, "direction": "asc"}],
       "limit": 3, "offset": 5}, "app"),
 
+    # Reading through a view, which is the only thing a view can demonstrate:
+    # `docs/views.md` refuses a projection, a sort and a limit, so a view is a
+    # name for a `WHERE` and the question is which rows it admits.
+    #
+    # `classics` is `year < 1980`, which is eight of eleven books. `app` holds
+    # a policy that admits everything, so this is the view's own answer.
+    ("a read through a view", "/api/query",
+     {"table": "classics", "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
+    # The same view, the same request, a different caller — and a different
+    # answer, which is the case worth having.
+    #
+    # `reader`'s row policy on `books` admits `year >= 1960`, so the two books
+    # from 1955 and 1951 are inside the view and outside the policy and this
+    # returns six rows rather than eight. That is `docs/views.md` §1: the view
+    # is substituted away before planning, the *base* table's `TableId` reaches
+    # `row_filter_with`, and the policy that runs is `books`'s. A view carrying
+    # its own id would have had no policy at all and handed a reader all eight,
+    # so a single-identity case would have passed against a privilege
+    # escalation.
+    ("a reader's read through the same view", "/api/query",
+     {"table": "classics", "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
+
+    # And the caller's own filter, which composes with the view's rather than
+    # replacing it: `year >= 1970` over a view of `year < 1980` is the decade
+    # between, not the whole of either. An `OR` here would return everything
+    # from 1970 on, which is how a client that got the composition backwards
+    # would look.
+    ("a filter composed with a view's", "/api/query",
+     {"table": "classics", "filter": {"op": "ge", "column": 3, "value": {"i64": "1970"}},
+      "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
+    # A view is not a table, and every path but `query` says so.
+    #
+    # All three adapters share their query builder with `/api/explain`, so all
+    # three accept the name locally and the *server* refuses — which makes this
+    # the cross-SDK check of that refusal's wording as well as of its kind.
+    # It reads "`classics` is a view over `books`, and only a plain query can
+    # read through one", which is the message `Head::no_such_table` produces
+    # and the reason it exists: "no table named `classics`" would send an
+    # operator to check a spelling that is correct.
+    ("explain cannot name a view", "/api/explain", {"table": "classics"}, "app"),
+
     # The four join types, where the outer cases are the ones a client can get
     # subtly wrong: an unmatched side must be null, not a row of nulls.
     *[(f"a {kind} join", "/api/join", {"type": kind}, "app")
@@ -155,6 +198,86 @@ CASES: list[tuple[str, str, Any, str]] = [
     # that book *and* the sale hanging off it, which a client resolving the
     # third step itself would not.
     ("a reader's chain", "/api/chain", {"type": "inner"}, "reader"),
+
+    # Windows, which are the one operator whose answer comes back in a list of
+    # its own. Every other case here compares columns; these compare the
+    # *placement* as well, because an adapter that folded a window value into
+    # the row would return something the caller reads as a different thing —
+    # and each SDK's own suite checks that against its own server, which
+    # cannot catch all three doing it the same way.
+    #
+    # Six functions, partitioned and not: a partition is the difference
+    # between "this row's rank among its author's books" and "among all of
+    # them", and a client that dropped the clause answers the second question
+    # with no error anywhere.
+    *[(f"a {fn} window{' per author' if partition else ''}", "/api/window",
+       {"function": fn, "partition": partition, "limit": 20}, "app")
+      for fn in ("rowNumber", "rank", "denseRank", "lag", "lead", "sum", "count")
+      for partition in (True, False)],
+
+    # And the frame rule, which is where SQL surprises people: an aggregate
+    # with no order is the whole partition repeated on every row, and the same
+    # aggregate *with* one is a running value. Not a different spelling — the
+    # standard's default frame changing — so a client that always sent an
+    # order, or never did, disagrees here and nowhere else.
+    *[(f"a running {fn} window", "/api/window",
+       {"function": fn, "partition": True, "running": True, "limit": 20}, "app")
+      for fn in ("sum", "count")],
+
+    # As a reader, whose row policy hides `The Astronauts`: the window is
+    # computed over what the policy admits, so author 4's numbering has to be
+    # two rows rather than three in all three SDKs. A client that windowed
+    # before the filter — which is not a thing this protocol can express, and
+    # is exactly the mistake the refusal on a keyset page exists to prevent —
+    # would report a rank nobody can see the row for.
+    ("a reader's window", "/api/window",
+     {"function": "rowNumber", "partition": True, "limit": 20}, "reader"),
+
+    # Full-text, by index and by scan. Both must return the same rows — that
+    # is what an access path *is* — so the rows alone would agree across three
+    # SDKs even if one ignored the hint entirely. `access` is in the answer for
+    # that reason, and the MUST_DIFFER pairs below compare the two.
+    #
+    # Three searches, each testing a different property of the tokenizer, and
+    # each run down both paths:
+    #
+    # - "the" is five titles, which is the ordinary case.
+    # - "the games" is one — *The Player of Games* — because the terms are
+    #   conjunctive. A client that sent only the first term, or that turned
+    #   the search into a disjunction, answers five here.
+    # - "GAMES" is the same one title, written in the other case. A client
+    #   that folded case itself would agree; a client that did not fold at all
+    #   answers nothing. Neither is distinguishable from the correct answer
+    #   without this case, because the *server* is what folds.
+    *[(f"a search for {text!r} by {path}", "/api/search",
+       {"text": text, "path": path, "limit": 20}, "app")
+      for text in ("the", "the games", "GAMES")
+      for path in ("index", "scan")],
+
+    # A term that is a prefix of a real one and not a term itself. `LIKE
+    # '%game%'` finds *The Player of Games*; this finds nothing, and the
+    # difference is the whole reason both predicates exist. An adapter that
+    # quietly lowered `contains` to a `like` would pass every case above and
+    # fail this one.
+    #
+    # What none of these cases catches, established by trying it: removing
+    # `text = true` from the demo's catalog leaves every one of them green and
+    # the MUST_DIFFER pairs satisfied. An ordinary index on `title` accepts the
+    # same hint and the plan summary names the index without its key range, so
+    # the two are indistinguishable over HTTP. That is not a hole to plug here
+    # — three SDKs compared to each other cannot see it, because all three
+    # would be equally wrong — and it is asserted in `slate-serverd`'s
+    # `schema.rs` tests and the kernel's `fulltext.rs` instead.
+    ("a search for a word that is only a prefix", "/api/search",
+     {"text": "game", "path": "index", "limit": 20}, "app"),
+
+    # As a reader, whose row policy hides `The Astronauts` (1951). It holds
+    # "the", so the policy has to cut the five down to four — through the
+    # *index*, which is the path where a policy is easiest to lose: the
+    # entries are read before any row is, and a filter applied only to a table
+    # scan would show up here and nowhere else in this corpus.
+    ("a reader's search", "/api/search",
+     {"text": "the", "path": "index", "limit": 20}, "reader"),
 
     # `decade` is the only case here whose group key is not a column: it is a
     # value the *join* computes, `books.year / 10 * 10`. Every SDK builds that
@@ -492,9 +615,74 @@ CASES: list[tuple[str, str, Any, str]] = [
     # too would agree across all three clients and be very wrong.
     ("a purge erases what was retired and nothing else", "/api/purge", {}, "app"),
 
+    # The *other* other half: taking a delete back. A retired row used to be
+    # writable by nobody at any privilege, so a retention window could only
+    # ever end in the row being erased. All three clients now generate a
+    # `restored` helper from the catalog, so all three have to agree on what it
+    # produces — which column it clears, and that it clears nothing else.
+    #
+    # The answer carries the row's state at three points rather than only the
+    # last. "It is live now" is also what an adapter that quietly inserted a
+    # fresh row at the same key would report, and `status_after` and
+    # `book_id_after` are what tell the two apart.
+    ("a retired row can be restored", "/api/restore", {}, "app"),
+
+    # And the mistake anybody makes first: reading the row with
+    # `include_deleted`, which hands back the retirement stamp, and writing it
+    # straight back. It is refused, and the refusal is its own reason token
+    # rather than a row-level-security one — which matters because the old
+    # message sent the reader to the grants on a table with no policies at all.
+    # Here so the three clients are compared on the refusal too, not only on
+    # the path that works.
+    ("the soft-delete column is not the caller's to write",
+     "/api/restore-unchanged", {}, "app"),
+
     ("a reader may not ask for retired rows", "/api/query",
      {"table": "shipments", "includeDeleted": True,
       "sort": [{"column": 0, "direction": "asc"}]}, "reader"),
+
+    # A refusal with *structure*, and with more than one entry in it.
+    #
+    # Every other refusal is compared on `kind` and `reason` — two strings the
+    # server hands over whole. This one is compared on `violations`, which no
+    # server hands over: each client hand-decodes it out of
+    # `ErrorInfo.metadata`, counting up from a `violations` key and reading
+    # `check.N`, `column.N`, `message.N`. Three hand-written parsers of one
+    # undeclared shape is the most drift-prone thing in these clients, and
+    # until this case existed each was checked only against a recording of the
+    # bytes. A recording cannot notice that the server started indexing from
+    # one.
+    ("a write the schema's CHECK refuses", "/api/bad-status", {}, "app"),
+
+    # The generated *decoders*, over rows a real server sent.
+    #
+    # Every other case here compares what the three clients do with values;
+    # this one compares what they do with values *after the generated row type
+    # has read them by ordinal*. The decoders had a suite each and both built
+    # their rows by hand, so all three agreed with their own idea of what the
+    # server sends — and until this route existed, no code path outside a test
+    # called a generated decoder at all.
+    #
+    # A `books` row and a `shipments` row, so the answer covers a u64, a
+    # string, an i64, a decimal, a vector, a nullable column and an enumerated
+    # one. Integers are spelled as decimal strings because one of the three
+    # reads them as `bigint`.
+    ("two rows through the generated decoders", "/api/typed", {}, "app"),
+
+    # The same typed refusal, through a *batch*.
+    #
+    # A batch reports each failure as data inside a successful response, so
+    # there are no trailers and no `grpc-status-details-bin`; this was the one
+    # path that could not carry `violations` at all, and a form submitted as a
+    # batch got the token and the prose. The server puts the same blob in the
+    # message body now and each client decodes it with the function it already
+    # had.
+    #
+    # Two rows, refused differently — one breaks two checks and one breaks one
+    # — because an adapter that reported the same list for every failed
+    # operation would otherwise look right. Nothing is written, so the case
+    # leaves the database as it found it.
+    ("a batch where two rows are refused differently", "/api/bad-batch", {}, "app"),
 ]
 
 
@@ -530,6 +718,21 @@ EXPECTED_REFUSALS = {
     # refusal of lifting the soft-delete filter, which is the whole reason
     # `read_deleted` is an action of its own rather than part of `read`.
     "a reader may not ask for retired rows",
+    # The row is refused by `shipments.status_known` before it is written, so
+    # there is nothing to undo — unlike the purge case above, which has to put
+    # the database back.
+    "a write the schema's CHECK refuses",
+    # Refused by the server, not by any grant: the soft-delete column is
+    # written by `delete` and by nothing else. The adapter puts the database
+    # back either way, because unlike the CHECK above this one had to retire a
+    # row to have something to write back.
+    "the soft-delete column is not the caller's to write",
+    # `classics` exists; `explain` is not a path that may read through it.
+    # Refused by the *server* rather than by any adapter's allowlist — all
+    # three share their query builder with `/api/explain`, so all three send
+    # the name — which makes this the cross-SDK check of the refusal's
+    # wording as well as of its kind.
+    "explain cannot name a view",
 }
 
 
@@ -547,12 +750,57 @@ EXPECTED_REFUSALS = {
 #: comparison lives.
 MUST_DIFFER: list[tuple[str, str]] = [
     ("a read that cannot see a retired row", "a read that asks for retired rows too"),
+    # A view has the same shape as `includeDeleted` and it is the shape that
+    # matters most: "the view returned eight rows" proves nothing about the
+    # row policy, because a view carrying its own `TableId` — the design
+    # `docs/views.md` §1 spends four paragraphs refusing — has no policy at all
+    # and returns *the same eight* to a reader. Three clients would agree
+    # about it perfectly.
+    #
+    # The evidence that the base table's policy ran is that a different caller
+    # gets a different answer, which needs two cases and this comparison. Six
+    # rows against eight; the two books from 1955 and 1951 are inside the view
+    # and outside `modern_only`.
+    ("a reader's read through the same view", "a read through a view"),
+    # And that the caller's filter *composed* rather than being dropped: a
+    # server that ignored it would return the view's own eight rows, which is
+    # what this pair forbids. The other direction — a composition that widened
+    # to an `OR` — is not visible here, because `year >= 1970` over an `OR`
+    # returns more than either, and `crates/slate-serverd/tests/views.rs`
+    # asserts that one against a running server instead.
+    ("a filter composed with a view's", "a read through a view"),
     # `returning` has the same shape and was demonstrated to have the same
     # hole: every `Returning` in all three clients set to false — twelve call
     # sites — and the run stayed green at 96 cases agreeing. These two cases
     # were already here, adjacent, describing each other in their comments, and
     # nothing compared them.
     ("a predicate delete, returning what it destroyed", "a predicate delete, not returning"),
+    # `partition` and `running` are the two window fields with exactly this
+    # weakness: a client that dropped either sends a smaller request, gets a
+    # smaller answer, and agrees with two other clients doing the same. Nothing
+    # refuses without them, so neither is covered by `EXPECTED_REFUSALS`.
+    #
+    # `rowNumber` for the partition, because it is the function where dropping
+    # the clause is most visibly wrong and least visibly an error: unpartitioned
+    # it numbers 1..11 straight through, which is a column of plausible
+    # integers.
+    ("a rowNumber window per author", "a rowNumber window"),
+    ("a sum window per author", "a sum window"),
+    # And the frame: the same aggregate over the same partition, with and
+    # without the window's own order. One is the total on every row and the
+    # other is a running value, and the standard says the order is what decides
+    # — so a client that always sent one, or never did, is wrong here and
+    # nowhere else.
+    ("a running sum window", "a sum window per author"),
+    ("a running count window", "a count window per author"),
+    # And the access path, which has exactly this weakness in its purest form:
+    # the two requests are *required* to return the same rows, so an adapter
+    # that ignored `path` agrees with two others doing the same on every row of
+    # every search above. `access` is the only field that can differ, and
+    # nothing refuses a query whose hint went missing — a hint is advice, so
+    # `EXPECTED_REFUSALS` cannot cover this either.
+    ("a search for 'the' by index", "a search for 'the' by scan"),
+    ("a search for 'the games' by index", "a search for 'the games' by scan"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.
@@ -590,6 +838,72 @@ def normalise(answer: Any) -> Any:
     return answer
 
 
+class Finding(NamedTuple):
+    """One thing that went wrong, and which case (if any) it belongs to.
+
+    `case` is the name of the case that failed, or `None` for a finding that
+    is not about a single case — a `MUST_DIFFER` pair is a relationship
+    *between* two cases and can fail while both of them pass.
+
+    A list of display strings was what this held before, and the tally counted
+    the lines beginning `FAIL`. That gets both numbers wrong the moment a
+    finding is not one-to-one with a case: a `MUST_DIFFER` pair returning the
+    same answer when all 130 cases agreed printed `129 passed, 1 failed`,
+    where the truth is 130 passed and one finding that is not a case at all.
+    """
+
+    case: str | None
+    lines: list[str]
+
+
+def tally(cases: int, findings: list[Finding]) -> tuple[int, int]:
+    """How many cases passed, and how many findings there are.
+
+    Separate counts because they count different things, which is the whole
+    defect this replaces. A case that produces two findings is still one case
+    that failed; a finding about no case subtracts from nothing.
+    """
+    broken = {f.case for f in findings if f.case is not None}
+    return cases - len(broken), len(findings)
+
+
+def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
+    """Every `MUST_DIFFER` pair that did not, as findings about no case.
+
+    Lifted out of `main` so it can be tested: it takes the agreed answers and
+    returns findings, with no adapter anywhere, which is the only reason the
+    `case=None` below is checked by anything. It was not, and a mutation that
+    attributed these to one of the pair's cases survived a suite that tested
+    the arithmetic and not what fed it.
+
+    `case=None` because a pair is a relationship *between* two cases. Both can
+    agree across the three SDKs — both pass — and still fail this, because
+    what fails is that they agree with each *other*. Blaming either would take
+    a passing case off the count.
+    """
+    findings: list[Finding] = []
+    for quiet, loud in MUST_DIFFER:
+        if quiet not in agreed_by_name or loud not in agreed_by_name:
+            # One of them already failed, or is missing from CASES entirely —
+            # the second is worth saying out loud, because a renamed case would
+            # otherwise turn this check off silently.
+            missing = [n for n in (quiet, loud) if n not in agreed_by_name]
+            findings.append(Finding(None, [
+                f"FAIL  the must-differ pair ({quiet!r}, {loud!r}) is not "
+                f"comparable: {', '.join(repr(n) for n in missing)} produced no "
+                f"agreed answer"
+            ]))
+            continue
+        if agreed_by_name[quiet] == agreed_by_name[loud]:
+            findings.append(Finding(None, [
+                f"FAIL  {quiet!r} and {loud!r} returned the same answer, so "
+                f"whatever separates them was dropped by all three clients or "
+                f"ignored by the server",
+                f"    {agreed_by_name[quiet][:400]}",
+            ]))
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verbose", action="store_true", help="print every case")
@@ -600,7 +914,7 @@ def main() -> int:
 
     adapters = {sdk: getattr(args, sdk) for sdk in DEFAULTS}
 
-    failures: list[str] = []
+    findings: list[Finding] = []
     # Every case's agreed answer, for the `MUST_DIFFER` check below. Only the
     # cases where all three agreed are recorded: a disagreement is already a
     # failure and comparing one of three answers to another case would say
@@ -614,9 +928,10 @@ def main() -> int:
         down = [sdk for sdk, a in answers.items()
                 if isinstance(a, dict) and "__transport__" in a]
         if down:
-            failures.append(f"{name}: adapters unreachable: {', '.join(down)}")
-            for sdk in down:
-                failures.append(f"    {sdk}: {answers[sdk]['__transport__']}")
+            findings.append(Finding(name, [
+                f"FAIL  {name}: adapters unreachable: {', '.join(down)}",
+                *(f"    {sdk}: {answers[sdk]['__transport__']}" for sdk in down),
+            ]))
             continue
 
         rendered = {sdk: json.dumps(a, sort_keys=True) for sdk, a in answers.items()}
@@ -625,54 +940,60 @@ def main() -> int:
             agreed = next(iter(answers.values()))
             refused = isinstance(agreed, dict) and "error" in agreed
             if refused and name not in EXPECTED_REFUSALS:
-                failures.append(
-                    f"{name} ({identity}): all three refused it, and this case "
-                    f"is supposed to return an answer"
-                )
-                failures.append(f"    {json.dumps(agreed)[:400]}")
+                findings.append(Finding(name, [
+                    f"FAIL  {name} ({identity}): all three refused it, and this "
+                    f"case is supposed to return an answer",
+                    f"    {json.dumps(agreed)[:400]}",
+                ]))
                 continue
             if not refused and name in EXPECTED_REFUSALS:
-                failures.append(
-                    f"{name} ({identity}): listed as a refusal and all three "
-                    f"answered it; the list is stale"
-                )
+                findings.append(Finding(name, [
+                    f"FAIL  {name} ({identity}): listed as a refusal and all "
+                    f"three answered it; the list is stale"
+                ]))
                 continue
             agreed_by_name[name] = rendered[next(iter(rendered))]
             if args.verbose:
                 print(f"  ok    {name}")
             continue
 
-        failures.append(f"{name} ({identity}): the adapters disagree")
-        for sdk, text in rendered.items():
-            failures.append(f"    {sdk:7} {text[:400]}")
+        findings.append(Finding(name, [
+            f"FAIL  {name} ({identity}): the adapters disagree",
+            *(f"    {sdk:7} {text[:400]}" for sdk, text in rendered.items()),
+        ]))
 
-    for quiet, loud in MUST_DIFFER:
-        if quiet not in agreed_by_name or loud not in agreed_by_name:
-            # One of them already failed, or is missing from CASES entirely —
-            # the second is worth saying out loud, because a renamed case would
-            # otherwise turn this check off silently.
-            missing = [n for n in (quiet, loud) if n not in agreed_by_name]
-            failures.append(
-                f"the must-differ pair ({quiet!r}, {loud!r}) is not comparable: "
-                f"{', '.join(repr(n) for n in missing)} produced no agreed answer"
-            )
-            continue
-        if agreed_by_name[quiet] == agreed_by_name[loud]:
-            failures.append(
-                f"{quiet!r} and {loud!r} returned the same answer, so whatever "
-                f"separates them was dropped by all three clients or ignored by "
-                f"the server"
-            )
-            failures.append(f"    {agreed_by_name[quiet][:400]}")
+    findings.extend(must_differ_findings(agreed_by_name))
 
     print()
-    if failures:
+    # `FAIL  <what>` per finding and a closing `N passed, M failed`, which is
+    # the house style every `scripts/test_*.py` prints and `scripts/mutate.py`'s
+    # `python` dialect reads.
+    #
+    # This runner had a format of its own — a bare headline per finding and
+    # `130 cases: the three SDKs agree on all of them` — and the cost showed up
+    # the first time somebody pointed `mutate.py` at it: the script reported
+    # "no test results at all" and refused to score the run, correctly, because
+    # neither line matched anything it knew. `test_codegen.py` had the identical
+    # problem and its entry settled how to fix it: the summary line rather than
+    # another dialect. A runner nobody can mutation-test is a runner whose own
+    # correctness is taken on trust, and this one decides whether three SDKs
+    # agree.
+    #
+    # The human-facing line stays, because "130 cases: the three SDKs agree on
+    # all of them" says something the counts do not.
+    passed, failed = tally(len(CASES), findings)
+    if findings:
         print(f"{len(CASES)} cases, disagreements:")
         print()
-        for line in failures:
-            print(line)
+        for finding in findings:
+            for line in finding.lines:
+                print(line)
+        print()
+        print(f"{passed} passed, {failed} failed")
         return 1
     print(f"{len(CASES)} cases: the three SDKs agree on all of them")
+    print()
+    print(f"{passed} passed, {failed} failed")
     return 0
 
 

@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-23T09:32:29+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "cb9af18",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a count is not required to call it a claim",
+      "old": "        if not COUNT.search(text):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "prose about mutation without a count is not a claim",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the clean-sweep contradiction is never reported",
+      "old": "            if claims_clean and left:",
+      "new": "            if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "claiming every mutation was caught beside a survivor is refused",
+        "an expected survivor still contradicts `all caught`"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

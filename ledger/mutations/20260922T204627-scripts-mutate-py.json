@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-22T20:46:27+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "11ff82f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a run that cannot score records nothing",
+      "old": "        entry[\"outcome\"] = \"baseline-unreadable\"",
+      "new": "        pass",
+      "verdict": "caught",
+      "caught_by": [
+        "a run that cannot score is recorded as such"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the record is written only when the run finishes cleanly",
+      "old": "    finally:\n        write_record(entry)",
+      "new": "    finally:\n        pass",
+      "verdict": "caught",
+      "caught_by": [
+        "a run records itself, with its command and verdicts",
+        "a run that cannot score is recorded as such"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a case's verdict is recorded without the tests that named it",
+      "old": "            \"caught_by\": failures[:8],",
+      "new": "            \"caught_by\": [],",
+      "verdict": "caught",
+      "caught_by": [
+        "a run records itself, with its command and verdicts"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the command is left out of the record",
+      "old": "        \"command\": command,",
+      "new": "        \"command\": [],",
+      "verdict": "caught",
+      "caught_by": [
+        "a run records itself, with its command and verdicts",
+        "a run that cannot score is recorded as such"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

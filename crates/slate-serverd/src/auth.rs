@@ -330,12 +330,42 @@ impl TokenIdentity {
 
 impl Authenticator for TokenIdentity {
     fn authenticate(&self, metadata: &MetadataMap) -> Result<SecurityContext, Status> {
-        let Some(header) = metadata.get(AUTHORIZATION) else {
+        // A repeated `authorization` is refused rather than resolved, for the
+        // reason finding 6 of the security review gives about the trusted
+        // header mode: taking the first trusts a proxy that replaces, taking
+        // the last trusts one that appends, and the server cannot tell which
+        // it is behind. `get` takes the first, which is the *caller's* copy
+        // exactly when the proxy appends.
+        //
+        // The same fix landed in `slate_server::auth::text` and stopped
+        // there, because that closed the finding as written and this is the
+        // other implementation of the same trait. Measured here before this
+        // block existed: with the caller's token first and the proxy's second,
+        // the request authenticated as the caller's principal.
+        //
+        // No privilege escalation was demonstrated — a caller needs a valid
+        // token either way, so the usual arrangement only ever downgrades them
+        // to themselves. It defeats a proxy that *downscopes* by replacing the
+        // caller's token with a narrower one, and it is an ambiguity resolved
+        // by a rule the finding explicitly rejected as unsafe to rely on.
+        let mut headers = metadata.get_all(AUTHORIZATION).iter();
+        let Some(header) = headers.next() else {
             return Err(Status::new(
                 Code::Unauthenticated,
                 "no `authorization` in the request metadata; this server expects `authorization: Bearer <token>`",
             ));
         };
+        if headers.next().is_some() {
+            // Naming neither value: the message is read by whatever collects
+            // this server's errors, and a bearer token in a log is a bearer
+            // token in a log.
+            return Err(Status::new(
+                Code::Unauthenticated,
+                "`authorization` appears more than once in the request metadata; \
+                 the proxy in front of this server must replace this header rather \
+                 than append to it",
+            ));
+        }
         let header = header.to_str().map_err(|_| {
             Status::new(
                 Code::Unauthenticated,
@@ -474,7 +504,41 @@ mod tests {
         metadata
     }
 
+    /// Every `impl Authenticator for` in the workspace.
+    ///
+    /// `scripts/check_handlers.py` fails if one exists that is not here, so a
+    /// new authenticator cannot quietly skip
+    /// `no_authenticator_resolves_a_duplicated_identity_key`.
+    const AUTHENTICATORS: [&str; 3] = ["MetadataIdentity", "DenyEveryone", "TokenIdentity"];
+
+    /// The header `MetadataIdentity` reads. Spelled out rather than imported
+    /// because `slate-server` does not export the constant, and a literal is
+    /// safe here for a reason worth stating: if the header were renamed, this
+    /// would send a key that authenticator ignores, it would refuse with "no
+    /// `…` in the request metadata", and the "more than once" assertion below
+    /// would fail. The test breaks loudly rather than passing vacuously.
+    const PRINCIPAL_KEY: &str = "slate-principal";
+
     const GOOD: &str = "0123456789abcdef0123456789abcdef";
+    /// A second, equally valid token belonging to a *different* principal, so
+    /// a test about which copy wins can name the winner.
+    const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+    fn two_token_config(directory: &std::path::Path) -> String {
+        let first = directory.join("first");
+        let second = directory.join("second");
+        std::fs::write(&first, GOOD).unwrap_or_else(|e| panic!("{e}"));
+        std::fs::write(&second, OTHER).unwrap_or_else(|e| panic!("{e}"));
+        format!(
+            "mode = \"token\"\n\
+             [[tokens]]\nname = \"caller\"\nsecret_file = \"{}\"\n\
+             principal = \"u64:7\"\ntenant = \"u64:1\"\nroles = [\"app\"]\n\
+             [[tokens]]\nname = \"proxy\"\nsecret_file = \"{}\"\n\
+             principal = \"u64:9\"\ntenant = \"u64:1\"\nroles = [\"app\"]\n",
+            first.display(),
+            second.display()
+        )
+    }
 
     #[test]
     fn no_auth_section_refuses_to_start_and_names_every_mode() {
@@ -603,6 +667,184 @@ mod tests {
         assert!(chosen.authenticator.authenticate(&bearer(GOOD)).is_ok());
     }
 
+    /// Finding 6's shape, in the daemon's *other* authenticator.
+    ///
+    /// The review's finding 6 was that `MetadataIdentity` took the first copy
+    /// of a repeated identity header, which is the client's exactly when the
+    /// proxy appends rather than replaces. That was fixed there, in
+    /// `slate_server::auth::text`. `TokenIdentity` is the second
+    /// implementation of the same trait and reached for `metadata.get`, which
+    /// is also the first copy — so the fix covered one of two.
+    ///
+    /// Two tokens with different principals, so the assertion can say *which*
+    /// one won rather than merely that something did. Before the fix this
+    /// authenticated as principal 7, the caller's own copy, over the one the
+    /// proxy appended.
+    #[test]
+    fn a_duplicated_authorization_header_is_refused_rather_than_resolved() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+
+        let mut metadata = MetadataMap::new();
+        // The caller's own header arrives first...
+        metadata.append(AUTHORIZATION, format!("Bearer {GOOD}").parse().unwrap());
+        // ...and the proxy appends its own after it.
+        metadata.append(AUTHORIZATION, format!("Bearer {OTHER}").parse().unwrap());
+
+        let status = chosen
+            .authenticator
+            .authenticate(&metadata)
+            .expect_err("a duplicated authorization header must not be resolved");
+        assert_eq!(status.code(), Code::Unauthenticated);
+        assert!(
+            status.message().contains("more than once"),
+            "the error should name the duplicate: {}",
+            status.message()
+        );
+        // The refusal must not echo either secret, which would turn a
+        // misconfiguration into a token disclosure in whatever reads the logs.
+        assert!(
+            !status.message().contains(GOOD) && !status.message().contains(OTHER),
+            "the refusal must not echo a token: {}",
+            status.message()
+        );
+    }
+
+    /// The control: one copy still authenticates, and as the right principal.
+    ///
+    /// Without this the test above passes for an authenticator that refuses
+    /// every request.
+    #[test]
+    fn a_single_authorization_header_still_authenticates() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+        let context = chosen
+            .authenticator
+            .authenticate(&bearer(OTHER))
+            .expect("one copy authenticates");
+        assert_eq!(context.principal().id, Value::U64(9));
+    }
+
+    /// Every implementation of `Authenticator`, against the hole finding 6
+    /// found in one of them.
+    ///
+    /// The finding was that `metadata.get` returns the *first* value for a
+    /// repeated key, which is the caller's copy exactly when the proxy appends
+    /// rather than replaces. It was fixed in `MetadataIdentity`, and
+    /// `TokenIdentity` went on doing it because the trait says nothing about
+    /// duplicated keys and nothing looked at the other implementation.
+    ///
+    /// Both are right now. This is here so a *third* one cannot be wrong
+    /// quietly: `AUTHENTICATORS` names every implementation, and
+    /// `scripts/check_handlers.py` fails if an `impl Authenticator for` exists
+    /// that the list does not name. A new authenticator therefore arrives with
+    /// a failing check rather than with a hole.
+    ///
+    /// Each reads a different key, so each case names its own. `DenyEveryone`
+    /// reads none and refuses regardless — included anyway, because the list
+    /// has to be complete for the check to mean anything, and a case that is
+    /// trivially true is cheaper than an exception that has to be argued.
+    #[test]
+    fn no_authenticator_resolves_a_duplicated_identity_key() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let chosen = choose_at(&two_token_config(dir.path()), "127.0.0.1:0").unwrap();
+
+        // Bound so the trait objects below outlive the vector: a
+        // `&MetadataIdentity::…()` inline borrows a temporary.
+        let headers = MetadataIdentity::trusting_the_caller_completely();
+        let nobody = DenyEveryone;
+        // A struct rather than a five-tuple: clippy calls the tuple a "very
+        // complex type" and CI runs `-D warnings`, but the better reason is
+        // that `names_the_duplicate` reads as a field rather than as the fifth
+        // element of something.
+        // Only the authenticator borrows locally; the rest are literals and
+        // must say so. Tying them all to one `'a` makes inference unify it
+        // with `'static` through `MetadataMap::append`, which then demands a
+        // `'static` authenticator — three "does not live long enough" errors
+        // about the wrong thing.
+        struct Case<'a> {
+            name: &'static str,
+            authenticator: &'a dyn Authenticator,
+            /// The metadata key this implementation reads.
+            key: &'static str,
+            /// Two different values, sent under that one key.
+            values: [&'static str; 2],
+            /// Whether the refusal should name the duplicate. False only for
+            /// an authenticator that refuses before looking at anything.
+            names_the_duplicate: bool,
+        }
+
+        let cases = vec![
+            Case {
+                name: "MetadataIdentity",
+                authenticator: &headers,
+                key: PRINCIPAL_KEY,
+                values: ["u64:666", "u64:1"],
+                names_the_duplicate: true,
+            },
+            Case {
+                name: "DenyEveryone",
+                authenticator: &nobody,
+                key: PRINCIPAL_KEY,
+                values: ["u64:1", "u64:2"],
+                names_the_duplicate: false,
+            },
+            Case {
+                name: "TokenIdentity",
+                authenticator: chosen.authenticator.as_ref(),
+                key: "authorization",
+                values: [
+                    "Bearer 0123456789abcdef0123456789abcdef",
+                    "Bearer fedcba9876543210fedcba9876543210",
+                ],
+                names_the_duplicate: true,
+            },
+        ];
+        assert_eq!(
+            cases.len(),
+            AUTHENTICATORS.len(),
+            "every implementation in AUTHENTICATORS needs a case here"
+        );
+
+        for case in cases {
+            let Case {
+                name,
+                authenticator,
+                key,
+                values,
+                names_the_duplicate,
+            } = case;
+            let mut metadata = MetadataMap::new();
+            for value in values {
+                metadata.append(key, value.parse().unwrap());
+            }
+            let status = authenticator
+                .authenticate(&metadata)
+                .err()
+                .unwrap_or_else(|| {
+                    panic!("{name} resolved a duplicated `{key}` instead of refusing it")
+                });
+            assert_eq!(status.code(), Code::Unauthenticated, "{name}");
+            if names_the_duplicate {
+                assert!(
+                    status.message().contains("more than once"),
+                    "{name} refused for some other reason: {}",
+                    status.message()
+                );
+            }
+            // Whatever the reason, the refusal must not echo what the caller
+            // sent — for a token that would put a bearer token into whatever
+            // collects this server's errors.
+            for value in values {
+                assert!(
+                    !status.message().contains(value),
+                    "{name} echoed what it rejected: {}",
+                    status.message()
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_short_secret_is_refused_with_the_reason() {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
@@ -696,6 +938,36 @@ mod tests {
             !rendered.contains(GOOD),
             "the secret is in the Debug output"
         );
+
+        // As bytes, too, which is the form the secret is actually held in.
+        // `Bearer::secret` is a `Vec<u8>`, so a `Debug` that printed it would
+        // render `[48, 49, 50, ..]` and the substring check above would pass
+        // while every byte of the token sat in the log. This half was added
+        // after a mutation printing `t.secret` in place of `t.name` — the
+        // exact accident being guarded against — was caught by the string
+        // check only because `Vec<u8>` happens to Debug as digits that do not
+        // spell the secret. That is luck, not a test.
+        let bytes = format!("{:?}", GOOD.as_bytes());
+        let listed = bytes.trim_start_matches('[').trim_end_matches(']');
+        assert!(
+            !rendered.contains(listed),
+            "the secret is in the Debug output as bytes: {rendered}"
+        );
+
+        // The startup banner is the other thing written to a log by
+        // construction, and it is built by hand rather than by a `Debug` impl,
+        // so nothing above covers it.
+        assert!(
+            !chosen.description.contains(GOOD),
+            "the secret is in the startup banner: {}",
+            chosen.description
+        );
+
+        // Through `Chosen` as well as through the authenticator alone: it
+        // derives `Debug` over an `Arc<dyn Authenticator>`, and that is the
+        // path a panic message or a trace would actually take.
+        let whole = format!("{chosen:?}");
+        assert!(!whole.contains(GOOD) && !whole.contains(listed), "{whole}");
     }
 
     #[test]

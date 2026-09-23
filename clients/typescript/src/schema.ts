@@ -22,7 +22,8 @@ export type ColumnType =
   | "f64"
   | "uuid"
   | "vector"
-  | "decimal";
+  | "decimal"
+  | "array";
 
 /** One column of a [TableDef]. */
 export interface ColumnDef {
@@ -40,6 +41,15 @@ export interface ColumnDef {
    * fingerprint is the only place this can be caught.
    */
   readonly scale?: number;
+  /**
+   * What an `"array"` column's elements are; absent for every other type.
+   *
+   * In the fingerprint, by exactly the argument `scale` gives one type over:
+   * it addresses no column, and a client that has it wrong reads the *right*
+   * column and decodes every element as the wrong type, with the wire
+   * carrying no element type to notice by.
+   */
+  readonly element?: ColumnType;
 }
 
 /** This client's declaration of a table. */
@@ -122,6 +132,11 @@ export function fingerprint(table: TableDef): bigint {
     hash.number(ordinal);
     hash.text(column.name);
     hash.text(column.type);
+    // An array's element type, and only an array's, by exactly the argument
+    // below one type over.
+    if (column.type === "array" && column.element !== undefined) {
+      hash.text(column.element);
+    }
     // A decimal's scale, and only a decimal's. It addresses no column -- the
     // test every other excluded property fails -- and is hashed anyway because
     // the failure it prevents is worse: a wrong ordinal reads the wrong column
@@ -177,4 +192,46 @@ export interface CheckRule {
   message: string | null;
   /** The text the predicate was parsed from, or null if it was built in Rust. */
   predicate: string | null;
+}
+
+/**
+ * One foreign key, as the catalog publishes it.
+ *
+ * Data, like {@link CheckRule}, and for the same reason: nothing here enforces
+ * anything, because the server does. What it carries is the one fact a caller
+ * cannot derive — which table a `Relation` read as `"parents"` answers with.
+ *
+ * A `Relation` names a relationship by the child table and the key's name and
+ * stops there, deliberately: a client that described the relationship could
+ * describe it differently from the next client. But `related` also needs the
+ * table its rows decode as, which for `"parents"` is the *parent* and is
+ * nowhere in the client. Before this it was a string the caller typed from
+ * memory.
+ *
+ * What the wrong one costs was measured rather than assumed, in Go, by making
+ * `Answers` return the child either way and running the three-SDK conformance
+ * suite: the server *refuses* it, because `related` sends the named table's
+ * declaration and the schema check sees one table's columns claimed for
+ * another. That is the good failure, and it holds only while the two
+ * declarations differ — two that fingerprint alike would be decoded
+ * positionally against each other with nothing said.
+ */
+export interface ForeignKey {
+  /** The key's name, which is what `Relation.through` wants. */
+  readonly name: string;
+  /** The table holding the key. `Relation.on`, either direction. */
+  readonly child: string;
+  /** The table it points at. The table a `"parents"` read answers with. */
+  readonly parent: string;
+  /**
+   * `"restrict"` or `"cascade"`, as the catalog spells it.
+   *
+   * Data only: the server applies it and this client never does.
+   */
+  readonly onDelete: string;
+}
+
+/** The table a read of `key` this way decodes as. */
+export function answers(key: ForeignKey, way: "children" | "parents"): string {
+  return way === "parents" ? key.parent : key.child;
 }

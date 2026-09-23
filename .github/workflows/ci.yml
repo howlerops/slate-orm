@@ -277,6 +277,77 @@ jobs:
       # demo's schema has, and the cases most worth getting right (a dropped
       # column, an unknown type) are ones it does not.
       - run: python3 scripts/test_codegen.py
+      # The demo's *generated* Python decoders, executed. The step above tests
+      # the generator against catalogs it invents; this tests the file the demo
+      # actually imports, against the ordinals the real catalog declares, and a
+      # generator right about the first and wrong about the second passes the
+      # step above. Go and TypeScript have had this since their decoders
+      # shipped compiled-but-never-run; Python did not.
+      #
+      # Here rather than in the `demo` job, where its two siblings live,
+      # because those need a built server and a browser and this needs neither
+      # — only the committed file and the installed client. That also lets
+      # `check.sh` run it, which it cannot do for the other two.
+      - run: python3 -m pytest examples/explorer/backends/python/adapter -q
+      # That `scripts/check.sh` still lists every step in this file, or says
+      # why it cannot run one. The script exists because three commits in one
+      # afternoon went red on checks that existed and were run from the wrong
+      # directory; a list that falls behind would be the same story with an
+      # extra step, and this is what stops it. Adding a step above fails here
+      # until somebody classifies it.
+      - run: python3 scripts/test_check_sh.py
+      # The mutation harness's own tests. They use a fake `cargo` — a few lines
+      # of Python that print what a real run prints — so this needs no
+      # toolchain and takes milliseconds, which is why it sits with the static
+      # checks rather than beside the suites it drives.
+      - run: python3 scripts/test_mutate.py
+      # Every test `docs/` names as a demonstration must be openable.
+      # `docs/security-review.md` spent a week citing four probes that
+      # their own fix commits had renamed, and nothing compiles a
+      # document, so only a check finds it.
+      - run: python3 scripts/check_cited_tests.py
+      - run: python3 scripts/test_check_cited_tests.py
+      # And the same one level over: every `docs/*.md` a *source file* points
+      # at must be openable. An error message ending "See docs/ctes.md" sends
+      # a reader who is already confused to a file that may not be there, and
+      # nothing compiles a path in a string literal either.
+      - run: python3 scripts/check_cited_docs.py
+      - run: python3 scripts/test_check_cited_docs.py
+      # A handler must authorise before it touches a table's shape.
+      # Security finding 8 was fixed twice — the second time because
+      # the first covered the handlers it was written about and the
+      # read paths went on resolving, then converting, then checking.
+      - run: python3 scripts/check_handlers.py
+      - run: python3 scripts/test_check_handlers.py
+      - run: python3 examples/explorer/conformance/test_conformance.py
+      - run: python3 scripts/check_demo_surface.py
+      - run: python3 scripts/test_check_demo_surface.py
+      - run: python3 scripts/test_run_examples.py
+      # …and that every crate with an `examples/` directory is in the
+      # runner's table at all. Two were not, and were run by nothing:
+      # the same defect as `headbench` and `slatedbbench` below, a
+      # third and fourth time.
+      - run: python3 scripts/check_examples_roster.py
+      - run: python3 scripts/test_check_examples_roster.py
+      # …and that no comment states a cost constant's old value. The
+      # planner's reasoning lives in prose around three numbers, and when
+      # `POINT_READ_COST` was re-measured from 3.0 to 1.0 eight files went
+      # on saying three — five of them deriving a crossover that had moved
+      # by the same factor.
+      - run: python3 scripts/check_cost_prose.py
+      - run: python3 scripts/test_check_cost_prose.py
+      - run: python3 scripts/check_build_stamp.py
+      - run: python3 scripts/test_check_build_stamp.py
+      - run: python3 scripts/check_table_provenance.py
+      - run: python3 scripts/test_check_table_provenance.py
+      - run: python3 scripts/test_reclaim.py
+      # The TypeScript client carries its own copy of the proto, because
+      # `@grpc/proto-loader` reads the file at run time and an npm package
+      # cannot reach into a sibling crate. Nothing checked the two agreed:
+      # a field added to one side only is a client building requests against
+      # a schema the server does not have, and no type system sees it.
+      - run: python3 scripts/check_proto_copies.py
+      - run: python3 scripts/test_check_proto_copies.py
 
   quickstarts:
     name: the landing page's code
@@ -437,6 +508,19 @@ jobs:
             --python examples/explorer/backends/python/adapter/schema.py \
             --go examples/explorer/backends/go/schema/schema.go \
             --typescript examples/explorer/backends/node/src/schema.ts
+      # The retention example's declaration is generated too and nothing was
+      # checking it, so it silently missed a generator change — which is the
+      # drift `--check` exists to catch, on the one generated file that was
+      # outside it. Its config carries a `{DIR}` placeholder that `run.sh`
+      # substitutes, so this does the same before reading it.
+      - name: The retention example's declaration matches its catalog
+        run: |
+          work=$(mktemp -d)
+          sed "s|{DIR}|$work/store|" examples/retention/head.toml > "$work/head.toml"
+          python3 scripts/codegen.py --check \
+            --config "$work/head.toml" \
+            --serverd "${{ github.workspace }}/bin/slate-serverd" \
+            --python examples/retention/schema.py
       # The generated decoders, run rather than only compiled.
       #
       # Both shipped type-checking and never executing, which proves they
@@ -448,6 +532,20 @@ jobs:
       # Here rather than in the Go and TypeScript client jobs because the
       # files under test are generated from the catalog, and this is the job
       # that has just checked them against it.
+      # The retention example, run rather than shipped. `purge_deleted` had an
+      # RPC and nothing that called it periodically, so a soft-deleting table
+      # grew without bound in every deployment that used the convention; the
+      # example beside this step is the answer, and an example nothing runs is
+      # the defect this repository keeps meeting in other forms.
+      #
+      # In this job because it needs the built `slate-serverd` and the
+      # installed Python client, which this job already has. It brings its own
+      # one-table catalog over a `local` directory, so it shares nothing with
+      # the demo's schema and needs neither MinIO nor a browser.
+      - run: ./run.sh
+        working-directory: examples/retention
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
       - run: go test ./schema/
         working-directory: examples/explorer/backends/go
       # The node adapter resolves `@slate-orm/client` to a symlink into
@@ -514,6 +612,70 @@ jobs:
         working-directory: examples/batchbench
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+
+  # The head-node benchmarks, run rather than asserted.
+  #
+  # Same argument as `batchbench` above, learned the hard way twice over. This
+  # crate's five benchmarks were built by `cargo clippy --all-targets` and run
+  # by nothing, and four of them were broken — three when `leadership` gained
+  # authentication, a fourth when `EXPLAIN` became privileged. Both are
+  # security fixes to `slate-server` that nobody would think to run a benchmark
+  # after, which is exactly why a machine has to.
+  #
+  # `--smoke` asks each one for the smallest fixture it accepts and checks
+  # nothing but the exit code. No threshold: a wall-clock assertion on a shared
+  # runner is a flake waiting for a slow morning, and the recorded numbers in
+  # `docs/performance.md` come from a quiet machine and say so.
+  headbench:
+    name: head-node benchmarks, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: crates/slate-headbench/run.sh --smoke
+
+  # The storage examples, run rather than asserted.
+  #
+  # The same argument as `headbench` above, and this crate has the sharper
+  # version of it: `SCAN_ROW_COST` and `POINT_READ_COST` are calibrated *from*
+  # these, so a benchmark nobody runs is a planner constant nobody re-measures.
+  # `POINT_READ_COST` was three times its measured value when somebody finally
+  # ran one.
+  #
+  # `s3_server` is a server rather than a measurement, so the runner waits for
+  # the `LISTENING` line it prints and kills it — a check, not a skip.
+  slatedbbench:
+    name: storage examples, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: crates/slate-slatedb/run.sh --smoke
+
+  # The kernel's four and the ORM's one, the last two crates that had examples
+  # nothing ran.
+  #
+  # `scripts/check_examples_roster.py` found them — it requires a floor for
+  # every workspace member with an `examples/` directory, and the runner named
+  # two of four. Unlike `slate-headbench`, where running them for the first
+  # time found four of five broken, all five of these already worked; the run
+  # is thirty seconds in debug, which is why they get one job rather than two.
+  #
+  # No `run.sh` wrapper for either crate: those exist so the paths already
+  # quoted in `docs/performance.md` stay true, and nothing quotes a path for
+  # these. The shared runner is called directly.
+  #
+  # None of the five reads an environment knob, so `--smoke` runs them at their
+  # recorded size. That is the honest thing to say about these numbers: the run
+  # proves they still work, and asserts nothing about what they print.
+  kernelbench:
+    name: kernel and ORM examples, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sh scripts/run_examples.sh slate-kernel --smoke
+      - run: sh scripts/run_examples.sh slate-orm --smoke
 
   # The release build, called rather than copied.
   #

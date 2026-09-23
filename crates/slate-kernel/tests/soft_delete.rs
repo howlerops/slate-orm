@@ -772,3 +772,1324 @@ async fn include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete() {
         .expect("collect");
     assert_eq!(rows.len(), 1);
 }
+
+// --- soft delete under a foreign key ----------------------------------------
+//
+// A retired row is hidden from reads and still present in storage, so every
+// constraint that decides by reading has to say which of those two facts it
+// means. The two arms of `deletion_closure` want opposite answers, and until
+// this section existed they shared one.
+
+const FOLDERS: TableId = TableId(11);
+const FILES: TableId = TableId(12);
+/// A table with no soft delete at all, for the negative half of the feature.
+const PLAIN: TableId = TableId(13);
+
+/// A hard-deleting parent and a soft-deleting child on `on_delete`.
+fn filing(on_delete: slate_schema::ReferentialAction) -> Catalog {
+    let folders = TableDef::builder("folders", FOLDERS)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let files = TableDef::builder("files", FILES)
+        .column("id", ValueType::U64)
+        .nullable_column("folder_id", ValueType::U64)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .foreign_key(
+            slate_schema::ForeignKeyDef::builder("files_folder", FOLDERS)
+                .column("folder_id")
+                .on_delete(on_delete),
+        )
+        .build()
+        .expect("a valid table");
+    Catalog::from_tables([folders, files]).expect("a catalog")
+}
+
+/// A folder holding one file, with the clock at `at`.
+async fn filed(
+    on_delete: slate_schema::ReferentialAction,
+    at: i64,
+) -> (RecordStore<MemoryStore>, Arc<FixedClock>) {
+    let clock = Arc::new(FixedClock::at(at));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        filing(on_delete),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(&root(), folders, &Row::new(vec![Value::U64(1)]))
+        .await
+        .expect("insert the folder");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(10), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("insert the file");
+    txn.commit().await.expect("commit");
+    (store, clock)
+}
+
+/// Delete folder 1, and say what happened.
+async fn drop_folder(store: &RecordStore<MemoryStore>) -> Result<bool, String> {
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    match txn.delete(&root(), folders, &[Value::U64(1)]).await {
+        Ok(gone) => {
+            txn.commit().await.expect("commit");
+            Ok(gone)
+        }
+        Err(why) => Err(why.to_string()),
+    }
+}
+
+/// Every row of `files`, retired ones included, as `(id, deleted_at)`.
+async fn files_of(store: &RecordStore<MemoryStore>) -> Vec<(u64, Option<i64>)> {
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&root(), files, &query)
+        .await
+        .expect("query")
+        .collect()
+        .await
+        .expect("rows");
+    rows.into_iter()
+        .map(|row| {
+            let id = match row.values()[0] {
+                Value::U64(id) => id,
+                ref other => panic!("id is {other:?}"),
+            };
+            let at = match row.values()[2] {
+                Value::Null => None,
+                Value::I64(at) => Some(at),
+                ref other => panic!("deleted_at is {other:?}"),
+            };
+            (id, at)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_live_child() {
+    // The control. Without it the next test passes on a schema where the edge
+    // never worked at all, and a mutation that broke `RESTRICT` outright would
+    // be caught only by tests in another file over another schema.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+    let why = drop_folder(&store).await.expect_err("a live child blocks");
+    assert!(why.contains("files"), "{why}");
+    assert!(why.contains("files_folder"), "{why}");
+    // The control for the message as well as for the refusal: a live child
+    // must *not* be described as soft-deleted, or the advice is wrong in the
+    // more common direction — "purge it" for a row a purge would never reach.
+    assert!(!why.contains("soft-deleted"), "{why}");
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_retired_child() {
+    // The defect this section was written for: retiring the child made the
+    // identical delete succeed, because the search for referencing rows read
+    // with the ordinary soft-delete filter on. The row was still there, still
+    // holding folder 1's key, and still readable with `include_deleted` — so
+    // the parent went and left it pointing at nothing.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    assert!(
+        txn.delete(&root(), files, &[Value::U64(10)])
+            .await
+            .expect("retire the file"),
+        "the file was there to retire"
+    );
+    txn.commit().await.expect("commit");
+
+    let why = drop_folder(&store)
+        .await
+        .expect_err("a retired child is still a child");
+    assert!(why.contains("files_folder"), "{why}");
+    // And the message says *which* case it is. Without this an operator reads
+    // "rows in `files` still reference it", queries `files`, finds nothing —
+    // an ordinary read hides the retired row — and concludes the constraint is
+    // wrong. The two cases also need opposite responses: delete the children,
+    // or purge them.
+    assert!(why.contains("soft-deleted"), "{why}");
+    assert!(why.contains("purge it"), "{why}");
+    assert_eq!(
+        files_of(&store).await,
+        vec![(10, Some(1_000))],
+        "and the refusal left the child exactly as it was"
+    );
+}
+
+#[tokio::test]
+async fn a_cascade_edge_leaves_an_already_retired_child_and_its_timestamp_alone() {
+    // The other half, and the reason `referencing_rows` takes a parameter
+    // instead of one constant: a cascade must *not* reach a retired child.
+    // Re-stamping `deleted_at` would push the row's purge deadline out by the
+    // gap between the two deletes, so a retention window would silently
+    // restart — which is why this test moves the clock rather than deleting
+    // twice at the same instant, where a re-stamp is invisible.
+    let (store, clock) = filed(slate_schema::ReferentialAction::Cascade, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the file");
+    txn.commit().await.expect("commit");
+    assert_eq!(files_of(&store).await, vec![(10, Some(1_000))]);
+
+    clock.set(9_000);
+    assert!(
+        drop_folder(&store).await.expect("the cascade is allowed"),
+        "the folder was there to delete"
+    );
+    assert_eq!(
+        files_of(&store).await,
+        vec![(10, Some(1_000))],
+        "the retired child keeps the timestamp its own delete gave it"
+    );
+}
+
+#[tokio::test]
+async fn a_cascade_edge_still_retires_a_live_child() {
+    // The control for the one above: the cascade does reach a live child, and
+    // retires rather than removes it. Reading with `include_deleted` is what
+    // separates "retired by the cascade" from "erased by it".
+    let (store, clock) = filed(slate_schema::ReferentialAction::Cascade, 1_000).await;
+    clock.set(9_000);
+    assert!(drop_folder(&store).await.expect("the cascade is allowed"));
+    assert_eq!(files_of(&store).await, vec![(10, Some(9_000))]);
+}
+
+// --- restoring a retired row ------------------------------------------------
+//
+// A retired row used to be writable by nobody. It blocked an insert at its key
+// with `DuplicatePrimaryKey` — present — and refused an update and an upsert at
+// that same key with `RowNotFound` — absent. Both answers about one row in one
+// transaction, so whichever a caller believed, the other was waiting. The line
+// drawn here: **a write that names a primary key means the row at that key; a
+// write that matches a predicate means the live ones.** `delete` is unaffected,
+// because retiring an already-retired row is a no-op rather than a
+// contradiction.
+
+/// The one live row and the one retired row of `docs`, as `(id, deleted_at)`.
+async fn state(store: &RecordStore<MemoryStore>) -> Vec<(u64, Option<i64>)> {
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&root(), table, &query)
+        .await
+        .expect("query")
+        .collect()
+        .await
+        .expect("rows");
+    let mut out: Vec<(u64, Option<i64>)> = rows
+        .into_iter()
+        .map(|row| {
+            let id = match row.values()[0] {
+                Value::U64(id) => id,
+                ref other => panic!("id is {other:?}"),
+            };
+            let at = match row.values()[2] {
+                Value::Null => None,
+                Value::I64(at) => Some(at),
+                ref other => panic!("deleted_at is {other:?}"),
+            };
+            (id, at)
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+#[tokio::test]
+async fn an_update_at_a_retired_rows_key_restores_it() {
+    // The gap this section closes. `seeded()` retires row 2 at 5,000.
+    let store = seeded().await;
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)]
+    );
+    assert_eq!(ids(&store, Query::all()).await, vec![1, 3]);
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update(&root(), table, &doc(2, "restored"))
+        .await
+        .expect("an update at a retired row's key restores it");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(state(&store).await, vec![(1, None), (2, None), (3, None)]);
+    assert_eq!(
+        ids(&store, Query::all()).await,
+        vec![1, 2, 3],
+        "and an ordinary read, which had stopped returning it, returns it again"
+    );
+}
+
+#[tokio::test]
+async fn an_upsert_over_a_retired_row_restores_it_rather_than_reporting_it_missing() {
+    let store = seeded().await;
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.upsert(&root(), table, &doc(2, "back"))
+        .await
+        .expect("an upsert names the key too");
+    txn.commit().await.expect("commit");
+    assert_eq!(state(&store).await, vec![(1, None), (2, None), (3, None)]);
+}
+
+#[tokio::test]
+async fn an_insert_at_a_retired_rows_key_is_still_refused() {
+    // The arm that was always right, and the reason the fix is "make the other
+    // three agree with this one" rather than "make all four say absent". An
+    // insert that succeeded here would silently overwrite a row the retention
+    // window exists to keep.
+    let store = seeded().await;
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let refused = txn
+        .insert(&root(), table, &doc(2, "new"))
+        .await
+        .expect_err("the key is taken by the retired row");
+    assert!(
+        matches!(
+            refused,
+            slate_kernel::KernelError::DuplicatePrimaryKey { .. }
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)]
+    );
+}
+
+#[tokio::test]
+async fn a_predicate_write_still_skips_a_retired_row() {
+    // The other side of the line, and the test that stops the fix being
+    // "simplified" into `row_filter` where it would apply to everything. An
+    // `update_where` whose predicate matches every row must still touch only
+    // the live ones: the predicate did not name row 2.
+    let store = seeded().await;
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let affected = txn
+        .update_where(
+            &root(),
+            table,
+            slate_kernel::Expr::True,
+            &[(
+                slate_schema::Ordinal(1),
+                slate_kernel::Scalar::Literal(Value::Str("swept".to_owned())),
+            )],
+            None,
+        )
+        .await
+        .expect("update_where");
+    txn.commit().await.expect("commit");
+    assert_eq!(affected.len(), 2, "the two live rows, not the retired one");
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)]
+    );
+}
+
+#[tokio::test]
+async fn a_policy_still_hides_a_retired_row_from_an_update() {
+    // `Deleted::Visible` drops the soft-delete conjunct and nothing else. If it
+    // dropped the policy too, a caller could reach a retired row their policy
+    // never let them see — and reach it by primary key, which is the cheapest
+    // possible probe. `RowNotFound` rather than a refusal naming the policy,
+    // for the reason the code gives: which of "hidden" and "missing" it was is
+    // exactly what a policy exists not to say.
+    let security = slate_kernel::SecurityCatalog::new()
+        .grant(slate_kernel::Grant::new(
+            "reader",
+            DOCS,
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Update,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+        ))
+        .policy(slate_kernel::Policy::new(
+            "memos_only",
+            DOCS,
+            slate_kernel::Action::ALL,
+            |_: &SecurityContext| {
+                slate_kernel::Expr::eq(slate_schema::Ordinal(1), Value::Str("memo".to_owned()))
+            },
+        ));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(5_000)));
+    seeded_for(&store).await; // rows 1..3 of kind "a", row 2 retired
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let refused = txn
+        .update(&reader(), table, &doc(2, "memo"))
+        .await
+        .expect_err("the policy hides row 2 whether or not it is retired");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowNotFound { .. }),
+        "{refused:?}"
+    );
+    // Unchanged, and still retired: the refusal is not a partial write.
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)]
+    );
+}
+
+#[tokio::test]
+async fn a_write_that_supplies_the_soft_delete_column_names_that_column() {
+    // What a caller hits first when restoring by hand: read the row with
+    // `include_deleted`, edit a field, write it back — timestamp and all. That
+    // used to come back as "row-level security forbids writing this row" on a
+    // table with no policies at all, which sends the reader to the grants. The
+    // column is the kernel's to write, and now the message says so.
+    let store = seeded().await;
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let stamped = Row::new(vec![
+        Value::U64(2),
+        Value::Str("as read".to_owned()),
+        Value::I64(5_000),
+    ]);
+    let refused = txn
+        .update(&root(), table, &stamped)
+        .await
+        .expect_err("the soft-delete column is not the caller's to write");
+    let why = refused.to_string();
+    assert!(why.contains("deleted_at"), "{why}");
+    assert!(why.contains("null to restore"), "{why}");
+    assert!(
+        !why.contains("row-level security"),
+        "the old message sent the reader to the grants: {why}"
+    );
+}
+
+#[tokio::test]
+async fn restoring_a_row_whose_unique_slot_was_reused_is_refused() {
+    // Retiring a row frees its slot in a partial unique index on
+    // `deleted_at IS NULL` — that is the documented point of the shape. So
+    // restoring one is not always possible, and the interesting case is the one
+    // where somebody took the slot in between. It has to be refused rather than
+    // written, or the index would hold two rows at one unique key.
+    let table = TableDef::builder("notes", NOTES)
+        .column("id", ValueType::U64)
+        .column("slug", ValueType::Str)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .index(
+            IndexDef::builder("live_slug", slate_schema::IndexId(1))
+                .column("slug")
+                .unique()
+                .only_where(slate_kernel::Expr::IsNull {
+                    column: slate_schema::Ordinal(2),
+                    negated: false,
+                }),
+        )
+        .build()
+        .expect("a valid table");
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([table]).expect("a catalog"),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::new(FixedClock::at(9_000)));
+    let row = |id: u64| {
+        Row::new(vec![
+            Value::U64(id),
+            Value::Str("x".to_owned()),
+            Value::Null,
+        ])
+    };
+
+    let txn = store.begin().await.expect("a transaction");
+    let notes = txn.catalog().table_by_name("notes").expect("the table");
+    txn.insert(&root(), notes, &row(1)).await.expect("insert");
+    txn.delete(&root(), notes, &[Value::U64(1)])
+        .await
+        .expect("retire 1, freeing the slug");
+    txn.insert(&root(), notes, &row(2))
+        .await
+        .expect("2 takes the freed slug");
+    let refused = txn
+        .update(&root(), notes, &row(1))
+        .await
+        .expect_err("restoring 1 would put two live rows on one unique slug");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::UniqueViolation { .. }),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_bulk_writes_restore_a_retired_row_too() {
+    // The bulk path is a separate arm over a separately-read `existing`, and it
+    // was the one mutation the tests above did not catch: making it read
+    // `Deleted::Hidden` again broke nothing, because nothing exercised it. A
+    // mutation that causes no failure is a missing test.
+    //
+    // Both bulk writes that can touch an existing row, each restoring row 2 in
+    // a batch that also writes a live one — so a fix that special-cased a
+    // one-row batch would still be caught.
+    for (name, bulk) in [("update_many", false), ("upsert_many", true)] {
+        let store = seeded().await;
+        let txn = store.begin().await.expect("a transaction");
+        let table = txn.catalog().table_by_name("docs").expect("the table");
+        let batch = [doc(1, "kept"), doc(2, "restored")];
+        if bulk {
+            txn.upsert_many(&root(), table, &batch).await
+        } else {
+            txn.update_many(&root(), table, &batch).await
+        }
+        .unwrap_or_else(|why| panic!("{name} at a retired row's key: {why}"));
+        txn.commit().await.expect("commit");
+        assert_eq!(
+            state(&store).await,
+            vec![(1, None), (2, None), (3, None)],
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_bulk_insert_at_a_retired_rows_key_is_still_refused() {
+    // The bulk twin of `an_insert_at_a_retired_rows_key_is_still_refused`: the
+    // arm that was already right, so that "make every bulk arm say absent"
+    // cannot pass.
+    let store = seeded().await;
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let refused = txn
+        .insert_many(
+            &root(),
+            table,
+            &[doc(4, "new"), doc(2, "over the retired one")],
+        )
+        .await
+        .expect_err("the key is taken by the retired row");
+    assert!(
+        matches!(
+            refused,
+            slate_kernel::KernelError::DuplicatePrimaryKey { .. }
+        ),
+        "{refused:?}"
+    );
+    drop(txn);
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)],
+        "and row 4, earlier in the same batch, was not written either"
+    );
+}
+
+#[tokio::test]
+async fn without_read_deleted_a_retired_row_stays_out_of_reach() {
+    // The grant is the line. A caller with read, insert, update and delete but
+    // not `read_deleted` sees a retired row exactly as they see a row a policy
+    // hides — the key is taken, and there is nothing there to update. Both
+    // halves are asserted together, because either one alone reads as a bug:
+    // it is the pair that is the design, and the pair this file already chose
+    // for policy-hidden rows.
+    let store = store_granting(&[
+        slate_kernel::Action::Read,
+        slate_kernel::Action::Insert,
+        slate_kernel::Action::Update,
+        slate_kernel::Action::Delete,
+    ]);
+    seeded_for(&store).await; // 1..3, row 2 retired at 5,000
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let taken = txn
+        .insert(&reader(), table, &doc(2, "mine now"))
+        .await
+        .expect_err("the retired row still occupies the key");
+    assert!(
+        matches!(taken, slate_kernel::KernelError::DuplicatePrimaryKey { .. }),
+        "{taken:?}"
+    );
+    let missing = txn
+        .update(&reader(), table, &doc(2, "mine now"))
+        .await
+        .expect_err("and is not theirs to overwrite");
+    assert!(
+        matches!(missing, slate_kernel::KernelError::RowNotFound { .. }),
+        "{missing:?}"
+    );
+    drop(txn);
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)]
+    );
+}
+
+#[tokio::test]
+async fn read_deleted_is_what_makes_the_same_row_restorable() {
+    // The control for the test above, differing in exactly one grant. Without
+    // it, "the caller could not restore it" would be evidence of nothing — a
+    // missing `update` grant, a wrong key, a table that never soft-deleted.
+    let store = store_granting(&[
+        slate_kernel::Action::Read,
+        slate_kernel::Action::Insert,
+        slate_kernel::Action::Update,
+        slate_kernel::Action::Delete,
+        slate_kernel::Action::ReadDeleted,
+    ]);
+    seeded_for(&store).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update(&reader(), table, &doc(2, "restored"))
+        .await
+        .expect("read_deleted is the grant that reaches it");
+    txn.commit().await.expect("commit");
+    assert_eq!(state(&store).await, vec![(1, None), (2, None), (3, None)]);
+}
+
+#[tokio::test]
+async fn a_predicate_that_selects_only_the_retired_row_touches_nothing() {
+    // `ledger/2026-09-20-four-say-absent-one-says-present.md` measured the
+    // predicate writes against a predicate matching *everything* and named this
+    // shape as unrun: "a predicate matching only the retired row would report
+    // affected=0". It does, and that is the interesting half — matching
+    // everything cannot tell "skipped the retired row" from "the live ones were
+    // all there was", because both answers are the same count.
+    //
+    // Zero rather than an error is the right answer and not an obvious one: a
+    // caller asking "delete everything matching this" and being told nothing
+    // matched has been told the truth, since to them the row is not there.
+    let store = seeded().await; // 1 and 3 live kind "note"/"memo", 2 retired kind "note"
+    let only_the_retired = slate_kernel::Expr::eq(slate_schema::Ordinal(0), Value::U64(2));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let updated = txn
+        .update_where(
+            &root(),
+            table,
+            only_the_retired.clone(),
+            &[(
+                slate_schema::Ordinal(1),
+                slate_kernel::Scalar::Literal(Value::Str("reached".to_owned())),
+            )],
+            None,
+        )
+        .await
+        .expect("a predicate matching nothing visible is not an error");
+    assert!(updated.is_empty(), "update_where reached {updated:?}");
+
+    let deleted = txn
+        .delete_where(&root(), table, only_the_retired, None)
+        .await
+        .expect("nor is it an error for a delete");
+    assert!(deleted.is_empty(), "delete_where reached {deleted:?}");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)],
+        "and the retired row is untouched — neither restamped nor edited"
+    );
+}
+
+#[tokio::test]
+async fn a_predicate_that_selects_only_a_live_row_is_the_control() {
+    // Without this, the test above passes on a predicate that matches nothing
+    // at all — a wrong ordinal, a wrong type, a comparison that never fires.
+    // Same shape, same call, one different key.
+    let store = seeded().await;
+    let only_a_live_one = slate_kernel::Expr::eq(slate_schema::Ordinal(0), Value::U64(1));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let updated = txn
+        .update_where(
+            &root(),
+            table,
+            only_a_live_one,
+            &[(
+                slate_schema::Ordinal(1),
+                slate_kernel::Scalar::Literal(Value::Str("reached".to_owned())),
+            )],
+            None,
+        )
+        .await
+        .expect("update_where");
+    txn.commit().await.expect("commit");
+    assert_eq!(
+        updated.len(),
+        1,
+        "the same predicate shape does reach a live row"
+    );
+}
+
+#[tokio::test]
+async fn without_read_deleted_the_bulk_writes_stay_out_of_reach_too() {
+    // The bulk twin of `without_read_deleted_a_retired_row_stays_out_of_reach`,
+    // and it exists because a mutation survived without it: the grant is read
+    // once per `write_many` call rather than once per row, and setting that one
+    // value to "always reachable" broke nothing. Every bulk test above uses the
+    // superuser, for whom the answer is the same either way.
+    let store = store_granting(&[
+        slate_kernel::Action::Read,
+        slate_kernel::Action::Insert,
+        slate_kernel::Action::Update,
+        slate_kernel::Action::Delete,
+    ]);
+    seeded_for(&store).await; // 1..3, row 2 retired at 5,000
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    // A batch mixing a row they may write with the retired one, so a fix that
+    // only looked at single-row batches would not pass either.
+    let batch = [doc(1, "theirs"), doc(2, "not theirs")];
+
+    let refused = txn
+        .update_many(&reader(), table, &batch)
+        .await
+        .expect_err("the retired row is not theirs to overwrite");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowNotFound { .. }),
+        "{refused:?}"
+    );
+    let refused = txn
+        .upsert_many(&reader(), table, &batch)
+        .await
+        .expect_err("nor by way of an upsert");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowNotFound { .. }),
+        "{refused:?}"
+    );
+    let taken = txn
+        .insert_many(&reader(), table, &batch)
+        .await
+        .expect_err("and the key is still occupied");
+    assert!(
+        matches!(taken, slate_kernel::KernelError::DuplicatePrimaryKey { .. }),
+        "{taken:?}"
+    );
+    drop(txn);
+    assert_eq!(
+        state(&store).await,
+        vec![(1, None), (2, Some(5_000)), (3, None)],
+        "and row 1, which they may write, was not written either"
+    );
+}
+
+/// `filing`, plus the index that makes the two tests below interesting: the
+/// only index on the referencing column, partial on exactly the predicate that
+/// excludes a retired row.
+///
+/// One fixture for both arms deliberately. The whole question is whether the
+/// *same* structure is safe for a `RESTRICT` search and correct for a `CASCADE`
+/// walk, and two schemas that drifted would answer a question nobody asked.
+async fn indexed_filing(
+    on_delete: slate_schema::ReferentialAction,
+    at: i64,
+) -> (RecordStore<MemoryStore>, Arc<FixedClock>, MemoryStore) {
+    let folders = TableDef::builder("folders", FOLDERS)
+        .column("id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let files = TableDef::builder("files", FILES)
+        .column("id", ValueType::U64)
+        .nullable_column("folder_id", ValueType::U64)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .index(
+            IndexDef::builder("live_by_folder", slate_schema::IndexId(1))
+                .column("folder_id")
+                .only_where(slate_kernel::Expr::IsNull {
+                    column: slate_schema::Ordinal(2),
+                    negated: false,
+                }),
+        )
+        .foreign_key(
+            slate_schema::ForeignKeyDef::builder("files_folder", FOLDERS)
+                .column("folder_id")
+                .on_delete(on_delete),
+        )
+        .build()
+        .expect("a valid table");
+    let clock = Arc::new(FixedClock::at(at));
+    // Cloned rather than re-made: `MemoryStore` is an `Arc` over its shared
+    // state, so this handle sees the same keyspace the store writes to. It is
+    // how the index count below reads the backend directly.
+    let backend = MemoryStore::new();
+    let store = RecordStore::new(
+        backend.clone(),
+        Catalog::from_tables([folders, files]).expect("a catalog"),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(&root(), folders, &Row::new(vec![Value::U64(1)]))
+        .await
+        .expect("insert the folder");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(10), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("insert the file");
+    txn.commit().await.expect("commit");
+    (store, clock, backend)
+}
+
+#[tokio::test]
+async fn the_partial_index_holds_a_live_child_and_drops_a_retired_one() {
+    // The premise the two tests below rest on, asserted rather than assumed.
+    //
+    // Both of them are about what happens when the only index on the
+    // referencing column cannot hold a retired row. If index maintenance ever
+    // stopped dropping the entry, the `RESTRICT` test would keep passing — the
+    // row is found either way — while the thing it demonstrates quietly became
+    // untrue, and nothing would say so. Counted out of the backend rather than
+    // through a read, for the reason `index_entry_count` in `constraints.rs`
+    // gives: asking the record layer would let a leaked entry hide behind the
+    // same code that leaked it.
+    let (store, _clock, backend) =
+        indexed_filing(slate_schema::ReferentialAction::Restrict, 1_000).await;
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    let prefix = slate_kernel::keys::index_prefix(files, &files.indexes()[0], None);
+    drop(txn);
+
+    let count = || {
+        backend
+            .keys()
+            .into_iter()
+            .filter(|key| key.starts_with(&prefix))
+            .count()
+    };
+    assert_eq!(count(), 1, "the index holds the live child");
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire it");
+    txn.commit().await.expect("commit");
+    assert_eq!(
+        count(),
+        0,
+        "and drops it when the row is retired, which is what makes it a \
+         structure the RESTRICT search cannot use"
+    );
+}
+
+#[tokio::test]
+async fn a_purge_does_not_conflict_with_the_writer_that_took_the_freed_slot() {
+    // `erase_row` deletes an index entry only for an index that `admits` the
+    // row, and `write_row_with` states the harm that filter prevents:
+    //
+    // > The delete would be harmless in itself and is not harmless in a
+    // > transaction: it writes the key, and so conflicts with any concurrent
+    // > writer of the row that really does own that slot.
+    //
+    // A purge is where that bites hardest, because *every* row it touches is
+    // retired and so outside a partial index on `deleted_at IS NULL` — and
+    // `a_purged_row_takes_its_index_entries_with_it` runs against a table
+    // whose index does hold the row, exercising the other branch.
+    //
+    // **The shape took two wrong drafts and both are worth recording.** The
+    // first asserted that no stray index key was left in the backend; deleting
+    // a key that was never written leaves nothing to count, so the mutation
+    // passed. The second used two overlapping transactions over a *non-unique*
+    // index; its entry key carries the primary key, so two rows never share
+    // one and there was nothing to collide over. It needs a **unique** partial
+    // index, where the key is the indexed value alone — the slot one row frees
+    // by being retired and another then takes.
+    let table = TableDef::builder("notes", NOTES)
+        .column("id", ValueType::U64)
+        .column("slug", ValueType::Str)
+        .nullable_column("deleted_at", ValueType::I64)
+        .primary_key(["id"])
+        .soft_delete("deleted_at")
+        .index(
+            IndexDef::builder("live_slug", slate_schema::IndexId(1))
+                .column("slug")
+                .unique()
+                .only_where(slate_kernel::Expr::IsNull {
+                    column: slate_schema::Ordinal(2),
+                    negated: false,
+                }),
+        )
+        .build()
+        .expect("a valid table");
+    let clock = Arc::new(FixedClock::at(1_000));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([table]).expect("a catalog"),
+        SecurityCatalog::new(),
+    )
+    .with_clock(Arc::clone(&clock) as Arc<dyn slate_kernel::clock::Clock>);
+    let row = |id: u64| {
+        Row::new(vec![
+            Value::U64(id),
+            Value::Str("x".to_owned()),
+            Value::Null,
+        ])
+    };
+
+    let txn = store.begin().await.expect("a transaction");
+    let notes = txn.catalog().table_by_name("notes").expect("notes");
+    txn.insert(&root(), notes, &row(1)).await.expect("insert");
+    txn.delete(&root(), notes, &[Value::U64(1)])
+        .await
+        .expect("retire 1, which frees the slug");
+    txn.commit().await.expect("commit");
+
+    clock.set(9_000);
+    let purge = store.begin().await.expect("the purge's transaction");
+    let writer = store.begin().await.expect("an overlapping writer");
+
+    // The writer takes the freed slot. Its index key is the slug alone, which
+    // is exactly the key the purge would write a delete for if `erase_row` did
+    // not skip an index that does not hold the row.
+    let notes = writer.catalog().table_by_name("notes").expect("notes");
+    writer
+        .insert(&root(), notes, &row(2))
+        .await
+        .expect("2 takes the slug 1 freed");
+
+    let notes = purge.catalog().table_by_name("notes").expect("notes");
+    assert_eq!(
+        purge
+            .purge_deleted(&root(), notes, 9_000, None)
+            .await
+            .expect("purge"),
+        1
+    );
+
+    purge.commit().await.expect("the purge commits");
+    writer
+        .commit()
+        .await
+        .expect("a purge must not conflict over a slot its row had already left");
+
+    let txn = store.begin().await.expect("a transaction");
+    let notes = txn.catalog().table_by_name("notes").expect("notes");
+    let mut query = Query::all();
+    query.include_deleted = true;
+    let rows = txn
+        .execute(&root(), notes, &query)
+        .await
+        .expect("query")
+        .collect()
+        .await
+        .expect("rows");
+    assert_eq!(rows.len(), 1, "1 was erased and 2 survived");
+}
+
+#[tokio::test]
+async fn a_cascade_edge_over_the_same_index_still_retires_the_live_child() {
+    // The symmetric half of the test below, and the arm where a partial index
+    // on `deleted_at IS NULL` *is* implied by the filter and may well be
+    // chosen: the cascade reads with `Deleted::Hidden`, so the conjunct is in
+    // the query and the index predicate follows from it. That is correct here —
+    // a cascade wants live children and nothing else — but "correct by the same
+    // reasoning" is what the entry beside this one said and did not assert.
+    //
+    // Two children, one live and one already retired, so the run distinguishes
+    // "reached the live one through the index" from "reached nothing".
+    let (store, clock, _backend) =
+        indexed_filing(slate_schema::ReferentialAction::Cascade, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(11), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("a second, live child");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the first");
+    txn.commit().await.expect("commit");
+
+    clock.set(9_000);
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    assert!(
+        txn.delete(&root(), folders, &[Value::U64(1)])
+            .await
+            .expect("the cascade is allowed"),
+        "the folder was there to delete"
+    );
+    txn.commit().await.expect("commit");
+
+    let mut rows = files_of(&store).await;
+    rows.sort_unstable();
+    assert_eq!(
+        rows,
+        vec![(10, Some(1_000)), (11, Some(9_000))],
+        "the live child was retired by the cascade and the already-retired one \
+         kept the timestamp its own delete gave it"
+    );
+}
+
+#[tokio::test]
+async fn a_restrict_edge_blocks_on_a_retired_child_the_only_index_cannot_see() {
+    // The hypothesis this is written to kill: `referencing_rows` is a *planned*
+    // read, so the planner may answer it from an index — and the index a
+    // soft-deleting table most wants is partial on `deleted_at IS NULL`, which
+    // by construction does not hold retired rows. If the planner chose it, the
+    // `RESTRICT` arm would look for the retired child through a structure that
+    // cannot contain it and find nothing, which is the defect
+    // `a_restrict_edge_blocks_on_a_retired_child` fixed, reintroduced through a
+    // different door and invisible to that test's schema, which has no index at
+    // all on the referencing column.
+    //
+    // It holds, and the reason is worth writing down rather than leaving to the
+    // next person to re-derive: the read carries `include_deleted`, so the
+    // soft-delete conjunct is not in the filter, so a partial index predicated
+    // on it is not implied by the query and cannot be chosen. The same
+    // conjoin-before-planning that stops a covering scan resurrecting a row is
+    // what stops a partial index hiding one here.
+    let (store, _clock, _backend) =
+        indexed_filing(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    // While it is live the index does hold it — `the_partial_index_holds_a
+    // _live_child_and_drops_a_retired_one` reads that out of the backend — so
+    // this is not asking a different question of a different structure.
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the file, which drops its entry from the partial index");
+    txn.commit().await.expect("commit");
+
+    let txn = store.begin().await.expect("a transaction");
+    let folders = txn.catalog().table_by_name("folders").expect("folders");
+    let why = txn
+        .delete(&root(), folders, &[Value::U64(1)])
+        .await
+        .expect_err("a retired child blocks even when no index holds it");
+    assert!(why.to_string().contains("files_folder"), "{why}");
+}
+
+#[tokio::test]
+async fn a_table_that_does_not_soft_delete_is_untouched_by_the_restore_grant() {
+    // The negative half of the whole feature, and it had no test: every write
+    // path now consults `read_deleted` before deciding whether a named key
+    // reaches a hidden row, and the overwhelming majority of tables have no
+    // such row to reach. A caller with no `read_deleted` must write them
+    // exactly as they did before any of this existed.
+    //
+    // `include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete`
+    // says the same thing about reads. This is the write side of it.
+    let plain = TableDef::builder("plain", PLAIN)
+        .column("id", ValueType::U64)
+        .column("body", ValueType::Str)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid table");
+    let security = slate_kernel::SecurityCatalog::new().grant(slate_kernel::Grant::new(
+        "reader",
+        plain.id(),
+        vec![
+            slate_kernel::Action::Read,
+            slate_kernel::Action::Insert,
+            slate_kernel::Action::Update,
+            slate_kernel::Action::Delete,
+        ],
+    ));
+    let store = RecordStore::new(
+        MemoryStore::new(),
+        Catalog::from_tables([plain.clone()]).expect("a catalog"),
+        security,
+    );
+
+    let row = |body: &str| Row::new(vec![Value::U64(1), Value::Str(body.to_owned())]);
+    let txn = store.begin().await.expect("a transaction");
+    txn.insert(&reader(), &plain, &row("first"))
+        .await
+        .expect("insert");
+    txn.update(&reader(), &plain, &row("second"))
+        .await
+        .expect("an update needs no read_deleted on a table with nothing retired");
+    txn.upsert(&reader(), &plain, &row("third"))
+        .await
+        .expect("nor does an upsert");
+    txn.update_many(&reader(), &plain, &[row("fourth")])
+        .await
+        .expect("nor the bulk path");
+    assert!(
+        txn.delete(&reader(), &plain, &[Value::U64(1)])
+            .await
+            .expect("delete"),
+        "and the row was there to delete"
+    );
+    txn.commit().await.expect("commit");
+}
+
+#[tokio::test]
+async fn a_mixture_of_live_and_retired_blockers_reports_as_the_ordinary_case() {
+    // The third case, and the one a per-row decision would get wrong. With a
+    // live child *and* a retired one both referencing the parent, the caller
+    // should be told about the live one: it is the one they can see, the one
+    // they can delete, and dealing with it is a prerequisite either way.
+    // Advising a purge here would send them to the operation that erases
+    // history for a problem an ordinary delete solves.
+    let (store, _clock) = filed(slate_schema::ReferentialAction::Restrict, 1_000).await;
+
+    let txn = store.begin().await.expect("a transaction");
+    let files = txn.catalog().table_by_name("files").expect("files");
+    txn.insert(
+        &root(),
+        files,
+        &Row::new(vec![Value::U64(11), Value::U64(1), Value::Null]),
+    )
+    .await
+    .expect("a second child");
+    txn.delete(&root(), files, &[Value::U64(10)])
+        .await
+        .expect("retire the first, leaving one of each");
+    txn.commit().await.expect("commit");
+
+    let why = drop_folder(&store).await.expect_err("both still block");
+    assert!(why.contains("files_folder"), "{why}");
+    assert!(
+        !why.contains("soft-deleted"),
+        "a mixture must read as the ordinary case: {why}"
+    );
+}
+
+#[tokio::test]
+async fn an_undo_window_can_be_a_policy_rather_than_a_role() {
+    // Not a feature — a demonstration, for `docs/undo-window.md`, that the
+    // second of the three shapes that note weighs is expressible *today* and
+    // needs no new mechanism.
+    //
+    // `PolicyPredicate::build` is called per request with the context, so a
+    // policy is free to read a clock and produce a predicate that means
+    // something different tomorrow. A window is then `deleted_at > now - w`,
+    // scoped to `Action::Update`: the caller may restore what was retired
+    // recently and nothing older, and the bound moves on its own.
+    //
+    // **And it is written here with a companion policy, which is the trap.**
+    // `row_filter_with` fails closed — "RLS on with nothing admitting anything
+    // means no rows, not all rows" — so declaring a policy for `Update` alone
+    // turns `Read`, `Insert` and `Delete` on that table into deny-all for
+    // every non-superuser. The first draft of this test did exactly that, and
+    // what broke was not the window: the *delete* that was supposed to retire
+    // the row silently did nothing, and the row under test was never retired
+    // at all. Anyone reaching for a policy to express a window has to declare
+    // the other actions too.
+    const WINDOW: i64 = 3_600;
+    let policy_clock = Arc::new(FixedClock::at(10_000));
+    let ticking = Arc::clone(&policy_clock);
+    let security = slate_kernel::SecurityCatalog::new()
+        .grant(slate_kernel::Grant::new(
+            "reader",
+            DOCS,
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Update,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+        ))
+        // The companion. Without it the table is invisible for everything but
+        // an update, which is not what "a window on undo" is supposed to mean.
+        .policy(slate_kernel::Policy::new(
+            "everything_else_is_unrestricted",
+            DOCS,
+            [
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ))
+        .policy(slate_kernel::Policy::new(
+            "recent_enough_to_undo",
+            DOCS,
+            [slate_kernel::Action::Update],
+            move |_: &SecurityContext| {
+                let floor = slate_kernel::clock::Clock::now(&*ticking) - WINDOW;
+                // A live row has a null stamp, which compares unknown against
+                // any bound — so the policy has to admit it explicitly or an
+                // ordinary update would be refused on every live row.
+                slate_kernel::Expr::Or(vec![
+                    slate_kernel::Expr::IsNull {
+                        column: slate_schema::Ordinal(2),
+                        negated: false,
+                    },
+                    slate_kernel::Expr::compare(
+                        slate_schema::Ordinal(2),
+                        slate_kernel::CmpOp::Gt,
+                        Value::I64(floor),
+                    ),
+                ])
+            },
+        ));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(10_000)));
+    seeded_for(&store).await; // 1..3 live, then 2 retired at 10,000
+
+    // Inside the window: the undo works.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update(&reader(), table, &doc(2, "undone"))
+        .await
+        .expect("retired now, well inside the hour");
+    txn.commit().await.expect("commit");
+    assert_eq!(ids(&store, Query::all()).await, vec![1, 2, 3]);
+
+    // Retire it again, then let the window close under it.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    assert!(
+        txn.delete(&reader(), table, &[Value::U64(2)])
+            .await
+            .expect("delete"),
+        "the row was there to retire — the companion policy is what makes \
+         this true, and its absence is what the comment above is about"
+    );
+    txn.commit().await.expect("commit");
+    policy_clock.set(10_000 + WINDOW + 1);
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let too_late = txn
+        .update(&reader(), table, &doc(2, "too late"))
+        .await
+        .expect_err("the window has closed");
+    assert!(
+        matches!(too_late, slate_kernel::KernelError::RowNotFound { .. }),
+        "{too_late:?}"
+    );
+    // And a live row is untouched by the window, which is the half a policy of
+    // `deleted_at > floor` alone would get wrong.
+    txn.update(&reader(), table, &doc(1, "ordinary"))
+        .await
+        .expect("a live row is not subject to an undo window");
+}
+
+#[tokio::test]
+async fn an_upsert_must_satisfy_the_insert_policy_even_for_a_row_that_exists() {
+    // Documented in `write_many` and, until now, asserted nowhere:
+    //
+    // > `Action::Insert` even for an upsert: the tenant restriction is the
+    // > same expression either way, so a row outside the caller's tenant is
+    // > refused by both, and a row inside it that turns out to exist still
+    // > takes the full `Action::Update` check in the loop below.
+    //
+    // It is a real decision with a real consequence — an upsert is *not* "an
+    // update when the row exists" as far as policy goes — and it is the reason
+    // a mutation swapping the loop's two filters survives the whole suite:
+    // every row that reaches the loop's insert branch has already been checked
+    // against the identical filter by the pre-check above it. See the note
+    // there.
+    //
+    // The policies are deliberately lopsided: `Insert` admits only `note`,
+    // `Update` admits anything. If an upsert of an *existing* row were judged
+    // by `Update` alone, writing `memo` over row 1 would be allowed.
+    let security = slate_kernel::SecurityCatalog::new()
+        .grant(slate_kernel::Grant::new(
+            "reader",
+            DOCS,
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Insert,
+                slate_kernel::Action::Update,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+        ))
+        // The companion, for the reason `an_undo_window_can_be_a_policy_rather
+        // _than_a_role` explains at length: RLS fails closed, so an action with
+        // no policy admits nothing.
+        .policy(slate_kernel::Policy::new(
+            "reads_and_deletes_are_unrestricted",
+            DOCS,
+            [
+                slate_kernel::Action::Read,
+                slate_kernel::Action::Delete,
+                slate_kernel::Action::ReadDeleted,
+            ],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ))
+        .policy(slate_kernel::Policy::new(
+            "only_notes_may_be_created",
+            DOCS,
+            [slate_kernel::Action::Insert],
+            |_: &SecurityContext| {
+                slate_kernel::Expr::eq(slate_schema::Ordinal(1), Value::Str("note".to_owned()))
+            },
+        ))
+        .policy(slate_kernel::Policy::new(
+            "anything_may_be_edited",
+            DOCS,
+            [slate_kernel::Action::Update],
+            |_: &SecurityContext| slate_kernel::Expr::True,
+        ));
+    let store = RecordStore::new(MemoryStore::new(), catalog(), security)
+        .with_clock(Arc::new(FixedClock::at(5_000)));
+
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.insert(&reader(), table, &doc(1, "note"))
+        .await
+        .expect("a note may be created");
+    txn.commit().await.expect("commit");
+
+    // The row exists, and the upsert is still refused: the insert policy
+    // applies to every row of a batch that *may* insert, before storage is
+    // read at all.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    let refused = txn
+        .upsert_many(&reader(), table, &[doc(1, "memo")])
+        .await
+        .expect_err("an upsert is judged by the insert policy too");
+    assert!(
+        matches!(refused, slate_kernel::KernelError::RowCheckFailed { .. }),
+        "{refused:?}"
+    );
+    drop(txn);
+
+    // And `update_many`, which cannot insert, is judged by `Update` alone —
+    // which is what makes the paragraph above a decision rather than an
+    // accident of where the check sits.
+    let txn = store.begin().await.expect("a transaction");
+    let table = txn.catalog().table_by_name("docs").expect("the table");
+    txn.update_many(&reader(), table, &[doc(1, "memo")])
+        .await
+        .expect("an update names an existing row and takes the update policy");
+    txn.commit().await.expect("commit");
+    assert_eq!(state(&store).await, vec![(1, None)]);
+}

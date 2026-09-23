@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
+	"github.com/howlerops/slate-orm/examples/explorer/backends/go/schema"
 )
 
 func (s *server) meta(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
@@ -26,6 +27,11 @@ func (s *server) meta(ctx context.Context, session *slate.Session, _ json.RawMes
 		// `/api/query` served four — and the conformance `meta` case caught
 		// it because the node adapter had already been deriving its list.
 		"tables": knownTables(),
+		// Beside the tables and not among them, for the reason `views` in
+		// `query.go` gives: a view has no id, no index and no write path, and
+		// a client that treated one as a table would generate a row type for
+		// something it cannot write.
+		"views": viewNames(),
 	}, nil
 }
 
@@ -51,6 +57,180 @@ func (s *server) query(ctx context.Context, session *slate.Session, body json.Ra
 		out = append(out, encodeRow(row))
 	}
 	return map[string]any{"rows": out}, nil
+}
+
+// Ordinals of the `books` columns this endpoint names, so a schema change
+// moves one literal rather than five.
+const (
+	bookID       = slate.Ordinal(0)
+	bookAuthorID = slate.Ordinal(1)
+	bookTitle    = slate.Ordinal(2)
+	bookYear     = slate.Ordinal(3)
+)
+
+// windowSpec is the fixed shape `/api/window` takes. See CONTRACT.md.
+type windowSpec struct {
+	Function string `json:"function"`
+	// Partition by `author_id`, rather than one partition over everything.
+	Partition bool `json:"partition"`
+	// Turn an aggregate's frame into a running one by giving it an order.
+	// Ignored by every function that needs an order anyway.
+	Running bool    `json:"running"`
+	Limit   *uint64 `json:"limit"`
+}
+
+func (s *server) window(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec windowSpec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the window: %w", err)
+	}
+
+	// The order is the *window's*, not the query's, and whether there is one
+	// is what turns an aggregate's frame from the whole partition into a
+	// running value. The ranking functions and lag/lead always get one: the
+	// server refuses them without, because the answer would be a number for
+	// an order nobody asked for.
+	ordered := spec.Running
+	var window slate.Window
+	switch spec.Function {
+	case "rowNumber":
+		window, ordered = slate.RowNumberOver(), true
+	case "rank":
+		window, ordered = slate.RankOver(), true
+	case "denseRank":
+		window, ordered = slate.DenseRankOver(), true
+	case "lag":
+		window, ordered = slate.LagOver(slate.Key0(bookYear), 1), true
+	case "lead":
+		window, ordered = slate.LeadOver(slate.Key0(bookYear), 1), true
+	case "sum":
+		window = slate.Over(slate.SumOf(slate.Key0(bookYear)))
+	case "count":
+		window = slate.Over(slate.Count())
+	default:
+		return nil, fmt.Errorf("no such window function: %s", spec.Function)
+	}
+
+	var partition []slate.Column
+	if spec.Partition {
+		partition = []slate.Column{slate.Key0(bookAuthorID)}
+	}
+	var order []slate.SortKey
+	if ordered {
+		order = []slate.SortKey{{Column: bookYear, Direction: slate.Asc}}
+	}
+
+	// `author_id <= 6` keeps out book 19, whose author matches nobody: it is
+	// here for the outer joins and would be a partition of one in every
+	// answer below. The query's own sort is by id, so the three adapters
+	// compare row for row rather than in whatever order the scan produced.
+	filter := slate.Le(bookAuthorID, slate.Uint(6))
+	query := slate.Query{
+		Table:  "books",
+		Filter: &filter,
+		Sort:   []slate.SortKey{{Column: bookID, Direction: slate.Asc}},
+		Limit:  spec.Limit,
+		Window: []slate.Window{window.Over(partition, order)},
+	}
+
+	stream, err := session.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	out := make([]map[string]any, 0, 16)
+	for stream.Next() {
+		// Windowed first: Row advances the cursor.
+		windowed := stream.Windowed()
+		row := stream.Row()
+		out = append(out, map[string]any{
+			"row": encodeRow(row),
+			// Its own list, because it is its own list on the wire: a window
+			// value is not a column and not a computed value, and an adapter
+			// folding it into `row` would return something a caller reads as
+			// a different thing.
+			"windowed": encodeRow(windowed),
+		})
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"rows": out}, nil
+}
+
+// searchSpec is the fixed shape `/api/search` takes. See CONTRACT.md.
+type searchSpec struct {
+	Text string `json:"text"`
+	// "index" or "scan". Which access path to ask the planner for — not a
+	// filter, and not something that may change the rows.
+	Path  string  `json:"path"`
+	Limit *uint64 `json:"limit"`
+}
+
+func (s *server) search(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec searchSpec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the search: %w", err)
+	}
+
+	var hint *slate.AccessHint
+	switch spec.Path {
+	case "index":
+		hint = slate.UsingIndex("by_title_text")
+	case "scan":
+		hint = slate.UsingTableScan()
+	default:
+		return nil, fmt.Errorf("no such access path: %s", spec.Path)
+	}
+
+	// `spec.Text` goes across whole. Splitting it here would be a fourth
+	// tokenizer beside the server's, and a client that split differently finds
+	// fewer rows than the table holds with nothing anywhere reporting it.
+	filter := slate.Contains(bookTitle, spec.Text)
+	query := slate.Query{
+		Table:  "books",
+		Filter: &filter,
+		Sort:   []slate.SortKey{{Column: bookID, Direction: slate.Asc}},
+		Limit:  spec.Limit,
+		Hint:   hint,
+	}
+
+	// Explained before it is run, because the access path is the only thing
+	// that tells the two requests apart: the rows are identical by
+	// construction and an adapter ignoring `path` would look correct.
+	//
+	// A caller without the `explain` grant gets `null` here rather than a
+	// refusal. EXPLAIN is privileged on purpose — a plan is costed against
+	// statistics covering rows the caller's policy hides — and the demo's
+	// `reader` role does not have it. Refusing the whole search over a
+	// diagnostic would make full-text the one feature a restricted reader
+	// cannot use at all, which is a bigger hole than an absent field. Only
+	// PERMISSION_DENIED is swallowed; every other failure is still the
+	// request's failure.
+	var access any
+	plan, err := session.Explain(ctx, query)
+	switch {
+	case err == nil:
+		access = plan.Access
+	case slate.IsKind(err, slate.KindPermissionDenied):
+		access = nil
+	default:
+		return nil, err
+	}
+
+	stream, err := session.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	rows := make([][]tagged, 0, 16)
+	for stream.Next() {
+		rows = append(rows, encodeRow(stream.Row()))
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"rows": rows, "access": access}, nil
 }
 
 func (s *server) join(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
@@ -559,13 +739,29 @@ func (s *server) related(ctx context.Context, session *slate.Session, body json.
 		return nil, fmt.Errorf("decoding the relation: %w", err)
 	}
 
-	way, table := slate.Children, "sales"
+	// The key, from the generated declaration rather than from three string
+	// literals here. `Answers` is the reason: the table a read decodes as is
+	// `sales` one way and `books` the other, and it used to be spelled out
+	// twice in this function and once more in `path` below. Making `Answers`
+	// return the child either way turns four conformance cases red with a
+	// schema-check refusal — the server catches it, so this is a convenience
+	// rather than a fix for a silent bug. See the type's own comment.
+	key := schema.SalesForeignKeys["sale_book"]
+	way := slate.Children
 	if spec.Way == "parents" {
-		way, table = slate.Parents, "books"
+		way = slate.Parents
 	}
-	through := spec.Through
-	if through == "" {
-		through = "sale_book"
+	relation := key.Children()
+	if way == slate.Parents {
+		relation = key.Parents()
+	}
+	table := key.Answers(way)
+	// The conformance corpus names a key that does not exist, so that the
+	// three refusals can be compared. That is the one thing about this call
+	// the three could spell differently, and it is why the override survives
+	// the generated key above.
+	if spec.Through != "" {
+		relation.Through = spec.Through
 	}
 
 	keys := make([][]slate.Value, 0, len(spec.Keys))
@@ -577,8 +773,7 @@ func (s *server) related(ctx context.Context, session *slate.Session, body json.
 		keys = append(keys, []slate.Value{value})
 	}
 
-	groups, err := session.Related(ctx, table,
-		slate.Relation{On: "sales", Through: through, Way: way}, keys...)
+	groups, err := session.Related(ctx, table, relation, keys...)
 	if err != nil {
 		return nil, err
 	}
@@ -755,15 +950,23 @@ func (s *server) predicateWrite(ctx context.Context, session *slate.Session, bod
 	}); err != nil {
 		return nil, err
 	}
+	// Built through the *generated* encoder rather than as a positional list.
+	// The eight values this replaces were in catalog order with nothing
+	// checking that order — the write side of the failure the generated
+	// decoders exist to catch, and the reason the encoders are not another
+	// thing that is generated, compiled and never called.
 	rows := make([][]slate.Value, 0, 4)
 	for n := uint64(0); n < 4; n++ {
-		rows = append(rows, []slate.Value{
-			slate.Uint(predicateFirst + n), slate.Uint(1),
-			slate.String(fmt.Sprintf("Predicate %d", n)),
-			slate.Int(int64(2000 + n)), slate.Float(3.0),
-			slate.Int(1767225600), slate.Vector([]float32{0.1, 0.2, 0.3, 0.4}),
-			slate.Units(1000),
-		})
+		rows = append(rows, schema.Books{
+			Id:        predicateFirst + n,
+			AuthorId:  1,
+			Title:     fmt.Sprintf("Predicate %d", n),
+			Year:      int64(2000 + n),
+			Rating:    3.0,
+			Released:  1767225600,
+			Embedding: []float32{0.1, 0.2, 0.3, 0.4},
+			Price:     slate.Units(1000),
+		}.Row())
 	}
 	if _, err := session.Insert(ctx, "books", rows...); err != nil {
 		return nil, err
@@ -1111,11 +1314,16 @@ func (s *server) path(ctx context.Context, session *slate.Session, body json.Raw
 		keys = append(keys, []slate.Value{value})
 	}
 
+	// Both steps from the generated declaration, so the `Table` beside each
+	// relation is the catalog's answer rather than this file's memory of it.
+	// The two steps go in opposite directions — up to the book a sale sold,
+	// then down to that book's editions — which is exactly the case where
+	// `Answers` earns its keep.
+	up := schema.SalesForeignKeys["sale_book"]
+	down := schema.EditionsForeignKeys["edition_book"]
 	steps := []slate.Step{
-		{Relation: slate.Relation{On: "sales", Through: "sale_book", Way: slate.Parents},
-			Table: "books"},
-		{Relation: slate.Relation{On: "editions", Through: "edition_book", Way: slate.Children},
-			Table: "editions"},
+		{Relation: up.Parents(), Table: up.Answers(slate.Parents)},
+		{Relation: down.Children(), Table: down.Answers(slate.Children)},
 	}
 
 	trees, err := session.RelatedPath(ctx, steps, keys...)
@@ -1161,7 +1369,12 @@ func (s *server) path(ctx context.Context, session *slate.Session, body json.Raw
 // this case against one database in turn: the first purge erases the rows, and
 // the second and third would find nothing and disagree. The upsert puts them
 // back, which is the same trick conditionalDelete uses.
-var purgeIDs = []uint64{9401, 9402, 9403}
+//
+// Below 9000 because `shipments.id_is_seeded` reserves 9000 and above for rows
+// the demo writes in order to have them refused. These were 9401-9403 and were
+// moved when that check arrived: a handler whose own fixture violated the
+// schema would have been a puzzle rather than a demonstration.
+var purgeIDs = []uint64{8401, 8402, 8403}
 
 // purge seeds three shipments, retires two, and erases what was retired.
 //
@@ -1246,4 +1459,405 @@ func (s *server) purge(
 		return nil, err
 	}
 	return map[string]any{"purged": purged.Affected, "left": ids}, nil
+}
+
+// restoreID is the shipment the restore handlers own.
+//
+// Below purgeIDs on purpose. The purge case lists what survives at
+// `id >= 8401`, so a row this handler left behind there would change that
+// case's answer depending on which ran first — the ordering bug that case's
+// own comment records having been bitten by.
+const restoreID = uint64(8301)
+
+// retireRestoreRow puts restoreID in the table, retired, and hands back the row.
+//
+// Upsert then delete, because a row cannot be created already retired — the
+// stamp is the server's clock and Delete is the only path that sets it. The
+// upsert is also what makes this idempotent now that an upsert at a retired
+// row's key restores it rather than reporting it missing, which is the very
+// behaviour these two handlers exist to demonstrate.
+func (s *server) retireRestoreRow(
+	ctx context.Context, session *slate.Session,
+) (schema.Shipments, error) {
+	var zero schema.Shipments
+	fresh := []slate.Value{
+		slate.Uint(restoreID), slate.Uint(10), slate.String("pending"), slate.Null{},
+	}
+	if _, err := session.Upsert(ctx, "shipments", fresh); err != nil {
+		return zero, err
+	}
+	if _, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(restoreID)}); err != nil {
+		return zero, err
+	}
+	stream, err := session.Query(ctx, slate.Query{
+		Table:          "shipments",
+		Filter:         slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+		IncludeDeleted: true,
+	})
+	if err != nil {
+		return zero, err
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		return zero, err
+	}
+	if len(rows) != 1 {
+		return zero, fmt.Errorf("expected one retired shipment, got %d", len(rows))
+	}
+	return schema.ScanShipments(rows[0])
+}
+
+// leaveShipmentsAsFound erases this handler's row and puts the seeder's back.
+//
+// The same shape the purge handler uses, and for the same reason: three
+// adapters run every case against one database in turn, so a case that leaves
+// a row behind makes the next adapter's answer depend on the order. A purge is
+// table-wide, so it takes the seeder's row 603 with it and 603 has to be
+// re-retired afterwards.
+func (s *server) leaveShipmentsAsFound(ctx context.Context, session *slate.Session) error {
+	if _, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(restoreID)}); err != nil {
+		return err
+	}
+	if _, err := session.PurgeDeleted(ctx, "shipments", time.Now().Unix()+3600, 0); err != nil {
+		return err
+	}
+	seeded := []slate.Value{
+		slate.Uint(603), slate.Uint(13), slate.String("pending"), slate.Null{},
+	}
+	if _, err := session.Upsert(ctx, "shipments", seeded); err != nil {
+		return err
+	}
+	_, err := session.Delete(ctx, "shipments", []slate.Value{slate.Uint(603)})
+	return err
+}
+
+// restore brings a retired row back, through the generated helper.
+//
+// A retired row used to be writable by nobody at any privilege, so the only
+// thing that could happen to one was being erased. This is the other half of a
+// retention window, and the reason it is a conformance case is that all three
+// clients now generate a Restored helper and all three have to agree about
+// what it produces and what the server does with it.
+//
+// The answer carries the row's state at three points rather than just the
+// last, because "it is live now" is also what a handler that quietly
+// re-inserted a fresh row would report.
+func (s *server) restore(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	retired, err := s.retireRestoreRow(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+
+	// An ordinary read, with no IncludeDeleted: the row is invisible.
+	stream, err := session.Query(ctx, slate.Query{
+		Table:  "shipments",
+		Filter: slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	hiddenRows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	hidden := make([]uint64, 0, len(hiddenRows))
+	for _, row := range hiddenRows {
+		id, ok := row[0].(slate.Uint)
+		if !ok {
+			return nil, fmt.Errorf("id is %T", row[0])
+		}
+		hidden = append(hidden, uint64(id))
+	}
+
+	// The restore. Restored is generated from the catalog — it clears
+	// whichever column the catalog names as the stamp — and the update is
+	// ordinary, because there is no restore verb.
+	if _, err := session.Update(ctx, "shipments", retired.Restored().Row()); err != nil {
+		return nil, err
+	}
+
+	stream, err = session.Query(ctx, slate.Query{
+		Table:  "shipments",
+		Filter: slate.Filter(slate.Eq(0, slate.Uint(restoreID))),
+	})
+	if err != nil {
+		return nil, err
+	}
+	backRows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]uint64, 0, len(backRows))
+	retiredAfter := make([]bool, 0, len(backRows))
+	statusAfter := make([]string, 0, len(backRows))
+	bookAfter := make([]uint64, 0, len(backRows))
+	for _, row := range backRows {
+		back, err := schema.ScanShipments(row)
+		if err != nil {
+			return nil, err
+		}
+		visible = append(visible, back.Id)
+		retiredAfter = append(retiredAfter, back.Retired())
+		statusAfter = append(statusAfter, back.Status)
+		bookAfter = append(bookAfter, back.BookId)
+	}
+	answer := map[string]any{
+		"retired_before":       retired.Retired(),
+		"hidden_while_retired": hidden,
+		"visible_after":        visible,
+		"retired_after":        retiredAfter,
+		// Every other column carried through, which is what separates a
+		// restore from an insert of a fresh row at the same key.
+		"status_after":  statusAfter,
+		"book_id_after": bookAfter,
+	}
+	if err := s.leaveShipmentsAsFound(ctx, session); err != nil {
+		return nil, err
+	}
+	return answer, nil
+}
+
+// restoreUnchanged writes the retired row back exactly as IncludeDeleted gave it.
+//
+// The mistake anybody restoring by hand makes first, and the reason the
+// refusal is its own error rather than a row-level-security one: the
+// soft-delete column is the server's to write. Here so that the three clients
+// are compared on the reason token and the message, not only on the happy path.
+//
+// The write is refused, so the row is left retired and the cleanup is the same
+// one the happy path does.
+func (s *server) restoreUnchanged(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	retired, err := s.retireRestoreRow(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	_, writeErr := session.Update(ctx, "shipments", retired.Row())
+	if cleanupErr := s.leaveShipmentsAsFound(ctx, session); cleanupErr != nil {
+		return nil, cleanupErr
+	}
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	// Reached only if the server stopped refusing, which is a disagreement
+	// worth failing loudly on rather than reporting as an answer.
+	return nil, errors.New("the server accepted a caller-supplied deleted_at")
+}
+
+// badStatus writes a shipment that breaks two of its table's checks at once.
+//
+// Two, not one, and that is the point: `violations` is a *list*, decoded by
+// counting up from a count, and reading one failure is different code from
+// reading several. With a single check in the demo this case could only ever
+// exercise the singleton, and the list was reached only by each client's unit
+// fixture. `"teleported"` breaks `status_known` and `id` 9499 breaks
+// `id_is_seeded`, so the refusal carries both — in the order `head.toml`
+// declares them, which is not the order the row breaks them in.
+//
+// The row is never written, so there is nothing to clean up — which is the one
+// convenience a refusal case has over the purge above.
+func (s *server) badStatus(
+	ctx context.Context, session *slate.Session, _ json.RawMessage,
+) (any, error) {
+	_, err := session.Upsert(ctx, "shipments", []slate.Value{
+		slate.Uint(9499), slate.Uint(10), slate.String("teleported"), slate.Null{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Reached only if the server stopped enforcing the check, which is a
+	// disagreement worth failing loudly on rather than reporting as an answer.
+	return nil, fmt.Errorf("the server accepted a status no CHECK admits")
+}
+
+// typed reads two rows and decodes them with the *generated* decoders.
+//
+// The gap this closes, recorded when the decoders were first executed: every
+// test of them builds `[]slate.Value` by hand, so all three suites agree with
+// their own idea of what the server sends. A value arriving as `Int` where the
+// schema says `Uint` would pass every one of them and fail here — which is the
+// only failure the decoders exist to catch that a hand-built row cannot show.
+//
+// It is also the first thing that *calls* a generated decoder outside a test.
+// They were generated, compiled, vetted and run against fixtures, and no code
+// path used one; a decoder nothing calls is a decoder whose contract with the
+// server is a hypothesis.
+//
+// `books` 10 covers u64, str, i64, decimal and vector; `shipments` 600 covers
+// the nullable column and the enumerated one. `rating` is left out on purpose:
+// a float's spelling is the one thing three languages will not agree on
+// without a shared formatter, the corpus pins it elsewhere, and this case is
+// about *decoding* rather than about rendering.
+func (s *server) typed(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
+	bookRow, found, err := session.Get(ctx, "books", []slate.Value{slate.Uint(10)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded book is not there")
+	}
+	book, err := schema.ScanBooks(bookRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding books: %w", err)
+	}
+
+	shipmentRow, found, err := session.Get(ctx, "shipments", []slate.Value{slate.Uint(600)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded shipment is not there")
+	}
+	shipment, err := schema.ScanShipments(shipmentRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding shipments: %w", err)
+	}
+
+	// The other three tables, added because two of five decoders having a live
+	// row meant the claim "the decoders agree with the server" held for the
+	// two somebody picked. These carry no value *shape* the first two do not —
+	// their point is the column list: each one's ordinals are checked against
+	// the real catalog rather than against a fixture written from it.
+	authorRow, found, err := session.Get(ctx, "authors", []slate.Value{slate.Uint(1)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded author is not there")
+	}
+	author, err := schema.ScanAuthors(authorRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding authors: %w", err)
+	}
+
+	saleRow, found, err := session.Get(ctx, "sales", []slate.Value{slate.Uint(100)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded sale is not there")
+	}
+	sale, err := schema.ScanSales(saleRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding sales: %w", err)
+	}
+
+	editionRow, found, err := session.Get(ctx, "editions", []slate.Value{slate.Uint(500)})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the seeded edition is not there")
+	}
+	edition, err := schema.ScanEditions(editionRow)
+	if err != nil {
+		return nil, fmt.Errorf("decoding editions: %w", err)
+	}
+
+	// Every integer as a decimal string, because one of the three languages
+	// reads them as `bigint` and JSON numbers are doubles. The demo's other
+	// handlers spell values the same way for the same reason.
+	deleted := "null"
+	if shipment.DeletedAt != nil {
+		deleted = fmt.Sprintf("%d", *shipment.DeletedAt)
+	}
+	return map[string]any{
+		"book": map[string]any{
+			"id":        fmt.Sprintf("%d", book.Id),
+			"author_id": fmt.Sprintf("%d", book.AuthorId),
+			"title":     book.Title,
+			"year":      fmt.Sprintf("%d", book.Year),
+			// A decimal is a count of the smallest unit; the scale lives in the
+			// schema and the row type does not know it.
+			"price":      fmt.Sprintf("%d", int64(book.Price)),
+			"dimensions": len(book.Embedding),
+		},
+		"shipment": map[string]any{
+			"id":         fmt.Sprintf("%d", shipment.Id),
+			"book_id":    fmt.Sprintf("%d", shipment.BookId),
+			"status":     shipment.Status,
+			"deleted_at": deleted,
+			// Through the *generated* accessor rather than by testing
+			// `DeletedAt` here. `--print-schema` publishes which column is the
+			// retirement stamp, so the generator knows and the caller should
+			// not have to — and putting it in this response is what stops the
+			// accessor being generated, compiled and never called.
+			"retired": shipment.Retired(),
+		},
+		"author": map[string]any{
+			"id": fmt.Sprintf("%d", author.Id),
+			// `name` and `country` are both strings and adjacent, so a decoder
+			// one ordinal out would read a plausible value. The seeded values
+			// differ, which is what makes that visible here.
+			"name":    author.Name,
+			"country": author.Country,
+			"born":    fmt.Sprintf("%d", author.Born),
+		},
+		"sale": map[string]any{
+			"id":      fmt.Sprintf("%d", sale.Id),
+			"book_id": fmt.Sprintf("%d", sale.BookId),
+			"units":   fmt.Sprintf("%d", sale.Units),
+		},
+		"edition": map[string]any{
+			"id":      fmt.Sprintf("%d", edition.Id),
+			"book_id": fmt.Sprintf("%d", edition.BookId),
+			"format":  edition.Format,
+		},
+	}, nil
+}
+
+// badBatch sends two shipments an independent batch will refuse, one for two
+// reasons and one for a single reason.
+//
+// The gap this closes: a batch reports each failure as *data* inside a
+// successful response, so there are no trailers and no
+// `grpc-status-details-bin`. A caller submitting a form as a batch got the
+// reason token and the prose and nothing to put beside a field, which is
+// where every client was before the check decoders were written. The server
+// now carries the same blob in the message body.
+//
+// Both rows are refused, so nothing is written and there is nothing to undo —
+// and the two refusals differ, which is what makes the case say more than "a
+// batch can fail": 9498 breaks `status_known` and `id_is_seeded`, 9497 breaks
+// only `id_is_seeded`, and an adapter reporting one list for both would be
+// caught here rather than looking plausible.
+func (s *server) badBatch(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
+	b := slate.NewBatch(slate.Independent)
+	b.Insert("shipments", []slate.Value{
+		slate.Uint(9498), slate.Uint(10), slate.String("teleported"), slate.Null{},
+	})
+	b.Insert("shipments", []slate.Value{
+		slate.Uint(9497), slate.Uint(10), slate.String("pending"), slate.Null{},
+	})
+
+	result, err := session.Batch(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+
+	outcomes := make([]any, 0, len(result.Outcomes))
+	for _, one := range result.Outcomes {
+		if one.OK() {
+			// Reached only if the server stopped enforcing a check, which is a
+			// disagreement worth failing loudly on.
+			return nil, fmt.Errorf("the server accepted a row two checks refuse")
+		}
+		var e *slate.Error
+		if !errors.As(one.Err, &e) {
+			return nil, one.Err
+		}
+		broke := make([]map[string]string, 0, len(e.Violations))
+		for _, violation := range e.Violations {
+			broke = append(broke, map[string]string{
+				"check": violation.Check, "column": violation.Column,
+			})
+		}
+		outcomes = append(outcomes, map[string]any{
+			"kind": kindName(e.Kind), "reason": e.Reason, "violations": broke,
+		})
+	}
+	return map[string]any{"outcomes": outcomes}, nil
 }

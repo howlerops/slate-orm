@@ -1,0 +1,23 @@
+{
+  "note": "Claims this repository has corrected, and must not state again. A correction that reaches one copy of a claim and leaves the others is the failure this list exists for; see scripts/check_retired_claims.py. Add an entry when you withdraw a claim that appeared in more than one place, naming the entry that withdrew it. Occurrences inside ledger/ are history and are never checked.",
+  "retired": [
+    {
+      "phrase": "a guard whose only witness is a suite you cannot run",
+      "retired_by": "ledger/2026-09-23-the-example-suite-does-run-here-in-release.md",
+      "why": "The suite runs here in --release; it is the debug build that does not fit. The guard has since been seen to fire as loader_cliff, exit 101.",
+      "instead": "Name the profile: the debug build is what exhausts the disk."
+    },
+    {
+      "phrase": "the runner that does reach it cannot be built",
+      "retired_by": "ledger/2026-09-23-the-example-suite-does-run-here-in-release.md",
+      "why": "False as written. It cannot be built in debug on this container; --release is 131 MB and runs.",
+      "instead": "SKIP_BUILD=1 BINARIES_DIR=target/release/examples, per CLAUDE.md."
+    },
+    {
+      "phrase": "linking eight binaries",
+      "retired_by": "ledger/2026-09-23-the-example-suite-does-run-here-in-release.md",
+      "why": "slate-slatedb has nine examples, and has since one was added.",
+      "instead": "nine binaries"
+    }
+  ]
+}

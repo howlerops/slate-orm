@@ -323,6 +323,26 @@ func rowFromProto(row *pb.Row) ([]Value, error) {
 	return out, nil
 }
 
+// windowedFromProto decodes a row's window values, the third list, for the
+// reason [rowFromProto] gives one level over: a window sits past every
+// computed value in the server's own flat row, so folding the two together
+// would make "the second computed value" mean a different position depending
+// on how many windows the query asked for.
+func windowedFromProto(row *pb.Row) ([]Value, error) {
+	if row == nil || len(row.Windowed) == 0 {
+		return nil, nil
+	}
+	out := make([]Value, 0, len(row.Windowed))
+	for i, v := range row.Windowed {
+		decoded, err := valueFromProto(v)
+		if err != nil {
+			return nil, fmt.Errorf("window value %d: %w", i, err)
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
+}
+
 // computedFromProto decodes a row's computed values, which are carried apart
 // from its columns for the reason [rowFromProto] gives.
 func computedFromProto(row *pb.Row) ([]Value, error) {
@@ -562,6 +582,7 @@ type RowStream struct {
 	session   *Session
 	batch     [][]Value
 	computed  [][]Value
+	windowed  [][]Value
 	at        int
 	servedBy  *ServedBy
 	warnings  []string
@@ -619,6 +640,7 @@ func (r *RowStream) Next() bool {
 		}
 		r.batch = r.batch[:0]
 		r.computed = r.computed[:0]
+		r.windowed = r.windowed[:0]
 		r.at = 0
 		for _, row := range message.Rows {
 			decoded, err := rowFromProto(row)
@@ -633,8 +655,15 @@ func (r *RowStream) Next() bool {
 				r.done = true
 				return false
 			}
+			windows, err := windowedFromProto(row)
+			if err != nil {
+				r.err = err
+				r.done = true
+				return false
+			}
 			r.batch = append(r.batch, decoded)
 			r.computed = append(r.computed, extra)
+			r.windowed = append(r.windowed, windows)
 		}
 	}
 	return true
@@ -673,6 +702,21 @@ func (r *RowStream) Computed() []Value {
 		return nil
 	}
 	return r.computed[r.at]
+}
+
+// Windowed is what [Query.Window] produced for the row [RowStream.Row] is
+// about to return, in declaration order. Empty when the query has no windows.
+//
+// A third list beside [RowStream.Computed], not more of it: a window sits past
+// every computed value, so folding them together would make "computed value 1"
+// mean a different thing depending on how many windows were asked for.
+//
+// Read it *before* [RowStream.Row], which advances the cursor.
+func (r *RowStream) Windowed() []Value {
+	if r.at >= len(r.windowed) {
+		return nil
+	}
+	return r.windowed[r.at]
 }
 
 // Err is why the stream stopped, or nil if it simply ended.

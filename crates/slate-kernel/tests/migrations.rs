@@ -410,9 +410,12 @@ async fn a_changed_column_type_is_refused_rather_than_read_as_something_else() {
         "{error}"
     );
     let message = error.to_string();
-    // The message names what the fingerprint covers, because the fingerprint
-    // itself cannot say which of them moved.
-    assert!(message.contains("each one's type"), "{message}");
+    // The message names the column that moved. It used to name what the
+    // fingerprint *covers* — six things, one of which — because a hash cannot
+    // say which; the stored schema can, and this is the assertion that
+    // changed when it started to.
+    assert!(message.contains("column 1 `email`"), "{message}");
+    assert!(message.contains("was string"), "{message}");
     assert!(message.contains("Renames"), "{message}");
 }
 
@@ -459,16 +462,154 @@ async fn adding_a_nullable_column_is_not_a_migration_but_it_is_a_new_layout() {
         .build()
         .unwrap();
 
-    // It changes the fingerprint — the column count moved — and that is
-    // correct: the decoder reads a different number of columns. What matters
-    // is that it is *refused*, loudly, rather than silently accepted, because
-    // the runner cannot tell an appended column from a retyped one and the
-    // safe answer to "I cannot tell" is no.
-    //
-    // This is the sharpest limitation of the fingerprint and it is recorded
-    // rather than papered over: a genuinely additive change needs a hand.
+    // It changes the fingerprint — the column count moved — and it is no
+    // longer refused. **This assertion was the opposite until the schema was
+    // stored**, and the comment then said why: "the runner cannot tell an
+    // appended column from a retyped one and the safe answer to 'I cannot
+    // tell' is no", which it called the sharpest limitation of the
+    // fingerprint. It can tell now, so a genuinely additive change no longer
+    // needs a hand.
+    let plan = migrate::plan(&store, &catalog(widened.clone()))
+        .await
+        .unwrap();
+    assert!(!plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.steps
+            .iter()
+            .any(|step| matches!(step, Step::WidenSchema { added, .. } if added == &["nickname"])),
+        "{plan:?}"
+    );
+
+    // And the row written before the column existed still reads, with the new
+    // column null. This is the claim the whole change rests on: nothing is
+    // rewritten because nothing needs to be — `decode_row` reads the row's own
+    // schema version and skips a column that had not been added yet.
+    migrate::migrate(&store, &catalog(widened.clone()))
+        .await
+        .unwrap();
+    let records = RecordStore::new(store.clone(), catalog(widened.clone()), security());
+    let txn = records.begin().await.unwrap();
+    let stored = txn
+        .get(&context(), &widened, &[Value::U64(1)])
+        .await
+        .unwrap()
+        .expect("the row written before the widening is gone");
+    txn.rollback();
+    let nickname = widened.ordinal_of("nickname").unwrap();
+    assert_eq!(stored.get(nickname), Some(&Value::Null));
+    // The columns that were there still read as themselves, which is the half
+    // a wrong prefix comparison would break.
+    assert_eq!(
+        stored.get(widened.ordinal_of("email").unwrap()),
+        Some(&Value::Str("a@x".into()))
+    );
+}
+
+/// A retype is still refused, which is the other half of the pair.
+///
+/// Without this the change above would read as "layout refusals were
+/// weakened". They were narrowed: an append is told from a retype and only one
+/// of the two is let through.
+#[tokio::test]
+async fn a_retype_is_still_refused_after_an_append_is_allowed() {
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(false)))
+        .await
+        .unwrap();
+
+    let retyped = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::U64)
+        .added_column("nickname", ValueType::Str, 2)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+
+    // Appended *and* retyped, which is the case that makes the prefix
+    // comparison load-bearing: a differ that reported only the column count
+    // would call this additive and let a `string` column be read as `u64`.
+    let plan = migrate::plan(&store, &catalog(retyped)).await.unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.why_blocked().contains("column 1 `email`"),
+        "{}",
+        plan.why_blocked()
+    );
+}
+
+/// A column appended at a version rows were already written at is refused.
+///
+/// It looks additive and is not: `present_at` would say the column *was* there
+/// when those rows were written, so the decoder would read a value nobody
+/// wrote. The `added_in` is the whole of what makes an append safe, and this
+/// is the case where it is wrong.
+#[tokio::test]
+async fn a_column_appended_at_an_already_written_version_is_refused() {
+    let store = MemoryStore::new();
+    let versioned = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+    migrate::migrate(&store, &catalog(versioned)).await.unwrap();
+
+    // Added at 2, and rows have already been written at 2.
+    let widened = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .added_column("nickname", ValueType::Str, 2)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
     let plan = migrate::plan(&store, &catalog(widened)).await.unwrap();
     assert!(plan.is_blocked(), "{plan:?}");
+}
+
+/// A table that *loses* a column is refused, which the append rule does not
+/// cover by symmetry.
+///
+/// An append is safe because `present_at` reads the row's own written version
+/// and hands back a default for a column that did not exist yet. A narrowing
+/// has no such mechanism working for it: every stored row was encoded with the
+/// wider column list, so the trailing value is still in the bytes with nothing
+/// declaring what it is. Letting it through would either misread the row or
+/// silently orphan a value, and both are worse than a refusal at startup.
+///
+/// This test exists because a mutation that replaced the "and it did not get
+/// wider" half of the compatibility test with `false` survived the whole
+/// suite: every other case here either changes the prefix or adds a column, so
+/// nothing pinned the direction.
+#[tokio::test]
+async fn a_table_that_loses_a_column_is_refused() {
+    let store = MemoryStore::new();
+    let wide = members(None);
+    migrate::migrate(&store, &catalog(wide.clone()))
+        .await
+        .unwrap();
+    seed(&store, &wide, &[(1, "a@x", 7)]).await;
+
+    // The same table with `team` gone. The prefix is untouched, so the only
+    // layout change is the count — which is exactly the shape an append has,
+    // and is why the count alone cannot decide.
+    let narrowed = TableDef::builder("members", MEMBERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .schema_version(2)
+        .build()
+        .unwrap();
+
+    let plan = migrate::plan(&store, &catalog(narrowed)).await.unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.why_blocked().contains("had 3 columns and now has 2"),
+        "{}",
+        plan.why_blocked()
+    );
 }
 
 #[tokio::test]
@@ -653,6 +794,54 @@ async fn an_unreadable_state_record_is_a_refusal_naming_the_table() {
     );
 }
 
+/// Every `ValueType` fingerprints differently from every other.
+///
+/// `type_code` is written out by hand precisely so that a type cannot be
+/// renumbered by accident, and it ends in `_ => 0` so a variant added upstream
+/// compiles. That arm is deliberate and it is also a trap: a type nobody adds
+/// a line for takes code 0, and 0 is shared, so two such columns fingerprint
+/// identically and a migration between them is invisible. Nothing checked
+/// that, because until `ValueType::ALL` existed there was no way to loop over
+/// the type space — a test naming nine types by hand would have gone stale
+/// exactly the way the thing it was checking does.
+///
+/// Through `fingerprint` rather than `type_code`, which is private: the
+/// property that matters is that two schemas differing only in a column's type
+/// hash apart, and that is what a caller sees.
+#[test]
+fn every_value_type_fingerprints_apart() {
+    let mut seen: std::collections::BTreeMap<u64, ValueType> = std::collections::BTreeMap::new();
+    for kind in ValueType::ALL {
+        let builder = TableDef::builder("t", USERS).column("id", ValueType::U64);
+        // An array column must declare what it holds, so it cannot be built
+        // the same way as the other nine. The element type is hashed as well
+        // as the array's own code, which is why it is pinned here rather than
+        // varied: this test is about `type_code`, and
+        // `the_element_type_is_part_of_the_fingerprint` is about the element.
+        let builder = if kind == ValueType::Array {
+            builder.array_column("v", ValueType::Bool)
+        } else {
+            builder.column("v", kind)
+        };
+        let table = builder
+            .primary_key(["id"])
+            .build()
+            .unwrap_or_else(|e| panic!("a table with a {kind} column should build: {e}"));
+        let hash = migrate::fingerprint(&table);
+        if let Some(clash) = seen.insert(hash, kind) {
+            panic!(
+                "a {kind} column and a {clash} column fingerprint identically \
+                 ({hash:#x}); give {kind} its own arm in type_code"
+            );
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        ValueType::ALL.len(),
+        "one fingerprint per type, and no type skipped"
+    );
+}
+
 #[test]
 fn the_fingerprint_ignores_names_and_notices_layout() {
     let base = users(false);
@@ -750,9 +939,403 @@ fn a_plan_with_a_refusal_is_blocked_and_says_so() {
             table: "users".into(),
             stored: 1,
             current: 2,
+            // No stored schema, which is the case this assertion is about:
+            // being blocked does not depend on being able to say why.
+            changes: vec![],
         }],
     };
     assert!(plan.is_blocked());
     assert!(!plan.is_empty());
     assert!(plan.why_blocked().contains("users"));
+}
+
+// --- the stored schema -------------------------------------------------------
+
+/// Every layout the fingerprint moves for, the stored schema names — and
+/// nothing else moves either.
+///
+/// This is the property that justifies storing exactly the hash's inputs, and
+/// `docs/persisting-the-schema.md` says it should be a test rather than a hope:
+/// *every difference the fingerprint detects is one the stored schema can name,
+/// and every difference the stored schema can name is one the fingerprint
+/// detects.* Both directions, over one list, so a change to either side that
+/// breaks the correspondence fails here.
+///
+/// A rename is in the list with `same: true` — it is the one difference the
+/// stored schema holds and deliberately does not report, which is the whole
+/// reason names are stored and not hashed.
+#[test]
+fn every_layout_change_moves_the_fingerprint() {
+    let base = users(false);
+    let cases: Vec<(&str, TableDef, bool)> = vec![
+        (
+            "a rename",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .column("email_address", ValueType::Str)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            true,
+        ),
+        (
+            "a retype",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .column("email", ValueType::U64)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            "nullability",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .nullable_column("email", ValueType::Str)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            "a third column",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .column("email", ValueType::Str)
+                .column("team", ValueType::U64)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            "a wider key",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .column("email", ValueType::Str)
+                .primary_key(["id", "email"])
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            "a tenant column",
+            TableDef::builder("users", USERS)
+                .column("id", ValueType::U64)
+                .column("email", ValueType::Str)
+                .primary_key(["id"])
+                .tenant_column("id")
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            // Against the scale-2 baseline below. A decimal's scale decides
+            // what its stored units *mean*, so it is a layout change in the
+            // same sense a retype is.
+            "a different scale",
+            TableDef::builder("money", TableId(90))
+                .column("id", ValueType::U64)
+                .decimal_column("amount", 3)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            false,
+        ),
+        (
+            "the same scale",
+            TableDef::builder("money", TableId(90))
+                .column("id", ValueType::U64)
+                .decimal_column("amount", 2)
+                .primary_key(["id"])
+                .build()
+                .unwrap(),
+            true,
+        ),
+    ];
+
+    // The scale cases are against each other rather than against `users`,
+    // which has no decimal column; everything else is against `base`.
+    for (what, table, same) in cases {
+        let against = if table.name() == "money" {
+            TableDef::builder("money", TableId(90))
+                .column("id", ValueType::U64)
+                .decimal_column("amount", 2)
+                .primary_key(["id"])
+                .build()
+                .unwrap()
+        } else {
+            base.clone()
+        };
+        let hashed_same = migrate::fingerprint(&against) == migrate::fingerprint(&table);
+        let named = migrate::layout_changes(
+            &migrate::StoredSchema::of(&against),
+            &migrate::StoredSchema::of(&table),
+        );
+        assert_eq!(
+            hashed_same,
+            named.is_empty(),
+            "{what}: the fingerprint says {}, the stored schema says {named:?}",
+            if hashed_same { "same" } else { "moved" }
+        );
+        assert_eq!(hashed_same, same, "{what}: the fingerprint disagrees");
+    }
+}
+
+/// The refusal names the column, which is the point of storing anything.
+#[tokio::test]
+async fn a_retyped_column_is_refused_by_name_rather_than_by_hash() {
+    let store = MemoryStore::new();
+    let before = Catalog::from_tables([users(false)]).unwrap();
+    migrate::migrate(&store, &before).await.unwrap();
+
+    let after = Catalog::from_tables([TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .unwrap()])
+    .unwrap();
+    let plan = migrate::plan(&store, &after).await.unwrap();
+    assert_eq!(plan.refusals.len(), 1, "{:?}", plan.refusals);
+
+    let Refusal::LayoutChanged { changes, .. } = &plan.refusals[0] else {
+        panic!("expected a layout refusal, got {:?}", plan.refusals[0]);
+    };
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    let message = plan.refusals[0].to_string();
+    // The column, by ordinal *and* by the name the database has — both,
+    // because an ordinal alone is what the old message effectively gave and a
+    // name alone does not survive a rename.
+    assert!(message.contains("column 1 `email`"), "{message}");
+    assert!(message.contains("was string"), "{message}");
+    assert!(message.contains("is now u64"), "{message}");
+    // And it no longer leads with two hex numbers, which is the thing this
+    // replaced.
+    assert!(!message.contains("0x"), "{message}");
+}
+
+/// A record written before stored schemas still refuses, and says so.
+///
+/// The permanent case, not a transition: an old binary's record, a restored
+/// backup, a table nobody has migrated since the upgrade. The refusal falls
+/// back to the hash and tells the reader which situation they are in.
+#[tokio::test]
+async fn a_record_with_no_stored_schema_falls_back_to_the_hash() {
+    let store = MemoryStore::new();
+    let before = Catalog::from_tables([users(false)]).unwrap();
+    migrate::migrate(&store, &before).await.unwrap();
+
+    // Rewrite the record as a version 1 one, which is what an older binary
+    // would have left. Done through the public encoder rather than by hand so
+    // the test cannot drift from the format.
+    let txn = store.begin().await.unwrap();
+    let key = slate_kernel::keys::meta_key(USERS);
+    let old = migrate::TableState {
+        schema_version: 0,
+        fingerprint: migrate::fingerprint(&users(false)),
+        built: vec![],
+        schema: None,
+    };
+    txn.put(key.clone(), migrate::encode_state(&old)).unwrap();
+    txn.commit().await.unwrap();
+
+    let after = Catalog::from_tables([TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .unwrap()])
+    .unwrap();
+    let plan = migrate::plan(&store, &after).await.unwrap();
+    let Refusal::LayoutChanged { changes, .. } = &plan.refusals[0] else {
+        panic!("expected a layout refusal, got {:?}", plan.refusals[0]);
+    };
+    assert!(changes.is_empty(), "{changes:?}");
+    let message = plan.refusals[0].to_string();
+    assert!(message.contains("predates stored schemas"), "{message}");
+    // The hash is back in the message, because it is all there is.
+    assert!(message.contains("0x"), "{message}");
+
+    // And migrating once upgrades the record, so the *next* refusal names the
+    // column. That is the lazy upgrade, end to end.
+    migrate::migrate(&store, &before).await.unwrap();
+    let plan = migrate::plan(&store, &after).await.unwrap();
+    let Refusal::LayoutChanged { changes, .. } = &plan.refusals[0] else {
+        panic!("expected a layout refusal, got {:?}", plan.refusals[0]);
+    };
+    assert_eq!(changes.len(), 1, "{changes:?}");
+}
+
+/// A version 1 record still reads, which is the compatibility promise.
+#[tokio::test]
+async fn a_version_one_record_reads_and_a_version_two_one_round_trips() {
+    let store = MemoryStore::new();
+    let catalog = Catalog::from_tables([users(true)]).unwrap();
+    migrate::migrate(&store, &catalog).await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let state = states[0].1.as_ref().unwrap();
+    let schema = state.schema.as_ref().expect("a fresh migration writes one");
+    assert_eq!(*schema, migrate::StoredSchema::of(&users(true)));
+    // The names are there, which is the addition to the hash's inputs.
+    assert_eq!(schema.columns[1].name, "email");
+    // And the indexes still round trip beside it, which is what the record
+    // held before and must keep holding.
+    assert_eq!(state.built, vec![BY_EMAIL]);
+}
+
+/// Every field of a stored column survives the round trip, over a table that
+/// actually has one of each.
+///
+/// The test above round-trips `users`, whose two columns are non-null, plain
+/// `u64` and `str` with no scale, no element type, no droppedness and no
+/// tenant column — so four of `StoredColumn`'s six fields and the tenant tag
+/// were written, read and compared against zero on both sides. Four mutations
+/// that dropped a field from the encoder survived the whole suite.
+///
+/// What they would have cost is not an unreadable record: it is a table that
+/// migrates once and is **refused on every startup after**, because the
+/// decoded schema disagrees with the one computed from the catalog in a field
+/// that never reached the keyspace. That is the second assertion here, and it
+/// is the one an operator would have met.
+#[tokio::test]
+async fn every_stored_column_field_survives_the_round_trip() {
+    fn rich() -> TableDef {
+        TableDef::builder("rich", TableId(3))
+            .column("tenant", ValueType::U64)
+            .column("id", ValueType::U64)
+            // Nullability.
+            .nullable_column("note", ValueType::Str)
+            // A scale.
+            .decimal_column("price", 2)
+            // An element type.
+            .array_column("tags", ValueType::Str)
+            // And droppedness, which needs a column to have been there first.
+            .column("legacy", ValueType::Str)
+            .drop_column("legacy", 2)
+            .primary_key(["tenant", "id"])
+            .tenant_column("tenant")
+            .schema_version(2)
+            .build()
+            .unwrap()
+    }
+
+    let store = MemoryStore::new();
+    let catalog = Catalog::from_tables([rich()]).unwrap();
+    migrate::migrate(&store, &catalog).await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let state = states[0].1.as_ref().unwrap();
+    let schema = state.schema.as_ref().expect("a fresh migration writes one");
+    // The oracle: what came back is what the catalog says, field for field,
+    // rather than a list of assertions naming the fields somebody remembered.
+    assert_eq!(*schema, migrate::StoredSchema::of(&rich()));
+
+    // And the symptom, which is what a lost field actually costs.
+    let again = migrate::plan(&store, &catalog).await.unwrap();
+    assert!(again.is_empty(), "a second startup found work: {again:?}");
+}
+
+/// A record that says version 1 and carries more than a version 1 record is
+/// corrupt, not a version 2 one.
+///
+/// The format byte decides, and the bytes after it must agree. Reading the
+/// extra as a schema anyway would mean a record could claim any version and be
+/// parsed as whatever its length suggested, which is the misparse the format
+/// byte exists to prevent — the module's own opening argument.
+#[tokio::test]
+async fn a_version_one_record_with_more_after_it_is_refused() {
+    let store = MemoryStore::new();
+    let catalog = Catalog::from_tables([users(false)]).unwrap();
+    migrate::migrate(&store, &catalog).await.unwrap();
+
+    // A version 1 record, with a version 2 record's tail glued on. Built from
+    // the two encoders rather than by hand, so the test cannot drift from the
+    // format it is about.
+    let v1 = migrate::encode_state(&migrate::TableState {
+        schema_version: 0,
+        fingerprint: migrate::fingerprint(&users(false)),
+        built: vec![],
+        schema: None,
+    });
+    let v2 = migrate::encode_state(&migrate::TableState {
+        schema_version: 0,
+        fingerprint: migrate::fingerprint(&users(false)),
+        built: vec![],
+        schema: Some(migrate::StoredSchema::of(&users(false))),
+    });
+    let mut mixed = v1.clone();
+    mixed.extend_from_slice(&v2[v1.len()..]);
+
+    let txn = store.begin().await.unwrap();
+    txn.put(slate_kernel::keys::meta_key(USERS), mixed).unwrap();
+    txn.commit().await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let Err(Refusal::Corrupt { detail, .. }) = &states[0].1 else {
+        panic!("expected a corrupt refusal, got {:?}", states[0].1);
+    };
+    assert!(detail.contains("bytes after it"), "{detail}");
+}
+
+/// The schema blob carries its own version, and a foreign one is refused.
+///
+/// Its own rather than leaning on the outer format byte, because the outer one
+/// says how the *record* is laid out and this says what a column record holds.
+/// A blob from a newer binary would decode into plausible nonsense without
+/// this — a column count read out of a name, and so on — which is the misparse
+/// the outer format byte already exists to prevent, one level down.
+#[tokio::test]
+async fn a_schema_blob_from_a_newer_binary_is_refused_rather_than_misread() {
+    let store = MemoryStore::new();
+    let catalog = Catalog::from_tables([users(false)]).unwrap();
+    migrate::migrate(&store, &catalog).await.unwrap();
+
+    // The version 1 prefix of a version 2 record, then a blob claiming a
+    // version this binary does not know. The prefix is taken from the real
+    // encoder and only the blob is hand-built, so the test is about the blob.
+    let with_schema = migrate::encode_state(&migrate::TableState {
+        schema_version: 0,
+        fingerprint: migrate::fingerprint(&users(false)),
+        built: vec![],
+        schema: Some(migrate::StoredSchema::of(&users(false))),
+    });
+    let without = migrate::encode_state(&migrate::TableState {
+        schema_version: 0,
+        fingerprint: migrate::fingerprint(&users(false)),
+        built: vec![],
+        schema: None,
+    });
+    let prefix_len = without.len();
+    let mut future = with_schema[..prefix_len].to_vec();
+    future.extend_from_slice(&slate_tuple::encode(&[Value::U64(99), Value::U64(0)]));
+
+    let txn = store.begin().await.unwrap();
+    txn.put(slate_kernel::keys::meta_key(USERS), future)
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let Err(Refusal::Corrupt { detail, .. }) = &states[0].1 else {
+        panic!("expected a corrupt refusal, got {:?}", states[0].1);
+    };
+    assert!(detail.contains("version 99"), "{detail}");
+
+    // And bytes after a blob that otherwise decodes are refused too, for the
+    // reason the outer record refuses them: a record that parses a prefix and
+    // ignores the rest cannot tell a longer format from a corrupt one.
+    let mut trailing = with_schema.clone();
+    trailing.extend_from_slice(&slate_tuple::encode(&[Value::U64(0)]));
+    let txn = store.begin().await.unwrap();
+    txn.put(slate_kernel::keys::meta_key(USERS), trailing)
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    let states = migrate::stored_state(&store, &catalog).await.unwrap();
+    let Err(Refusal::Corrupt { detail, .. }) = &states[0].1 else {
+        panic!("expected a corrupt refusal, got {:?}", states[0].1);
+    };
+    assert!(detail.contains("after the schema"), "{detail}");
 }

@@ -210,6 +210,37 @@ if [ -n "$restart" ]; then
   # silently proved nothing.
   echo "  waiting out the dead node's writer lease..."
   sleep 4
+
+  # `--plan` against the bucket this deployment has just written to, which is
+  # the only place it meets real object storage: `plan.rs` covers every shape
+  # of plan, and covers all of them over `backend = "local"`. This is also the
+  # only place the exit code is used the way it was built to be used — the
+  # flag's own comment says "so a deployment can gate on it", and until now no
+  # deployment did, which is this repository's most familiar shape of defect.
+  #
+  # Here rather than before the kill: the node that wrote the bucket is gone
+  # and its lease has expired, so this is the moment a real operator would
+  # preview a restart. `previewing_does_not_fence_the_node_that_holds_the_lease`
+  # covers the other order.
+  echo "  previewing the migration a restart would apply..."
+  if ! plan=$("$root/target/debug/slate-serverd" --config "$here/head.toml" --plan 2>&1); then
+    echo "--plan exited non-zero against a bucket it had just written:" >&2
+    echo "$plan" >&2
+    exit 1
+  fi
+  # Nothing about the configuration changed between the two processes, so the
+  # only honest plan is an empty one. Asserted rather than printed: a preview
+  # that proposed an index build here would mean the first node had not
+  # finished migrating what it claimed to, and printing it would let that pass.
+  case $plan in
+    *"Up to date"*) echo "  $plan" ;;
+    *)
+      echo "--plan proposed work on a configuration that has not changed:" >&2
+      echo "$plan" >&2
+      exit 1
+      ;;
+  esac
+
   start_head "$work/head-2.log"
   echo "  a new process, serving on $address"
   python3 "$here/probe.py" --address "$address" --verify

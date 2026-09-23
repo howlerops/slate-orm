@@ -44,6 +44,7 @@
 
 use crate::convert::{GroupedRead, GroupedSource, MultiRead, chain_row_values, two_tables};
 use crate::leadership::Leadership;
+use crate::service::WriteObserver;
 use crate::status::from_kernel;
 use slate_kernel::security::Principal;
 use slate_kernel::{
@@ -53,7 +54,7 @@ use slate_kernel::{
 };
 use slate_schema::{Ordinal, Row, TableDef, TableId};
 use slate_tuple::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -478,6 +479,7 @@ impl Sessions {
         store: Arc<RecordStore<S>>,
         leadership: Arc<Leadership>,
         owner: Principal,
+        writes: Option<Arc<dyn WriteObserver>>,
     ) -> Result<Uuid, Status> {
         // Checked before the task is spawned, so a client hammering `Begin`
         // cannot outrun the accounting.
@@ -501,7 +503,7 @@ impl Sessions {
         let idle = self.limits.idle_timeout;
 
         tokio::spawn(async move {
-            run(store, leadership, receiver, ready, idle).await;
+            run(store, leadership, receiver, ready, idle, writes).await;
             // The task removes its own entry: nothing else knows when a
             // transaction has timed out, and a registry that only shrank on
             // `Commit` would leak an entry for every client that walked away.
@@ -834,6 +836,97 @@ fn poisoned(_: impl core::fmt::Debug) -> Status {
     )
 }
 
+/// What a transaction has written, waiting to find out whether it committed.
+///
+/// A standalone write is counted after its own commit — see [`Head::autocommit`]
+/// — because a conflicting write is retried and applies more than once while
+/// committing once. A write inside a caller's transaction has the same problem
+/// one level up and a worse one beside it: the caller decides whether any of it
+/// lands, and may roll back or simply walk away. Counting at the write would
+/// report rows that never existed, which is the failure mode a "rows written"
+/// series exists to rule out.
+///
+/// So the counts accumulate here and are told to the observer on a successful
+/// `Commit`, and on nothing else. A rolled-back, timed-out, fenced or abandoned
+/// transaction drops this on the floor, which is the right answer for all four.
+///
+/// [`Head::autocommit`]: crate::service::Head
+#[derive(Default)]
+struct Tally {
+    /// Keyed the way the observer is labelled, and summed: one transaction may
+    /// insert into one table twenty times, and twenty series of one is not what
+    /// a counter means.
+    rows: BTreeMap<(&'static str, String), u64>,
+}
+
+impl Tally {
+    /// Remember that `kind` on `table` applied `affected` rows.
+    ///
+    /// Called with what the kernel *did*, not with what was asked for. See
+    /// [`Tally::applied`] for the one rule every arm follows about whether to
+    /// call it at all.
+    fn add(&mut self, kind: &'static str, table: &str, affected: u64) {
+        // Zero is kept, for the reason the observer's own documentation gives:
+        // a series that appears only when non-zero cannot be told from a node
+        // that never did the thing.
+        *self.rows.entry((kind, table.to_owned())).or_default() += affected;
+    }
+
+    /// Record what a command applied, if anything is worth recording.
+    ///
+    /// **A statement contributes unless it both failed and applied nothing.**
+    /// Two clauses, because it answers two different questions — and the first
+    /// version of this file got it wrong in both directions at once: `insert`
+    /// dropped a failure and `update` recorded a zero for one, and twenty-two
+    /// tests passed either way.
+    ///
+    /// *Succeeded, applied zero* contributes. A `delete_where` that stopped
+    /// matching is the failure a retention sweep's operator watches for, and a
+    /// series that appears only when non-zero cannot be told from a sweep
+    /// nobody scheduled.
+    ///
+    /// *Failed, applied zero* contributes nothing — the rule the standalone
+    /// path already follows and `a_refused_purge_reports_nothing` already
+    /// pins: a counter that moved on a permission error would make
+    /// misconfiguration look like data loss.
+    ///
+    /// *Failed, applied some* contributes those. A conditional update that
+    /// applied two rows and was refused on the third has put two rows in the
+    /// transaction's buffer, and the caller may still commit; dropping them
+    /// would under-report a write that landed.
+    ///
+    /// All three clauses rest on `rows` being what the kernel *applied*, which
+    /// for an all-or-nothing arm is zero whenever `ok` is false. Passing the
+    /// requested count instead turns the second clause into the third, and no
+    /// signature can catch it — both are `u64`. It is the mistake this
+    /// function's own first caller made.
+    fn applied(&mut self, kind: &'static str, table: &str, rows: u64, ok: bool) {
+        if ok || rows > 0 {
+            self.add(kind, table, rows);
+        }
+    }
+
+    /// Tell `observer` everything, once the transaction has committed.
+    ///
+    /// Takes `self` rather than `&self`, which is the only reason a second
+    /// call site is impossible. A mutation that reported after each command
+    /// instead of after the commit survived nine tests: the only reachable
+    /// version of it sat in the `apply` arm's error branch, which `answer`
+    /// enters for a fenced writer alone, and fencing a write *inside* a
+    /// transaction needs a real object store and a successor node — the setup
+    /// `handover.rs` exists for. Rather than leave a narrow hole covered by
+    /// nothing or move that harness in here, consuming the tally turns the
+    /// mutation into a compile error: the loop cannot move out of a value its
+    /// next iteration uses. The compiler is a cheaper oracle than a test and
+    /// it does not need the fence to happen.
+    fn report(self, observer: Option<&Arc<dyn WriteObserver>>) {
+        let Some(observer) = observer else { return };
+        for ((kind, table), affected) in &self.rows {
+            observer.wrote(kind, table, *affected);
+        }
+    }
+}
+
 /// One transaction, for as long as it lives.
 async fn run<S: KvStore>(
     store: Arc<RecordStore<S>>,
@@ -841,7 +934,9 @@ async fn run<S: KvStore>(
     mut commands: mpsc::Receiver<Command>,
     ready: oneshot::Sender<Result<(), KernelError>>,
     idle: Duration,
+    writes: Option<Arc<dyn WriteObserver>>,
 ) {
+    let mut tally = Tally::default();
     let transaction = match store.begin().await {
         Ok(transaction) => {
             if ready.send(Ok(())).is_err() {
@@ -876,6 +971,9 @@ async fn run<S: KvStore>(
                 let outcome = transaction.commit().await;
                 if let Err(error) = &outcome {
                     note_fencing(&leadership, error).await;
+                } else {
+                    // The one place a transaction's writes become real.
+                    tally.report(writes.as_ref());
                 }
                 let _ = reply.send(outcome);
                 return;
@@ -886,7 +984,7 @@ async fn run<S: KvStore>(
                 return;
             }
             other => {
-                if let Some(error) = apply(&transaction, &store, other).await {
+                if let Some(error) = apply(&transaction, &store, other, &mut tally).await {
                     note_fencing(&leadership, &error).await;
                     if matches!(error, KernelError::WriterFenced) {
                         // The transaction is unusable and so is the store.
@@ -910,6 +1008,7 @@ async fn apply<S: KvStore>(
     transaction: &RecordTransaction<'_>,
     store: &RecordStore<S>,
     command: Command,
+    tally: &mut Tally,
 ) -> Option<KernelError> {
     /// Resolve a table, or answer the caller and stop.
     macro_rules! table {
@@ -941,6 +1040,16 @@ async fn apply<S: KvStore>(
             } else {
                 transaction.insert_many(&context, definition, &rows).await
             };
+            // All-or-nothing: `insert_many` and `upsert_many` validate the
+            // whole batch before writing any of it, so a refused batch applied
+            // *zero* — not `affected`, which is what was asked for. Verified
+            // rather than read off that comment: inserting `[2, 1]` where 1 is
+            // taken leaves key 2 absent after the commit. Passing `affected`
+            // here made a refused two-row insert report two rows written, and
+            // it is the mistake `Tally::add`'s "what the kernel did, not what
+            // was asked for" exists to name.
+            let applied = outcome.as_ref().map_or(0, |()| affected);
+            tally.applied("insert", definition.name(), applied, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::Update {
@@ -952,6 +1061,10 @@ async fn apply<S: KvStore>(
         } => {
             let definition = table!(table, reply);
             let affected = rows.len() as u64;
+            // How many the conditional branch below got through before it
+            // stopped. Unused by the all-or-nothing branch, which applies
+            // `affected` or nothing.
+            let mut conditional = 0;
             let outcome = if expected.is_empty() {
                 // `update_many` overlaps the reads that decide whether each row
                 // is there, the same as `insert_many`. It is also
@@ -972,9 +1085,21 @@ async fn apply<S: KvStore>(
                     if outcome.is_err() {
                         break;
                     }
+                    conditional += 1;
                 }
                 outcome
             };
+            // `update_many` is all-or-nothing. The conditional loop is not: it
+            // breaks on the first refusal, having applied the rows before it,
+            // and those rows are in the buffer whether or not the caller goes
+            // on to commit. `conditional` is the honest count there, and is
+            // zero for the branch that never partially applies.
+            let rows = if outcome.is_ok() {
+                affected
+            } else {
+                conditional
+            };
+            tally.applied("update", definition.name(), rows, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::Delete {
@@ -991,6 +1116,7 @@ async fn apply<S: KvStore>(
                 // `delete_if_unchanged` refuses an absent row rather than
                 // returning `false`, so every key that got through was there.
                 let mut outcome = Ok(());
+                let mut applied = 0;
                 for (key, was) in keys.iter().zip(expected.iter()) {
                     outcome = transaction
                         .delete_if_unchanged(&context, definition, key, was)
@@ -998,7 +1124,9 @@ async fn apply<S: KvStore>(
                     if outcome.is_err() {
                         break;
                     }
+                    applied += 1;
                 }
+                tally.applied("delete", definition.name(), applied, outcome.is_ok());
                 return answer(reply, outcome.map(|()| keys.len() as u64));
             }
             let mut affected = 0;
@@ -1018,6 +1146,11 @@ async fn apply<S: KvStore>(
                     }
                 }
             }
+            // `affected` counts the keys that were there, error or not: a loop
+            // that removed two rows and then failed has removed two. A
+            // *successful* delete of absent keys is zero and still counts,
+            // which is why this is `applied` and not `if affected > 0`.
+            tally.applied("delete", definition.name(), affected, outcome.is_ok());
             answer(reply, outcome.map(|()| affected))
         }
         Command::PurgeDeleted {
@@ -1031,6 +1164,12 @@ async fn apply<S: KvStore>(
             let outcome = transaction
                 .purge_deleted(&context, definition, before, at_most)
                 .await;
+            tally.applied(
+                "purge_deleted",
+                definition.name(),
+                outcome.as_ref().copied().unwrap_or(0),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::DeleteWhere {
@@ -1044,6 +1183,14 @@ async fn apply<S: KvStore>(
             let outcome = transaction
                 .delete_where(&context, definition, predicate, at_most)
                 .await;
+            // The rows are the answer here, so their count is the affected
+            // count; `Write::labels` spells the same statement the same way.
+            tally.applied(
+                "delete_where",
+                definition.name(),
+                outcome.as_ref().map_or(0, |rows| rows.len() as u64),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::UpdateWhere {
@@ -1058,6 +1205,12 @@ async fn apply<S: KvStore>(
             let outcome = transaction
                 .update_where(&context, definition, predicate, &assignments, at_most)
                 .await;
+            tally.applied(
+                "update_where",
+                definition.name(),
+                outcome.as_ref().map_or(0, |rows| rows.len() as u64),
+                outcome.is_ok(),
+            );
             answer(reply, outcome)
         }
         Command::Get {

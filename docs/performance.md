@@ -22,6 +22,69 @@ SCALE_ROWS=200000,600000,1200000 \
   cargo run --release -p slate-slatedb --example cost_at_scale
 ```
 
+### Every run says what build it is
+
+Each command above prints a `build:` line before its first number, and a table
+recorded from one should carry that line with it:
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+**This exists because a number without it cost nine tasks.** `POINT_READ_COST`
+was recorded at 3.0, re-measured at 1.0 by #269 with the change unexplained,
+and finally traced by #278 to a build with SlateDB's block cache compiled out
+— a cargo feature, three times the object-store requests, and nothing in any
+output that said so. The figures were right; the records were incomplete.
+
+Two lines are printed only when they apply, and both mean *do not compare this
+with the tables below*:
+
+- `!! this is a debug build` — wall clock in a debug build is a different
+  program, not a slower one. Note that `scripts/run_examples.sh` builds debug,
+  so a CI transcript says this and a `--release` run does not.
+- `` !! `cache` is OFF `` — the defect above, caught at the source.
+
+`scripts/check_build_stamp.py` fails if a feature is added without the stamp
+reporting it, or if a program that measures something does not print it.
+
+Four dependencies are named rather than one. #269 offered three explanations
+for the point-read figure it could not reproduce — a SlateDB release, a block
+size, the readahead — and the code behind all of them is in `slatedb` and
+`foyer`. `foyer` is the cache whose *absence* was the whole of finding 8, so a
+different version of it is as worth recording as none of it; `object_store`
+issues the requests every GET count here counts, and `tokio` schedules the
+concurrency the pipelined-read costing is about. `rustls` and `aws-lc-rs` are
+under every S3 byte too and are deliberately left out: nothing here isolates a
+connection cost, and the line has to stay readable.
+
+**Tables on this page that predate 2026-09-22 have no build line**, and one
+cannot be reconstructed for them. Exactly one does carry it — the re-measured
+cost model in [§8b](#8b-the-same-measurement-with-the-cache-on-at-release--and-the-first-table-here-that-says-what-built-it),
+which is the first table here recorded from a run that could say what built
+it. `scripts/check_table_provenance.py` holds
+that boundary rather than leaving it to this sentence: it finds every table in
+`docs/`, decides which record a measurement, and fails on one that is neither
+stamped, marked `<!-- not a measurement -->`, nor frozen in
+[`scripts/frozen_tables.json`](../scripts/frozen_tables.json) as predating the
+rule. The roster pins table *contents*, so editing a number in one of those 70
+legacy tables takes it off the list and asks for the line — which is right,
+because a changed number means a run happened, and that run could say what
+built it. What is recorded about them is what their own
+prose says — fixture size, run count, machine load — plus the `--release` in
+the commands above. Finding 8 and the `POINT_READ_COST` history in
+[`docs/correctness.md`](correctness.md) are the only two places in this
+repository where the cargo features behind a measurement were written down
+before this existed, and both are write-ups of that defect.
+
+Every command above runs at the size the figures on this page were taken at.
+Three environment variables shrink them — `KERNELBENCH_ROWS` for the kernel's
+examples, `HEADBENCH_*` for the head node's, `SCALE_ROWS` for the storage ones
+— and `scripts/run_examples.sh --smoke` sets all of them, which is how CI runs
+every benchmark in seconds. **A smoke run's numbers are not the numbers on this
+page and are not comparable to them**; each example prints the size it ran at,
+so a pasted line says which it was.
+
 Two profiles are used. `free` charges nothing and isolates CPU. `io` charges
 object-storage round trips — a millisecond per point read, one per scan and one
 per 256-row block. Prefer the **I/O counts** over the clock: "this removed 500
@@ -452,7 +515,13 @@ Two things to carry into any reading of the numbers here:
 
 - The unit is now **object-store requests**, measured, not round trips inferred
   from a latency fixture. A scan returns about 8,000 rows per request; a point
-  read costs about 3.
+  read costs about 1. ~~A point read costs about 3~~ — corrected on
+  2026-09-22. It was 3 when this paragraph was written, and #269 re-measured
+  it at 1.0; #278 then found that the 3 came from a build with SlateDB's
+  block cache compiled out (finding 8 below). This sentence was the last place
+  the old figure survived, because `scripts/check_cost_prose.py` read `crates/`
+  and not `docs/`. Since #283 it reads both, so a fourth place cannot open up
+  the way this one did.
 - Wall times below were derived as cost × 2.2 ms against the old constants.
   They are kept because the *relative* findings they record — late
   materialisation, the projection fix, hash grouping — were measured directly
@@ -554,6 +623,20 @@ holds, called the way its handlers call them, with no protobuf type constructed
 anywhere. The difference between the two is the head node.
 
 ```sh
+# Every benchmark in the crate, at its recorded size. `--smoke` runs the same
+# five at the smallest fixture each accepts: worthless numbers, seconds rather
+# than minutes, and the only thing that catches a benchmark that has stopped
+# working. CI runs `--smoke` on every push, which is new — for weeks nothing
+# ran any of them and four were broken, twice over, by security fixes
+# elsewhere in the tree.
+crates/slate-headbench/run.sh
+crates/slate-headbench/run.sh --smoke
+
+# The same for the storage examples, which is where the planner's two cost
+# constants come from. `SCALE_ROWS` shrinks their fixtures the way
+# `HEADBENCH_ROWS` shrinks the head node's.
+crates/slate-slatedb/run.sh --smoke
+
 cargo run --release -p slate-headbench --example head_report
 cargo run --release -p slate-headbench --example head_report -- stream lease
 
@@ -570,6 +653,11 @@ cargo run --release -p slate-headbench --example s3_nodelay
 HEADBENCH_POLL_MS=10000 cargo run --release -p slate-headbench \
     --example head_report -- routing
 ```
+
+`HEADBENCH_ROWS` overrides the 20,000-row fixture in all five; it used to work
+in three, and the two that hard-coded it were the two a smoke run had to wait
+two minutes for. The default is unchanged, so every number below still
+describes 20,000 rows.
 
 ### Conditions, and why they are stated first
 
@@ -1479,6 +1567,31 @@ Two independent runs, cold and warm, and the difference between the columns is
 smaller than the difference between the runs. **The cache is not what the
 calibration measured.**
 
+**Superseded: it is not the cache being warm, it is the cache being *partly*
+warm.** Re-measured later, the same full scan of the same 200,000 rows costs
+whatever the reads before it left behind:
+
+| the store has already | GETs | rows/GET |
+|---|---:|---:|
+| read nothing at all | 53 | 3,774 |
+| served 200 random point reads | 204, 208, 205 | 980 |
+| served `analyze` and 400 of them | 369 | 542 |
+
+Three consecutive scans give the middle row, so this is not "the first one
+paid and the rest are free". A *partially* populated block cache fragments a
+scan into many small ranged reads instead of a few large ones, and more of it
+fragments it further — which is why a scan measured after `analyze` costs
+*more* than one measured before, an ordering no cache can produce and the
+thing that gave this away.
+
+`SCAN_ROW_COST` says 8,000 rows per request, which is none of the three. It is
+what a scan costs when the cache already holds the whole table.
+
+This also explains a disagreement that looked like a defect: `cost_calibration
+--cold` measures that scan at 58 requests and `cost_at_scale` at 205, on a
+byte-identical fixture. Both are right — the first scans a store that has done
+nothing, the second one that has just walked 200 random keys.
+
 #### The two constants at 200,000 rows
 
 | | the model says | measured |
@@ -1486,7 +1599,7 @@ calibration measured.**
 | `SCAN_ROW_COST` → rows per request on a scan | 8,000 | **8,000 – 10,526** |
 | `POINT_READ_COST` → requests per point read | 3.0 | **3.40 – 3.57** |
 
-The scan constant is right, on the conservative side of right. The point-read
+~~The scan constant is right, on the conservative side of right. The point-read
 constant is **13–19% low** — a read really costs about three and a half
 requests, not three. Both errors point the same way (the model slightly
 under-charges reads relative to scans, which makes an index look marginally
@@ -1496,7 +1609,25 @@ requests. Adjusting `POINT_READ_COST` from 3.0 to 3.5 is not proposed here,
 because it is a 17% change to a constant whose own spread across two runs is 5%
 and which is a property of the row width and the deployment rather than of
 anything in this repository — the same argument `SCAN_ROW_COST` was left alone
-under, one section up.
+under, one section up.~~
+
+<!-- not a cost-model claim -->
+
+**Both halves withdrawn.** The point-read figure does not reproduce: four
+measurements across three benchmarks and two fixtures give 1.02, 1.09,
+1.16/0.96 and 1.015 requests per row, and `POINT_READ_COST` is now **1.0** —
+see [`correctness.md`](correctness.md). The scan figure is not a constant at
+all: it is 3,774 rows per request on a store that has read nothing, 980 after
+200 random point reads and 542 after `analyze`, per the table above.
+`SCAN_ROW_COST` is unchanged at 8,000 rows per request, which is the
+fully-cached case, because choosing among three measurements eight times apart
+is a modelling decision and not a calibration.
+
+The sentence that has aged worst is "at this scale neither is close to changing
+a decision". `cost_at_scale`'s own verdict line now reads **chose TableScan but
+Index is faster — WRONG at this scale**: at 200,000 rows the index does 368
+requests against the scan's 370 and finishes 11× sooner, while the model calls
+it 15× worse.
 
 #### Where this stops, and it is not the model
 
@@ -1835,6 +1966,8 @@ wrapped in a counting store, 21 runs, on a quiet box (load 1.3):
 | full scan of 20,000 | as shipped (default) | 2 | 2.00 | 34.79 ms [34.12 – 36.17] |
 | full scan of 20,000 | cache on | 2 | 1.00 | 34.90 ms [34.38 – 35.75] |
 
+<!-- not a cost-model claim -->
+
 **A point read costs three object-store GETs, every time, for ever.** With a
 cache installed it costs none once the metadata is loaded. The GET column
 does not care what else is on the machine: the same four arms re-run at load
@@ -1884,6 +2017,143 @@ knowing. The same line appears in `crates/slate-serverd/Cargo.toml`,
 dev-dependencies, all of which are pinned to the same version so that
 `Arc<dyn ObjectStore>` stays one type; features unify across them, so one of
 them enabling `foyer` is enough to turn the cache on everywhere.
+
+### 8b. The same measurement with the cache on, at `--release` — and the first table here that says what built it
+
+Finding 8 was measured on a build with SlateDB's block cache compiled out, and
+the `3.0` it produced sat in `POINT_READ_COST` for nine tasks. #278 fixed the
+manifest. Nothing had since re-run the calibration on a build with the cache
+**on**, at `--release`, and recorded the result beside the build that produced
+it. This is that run.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example cost_calibration`, three runs,
+200,000 rows through SlateDB over the in-process `s3s` server. The spread is
+across those three runs; where one figure is given it was identical in all
+three.
+
+| query | rows | predicted cost | GETs | rows per GET |
+|---|---:|---:|---:|---:|
+| point get by primary key | 1 | 1.0 | 19 – 25 | — (see below) |
+| index equality, one bucket | 400 | 26.0 | 33 – 38 | — |
+| narrow key range | 1,000 | 1.0 | 1 | 1,000 |
+| wide key range | 50,000 | 7.1 | 10 | 5,000 |
+| full scan | 200,000 | 26.0 | 20 – 21 | **9,524 – 10,000** |
+
+<!-- not a cost-model claim -->
+
+**Both constants hold.** The decisive arm is the forced index scan, which does
+400 primary-key reads and served **408 GETs in every one of the three runs** —
+1.02 requests per row, against `POINT_READ_COST = 1.0`. The full scan returns
+9,524–10,000 rows per request, against `SCAN_ROW_COST`'s 8,000; that is inside
+the 8,000–10,526 band already recorded above, and `SCAN_ROW_COST` is left
+alone for the reason given there.
+
+**The point-get row is warm-up, not the cost of a point read.** It is the
+first query issued against a freshly loaded store, so it pays for the manifest
+and the SST metadata the four rows under it then reuse — which is why it is
+the only row that moves between runs (19, 25, 19) while every other GET count
+is identical or within one. Read as a point read's cost it says 22; the
+forced-index arm in the same process says 1.02, and the forced-index arm is
+the one doing 400 of them. This is the confound #269 recorded, still present,
+now bounded: it lives in one row and the run says which.
+
+**The clock is not comparable with anything on this page.** 10.665, 10.930 and
+10.860 ms per GET, against a loopback `s3s`; `docs/performance.md` uses 2.2 ms,
+a wide-area figure. The GET counts are what transfers.
+
+### 8c. Doubling the table does not double the requests — a scan gets cheaper per row as it grows
+
+Every cost measurement on this page until now was taken at 200,000 rows, and
+the README has carried "the constants at a million rows are still unmeasured"
+for as long as that has been true. The loader cliff between 500,000 and 600,000
+rows still blocks the million. **400,000 fits**, and it is the first second
+point this model has ever had.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example cost_at_scale`, with
+`SCALE_ROWS`. Two runs at 400,000; one at 200,000, which reproduces the
+three-state table recorded above (53 / 205 / 369 there, 51 / 199 / 365 here).
+
+| the store has already | 200,000 rows | 400,000 rows | requests, for 2× the rows |
+|---|---:|---:|---:|
+| read nothing at all | 51 GETs | 69 – 77 | **1.35 – 1.51×** |
+| served 200 random point reads | 199 – 201 | 228 | **1.14×** |
+| served `analyze` and 400 of them | 365 | 406 | **1.11×** |
+
+Per row, in the same three states: 3,922 → 5,195 – 5,797 rows/GET; 1,005 →
+1,754; 548 → 985.
+
+**A scan gets more efficient per row as the table grows**, in every cache
+state, and the effect is largest in the states a real deployment is actually
+in. Nothing here predicted that — the cost model charges a scan strictly
+linearly in rows, so it is the one direction the model cannot express.
+
+The stability is worth stating because it is what makes the comparison
+readable: `full scan, three times` printed `[228, 228, 228]` in both 400,000
+runs, and the two probe-state rows are **identical across runs**. The pristine
+scan is the only figure that moves at all (69 against 77), and it is the one
+measured before anything has touched the store.
+
+Cold point reads hold across the scale change: **1.14, 1.19 and 1.16 requests
+per read** at the two sizes, against `POINT_READ_COST`'s 1.0 — an independent
+confirmation of [§8b](#8b-the-same-measurement-with-the-cache-on-at-release--and-the-first-table-here-that-says-what-built-it)'s
+1.02, from a different example, a different fixture size and a colder store.
+
+**This does not move `SCAN_ROW_COST`.** It sharpens the reason not to: the
+constant's docstring says there is no single value because the cost depends on
+a cache state the model has no input for, and there is now a second axis it
+has no input for either. A model that charged scans sub-linearly would fit
+these six numbers better and would still be guessing at the cache.
+
+### 8d. The loader cliff is not `l0_sst_size_bytes`, and the test did not need the cliff
+
+`README.md` carried this from #118: the loader stops being linear between
+500,000 and 600,000 rows, four attempts past that never finished, SlateDB's
+default 64 MiB `l0_sst_size_bytes` "lines up suspiciously well", **and the size
+that would settle it is the size that will not finish.**
+
+That last clause is the interesting one, and it is wrong. It assumes the test
+has to run *at* the cliff. SlateDB pauses writers when L0 fills, and L0's
+capacity is `l0_max_ssts` × `l0_sst_size_bytes` — 8 × 64 MiB by default. If
+that is the mechanism, shrinking the knob shrinks L0 in proportion and **the
+cliff comes down to meet you**.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example loader_cliff`, 120,000 rows in
+chunks of 10,000, timing each chunk.
+
+| `l0_sst_size_bytes` | `max_unflushed_bytes` | L0 capacity | load | slow chunks |
+|---|---|---:|---:|---|
+| 64 MiB (stock) | 1 GiB (stock) | 512 MiB | 2.4 s | none |
+| 8 MiB | 1 GiB | 64 MiB | 2.4 s | none |
+| 128 MiB (stock l0) | 128 MiB | 512 MiB | 2.4 s | none |
+| **4 MiB** | **8 MiB** | **32 MiB** | 2.6 – 2.7 s | one, at 90–100k |
+
+**Shrinking L0 sixteenfold does not move a cliff into a load that is flat
+without it.** If L0 capacity set the cliff at 500,000 rows, 32 MiB of it should
+have produced one before 31,000. Three runs at the tightest setting give one
+slow chunk each — 0.31 s, 0.40 s, 0.31 s against a 0.21 s baseline, at 90,000
+or 100,000 rows — and a total load 12% slower. That is backpressure being
+touched, and it is not what "four attempts never finished" describes.
+
+The run says why, in a column that was there for another reason: **120,000 rows
+issue under thirty PUTs.** At these sizes the data is barely reaching L0 at
+all, so a knob governing L0 has almost nothing to govern.
+
+What is now known: the cliff is above 400,000 rows — [§8c](#8c-doubling-the-table-does-not-double-the-requests--a-scan-gets-cheaper-per-row-as-it-grows)
+loaded that on stock settings — and it is not set in proportion to either
+write-backpressure knob. One place fewer to look, which is the whole return on
+a negative result.
 
 ### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
 
@@ -2078,6 +2348,75 @@ again:
   means regenerating `slate-server`'s protobuf types and that crate was not
   this sweep's to edit. The fixture here is keyed by `u64` and would show
   nothing.
+
+### 8e. The loader cliff does not reproduce, and the knob #292 cleared does set where the bump is
+
+Section 7 recorded that the loader stops being linear between 500,000 and
+600,000 rows, that 600,000 "did not finish in five minutes, on three attempts",
+and that the disk under the in-process S3 server was the other candidate and
+"still not ruled out". §8d then tested the `l0_sst_size_bytes` hypothesis and
+reported it failed. Two of those three statements need correcting.
+
+**The disk is not it, and now it can be weighed.** `s3s_fs` is a filesystem
+backend, so every byte written through the fake S3 lands in a temporary
+directory — and nothing measured it, because the counters count *requests* and
+a 120,000-row load issues under thirty. `loader_cliff` now walks that directory
+each chunk:
+
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+| rows | wall | PUTs | on disk | bytes a row |
+|---:|---:|---:|---:|---:|
+| 120,000 | 2.4 s | 30 | 27.1 MiB | 236 |
+| 600,000 | 12.6 / 12.8 / 12.6 s | 135 | 136.3 MiB | 238 |
+| 1,000,000 | 22.0 / 23.2 / 22.5 s | 224 | 227.3 MiB | 238 |
+
+238 bytes a row, flat over a factor of eight. A million rows is 227 MiB, so the
+sizes section 7 could not finish were never close to this container's free
+space. That candidate is closed.
+
+**600,000 rows loads in 12.6 seconds, and a million in 22.** Three runs each,
+identical PUT counts and identical bytes. Whatever section 7 hit, it does not
+reproduce on this build — and a million rows, which that section's "the
+constants at a million rows remain unmeasured" was waiting on, is now a size
+that runs in under half a minute.
+
+**But §8d's headline is too strong, and this is the correction.** That section
+concluded "not `l0_sst_size_bytes`", having found no level shift at any
+setting. There is no level shift — that part stands. What it missed is that
+there *is* a real, reproducible event, and the knob places it exactly:
+
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+| `l0_sst_size_bytes` | on-disk jumps at | interval |
+|---|---|---:|
+| 8 MiB | 70k, 130k, 190k rows | ~60,000 rows |
+| 16 MiB | 140k rows | ~130,000 rows |
+| 64 MiB (stock) | 510k rows | ~510,000 rows |
+
+Doubling the knob doubles the interval; multiplying it by eight multiplies the
+interval by about eight. At each jump the directory nearly doubles (56 → 111
+MiB at the stock setting) and the PUT rate leaps from 2 a chunk to 9, 3, 3 —
+a compaction, writing the new SSTs before the old ones go. It costs about
+0.3 seconds and the loader returns to 50,000 rows a second in the next chunk.
+
+So the #118 hypothesis named the right knob for the wrong reason. It is not
+write backpressure, and L0 never fills — §8d established both, and they remain
+established. It is compaction scheduling, and the stock 64 MiB puts the first
+one at ~510,000 rows: **inside the 500,000–600,000 band section 7 recorded the
+cliff in.** A hypothesis can name the right place and the wrong mechanism, and
+§8d refuted the mechanism while reporting it had cleared the knob.
+
+**What this does not settle.** It does not explain the original observation. A
+0.3-second compaction is not five minutes, so either that machine turned the
+same compaction into something far worse — plausible, and untested, because
+nothing recorded what else was running — or it was something this build no
+longer does. The honest statement is that the cliff is **not reproducible
+here**, not that it never happened; four recorded attempts are evidence about
+some machine, and this is evidence about this one.
+
+It is also one fixture, ~110 bytes a row serialised, against a loopback `s3s`
+on a container with 16 GB of memory. Row counts here are properties of that.
 
 ## Paging by key, and loading relations in one read
 

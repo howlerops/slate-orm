@@ -115,6 +115,41 @@ pub(crate) struct Document {
     /// Roles, grants and policies.
     #[serde(default)]
     pub(crate) security: Security,
+    /// Named queries over the tables above. See `docs/views.md`.
+    #[serde(default)]
+    pub(crate) views: Vec<View>,
+}
+
+/// A view: a name bound to a `SELECT`.
+///
+/// **Not a table**, and the distinction is the whole design. `docs/views.md`
+/// §1: give a view a `TableId` and `row_filter_with` keys row-level security
+/// on the *view's* id — which nothing enabled and no policy names — so the
+/// filter comes back `Expr::True` over the base table's rows. A view is
+/// therefore held beside the catalog and never in it, and §3a records what
+/// that already buys: every path that resolves a request's table name goes
+/// through `Catalog::table_by_name`, which searches only tables, so a view is
+/// refused everywhere until a read path opts in by name.
+///
+/// **A view is not a privilege boundary here** (§2). Postgres views run with
+/// their owner's rights; a `Grant` has no owner to run as, so a caller needs
+/// the grant on the *base* table — and holding it, they can read the columns
+/// the view leaves out by querying the table directly. "Give the analysts a
+/// narrowed view" is the reason people reach for views and it does not work
+/// here; column-level grants are the feature that would.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct View {
+    /// What a query names it.
+    pub(crate) name: String,
+    /// The statement, in the SQL subset `slate-sql` parses.
+    ///
+    /// SQL rather than a spec written out in TOML, because a view is a query
+    /// and the readable way to write a query down is SQL. That this is
+    /// possible at all is recent: the parser lived in the browser binding
+    /// until `slate-sql` was extracted, which is what `views.md` recorded as
+    /// blocking the feature.
+    pub(crate) query: String,
 }
 
 impl Document {
@@ -406,6 +441,11 @@ pub(crate) struct LimitSettings {
     /// Rows an `ORDER BY` with no `LIMIT` may materialise.
     #[serde(default)]
     pub(crate) max_sort_rows: Option<usize>,
+    /// Rows a window function may materialise. Separate from `max_sort_rows`
+    /// because no `LIMIT` bounds a window, so raising one says nothing about
+    /// the other.
+    #[serde(default)]
+    pub(crate) max_window_rows: Option<usize>,
 }
 
 /// What the planner is told about the data.
@@ -549,6 +589,15 @@ pub(crate) struct Column {
     /// the same reason.
     #[serde(default)]
     pub(crate) scale: Option<u8>,
+    /// What an `array` column's elements are, as a type name.
+    ///
+    /// Required on an array column and refused on any other, which is the
+    /// same pairing `scale` has with `decimal` and for the same reason: an
+    /// element type on a column that has no elements means somebody believes
+    /// this column holds a list, and that belief is worth refusing rather
+    /// than ignoring.
+    #[serde(default)]
+    pub(crate) element: Option<String>,
     /// `"created_at"` or `"updated_at"`: the store writes this column.
     ///
     /// A string rather than two booleans, because the two are exclusive and a
@@ -601,6 +650,15 @@ pub(crate) struct Index {
     /// Whether the index is unique.
     #[serde(default)]
     pub(crate) unique: bool,
+    /// Whether the index holds one entry per *term* of its one string column
+    /// rather than one per row: an inverted index, which is what makes
+    /// `contains` a lookup rather than a scan.
+    ///
+    /// Mutually exclusive with `unique`, with `expression`, and with a second
+    /// column, and the column must be a string. All four are refused when the
+    /// schema is built, with the reason.
+    #[serde(default)]
+    pub(crate) text: bool,
     /// The rows the index holds. Absent means every row.
     #[serde(default, rename = "where")]
     pub(crate) predicate: Option<String>,

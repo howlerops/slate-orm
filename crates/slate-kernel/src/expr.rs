@@ -240,6 +240,31 @@ pub enum Expr {
         /// Whether case is ignored.
         insensitive: bool,
     },
+    /// Every one of `terms` is a term of the column's text.
+    ///
+    /// The search half of full-text search, and the reason the terms are
+    /// stored already tokenized: [`Expr::contains`] runs the *same*
+    /// `slate_schema::tokenize` the write path runs, so what a query looks for
+    /// and what the index holds cannot drift. A caller building this variant
+    /// by hand with its own splitting would find fewer rows than the table
+    /// contains, silently, and only a comparison against a scan would say so.
+    ///
+    /// Conjunctive: all the terms, which is what a search box means by two
+    /// words. A disjunction is `Expr::any` of two of these, and phrase search
+    /// — the terms *adjacent, in order* — is not offered at all, because an
+    /// inverted index without positions cannot answer it and adding positions
+    /// is a different structure.
+    ///
+    /// An empty term list matches nothing. `contains(title, '???')` has no
+    /// terms to look for, and the alternative — matching everything — hands
+    /// back the whole table for a query the caller thought was narrow. Same
+    /// choice [`Expr::Matches`] makes for a pattern that does not compile.
+    Contains {
+        /// The column whose text is searched.
+        column: Ordinal,
+        /// The terms, lowercased and deduplicated by [`Expr::contains`].
+        terms: Vec<String>,
+    },
     /// `column IN (values)`.
     In {
         /// The column being tested.
@@ -277,6 +302,58 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// Every node kind's name, in the order `node_name` gives them.
+    ///
+    /// Here rather than beside the property suite that needs it, for the
+    /// reason `ValueType::ALL` gives: `Expr` is `#[non_exhaustive]`, so a test
+    /// in another crate *cannot* write the exhaustive match that catches a new
+    /// variant — the compiler demands a wildcard and the wildcard is the hole.
+    /// Inside this crate it can, and `node_names_lists_every_variant` does.
+    ///
+    /// The one consumer today is `slate-server`'s wire round trip, which uses
+    /// it to check its *generator* reaches every node. That guard exists
+    /// because `Expr::Contains` was added, the round-trip property went on
+    /// passing, and a mutation that sent an empty search text survived: the
+    /// generator had never produced one.
+    pub const NODE_NAMES: [&'static str; 13] = [
+        "true",
+        "false",
+        "compare",
+        "compare_columns",
+        "is_null",
+        "like",
+        "matches",
+        "contains",
+        "in",
+        "in_sorted",
+        "and",
+        "or",
+        "not",
+    ];
+
+    /// This node's kind, as [`Self::NODE_NAMES`] spells it.
+    ///
+    /// For diagnostics and for coverage guards, never for dispatch: a `match`
+    /// on the enum is checked and a `match` on a string is not.
+    #[must_use]
+    pub const fn node_name(&self) -> &'static str {
+        match self {
+            Self::True => "true",
+            Self::False => "false",
+            Self::Compare { .. } => "compare",
+            Self::CompareColumns { .. } => "compare_columns",
+            Self::IsNull { .. } => "is_null",
+            Self::Like { .. } => "like",
+            Self::Matches { .. } => "matches",
+            Self::Contains { .. } => "contains",
+            Self::In { .. } => "in",
+            Self::InSorted { .. } => "in_sorted",
+            Self::And(_) => "and",
+            Self::Or(_) => "or",
+            Self::Not(_) => "not",
+        }
+    }
+
     /// `column = value`.
     #[must_use]
     pub const fn eq(column: Ordinal, value: Value) -> Self {
@@ -291,6 +368,19 @@ impl Expr {
     #[must_use]
     pub const fn compare(column: Ordinal, op: CmpOp, value: Value) -> Self {
         Self::Compare { column, op, value }
+    }
+
+    /// Every term of `text` is a term of the column. See [`Expr::Contains`].
+    ///
+    /// Takes the search as written and tokenizes it here, which is the whole
+    /// safety property: one tokenizer, shared with the write path, so a phrase
+    /// a caller types and the entries a row wrote are split the same way.
+    #[must_use]
+    pub fn contains(column: Ordinal, text: &str) -> Self {
+        Self::Contains {
+            column,
+            terms: slate_schema::tokenize(text),
+        }
     }
 
     /// `left <op> right`, comparing two columns rather than a column and a
@@ -523,6 +613,28 @@ impl Expr {
                 };
                 Truth::from(regex.is_match(text) != *negated)
             }
+            Self::Contains { column, terms } => {
+                let Some(actual) = row.value(*column) else {
+                    return Truth::Unknown;
+                };
+                // A null contains no term, and does not fail to contain one
+                // either: the same three-valued rule as a comparison, and the
+                // same one `LIKE` follows one arm up.
+                let Value::Str(text) = actual else {
+                    return Truth::Unknown;
+                };
+                if terms.is_empty() {
+                    return Truth::False;
+                }
+                // Tokenized per row rather than held: the row is already
+                // decoded and the alternative is a cache keyed on a string
+                // this evaluator does not own. `terms` is sorted, so a binary
+                // search would be available — with the handful of terms a
+                // search box produces, over the handful a title has, the scan
+                // is shorter than the setup.
+                let held = slate_schema::tokenize(text);
+                Truth::from(terms.iter().all(|term| held.contains(term)))
+            }
             Self::IsNull { column, negated } => {
                 // `IS NULL` is the one test that is never unknown.
                 let is_null = row.value(*column).is_none_or(Value::is_null);
@@ -622,6 +734,10 @@ impl Expr {
                 op: *op,
                 right: f(*right),
             },
+            Self::Contains { column, terms } => Self::Contains {
+                column: f(*column),
+                terms: terms.clone(),
+            },
             Self::Like {
                 column,
                 pattern,
@@ -719,7 +835,8 @@ impl Expr {
             | Self::In { .. }
             | Self::InSorted { .. }
             | Self::Like { .. }
-            | Self::Matches { .. } => None,
+            | Self::Matches { .. }
+            | Self::Contains { .. } => None,
             Self::CompareColumns { left, right, .. } => match (types(*left), types(*right)) {
                 (Some(a), Some(b)) if a != b => Some((*left, *right)),
                 _ => None,
@@ -753,7 +870,8 @@ impl Expr {
             | Self::In { column, .. }
             | Self::InSorted { column, .. }
             | Self::Like { column, .. }
-            | Self::Matches { column, .. } => {
+            | Self::Matches { column, .. }
+            | Self::Contains { column, .. } => {
                 out.insert(*column);
             }
             Self::CompareColumns { left, right, .. } => {
@@ -924,4 +1042,60 @@ pub(crate) fn compile(pattern: &str, insensitive: bool) -> Result<Arc<regex::Reg
         cache.insert(pattern.to_owned(), Arc::clone(&compiled));
         Ok(compiled)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `NODE_NAMES` lists every variant, held to the enum by the compiler.
+    ///
+    /// The `match` in `node_name` is exhaustive and wildcard-free, which is
+    /// only possible in the crate that defines a `#[non_exhaustive]` enum. A
+    /// thirteenth variant stops *that* compiling; this pins the list to it, so
+    /// a coverage guard elsewhere cannot go one node short while reporting
+    /// that everything is covered.
+    #[test]
+    fn node_names_lists_every_variant() {
+        let one_of_each = [
+            Expr::True,
+            Expr::False,
+            Expr::eq(Ordinal(0), Value::U64(1)),
+            Expr::CompareColumns {
+                left: Ordinal(0),
+                op: CmpOp::Eq,
+                right: Ordinal(1),
+            },
+            Expr::IsNull {
+                column: Ordinal(0),
+                negated: false,
+            },
+            Expr::like(Ordinal(0), "a%"),
+            Expr::matches(Ordinal(0), "a"),
+            Expr::contains(Ordinal(0), "a"),
+            Expr::In {
+                column: Ordinal(0),
+                values: Vec::new(),
+            },
+            Expr::InSorted {
+                column: Ordinal(0),
+                values: Arc::new(Vec::new()),
+                any_null: false,
+            },
+            Expr::And(Vec::new()),
+            Expr::Or(Vec::new()),
+            Expr::Not(Box::new(Expr::True)),
+        ];
+        // Positions rather than `contains`: it checks membership *and* that
+        // nothing is listed twice, which a `contains` loop over a list with a
+        // duplicate and a gap would pass.
+        assert_eq!(one_of_each.len(), Expr::NODE_NAMES.len());
+        for (listed, expr) in Expr::NODE_NAMES.iter().zip(one_of_each.iter()) {
+            assert_eq!(
+                *listed,
+                expr.node_name(),
+                "{expr:?} is out of place in NODE_NAMES"
+            );
+        }
+    }
 }

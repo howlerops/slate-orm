@@ -77,6 +77,12 @@ pub struct ColumnDef {
     /// Zero for every other type, and meaningless there. See
     /// [`ColumnDef::scale`].
     scale: u8,
+    /// What a [`ValueType::Array`] column's elements are.
+    ///
+    /// `None` for every other type, and meaningless there — the same
+    /// arrangement as `scale`, and for the same reason. See
+    /// [`ColumnDef::element_type`].
+    element: Option<ValueType>,
     /// Whether the store writes this column's value. See [`Managed`].
     managed: Option<Managed>,
 }
@@ -122,6 +128,25 @@ impl ColumnDef {
     pub const fn scale(&self) -> Option<u8> {
         match self.ty {
             ValueType::Decimal => Some(self.scale),
+            _ => None,
+        }
+    }
+
+    /// What an array column's elements are.
+    ///
+    /// An array's element type lives here rather than in
+    /// [`ValueType::Array`] for the same reason a decimal's scale does: the
+    /// enum is fieldless, `Copy` and matchable in a `const fn`, and an
+    /// `Array(Box<ValueType>)` would cost all three to describe one column.
+    /// `docs/arrays.md` §1 works the trade through.
+    ///
+    /// `None` for a column that is not an array, so a caller cannot read an
+    /// element type off a type that does not have one. An array column
+    /// *without* one does not exist: [`TableBuilder::build`] refuses it.
+    #[must_use]
+    pub const fn element_type(&self) -> Option<ValueType> {
+        match self.ty {
+            ValueType::Array => self.element,
             _ => None,
         }
     }
@@ -310,6 +335,15 @@ pub struct IndexDef {
     /// The computed key, when the index keys on a value the row does not hold.
     /// Mutually exclusive with `columns`, which is then empty.
     expression: Option<IndexExpression>,
+    /// Whether this is an inverted index: one entry per *term* of its one
+    /// string column, rather than one entry per row.
+    ///
+    /// A flag rather than a third key shape, because the key *type* is the
+    /// column's own — a `Str` — and only the cardinality differs. Everything
+    /// that reads an entry back (`decode_index_entry`, `index_key_types`) is
+    /// therefore unchanged; what changes is how many entries a row writes,
+    /// which is [`IndexDef::key_sets`].
+    text: bool,
 }
 
 impl core::fmt::Debug for IndexDef {
@@ -321,6 +355,7 @@ impl core::fmt::Debug for IndexDef {
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
             .field("expression", &self.expression)
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -339,6 +374,7 @@ impl PartialEq for IndexDef {
             && self.name == other.name
             && self.columns == other.columns
             && self.unique == other.unique
+            && self.text == other.text
             && self.predicate.is_some() == other.predicate.is_some()
             && self.expression.as_ref().map(IndexExpression::produces)
                 == other.expression.as_ref().map(IndexExpression::produces)
@@ -360,6 +396,7 @@ impl IndexDef {
             unique: false,
             predicate: None,
             expression: None,
+            text: false,
         }
     }
 
@@ -402,6 +439,44 @@ impl IndexDef {
             Some(expression) => vec![expression.value(row)],
             None => row.index_values(self),
         }
+    }
+
+    /// Whether this is an inverted index: one entry per term, not per row.
+    #[must_use]
+    pub const fn is_text(&self) -> bool {
+        self.text
+    }
+
+    /// The key values of every entry this index holds for `row`.
+    ///
+    /// **One list for an ordinary index and one per term for a text one**, and
+    /// this is the only place that difference lives. Every caller that used to
+    /// build a single entry now iterates this, which is the whole of the
+    /// cardinality change: `entry_for` in the record store became
+    /// `entries_for`, and the write path compares two sets of keys where it
+    /// used to compare two keys.
+    ///
+    /// A text index over a value that is not a string — a null, or a column
+    /// whose type the builder somehow let through — holds *no* entry, the same
+    /// way a partial index holds none for a row its predicate rejects. A row
+    /// with no text is a row no term can find, which is the answer a search
+    /// wants; writing an entry for the empty term would put every such row
+    /// under one key and make it a hot spot for nothing.
+    #[must_use]
+    pub fn key_sets(&self, row: &Row) -> Vec<Vec<Value>> {
+        if !self.text {
+            return vec![self.key_values(row)];
+        }
+        let Some(IndexColumn { ordinal, .. }) = self.columns.first() else {
+            return Vec::new();
+        };
+        let Some(Value::Str(text)) = row.get(*ordinal) else {
+            return Vec::new();
+        };
+        crate::text::tokenize(text)
+            .into_iter()
+            .map(|term| vec![Value::Str(term)])
+            .collect()
     }
 
     /// The sort direction of each key term, in key order.
@@ -456,6 +531,7 @@ pub struct IndexBuilder {
     unique: bool,
     predicate: Option<Arc<dyn Predicate>>,
     expression: Option<IndexExpression>,
+    text: bool,
 }
 
 impl core::fmt::Debug for IndexBuilder {
@@ -467,6 +543,7 @@ impl core::fmt::Debug for IndexBuilder {
             .field("unique", &self.unique)
             .field("partial", &self.predicate.is_some())
             .field("expression", &self.expression)
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -535,6 +612,29 @@ impl IndexBuilder {
     #[must_use]
     pub fn expression<C: Computed>(self, compute: C, produces: ValueType) -> Self {
         self.expression_with(compute, produces, Direction::Asc)
+    }
+
+    /// Hold one entry per *term* of the column, rather than one per row.
+    ///
+    /// An inverted index, which is what makes `contains` a lookup rather than
+    /// a scan. The column is still named with [`IndexBuilder::column`] — the
+    /// key type is the column's own `Str` — and exactly one is allowed:
+    /// two columns would need a cross product of their terms, which is a
+    /// different structure and a much larger one.
+    ///
+    /// Refused when the table is built, rather than half-working: on a column
+    /// that is not a string, beside a second column, beside an expression, or
+    /// with [`IndexBuilder::unique`]. That last one is worth naming: a term
+    /// appears in many rows by construction, so a unique inverted index is a
+    /// constraint no realistic text can satisfy, and accepting it would turn
+    /// the second row containing "the" into a write failure nobody could read.
+    ///
+    /// [`IndexBuilder::only_where`] composes with it and is free: a partial
+    /// text index holds terms for the rows its predicate admits.
+    #[must_use]
+    pub const fn text(mut self) -> Self {
+        self.text = true;
+        self
     }
 
     /// [`IndexBuilder::expression`] with an explicit direction.
@@ -905,6 +1005,7 @@ impl TableBuilder {
             default: None,
             previous_names: Vec::new(),
             scale: 0,
+            element: None,
             managed: None,
         });
         self
@@ -929,6 +1030,62 @@ impl TableBuilder {
     #[must_use]
     pub fn nullable_decimal_column(self, name: impl Into<String>, scale: u8) -> Self {
         self.push_decimal(name, scale, true, 0)
+    }
+
+    /// Append an array column whose elements are `element`.
+    ///
+    /// The element type is declared once here and every value in the column
+    /// obeys it, which is what keeps [`ValueType`] fieldless. An array of
+    /// arrays is refused at build time: `ValueType::Array` cannot name an
+    /// inner element type, so the inner array would be a value the schema
+    /// cannot describe.
+    ///
+    /// An array cannot be a primary key or an index column. The order is
+    /// meaningful — unlike a vector's — but the question an indexed array is
+    /// asked is *containment*, which needs one index entry per element and is
+    /// a different index cardinality from the one this store has. See
+    /// `docs/arrays.md` §4.
+    #[must_use]
+    pub fn array_column(self, name: impl Into<String>, element: ValueType) -> Self {
+        self.push_array(name, element, false, 0)
+    }
+
+    /// [`TableBuilder::array_column`], accepting nulls.
+    ///
+    /// Nullable in the column's sense: the whole value may be absent. It says
+    /// nothing about an *element* being null, which is refused either way —
+    /// see [`crate::row::Row::validate`].
+    #[must_use]
+    pub fn nullable_array_column(self, name: impl Into<String>, element: ValueType) -> Self {
+        self.push_array(name, element, true, 0)
+    }
+
+    /// Set the element type of an array column already appended.
+    ///
+    /// [`TableBuilder::array_column`] is the way to declare one; this is for a
+    /// caller that cannot use it, exactly as [`TableBuilder::scale_for`] is.
+    /// A name that is not a column here is ignored rather than refused, for
+    /// the reason given there.
+    #[must_use]
+    pub fn element_for(mut self, column: &str, element: ValueType) -> Self {
+        if let Some(found) = self.columns.iter_mut().find(|c| c.name == column) {
+            found.element = Some(element);
+        }
+        self
+    }
+
+    fn push_array(
+        mut self,
+        name: impl Into<String>,
+        element: ValueType,
+        nullable: bool,
+        added_in: u32,
+    ) -> Self {
+        self = self.push_column(name, ValueType::Array, nullable, added_in);
+        if let Some(column) = self.columns.last_mut() {
+            column.element = Some(element);
+        }
+        self
     }
 
     /// Make a column already appended one the store writes. See [`Managed`].
@@ -1091,6 +1248,29 @@ impl TableBuilder {
         // scale that can represent anything above one.
         const MAX_SCALE: u8 = 18;
         for col in &self.columns {
+            // An array column must say what it holds, and must not say
+            // "another array". Both are build-time refusals rather than
+            // silent defaults: an unstated element type has no sensible
+            // stand-in, and a nested one is a value `Row::validate` could
+            // never accept, so accepting the *declaration* would only move
+            // the failure to the first write.
+            if col.ty == ValueType::Array {
+                match col.element {
+                    None => {
+                        return Err(SchemaError::ArrayWithoutElementType {
+                            table: table.clone(),
+                            column: col.name.clone(),
+                        });
+                    }
+                    Some(ValueType::Array) => {
+                        return Err(SchemaError::NestedArrayColumn {
+                            table: table.clone(),
+                            column: col.name.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
             if col.ty == ValueType::Decimal && col.scale > MAX_SCALE {
                 return Err(SchemaError::ScaleTooLarge {
                     table: table.clone(),
@@ -1185,7 +1365,7 @@ impl TableBuilder {
                     column: name.clone(),
                 });
             }
-            reject_vector(&self.columns, ordinal, table.as_str(), "primary key", name)?;
+            reject_unkeyable(&self.columns, ordinal, table.as_str(), "primary key", name)?;
             reject_dropped(&self.columns, ordinal, table.as_str(), "primary key", name)?;
             primary_key.push(ordinal);
         }
@@ -1261,6 +1441,17 @@ impl TableBuilder {
 
         let mut indexes: Vec<IndexDef> = Vec::with_capacity(self.indexes.len());
         for spec in &self.indexes {
+            // Before the gate below, which would report this as "no columns":
+            // a text index with an expression has columns *and* an expression,
+            // so it lands in the same XNOR and comes back with a reason that
+            // is not its reason.
+            if spec.text && spec.expression.is_some() {
+                return Err(SchemaError::UnindexableText {
+                    table: table.clone(),
+                    index: spec.name.clone(),
+                    reason: "also keys on an expression, and a term is not a computed value",
+                });
+            }
             // An index keys on columns or on an expression. Neither is nothing
             // to look up by; both would be two answers to what its key holds.
             if spec.columns.is_empty() == spec.expression.is_none() {
@@ -1288,12 +1479,45 @@ impl TableBuilder {
                         column: name.clone(),
                     });
                 }
-                reject_vector(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
+                reject_unkeyable(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
                 reject_dropped(&self.columns, ordinal, table.as_str(), &spec.name, name)?;
                 columns.push(IndexColumn {
                     ordinal,
                     direction: *direction,
                 });
+            }
+            if spec.text {
+                // Four ways to declare something an inverted index cannot
+                // hold, refused here rather than half-working. The types are
+                // read out of the columns being built, not out of the table,
+                // because the table does not exist yet.
+                let reason = if spec.unique {
+                    Some(
+                        "is also unique, which no realistic text can satisfy: a term appears \
+                         in many rows by construction",
+                    )
+                } else if columns.len() != 1 {
+                    Some(
+                        "names more than one column, and a cross product of two columns' \
+                          terms is a different and much larger structure",
+                    )
+                } else if columns
+                    .first()
+                    .and_then(|c| self.columns.get(c.ordinal.0))
+                    .map(ColumnDef::value_type)
+                    != Some(ValueType::Str)
+                {
+                    Some("keys on a column that is not a string")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    return Err(SchemaError::UnindexableText {
+                        table: table.clone(),
+                        index: spec.name.clone(),
+                        reason,
+                    });
+                }
             }
             indexes.push(IndexDef {
                 id: spec.id,
@@ -1302,6 +1526,7 @@ impl TableBuilder {
                 unique: spec.unique,
                 predicate: spec.predicate.clone(),
                 expression: spec.expression.clone(),
+                text: spec.text,
             });
         }
 
@@ -1310,6 +1535,16 @@ impl TableBuilder {
         for (i, check) in self.checks.iter().enumerate() {
             if self.checks.iter().take(i).any(|c| c.name() == check.name()) {
                 return Err(SchemaError::DuplicateCheck {
+                    table: table.clone(),
+                    check: check.name().to_owned(),
+                });
+            }
+            // A message that is present and blank. `None` is the way to have no
+            // message; `Some("")` is an author who meant to write one, and it
+            // reaches a form as an empty error beside the field it is supposed
+            // to explain.
+            if check.message().is_some_and(|m| m.trim().is_empty()) {
+                return Err(SchemaError::EmptyCheckMessage {
                     table: table.clone(),
                     check: check.name().to_owned(),
                 });
@@ -1513,28 +1748,40 @@ fn reject_dropped(
     Ok(())
 }
 
-/// Refuse a vector column in a key or an index.
+/// Refuse a vector or an array column in a key or an index.
+///
+/// Two types, two different reasons, and keeping them apart is the point of
+/// the two errors.
 ///
 /// A vector orders totally, so it can be stored and grouped, but that order is
 /// not its similarity — two nearby embeddings need not sort near each other.
 /// An index on one would answer no question worth asking and a range over one
 /// would mean nothing, so this is a schema error rather than a slow query.
-fn reject_vector(
+///
+/// An array's order *is* meaningful, so that argument does not transfer. It is
+/// refused for a different reason: what a user wants from an indexed array is
+/// almost never "rows whose array sorts near this one" but *which rows contain
+/// this element*, and that is one index entry per element per row against a
+/// write path that produces exactly one. The message says so, rather than
+/// leaving a caller to infer that arrays sort badly — they do not.
+fn reject_unkeyable(
     columns: &[ColumnDef],
     ordinal: Ordinal,
     table: &str,
     key: &str,
     column: &str,
 ) -> Result<()> {
-    if columns
-        .get(ordinal.0)
-        .is_some_and(|c| c.value_type() == ValueType::Vector)
-    {
-        return Err(SchemaError::VectorInKey {
+    match columns.get(ordinal.0).map(ColumnDef::value_type) {
+        Some(ValueType::Vector) => Err(SchemaError::VectorInKey {
             table: table.to_owned(),
             key: key.to_owned(),
             column: column.to_owned(),
-        });
+        }),
+        Some(ValueType::Array) => Err(SchemaError::ArrayInKey {
+            table: table.to_owned(),
+            key: key.to_owned(),
+            column: column.to_owned(),
+        }),
+        _ => Ok(()),
     }
-    Ok(())
 }

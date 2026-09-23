@@ -31,6 +31,21 @@ const LEFT: TableId = TableId(1);
 const RIGHT: TableId = TableId(2);
 const ROWS: u64 = 60_000;
 
+/// Rows this runs over, overridable with `KERNELBENCH_ROWS`.
+///
+/// `scripts/run_examples.sh --smoke` sets it small: CI's job is to prove this
+/// still executes against the current tree, and the numbers a smoke run prints
+/// are worthless — the file says so rather than letting a reader trust them.
+/// A run with the variable unset is the recorded size, which is what
+/// `docs/performance.md` quotes.
+fn rows() -> u64 {
+    std::env::var("KERNELBENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
+
 fn left() -> TableDef {
     TableDef::builder("l", LEFT)
         .column("id", ValueType::U64)
@@ -55,13 +70,14 @@ fn right() -> TableDef {
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     let (l, r) = (left(), right());
     let catalog = Catalog::from_tables([l.clone(), r.clone()]).unwrap();
     let store = RecordStore::new(MemoryStore::new(), catalog, SecurityCatalog::new());
     let root = SecurityContext::superuser();
 
     let txn = store.begin().await.unwrap();
-    let lrows: Vec<Row> = (0..ROWS)
+    let lrows: Vec<Row> = (0..rows())
         .map(|i| {
             Row::new(vec![
                 Value::U64(i),
@@ -72,7 +88,7 @@ async fn main() {
         })
         .collect();
     txn.insert_many(&root, &l, &lrows).await.unwrap();
-    let rrows: Vec<Row> = (0..ROWS)
+    let rrows: Vec<Row> = (0..rows())
         .map(|i| {
             Row::new(vec![
                 Value::U64(i),
@@ -117,8 +133,11 @@ async fn main() {
     }
     times.sort_by(f64::total_cmp);
     println!(
-        "grouped join with a computed column over {ROWS} rows: \
+        "grouped join with a computed column over {} rows: \
          min {:.1} ms, median {:.1} ms, max {:.1} ms",
-        times[0], times[4], times[8]
+        rows(),
+        times[0],
+        times[4],
+        times[8]
     );
 }

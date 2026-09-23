@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/howlerops/slate-orm/clients/go/internal/pb/slate/v1"
 )
@@ -130,6 +133,17 @@ type Error struct {
 	// "" when the server sent no ErrorInfo and for a failure raised without
 	// reaching the server.
 	Reason string
+	// Violations is every CHECK a refused row broke, in declaration order.
+	//
+	// Empty for every failure that is not a check violation, which is almost
+	// all of them. Each entry carries the constraint's name, the column it is
+	// about and the sentence to show — so a form puts the message beside the
+	// field rather than parsing it out of Message, which is prose and is not
+	// a stability promise.
+	//
+	// The server reports every failing check rather than the first, so a row
+	// with three bad fields produces three entries and one round trip.
+	Violations []CheckViolation
 	// RequestID is the id this client sent for the call that failed, or "".
 	//
 	// Not the server's — the server assigns none. This is what went out in
@@ -224,12 +238,78 @@ func fromRPCWithID(id string, err error) error {
 		kind = KindInternal
 	}
 	return &Error{
-		Kind:      kind,
-		Message:   st.Message(),
-		Code:      st.Code(),
-		Reason:    reasonOf(st),
-		RequestID: id,
+		Kind:       kind,
+		Message:    st.Message(),
+		Code:       st.Code(),
+		Reason:     reasonOf(st),
+		Violations: violationsOf(st),
+		RequestID:  id,
 	}
+}
+
+// CheckViolation is one CHECK a refused row broke.
+//
+// Column and Message are empty where the schema supplied none: a check
+// spanning two columns has no single one to name, and naming either would be
+// a lie a form renders beside the wrong field. Empty strings rather than
+// pointers, for the reason [CheckRule] gives.
+type CheckViolation struct {
+	// Check is the constraint's name, as the schema declares it.
+	Check string
+	// Column is the column it is about, or "" for one spanning several.
+	Column string
+	// Message is the sentence to show, or "" where the schema wrote none.
+	Message string
+}
+
+// violationsOf is every check a refused write broke, in declaration order.
+//
+// Reads the indexed keys (check.0, column.0, message.0, …) rather than the
+// unindexed pair, which is only the first failure. Counting up from the
+// violations count rather than walking the map for check.* keys, because the
+// metadata is string-keyed: check.10 sorts between check.1 and check.2, so a
+// map walk is right for nine failures and wrong for eleven.
+//
+// Returns nothing rather than a prefix when the count and the keys disagree.
+// A caller shown two failures for a row that broke three fixes two fields,
+// resubmits and is refused again — which is the round-trip-per-field
+// behaviour this exists to remove.
+func violationsOf(st *status.Status) []CheckViolation {
+	for _, detail := range st.Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if !ok {
+			continue
+		}
+		if info.GetReason() != "CHECK_VIOLATION" {
+			return nil
+		}
+		data := info.GetMetadata()
+		total, err := strconv.Atoi(data["violations"])
+		if err != nil {
+			// Old enough to send the unindexed pair and no count. One
+			// failure is the honest reading of what it said.
+			if name := data["check"]; name != "" {
+				return []CheckViolation{{
+					Check: name, Column: data["column"], Message: data["message"],
+				}}
+			}
+			return nil
+		}
+		out := make([]CheckViolation, 0, total)
+		for at := range total {
+			name := data[fmt.Sprintf("check.%d", at)]
+			if name == "" {
+				return nil
+			}
+			out = append(out, CheckViolation{
+				Check:   name,
+				Column:  data[fmt.Sprintf("column.%d", at)],
+				Message: data[fmt.Sprintf("message.%d", at)],
+			})
+		}
+		return out
+	}
+	return nil
 }
 
 // reasonOf is the stable token in a status's details, or "".
@@ -259,6 +339,12 @@ func reasonOf(st *status.Status) string {
 // response, so the code and message arrive in a message body rather than in
 // trailers. This turns them back into the same type a lone call returns, so a
 // caller writes one errors.As whether or not the write was batched.
+//
+// Including Violations, which used to be the one field a batched failure could
+// not carry: there are no trailers, so there was no `grpc-status-details-bin`
+// and nothing to decode. The server now puts the same blob in the message
+// body, and this reads it with the same decoder the lone path uses — so a form
+// submitted as a batch gets the same typed failures as one submitted alone.
 func fromBatchError(failed *pb.BatchError) error {
 	if failed == nil {
 		return &Error{Kind: KindInternal, Message: "a batch reported an empty error", Code: codes.Unknown}
@@ -269,11 +355,31 @@ func fromBatchError(failed *pb.BatchError) error {
 		kind = KindInternal
 	}
 	return &Error{
-		Kind:    kind,
-		Message: failed.Message,
-		Code:    code,
-		Reason:  failed.Reason,
+		Kind:       kind,
+		Message:    failed.Message,
+		Code:       code,
+		Reason:     failed.Reason,
+		Violations: violationsInDetails(failed.Details),
 	}
+}
+
+// violationsInDetails decodes a `google.rpc.Status` carried as bytes.
+//
+// [violationsOf] takes a *status.Status because that is what a lone failure
+// arrives as; a batched one arrives as the encoded bytes. Rebuilding the
+// status from them rather than writing a second walk keeps one decoder: the
+// alternative is two, which agree until somebody edits one.
+func violationsInDetails(details []byte) []CheckViolation {
+	if len(details) == 0 {
+		return nil
+	}
+	var raw rpcstatus.Status
+	if proto.Unmarshal(details, &raw) != nil {
+		// A blob that does not parse loses the violations and nothing else.
+		// Raising here would replace the server's failure with this client's.
+		return nil
+	}
+	return violationsOf(status.FromProto(&raw))
 }
 
 // withTrailers refines an error using the call's trailers.

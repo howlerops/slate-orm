@@ -27,3 +27,6 @@ class ValueType(enum.Enum):
     #: An exact decimal. The *scale* is not part of the type — see
     #: `Column.scale`, and `values.Units` for what a decimal value is.
     DECIMAL = "decimal"
+    #: A homogeneous list. The *element type* is not part of the type — see
+    #: `Column.element`, and `values.Array` for what an array value is.
+    ARRAY = "array"

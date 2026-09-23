@@ -139,6 +139,7 @@ fn runtimes() -> Runtimes {
 }
 
 fn main() {
+    slate_slatedb::announce();
     let requested: Vec<String> = std::env::args().skip(1).collect();
     let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
 
@@ -188,6 +189,7 @@ fn heading(title: &str) {
 fn wire_key(tenant: u64, id: u64) -> pb::Row {
     pb::Row {
         computed: Vec::new(),
+        windowed: Vec::new(),
         values: vec![
             slate_server::convert::value_to_proto(&Value::U64(tenant)),
             slate_server::convert::value_to_proto(&Value::U64(id)),
@@ -245,7 +247,7 @@ async fn connect_many(address: std::net::SocketAddr, count: usize) -> Vec<Record
             tokio::spawn(async move {
                 for _ in 0..2_000 {
                     let _ = client
-                        .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+                        .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
                         .await
                         .expect("leadership");
                 }
@@ -552,7 +554,7 @@ fn section_scale(rt: &Runtimes) {
     for &level in &sweep {
         let repeated = sweep_point(rt, &clients, level, |mut client, _| async move {
             let ok = client
-                .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+                .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
                 .await
                 .is_ok();
             (client, ok)

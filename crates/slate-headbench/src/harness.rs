@@ -21,7 +21,7 @@ use slate_schema::Catalog;
 use slate_server::leadership::Leadership;
 use slate_server::lease::{Lease, LeaseError, Term};
 use slate_server::proto::records_client::RecordsClient;
-use slate_server::{Head, HeadConfig, Limits, MetadataIdentity};
+use slate_server::{Head, HeadConfig, Limits, MetadataIdentity, Views};
 use slate_slatedb::{SlateReader, SlateStore};
 use slatedb::Db;
 use slatedb::config::DbReaderOptions;
@@ -179,6 +179,34 @@ pub fn head<S: KvStore + KvReadStore>(
     leadership: Arc<Leadership>,
     limits: Limits,
 ) -> Head<S> {
+    head_serving_views(
+        catalog,
+        security,
+        writer,
+        replicas,
+        leadership,
+        limits,
+        Views::new(),
+    )
+}
+
+/// [`head`], with a view registry installed.
+///
+/// A separate function rather than a seventh argument on `head`, because every
+/// existing caller wants an empty registry and would have to say so. `Views`
+/// is `BTreeMap`-shaped, so the empty case costs one failed lookup per read,
+/// and whether that is measurable at all is the question the report's `views`
+/// section exists to answer — which it cannot ask if the benchmark harness
+/// cannot build a node that has any.
+pub fn head_serving_views<S: KvStore + KvReadStore>(
+    catalog: Catalog,
+    security: SecurityCatalog,
+    writer: Arc<S>,
+    replicas: Vec<Arc<dyn KvReadStore>>,
+    leadership: Arc<Leadership>,
+    limits: Limits,
+    views: Views,
+) -> Head<S> {
     Head::new(
         HeadConfig::new(catalog, security).with_limits(limits),
         writer,
@@ -186,6 +214,7 @@ pub fn head<S: KvStore + KvReadStore>(
         leadership,
         Arc::new(MetadataIdentity::trusting_the_caller_completely()),
     )
+    .serving_views(views)
 }
 
 /// The same kernel the head node holds, assembled the same way, reachable

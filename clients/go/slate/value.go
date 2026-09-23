@@ -62,6 +62,19 @@ type UUID [16]byte
 // Vector is a dense f32 vector, for embeddings.
 type Vector []float32
 
+// Array is a homogeneous list.
+//
+// Homogeneous by the column's declaration rather than by this type: the
+// element type lives on the column, the way a decimal's scale does, and a
+// []Value cannot express it. Sending a mixed list compiles and is refused by
+// the server, naming the element that did not match — which is the same place
+// a wrong scale is caught, and for the same reason: only the catalog knows.
+//
+// An Array may not hold another Array. The server refuses one, because a
+// column's element type is a scalar type name and cannot say what an inner
+// list would hold.
+type Array []Value
+
 func (Null) toProto() *pb.Value {
 	return &pb.Value{Kind: &pb.Value_NullValue{NullValue: pb.NullValue_NULL_VALUE}}
 }
@@ -93,6 +106,21 @@ func (v UUID) toProto() *pb.Value {
 }
 func (v Vector) toProto() *pb.Value {
 	return &pb.Value{Kind: &pb.Value_VectorValue{VectorValue: &pb.Vector{Elements: []float32(v)}}}
+}
+func (v Array) toProto() *pb.Value {
+	elements := make([]*pb.Value, len(v))
+	for i, element := range v {
+		// A nil element is a caller that built a []Value and left a hole.
+		// Sent as an explicit null rather than as a nil message, because the
+		// server refuses a value with no kind set — correctly, since proto3
+		// cannot tell an unset field from a zero one — and the refusal would
+		// name the wire rather than the hole.
+		if element == nil {
+			element = Null{}
+		}
+		elements[i] = element.toProto()
+	}
+	return &pb.Value{Kind: &pb.Value_ArrayValue{ArrayValue: &pb.ArrayValue{Elements: elements}}}
 }
 
 // StringWithScale renders the units against a scale, as a decimal string.
@@ -172,6 +200,24 @@ func valueFromProto(v *pb.Value) (Value, error) {
 		}
 		out := make(Vector, len(k.VectorValue.Elements))
 		copy(out, k.VectorValue.Elements)
+		return out, nil
+	case *pb.Value_ArrayValue:
+		if k.ArrayValue == nil {
+			return Array(nil), nil
+		}
+		out := make(Array, len(k.ArrayValue.Elements))
+		for i, element := range k.ArrayValue.Elements {
+			// Recursing through valueFromProto rather than matching the
+			// scalar kinds again: one decoder means the two cannot disagree
+			// about what a uuid's length must be, and a nested array — which
+			// the server will not send — comes back as the same refusal any
+			// other unreadable element would.
+			decoded, err := valueFromProto(element)
+			if err != nil {
+				return nil, fmt.Errorf("slate: array element %d: %w", i, err)
+			}
+			out[i] = decoded
+		}
 		return out, nil
 	default:
 		return nil, fmt.Errorf("slate: a column carried a value kind this client does not know")

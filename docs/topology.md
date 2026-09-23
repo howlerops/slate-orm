@@ -721,7 +721,13 @@ Every status now also carries a `google.rpc.ErrorInfo` in
 the variant's own payload as metadata (`table`, `index`, `action`, `replica`,
 `required`, `visible`, `limit`). That is the standard shape, so a client using
 its language's rich-error helper needs no special support, and one that ignores
-details is unaffected. The two well-known messages are declared in this
+details is unaffected.
+
+One family of metadata keys is *specified* rather than incidental, and is the
+only one clients parse: a check violation sends a `violations` count and
+`check.N`, `column.N`, `message.N` indexed from zero. All three clients read it
+into typed values — see `docs/validation.md` — because a refused form needs to
+know which field, and every other key here varies per variant. The two well-known messages are declared in this
 repository's own `proto/google/rpc/` rather than pulled in as a dependency —
 they are twelve lines, the build is hermetic on purpose, and what has to agree
 is the bytes rather than the crate.

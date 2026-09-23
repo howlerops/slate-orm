@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{app_in, claim, serving_leader, user};
+use common::{app_in, claim, serving_denied, serving_leader, user};
 use slate_kernel::memory::MemoryStore;
 use slate_server::proto as pb;
 use std::sync::Arc;
@@ -346,4 +346,769 @@ async fn the_early_authorization_does_not_refuse_a_permitted_caller() {
         ))
         .await
         .expect("delete is permitted");
+}
+
+/// Finding 8 again, on the read paths the fix did not cover.
+///
+/// The fix ordered the *fingerprint* check behind `authorized_table`, closing
+/// the channel the finding named. `query` and `explain` resolve their table
+/// with the bare `self.table(..)` and then run `query_from_proto`, which turns
+/// a `ColumnRef` into a flat ordinal — and, as the proto says, "only the
+/// server knows how wide each table is". So a caller with no grant can ask
+/// about column *n* and learn from the answer whether the table has one.
+///
+/// Two requests that differ only in an ordinal, from a role granted nothing on
+/// `users`. If the answers differ, the width of a table the caller cannot read
+/// is a binary search away.
+#[tokio::test]
+async fn a_caller_with_no_grant_cannot_probe_a_tables_width() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let stranger = |message: pb::QueryRequest| {
+        common::as_principal(message, "u64:9", Some("u64:1"), "stranger")
+    };
+    let projecting = |ordinal: u32| {
+        let mut query = common::plain_query("users");
+        query.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(query),
+            freshness: None,
+        }
+    };
+
+    // Ordinal 0 exists in every table; 99 exists in none of this size.
+    let real = client.query(stranger(projecting(0))).await.err();
+    let absent = client.query(stranger(projecting(99))).await.err();
+
+    let code = |e: &Option<tonic::Status>| e.as_ref().map(tonic::Status::code);
+    let message = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        code(&real),
+        code(&absent),
+        "a real and an absent column must be indistinguishable to a caller \
+         with no grant: {:?} vs {:?}",
+        message(&real),
+        message(&absent)
+    );
+    assert_eq!(
+        message(&real),
+        message(&absent),
+        "and the message must not vary with the ordinal either"
+    );
+    assert_eq!(
+        code(&real),
+        Some(Code::PermissionDenied),
+        "a caller with no grant must be refused before the query is converted"
+    );
+}
+
+/// The same channel on `explain`, which resolves and converts identically.
+///
+/// `Action::Explain` rather than `Read`, because that is what the kernel
+/// checks first — a handler authorising the wrong action refuses a caller the
+/// kernel would allow, which is the hazard `each_handler_authorizes_the_action_it_performs`
+/// exists for.
+#[tokio::test]
+async fn explaining_does_not_leak_a_tables_width_either() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let explaining = |ordinal: u32| {
+        let mut query = common::plain_query("users");
+        query.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::ExplainRequest {
+                transaction: String::new(),
+                query: Some(query),
+                freshness: None,
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.explain(explaining(0)).await.expect_err("denied");
+    let absent = client.explain(explaining(99)).await.expect_err("denied");
+    assert_eq!(real.code(), Code::PermissionDenied);
+    // And the action named is `explain`, not `read`. The kernel checks
+    // `Action::Explain` first and `Read` second, so a handler authorising
+    // `Read` early answers a caller holding neither with the wrong one — which
+    // is `each_handler_authorizes_the_action_it_performs`'s hazard, "checking
+    // early is checking *differently*", on a handler that test does not cover.
+    // Without this line, swapping the action here changes nothing observable
+    // and the mutation survives.
+    assert!(
+        real.message().contains("explain"),
+        "the refusal should name the action the kernel checks first: {}",
+        real.message()
+    );
+    assert_eq!(
+        real.message(),
+        absent.message(),
+        "a real and an absent column must be indistinguishable: {} vs {}",
+        real.message(),
+        absent.message()
+    );
+}
+
+/// And on `load`, where the schema disclosed is the foreign keys rather than
+/// the width.
+///
+/// `resolve_relation` refuses an unknown foreign key by *listing the ones that
+/// exist*, and it ran before anything authorised the caller. Two requests
+/// differing only in a relation name, from a role granted nothing.
+#[tokio::test]
+async fn loading_does_not_leak_a_tables_foreign_keys() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let loading = |foreign_key: &str| {
+        common::as_principal(
+            pb::RelatedRequest {
+                transaction: String::new(),
+                relation: None,
+                keys: vec![pb::Value {
+                    kind: Some(pb::value::Kind::Uint64Value(1)),
+                }],
+                freshness: None,
+                schema: None,
+                path: vec![pb::RelatedStep {
+                    relation: Some(pb::Relation {
+                        table: "users".to_owned(),
+                        foreign_key: foreign_key.to_owned(),
+                        direction: pb::relation::Direction::Children as i32,
+                    }),
+                    schema: None,
+                }],
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let one = client
+        .related(loading("no_such_key"))
+        .await
+        .expect_err("denied");
+    let other = client
+        .related(loading("also_not_a_key"))
+        .await
+        .expect_err("denied");
+    assert_eq!(
+        one.code(),
+        Code::PermissionDenied,
+        "a caller with no grant must be refused before the relation resolves: {}",
+        one.message()
+    );
+    assert_eq!(
+        one.message(),
+        other.message(),
+        "and the refusal must not name the foreign keys that do exist"
+    );
+}
+
+/// And on `join`, which resolves *and converts every input* before the first
+/// authorisation.
+///
+/// `join_from_proto(&wire, self.pool.catalog())` takes a catalog rather than a
+/// context — so it cannot authorise, and the handler does not either. Same
+/// width oracle as `query`, on a request that names more tables per round
+/// trip.
+///
+/// Found by checking a claim made from reading: the exemption this session
+/// added for `query_from_proto_at` asserted its callers "authorise before
+/// converting", naming these handlers. Two of the four did not.
+///
+/// Two inputs, because a one-input join is refused by arity *before* anything
+/// converts — the first version of this test asserted indistinguishable
+/// answers and got them, from "a join needs at least two inputs" twice. A
+/// probe that cannot reach the code it is about passes for the wrong reason.
+#[tokio::test]
+async fn joining_does_not_leak_a_tables_width_either() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let joining = |ordinal: u32| {
+        let mut left = common::plain_query("users");
+        left.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        let right = common::plain_query("docs");
+        common::as_principal(
+            pb::JoinRequest {
+                transaction: String::new(),
+                freshness: None,
+                join: Some(pb::JoinQuery {
+                    inputs: vec![
+                        pb::JoinInput {
+                            query: Some(left),
+                            on: Vec::new(),
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                        pb::JoinInput {
+                            query: Some(right),
+                            on: vec![pb::JoinOn {
+                                earlier: Some(pb::ColumnRef {
+                                    input: 0,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                                own: Some(pb::ColumnRef {
+                                    input: 1,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                            }],
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                    ],
+                    limit: None,
+                    offset: 0,
+                    build_limit: None,
+                    after: Vec::new(),
+                    paged: false,
+                    compute: Vec::new(),
+                }),
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.join(joining(0)).await.err();
+    let absent = client.join(joining(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    // The control, so this cannot pass on an arity refusal again: the
+    // *authorised* shape must actually be refused for lack of a grant, which
+    // means conversion was reached and the tables resolved.
+    assert!(
+        says(&real).contains("access denied") || says(&real).contains("no role grants"),
+        "the in-range request should be refused for the grant, not the shape: {}",
+        says(&real)
+    );
+    assert_eq!(
+        says(&real),
+        says(&absent),
+        "a real and an absent column must be indistinguishable to a caller \
+         with no grant"
+    );
+}
+
+/// Every input of a join, not the first.
+///
+/// `reader_only` holds `Read` on `users` and nothing on `docs`, so a join of
+/// the two passes the first check and must still be refused on the second.
+/// Without this, authorising only `wire.inputs[0]` leaves every later input's
+/// width readable to anyone who can read *some* table — which is a lower bar
+/// than holding no grant at all.
+#[tokio::test]
+async fn every_input_of_a_join_is_authorised_not_only_the_first() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let joining = |ordinal: u32| {
+        let left = common::plain_query("users");
+        let mut right = common::plain_query("docs");
+        right.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 1,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::JoinRequest {
+                transaction: String::new(),
+                freshness: None,
+                join: Some(pb::JoinQuery {
+                    inputs: vec![
+                        pb::JoinInput {
+                            query: Some(left),
+                            on: Vec::new(),
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                        pb::JoinInput {
+                            query: Some(right),
+                            on: vec![pb::JoinOn {
+                                earlier: Some(pb::ColumnRef {
+                                    input: 0,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                                own: Some(pb::ColumnRef {
+                                    input: 1,
+                                    of: Some(pb::column_ref::Of::Column(0)),
+                                }),
+                            }],
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                    ],
+                    limit: None,
+                    offset: 0,
+                    build_limit: None,
+                    after: Vec::new(),
+                    paged: false,
+                    compute: Vec::new(),
+                }),
+            },
+            "u64:1",
+            Some("u64:1"),
+            "reader_only",
+        )
+    };
+
+    let real = client.join(joining(0)).await.err();
+    let absent = client.join(joining(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        says(&real).contains("docs"),
+        "the in-range request should be refused for the grant on `docs`: {}",
+        says(&real)
+    );
+    assert_eq!(
+        says(&real),
+        says(&absent),
+        "the second input's width must not vary the refusal"
+    );
+}
+
+/// And the aggregate handlers, which convert through the same path.
+///
+/// Its `join` arm was untested until a mutation that skipped it entirely
+/// survived: `aggregate` reaches `join_from_proto` through
+/// `aggregate_from_proto_query`, so a fix applied to `join` alone leaves the
+/// same oracle one RPC away.
+#[tokio::test]
+async fn aggregating_over_a_join_does_not_leak_a_tables_width() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let aggregating = |ordinal: u32| {
+        let mut left = common::plain_query("users");
+        left.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        common::as_principal(
+            pb::AggregateRequest {
+                transaction: String::new(),
+                freshness: None,
+                aggregate: Some(pb::AggregateQuery {
+                    input: None,
+                    group_by: Vec::new(),
+                    aggregates: Vec::new(),
+                    having: None,
+                    sort: Vec::new(),
+                    limit: None,
+                    offset: 0,
+                    join: Some(pb::JoinQuery {
+                        inputs: vec![
+                            pb::JoinInput {
+                                query: Some(left),
+                                on: Vec::new(),
+                                join_type: 0,
+                                having: None,
+                                force: None,
+                            },
+                            pb::JoinInput {
+                                query: Some(common::plain_query("docs")),
+                                on: vec![pb::JoinOn {
+                                    earlier: Some(pb::ColumnRef {
+                                        input: 0,
+                                        of: Some(pb::column_ref::Of::Column(0)),
+                                    }),
+                                    own: Some(pb::ColumnRef {
+                                        input: 1,
+                                        of: Some(pb::column_ref::Of::Column(0)),
+                                    }),
+                                }],
+                                join_type: 0,
+                                having: None,
+                                force: None,
+                            },
+                        ],
+                        limit: None,
+                        offset: 0,
+                        build_limit: None,
+                        after: Vec::new(),
+                        paged: false,
+                        compute: Vec::new(),
+                    }),
+                }),
+            },
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        )
+    };
+
+    let real = client.aggregate(aggregating(0)).await.err();
+    let absent = client.aggregate(aggregating(99)).await.err();
+    let says = |e: &Option<tonic::Status>| {
+        e.as_ref()
+            .map(|s| s.message().to_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        says(&real).contains("access denied") || says(&real).contains("no role grants"),
+        "the in-range request should be refused for the grant: {}",
+        says(&real)
+    );
+    assert_eq!(says(&real), says(&absent), "and the width must not show");
+}
+
+/// The two `explain` twins, probed rather than assumed.
+///
+/// `explain_join` and `explain_aggregate` take the same helpers as their
+/// reading counterparts with `Action::Explain`. The entry for that change said
+/// so from reading and called the sentence the one it existed to be
+/// embarrassed by — the whole finding it recorded was a claim about callers
+/// made without checking them. So: checked.
+///
+/// The action matters as much as the ordering. The kernel checks `Explain`
+/// first and `Read` after, so a caller holding neither must be told `explain`;
+/// a handler authorising `Read` early names the wrong one, and that swap
+/// survived a mutation on the single-table path until a test asserted the
+/// word.
+#[tokio::test]
+async fn the_explain_twins_refuse_before_converting_and_name_explain() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let joined = |ordinal: u32| {
+        let mut left = common::plain_query("users");
+        left.projection = Some(pb::Projection {
+            all_columns: false,
+            columns: vec![pb::ColumnRef {
+                input: 0,
+                of: Some(pb::column_ref::Of::Column(ordinal)),
+            }],
+        });
+        pb::JoinQuery {
+            inputs: vec![
+                pb::JoinInput {
+                    query: Some(left),
+                    on: Vec::new(),
+                    join_type: 0,
+                    having: None,
+                    force: None,
+                },
+                pb::JoinInput {
+                    query: Some(common::plain_query("docs")),
+                    on: vec![pb::JoinOn {
+                        earlier: Some(pb::ColumnRef {
+                            input: 0,
+                            of: Some(pb::column_ref::Of::Column(0)),
+                        }),
+                        own: Some(pb::ColumnRef {
+                            input: 1,
+                            of: Some(pb::column_ref::Of::Column(0)),
+                        }),
+                    }],
+                    join_type: 0,
+                    having: None,
+                    force: None,
+                },
+            ],
+            limit: None,
+            offset: 0,
+            build_limit: None,
+            after: Vec::new(),
+            paged: false,
+            compute: Vec::new(),
+        }
+    };
+    // A `fn`, not a closure, for the reason
+    // `each_handler_authorizes_the_action_it_performs` gives: a closure
+    // monomorphises to the first type it is called with, and this is called
+    // with two different requests.
+    fn stranger<T>(message: T) -> tonic::Request<T> {
+        common::as_principal(message, "u64:9", Some("u64:1"), "stranger")
+    }
+    let says = |status: &tonic::Status| status.message().to_owned();
+
+    let real = client
+        .explain_join(stranger(pb::ExplainJoinRequest {
+            transaction: String::new(),
+            join: Some(joined(0)),
+            freshness: None,
+        }))
+        .await
+        .expect_err("denied");
+    let absent = client
+        .explain_join(stranger(pb::ExplainJoinRequest {
+            transaction: String::new(),
+            join: Some(joined(99)),
+            freshness: None,
+        }))
+        .await
+        .expect_err("denied");
+    assert_eq!(real.code(), Code::PermissionDenied);
+    assert_eq!(says(&real), says(&absent), "explain_join leaked the width");
+    assert!(
+        says(&real).contains("explain"),
+        "explain_join should name the action the kernel checks first: {}",
+        says(&real)
+    );
+
+    let aggregated = |ordinal: u32| pb::ExplainAggregateRequest {
+        transaction: String::new(),
+        freshness: None,
+        aggregate: Some(pb::AggregateQuery {
+            input: None,
+            group_by: Vec::new(),
+            aggregates: Vec::new(),
+            having: None,
+            sort: Vec::new(),
+            limit: None,
+            offset: 0,
+            join: Some(joined(ordinal)),
+        }),
+    };
+    let real = client
+        .explain_aggregate(stranger(aggregated(0)))
+        .await
+        .expect_err("denied");
+    let absent = client
+        .explain_aggregate(stranger(aggregated(99)))
+        .await
+        .expect_err("denied");
+    assert_eq!(real.code(), Code::PermissionDenied);
+    assert_eq!(
+        says(&real),
+        says(&absent),
+        "explain_aggregate leaked the width"
+    );
+    assert!(
+        says(&real).contains("explain"),
+        "explain_aggregate should name `explain` too: {}",
+        says(&real)
+    );
+}
+
+/// A chain, which is a `JoinQuery` with more than two inputs — demonstrated
+/// rather than inferred from the converter.
+///
+/// The entry for the join fix said the chain handlers were "covered because a
+/// chain *is* a `JoinQuery`… read from the converter, not demonstrated with a
+/// three-input request". Every probe until this one sent two.
+///
+/// `two_table_reader` exists for this and nothing else: `Read` on `users` and
+/// `docs` and nothing on `mentions`, so the request passes inputs 0 and 1 and
+/// must be refused on the *third*. The first version of this test used
+/// `reader_only`, which holds only `users` — so it was refused at input 1, and
+/// a mutation making the loop `take(2)` **survived** it. A probe that is
+/// stopped before the code it is about passes for the wrong reason, which is
+/// the second time that happened today.
+#[tokio::test]
+async fn the_third_input_of_a_chain_is_authorised_too() {
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+
+    let step = |table: &str, from: u32, own: u32| pb::JoinInput {
+        query: Some(common::plain_query(table)),
+        on: vec![pb::JoinOn {
+            earlier: Some(pb::ColumnRef {
+                input: from,
+                of: Some(pb::column_ref::Of::Column(0)),
+            }),
+            own: Some(pb::ColumnRef {
+                input: own,
+                of: Some(pb::column_ref::Of::Column(0)),
+            }),
+        }],
+        join_type: 0,
+        having: None,
+        force: None,
+    };
+
+    let chaining = |ordinal: u32| {
+        let mut last = step("mentions", 1, 2);
+        if let Some(query) = last.query.as_mut() {
+            query.projection = Some(pb::Projection {
+                all_columns: false,
+                columns: vec![pb::ColumnRef {
+                    input: 2,
+                    of: Some(pb::column_ref::Of::Column(ordinal)),
+                }],
+            });
+        }
+        common::as_principal(
+            pb::JoinRequest {
+                transaction: String::new(),
+                freshness: None,
+                join: Some(pb::JoinQuery {
+                    inputs: vec![
+                        pb::JoinInput {
+                            query: Some(common::plain_query("users")),
+                            on: Vec::new(),
+                            join_type: 0,
+                            having: None,
+                            force: None,
+                        },
+                        step("docs", 0, 1),
+                        last,
+                    ],
+                    limit: None,
+                    offset: 0,
+                    build_limit: None,
+                    after: Vec::new(),
+                    paged: false,
+                    compute: Vec::new(),
+                }),
+            },
+            "u64:1",
+            Some("u64:1"),
+            "two_table_reader",
+        )
+    };
+
+    let real = client.join(chaining(0)).await.expect_err("denied");
+    let absent = client.join(chaining(99)).await.expect_err("denied");
+    // The control: the in-range request must be refused for the grant on the
+    // *third* table, which is what says inputs 0 and 1 were let through.
+    assert!(
+        real.message().contains("mentions"),
+        "the refusal should name the third input: {}",
+        real.message()
+    );
+    assert_eq!(
+        real.message(),
+        absent.message(),
+        "the third input's width must not vary the refusal: {} vs {}",
+        real.message(),
+        absent.message()
+    );
+}
+
+/// FINDING: `Leadership` answered a caller that `deny-all` refuses.
+///
+/// Eighteen of the nineteen RPCs derived a `SecurityContext` from the
+/// request's metadata before doing anything. `leadership` took `_request` — it
+/// never looked at the metadata at all — so it was answered by a caller the
+/// authenticator rejects, including under the one configuration whose whole
+/// statement is that it "authenticates nobody and will refuse every request".
+///
+/// What came back was the node's standing, the lease generation, and the
+/// holder's identity, which the proto describes as something "a client can use
+/// to find the node that will accept its writes". That is a useful thing to
+/// tell a client and a useful thing to tell a scanner: it names the write
+/// leader out of a set of otherwise identical endpoints, and the generation
+/// counts lease changes, so polling it reported instability nobody chose to
+/// publish.
+///
+/// Measured before the fix:
+///
+/// ```text
+/// standing: Leader, generation: Some(1), holder: "test-leader"
+/// ```
+///
+/// FIXED: it authenticates now. No grant is checked — there is no table — so
+/// the bar is who may talk to this server at all.
+#[tokio::test]
+async fn leadership_is_refused_to_a_caller_that_deny_all_refuses() {
+    let writer = Arc::new(MemoryStore::new());
+    let serving = serving_denied(writer).await;
+    let mut client = serving.client().await;
+
+    // The control. Every other RPC must be refused for this to be about
+    // `leadership` rather than about a misbuilt fixture.
+    let read = client
+        .query(pb::QueryRequest {
+            transaction: String::new(),
+            query: Some(common::plain_query("users")),
+            freshness: None,
+        })
+        .await
+        .expect_err("deny-all must refuse an ordinary read");
+    assert_eq!(read.code(), Code::Unauthenticated, "{read:?}");
+
+    let refused = client
+        .leadership(pb::LeadershipRequest {})
+        .await
+        .expect_err("leadership must be refused too");
+    assert_eq!(refused.code(), Code::Unauthenticated, "{refused:?}");
+}
+
+/// The other half, and the reason the fix is authentication rather than a
+/// narrower response: an authenticated caller still learns everything it did.
+///
+/// Without this, deleting the whole handler body would satisfy the probe
+/// above. The three shipped clients all call this to find the write leader and
+/// all of them send their credentials, so the fix costs them nothing — but
+/// that is a claim about the clients, and this is the assertion about the
+/// server.
+#[tokio::test]
+async fn an_authenticated_caller_still_learns_who_holds_the_lease() {
+    let writer = Arc::new(MemoryStore::new());
+    let serving = serving_leader(writer).await;
+    let mut client = serving.client().await;
+
+    let answered = client
+        .leadership(common::as_principal(
+            pb::LeadershipRequest {},
+            "u64:9",
+            Some("u64:1"),
+            "stranger",
+        ))
+        .await
+        .expect("an authenticated caller may ask")
+        .into_inner();
+
+    assert_eq!(
+        answered.standing,
+        pb::leadership_status::Standing::Leader as i32,
+        "{answered:?}"
+    );
+    assert!(answered.generation.is_some(), "{answered:?}");
+    assert!(!answered.holder.is_empty(), "{answered:?}");
 }

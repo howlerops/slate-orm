@@ -90,6 +90,34 @@ impl Row {
                 }
                 Some(_) => {}
             }
+
+            // An array's elements are typed by the column, so the column is
+            // the only place that can check them. `validate` is where every
+            // write passes, and an element of the wrong type would otherwise
+            // reach storage, encode fine — the codec is happy to hold a
+            // heterogeneous array — and read back as a value the schema says
+            // cannot exist.
+            //
+            // **A null element is refused**, and that is a decision rather
+            // than a consequence. `docs/arrays.md` leaves nullable elements
+            // open: `[1, null, 3]` is meaningful in Postgres and a nuisance
+            // elsewhere. Refusing is the reversible half of an open question —
+            // accepting nulls now would be a promise every client and the
+            // wire would have to keep. It is also *not* the same knob as the
+            // column's nullability, which is about the whole value.
+            if let (Some(element), Value::Array(elements)) = (column.element_type(), value) {
+                for (index, item) in elements.iter().enumerate() {
+                    if item.value_type() != Some(element) {
+                        return Err(SchemaError::ArrayElementTypeMismatch {
+                            table: table.name().to_owned(),
+                            column: column.name().to_owned(),
+                            index,
+                            expected: element,
+                            actual: item.type_name(),
+                        });
+                    }
+                }
+            }
         }
 
         // An expression index declares the type it produces, because the

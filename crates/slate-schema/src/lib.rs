@@ -33,6 +33,7 @@ pub mod constraint;
 pub mod error;
 pub mod row;
 pub mod table;
+pub mod text;
 
 pub use catalog::Catalog;
 pub use columns::ColumnSet;
@@ -43,3 +44,4 @@ pub use table::{
     ColumnDef, Computed, IndexBuilder, IndexColumn, IndexDef, IndexExpression, IndexId, Managed,
     Ordinal, TableBuilder, TableDef, TableId,
 };
+pub use text::tokenize;

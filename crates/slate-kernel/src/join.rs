@@ -22,17 +22,28 @@
 //! the answer a long way.
 //!
 //! A scan with readahead returns roughly eight thousand rows per request. A
-//! point read costs about three. So a probe is worth it only when it saves
-//! scanning something like twenty-four thousand rows — which means the loop
-//! wins when the *rows fetched* are a vanishingly small fraction of the inner
-//! table, not merely a small one.
+//! point read costs one — `POINT_READ_COST`, re-measured in #269 at 1.0 after
+//! four measurements contradicted the 3.0 the sentences below were written
+//! against. So a probe is worth it only when it saves scanning about **eight
+//! thousand** rows — which still means the loop wins when the *rows fetched*
+//! are a vanishingly small fraction of the inner table, not merely a small
+//! one, but the fraction is three times less demanding than this used to say.
 //!
 //! This used to say a loop wins when the outer side is under a hundredth of the
 //! inner, which was three orders of magnitude out. Measured: four hundred point
 //! reads cost 1,221 requests and 3.73 s, while scanning the whole two-hundred
-//! thousand row table cost 25 requests and 0.37 s. Loading one parent and its
-//! ten children still picks a loop — but only once the inner table is in the
-//! hundreds of millions, not the hundreds of thousands.
+//! thousand row table cost 25 requests and 0.37 s.
+//!
+//! ~~**The request figure does not reproduce**~~ — written here a few hours
+//! before #278 reproduced it exactly. It is a property of the *build*: with
+//! `slate-slatedb`'s `cache` feature off, as it was when this was measured,
+//! the same probe reads 1,221 GETs; with it on, 414. Both measurements were
+//! right. See `stats.rs`, which carries the A/B.
+//!
+//! What follows from the constant as it stands today: loading one parent and
+//! its ten children still picks a loop, and the threshold moved with
+//! `POINT_READ_COST` — tens of millions of inner rows rather than hundreds of
+//! millions.
 //!
 //! # Outer joins, and which algorithm can serve them
 //!

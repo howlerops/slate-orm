@@ -9,6 +9,7 @@
 #![warn(missing_docs)]
 
 pub mod aggregate;
+pub mod build;
 pub mod chain;
 pub mod clock;
 pub mod error;
@@ -33,6 +34,7 @@ pub mod stats;
 pub mod store;
 pub mod token;
 /// Generated timezone transition tables. See `scripts/generate_zones.py`.
+pub mod window;
 pub mod zones;
 
 pub use aggregate::{Aggregate, Group, Grouper, Grouping};
@@ -72,3 +74,4 @@ pub use store::{
     KeyRange, KeyValue, KvIterator, KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder,
 };
 pub use token::{Freshness, ReadToken, ReadWatermark};
+pub use window::{Window, WindowFunction};

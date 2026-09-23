@@ -217,10 +217,22 @@ to work around; it is the reason the catalog is the answer.
    beside a `violations` count, and the unindexed `check`/`column` stay as the
    first failure for a client that shows one error at a time.
 
+   All three clients decode that shape and hand a caller typed values —
+   `error.violations` in Python and TypeScript, `Error.Violations` in Go — so a
+   form picks the field from `column` and fills it from `message` without
+   touching the status text. None of them expose the raw `metadata` map: the
+   check keys are the one family the server specifies, and the rest vary per
+   variant, so there is nothing else a client could promise about. An absent
+   column is `None` in Python and `""` in Go and TypeScript, which is each
+   language's own idiom rather than a disagreement.
+
 3. ~~**Publish the constraints.**~~ **Built, in part.** `--print-schema` now
    carries `checks` (name, column, message, and the text the predicate was
    parsed from) and `foreign_keys`, and `scripts/codegen.py` generates from
-   both. `status in ('draft', 'live')` over a `str` column becomes
+   both. A foreign key's `parent` arrives as a table *id*, which means nothing
+   outside the catalog; the generator resolves it to a name, so a client
+   holding a relation also holds the table a `parents` read decodes as — the
+   one fact about a relationship that a client cannot work out for itself. `status in ('draft', 'live')` over a `str` column becomes
    `Literal["draft", "live"]` in Python and `"draft" | "live"` in TypeScript;
    Go has no union of string literals, so it gets the values as a slice and the
    field stays `string`.

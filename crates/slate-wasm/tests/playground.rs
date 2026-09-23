@@ -229,11 +229,14 @@ fn the_schema_comes_from_the_catalog() {
         .find(|t| t["name"] == json!("books"))
         .expect("books");
     assert_eq!(books["columns"].as_array().expect("columns").len(), 5);
-    // The UI marks indexed columns from this, so it has to be the real one.
+    // The UI marks indexed columns from this, so it has to be the real set.
+    // `author_id` for `by_author` and `title` for `by_title_text`, which is
+    // inverted — the tree does not distinguish the two kinds, and the column
+    // being indexed is all the mark claims.
     assert_eq!(
         books["indexed"],
-        json!([1]),
-        "author_id is the indexed column"
+        json!([1, 2]),
+        "author_id and title are the indexed columns"
     );
 
     let authors = tables

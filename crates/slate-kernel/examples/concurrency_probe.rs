@@ -24,6 +24,7 @@ use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     let backing = MemoryStore::new();
     {
         let txn = backing.begin().await.expect("begin");

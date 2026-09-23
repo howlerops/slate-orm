@@ -125,6 +125,26 @@ pub enum KernelError {
         table: String,
     },
 
+    /// A write supplied a value for the table's soft-delete column.
+    ///
+    /// Its own error because this is what a caller hits first when they try to
+    /// restore a row: they read it with `include_deleted`, which hands back the
+    /// retirement timestamp, edit a field and write the row back. Before this
+    /// variant that came out as `RowCheckFailed` — "row-level security forbids
+    /// writing this row" — on tables with no row-level security at all, which
+    /// sends the reader to the grants rather than to the one column that is
+    /// actually the problem. The message says what to do instead.
+    #[error(
+        "column `{column}` of table `{table}` is its soft-delete column and is written by `delete`, \
+         not by a caller; send null to restore the row, or leave the row alone to keep it retired"
+    )]
+    SoftDeleteColumnSupplied {
+        /// The table written to.
+        table: String,
+        /// The soft-delete column's name.
+        column: String,
+    },
+
     /// A conditional write found the row already changed.
     ///
     /// Distinct from [`KernelError::TransactionConflict`], and the distinction
@@ -358,6 +378,45 @@ pub enum KernelError {
     SortTooLarge {
         /// The limit that was passed.
         limit: usize,
+    },
+    #[error(
+        "a window function selected more than {limit} rows; \
+         filter first, or raise the limit — a LIMIT does not help, because \
+         the window is computed before it applies"
+    )]
+    /// A window function selected more rows than the node will materialise.
+    ///
+    /// Unlike [`KernelError::SortTooLarge`] there is no bounded alternative to
+    /// point the caller at: a window has to see its whole partition, and a
+    /// `LIMIT` cannot be pushed past it without changing the answer.
+    WindowTooLarge {
+        /// The limit that was passed.
+        limit: usize,
+    },
+    #[error(
+        "{function} needs an ORDER BY inside its OVER clause; \
+         without one there is no order to number, rank or step through"
+    )]
+    /// A window function that has no meaning without an order.
+    WindowNeedsOrder {
+        /// What was asked for.
+        function: &'static str,
+    },
+    #[error(
+        "COUNT(DISTINCT) cannot run over an ordered window; \
+         the running form would hold one copy of the value set per peer group"
+    )]
+    /// A running `COUNT(DISTINCT)`, which is quadratic in the partition.
+    ///
+    /// The whole-partition form — `OVER (PARTITION BY …)` with no `ORDER BY` —
+    /// is one set for the partition and is allowed.
+    RunningDistinctCount,
+    #[error("{function} needs a non-zero offset; zero is the current row")]
+    /// `LAG` or `LEAD` at offset zero, which is a column reference spelled
+    /// obscurely and is much more likely a mistake than an intention.
+    WindowOffsetZero {
+        /// What was asked for.
+        function: &'static str,
     },
 
     /// A predicate write matched more rows than the caller allowed it to.

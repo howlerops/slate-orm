@@ -102,9 +102,13 @@ status message, so the `message` already reaches a caller; the `column` is on
 the wire and nothing picks it up yet. A client-side `error.column` is a small
 addition to three SDKs and is not here.
 
-Nothing validates that `message` is a sentence, non-empty, or free of the
+~~Nothing validates that `message` is a sentence, non-empty, or free of the
 row's data. A schema author can write an empty `message` and get a status
-ending in `: `, which is ugly and not wrong enough to refuse a deployment over.
+ending in `: `, which is ugly and not wrong enough to refuse a deployment
+over.~~ **Partly closed** — an empty or whitespace-only message is now refused
+at catalog build; see `2026-09-20-a-message-that-says-nothing.md`, which also
+explains why "ugly, not wrong enough" was the wrong reading. "Is a sentence"
+and "free of the row's data" remain unchecked and are not checkable.
 
 `#[derive(Record)]` cannot declare either field. A check written in Rust goes
 through `CheckDef` directly and can call the builders; one written through the

@@ -701,11 +701,23 @@ at once:
 | full scan, 200,000 rows | 2001 | 25 |
 | 400 rows via index | 30 | 1217 |
 
+<!-- not a cost-model claim -->
+
 Scans were overcharged about **eighty times** (`SCAN_ROW_COST` assumed 100 rows
 per request; readahead delivers ~8,000). Index lookups were undercharged about
-**forty times**: a point read costs ~3 requests rather than 1, and
-`pipelined_read_cost` divided by concurrency depth — which is true of latency
-and false of work, and the fixture could only ever measure latency.
+**forty times**: a point read cost ~3 requests rather than 1 *on the build
+being measured*, and `pipelined_read_cost` divided by concurrency depth — which
+is true of latency and false of work, and the fixture could only ever measure
+latency.
+
+> The ~3 is past tense now, and the tense is the finding. #278 reproduced it
+> exactly — 1,221 GETs for 400 rows — by rebuilding `slate-slatedb` with
+> `--no-default-features --features aws`, which is the build this was measured
+> on: SlateDB's block cache was compiled out (finding 8 in
+> [`performance.md`](performance.md)). With the cache on, as it has shipped
+> since, the same probe reads 414 and `POINT_READ_COST` is 1.0. The
+> undercharge described here was real; its size was a property of a missing
+> feature rather than of object storage.
 
 The errors compounded in the same direction, and the planner acted on them. For
 `WHERE bucket = 7` it chose an index scan at cost 30 over a table scan at cost
@@ -716,12 +728,43 @@ Recalibrated from the measurements, the model now predicts 26 against 21 actual
 requests for the scan and 1201 against 1223 for the index, and picks the scan.
 ClickBench is unchanged at 70.1 s.
 
+**Re-measured later, and the point-read half no longer reproduces.** The same
+example on the same fixture makes the forced index do **435 requests cold and
+410 warm** for those 400 rows, not 1,217 — about 1.0 each rather than 3.04.
+Three benchmarks and four measurements agree, across two fixtures and both
+cache states: 1.02 and 1.09 (`cost_calibration`), 1.16 and 0.96
+(`cost_at_scale`, on a pseudo-random walk), 1.015 (`ascending_walk`). Nothing
+produces 3. What changed between then and now is not known — a SlateDB
+release, a block size, the readahead #34 turned on — so `POINT_READ_COST` is
+**1.0**, a bound with a meaning (one request for a row sharing its block with
+no neighbour) rather than a figure four measurements contradict. The crossover
+follows: `n > 8000k` rather than ~~`n > 24000k`~~. The plan snapshot moved 13
+costs and **no access path**, which is both the blast radius at fixture scale
+and the limit of what the suite could see.
+
+`SCAN_ROW_COST` was **not** changed. The reason first written here was that
+the two examples *contradict* each other about what a cold full scan of this
+fixture costs — 58 requests against 205. That reason is wrong and is corrected
+here: [`performance.md`](performance.md) later established that both are right,
+because they scan stores in different cache states, and a partially populated
+cache fragments a scan into many small ranged reads. Re-measured at `--release`
+with the cache on, the three states reproduce — 51, 199 and 365 requests over
+the same 200,000 rows.
+
+The real reason is the one in `SCAN_ROW_COST`'s own docstring, and it is
+stronger: **there is no single value to calibrate to.** A scan of this fixture
+costs between 548 and 3,922 rows per GET depending only on what was read
+before it, and the model has no input for cache state. Under-charging a scan is
+how `cost_at_scale` picks a plan 11× slower at 200,000 rows; over-charging one
+turns a four-hundred-key `IN` into four hundred point reads against a fully
+cached table. Both are wrong, and only one is the status quo.
+
 ### What that changes about indexes
 
 The consequence is counter-intuitive enough to state plainly: **an index earns
 its keep on absolute rows fetched, not on percentage selectivity.** Fetching
-`k` rows beats scanning `n` only when `n > 24000k`, so `k = 0.005n` never
-qualifies at any table size. Seven tests asserted the old rule — that a few
+`k` rows beats scanning `n` only when `n > 8000k` — ~~`n > 24000k`~~ before the
+re-measurement above — so `k = 0.005n` never qualifies at any table size. Seven tests asserted the old rule — that a few
 percent was selective enough — and each was rewritten against the measurement
 rather than nudged: a nested loop now wins at a hundred million inner rows
 rather than a hundred thousand, and a small table is simply cheaper to scan

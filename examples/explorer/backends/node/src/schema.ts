@@ -6,7 +6,7 @@
 // positionally-wrong. This file is that declaration, produced from the
 // catalog itself so the two cannot drift.
 
-import type { CheckRule, Schemas, TableDef, Value } from "@slate-orm/client";
+import type { CheckRule, ForeignKey, Schemas, TableDef, Value } from "@slate-orm/client";
 
 /**
  * One column of a row, with its tag checked.
@@ -34,6 +34,35 @@ function field(
     );
   }
   return "value" in value ? value.value : undefined;
+}
+
+/**
+ * One array column, with every element checked against its declared type.
+ *
+ * `field` above stops at the array: its value is a `Value[]`, whose members
+ * still carry their own tags, so a cast to `string[]` at the call site would
+ * be a lie nothing can see. The element type is not on the wire either, so
+ * this is the only place on this side that can notice — and the error names
+ * the position, because `tags[2]` is findable and `tags` is not.
+ */
+function elements(
+  row: Value[],
+  at: number,
+  table: string,
+  column: string,
+  kind: string,
+  nullable: boolean,
+): unknown {
+  const value = field(row, at, table, column, "array", nullable);
+  if (value === null) return null;
+  return (value as Value[]).map((element, index) => {
+    if (element.kind !== kind) {
+      throw new Error(
+        `${table}.${column}[${index}] is ${element.kind}, not the declared ${kind}`,
+      );
+    }
+    return "value" in element ? element.value : undefined;
+  });
 }
 
 export const AUTHORS: TableDef = {
@@ -82,6 +111,17 @@ export const EDITIONS: TableDef = {
   primaryKey: ["id"],
 };
 
+export const POSTS: TableDef = {
+  name: "posts",
+  columns: [
+    { name: "id", type: "u64" },
+    { name: "title", type: "string" },
+    { name: "tags", type: "array", element: "string" },
+    { name: "sizes", type: "array", element: "i64" },
+  ],
+  primaryKey: ["id"],
+};
+
 export const SHIPMENTS: TableDef = {
   name: "shipments",
   columns: [
@@ -99,7 +139,24 @@ export const TABLES: Schemas = {
   [BOOKS.name]: BOOKS,
   [SALES.name]: SALES,
   [EDITIONS.name]: EDITIONS,
+  [POSTS.name]: POSTS,
   [SHIPMENTS.name]: SHIPMENTS,
+};
+
+/** Every view the catalog declares, for
+ * `client.declaring({ ...TABLES, ...VIEWS })`.
+ *
+ * Each is its base table's declaration with the view's name, spread
+ * from the constant above rather than written out again. A view may
+ * not narrow columns, so its ordinals are its base table's and there
+ * is nothing here that could disagree.
+ *
+ * Separate from `TABLES` because a view is not a table: only a plain
+ * query reads through one, and every other request naming it is
+ * refused.
+ */
+export const VIEWS: Schemas = {
+  "classics": { ...BOOKS, name: "classics" },
 };
 
 
@@ -128,6 +185,21 @@ export function decodeAuthors(row: Value[]): Authors {
     country: field(row, 2, "authors", "country", "string", false) as string,
     born: field(row, 3, "authors", "born", "int", false) as bigint,
   };
+}
+
+/**
+ * Encode one row of `authors` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeAuthors(row: Authors): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "string", value: row.name },
+    { kind: "string", value: row.country },
+    { kind: "int", value: row.born },
+  ];
 }
 
 /**
@@ -176,6 +248,39 @@ export function decodeBooks(row: Value[]): Books {
   };
 }
 
+/**
+ * Encode one row of `books` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeBooks(row: Books): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.author_id },
+    { kind: "string", value: row.title },
+    { kind: "int", value: row.year },
+    { kind: "float", value: row.rating },
+    { kind: "int", value: row.released },
+    { kind: "vector", value: row.embedding },
+    { kind: "units", value: row.price },
+  ];
+}
+
+/**
+ * Every foreign key on `sales`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const SalesForeignKeys: Record<string, ForeignKey> = {
+  "sale_book": { name: "sale_book", child: "sales", parent: "books", onDelete: "restrict" },
+};
+
 /** A row of `sales`, decoded. */
 export interface Sales {
   id: bigint;
@@ -200,6 +305,34 @@ export function decodeSales(row: Value[]): Sales {
     units: field(row, 2, "sales", "units", "int", false) as bigint,
   };
 }
+
+/**
+ * Encode one row of `sales` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeSales(row: Sales): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "int", value: row.units },
+  ];
+}
+
+/**
+ * Every foreign key on `editions`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const EditionsForeignKeys: Record<string, ForeignKey> = {
+  "edition_book": { name: "edition_book", child: "editions", parent: "books", onDelete: "restrict" },
+};
 
 /** A row of `editions`, decoded. */
 export interface Editions {
@@ -227,6 +360,62 @@ export function decodeEditions(row: Value[]): Editions {
 }
 
 /**
+ * Encode one row of `editions` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeEditions(row: Editions): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "string", value: row.format },
+  ];
+}
+
+/** A row of `posts`, decoded. */
+export interface Posts {
+  id: bigint;
+  title: string;
+  tags: string[];
+  sizes: bigint[];
+}
+
+/**
+ * Decode one row of `posts`, by ordinal.
+ *
+ * Every column's tag is checked rather than assumed. A declaration one
+ * column out would otherwise return the neighbour, which type-checks
+ * and is wrong; this throws naming the column.
+ */
+export function decodePosts(row: Value[]): Posts {
+  if (row.length !== 4) {
+    throw new Error(`posts has 4 columns, got ${row.length}`);
+  }
+  return {
+    id: field(row, 0, "posts", "id", "uint", false) as bigint,
+    title: field(row, 1, "posts", "title", "string", false) as string,
+    tags: elements(row, 2, "posts", "tags", "string", false) as string[],
+    sizes: elements(row, 3, "posts", "sizes", "int", false) as bigint[],
+  };
+}
+
+/**
+ * Encode one row of `posts` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodePosts(row: Posts): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "string", value: row.title },
+    { kind: "array", value: row.tags.map((e) => ({ kind: "string", value: e })) },
+    { kind: "array", value: row.sizes.map((e) => ({ kind: "int", value: e })) },
+  ];
+}
+
+/**
  * Every `CHECK` on `shipments`, by name.
  *
  * Published rather than restated: checks are outside the schema
@@ -235,6 +424,21 @@ export function decodeEditions(row: Value[]): Editions {
  */
 export const ShipmentsChecks: Record<string, CheckRule> = {
   "status_known": { column: "status", message: "Status must be pending, shipped or delivered.", predicate: "status in ('pending', 'shipped', 'delivered')" },
+  "id_is_seeded": { column: "id", message: "Shipment ids above 9000 are reserved for the demo's own handlers.", predicate: "id < 9000" },
+};
+
+/**
+ * Every foreign key on `shipments`, by name.
+ *
+ * The parent is the point. A `Relation` names a relationship by the
+ * child table and the key, which is all the server needs — but
+ * `related` also wants the table its rows decode as, and for a
+ * `"parents"` read that is the parent, which no client can derive.
+ * The wrong one is refused by the schema check rather than
+ * mis-decoded, which was measured; this is a convenience, not a fix.
+ */
+export const ShipmentsForeignKeys: Record<string, ForeignKey> = {
+  "shipment_book": { name: "shipment_book", child: "shipments", parent: "books", onDelete: "restrict" },
 };
 
 /** A row of `shipments`, decoded. */
@@ -262,4 +466,37 @@ export function decodeShipments(row: Value[]): Shipments {
     status: field(row, 2, "shipments", "status", "string", false) as "pending" | "shipped" | "delivered",
     deleted_at: field(row, 3, "shipments", "deleted_at", "int", true) as bigint | null,
   };
+}
+
+/**
+ * Encode one row of `shipments` in the catalog column order.
+ *
+ * `int` and `uint` are both `bigint` on this side, so a hand-built row
+ * can carry the wrong tag and still typecheck. This cannot.
+ */
+export function encodeShipments(row: Shipments): Value[] {
+  return [
+    { kind: "uint", value: row.id },
+    { kind: "uint", value: row.book_id },
+    { kind: "string", value: row.status },
+    row.deleted_at === null ? { kind: "null" } : { kind: "int", value: row.deleted_at },
+  ];
+}
+
+/**
+ * Whether this row of `shipments` has been soft-deleted.
+ */
+export function isRetiredShipments(row: Shipments): boolean {
+  return row.deleted_at !== null;
+}
+
+/**
+ * This row of `shipments` with its soft delete cleared, ready to
+ * write back with `update` or `upsert`. There is no restore verb; this
+ * only clears the column. It needs the `read_deleted` action, the same
+ * grant `includeDeleted` needs. Writing the row back unchanged is
+ * refused naming the column.
+ */
+export function restoredShipments(row: Shipments): Shipments {
+  return { ...row, deleted_at: null };
 }

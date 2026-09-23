@@ -103,12 +103,10 @@ function protoRoot(): string {
  *
  * `""` for a blob carrying no `ErrorInfo` and for one that does not parse.
  *
- * `ErrorInfo.metadata` is deliberately not returned. The server fills it with
- * a variant's own payload — `index` and `table` on a unique violation, `limit`
- * on a predicate write that matched too many — and exposing it means promising
- * something about keys that differ per variant. The token alone is what lets
+ * `ErrorInfo.metadata` is not returned *here*. The token alone is what lets
  * `errors.ts` branch below a status code, and it is what three clients can
- * agree on.
+ * agree on. See {@link checkFailuresOf} for the one part of that map this
+ * client reads.
  */
 export function reasonOf(blob: Uint8Array): string {
   const loaded = types();
@@ -124,4 +122,85 @@ export function reasonOf(blob: Uint8Array): string {
     return "";
   }
   return "";
+}
+
+/** One `CHECK` a refused row violated. */
+export interface CheckFailure {
+  /** The constraint's name, as the schema declares it. */
+  readonly check: string;
+  /**
+   * The column it is about, or `""` for a check spanning several.
+   *
+   * `""` rather than `undefined`, so that a caller rendering it into a form
+   * writes `failure.column` and not a null check: a check over two columns has
+   * no single field to hang the message on, and naming either would put the
+   * sentence beside the wrong input.
+   */
+  readonly column: string;
+  /** The sentence to show, or `""` where the schema wrote none. */
+  readonly message: string;
+}
+
+type ErrorInfoMessage = { reason?: string; metadata?: Record<string, string> };
+
+/**
+ * Every `CHECK` a refused write violated, in declaration order.
+ *
+ * Empty for any failure that is not a check violation — which is almost all of
+ * them — and for a blob that does not parse, for the reason {@link reasonOf}
+ * gives about never throwing out of an error path.
+ *
+ * This reads `ErrorInfo.metadata`, which `reasonOf`'s comment used to say was
+ * deliberately never exposed. That objection was about keys that vary per
+ * variant, and it still holds: the check-violation keys are the one *specified*
+ * shape — `violations` is a count and `check.N`, `column.N`, `message.N` are
+ * indexed from zero — so this reads them into typed values and hands nobody the
+ * raw dictionary. A key this client has no contract for still reaches no
+ * caller.
+ *
+ * Counts up from `violations` rather than walking the map for `check.*`,
+ * because the metadata is string-keyed: `check.10` sorts between `check.1` and
+ * `check.2`, so a map walk is right for nine failures and wrong for eleven.
+ *
+ * Returns nothing rather than a prefix when the count and the keys disagree. A
+ * caller shown two failures for a row that broke three fixes two fields,
+ * resubmits and is refused again — the round-trip-per-field behaviour this
+ * exists to remove.
+ */
+export function checkFailuresOf(blob: Uint8Array): CheckFailure[] {
+  const loaded = types();
+  if (!loaded) return [];
+  try {
+    const decoded = loaded.status.decode(blob) as unknown as StatusMessage;
+    for (const detail of decoded.details ?? []) {
+      if (detail.type_url !== ERROR_INFO_URL || !detail.value) continue;
+      const info = loaded.info.decode(detail.value) as unknown as ErrorInfoMessage;
+      if (info.reason !== "CHECK_VIOLATION") return [];
+      const data = info.metadata ?? {};
+      const total = Number.parseInt(data["violations"] ?? "", 10);
+      if (!Number.isInteger(total)) {
+        // A server old enough to send the unindexed pair and no count. One
+        // failure is the honest reading of what it said.
+        const name = data["check"];
+        if (!name) return [];
+        return [
+          { check: name, column: data["column"] ?? "", message: data["message"] ?? "" },
+        ];
+      }
+      const out: CheckFailure[] = [];
+      for (let at = 0; at < total; at += 1) {
+        const name = data[`check.${at}`];
+        if (!name) return [];
+        out.push({
+          check: name,
+          column: data[`column.${at}`] ?? "",
+          message: data[`message.${at}`] ?? "",
+        });
+      }
+      return out;
+    }
+  } catch {
+    return [];
+  }
+  return [];
 }

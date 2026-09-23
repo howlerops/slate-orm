@@ -251,12 +251,29 @@ function computedFromWire(row: unknown): Value[] {
   return values.map(valueFromWire);
 }
 
+/** A row's window values, the third list. */
+function windowedFromWire(row: unknown): Value[] {
+  if (!row || typeof row !== "object") return [];
+  const values = (row as { windowed?: unknown[] }).windowed ?? [];
+  return values.map(valueFromWire);
+}
+
 /** A row and what the query computed for it. See `RowStream.withComputed`. */
 export interface ComputedRow {
   /** The stored columns, in table order. */
   readonly values: Value[];
   /** What `Query.compute` produced, in declaration order. */
   readonly computed: Value[];
+  /**
+   * What `Query.window` produced, in declaration order.
+   *
+   * A third list rather than more `computed`, for the reason `computed` is not
+   * more `values`: a window sits past every computed value in the server's own
+   * flat row, so folding them together would make "the second computed value"
+   * mean a different position depending on how many windows the query asked
+   * for. Empty when the query has no windows.
+   */
+  readonly windowed: Value[];
 }
 
 /** A joined row and what the join computed for it. See `JoinStream.withComputed`. */
@@ -816,7 +833,9 @@ export class Session {
     const outcomes = (response.results ?? []).map((raw) => {
       const result = raw as {
         ok?: { sequence?: string; affected?: string; rows?: unknown[] };
-        error?: { code?: number; message?: string; reason?: string };
+        // `details` is a `bytes` field, which proto-loader hands over as a
+        // `Buffer` — a `Uint8Array`, which is what the decoder takes.
+        error?: { code?: number; message?: string; reason?: string; details?: Uint8Array };
       };
       if (result.error) {
         return { error: fromBatchError(result.error) } as BatchOutcome;
@@ -1842,7 +1861,11 @@ export class RowStream implements AsyncIterable<Value[]> {
         const warnings = message["warnings"] as string[] | undefined;
         if (warnings?.length) this.#warnings.push(...warnings);
         for (const row of (message["rows"] as unknown[]) ?? []) {
-          yield { values: rowFromWire(row), computed: computedFromWire(row) };
+          yield {
+            values: rowFromWire(row),
+            computed: computedFromWire(row),
+            windowed: windowedFromWire(row),
+          };
         }
       }
     } catch (error) {

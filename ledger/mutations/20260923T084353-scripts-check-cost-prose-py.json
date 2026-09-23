@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-23T08:43:53+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "f1547ad",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an en dash is not read as a range",
+      "old": "    r\"([0-9]+(?:\\s*[\\u2013-]\\s*[0-9]+)?\\s*%)\\s*\"",
+      "new": "    r\"([0-9]+(?:\\s*[-]\\s*[0-9]+)?\\s*%)\\s*\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the refusal quotes the whole range it saw"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

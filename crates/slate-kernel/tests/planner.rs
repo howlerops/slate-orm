@@ -359,15 +359,17 @@ async fn an_index_is_not_worth_its_lookups_on_a_small_table() {
     };
 
     // Selective *as a percentage* is not the test any more. 500 distinct values
-    // over ten thousand rows keeps 0.2% of them — twenty rows — and twenty
-    // point reads cost about sixty object-store requests where the whole table
-    // is one or two. So the scan wins, and it really is faster.
+    // over ten thousand rows keeps 0.2% of them — twenty rows — and fetching
+    // those twenty costs about twenty object-store requests, one apiece, where
+    // the whole table is one or two. So the scan wins, and it really is
+    // faster.
     //
     // The rule that replaced "a few percent" is absolute, not proportional:
-    // fetching `k` rows beats scanning `n` only when `n > 24000k`, because a
-    // scan returns ~8000 rows per request and a point read costs ~3. A
+    // fetching `k` rows beats scanning `n` only when `n > 8000k`, because a
+    // scan returns ~8000 rows per request and a point read costs 1. A
     // percentage can never satisfy that, however small — `k = 0.002n` needs
-    // `n > 48n`. Indexes earn their keep on large tables and small absolute
+    // `n > 16n`. (This said 24000 and 48 while `POINT_READ_COST` was 3.0;
+    // #269 re-measured it at 1.0 and the ratio moved with it.) Indexes earn their keep on large tables and small absolute
     // result sets, which is a narrower claim than this test used to make.
     let selective = store()
         .await

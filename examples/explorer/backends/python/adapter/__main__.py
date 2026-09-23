@@ -31,6 +31,7 @@ from slate import (
     JoinQuery,
     JoinType,
     Metric,
+    PermissionDenied,
     Query,
     SlateError,
     Step,
@@ -38,6 +39,7 @@ from slate import (
     Units,
     UpdateWhere,
     Vector,
+    Window,
     as_scalar,
     asc,
     case,
@@ -56,7 +58,22 @@ from slate import (
     year,
 )
 
-from .schema import AUTHORS, BOOKS, BY_NAME, EDITIONS, SALES, SHIPMENTS
+from .schema import (
+    AUTHORS,
+    BOOKS,
+    BY_NAME,
+    EDITIONS,
+    EDITIONS_FOREIGN_KEYS,
+    SALES,
+    SALES_FOREIGN_KEYS,
+    SHIPMENTS,
+    VIEWS_BY_NAME,
+    Authors,
+    Books,
+    Editions,
+    Sales,
+    Shipments,
+)
 from .values import decode, encode, encode_row, format_float
 
 # The demo's three personas, mapped onto head-node identities.
@@ -69,6 +86,19 @@ IDENTITIES = {
     "reader": Identity("u64:2", tenant="u64:1", roles=["reader"]),
     "stranger": Identity("u64:3", tenant="u64:1", roles=["stranger"]),
 }
+
+
+def _answers(key: dict[str, str], *, parents: bool):
+    """The table a read of `key` this way decodes as.
+
+    The Go and TypeScript clients spell this `Answers` / `answers` on the
+    client's own `ForeignKey` type. Here the generated file emits a plain
+    dict — matching how it emits checks, and how this client publishes
+    schema data generally — so the helper lives in the adapter rather than
+    in the package. Same three lines either way; the divergence is in where
+    they sit, and is recorded rather than smoothed over.
+    """
+    return BY_NAME[key["parent"] if parents else key["child"]]
 
 
 def build_filter(query, table, spec: dict[str, Any] | None):
@@ -119,10 +149,23 @@ def build_filter(query, table, spec: dict[str, Any] | None):
 #: different databases. The conformance `meta` case is what reported it.
 QUERYABLE = ("authors", "books", "sales", "shipments")
 
+#: The views this adapter serves, generated from the catalog like the tables.
+#:
+#: `VIEWS_BY_NAME` is `scripts/codegen.py`'s, and each entry is its base
+#: table's columns under the view's name — which is the whole declaration a
+#: view can have, because `docs/views.md` refuses a projection and so a view's
+#: ordinals *are* its base table's. That is also what makes generating it
+#: safe: there is no per-view column list to get wrong, only a name and a base.
+#:
+#: Not merged into `BY_NAME` and not in `QUERYABLE`: those are tables, and
+#: every other endpoint here reads them. Only `/api/query` accepts a view,
+#: which is exactly which handler the server opted in.
+VIEWS = dict(VIEWS_BY_NAME)
+
 
 def build_query(spec: dict[str, Any]) -> Query:
     name = spec.get("table", "")
-    table = BY_NAME.get(name) if name in QUERYABLE else None
+    table = BY_NAME.get(name) if name in QUERYABLE else VIEWS.get(name)
     if table is None:
         # Caught here rather than by the server, because two of the three
         # clients hold a schema and cannot build a request without one. The
@@ -163,11 +206,109 @@ class Adapter:
             "sdk": "python",
             "leader": self.clients["app"].session().leadership().is_leader,
             "tables": list(QUERYABLE),
+            # Beside the tables and not among them; see `VIEWS`.
+            "views": sorted(VIEWS),
         }
 
     def query(self, session, body):
         rows = [encode_row(list(row)) for row in session.query(build_query(body))]
         return {"rows": rows}
+
+    def window(self, session, body):
+        """A window function, one value per input row. See CONTRACT.md.
+
+        Fixed shape, like `/api/join`: the demo is about which window, not
+        about a general window builder, and three implementations of one would
+        be three places for the same expression language to drift.
+        """
+        query = Query(BOOKS)
+        # The order is the *window's*, not the query's, and whether there is
+        # one is what turns an aggregate's frame from the whole partition into
+        # a running value. The ranking functions and lag/lead always get one:
+        # the server refuses them without, because the answer would be a
+        # number for an order nobody asked for.
+        ordered = bool(body.get("running"))
+        name = body.get("function")
+        if name == "rowNumber":
+            window, ordered = Window.row_number(), True
+        elif name == "rank":
+            window, ordered = Window.rank(), True
+        elif name == "denseRank":
+            window, ordered = Window.dense_rank(), True
+        elif name == "lag":
+            window, ordered = Window.lag(query.c.year, 1), True
+        elif name == "lead":
+            window, ordered = Window.lead(query.c.year, 1), True
+        elif name == "sum":
+            window = Window.aggregate_over(Agg.sum(query.c.year))
+        elif name == "count":
+            window = Window.aggregate_over(Agg.count())
+        else:
+            raise ValueError(f"no such window function: {name}")
+
+        partition = [query.c.author_id] if body.get("partition") else []
+        order = [asc(query.c.year)] if ordered else []
+        # `author_id <= 6` keeps out book 19, whose author matches nobody: it
+        # is here for the outer joins and would be a partition of one in every
+        # answer. The query's own sort is by id, so the three adapters compare
+        # row for row rather than in whatever order the scan produced.
+        query.where(query.c.author_id.le(u64(6))).sort(asc(query.c.id))
+        query.window(window.over(partition=partition, order=order))
+        if body.get("limit") is not None:
+            query.limit(int(body["limit"]))
+        rows = [
+            {
+                "row": encode_row(list(row)),
+                # Its own list, because it is its own list on the wire: a
+                # window value is not a column and not a computed value, and
+                # an adapter folding it into `row` would return something a
+                # caller reads as a different thing.
+                "windowed": encode_row(list(row.window_values)),
+            }
+            for row in session.query(query)
+        ]
+        return {"rows": rows}
+
+    def search(self, session, body):
+        """Full-text over `books.title`, by index or by scan. See CONTRACT.md.
+
+        `body["text"]` goes across whole. Splitting it here would be a fourth
+        tokenizer beside the server's, and a client that split differently
+        finds fewer rows than the table holds with nothing anywhere reporting
+        it.
+        """
+        query = Query(BOOKS)
+        query.where(query.c.title.contains(body.get("text", "")))
+        query.sort(asc(query.c.id))
+        if body.get("limit") is not None:
+            query.limit(int(body["limit"]))
+
+        path = body.get("path")
+        if path == "index":
+            query.using_index("by_title_text")
+        elif path == "scan":
+            query.using_table_scan()
+        else:
+            raise ValueError(f"no such access path: {path}")
+
+        # Explained before it is run, because the access path is the only
+        # thing that tells the two requests apart: the rows are identical by
+        # construction and an adapter ignoring `path` would look correct.
+        #
+        # A caller without the `explain` grant gets `None` here rather than a
+        # refusal. EXPLAIN is privileged on purpose -- a plan is costed
+        # against statistics covering rows the caller's policy hides -- and
+        # the demo's `reader` role does not have it. Refusing the whole search
+        # over a diagnostic would make full-text the one feature a restricted
+        # reader cannot use at all, which is a bigger hole than an absent
+        # field. Only PermissionDenied is swallowed; every other failure is
+        # still the request's failure.
+        try:
+            access = session.explain(query).access
+        except PermissionDenied:
+            access = None
+        rows = [encode_row(list(row)) for row in session.query(query)]
+        return {"rows": rows, "access": access}
 
     def related(self, session, body):
         """One relationship, loaded for many parents in one read.
@@ -183,14 +324,21 @@ class Adapter:
         """
         parents = body.get("way") == "parents"
         keys = [decode(raw) for raw in body.get("keys", [])]
+        # The key, from the generated declaration rather than three string
+        # literals. `_answers` is the reason: the table a read decodes as is
+        # `sales` one way and `books` the other, and it was written out here
+        # and again in `path` below. The wrong one is refused by the schema
+        # check rather than mis-decoded — measured in Go — so this is a
+        # convenience, not a fix for a silent bug.
+        key = SALES_FOREIGN_KEYS["sale_book"]
         # `through` is overridable only so the conformance corpus can name a
         # key that does not exist and compare the three refusals, which is the
         # one thing about this call the three could spell differently.
         groups = session.related(
-            BOOKS if parents else SALES,
+            _answers(key, parents=parents),
             keys,
-            through=body.get("through") or "sale_book",
-            on=SALES,
+            through=body.get("through") or key["name"],
+            on=BY_NAME[key["child"]],
             children=not parents,
         )
         # A group per key the caller sent, in the caller's order, including the
@@ -219,9 +367,24 @@ class Adapter:
         worth pinning in all three.
         """
         keys = [decode(raw) for raw in body.get("keys", [])]
+        # Both steps from the generated declaration, so the `table` beside
+        # each is the catalog's answer rather than this file's memory of it.
+        # The two go in opposite directions, which is where `_answers` earns
+        # its keep.
+        up = SALES_FOREIGN_KEYS["sale_book"]
+        down = EDITIONS_FOREIGN_KEYS["edition_book"]
         steps = [
-            Step(on=SALES, through="sale_book", table=BOOKS, children=False),
-            Step(on=EDITIONS, through="edition_book", table=EDITIONS),
+            Step(
+                on=BY_NAME[up["child"]],
+                through=up["name"],
+                table=_answers(up, parents=True),
+                children=False,
+            ),
+            Step(
+                on=BY_NAME[down["child"]],
+                through=down["name"],
+                table=_answers(down, parents=False),
+            ),
         ]
         trees = session.related_path(keys, steps)
         through = session.related_through(keys, steps)
@@ -581,14 +744,28 @@ class Adapter:
         # Clean slate. A predicate delete is the tidiest way to say "whatever
         # is left from last time", and it exercises the feature on the way in.
         session.delete_where(mine.where(mine.c.id.ge(u64(first))))
+        # Built through the *generated* encoder rather than as a positional
+        # list. The list this replaces was eight values in catalog order with
+        # nothing checking either the order or the tags, which is the write
+        # side of the failure the generated decoders exist to catch — and
+        # `u64` and `i64` are both `int` here, so a swapped pair would have
+        # been refused by the server with the client none the wiser.
+        #
+        # It is also what stops the encoders being another thing that is
+        # generated, compiled and never called.
         session.insert(
             BOOKS,
             [
-                [
-                    u64(first + n), u64(1), f"Predicate {n}", i64(2000 + n),
-                    3.0, i64(1767225600), Vector((0.1, 0.2, 0.3, 0.4)),
-                    Units(1000),
-                ]
+                Books(
+                    id=first + n,
+                    author_id=1,
+                    title=f"Predicate {n}",
+                    year=2000 + n,
+                    rating=3.0,
+                    released=1767225600,
+                    embedding=(0.1, 0.2, 0.3, 0.4),
+                    price=Units(1000),
+                ).to_row()
                 for n in range(4)
             ],
         )
@@ -740,7 +917,7 @@ class Adapter:
     #: rows, and the second and third would find nothing and disagree. Upsert
     #: puts them back, which is the same trick the conditional-delete handler
     #: uses two methods down.
-    PURGE_IDS = (9401, 9402, 9403)
+    PURGE_IDS = (8401, 8402, 8403)
 
     def purge(self, session, body):
         """Seed three shipments, retire two, and erase what was retired.
@@ -790,6 +967,266 @@ class Adapter:
         session.insert(SHIPMENTS, [[u64(603), u64(13), "pending", None]], upsert=True)
         session.delete(SHIPMENTS, [(u64(603),)])
         return answer
+
+    #: The shipment the restore handlers own.
+    #:
+    #: Below `PURGE_IDS` on purpose. The purge case lists what survives at
+    #: `id >= 8401`, so a row this handler left behind there would change that
+    #: case's answer depending on which ran first — the ordering bug that case's
+    #: own comment records having been bitten by.
+    RESTORE_ID = 8301
+
+    def _retire_restore_row(self, session):
+        """Put `RESTORE_ID` in the table, retired, and hand back the row.
+
+        Upsert then delete, because a row cannot be created already retired —
+        the stamp is the server's clock and `delete` is the only path that sets
+        it. The upsert is also what makes this idempotent now that an upsert at
+        a retired row's key restores it rather than reporting it missing, which
+        is the very behaviour these two handlers exist to demonstrate.
+        """
+        session.insert(
+            SHIPMENTS, [[u64(self.RESTORE_ID), u64(10), "pending", None]], upsert=True
+        )
+        session.delete(SHIPMENTS, [(u64(self.RESTORE_ID),)])
+        query = Query(SHIPMENTS)
+        rows = session.query(
+            query.where(query.c.id.eq(u64(self.RESTORE_ID))).include_deleted()
+        )
+        return Shipments.from_row(list(next(iter(rows)).values))
+
+    def restore(self, session, body):
+        """Bring a retired row back, through the generated helper.
+
+        A retired row used to be writable by nobody at any privilege, so the
+        only thing that could happen to one was being erased. This is the other
+        half of a retention window, and the reason it is a conformance case is
+        that all three clients now generate a `restored` helper and all three
+        have to agree about what it produces and what the server does with it.
+
+        The answer carries the row's state at three points rather than just the
+        last, because "it is live now" is also what a handler that quietly
+        re-inserted a fresh row would report.
+        """
+        retired = self._retire_restore_row(session)
+        # An ordinary read, with no `include_deleted`: the row is invisible.
+        query = Query(SHIPMENTS)
+        hidden = [
+            int(row[0])
+            for row in session.query(query.where(query.c.id.eq(u64(self.RESTORE_ID))))
+        ]
+
+        # The restore. `restored()` is generated from the catalog — it clears
+        # whichever column the catalog names as the stamp — and the update is
+        # ordinary, because there is no restore verb.
+        session.update(SHIPMENTS, [retired.restored().to_row()])
+
+        visible = Query(SHIPMENTS)
+        back = [
+            Shipments.from_row(list(row.values))
+            for row in session.query(visible.where(visible.c.id.eq(u64(self.RESTORE_ID))))
+        ]
+        answer = {
+            "retired_before": retired.retired,
+            "hidden_while_retired": hidden,
+            "visible_after": [row.id for row in back],
+            "retired_after": [row.retired for row in back],
+            # Every other column carried through, which is what separates a
+            # restore from an insert of a fresh row at the same key.
+            "status_after": [row.status for row in back],
+            "book_id_after": [row.book_id for row in back],
+        }
+        self._leave_shipments_as_found(session)
+        return answer
+
+    def restore_unchanged(self, session, body):
+        """Write the retired row back exactly as `include_deleted` gave it.
+
+        The mistake anybody restoring by hand makes first, and the reason the
+        refusal is its own error rather than a row-level-security one: the
+        soft-delete column is the server's to write. Here so that the three
+        clients are compared on the reason token and the message, not only on
+        the happy path.
+
+        The write is refused, so the row is left retired and the cleanup below
+        is the same one the happy path does.
+        """
+        retired = self._retire_restore_row(session)
+        try:
+            session.update(SHIPMENTS, [retired.to_row()])
+        finally:
+            self._leave_shipments_as_found(session)
+        # Reached only if the server stopped refusing, which is a disagreement
+        # worth failing loudly on rather than reporting as an answer.
+        raise RuntimeError("the server accepted a caller-supplied deleted_at")
+
+    def _leave_shipments_as_found(self, session):
+        """Erase this handler's row and put the seeder's retired one back.
+
+        The same shape the purge handler uses, and for the same reason: three
+        adapters run every case against one database in turn, so a case that
+        leaves a row behind makes the next adapter's answer depend on the
+        order. A purge is table-wide, so it takes the seeder's row 603 with it
+        and 603 has to be re-retired afterwards.
+        """
+        session.delete(SHIPMENTS, [(u64(self.RESTORE_ID),)])
+        session.purge_deleted(SHIPMENTS, int(time.time()) + 3600)
+        session.insert(SHIPMENTS, [[u64(603), u64(13), "pending", None]], upsert=True)
+        session.delete(SHIPMENTS, [(u64(603),)])
+
+    def bad_batch(self, session, body):
+        """Two shipments an independent batch refuses, for different reasons.
+
+        The gap this closes: a batch reports each failure *as data* inside a
+        successful response, so there are no trailers and no
+        `grpc-status-details-bin`. A caller submitting a form as a batch got
+        the reason token and the prose and nothing to put beside a field. The
+        server now carries the same blob in the message body.
+
+        Both rows are refused, so nothing is written and there is nothing to
+        undo — and the two refusals differ, which is what makes the case say
+        more than "a batch can fail": 9498 breaks `status_known` and
+        `id_is_seeded`, 9497 breaks only `id_is_seeded`, and an adapter
+        reporting one list for both would be caught here rather than looking
+        plausible.
+        """
+        b = Batch(Atomicity.INDEPENDENT)
+        b.insert(SHIPMENTS, [[u64(9498), u64(10), "teleported", None]])
+        b.insert(SHIPMENTS, [[u64(9497), u64(10), "pending", None]])
+
+        outcomes = []
+        for one in session.batch(b).outcomes:
+            if one.ok:
+                # Reached only if the server stopped enforcing a check, which
+                # is a disagreement worth failing loudly on.
+                raise RuntimeError("the server accepted a row two checks refuse")
+            outcomes.append(
+                {
+                    "kind": kind_name(one.error),
+                    "reason": one.error.reason,
+                    "violations": [
+                        {"check": v.check, "column": v.column or ""}
+                        for v in one.error.violations
+                    ],
+                }
+            )
+        return {"outcomes": outcomes}
+
+    def typed(self, session, body):
+        """Read two rows and decode them with the *generated* decoders.
+
+        The gap this closes, recorded when the decoders were first executed:
+        every test of them builds values by hand, so all three suites agree
+        with their own idea of what the server sends. A value arriving as an
+        `int` where the schema says `u64` would pass every one of them and
+        fail here — the only failure the decoders exist to catch that a
+        hand-built row cannot show.
+
+        It is also the first thing that *calls* a generated decoder outside a
+        test. They were generated, checked, and run against fixtures, and no
+        code path used one.
+
+        `books` 10 covers u64, str, i64, decimal and vector; `shipments` 600
+        covers the nullable column and the enumerated one. `rating` is left
+        out on purpose: a float's spelling is the one thing three languages
+        will not agree on without a shared formatter, the corpus pins it
+        elsewhere, and this case is about *decoding* rather than rendering.
+        """
+        book_row = session.get(BOOKS, (u64(10),))
+        if book_row is None:
+            raise RuntimeError("the seeded book is not there")
+        book = Books.from_row(list(book_row))
+
+        shipment_row = session.get(SHIPMENTS, (u64(600),))
+        if shipment_row is None:
+            raise RuntimeError("the seeded shipment is not there")
+        shipment = Shipments.from_row(list(shipment_row))
+
+        # The other three tables, added because two of five decoders having a
+        # live row meant "the decoders agree with the server" held for the two
+        # somebody picked. They carry no value *shape* the first two do not —
+        # their point is the column list, checked against the real catalog
+        # rather than a fixture written from it.
+        author_row = session.get(AUTHORS, (u64(1),))
+        if author_row is None:
+            raise RuntimeError("the seeded author is not there")
+        author = Authors.from_row(list(author_row))
+
+        sale_row = session.get(SALES, (u64(100),))
+        if sale_row is None:
+            raise RuntimeError("the seeded sale is not there")
+        sale = Sales.from_row(list(sale_row))
+
+        edition_row = session.get(EDITIONS, (u64(500),))
+        if edition_row is None:
+            raise RuntimeError("the seeded edition is not there")
+        edition = Editions.from_row(list(edition_row))
+
+        # Every integer as a decimal string, because one of the three
+        # languages reads them as `bigint` and JSON numbers are doubles. The
+        # demo's other handlers agree.
+        return {
+            "book": {
+                "id": str(book.id),
+                "author_id": str(book.author_id),
+                "title": book.title,
+                "year": str(book.year),
+                # A decimal is a count of the smallest unit; the scale lives
+                # in the schema and the row type does not know it.
+                "price": str(int(book.price)),
+                "dimensions": len(book.embedding),
+            },
+            "shipment": {
+                "id": str(shipment.id),
+                "book_id": str(shipment.book_id),
+                "status": shipment.status,
+                "deleted_at": "null"
+                if shipment.deleted_at is None
+                else str(shipment.deleted_at),
+                # Through the generated accessor; see the Go adapter for why.
+                "retired": shipment.retired,
+            },
+            "author": {
+                "id": str(author.id),
+                # `name` and `country` are both strings and adjacent, so a
+                # decoder one ordinal out would read a plausible value. The
+                # seeded values differ, which is what makes that visible here.
+                "name": author.name,
+                "country": author.country,
+                "born": str(author.born),
+            },
+            "sale": {
+                "id": str(sale.id),
+                "book_id": str(sale.book_id),
+                "units": str(sale.units),
+            },
+            "edition": {
+                "id": str(edition.id),
+                "book_id": str(edition.book_id),
+                "format": edition.format,
+            },
+        }
+
+    def bad_status(self, session, body):
+        """Write a shipment that breaks two of its table's checks at once.
+
+        Two, not one, and that is the point: `violations` is a *list*, decoded
+        by counting up from a count, and reading one failure is different code
+        from reading several. `"teleported"` breaks `status_known` and `id`
+        9499 breaks `id_is_seeded`, so the refusal carries both — in the order
+        `head.toml` declares them, which is not the order the row breaks them
+        in.
+
+        The row is never written, so there is nothing to clean up — the one
+        convenience a refusal case has over `purge` above.
+        """
+        session.insert(
+            SHIPMENTS, [[u64(9499), u64(10), "teleported", None]], upsert=True
+        )
+        # Reached only if the server stopped enforcing the check, which is a
+        # disagreement worth failing loudly on rather than reporting as an
+        # answer.
+        raise RuntimeError("the server accepted a status no CHECK admits")
 
     #: The id the conditional-delete handler owns.
     CONDITIONAL_DELETE_ID = 9301
@@ -879,6 +1316,8 @@ class Adapter:
 ROUTES = {
     "/api/meta": "meta",
     "/api/query": "query",
+    "/api/window": "window",
+    "/api/search": "search",
     "/api/join": "join",
     "/api/aggregate": "aggregate",
     "/api/explain": "explain",
@@ -893,6 +1332,11 @@ ROUTES = {
     "/api/conditional-update": "conditional_update",
     "/api/conditional-delete": "conditional_delete",
     "/api/purge": "purge",
+    "/api/restore": "restore",
+    "/api/restore-unchanged": "restore_unchanged",
+    "/api/bad-status": "bad_status",
+    "/api/typed": "typed",
+    "/api/bad-batch": "bad_batch",
     "/api/transaction": "transaction",
 }
 
@@ -962,10 +1406,34 @@ def handler_for(adapter: Adapter):
                 # while the token is the server's own and is finer than the
                 # code. A client that decodes the details blob differently from
                 # the other two disagrees here rather than in production.
+                #
+                # `violations` is that argument one level down. The token says
+                # *that* a row broke a check; this says which ones, and it is
+                # the part each client decodes by hand out of
+                # `ErrorInfo.metadata`. Three hand-written decoders is exactly
+                # the shape of thing that drifts, and each client's unit tests
+                # decode a captured fixture — which proves each agrees with a
+                # recording, not that the three agree with each other against a
+                # live server. This is where that is checked.
+                #
+                # `or ""` rather than passing `None` through, so the JSON is
+                # this adapter's shape and not Python's: this client spells an
+                # absent column `None` and the other two spell it `""`, which
+                # is each language's own idiom and not a disagreement about
+                # what the server said. The flattening is what `kind_name`
+                # already does for status codes.
                 self._send(200, {"error": {
                     "kind": kind_name(error),
                     "message": str(error.message),
                     "reason": error.reason,
+                    "violations": [
+                        {
+                            "check": one.check,
+                            "column": one.column or "",
+                            "message": one.message or "",
+                        }
+                        for one in error.violations
+                    ],
                 }})
                 return
             except Exception as error:  # noqa: BLE001

@@ -21,6 +21,7 @@ import {
   render,
   TABLES,
   type Tagged,
+  VIEWS,
 } from "../src/api.js";
 
 test("with nothing in the environment, the adapters are the demo's ports", () => {
@@ -178,9 +179,74 @@ function tablesInConfig(): Record<string, string[]> {
   return found;
 }
 
+/** Tables in `head.toml` that the UI deliberately does not show, and why.
+ *
+ * The `EXPECTED_REFUSALS` idiom this repository uses elsewhere: a list you are
+ * forced to edit is a list that stays true. A table added to the catalog fails
+ * the test below until somebody either puts it in the UI or says here why it
+ * is not there — which is the decision, made once, rather than never.
+ */
+const NOT_IN_THE_UI: Record<string, string> = {
+  posts: "it exists so the generated array decoders have something to decode; \
+nothing seeds it and the UI has no way to render a list cell",
+};
+
+/** The `[[views]]` blocks of head.toml, as view name -> base table name.
+ *
+ * The base table is read out of the `FROM` rather than out of a second field,
+ * because that is where the config says it — a view is a `SELECT` and the
+ * server resolves its table by parsing one. Strict in the same way
+ * `tablesInConfig` is: no blocks at all throws, so a parser that stops
+ * matching fails this test instead of agreeing with an empty expectation.
+ */
+function viewsInConfig(): Record<string, string> {
+  const toml = readFileSync(findUp("head.toml"), "utf8");
+  const found: Record<string, string> = {};
+  for (const block of toml.split(/^\[\[views\]\]$/m).slice(1)) {
+    const name = /^name = "([^"]+)"/m.exec(block)?.[1];
+    const base = /^query = "[^"]*\bFROM\s+(\w+)/m.exec(block)?.[1];
+    if (!name || !base) continue;
+    found[name] = base;
+  }
+  if (Object.keys(found).length === 0) {
+    throw new Error("parsed no views out of head.toml; the parser, not the config, is wrong");
+  }
+  return found;
+}
+
+test("every view the UI offers reads a table, with that table's columns", () => {
+  // Not a column list of its own, which is the point: `docs/views.md` refuses
+  // a projection in a view, so a view's ordinals are its base table's and the
+  // UI has nothing separate to get wrong. This asserts that `VIEWS` really is
+  // built that way rather than out of a copied literal that happens to agree
+  // today — an identity check on the array, so a copy fails it.
+  const config = viewsInConfig();
+  assert.deepEqual(Object.keys(VIEWS).sort(), Object.keys(config).sort());
+  for (const [name, base] of Object.entries(config)) {
+    assert.ok(base in TABLES, `view ${name} reads ${base}, which the UI does not know`);
+    assert.strictEqual(
+      VIEWS[name],
+      TABLES[base],
+      `view ${name} should be ${base}'s column list, not a copy of it`,
+    );
+  }
+});
+
 test("the UI's column names match head.toml, in order", () => {
   // A copy of the schema like every client holds. The server's fingerprint
   // check catches a disagreement at query time; this catches it at test time,
   // and names the table rather than printing two hashes.
-  assert.deepEqual(TABLES, tablesInConfig());
+  //
+  // Subset rather than equality, with the difference named above. Equality was
+  // the first version and was right while the UI showed everything; it stopped
+  // being right the moment the catalog gained a table for a reason that has
+  // nothing to do with the UI, and the choice then is to show an empty table
+  // nobody can do anything with or to say so. This says so.
+  const config = tablesInConfig();
+  for (const [name, reason] of Object.entries(NOT_IN_THE_UI)) {
+    assert.ok(name in config, `NOT_IN_THE_UI names ${name}, which head.toml no longer has`);
+    assert.ok(!(name in TABLES), `${name} is in the UI, so it is not ${reason}`);
+    delete config[name];
+  }
+  assert.deepEqual(TABLES, config);
 });

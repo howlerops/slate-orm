@@ -429,6 +429,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // --- field-level attributes
     let mut fields: Vec<FieldSpec> = Vec::new();
     let mut primary_key: Vec<String> = Vec::new();
+    let mut soft_delete: Option<String> = None;
 
     for field in &named.named {
         let Some(ident) = field.ident.clone() else {
@@ -440,6 +441,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         let mut renamed: Option<String> = None;
         let mut scale: Option<u8> = None;
         let mut managed: Option<&'static str> = None;
+        let mut is_soft_delete = false;
 
         // Names are resolved after the loop, so index specs on this field are
         // collected against the field's *final* column name.
@@ -462,12 +464,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     managed = Some("CreatedAt");
                 } else if meta.path.is_ident("updated_at") {
                     managed = Some("UpdatedAt");
+                } else if meta.path.is_ident("soft_delete") {
+                    is_soft_delete = true;
                 } else if meta.path.is_ident("index") {
                     field_indexes.push(parse_index(&meta, Some("\0self"))?);
                 } else {
                     return Err(meta.error(
                         "unknown option; expected `pk`, `rename`, `added_in`, `scale`, \
-                         `created_at`, `updated_at` or `index`",
+                         `created_at`, `updated_at`, `soft_delete` or `index`",
                     ));
                 }
                 Ok(())
@@ -487,6 +491,21 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
         if is_pk {
             primary_key.push(column.clone());
+        }
+        if is_soft_delete {
+            // Refused here rather than left to the builder, which takes one
+            // name and would silently keep whichever came last. The span points
+            // at the second field, which is the one to delete.
+            if let Some(first) = &soft_delete {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "a second `soft_delete` column; `{first}` already carries \
+                         the retirement stamp and a table has one"
+                    ),
+                ));
+            }
+            soft_delete = Some(column.clone());
         }
 
         fields.push(FieldSpec {
@@ -552,6 +571,13 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let pk_names = primary_key.iter();
     let tenant_stmt = tenant.as_ref().map(|(name, _)| {
         quote! { builder = builder.tenant_column(#name); }
+    });
+    // The schema layer does the real checking — the column must be a nullable
+    // `I64`, and it explains why in `TableBuilder::build` — so this passes the
+    // name and lets that refusal stand rather than restating two rules in a
+    // second place where they could drift apart.
+    let soft_delete_stmt = soft_delete.as_ref().map(|name| {
+        quote! { builder = builder.soft_delete(#name); }
     });
 
     // Every field ident bound to its ordinal, for a partial index's predicate
@@ -774,6 +800,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     // schema error into no error at all.
                     #(#managed_stmts)*
                     #tenant_stmt
+                    #soft_delete_stmt
                     #(#index_stmts)*
                     builder = builder.schema_version(#version);
                     match builder.build() {
@@ -1140,4 +1167,73 @@ fn expand_enum(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+#[cfg(test)]
+// The same pair `slate-kernel`'s own test modules allow: a fixture that will
+// not parse and a refusal that does not arrive are both this suite failing,
+// and `expect`/`panic` say so at the line rather than through a `Result` no
+// caller reads.
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::expand_enum;
+
+    /// What `expand_enum` says when it refuses, not merely that it refuses.
+    ///
+    /// The `compile_fail` doctests on `slate_orm::Enum` cannot make this
+    /// distinction, and #295 found out the hard way: removing the
+    /// variant-carrying-data check and the empty-enum check left both
+    /// doctests still passing, because the *generated* code does not compile
+    /// for those shapes either. The shape is refused either way — what the
+    /// checks buy is the message, and a `compile_fail` block cannot read one.
+    ///
+    /// So the safety property was never at risk; the diagnostic was, and it is
+    /// the entire reason these two checks exist. Their own comments say so:
+    /// "a compile error here beats a `match` with no arms later".
+    fn refusal(source: &str) -> String {
+        let parsed = syn::parse_str(source).expect("the fixture itself must parse");
+        match expand_enum(&parsed) {
+            Ok(_) => panic!("expected a refusal, got generated code:\n{source}"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_variant_carrying_data_is_refused_by_name() {
+        let said = refusal("enum Event { Opened, Closed(String) }");
+        assert!(
+            said.contains("carrying data"),
+            "the message should say what is wrong, got: {said}"
+        );
+    }
+
+    #[test]
+    fn an_empty_enum_is_refused_by_name() {
+        let said = refusal("enum Nothing {}");
+        assert!(
+            said.contains("at least one variant"),
+            "the message should say what is wrong, got: {said}"
+        );
+    }
+
+    /// The other two refusals the doctests cover, tested the same way so that
+    /// all four Enum diagnostics are held to the same standard rather than
+    /// only the two that happened to survive a mutation.
+    #[test]
+    fn two_variants_storing_one_name_are_refused_by_name() {
+        let said = refusal("enum Payment { Cash, #[record(rename = \"Cash\")] Coins }");
+        assert!(
+            said.contains("Cash"),
+            "the message should name the collision, got: {said}"
+        );
+    }
+
+    #[test]
+    fn a_struct_is_refused_by_name() {
+        let said = refusal("struct Payment { kind: String }");
+        assert!(
+            said.contains("is for enums"),
+            "the message should point at the right derive, got: {said}"
+        );
+    }
 }

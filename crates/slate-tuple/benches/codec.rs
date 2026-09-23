@@ -8,7 +8,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use bytes::Bytes;
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group};
 use slate_tuple::{Direction, Value, ValueType, decode, encode, encode_with};
 use std::hint::black_box;
 use uuid::Uuid;
@@ -87,4 +87,12 @@ fn codec(c: &mut Criterion) {
 }
 
 criterion_group!(benches, codec);
-criterion_main!(benches);
+/// Spelled out rather than `criterion_main!(benches)`, which is what this
+/// was: the generated main runs the group and prints criterion's summary,
+/// with nowhere to say what build produced the numbers. A bench whose output
+/// cannot be told apart from a debug run's is the defect #280 is about.
+fn main() {
+    slate_kernel::build::announce();
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}

@@ -199,6 +199,7 @@ pub mod proto;
 pub mod service;
 pub mod session;
 pub mod status;
+pub mod views;
 
 pub use auth::{Authenticator, DenyEveryone, MetadataIdentity, REQUEST_ID_KEY};
 pub use fingerprint::of_table as schema_fingerprint;
@@ -207,3 +208,4 @@ pub use lease::{Clock, Lease, LeaseError, ObjectStoreLease, SystemClock, Term};
 pub use service::{Head, HeadConfig, WriteObserver};
 pub use session::{Limits, Sessions};
 pub use status::{DOMAIN, LEADER_KEY, code_for, from_kernel, reason_for};
+pub use views::{View, Views};

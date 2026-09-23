@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-23T13:20:35+00:00",
+  "file": "crates/slate-slatedb/examples/loader_cliff.rs",
+  "dialect": "rust",
+  "command": [
+    "sh",
+    "scripts/run_examples.sh",
+    "slate-slatedb",
+    "--smoke"
+  ],
+  "commit": "7538095",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

@@ -34,6 +34,7 @@
 
 pub mod error;
 pub mod ext;
+pub mod factory;
 pub mod field;
 #[cfg(feature = "json")]
 pub mod json;
@@ -42,6 +43,7 @@ pub mod relation;
 
 pub use error::{OrmError, Result};
 pub use ext::{Page, Records};
+pub use factory::{Factory, FactoryError, seeding_context};
 pub use field::{Field, FieldError, Timestamp, Units};
 #[cfg(feature = "json")]
 pub use json::{Json, JsonError};
@@ -52,6 +54,54 @@ pub use relation::{
 };
 
 /// Derive [`Record`] for a struct. See the crate docs for the attributes.
+///
+/// # Soft delete
+///
+/// `#[record(soft_delete)]` on a field makes that column the retirement stamp:
+/// a delete writes the clock into it instead of erasing the row, and every
+/// ordinary read hides it thereafter. The column must be a nullable `i64`,
+/// which the schema layer enforces and explains — a non-nullable one has no
+/// value meaning "not deleted", so the table would read as empty.
+///
+/// ```
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "notes", id = 1)]
+/// struct Note {
+///     #[record(pk)]
+///     id: u64,
+///     body: String,
+///     #[record(soft_delete)]
+///     deleted_at: Option<i64>,
+/// }
+///
+/// let table = Note::table();
+/// assert_eq!(table.soft_delete(), table.ordinal_of("deleted_at"));
+/// ```
+///
+/// The attribute is the declaration, not the name: a column called
+/// `deleted_at` without it is an ordinary column, and deletes on that table
+/// erase.
+///
+/// Two of them do not compile. The builder takes one column name and would
+/// keep whichever the macro emitted last, which is a coin toss decided by
+/// field order:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "notes", id = 1)]
+/// struct Note {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(soft_delete)]
+///     deleted_at: Option<i64>,
+///     #[record(soft_delete)]
+///     retired_at: Option<i64>,
+/// }
+/// ```
 ///
 /// # Partial indexes
 ///
@@ -416,8 +466,14 @@ pub use slate_kernel::{
     SecurityContext, Side, SortKey, Statistics, TableState, TableStats, TimeUnit, Truth, latency,
     memory, migrate,
 };
+// `CheckDef`, `ForeignKeyDef` and `ReferentialAction` are re-exported for the
+// same reason the rest of this list is: a caller who builds a `TableDef`
+// through `slate-orm` — which `factory.rs` and every test here do — would
+// otherwise have to add `slate-schema` as a direct dependency to declare a
+// check or a foreign key on it, for two types out of a module they already
+// have most of.
 pub use slate_schema::{
-    Catalog, ColumnDef, IndexColumn, IndexDef, IndexId, Managed, Ordinal, Row, SchemaError,
-    TableDef, TableId,
+    Catalog, CheckDef, ColumnDef, ForeignKeyDef, IndexColumn, IndexDef, IndexId, Managed, Ordinal,
+    ReferentialAction, Row, SchemaError, TableDef, TableId,
 };
 pub use slate_tuple::{Direction, Value, ValueType};

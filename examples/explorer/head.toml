@@ -58,6 +58,43 @@ columns = [
 ]
 primary_key = ["id"]
 
+# The demo's one index, and it is an inverted one: `by_title_text` holds an
+# entry per *term* of `title` rather than one per row, which is what makes
+# `contains` a lookup instead of a scan.
+#
+# A text index rather than an ordinary one on `author_id`, even though the
+# joins would have used that, because this catalog had no index at all and the
+# one it gains should be the one the adapters cannot demonstrate any other way.
+# A join's access path is already visible in the plan panel; an inverted index
+# is a *shape* — one row, many entries — that nothing else here shows.
+#
+# It adds no column, so the fingerprint is unchanged and none of the three
+# adapters' declarations of `books` had to move. That is deliberate and it is
+# why the index went on an existing table rather than a new one.
+#
+# The planner will not choose it at eleven books: a non-covering index is worth
+# taking at about one row in 24,000 (`docs/full-text.md` measures it), so
+# `/api/search` hints. Both paths are served, and the conformance runner
+# requires their plans to differ.
+#
+# **What the demo cannot show, measured rather than assumed.** Delete `text =
+# true` below and `/api/search` answers *identically*: `Index Scan using
+# by_title_text`, the same six rows, every conformance case still green. An
+# ordinary index on `title` accepts the same hint, and the plan summary carries
+# the index's name but not its key range — so the difference between reading
+# six entries under one term and reading all eleven and filtering is real work
+# and invisible here. Nothing reachable over HTTP distinguishes the two, and no
+# cross-SDK comparison could: all three adapters would be equally wrong.
+#
+# The inverted shape is asserted where it can be — `key_sets` in
+# `slate-serverd`'s `schema.rs` tests, and the planner's range in the kernel's
+# `fulltext.rs`. This line is a demonstration of the wiring, not of the shape.
+[[tables.indexes]]
+name = "by_title_text"
+id = 1
+columns = ["title"]
+text = true
+
 # The demo's one CHECK, here so `--print-schema` publishes a real constraint
 # and the generated declarations carry one rather than an empty list nobody
 # has looked at. Deliberately weak — every seeded year is a real year — because
@@ -126,6 +163,35 @@ name = "edition_book"
 parent = "books"
 columns = ["book_id"]
 
+# A table whose only reason to exist is an array column, and two of them
+# because one element type proves less than it looks.
+#
+# **Not a column on `books`.** That was the first plan and it is worse: `books`
+# is named in the Node adapter's table allowlist, the frontend's column map,
+# the conformance cases and three decoder suites, so widening it moves a
+# fingerprint that four things restate. A new table is additive — the adapters
+# already expose a subset of the catalog (`editions` is in neither allowlist),
+# so nothing existing changes.
+#
+# It is here because the *generated* array decoder and encoder had nowhere to
+# run. `scripts/test_codegen.py` executes the generated Python, but the suites
+# that execute generated Go and TypeScript are the demo's own, and until this
+# table there was no array column for them to execute. Generated code nothing
+# calls is the gap this repository closed as CG1 and G5 for other types, and
+# it would have been reopened by a feature rather than by neglect.
+[[tables]]
+name = "posts"
+id = 6
+columns = [
+  { name = "id",    type = "u64" },
+  { name = "title", type = "str" },
+  # Two element types, because a single one cannot show that the element type
+  # is read from the column: a generator that hard-coded `str` would pass.
+  { name = "tags",  type = "array", element = "str" },
+  { name = "sizes", type = "array", element = "i64" },
+]
+primary_key = ["id"]
+
 [[tables]]
 name = "shipments"
 id = 5
@@ -158,6 +224,23 @@ predicate = "status in ('pending', 'shipped', 'delivered')"
 column = "status"
 message = "Status must be pending, shipped or delivered."
 
+# A second check, so that one bad row breaks *two* rules.
+#
+# The point is the list. A refusal carries `violations`, `check.N`, `column.N`
+# and `message.N`, and three clients decode them by counting up — but with one
+# check in the whole demo, the live case could only ever exercise the
+# singleton. Reading one failure and reading a list are different code, and
+# only the fixture in each client's unit suite had ever reached the second.
+#
+# `9000` and above is the range the adapters' own handlers write into
+# (`purge` owns 9401-9403, `bad-status` writes 9499), so a seeded row cannot
+# accidentally violate it and a handler's row deliberately does.
+[[tables.checks]]
+name = "id_is_seeded"
+predicate = "id < 9000"
+column = "id"
+message = "Shipment ids above 9000 are reserved for the demo's own handlers."
+
 # A third foreign key, so a soft-deleted row is also a *referencing* row.
 #
 # It makes the retirement path do something worth watching: retiring a shipment
@@ -170,9 +253,14 @@ parent = "books"
 columns = ["book_id"]
 
 # `app` can do everything, including EXPLAIN.
+#
+# `posts` is here and deliberately *not* in the `reader` grant below: nothing
+# in the demo reads it, and a table reachable by a role no demonstration uses
+# would read as an oversight. It exists so the generated array decoder has a
+# row type to be, and the suites that exercise that build their own rows.
 [[security.grants]]
 role = "app"
-tables = ["authors", "books", "sales", "editions", "shipments"]
+tables = ["authors", "books", "sales", "editions", "shipments", "posts"]
 actions = ["everything"]
 
 # `reader` can read and nothing else — notably not EXPLAIN, which is its own
@@ -226,3 +314,31 @@ table = "books"
 actions = ["read", "insert", "update", "delete"]
 roles = ["app"]
 using = "true"
+
+# The demo's one view, and the reason it is over `books` rather than over a
+# table with no policy.
+#
+# A view here is a name for a `WHERE` and nothing else — no projection, no
+# sort, no limit; `docs/views.md` argues each refusal and the short version is
+# that a projection would make the caller's ordinals *view* ordinals. So the
+# only thing a view can demonstrate is which rows it admits, and the
+# interesting version of that is a view whose answer **depends on who asks**.
+#
+# `year < 1980` admits eight of the eleven seeded books. The `reader` role's
+# row policy above admits `year >= 1960`, so a reader reading this same view
+# gets six: 1955 and 1951 are inside the view and outside the policy. That is
+# §1's whole argument made visible — the view is substituted away before
+# planning, the *base* table's `TableId` reaches `row_filter_with`, and the
+# policy that runs is `books`'s. A view with its own id would have had no
+# policy at all and would have handed a reader all eight.
+#
+# The conformance runner reads it as both identities for exactly that reason;
+# a single-identity case would have passed against a view that was a privilege
+# escalation.
+#
+# Not a second view over a table with no policy. Nothing would be learned that
+# `crates/slate-serverd/tests/views.rs` does not already assert against a real
+# binary, and this file is read by people deciding whether to use the feature.
+[[views]]
+name = "classics"
+query = "SELECT * FROM books WHERE year < 1980"

@@ -21,7 +21,9 @@
 
 mod harness;
 
-use harness::{Files, Identity, Serving, connect, proto, query, rows, u64_value};
+use harness::{
+    Files, Identity, Serving, connect, null_value, proto, query, row, rows, str_value, u64_value,
+};
 
 /// A node that says nothing extra. The `[observability]` section is absent on
 /// purpose: the default is what most deployments run.
@@ -47,9 +49,24 @@ columns = [
 ]
 primary_key = ["id"]
 
+# A second table, with a soft delete, so a purge has something to erase.
+#
+# Separate from `docs` rather than a column added to it: every row literal in
+# this file is two columns wide, and widening them all to reach one statement
+# label would have been a change to nine tests for the sake of one.
+[[tables]]
+name = "retired"
+id = 2
+columns = [
+  { name = "id",         type = "u64" },
+  { name = "deleted_at", type = "i64", nullable = true },
+]
+primary_key = ["id"]
+soft_delete = "deleted_at"
+
 [[security.grants]]
 role = "app"
-tables = ["docs"]
+tables = ["docs", "retired"]
 actions = ["everything"]
 "#;
 
@@ -198,6 +215,188 @@ async fn a_scrape_reports_what_the_node_served() {
         )),
         "{answered}"
     );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_scrape_reports_the_rows_a_write_touched() {
+    // The other counter, and the other wiring line. `a_scrape_reports_what the
+    // node served` above covers `slate_requests_total`, whose layer wraps the
+    // router; `slate_rows_written_total` comes from a `WriteObserver` attached
+    // in one line of `serve.rs`, and until now nothing ran that line. The
+    // observer has a recording double, `Counters::prometheus` has its own
+    // tests, and their composition had neither — the exact shape of gap the
+    // module docstring above was written about.
+    //
+    // Both write paths, because they reach the observer differently and only
+    // one of them existed when it was built: a standalone insert is counted
+    // after `autocommit`, and an insert inside a caller's transaction is
+    // tallied and reported on `Commit`.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            table: "docs".to_owned(),
+            rows: vec![row(vec![u64_value(10), str_value("standalone")])],
+            ..Default::default()
+        }))
+        .await
+        .expect("a standalone insert");
+
+    let transaction = client
+        .begin(APP.on(proto::BeginRequest {}))
+        .await
+        .expect("begin")
+        .into_inner()
+        .transaction;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            rows: vec![
+                row(vec![u64_value(11), str_value("in a transaction")]),
+                row(vec![u64_value(12), str_value("in a transaction")]),
+            ],
+            ..Default::default()
+        }))
+        .await
+        .expect("an insert inside a transaction");
+
+    // Scraped *before* the commit, so the reading is evidence of the rule and
+    // not just of the total: three rows have been written and one has landed.
+    let midway = scrape(&address, "/metrics").await;
+    assert!(
+        midway.contains("slate_rows_written_total{statement=\"insert\",table=\"docs\"} 1"),
+        "only the committed row should be counted yet:\n{midway}"
+    );
+
+    client
+        .commit(APP.on(proto::CommitRequest { transaction }))
+        .await
+        .expect("commit");
+    drop(client);
+
+    let answered = scrape(&address, "/metrics").await;
+    assert!(answered.starts_with("HTTP/1.1 200 OK"), "{answered}");
+    assert!(
+        answered.contains("slate_rows_written_total{statement=\"insert\",table=\"docs\"} 3"),
+        "the transaction's two rows should join the standalone one:\n{answered}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_rolled_back_transactions_rows_never_reach_the_scrape() {
+    // The other half of the mid-transaction reading above, and the one the
+    // previous entry left out for length rather than for a reason.
+    //
+    // "Not counted yet" and "never counted" are different claims. The scrape
+    // before a commit proves the first; only a rollback followed by a scrape
+    // proves the second, and the second is what an operator is relying on when
+    // they read the series as rows that actually landed.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving.metrics_address().expect("a metrics port");
+
+    let mut client = connect(&serving).await;
+    let transaction = client
+        .begin(APP.on(proto::BeginRequest {}))
+        .await
+        .expect("begin")
+        .into_inner()
+        .transaction;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            transaction: transaction.clone(),
+            table: "docs".to_owned(),
+            rows: vec![row(vec![u64_value(20), str_value("doomed")])],
+            ..Default::default()
+        }))
+        .await
+        .expect("an insert inside a transaction");
+    client
+        .rollback(APP.on(proto::RollbackRequest { transaction }))
+        .await
+        .expect("rollback");
+    drop(client);
+
+    let answered = scrape(&address, "/metrics").await;
+    // The *family* is absent, not zero: nothing else wrote, so there is no
+    // (statement, table) pair to report and the series does not exist. Both
+    // readings are asserted, because "contains no 3" would pass on a body that
+    // said 30.
+    assert!(
+        !answered.contains("slate_rows_written_total"),
+        "a rolled-back transaction published a rows series:\n{answered}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_purge_reports_its_own_statement_label() {
+    // The write that prompted the counter, and the one the previous entry
+    // could not reach: this harness's fixture had no soft delete, so there was
+    // nothing to purge. The claim it left behind — "the statement label travels
+    // the same path as `insert`, so there is no reason to expect a difference"
+    // — was labelled a hypothesis. This is the test rather than the label.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving.metrics_address().expect("a metrics port");
+
+    let mut client = connect(&serving).await;
+    client
+        .insert(APP.on(proto::InsertRequest {
+            table: "retired".to_owned(),
+            rows: vec![
+                row(vec![u64_value(1), null_value()]),
+                row(vec![u64_value(2), null_value()]),
+            ],
+            ..Default::default()
+        }))
+        .await
+        .expect("two live rows");
+    client
+        .delete(APP.on(proto::DeleteRequest {
+            table: "retired".to_owned(),
+            primary_keys: vec![row(vec![u64_value(1)])],
+            ..Default::default()
+        }))
+        .await
+        .expect("retire one");
+    client
+        .purge_deleted(APP.on(proto::PurgeDeletedRequest {
+            table: "retired".to_owned(),
+            // Comfortably after the retirement: the stamp is the server's
+            // clock and this is the client's, so "now" would be a race.
+            before: 1 << 40,
+            ..Default::default()
+        }))
+        .await
+        .expect("purge");
+    drop(client);
+
+    let answered = scrape(&address, "/metrics").await;
+    for expected in [
+        "slate_rows_written_total{statement=\"insert\",table=\"retired\"} 2",
+        "slate_rows_written_total{statement=\"delete\",table=\"retired\"} 1",
+        "slate_rows_written_total{statement=\"purge_deleted\",table=\"retired\"} 1",
+    ] {
+        assert!(
+            answered.contains(expected),
+            "missing `{expected}`:\n{answered}"
+        );
+    }
 
     let finished = serving.terminate();
     assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);

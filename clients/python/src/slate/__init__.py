@@ -86,6 +86,7 @@ from .query import (
     ScanOrder,
     SortKey,
     UpdateWhere,
+    Window,
     asc,
     desc,
 )
@@ -121,7 +122,7 @@ from .scalar import (
 )
 from .schema import Column, Table
 from .types import ValueType
-from .values import NULL, Null, PyValue, Units, Vector, i64, u64
+from .values import NULL, Array, Null, PyValue, Units, Vector, i64, u64
 
 __version__ = "0.0.1"
 
@@ -131,6 +132,7 @@ __all__ = [
     "AggregateExplanation",
     "AggregateQuery",
     "AlreadyExists",
+    "Array",
     "Atomicity",
     "Batch",
     "BatchOutcome",
@@ -198,6 +200,7 @@ __all__ = [
     "UpdateWhere",
     "ValueType",
     "Vector",
+    "Window",
     "WriteResult",
     "all_of",
     "any_of",

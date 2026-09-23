@@ -1,4 +1,4 @@
-import { type Column, columnWire } from "./join.js";
+import { type Column, columnWire, type Window, windowWire } from "./join.js";
 import { type Scalar, scalarsToWire } from "./scalar.js";
 import { rowToWire, type Value, valueToWire } from "./value.js";
 
@@ -56,6 +56,25 @@ export const isIn = (column: Ordinal, values: Value[]): Expr => ({
   wire: { inList: { column: columnRef(column), values: values.map(valueToWire) } },
 });
 
+/**
+ * `every term of text is a term of column`: full-text search.
+ *
+ * The search is sent as written and tokenized by the *server*, with the same
+ * function its write path tokenized the column with. This client deliberately
+ * does no splitting of its own: a client that split differently would find
+ * fewer rows than the table holds, with no error anywhere to say so.
+ *
+ * Conjunctive — every term must appear. For a disjunction, {@link or} two of
+ * these. A phrase is not expressible: the index holds no positions.
+ *
+ * A text index makes this a lookup rather than a scan, but it does not have to
+ * exist. Without one the server evaluates the same predicate row by row and
+ * returns the same rows.
+ */
+export const contains = (column: Ordinal, text: string): Expr => ({
+  wire: { contains: { column: columnRef(column), text } },
+});
+
 const likeExpr = (
   column: Ordinal,
   pattern: string,
@@ -71,6 +90,37 @@ export const like = (c: Ordinal, p: string): Expr => likeExpr(c, p, false, false
 export const ilike = (c: Ordinal, p: string): Expr => likeExpr(c, p, false, true);
 /** `column NOT LIKE pattern`. */
 export const notLike = (c: Ordinal, p: string): Expr => likeExpr(c, p, true, false);
+
+/**
+ * Which access path a query asks for. Build one with {@link usingIndex} or
+ * {@link usingTableScan}.
+ */
+export interface AccessHint {
+  readonly wire: Record<string, unknown>;
+}
+
+/**
+ * Ask the planner to take this index rather than the cheapest path.
+ *
+ * Advice, not an instruction: an index the table does not have is ignored,
+ * matching the kernel, because a query that stops working because an index was
+ * renamed is worse than one that gets slower. The server records that it did
+ * so in an explanation's `warnings` — and *only* there, so a plain read cannot
+ * tell you your hint did nothing.
+ */
+export const usingIndex = (name: string): AccessHint => ({ wire: { index: name } });
+
+/**
+ * Ask the planner to read the table rather than any index.
+ *
+ * Chiefly for a test that wants to compare two access paths' answers: one of
+ * them has to be the path that cannot be wrong.
+ *
+ * `UNIT` and not `true`: the field is a `Unit` in the oneof, precisely so that
+ * a zeroed message cannot read as "yes, a table scan" — which is what a `bool`
+ * here used to do, and why field 1 of `AccessHint` is reserved.
+ */
+export const usingTableScan = (): AccessHint => ({ wire: { tableScan: "UNIT" } });
 
 /**
  * The conjunction of every part.
@@ -215,6 +265,13 @@ export interface Query {
    */
   readonly includeDeleted?: boolean;
   /**
+   * Which access path to take. Absent leaves the choice to the planner, which
+   * is right nearly always.
+   *
+   * Build it with {@link usingIndex} or {@link usingTableScan}.
+   */
+  readonly hint?: AccessHint;
+  /**
    * Values computed per row, appended after the table's own columns and named
    * with `computed0`.
    *
@@ -226,7 +283,33 @@ export interface Query {
    * tail of it, so an ordinal still means a column.
    */
   readonly compute?: Scalar[];
+  /**
+   * Values computed over a partition, one per row, named from a sort key with
+   * `windowed`.
+   *
+   * They come back in each row's `windowed` list — a third list beside
+   * `values` and `computed`, because a window sits past every computed value
+   * and folding them together would make "the second computed value" mean a
+   * different position depending on how many windows were asked for.
+   *
+   * See {@link Window} for what a window costs, which the request does not
+   * show: a query carrying one does not stream, and no `limit` bounds it.
+   */
+  readonly window?: Window[];
 }
+
+/**
+ * One sort key in its wire form.
+ *
+ * Extracted when windows arrived and needed the same conversion for their own
+ * `ORDER BY`: two copies of a direction mapping is two places for a direction
+ * to be written backwards.
+ */
+export const sortKeyWire = (key: SortKey): Record<string, unknown> => ({
+  column: key.ref ? columnWire(key.ref) : columnRef(key.column),
+  direction:
+    key.direction === "desc" ? "SORT_DIRECTION_DESC" : "SORT_DIRECTION_ASC",
+});
 
 /**
  * A query in its wire form.
@@ -248,12 +331,13 @@ export function queryToWire(
   if (query.columns && query.columns.length > 0) {
     out["projection"] = { columns: query.columns.map(columnRef) };
   }
+  // Before the sort, here and in the message, because a sort key may name a
+  // window and nothing a window names may be a window.
+  if (query.window && query.window.length > 0) {
+    out["window"] = query.window.map(windowWire);
+  }
   if (query.sort && query.sort.length > 0) {
-    out["sort"] = query.sort.map((key) => ({
-      column: key.ref ? columnWire(key.ref) : columnRef(key.column),
-      direction:
-        key.direction === "desc" ? "SORT_DIRECTION_DESC" : "SORT_DIRECTION_ASC",
-    }));
+    out["sort"] = query.sort.map(sortKeyWire);
   }
   if (query.compute && query.compute.length > 0) {
     out["compute"] = scalarsToWire(query.compute);
@@ -263,6 +347,7 @@ export function queryToWire(
   }
   if (query.paged) out["paged"] = true;
   if (query.includeDeleted) out["includeDeleted"] = true;
+  if (query.hint) out["hint"] = query.hint.wire;
   return out;
 }
 

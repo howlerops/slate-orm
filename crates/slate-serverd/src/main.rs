@@ -57,6 +57,7 @@ mod seed;
 mod serve;
 mod storage;
 mod value;
+mod views;
 
 use clap::Parser;
 use core::time::Duration;
@@ -106,9 +107,16 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 
     let mut warnings = Vec::new();
     let catalog = schema::catalog(&document.tables)?;
+    // Resolved here, beside the catalog and against the same tables, so a view
+    // naming a column that does not exist is a refusal to boot rather than a
+    // surprise the first time somebody reads through it. Deliberately *not*
+    // inserted into the catalog: `views::Views` is a separate map, which is
+    // what makes every path that resolves a table name refuse a view today
+    // without carrying a check for one. See `docs/views.md` §3a.
+    let views = views::views(&document.views, catalog.tables())?;
 
     if arguments.print_schema {
-        println!("{}", describe(&catalog));
+        println!("{}", describe(&catalog, &views));
         return Ok(());
     }
 
@@ -381,6 +389,13 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         .local_addr()
         .map_err(|why| Fault::new(format!("cannot read the bound address: {why}")))?;
 
+    // On stderr, above the configuration banner: stdout is this binary's
+    // machine-readable channel — `LISTENING <addr>` is parsed by the Python,
+    // Go and TypeScript harnesses — and a build line there would be a new
+    // line those parsers have to skip. The head-node tables in
+    // `docs/performance.md` all measure *this* binary, so "which build is
+    // running" is the same question #280 is about, asked of a server.
+    slate_slatedb::announce_to(&mut std::io::stderr());
     for warning in &warnings {
         eprintln!("slate-serverd: warning: {warning}");
     }
@@ -407,6 +422,11 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 
     let common = Common {
         execution,
+        // Lowered here, where the `TableDef`s the catalog was built from are
+        // still in hand, and carried rather than recomputed: both start paths
+        // serve the same views, and a follower that served fewer would answer
+        // a read the leader answers with `NOT_FOUND`.
+        views: views::lowered(&views, catalog.tables())?,
         serving: serve::Serving {
             grace,
             concurrency,
@@ -447,6 +467,8 @@ async fn run(arguments: cli::Cli) -> Started<()> {
 /// Everything that does not depend on which backend is in use.
 struct Common {
     catalog: Catalog,
+    /// Names a read may go through, already compiled. See [`crate::views`].
+    views: slate_server::Views,
     security: slate_kernel::SecurityCatalog,
     limits: Limits,
     /// The kernel's per-request ceilings. See [`ExecutionLimits`].
@@ -471,6 +493,7 @@ async fn start<S: KvStore + KvReadStore>(
     let Common {
         execution,
         serving,
+        views,
         catalog,
         security,
         limits,
@@ -509,7 +532,8 @@ async fn start<S: KvStore + KvReadStore>(
         replicas,
         Arc::clone(&leadership),
         authenticator,
-    );
+    )
+    .serving_views(views);
 
     announce_and_serve(head, listener, bound, leadership, serving).await?;
 
@@ -543,6 +567,7 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
     let Common {
         execution,
         serving,
+        views,
         catalog,
         security,
         limits,
@@ -565,6 +590,8 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
         );
     }
 
+    // The same views the writer serves. `topology.md`'s follower "answers
+    // every read a leader answers", and a view is a read.
     let head = Head::<S>::read_only(
         HeadConfig::new(catalog, security)
             .with_routing(routing)
@@ -573,7 +600,8 @@ async fn start_read_only<S: KvStore + KvReadStore>(common: Common) -> Started<()
         replicas,
         Arc::clone(&leadership),
         authenticator,
-    );
+    )
+    .serving_views(views);
 
     announce_and_serve(head, listener, bound, leadership, serving).await
 }
@@ -670,6 +698,7 @@ fn execution_limits(settings: &config::LimitSettings) -> Started<ExecutionLimits
         (settings.max_groups, "max_groups", 0usize),
         (settings.max_distinct, "max_distinct", 1),
         (settings.max_sort_rows, "max_sort_rows", 2),
+        (settings.max_window_rows, "max_window_rows", 3),
     ] {
         let Some(value) = value else { continue };
         if value == 0 {
@@ -681,7 +710,8 @@ fn execution_limits(settings: &config::LimitSettings) -> Started<ExecutionLimits
         match field {
             0 => limits.max_groups = value,
             1 => limits.max_distinct = value,
-            _ => limits.max_sort_rows = value,
+            2 => limits.max_sort_rows = value,
+            _ => limits.max_window_rows = value,
         }
     }
     Ok(limits)
@@ -774,6 +804,25 @@ async fn reconcile<S: slate_kernel::store::KvStore + ?Sized>(
             if entries == 1 { "y" } else { "ies" },
             started.elapsed(),
         );
+        // Per index as well as in total, when there is more than one.
+        //
+        // `--plan` cannot say how long a backfill will take: the row count
+        // lives in statistics that are computed by a *scan* and held in the
+        // serving process's memory, so a separate preview process could only
+        // learn it by doing the work it is previewing. What it can do is make
+        // the run that pays that cost tell you the number, so the *next*
+        // deploy of the same shape is predictable — and one summed total over
+        // two indexes does not, because the operator cannot tell which of them
+        // was the slow one.
+        //
+        // `Report::entries_written` holds one count per `BuildIndex` step in
+        // step order, and `building` holds their names in the same order, so
+        // the two zip.
+        if building.len() > 1 {
+            for (name, written) in building.iter().zip(&report.entries_written) {
+                eprintln!("slate-serverd:   {name}: {written}");
+            }
+        }
     }
     Ok(())
 }
@@ -853,13 +902,43 @@ fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -
                  change, so no row is rewritten",
                 named(*table)
             ),
+            // The one step that changes what the schema *is* rather than what
+            // the keyspace remembers about it, and the operator's question is
+            // which columns. Both lists, because a retirement reads very
+            // differently from an addition and a plan that said "3 columns
+            // changed" would send them to the config file to find out.
+            Step::WidenSchema {
+                name,
+                added,
+                retired,
+                ..
+            } => {
+                let mut line = format!("widen `{name}`: no row is read and none is rewritten");
+                if !added.is_empty() {
+                    line.push_str(&format!("\n    adds {}", added.join(", ")));
+                }
+                if !retired.is_empty() {
+                    line.push_str(&format!("\n    retires {}", retired.join(", ")));
+                }
+                line
+            }
+            // Shown rather than done quietly, which is why it is a step at
+            // all. It costs one key write and buys a refusal that can name a
+            // column instead of printing two hashes — and it makes the record
+            // unreadable to an older binary, which is the part an operator
+            // would rather read here than discover on a rollback.
+            Step::RecordSchema { name, .. } => format!(
+                "store `{name}`'s column layout beside its fingerprint — one key, no\n    \
+                 rows read. A later layout change will then name the column that moved.\n    \
+                 An older binary cannot read the rewritten record",
+            ),
         };
         let _ = writeln!(out, "  - {line}");
     }
     out
 }
 
-fn describe(catalog: &Catalog) -> String {
+fn describe(catalog: &Catalog, views: &views::Views) -> String {
     let tables: Vec<serde_json::Value> = catalog
         .tables()
         .iter()
@@ -889,6 +968,13 @@ fn describe(catalog: &Catalog) -> String {
                         // restate by hand" was omitting the one field nothing
                         // else could supply.
                         "scale": column.scale(),
+                        // `null` for every type but `array`, for the reason
+                        // the scale is `null` for everything but a decimal: a
+                        // caller must not read an element type off a column
+                        // that has none. In the schema fingerprint, like the
+                        // scale, so a declaration rebuilt from this output
+                        // without it is refused rather than quietly wrong.
+                        "element_type": column.element_type().map(|kind| kind.name()),
                         // `null`, `"created_at"` or `"updated_at"`. Not in the
                         // schema fingerprint and so not something a client has
                         // to restate — it is here because this dump describes
@@ -975,6 +1061,13 @@ fn describe(catalog: &Catalog) -> String {
                 "schema_version": table.schema_version(),
                 "primary_key": table.primary_key().iter().map(|o| o.0).collect::<Vec<_>>(),
                 "tenant_column": table.tenant_column().map(|o| o.0),
+                // The retirement stamp, as an ordinal beside the tenant
+                // column and for the same reason: a generated client cannot
+                // tell it from an ordinary nullable `i64`, and the difference
+                // decides what a delete on this table means. Without it,
+                // `include_deleted` is a flag a client can set and a column it
+                // cannot find.
+                "soft_delete": table.soft_delete().map(|o| o.0),
                 "columns": columns,
                 "indexes": indexes,
                 "checks": checks,
@@ -982,7 +1075,27 @@ fn describe(catalog: &Catalog) -> String {
             })
         })
         .collect();
-    serde_json::to_string_pretty(&serde_json::json!({ "tables": tables }))
+    // Views are published beside the tables and not among them, which is the
+    // same distinction the server itself draws: a view is a name for a filter
+    // over a base table, and a client that treated one as a table would
+    // generate a row type for something with no id, no index and no write
+    // path. The base table is named so a reader can find the policy that
+    // actually applies — a view is not a privilege boundary, and `docs/views.md`
+    // §2 says so in the one place somebody reading this output might look.
+    let views: Vec<serde_json::Value> = views
+        .iter()
+        .map(|(name, view)| {
+            serde_json::json!({
+                "name": name,
+                "table": view.table,
+                // The compiled spec rather than the SQL it was written as: the
+                // SQL is in the operator's own config file, and what the server
+                // resolved it to is the thing they cannot otherwise see.
+                "spec": view.spec,
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&serde_json::json!({ "tables": tables, "views": views }))
         .unwrap_or_else(|why| format!("{{\"error\": \"{why}\"}}"))
 }
 
@@ -1086,9 +1199,84 @@ where = "id > 0"
         )
         .unwrap();
         let catalog = schema::catalog(&document.tables).unwrap();
-        let json = describe(&catalog);
+        let json = describe(&catalog, &views::Views::new());
         assert!(json.contains("\"ordinal\": 1"), "{json}");
         assert!(json.contains("\"kind\""), "{json}");
         assert!(json.contains("\"partial\": true"), "{json}");
+    }
+
+    /// `--plan` says a storage-format upgrade is coming, and what it costs.
+    ///
+    /// `tests/plan.rs` runs the binary and covers the other four steps, and it
+    /// cannot reach this one: every store it makes is written by *this* binary,
+    /// so every record already carries a schema and the step is never planned.
+    /// The line would otherwise be code the compiler required and nobody read.
+    #[test]
+    fn the_plan_names_a_schema_record_upgrade_and_what_it_costs() {
+        let table = slate_schema::TableDef::builder("users", slate_schema::TableId(1))
+            .column("id", slate_tuple::ValueType::U64)
+            .primary_key(["id"])
+            .build()
+            .unwrap();
+        let catalog = Catalog::from_tables([table]).unwrap();
+        let plan = slate_kernel::migrate::MigrationPlan {
+            steps: vec![slate_kernel::migrate::Step::RecordSchema {
+                table: slate_schema::TableId(1),
+                name: "users".into(),
+            }],
+            refusals: vec![],
+        };
+        let rendered = render_plan(&plan, &catalog);
+        assert!(rendered.contains("`users`"), "{rendered}");
+        // The three things an operator is deciding on: what it writes, what it
+        // buys, and what it costs on a rollback.
+        assert!(rendered.contains("one key, no"), "{rendered}");
+        assert!(rendered.contains("name the column"), "{rendered}");
+        assert!(rendered.contains("older binary"), "{rendered}");
+    }
+
+    /// A widening names both lists, and a widening with nothing retired says
+    /// nothing about retirements.
+    ///
+    /// Unreachable from `tests/plan.rs` for the same reason as the test above
+    /// and one more: reaching it needs a store whose *stored schema* is
+    /// narrower than the catalog, which no single run of the binary can
+    /// produce.
+    #[test]
+    fn the_plan_names_which_columns_a_widening_adds_and_retires() {
+        let table = slate_schema::TableDef::builder("users", slate_schema::TableId(1))
+            .column("id", slate_tuple::ValueType::U64)
+            .primary_key(["id"])
+            .build()
+            .unwrap();
+        let catalog = Catalog::from_tables([table]).unwrap();
+        let widen = |added: Vec<String>, retired: Vec<String>| {
+            render_plan(
+                &slate_kernel::migrate::MigrationPlan {
+                    steps: vec![slate_kernel::migrate::Step::WidenSchema {
+                        table: slate_schema::TableId(1),
+                        name: "users".into(),
+                        added,
+                        retired,
+                    }],
+                    refusals: vec![],
+                },
+                &catalog,
+            )
+        };
+
+        let both = widen(vec!["nickname".into()], vec!["email".into()]);
+        assert!(both.contains("adds nickname"), "{both}");
+        assert!(both.contains("retires email"), "{both}");
+        // The cost, which is the number the operator is deciding on: an append
+        // is safe precisely because it reads nothing.
+        assert!(both.contains("none is rewritten"), "{both}");
+
+        // And the empty list is omitted rather than printed empty. `retires `
+        // with nothing after it reads as a bug in the plan, and an operator
+        // who sees it has to go and check.
+        let only_added = widen(vec!["nickname".into()], vec![]);
+        assert!(only_added.contains("adds nickname"), "{only_added}");
+        assert!(!only_added.contains("retires"), "{only_added}");
     }
 }

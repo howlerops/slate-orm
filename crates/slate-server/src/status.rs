@@ -150,6 +150,13 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
         | KernelError::TenantRequired { table }
         | KernelError::RowCheckFailed { table }
         | KernelError::InvalidCursor { table, .. } => put("table", table.clone()),
+        KernelError::SoftDeleteColumnSupplied { table, column } => {
+            put("table", table.clone());
+            // Named for the same reason `index` is on a unique violation: the
+            // caller has to blank one column to retry, and the status code
+            // cannot say which.
+            put("column", column.clone());
+        }
         KernelError::AccessDenied { table, action } => {
             put("table", table.clone());
             put("action", (*action).to_owned());
@@ -232,6 +239,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::AccessDenied { .. } => "ACCESS_DENIED",
         KernelError::TenantRequired { .. } => "TENANT_REQUIRED",
         KernelError::RowCheckFailed { .. } => "ROW_CHECK_FAILED",
+        KernelError::SoftDeleteColumnSupplied { .. } => "SOFT_DELETE_COLUMN_SUPPLIED",
         KernelError::TransactionConflict => "TRANSACTION_CONFLICT",
         KernelError::WriterFenced => "WRITER_FENCED",
         KernelError::CommitTimedOut => "COMMIT_TIMED_OUT",
@@ -257,6 +265,10 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::PredicateWriteTooLarge { .. } => "PREDICATE_WRITE_TOO_LARGE",
         KernelError::NotSoftDeleting { .. } => "NOT_SOFT_DELETING",
         KernelError::SortTooLarge { .. } => "SORT_TOO_LARGE",
+        KernelError::WindowTooLarge { .. } => "WINDOW_TOO_LARGE",
+        KernelError::WindowNeedsOrder { .. } => "WINDOW_NEEDS_ORDER",
+        KernelError::RunningDistinctCount => "RUNNING_DISTINCT_COUNT",
+        KernelError::WindowOffsetZero { .. } => "WINDOW_OFFSET_ZERO",
         KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
         KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
         KernelError::DuplicateAssignment { .. } => "DUPLICATE_ASSIGNMENT",
@@ -295,6 +307,13 @@ pub fn code_for(error: &KernelError) -> Code {
         KernelError::AccessDenied { .. }
         | KernelError::TenantRequired { .. }
         | KernelError::RowCheckFailed { .. } => Code::PermissionDenied,
+
+        // `InvalidArgument`, not `PermissionDenied`: no grant fixes this. The
+        // soft-delete column is written by `delete` and by nothing else, so a
+        // caller who supplied a value sent a bad row, not an unauthorised one —
+        // and the whole reason this is its own variant is that it used to come
+        // back as `PermissionDenied` and send people to the grants.
+        KernelError::SoftDeleteColumnSupplied { .. } => Code::InvalidArgument,
 
         // The one code gRPC defines as "retry the whole transaction".
         KernelError::TransactionConflict => Code::Aborted,
@@ -370,8 +389,14 @@ pub fn code_for(error: &KernelError) -> Code {
         // when a predicate write matched more rows than one response can
         // carry. `ResourceExhausted` all the same, and for the same reason —
         // the caller's remedy is a narrower request.
+        //
+        // `WindowTooLarge` is the sixth, and the one with the weakest remedy:
+        // the others can be narrowed with a `LIMIT`, and a window cannot be,
+        // because it is computed before the limit applies. Its message says
+        // so, so a caller does not retry with a limit and get the same answer.
         KernelError::JoinBuildTooLarge { .. }
         | KernelError::SortTooLarge { .. }
+        | KernelError::WindowTooLarge { .. }
         | KernelError::TooManyGroups { .. }
         | KernelError::TooManyDistinctValues { .. }
         | KernelError::PredicateWriteTooLarge { .. } => Code::ResourceExhausted,
@@ -380,9 +405,16 @@ pub fn code_for(error: &KernelError) -> Code {
         // `DuplicateAssignment` and `NoSuchColumn` became reachable when
         // predicate writes crossed the wire; before that nothing could send an
         // assignment at all.
-        KernelError::DuplicateAssignment { .. } | KernelError::NoSuchColumn { .. } => {
-            Code::InvalidArgument
-        }
+        // The three window refusals join them. Each is a specification that
+        // has no answer rather than one that is too expensive — an unordered
+        // rank, a running distinct count, an offset of zero — so the remedy is
+        // to write a different query, not a smaller one, and
+        // `ResourceExhausted` above would point the caller at the wrong fix.
+        KernelError::DuplicateAssignment { .. }
+        | KernelError::NoSuchColumn { .. }
+        | KernelError::WindowNeedsOrder { .. }
+        | KernelError::RunningDistinctCount
+        | KernelError::WindowOffsetZero { .. } => Code::InvalidArgument,
 
         // The stored row moved between the read and the write. Re-read,
         // recompute, retry — the same shape as `TransactionConflict`, and the

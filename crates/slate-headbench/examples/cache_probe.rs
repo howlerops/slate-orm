@@ -73,7 +73,22 @@ const TENANT: u64 = 1;
 
 /// Rows in the fixture. Enough that the table spans many blocks and several
 /// SSTs, which is the only way a cache has anything to hold.
+///
+/// The default is what `docs/performance.md` records and is unchanged.
+/// `HEADBENCH_ROWS` exists so `run.sh` can ask for a fixture small enough to
+/// prove the benchmark still *runs* in seconds rather than minutes — at which
+/// size the numbers mean nothing, which is the point of that mode and is why
+/// it is not the default. Three of this crate's five benchmarks already took
+/// a row knob; the two that did not are the two a smoke run had to wait for.
 const ROWS: u64 = 20_000;
+
+fn rows() -> u64 {
+    std::env::var("HEADBENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
 
 /// Point reads per timed run.
 const READS: usize = 200;
@@ -222,8 +237,8 @@ async fn seeded() -> (Arc<dyn ObjectStore>, Arc<Counts>) {
     let table = events();
     let ctx = context(TENANT);
 
-    for chunk_start in (0..ROWS).step_by(1_000) {
-        let rows: Vec<Row> = (chunk_start..(chunk_start + 1_000).min(ROWS))
+    for chunk_start in (0..rows()).step_by(1_000) {
+        let rows: Vec<Row> = (chunk_start..(chunk_start + 1_000).min(rows()))
             .map(|id| row(TENANT, id))
             .collect();
         let txn = records.begin().await.expect("begin");
@@ -264,7 +279,7 @@ async fn reopen(
 fn probe_keys() -> Vec<Vec<Value>> {
     (0..READS)
         .map(|i| {
-            let id = (i as u64 * (ROWS / READS as u64)) % ROWS;
+            let id = (i as u64 * (rows() / READS as u64).max(1)) % rows();
             vec![Value::U64(TENANT), Value::U64(id)]
         })
         .collect()
@@ -376,7 +391,7 @@ async fn run(arm: &Arm) -> Outcome {
     .await;
 
     let scan = phase(
-        format!("{}: full scan of {ROWS} rows", arm.label),
+        format!("{}: full scan of {} rows", arm.label, rows()),
         1,
         &store,
         arm,
@@ -390,7 +405,7 @@ async fn run(arm: &Arm) -> Outcome {
                 .count()
                 .await
                 .expect("count");
-            assert_eq!(rows as u64, ROWS, "a scan lost rows");
+            assert_eq!(rows as u64, self::rows(), "a scan lost rows");
         },
     )
     .await;
@@ -411,10 +426,12 @@ fn median(values: &[f64]) -> f64 {
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     println!("# Does SlateDB have a block cache in this build?\n");
     println!(
-        "Fixture: {ROWS} rows of the `events` table, written, closed, reopened, over an\n\
+        "Fixture: {} rows of the `events` table, written, closed, reopened, over an\n\
          in-memory object store wrapped in a counting store. Runs: {}, `median [min – max]`.\n",
+        rows(),
         runs()
     );
     println!(

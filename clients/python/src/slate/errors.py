@@ -194,37 +194,26 @@ class NotLeader(Unavailable):
     one. Best effort by construction: the lease may have moved again before this
     arrived, which is why the server puts it in metadata rather than promising
     it in the message.
+
+    # Why a property and not an `__init__`
+
+    This was the one subclass with its own constructor, forwarding each of the
+    base's keywords by hand so it could set `self.leader` afterwards. A keyword
+    added to the base was then silently unsupported here until something passed
+    it, and the comment that used to sit below said this had happened *twice*.
+    It happened a third time, on `violations`, and the third time is the
+    argument: the override was never doing anything a property could not.
+
+    `leader` is derived from `trailers`, which the base already stores and which
+    nothing mutates, so reading it on demand is the same answer with no
+    constructor to keep in step. `**kwargs` was the other way out and is worse —
+    it forwards a typo as readily as a field.
     """
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: grpc.StatusCode,
-        trailers: dict[str, str] | None = None,
-        reason: str = "",
-        request_id: str = "",
-    ) -> None:
-        # Every keyword the base takes is accepted and forwarded rather than
-        # dropped: this is the one subclass with its own `__init__`, so a
-        # keyword added to the base is silently unsupported here until
-        # something passes it.
-        #
-        # That has now happened **twice**, which is the argument for either
-        # `**kwargs` or no override at all — and against both is that this
-        # class exists to set `leader`, and `**kwargs` would forward a typo as
-        # readily as a field. It stays explicit, and this comment is the
-        # reminder. Both times the suite caught it as a `TypeError` on a
-        # redirect rather than as a missing field, which is the good failure:
-        # loud, and on the path that uses it.
-        super().__init__(
-            message,
-            code=code,
-            trailers=trailers,
-            reason=reason,
-            request_id=request_id,
-        )
-        self.leader: str | None = self.trailers.get(LEADER_KEY)
+    @property
+    def leader(self) -> str | None:
+        """The node the `slate-leader` trailer named, or `None`."""
+        return self.trailers.get(LEADER_KEY)
 
 
 class ResourceLimit(Retryable):
@@ -368,7 +357,9 @@ def _trailers(error: grpc.RpcError | RpcCall) -> dict[str, str]:
     return out
 
 
-def from_batch_error(code: int, message: str, reason: str) -> SlateError:
+def from_batch_error(
+    code: int, message: str, reason: str, details: bytes = b""
+) -> SlateError:
     """The exception a batch's per-operation failure becomes.
 
     An independent batch reports each failure *as data*, inside a successful
@@ -380,10 +371,25 @@ def from_batch_error(code: int, message: str, reason: str) -> SlateError:
     `reason` is carried on the exception rather than in `trailers`, because
     there are no trailers: the whole point of an independent batch is that the
     request succeeded and the operation did not.
+
+    `details` is the same `google.rpc.Status` blob a lone failure carries in
+    `grpc-status-details-bin`, put in the message body by the server for the
+    same reason. It is decoded by `check_failures_of` — the function the lone
+    path uses — so a form submitted as a batch gets the same typed failures as
+    one submitted alone. It used to be the field a batched failure could not
+    have: there are no trailers, so there was nothing to decode.
+
+    Defaulted to empty rather than required, because a batch error built by a
+    caller's own test should not have to supply a blob to say there is none.
     """
     status = _BY_VALUE.get(code, grpc.StatusCode.UNKNOWN)
     kind: type[SlateError] = _BY_CODE.get(status, InternalError)
-    return kind(message or status.name, code=status, reason=reason)
+    return kind(
+        message or status.name,
+        code=status,
+        reason=reason,
+        violations=check_failures_of(details),
+    )
 
 
 #: gRPC's numeric codes, which arrive as an `int32` in a `BatchError`.

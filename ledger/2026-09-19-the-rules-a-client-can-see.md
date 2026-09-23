@@ -107,9 +107,10 @@ the backend, `codegen.py --check` reporting no drift, and
 
 No client-side evaluation, as above.
 
-Foreign keys are published and nothing generates from them. A `parent` table id
-and the referencing columns are in the output; turning that into a typed
-relation in three languages is the obvious next step and is not started.
+~~Foreign keys are published and nothing generates from them.~~ **Closed** —
+see `2026-09-19-the-parent-a-client-cannot-derive.md`. The `parent` id is
+resolved to a table name and emitted per table in all three languages, and the
+demo's adapters use it in place of the string literals they held.
 
 The demo's one check is weak on purpose — `year > 0`, which every seeded row
 satisfies. A demo constraint that rejected the demo's own data would be a trap

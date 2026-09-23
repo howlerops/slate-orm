@@ -1,0 +1,78 @@
+{
+  "at": "2026-09-23T16:49:35+00:00",
+  "file": "scripts/check_retired_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_retired_claims.py"
+  ],
+  "commit": "43da044",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "lines are not joined, so a wrapped claim is missed",
+      "old": "                out.append(\" \")",
+      "new": "                out.append(\"\\n\")",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "strikethrough stops exempting a withdrawal",
+      "old": "    for struck in STRUCK.finditer(flat):\n        if struck.start() <= start and end <= struck.end():\n            return True",
+      "new": "    for struck in STRUCK.finditer(flat):\n        if struck.start() <= start and end <= struck.end():\n            pass",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a one-word phrase is accepted into the registry",
+      "old": "        if len(phrase.split()) < 3:",
+      "new": "        if len(phrase.split()) < 0:",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty registry no longer fails",
+      "old": "    if phrases == 0:",
+      "new": "    if phrases == -1:",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a retirement naming a missing entry is accepted",
+      "old": "        if not cited or not (root / cited).is_file():",
+      "new": "        if not cited and not (root / cited).is_file():",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the NOT_A_CLAIM marker stops exempting",
+      "old": "    return any(MARKER in raw_lines[i] for i in range(lo, hi))",
+      "new": "    return False",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "vendored trees are scanned after all",
+      "old": "            if any(part in SKIP_DIRS for part in path.relative_to(root).parts):\n                continue",
+      "new": "            if False:\n                continue",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

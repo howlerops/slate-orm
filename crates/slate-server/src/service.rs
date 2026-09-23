@@ -42,8 +42,8 @@ use crate::convert::{
     GroupedSource, MultiRead, aggregate_from_proto_query, chain_plan_to_proto,
     explanation_to_proto, freshness_from_proto, group_to_proto, grouped_explanation_to_proto,
     join_explanation_to_proto, join_from_proto, multi_row_to_proto, primary_key_from_proto,
-    query_from_proto, row_from_proto, row_to_proto, row_to_proto_split, two_tables,
-    value_from_proto, value_to_proto,
+    query_from_proto, row_from_proto, row_to_proto, row_to_proto_split,
+    row_to_proto_split_windowed, two_tables, value_from_proto, value_to_proto,
 };
 use crate::convert::{Space, assignments_from_proto, expr_named};
 use crate::fingerprint;
@@ -55,6 +55,7 @@ use crate::session::{
 };
 use crate::status::reason_of;
 use crate::status::{from_kernel, redirect};
+use crate::views::Views;
 use slate_kernel::{
     Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
     ReadToken, RecordSnapshot, RecordStore, RecordTransaction, ReplicaPool, RoutingPolicy, Scalar,
@@ -89,11 +90,35 @@ const IN_TRANSACTION: &str = "writer (in transaction)";
 /// Implemented outside this crate, because what to do with the number — a
 /// counter, a log line, nothing — is a deployment's business and this crate
 /// has no opinion. `None` is the ordinary case and costs a branch per write.
+///
+/// # When it is told
+///
+/// **After the write committed, never before.** There are three paths and all
+/// three obey it, for three different reasons:
+///
+/// - [`Head::autocommit`], for a standalone write: a conflicting write is
+///   retried and applies more than once while committing once, so counting
+///   attempts would report a number no row ever had.
+/// - An atomic batch that opens its own transaction: the same retry, one level
+///   up, so the counts are returned out of the closure rather than added
+///   inside it.
+/// - A caller's own transaction, in `session::run`: the caller decides whether
+///   any of it lands. The counts accumulate for the transaction's life and are
+///   reported on a successful `Commit`; a rollback, an idle timeout, a fence
+///   or a client that walked away reports nothing.
+///
+/// A deployment therefore sees committed rows and only committed rows, which
+/// is what makes the number worth alerting on.
 pub trait WriteObserver: Send + Sync {
     /// `kind` is the statement (`insert`, `purge_deleted`, …) and `table` is
     /// its table. Both are bounded — by the enum and by the catalog — so a
     /// counter keyed on the pair cannot grow without limit, which is the
     /// failure a label taken from a request would have.
+    ///
+    /// Called once per statement for a standalone write or an atomic batch,
+    /// and once per (statement, table) *pair* for a transaction, which is why
+    /// an implementation must add rather than set: a transaction that inserted
+    /// into one table twenty times is one call of the sum.
     fn wrote(&self, kind: &'static str, table: &str, affected: u64);
 }
 
@@ -192,13 +217,20 @@ pub struct Head<S> {
     authenticator: Arc<dyn Authenticator>,
     sessions: Arc<Sessions>,
     limits: Limits,
-    /// Told what each standalone write touched; see [`WriteObserver`].
+    /// Told what each committed write touched; see [`WriteObserver`].
     ///
     /// A field set after construction rather than a `HeadConfig` entry,
     /// because every existing caller builds that struct literally and a new
     /// field would break each of them for something all but one of them wants
     /// to leave unset.
     writes: Option<Arc<dyn WriteObserver>>,
+    /// Names bound to a predicate over a base table; see [`crate::views`].
+    ///
+    /// Beside the catalog and never in it, which is what makes every read path
+    /// that has not opted in refuse a view by finding nothing rather than by
+    /// carrying a check. Empty on a node that declares none, and a
+    /// post-construction field for the reason [`Head::writes`] is one.
+    views: Views,
 }
 
 impl<S> Head<S> {
@@ -211,6 +243,24 @@ impl<S> Head<S> {
     #[must_use]
     pub fn observing_writes(mut self, observer: Arc<dyn WriteObserver>) -> Self {
         self.writes = Some(observer);
+        self
+    }
+
+    /// Serve `views` as names a read may go through.
+    ///
+    /// Consuming, for the reason [`Head::observing_writes`] is: a view that
+    /// appeared halfway through a node's life would make "which requests saw
+    /// it" a question somebody has to answer.
+    ///
+    /// A view resolved here is **not** added to the catalog. Only the handlers
+    /// that call [`Head::authorized_read_source`] can reach one, and today
+    /// that is `query` alone — every write, join, chain, aggregate, explain
+    /// and relation still resolves through `Catalog::table_by_name` and so
+    /// still answers `NOT_FOUND`. That is `docs/views.md` §3a's build order,
+    /// and the narrowness is the design rather than an unfinished edge.
+    #[must_use]
+    pub fn serving_views(mut self, views: Views) -> Self {
+        self.views = views;
         self
     }
 }
@@ -294,6 +344,7 @@ impl<S> Head<S> {
             sessions: Arc::new(Sessions::new(limits)),
             limits,
             writes: None,
+            views: Views::new(),
         }
     }
 
@@ -354,6 +405,7 @@ impl<S: KvStore + KvReadStore> Head<S> {
             sessions: Arc::new(Sessions::new(limits)),
             limits,
             writes: None,
+            views: Views::new(),
         }
     }
 
@@ -399,11 +451,60 @@ impl<S: KvStore + KvReadStore> Head<S> {
     }
 
     fn table(&self, name: &str) -> Result<&TableDef, Status> {
-        self.pool.catalog().table_by_name(name).ok_or_else(|| {
-            // `NOT_FOUND` rather than `INVALID_ARGUMENT`: the request is
-            // well-formed, this catalog simply has no such table.
-            Status::new(Code::NotFound, format!("no table named `{name}`"))
-        })
+        self.pool
+            .catalog()
+            .table_by_name(name)
+            .ok_or_else(|| self.no_such_table(name))
+    }
+
+    /// The refusal for a name this catalog holds no table for.
+    ///
+    /// `NOT_FOUND` rather than `INVALID_ARGUMENT`: the request is well-formed,
+    /// this catalog simply has no such table.
+    ///
+    /// # Why a declared view gets a different sentence
+    ///
+    /// Every path but `query` resolves through here, so a caller who declared
+    /// `[[views]] name = "notes"` and then joined it used to be told *"no table
+    /// named `notes`"* — which reads as a typo and sends them to check a file
+    /// where the name is spelled correctly. `docs/views.md` §3a predicted that
+    /// message and called it the cost of the build order; this is the message
+    /// paying it back. Nothing about which paths accept a view changes: this
+    /// function returns a `Status` and only a `Status`, so however it is
+    /// called it cannot hand anybody a view. That is the guarantee, and it is
+    /// structural rather than a promise in `check_handlers.py`'s roster.
+    ///
+    /// # Why it names the base table
+    ///
+    /// `docs/views.md` §4 settled this for the write refusal — *"the refusal
+    /// should name the base table, because the useful next step is to write to
+    /// that"* — and a join refusal that said less than the write refusal about
+    /// the same view would be an inconsistency nobody could explain. §2 points
+    /// the same way: a view is not a privilege boundary, the caller needs the
+    /// grant on the base table anyway, and the whole design already sends them
+    /// there.
+    ///
+    /// It was nearly written the other way. This refusal is produced before any
+    /// grant is checked — `authorized_table` calls `table` first — so it is
+    /// said to a caller who may hold nothing, and a *link* between two names is
+    /// more than the table-existence disclosure `authorized_table` documents as
+    /// deliberate. What decided it is that the link is already derivable: an
+    /// unknown name answers `NOT_FOUND` and a known one with no grant answers
+    /// `PERMISSION_DENIED`, so a caller who can send two requests can already
+    /// enumerate table names, and the only thing withheld would be which of
+    /// them this view reads. That is one probe saved against an operator
+    /// reading a refusal they cannot act on.
+    fn no_such_table(&self, name: &str) -> Status {
+        if let Some(view) = self.views.get(name) {
+            return Status::new(
+                Code::NotFound,
+                format!(
+                    "`{name}` is a view over `{}`, and only a plain query can read through one",
+                    view.table
+                ),
+            );
+        }
+        Status::new(Code::NotFound, format!("no table named `{name}`"))
     }
 
     /// The table, if this caller holds a grant for `action` on it.
@@ -438,6 +539,104 @@ impl<S: KvStore + KvReadStore> Head<S> {
             .authorize(context, table, action)
             .map_err(|error| from_kernel(&error))?;
         Ok(table)
+    }
+
+    /// Resolve a read's source name, which may be a table or a view.
+    ///
+    /// Returns the **base** `TableDef` and the predicate to `AND` onto the
+    /// caller's filter — `Expr::True` when the name was an ordinary table, so
+    /// a caller composes unconditionally and there is no branch to forget.
+    ///
+    /// # Why this is a second resolver rather than a change to the first
+    ///
+    /// `docs/views.md` §3a's build order is *declare first, read last*, and
+    /// the reason is that widening `authorized_table` would opt **every**
+    /// handler in at once — writes included, which §4 refuses, and joins and
+    /// aggregates, which §1 has no answer for because a joined row has no
+    /// single base table to authorise against. A separate function that one
+    /// handler calls is the opt-in: everything still on `authorized_table`
+    /// keeps answering `NOT_FOUND` for a view, by construction.
+    ///
+    /// The shape every finding in `security-review.md` has is a fix that
+    /// covered one path of several. This is the same shape run the other way —
+    /// a *capability* that covers one path of several — and the difference is
+    /// that here the uncovered paths are the safe ones.
+    ///
+    /// # What the caller is authorised against
+    ///
+    /// The base table, through `authorized_table`, with the same action the
+    /// kernel will check. So RLS keys on the base table's `TableId` and its
+    /// policy is the one that runs — §1's whole point — and a caller with no
+    /// grant on the base table cannot read through a view onto it. §2 is the
+    /// other half of that and is not a bug: holding the grant, they can read
+    /// the same rows by naming the table.
+    ///
+    /// A view whose base table has since left the catalog answers `NOT_FOUND`
+    /// naming the *table*. It cannot happen today — `views::views` resolves
+    /// every view against the catalog at startup and the catalog is immutable
+    /// afterwards — and the arm exists because "cannot happen" is a property
+    /// of today's wiring rather than of this function.
+    fn authorized_read_source(
+        &self,
+        context: &SecurityContext,
+        name: &str,
+        action: Action,
+    ) -> Result<(&TableDef, Expr), Status> {
+        if let Some(view) = self.views.get(name) {
+            let table = self.authorized_table(context, &view.table, action)?;
+            return Ok((table, view.predicate.clone()));
+        }
+        let table = self.authorized_table(context, name, action)?;
+        Ok((table, Expr::True))
+    }
+
+    /// Authorise every table a multi-table read names, before it is converted.
+    ///
+    /// `join_from_proto` and `aggregate_from_proto_query` take a `Catalog`
+    /// rather than a `SecurityContext`, so they resolve and convert with no
+    /// idea who is asking — and the handlers called them first. That is
+    /// finding 8 on four more handlers than the ones it was written about:
+    /// converting an input resolves its `ColumnRef`s against the table's
+    /// width, and the refusal states the width. Measured on `join`, from a
+    /// role granted nothing: "the projection names column 99 of table
+    /// `users`, which has 4 columns".
+    ///
+    /// The names are read off the wire, because a converted read is the thing
+    /// that cannot be produced safely yet. Every input, not the first: a join
+    /// reads all of them and the kernel checks each, so checking one would
+    /// leave the others' widths readable.
+    fn authorize_join_inputs(
+        &self,
+        context: &SecurityContext,
+        wire: &pb::JoinQuery,
+        action: Action,
+    ) -> Result<(), Status> {
+        for input in &wire.inputs {
+            if let Some(query) = input.query.as_ref() {
+                self.authorized_table(context, &query.table, action)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Head::authorize_join_inputs`] for an aggregate, over either source.
+    ///
+    /// Both arms rather than the one that is set: the converter refuses a
+    /// request setting both, and doing that refusal *after* this one would
+    /// make "set exactly one" a way to choose which table gets checked.
+    fn authorize_aggregate_inputs(
+        &self,
+        context: &SecurityContext,
+        wire: &pb::AggregateQuery,
+        action: Action,
+    ) -> Result<(), Status> {
+        if let Some(input) = wire.input.as_ref() {
+            self.authorized_table(context, &input.table, action)?;
+        }
+        if let Some(join) = wire.join.as_ref() {
+            self.authorize_join_inputs(context, join, action)?;
+        }
+        Ok(())
     }
 
     /// The writer, if this node may use it.
@@ -863,21 +1062,33 @@ impl<S: KvStore + KvReadStore> Head<S> {
         let outcome = writer
             .transact_boxed_tracked(move |txn| {
                 Box::pin(async move {
+                    // Collected and returned rather than counted here: the
+                    // closure is `Fn` because it runs once per retry, and a
+                    // conflicting batch that applies twice and commits once
+                    // would otherwise report every row twice.
+                    let mut wrote = Vec::with_capacity(decoded.len());
                     for operation in decoded {
-                        operation.apply(txn, context, returnable).await?;
+                        wrote.push(operation.apply(txn, context, returnable).await?);
                     }
-                    Ok(())
+                    Ok(wrote)
                 })
             })
             .await;
         match outcome {
-            Ok(((), token)) => Ok(Response::new(pb::BatchResponse {
-                // No per-operation results: they all happened. Reporting a
-                // list of successes would invite a caller to check it, and the
-                // only thing it could ever say is "yes" for every entry.
-                results: Vec::new(),
-                sequence: token.map(ReadToken::sequence),
-            })),
+            Ok((wrote, token)) => {
+                if let Some(observer) = &self.writes {
+                    for (kind, table, affected) in &wrote {
+                        observer.wrote(kind, table, *affected);
+                    }
+                }
+                Ok(Response::new(pb::BatchResponse {
+                    // No per-operation results: they all happened. Reporting a
+                    // list of successes would invite a caller to check it, and the
+                    // only thing it could ever say is "yes" for every entry.
+                    results: Vec::new(),
+                    sequence: token.map(ReadToken::sequence),
+                }))
+            }
             Err(error) => {
                 if matches!(error, KernelError::WriterFenced) {
                     self.leadership.fenced().await;
@@ -925,6 +1136,11 @@ impl<S: KvStore + KvReadStore> Head<S> {
                         code: status.code() as i32,
                         message: status.message().to_owned(),
                         reason: reason_of(&status),
+                        // The whole blob, not a re-encoding of part of it: a
+                        // client decodes a batched refusal with the same
+                        // function it uses for a lone one, so the two cannot
+                        // come to disagree.
+                        details: status.details().to_vec(),
                     })),
                 }),
             }
@@ -1340,16 +1556,25 @@ impl<'a> Decoded<'a> {
     }
 
     /// Apply it inside a transaction the caller already has.
+    ///
+    /// Answers the statement's label, its table and how many rows it touched,
+    /// which is what an atomic batch needs to tell a [`WriteObserver`] once the
+    /// transaction it ran in has committed. The rows themselves are dropped:
+    /// an atomic batch reports no per-operation results, which is the whole
+    /// difference from the independent one.
     async fn apply(
         &self,
         transaction: &RecordTransaction<'_>,
         context: &SecurityContext,
         at_most: Option<usize>,
-    ) -> Result<(), KernelError> {
-        self.as_write(at_most)
+    ) -> Result<(&'static str, String, u64), KernelError> {
+        let write = self.as_write(at_most);
+        let (kind, table) = write.labels();
+        let name = table.name().to_owned();
+        write
             .apply(transaction, context)
             .await
-            .map(|_| ())
+            .map(|written| (kind, name, written.affected))
     }
 
     /// The ceiling this operation's match is held to, given the node's.
@@ -1536,6 +1761,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                 writer,
                 Arc::clone(&self.leadership),
                 context.principal().clone(),
+                self.writes.clone(),
             )
             .await?;
         Ok(Response::new(pb::BeginResponse {
@@ -2037,6 +2263,22 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                     format!("step {at} of the path has no relation"),
                 ));
             };
+            // Authorised before the relation is resolved, for the reason
+            // `query` is: `resolve_relation`'s refusals name the child's
+            // foreign keys — "`orders` has no foreign key named `x`; it has
+            // …" — and the composition errors below name the tables a path
+            // touches. Both are schema, to a caller who may hold no grant.
+            //
+            // `relation.table` rather than the step's `rows_from`, which is
+            // only known after resolving. For a `CHILDREN` step they are the
+            // same table; for `PARENTS` the child is the *source* and its rows
+            // are not read, so this asks for a grant the read itself does not
+            // need. Accepted deliberately: naming a relation is asking about
+            // the child's foreign keys, and a caller with no grant on the
+            // child has no business being told what they are. The per-step
+            // `Read` on `rows_from` below still happens and is what protects
+            // the rows.
+            self.authorized_table(&context, &relation.table, Action::Read)?;
             let this = self.resolve_relation(relation)?;
             if let Some(previous) = resolved.last()
                 && previous.rows_from.id() != this.source.id()
@@ -2218,13 +2460,44 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.query else {
             return Err(Status::new(Code::InvalidArgument, "no query given"));
         };
-        let table = self.table(&wire.table)?;
+        // Authorised before the query is converted, not only inside the
+        // planner. `query_from_proto` resolves a `ColumnRef` against the
+        // table's width — "only the server knows how wide each table is", as
+        // the proto puts it — and reported the width in the refusal: a caller
+        // holding no grant on `users` got "the projection names column 99 of
+        // table `users`, which has 4 columns". That is finding 8's disclosure
+        // on a path its fix did not cover, and one request rather than a
+        // binary search.
+        //
+        // `Action::Read` because that is what the planner will check; see
+        // `authorized_table` on why the action is passed rather than inferred.
+        //
+        // `authorized_read_source` rather than `authorized_table`: this is the
+        // one handler that may read through a view, and the opt-in is the
+        // call. See that function for why widening the shared resolver would
+        // have opted every other handler in too. `admits` is `Expr::True` for
+        // an ordinary table, so the composition below is unconditional.
+        let (table, admits) = self.authorized_read_source(&context, &wire.table, Action::Read)?;
         // Kept, not dropped. An ignored index hint used to be reported by
         // `Explain` alone, so a caller whose hint did nothing had to issue a
         // *different* request and trust the planner had decided the same way
         // on it. The first message of the stream is always sent and already
         // carries `served_by`, so there was a header to put this in all along.
-        let (query, warnings) = query_from_proto(&wire, table)?;
+        let (mut query, warnings) = query_from_proto(&wire, table)?;
+        // The view's rows AND the caller's, which is the composition
+        // `docs/views.md` settled on and the only one that cannot widen what a
+        // view admits: an `OR` would let a caller reach rows the view excludes
+        // by asking for them.
+        //
+        // Both sides carry the *base table's* ordinals — the caller's because
+        // `query_from_proto` resolved it against this same `TableDef`, the
+        // view's because a view may not narrow columns — so this is a plain
+        // conjunction and not a rewrite. That is the whole reason a projection
+        // is refused at load.
+        //
+        // Before `check_paged`, so a paged read through a view is checked
+        // against the query it will actually run.
+        query.filter = admits.and(query.filter);
         if wire.paged {
             crate::convert::check_paged(&query, table)?;
         }
@@ -2255,6 +2528,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
             return Ok(Response::new(replay(
                 rows,
                 stored,
+                wire.window.len(),
                 in_transaction(),
                 warnings,
                 batch_size,
@@ -2314,7 +2588,13 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.query else {
             return Err(Status::new(Code::InvalidArgument, "no query given"));
         };
-        let table = self.table(&wire.table)?;
+        // `Action::Explain` rather than `Read`, for the same reason the
+        // conversion below needs guarding at all: explaining is its own action
+        // (finding 3), and this must check what the kernel checks first or it
+        // refuses something the kernel would allow. A caller holding `Explain`
+        // and not `Read` still gets no further — the planner checks `Read`
+        // after — so this is a strict narrowing of who reaches the converter.
+        let table = self.authorized_table(&context, &wire.table, Action::Explain)?;
         let (query, warnings) = query_from_proto(&wire, table)?;
 
         if !request.transaction.is_empty() {
@@ -2371,6 +2651,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         // `served_by`. They used to be dropped here on the grounds that a
         // stream has no header; it has one, and it is the message that is
         // always sent even when the result is empty.
+        self.authorize_join_inputs(&context, &wire, Action::Read)?;
         let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
         let definitions = self.definitions(&tables)?;
         let stored: Vec<usize> = definitions
@@ -2462,6 +2743,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.aggregate else {
             return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
         };
+        self.authorize_aggregate_inputs(&context, &wire, Action::Read)?;
         // Carried on the first message, as on `Query` and `Join`.
         let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
         let batch_size = self.limits.rows_per_message.max(1);
@@ -2540,6 +2822,10 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.join else {
             return Err(Status::new(Code::InvalidArgument, "no join given"));
         };
+        // `Explain` rather than `Read`, for the reason the single-table
+        // `explain` gives: it is what the kernel checks first, so a caller
+        // holding neither is told the same thing either way round.
+        self.authorize_join_inputs(&context, &wire, Action::Explain)?;
         let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;
         let definitions = self.definitions(&tables)?;
 
@@ -2597,6 +2883,7 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         let Some(wire) = request.aggregate else {
             return Err(Status::new(Code::InvalidArgument, "no aggregate given"));
         };
+        self.authorize_aggregate_inputs(&context, &wire, Action::Explain)?;
         let (read, warnings) = aggregate_from_proto_query(&wire, self.pool.catalog())?;
         let grouping = read.grouping();
 
@@ -2659,8 +2946,27 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
     async fn leadership(
         &self,
-        _request: Request<pb::LeadershipRequest>,
+        request: Request<pb::LeadershipRequest>,
     ) -> Result<Response<pb::LeadershipStatus>, Status> {
+        // Authenticated, like the other eighteen. This one took `_request` and
+        // answered anybody who could reach the port — including under
+        // `mode = "deny-all"`, whose startup banner says the node
+        // "authenticates nobody and will refuse every request". That sentence
+        // was false, and it is the strongest statement the configuration can
+        // make.
+        //
+        // No grant is checked, because there is no table to check one against.
+        // The bar is who may talk to this server at all, which is what
+        // authentication decides. All three shipped clients already send their
+        // credentials on this call, so nothing that used it legitimately
+        // notices.
+        //
+        // What it gives up is the holder's identity — the proto calls it a way
+        // for "a client to find the node that will accept its writes", which
+        // is as useful to a scanner picking the write leader out of a set of
+        // identical endpoints — and the lease generation, which counts lease
+        // changes and so reports instability to anyone willing to poll.
+        let _ = self.context(&request)?;
         use pb::leadership_status::Standing as Wire;
         let status = match self.leadership.standing() {
             Standing::Follower { leader } => pb::LeadershipStatus {
@@ -2688,14 +2994,16 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
 
 /// Turn rows already in memory into the same stream shape a live query gives.
 ///
-/// `stored` is the table's declared width, so a computed value goes in
-/// `Row.computed` here exactly as it does on the streaming path. The two
-/// shapes have to be identical: a client cannot see which one it got, and the
-/// only thing worse than the arithmetic this removes would be it applying to
-/// one of the two.
+/// `stored` is the table's declared width and `windows` is how many the
+/// request asked for, so a computed value goes in `Row.computed` and a window
+/// value in `Row.windowed` here exactly as they do on the streaming path. The
+/// two shapes have to be identical: a client cannot see which one it got, and
+/// the only thing worse than the arithmetic this removes would be it applying
+/// to one of the two.
 fn replay(
     rows: Vec<Row>,
     stored: usize,
+    windows: usize,
     served_by: pb::ServedBy,
     warnings: Vec<String>,
     batch_size: usize,
@@ -2711,7 +3019,7 @@ fn replay(
         messages.push(Ok(pb::QueryResponse {
             rows: batch
                 .iter()
-                .map(|row| row_to_proto_split(row, stored))
+                .map(|row| row_to_proto_split_windowed(row, stored, windows))
                 .collect(),
             served_by: None,
             warnings: Vec::new(),
@@ -2810,6 +3118,11 @@ impl Scan {
         }
 
         let stored = definition.columns().len();
+        // Taken from the request rather than from the row, for the reason
+        // `stored` is: it is the length that is *known*, and a row that came
+        // back shorter than expected should lose values from the middle list
+        // rather than silently relabel a column as a window.
+        let windows = self.query.window.len();
         let mut batch = Vec::with_capacity(self.batch_size);
         // The last row and how many went out, for the cursor.
         //
@@ -2824,7 +3137,7 @@ impl Scan {
             match cursor.next().await {
                 Ok(Some(row)) => {
                     sent += 1;
-                    batch.push(row_to_proto_split(&row, stored));
+                    batch.push(row_to_proto_split_windowed(&row, stored, windows));
                     last = Some(row);
                 }
                 Ok(None) => break,

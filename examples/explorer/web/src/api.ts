@@ -129,6 +129,27 @@ export interface PredicateWrite {
   left: number;
 }
 
+/** What the restore handler reports, at three points rather than one.
+ *
+ *  Three because "it is live now" is also what a handler that quietly inserted
+ *  a fresh row at the same key would say. The columns carried through are what
+ *  separate a restore from a replacement, which is why they are in the answer
+ *  and on the screen.
+ */
+export interface Restore {
+  /** The row was retired before any of this — the premise, checked. */
+  retired_before: boolean;
+  /** Ids an *ordinary* read returned while it was retired: none. */
+  hidden_while_retired: number[];
+  /** Ids an ordinary read returns now. */
+  visible_after: number[];
+  /** Whether each of those still carries a stamp: no. */
+  retired_after: boolean[];
+  /** The columns the restore had to carry through, unchanged. */
+  status_after: string[];
+  book_id_after: number[];
+}
+
 /** One operation's outcome inside an independent batch. */
 export type BatchOne = { ok: number } | { kind: string; reason: string };
 
@@ -225,6 +246,13 @@ export const api = {
     spec: { kind: "delete" | "update"; returning: boolean },
   ) => call<PredicateWrite>(sdk, "/api/predicate-write", spec, persona),
 
+  // No arguments, and no separate endpoint for the mistake beside it. The
+  // panel shows the path that works; `/api/restore-unchanged` exists for the
+  // conformance runner, which compares refusals across the three SDKs and is
+  // the right place for one.
+  restore: (sdk: Sdk, persona: Persona) =>
+    call<Restore>(sdk, "/api/restore", {}, persona),
+
   batch: (sdk: Sdk, persona: Persona, atomicity: "independent" | "all-or-nothing") =>
     call<BatchOutcome>(sdk, "/api/batch", { atomicity }, persona),
 
@@ -266,9 +294,18 @@ export function kindOf(value: Tagged | undefined): string {
 
 /** The demo's tables, as the UI needs to label them.
  *
- * A copy of the schema, like every client holds. The server checks it on every
- * request and refuses a declaration that disagrees, so this cannot drift
- * silently — it drifts loudly, on the first query.
+ * A copy of the schema, like every client holds — and unlike theirs, **this
+ * one never reaches the server**. The adapters' declarations carry a
+ * fingerprint and are refused when they disagree with the catalog; these are
+ * column *headers*, they stay in the browser, and nothing hashes them. A
+ * stale entry here is a wrong label over a right value, which is the quietest
+ * kind of wrong there is.
+ *
+ * What catches that is `test/api.test.ts`, which parses `head.toml` and
+ * compares this table by table and in order, with `NOT_IN_THE_UI` naming the
+ * tables that are deliberately absent and why. The comment here used to
+ * credit the server's fingerprint check instead, which is true of every other
+ * copy of the schema in this repository and not of this one.
  */
 export const TABLES: Record<string, string[]> = {
   authors: ["id", "name", "country", "born"],
@@ -276,4 +313,21 @@ export const TABLES: Record<string, string[]> = {
   sales: ["id", "book_id", "units"],
   editions: ["id", "book_id", "format"],
   shipments: ["id", "book_id", "status", "deleted_at"],
+};
+
+/** The demo's views, as name -> the columns a read through one returns.
+ *
+ * Each maps to its **base table's** column list rather than to a list of its
+ * own, and that is the design rather than a shortcut: `docs/views.md` refuses a
+ * projection in a view, so a view's ordinals *are* its base table's. A view
+ * that could narrow columns would need a list here, and a second list is what
+ * drifts.
+ *
+ * Separate from `TABLES` because a view is not a table. `/api/meta` reports
+ * the two separately for the same reason, and only `/api/query` accepts a view
+ * — the plan panel asks for one anyway, deliberately, so the refusal is
+ * visible rather than described.
+ */
+export const VIEWS: Record<string, string[]> = {
+  classics: TABLES["books"]!,
 };

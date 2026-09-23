@@ -58,6 +58,16 @@ var Tables = slate.Schemas{
 		},
 		PrimaryKey: []string{"id"},
 	},
+	"posts": {
+		Name: "posts",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "title", Type: slate.TypeString},
+			{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString},
+			{Name: "sizes", Type: slate.TypeArray, Element: slate.TypeInt},
+		},
+		PrimaryKey: []string{"id"},
+	},
 	"shipments": {
 		Name: "shipments",
 		Columns: []slate.ColumnDef{
@@ -68,6 +78,29 @@ var Tables = slate.Schemas{
 		},
 		PrimaryKey: []string{"id"},
 	},
+}
+
+// named is a table's declaration under a different name, which is
+// exactly what a view's is: a view may not narrow columns, so its
+// ordinals are its base table's and only the name differs.
+//
+// It copies the struct and reassigns one field. The Columns slice is
+// shared with the table's declaration, which is correct — neither is
+// written after this file is loaded — and is why this is not a deep
+// copy.
+func named(name string, base slate.TableDef) slate.TableDef {
+	base.Name = name
+	return base
+}
+
+// Views is every view the catalog declares, ready for
+// `client.Declaring(schema.Views)` beside the tables.
+//
+// Separate from `Tables` because a view is not a table: only a plain
+// query reads through one, and every other request naming it is
+// refused.
+var Views = slate.Schemas{
+	"classics": named("classics", Tables["books"]),
 }
 
 // Authors is a row of `authors`, decoded.
@@ -125,6 +158,20 @@ func ScanAuthors(row []slate.Value) (Authors, error) {
 		return out, fmt.Errorf("authors.born is not nullable and came back null")
 	}
 	return out, nil
+}
+
+// Row encodes r in the column order of `authors`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Authors) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.String(r.Name))
+	out = append(out, slate.String(r.Country))
+	out = append(out, slate.Int(r.Born))
+	return out
 }
 
 // BooksChecks is every `CHECK` on `books`, by name.
@@ -234,6 +281,37 @@ func ScanBooks(row []slate.Value) (Books, error) {
 	return out, nil
 }
 
+// Row encodes r in the column order of `books`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Books) Row() []slate.Value {
+	out := make([]slate.Value, 0, 8)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.AuthorId))
+	out = append(out, slate.String(r.Title))
+	out = append(out, slate.Int(r.Year))
+	out = append(out, slate.Float(r.Rating))
+	out = append(out, slate.Int(r.Released))
+	out = append(out, slate.Vector(r.Embedding))
+	out = append(out, r.Price)
+	return out
+}
+
+// SalesForeignKeys is every foreign key on `sales`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var SalesForeignKeys = map[string]slate.ForeignKey{
+	"sale_book": {Name: "sale_book", Child: "sales", Parent: "books", OnDelete: "restrict"},
+}
+
 // Sales is a row of `sales`, decoded.
 type Sales struct {
 	Id     uint64
@@ -279,6 +357,32 @@ func ScanSales(row []slate.Value) (Sales, error) {
 		return out, fmt.Errorf("sales.units is not nullable and came back null")
 	}
 	return out, nil
+}
+
+// Row encodes r in the column order of `sales`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Sales) Row() []slate.Value {
+	out := make([]slate.Value, 0, 3)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.Int(r.Units))
+	return out
+}
+
+// EditionsForeignKeys is every foreign key on `editions`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var EditionsForeignKeys = map[string]slate.ForeignKey{
+	"edition_book": {Name: "edition_book", Child: "editions", Parent: "books", OnDelete: "restrict"},
 }
 
 // Editions is a row of `editions`, decoded.
@@ -328,6 +432,114 @@ func ScanEditions(row []slate.Value) (Editions, error) {
 	return out, nil
 }
 
+// Row encodes r in the column order of `editions`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Editions) Row() []slate.Value {
+	out := make([]slate.Value, 0, 3)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.String(r.Format))
+	return out
+}
+
+// Posts is a row of `posts`, decoded.
+type Posts struct {
+	Id    uint64
+	Title string
+	Tags  []string
+	Sizes []int64
+}
+
+// ScanPosts decodes one row of `posts`, by ordinal.
+//
+// Every column is type-asserted rather than cast. A declaration one
+// column out would otherwise read the neighbour and return it, which
+// compiles and is wrong; this returns an error naming the column.
+func ScanPosts(row []slate.Value) (Posts, error) {
+	var out Posts
+	if len(row) != 4 {
+		return out, fmt.Errorf("posts has 4 columns, got %d", len(row))
+	}
+	if _, null := row[0].(slate.Null); !null {
+		v, ok := row[0].(slate.Uint)
+		if !ok {
+			return out, fmt.Errorf("posts.id: expected slate.Uint, got %T", row[0])
+		}
+		out.Id = uint64(v)
+	} else {
+		return out, fmt.Errorf("posts.id is not nullable and came back null")
+	}
+	if _, null := row[1].(slate.Null); !null {
+		v, ok := row[1].(slate.String)
+		if !ok {
+			return out, fmt.Errorf("posts.title: expected slate.String, got %T", row[1])
+		}
+		out.Title = string(v)
+	} else {
+		return out, fmt.Errorf("posts.title is not nullable and came back null")
+	}
+	if _, null := row[2].(slate.Null); !null {
+		v, ok := row[2].(slate.Array)
+		if !ok {
+			return out, fmt.Errorf("posts.tags: expected slate.Array, got %T", row[2])
+		}
+		tagsElements := make([]string, len(v))
+		for i, e := range v {
+			ev, ok := e.(slate.String)
+			if !ok {
+				return out, fmt.Errorf("posts.tags[%d]: expected slate.String, got %T", i, e)
+			}
+			tagsElements[i] = string(ev)
+		}
+		out.Tags = tagsElements
+	} else {
+		return out, fmt.Errorf("posts.tags is not nullable and came back null")
+	}
+	if _, null := row[3].(slate.Null); !null {
+		v, ok := row[3].(slate.Array)
+		if !ok {
+			return out, fmt.Errorf("posts.sizes: expected slate.Array, got %T", row[3])
+		}
+		sizesElements := make([]int64, len(v))
+		for i, e := range v {
+			ev, ok := e.(slate.Int)
+			if !ok {
+				return out, fmt.Errorf("posts.sizes[%d]: expected slate.Int, got %T", i, e)
+			}
+			sizesElements[i] = int64(ev)
+		}
+		out.Sizes = sizesElements
+	} else {
+		return out, fmt.Errorf("posts.sizes is not nullable and came back null")
+	}
+	return out, nil
+}
+
+// Row encodes r in the column order of `posts`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Posts) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.String(r.Title))
+	tagsElements := make(slate.Array, 0, len(r.Tags))
+	for _, e := range r.Tags {
+		tagsElements = append(tagsElements, slate.String(e))
+	}
+	out = append(out, tagsElements)
+	sizesElements := make(slate.Array, 0, len(r.Sizes))
+	for _, e := range r.Sizes {
+		sizesElements = append(sizesElements, slate.Int(e))
+	}
+	out = append(out, sizesElements)
+	return out
+}
+
 // ShipmentsStatusValues is every value the `shipments`
 // check allows in `status`. The server enforces it; this is here so a
 // caller can offer the choices without asking, and is not a type because
@@ -342,6 +554,20 @@ var ShipmentsStatusValues = []string{"pending", "shipped", "delivered"}
 // the key here.
 var ShipmentsChecks = map[string]slate.CheckRule{
 	"status_known": {Column: "status", Message: "Status must be pending, shipped or delivered.", Predicate: "status in ('pending', 'shipped', 'delivered')"},
+	"id_is_seeded": {Column: "id", Message: "Shipment ids above 9000 are reserved for the demo's own handlers.", Predicate: "id < 9000"},
+}
+
+// ShipmentsForeignKeys is every foreign key on `shipments`, by name.
+//
+// The parent is the point. A `Relation` names a relationship by the
+// child table and the key, which is all the server needs — but
+// `Related` also wants the table its rows decode as, and for a
+// `Parents` read that is the parent, which no client can derive. It
+// was a string the caller typed; now it is generated. The wrong one
+// is refused by the schema check rather than mis-decoded, which was
+// measured and is why this is a convenience and not a bug fix.
+var ShipmentsForeignKeys = map[string]slate.ForeignKey{
+	"shipment_book": {Name: "shipment_book", Child: "shipments", Parent: "books", OnDelete: "restrict"},
 }
 
 // Shipments is a row of `shipments`, decoded.
@@ -400,4 +626,38 @@ func ScanShipments(row []slate.Value) (Shipments, error) {
 		out.DeletedAt = nil
 	}
 	return out, nil
+}
+
+// Row encodes r in the column order of `shipments`.
+//
+// The twin of the decoder above. A caller building this slice by hand
+// gets no help with the order, and a transposition the server happens
+// to accept is a row written wrong with nothing to say so.
+func (r Shipments) Row() []slate.Value {
+	out := make([]slate.Value, 0, 4)
+	out = append(out, slate.Uint(r.Id))
+	out = append(out, slate.Uint(r.BookId))
+	out = append(out, slate.String(r.Status))
+	if r.DeletedAt == nil {
+		out = append(out, slate.Null{})
+	} else {
+		out = append(out, slate.Int(*r.DeletedAt))
+	}
+	return out
+}
+
+// Retired reports whether this row of `shipments` has been
+// soft-deleted.
+func (r Shipments) Retired() bool {
+	return r.DeletedAt != nil
+}
+
+// Restored returns this row with its soft delete cleared, ready to
+// write back with Update or Upsert. There is no restore verb; this
+// only clears the column. It needs the `read_deleted` action, the
+// same grant include_deleted needs. Writing the row back unchanged
+// is refused naming the column.
+func (r Shipments) Restored() Shipments {
+	r.DeletedAt = nil
+	return r
 }

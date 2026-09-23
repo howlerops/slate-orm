@@ -6,6 +6,24 @@ does not survive in a diff.
 A commit that touches anything outside `ledger/` needs an entry. The
 `pre-commit` hook enforces it; see [Enforcement](#enforcement).
 
+## `mutations/`
+
+`scripts/mutate.py` writes one JSON file per run here, automatically. They are
+not entries and the pre-commit hook does not read them as entries — its pattern
+is `ledger/<date>-*.md`, anchored at this directory — but they are inside
+`ledger/`, so a commit carrying only records still counts as ledger-only.
+
+Each holds the command, the dialect, the commit, and every case's verdict with
+the tests that named it. **Runs that could not score are recorded too**, which
+is the point: #285 found that `cargo test -q` suppresses the lines the `rust`
+dialect matches, so every mutation scored as a survivor — and then could not
+answer which earlier runs that had ruined, because nothing kept them. The
+entry written at the time guessed, wrongly, and had to be corrected.
+
+One file per run rather than an appended log, for the same reason entries are
+one file each: several agents work here at once and a shared file conflicts on
+every commit.
+
 ## Why this exists
 
 A diff says what a line became. It does not say what the alternatives were,
@@ -91,34 +109,26 @@ first symptom is never "disk full" — it is a linker `Bus error`, an
 looks exactly like broken code.
 
 ```sh
-cd target/debug/deps && python3 -c "
-import os, re, collections
-pat = re.compile(r'^(.*)-[0-9a-f]{16}(\.[A-Za-z0-9.]+)?\$')
-g = collections.defaultdict(list)
-for n in os.listdir('.'):
-    m = pat.match(n)
-    if not m: continue
-    try: st = os.stat(n)
-    except OSError: continue
-    g[(m.group(1), m.group(2) or '')].append((st.st_mtime, st.st_size, n))
-freed = 0
-for f in g.values():
-    f.sort(reverse=True)
-    for _, size, n in f[1:]:
-        try: os.remove(n); freed += size
-        except OSError: pass
-print('freed %.2f GB' % (freed / 1024 ** 3))
-"
+python3 scripts/reclaim.py --dry-run   # what would go
+python3 scripts/reclaim.py             # go
 ```
 
-That keeps the newest build of each target and drops the superseded copies.
+It keeps the newest build of each target, drops the superseded copies, and
+removes `incremental/` and `examples/`. It reports both what it freed and what
+the filesystem now says is free, because those two differ when another build is
+writing — and the filesystem's number is the one that decides whether the next
+link succeeds.
 
-**It used to skip any filename with a dot in it**, which meant it dedupped the
-test binaries and left every `.rlib` and `.rmeta` behind — and those are most
-of what is on disk. On a tree that the old snippet had just "cleaned" down to
-0.1 GB of savings, grouping by name *and extension* freed **6.5 GB** more. If
-this is not freeing gigabytes on a full disk, check that you are running this
-version.
+This was a snippet to paste into `python3 -c` until #286. Two things it could
+not do. It `cd`s into `target/debug/deps` and reports `freed 0.00 GB` from
+wherever it lands, which is indistinguishable from an already-clean tree; that
+happened twice in one session. And nothing tested it — it keys on filename
+**and extension**, where an earlier version keyed on the stem and skipped any
+name with a dot in it, so it dedupped the test binaries and left every `.rlib`
+and `.rmeta`, which is most of what is on disk. On a tree that version had just
+"cleaned", regrouping freed **6.5 GB** more. That is a case in
+`scripts/test_reclaim.py` now rather than a warning paragraph here.
+
 **Do not delete `target/debug/build`** — it holds build-script outputs, and
 removing it produces hundreds of convincing, fictional compile errors in
 dependencies that were fine. If that has already happened,

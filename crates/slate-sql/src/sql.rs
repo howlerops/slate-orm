@@ -109,7 +109,7 @@
 
 use crate::{
     AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
-    QuerySpec, SortSpec,
+    QuerySpec, SortSpec, WindowSpec,
 };
 use slate_schema::TableDef;
 use slate_tuple::ValueType;
@@ -237,6 +237,54 @@ impl Input {
 const FOLLOWS_A_TABLE: &[&str] = &[
     "join", "inner", "on", "where", "group", "order", "limit", "offset", "having", "as",
 ];
+
+/// A stand-in ordinal for "the `i`th window", used while the query is still
+/// being parsed.
+///
+/// A window lands at `columns + compute.len() + i`, and `compute.len()` is not
+/// final until the whole statement is read: `ORDER BY hour(pickup_time)`
+/// registers a computed column *after* the select list has been walked, and
+/// every window ordinal handed out before that would be one too small. Rather
+/// than resolve the select list twice, a window reference is parked at
+/// `WINDOW_SLOT + i` and [`resolve_window_slots`] rewrites it once, at the end,
+/// when the count cannot change again.
+///
+/// Well past any real ordinal — a table with sixteen million columns is not a
+/// case this front end has — and never serialized: the rewrite runs before the
+/// spec leaves the parser, and a slot reaching `build` would name a column that
+/// is not there rather than reading the wrong one.
+const WINDOW_SLOT: u32 = 1 << 24;
+
+/// A parsed `OVER (…)`: the `PARTITION BY` columns, then the order keys as
+/// `(column, descending)`.
+///
+/// Both raw names, like every other select item, because the select list is
+/// read before `FROM` and there is nothing to resolve them against yet.
+type OverClause = (Vec<String>, Vec<(String, bool)>);
+
+/// Rewrite every parked window reference into the ordinal it actually lands on.
+///
+/// Both places one can appear: the projection, where `SELECT row_number() OVER
+/// (…)` put it, and a sort key, where `ORDER BY` did. A window's own
+/// `PARTITION BY` and `ORDER BY` never hold one — they name columns and
+/// computed values, resolved as they are read — so they are not walked here.
+fn resolve_window_slots(spec: &mut QuerySpec, table: &TableDef) {
+    if spec.window.is_empty() {
+        return;
+    }
+    let base = u32::try_from(table.columns().len() + spec.compute.len()).unwrap_or(u32::MAX);
+    let fix = |ordinal: &mut u32| {
+        if *ordinal >= WINDOW_SLOT {
+            *ordinal = base + (*ordinal - WINDOW_SLOT);
+        }
+    };
+    for ordinal in &mut spec.columns {
+        fix(ordinal);
+    }
+    for key in &mut spec.sort {
+        fix(&mut key.column);
+    }
+}
 
 #[derive(Debug)]
 pub struct Schema<'a>(pub &'a [TableDef]);
@@ -938,6 +986,50 @@ impl Parser<'_> {
             Some("insert") => self.insert(),
             Some("update") => self.update(),
             Some("delete") => self.delete(),
+            // `WITH` gets its own message, for the reason the set operators do
+            // one line below: "found `WITH`" is true and reads as a parser
+            // that has not heard of it, when the answer is that `WITH` covers
+            // three constructs with three different answers. Saying "CTEs are
+            // not supported" would be wrong about one of the three, and the
+            // one it would be wrong about is the one somebody could build.
+            //
+            // Worked through in `docs/ctes.md`; the split is summarised here
+            // because an error message a reader has to leave to understand is
+            // most of the way back to "unexpected `WITH`".
+            // `CREATE` for the same reason as `WITH`, and with the same
+            // shape of answer: the interesting part is not that it is
+            // unsupported but *what a view would have to be here*. A caller
+            // reaching for one is usually reaching for a privilege boundary,
+            // and it cannot be one — there is no owner for a view to run as,
+            // so a caller needs the grant on the base table either way.
+            // Saying that at the moment they ask is the whole point; saying
+            // it after they have built a permission model on the opposite
+            // assumption is the failure mode `docs/views.md` is about.
+            Some("create") => Err(SqlError {
+                message: "CREATE is not supported: this front end queries a catalog \
+                     rather than defining one — tables are declared in the daemon's \
+                     configuration, not by a statement. A view in particular could not \
+                     be a privilege boundary here the way it is in Postgres: grants key \
+                     on a table id and nothing owns a view, so a caller would still need \
+                     the grant on the base table, and having it could read the columns \
+                     the view leaves out. See docs/views.md"
+                    .to_owned(),
+                at: self.at(),
+            }),
+            Some("with") => Err(SqlError {
+                message: "WITH is not supported, and the three things it means have \
+                     different reasons. A recursive CTE is a fixpoint loop and a \
+                     statement compiles to one plan with nothing to iterate. A CTE \
+                     referenced more than once has to be computed once and read twice, \
+                     which is a second plan in the same statement — the same reason \
+                     UNION is refused. A non-recursive CTE referenced *once* is neither: \
+                     it inlines into the outer query, and that inlining is the same \
+                     mechanism a view needs, so it is a gap rather than a refusal. See \
+                     docs/ctes.md. Meanwhile an uncorrelated subquery works in \
+                     `IN (SELECT …)`"
+                    .to_owned(),
+                at: self.at(),
+            }),
             _ => Err(SqlError {
                 message: format!(
                     "expected SELECT, INSERT, UPDATE or DELETE, found {}",
@@ -1121,6 +1213,26 @@ impl Parser<'_> {
                         spec.columns.push(ordinal);
                     }
                 }
+                SelectItem::Window { at, .. } => {
+                    let at = *at;
+                    if grouping {
+                        // Not "add it to GROUP BY": a window cannot be a group
+                        // key, because it is computed over the rows a grouping
+                        // has already folded away. The two are alternatives
+                        // rather than a missing clause apart, so the message
+                        // says so rather than suggesting a fix that does not
+                        // work.
+                        return Err(SqlError {
+                            message: "a window and a GROUP BY answer different questions: a \
+                                      grouping returns one row per group and a window returns \
+                                      one value per input row. Keep one"
+                                .to_owned(),
+                            at,
+                        });
+                    }
+                    let ordinal = self.value_ordinal(item, &mut spec, &table, at, "SELECT")?;
+                    spec.columns.push(ordinal);
+                }
                 SelectItem::Call { at, .. } => {
                     let at = *at;
                     let ordinal = self.value_ordinal(item, &mut spec, &table, at, "SELECT")?;
@@ -1250,7 +1362,102 @@ impl Parser<'_> {
         if self.eat("offset") {
             spec.offset = self.count("OFFSET")?;
         }
+        // Last, because `compute` cannot grow any more: ORDER BY above is the
+        // final clause that can register a computed column, and a window's
+        // ordinal is counted past all of them.
+        resolve_window_slots(&mut spec, &table);
         Ok(Statement::Select(spec))
+    }
+
+    /// The parked ordinal a window denotes, registering it if it is new.
+    ///
+    /// Find-or-add on the whole specification, exactly as a computed column is,
+    /// so `SELECT row_number() OVER (ORDER BY id) ... ORDER BY row_number()
+    /// OVER (ORDER BY id)` computes one window and sorts by it rather than
+    /// computing two identical ones. Returns a [`WINDOW_SLOT`] reference, not a
+    /// real ordinal — see that constant for why the real one is not known yet.
+    fn window_ordinal(
+        &self,
+        item: &SelectItem,
+        spec: &mut QuerySpec,
+        table: &TableDef,
+    ) -> Result<u32, SqlError> {
+        let SelectItem::Window {
+            function,
+            argument,
+            offset,
+            partition,
+            order,
+            at,
+        } = item
+        else {
+            unreachable!("window_ordinal is only called on a window item")
+        };
+        let at = *at;
+        let column = match argument {
+            Some(raw) => self.resolve(raw, table, at)?,
+            None => 0,
+        };
+        // The spec mirrors the wire, which keeps the aggregate in a field of
+        // its own rather than folding six aggregate names into the function
+        // name. `lag` and the ranking functions carry no aggregate at all.
+        let (function, aggregate) = match function.as_str() {
+            "row_number" | "rank" | "dense_rank" | "lag" | "lead" => (function.clone(), None),
+            "count" if argument.is_none() => (
+                "aggregate".to_owned(),
+                Some(AggregateSpec {
+                    kind: "count".to_owned(),
+                    input: 0,
+                    column: 0,
+                }),
+            ),
+            // `count(x)` skips nulls and `count(*)` does not, which is why the
+            // kernel has both and why the name changes here.
+            "count" => (
+                "aggregate".to_owned(),
+                Some(AggregateSpec {
+                    kind: "count_column".to_owned(),
+                    input: 0,
+                    column,
+                }),
+            ),
+            kind => (
+                "aggregate".to_owned(),
+                Some(AggregateSpec {
+                    kind: kind.to_owned(),
+                    input: 0,
+                    column,
+                }),
+            ),
+        };
+        let mut partition_by = Vec::with_capacity(partition.len());
+        for raw in partition {
+            partition_by.push(self.resolve(raw, table, at)?);
+        }
+        let mut keys = Vec::with_capacity(order.len());
+        for (raw, descending) in order {
+            keys.push(SortSpec {
+                column: self.resolve(raw, table, at)?,
+                descending: *descending,
+            });
+        }
+        let wanted = WindowSpec {
+            function,
+            aggregate,
+            column,
+            offset: *offset,
+            partition_by,
+            order: keys,
+        };
+        let position = spec
+            .window
+            .iter()
+            .position(|w| *w == wanted)
+            .unwrap_or_else(|| {
+                spec.window.push(wanted);
+                spec.window.len() - 1
+            });
+        Ok(WINDOW_SLOT + u32::try_from(position).unwrap_or(0))
     }
 
     /// The ordinal a column or a computed call denotes, registering the
@@ -1271,6 +1478,7 @@ impl Parser<'_> {
     ) -> Result<u32, SqlError> {
         match item {
             SelectItem::Column { raw, at } => self.resolve(raw, table, *at),
+            SelectItem::Window { .. } => self.window_ordinal(item, spec, table),
             SelectItem::Aggregate { kind, .. } => Err(SqlError {
                 // An unknown name parses as an aggregate, because that is what
                 // anything `word(...)` that is not a time function is. Saying
@@ -1348,6 +1556,14 @@ impl Parser<'_> {
         at: usize,
     ) -> Result<u32, SqlError> {
         match item {
+            SelectItem::Window { at, .. } => Err(SqlError {
+                message: "a window over a join is not supported here. The kernel refuses one \
+                          on a join input for its own reason — a join has no order, so which \
+                          rows a window saw would be whichever ones the chosen algorithm \
+                          happened to yield — and this front end has no shape for it either"
+                    .to_owned(),
+                at: *at,
+            }),
             SelectItem::Column { raw, at } => {
                 let (input, column) = self.resolve_side(raw, inputs, *at)?;
                 joined_at(inputs, input, column, *at)
@@ -1552,6 +1768,14 @@ impl Parser<'_> {
         clause: &str,
     ) -> Result<u32, SqlError> {
         match item {
+            SelectItem::Window { at, .. } => Err(SqlError {
+                message: format!(
+                    "{clause} names a window, and this query groups. A window is computed \
+                     over the rows a grouping folds away, so there is nothing for it to \
+                     name here"
+                ),
+                at: *at,
+            }),
             SelectItem::Column { raw, at } => {
                 let ordinal = self.resolve(raw, table, *at)?;
                 spec.group_by
@@ -1697,48 +1921,160 @@ impl Parser<'_> {
         })
     }
 
+    /// The three functions that take no argument and mean nothing without a
+    /// window.
+    const RANKING: [&'static str; 3] = ["row_number", "rank", "dense_rank"];
+
+    /// `OVER (PARTITION BY a, b ORDER BY c DESC)`, if one follows.
+    ///
+    /// Returns `None` when the next token is not `OVER`, so every caller can
+    /// ask unconditionally: `count(*)` and `count(*) OVER (…)` differ only in
+    /// what comes after the closing paren, and deciding earlier would mean
+    /// looking ahead past a variable-length argument list.
+    fn over_clause(&mut self) -> Result<Option<OverClause>, SqlError> {
+        if self.peek_word().as_deref() != Some("over") {
+            return Ok(None);
+        }
+        self.i += 1;
+        self.expect_symbol("(")?;
+        let mut partition = Vec::new();
+        if self.eat("partition") {
+            self.expect("by")?;
+            loop {
+                partition.push(self.window_name("PARTITION BY")?);
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
+        }
+        let mut order = Vec::new();
+        if self.eat("order") {
+            self.expect("by")?;
+            loop {
+                let name = self.window_name("a window's ORDER BY")?;
+                let descending = if self.eat("desc") {
+                    true
+                } else {
+                    self.eat("asc");
+                    false
+                };
+                order.push((name, descending));
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
+        }
+        self.expect_symbol(")")?;
+        Ok(Some((partition, order)))
+    }
+
+    /// A column name inside an `OVER (…)`, refusing a call by name.
+    ///
+    /// `PARTITION BY hour(pickup_time)` would otherwise fail at the `(` with
+    /// "expected `)`", which is true and points at the wrong thing. The
+    /// kernel's window takes ordinals and a computed column has one, so this
+    /// is a limit of the parser and not of what is underneath — and saying
+    /// which is the difference between a reader rewriting their query and a
+    /// reader concluding the database cannot do it.
+    fn window_name(&mut self, clause: &str) -> Result<String, SqlError> {
+        let at = self.at();
+        let name = self.name()?;
+        if matches!(self.toks.get(self.i), Some(Spanned { tok: Tok::Symbol(s), .. }) if s == "(") {
+            return Err(SqlError {
+                message: format!(
+                    "{clause} takes a column here, and `{name}(` opens a call. The spec \
+                     underneath can partition on a computed value — this parser cannot \
+                     write one inside `OVER`"
+                ),
+                at,
+            });
+        }
+        Ok(name)
+    }
+
+    /// One item of a select list: a column, a call, an aggregate, or any of
+    /// those under an `OVER (…)`.
+    ///
+    /// The window check is last rather than first because the three forms are
+    /// told apart by what follows the closing paren: `count(*)`,
+    /// `count(*) OVER ()` and `hour(t)` all start `word(`. Branching earlier
+    /// would mean scanning ahead over an argument list to find out which
+    /// grammar to use.
     fn select_item(&mut self) -> Result<SelectItem, SqlError> {
         let at = self.at();
         let name = self.name()?;
         if self.eat_symbol("(") {
-            // `count(*)`, `max(year)`, `count(distinct pickup_zone)`.
+            // `count(*)`, `max(year)`, `count(distinct pickup_zone)`,
+            // `row_number()`.
             let distinct = self.eat("distinct");
+            let mut empty = false;
             let argument = if !distinct && self.eat_symbol("*") {
+                None
+            } else if !distinct
+                && matches!(self.toks.get(self.i), Some(Spanned { tok: Tok::Symbol(s), .. }) if s == ")")
+            {
+                // `row_number()`. Recorded rather than treated as `(*)`,
+                // because `count()` is not `count(*)` in any dialect and
+                // conflating them here would invent a spelling.
+                empty = true;
                 None
             } else {
                 Some(self.name()?)
             };
+            // An optional second argument: a timezone for a time function,
+            // `lag`/`lead`'s offset for a window. Read as raw text and
+            // interpreted below, once the `OVER` has said which grammar this
+            // item is in — `lag(size, 2)` and `hour(t, '-05:00')` are the same
+            // shape and different arguments.
+            let name_lower = name.to_ascii_lowercase();
+            let mut second: Option<(String, usize)> = None;
+            if self.eat_symbol(",") {
+                let second_at = self.at();
+                second = Some((self.literal()?, second_at));
+            }
+            self.expect_symbol(")")?;
+            let name = name_lower;
+
+            if let Some((partition, order)) = self.over_clause()? {
+                return self.window_item(
+                    &name, argument, distinct, empty, second, partition, order, at,
+                );
+            }
+            if empty {
+                return Err(SqlError {
+                    message: format!(
+                        "`{name}()` has no argument. {}",
+                        if Self::RANKING.contains(&name.as_str()) {
+                            "It is a window function and needs an `OVER (…)`: \
+                             `row_number() OVER (ORDER BY id)`"
+                        } else {
+                            "`count(*)` counts rows; every other function takes a column"
+                        }
+                    ),
+                    at,
+                });
+            }
             if distinct {
-                self.expect_symbol(")")?;
                 return Ok(SelectItem::Aggregate {
                     kind: "count_distinct".to_owned(),
                     argument,
                     at,
                 });
             }
-            // An optional second argument, only ever a timezone:
-            // `hour(pickup_time, '-05:00')`. Read before the `)` and refused
-            // for a name that is not a time function, so `max(a, b)` says the
-            // aggregate takes one column rather than complaining about a zone.
-            let name_lower = name.to_ascii_lowercase();
             let mut offset = 0;
             let mut zone = String::new();
-            if self.eat_symbol(",") {
-                let zone_at = self.at();
-                let text = self.literal()?;
-                if !TIME_FUNCTIONS.contains(&name_lower.as_str()) {
+            if let Some((text, second_at)) = second {
+                if !TIME_FUNCTIONS.contains(&name.as_str()) {
                     return Err(SqlError {
-                        message: format!("{name_lower}() takes one column"),
-                        at: zone_at,
+                        message: format!("{name}() takes one column"),
+                        at: second_at,
                     });
                 }
                 (offset, zone) = parse_zone(&text).map_err(|message| SqlError {
                     message,
-                    at: zone_at,
+                    at: second_at,
                 })?;
             }
-            self.expect_symbol(")")?;
-            let name = name_lower;
             // Told apart by name, because they are told apart by nothing else:
             // both are `word(column)`. The alternative — deciding later, from
             // whether the name resolves as an aggregate — would put the
@@ -1765,6 +2101,94 @@ impl Parser<'_> {
             });
         }
         Ok(SelectItem::Column { raw: name, at })
+    }
+
+    /// One `f(…) OVER (…)`, checked against what each function takes.
+    ///
+    /// The combinations with no meaning — an unordered `RANK`, a running
+    /// `COUNT(DISTINCT)`, an offset of zero — are *not* checked here. The
+    /// kernel refuses them in `Window::new` and this lowering runs through
+    /// that, so there is one statement of each rule rather than two that
+    /// drift. What is checked here is the grammar: which functions take a
+    /// column, which take none, and which take a second argument at all.
+    #[allow(clippy::too_many_arguments)]
+    fn window_item(
+        &mut self,
+        name: &str,
+        argument: Option<String>,
+        distinct: bool,
+        empty: bool,
+        second: Option<(String, usize)>,
+        partition: Vec<String>,
+        order: Vec<(String, bool)>,
+        at: usize,
+    ) -> Result<SelectItem, SqlError> {
+        let ranking = Self::RANKING.contains(&name);
+        let stepping = name == "lag" || name == "lead";
+        if !ranking && !stepping && !AGGREGATES.contains(&name) {
+            return Err(SqlError {
+                message: format!(
+                    "no such window function: `{name}` — this has {}, lag, lead, and any \
+                     of the aggregates {} over a partition",
+                    Self::RANKING.join(", "),
+                    AGGREGATES.join(", ")
+                ),
+                at,
+            });
+        }
+        if ranking && !empty {
+            return Err(SqlError {
+                message: format!(
+                    "{name}() takes no argument: it numbers rows, it does not read one"
+                ),
+                at,
+            });
+        }
+        if !ranking && empty {
+            return Err(SqlError {
+                message: format!("{name}() needs a column"),
+                at,
+            });
+        }
+        if let Some((_, second_at)) = &second
+            && !stepping
+        {
+            return Err(SqlError {
+                message: format!("{name}() over a partition takes one column"),
+                at: *second_at,
+            });
+        }
+        let offset = match &second {
+            None => 1,
+            Some((text, second_at)) => text.parse::<u64>().map_err(|_| SqlError {
+                message: format!("{name}() steps a whole number of rows, and `{text}` is not one"),
+                at: *second_at,
+            })?,
+        };
+        if stepping && argument.is_none() {
+            return Err(SqlError {
+                message: format!("{name}() needs a column to read"),
+                at,
+            });
+        }
+        // `count(distinct x) OVER (…)` is the one aggregate whose spelling
+        // carries into the window, so it keeps its own name; the kernel
+        // refuses it with an ORDER BY and allows it over a whole partition.
+        let function = if ranking || stepping {
+            name.to_owned()
+        } else if distinct {
+            "count_distinct".to_owned()
+        } else {
+            name.to_owned()
+        };
+        Ok(SelectItem::Window {
+            function,
+            argument,
+            offset,
+            partition,
+            order,
+            at,
+        })
     }
 
     fn count(&mut self, what: &str) -> Result<u64, SqlError> {
@@ -2062,6 +2486,22 @@ impl Parser<'_> {
             "like"
         } else if self.eat("ilike") {
             "ilike"
+        } else if self.eat("contains") {
+            // Infix — `title CONTAINS 'earthsea'` — where SQL Server spells it
+            // `CONTAINS(title, 'earthsea')` and Postgres
+            // `to_tsvector(title) @@ to_tsquery('earthsea')`. Neither is
+            // standard, so there is no spelling to be faithful to, and infix
+            // is the one this parser already has a place for: it is a column,
+            // an operator and a literal, exactly like `LIKE`. A function call
+            // would need its own parse path and would put the column inside
+            // an argument list, where nothing else in this grammar puts one.
+            //
+            // It is *not* `LIKE` with different punctuation. `LIKE '%game%'`
+            // finds `Games`; this does not, because a term is a whole word.
+            // That is the difference worth having a keyword for, and it is
+            // why this is here even though the planner takes a table scan for
+            // it at the fixture's size.
+            "contains"
         } else {
             return Err(SqlError {
                 message: format!("expected a comparison, found {}", self.describe(self.i)),
@@ -2282,6 +2722,17 @@ impl Parser<'_> {
 
         for item in list {
             match item {
+                SelectItem::Window { at, .. } => {
+                    return Err(SqlError {
+                        message: "a window over a join is not supported. The kernel refuses \
+                                  one on a join input — a join has no order, so which rows \
+                                  the window saw would be whichever ones the chosen \
+                                  algorithm yielded — and a single-table query is where \
+                                  `OVER` works here"
+                            .to_owned(),
+                        at: *at,
+                    });
+                }
                 SelectItem::Aggregate { kind, argument, at } => {
                     aggregates.push(self.join_aggregate(
                         kind,
@@ -2913,6 +3364,26 @@ enum SelectItem {
         zone: String,
         at: usize,
     },
+    /// `row_number() OVER (PARTITION BY site ORDER BY id)`: a value computed
+    /// over a partition, one per input row.
+    ///
+    /// The names in `partition` and `order` are raw, like every other item
+    /// here, because the select list is parsed before `FROM` is read and there
+    /// is nothing to resolve them against yet.
+    Window {
+        /// `row_number`, `rank`, `dense_rank`, `lag`, `lead`, or an aggregate
+        /// name — which becomes `aggregate` in the spec, with the aggregate
+        /// itself beside it.
+        function: String,
+        /// The column, for `lag`, `lead` and every aggregate but `count(*)`.
+        argument: Option<String>,
+        /// `lag`/`lead`'s second argument, defaulting to 1 as SQL's does.
+        offset: u64,
+        partition: Vec<String>,
+        /// `(column, descending)`, in the order written.
+        order: Vec<(String, bool)>,
+        at: usize,
+    },
 }
 
 impl SelectItem {
@@ -2922,7 +3393,10 @@ impl SelectItem {
     /// list of items does not have to match three ways to report against one.
     fn at(&self) -> usize {
         match self {
-            Self::Column { at, .. } | Self::Aggregate { at, .. } | Self::Call { at, .. } => *at,
+            Self::Column { at, .. }
+            | Self::Aggregate { at, .. }
+            | Self::Call { at, .. }
+            | Self::Window { at, .. } => *at,
         }
     }
 }

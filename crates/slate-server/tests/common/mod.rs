@@ -26,7 +26,7 @@ use slate_server::leadership::Leadership;
 use slate_server::lease::{Clock, Lease, LeaseError, ObjectStoreLease, Term};
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
-use slate_server::{Head, HeadConfig, MetadataIdentity};
+use slate_server::{DenyEveryone, Head, HeadConfig, MetadataIdentity};
 use slate_tuple::{Direction, Value, ValueType};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ pub const BOOKS: TableId = TableId(4);
 pub const SALES: TableId = TableId(5);
 pub const PRICES: TableId = TableId(6);
 pub const RETIRE: TableId = TableId(7);
+pub const MENTIONS: TableId = TableId(8);
 
 /// A plain table: no tenant, two indexes, one nullable column.
 pub fn docs() -> TableDef {
@@ -175,6 +176,29 @@ pub fn retire() -> TableDef {
         .expect("valid schema")
 }
 
+/// A child of `docs`, referencing it `ON DELETE RESTRICT`.
+///
+/// It exists so a *plain* delete can fail. Every other way to make
+/// `RecordTransaction::delete` return an error needs something this harness
+/// has no setup for: an absent key answers `Ok(false)` by design, and an
+/// unauthorized delete is refused before the session task is dispatched to, so
+/// the error branch of the delete loop in `session.rs` was unreachable from any
+/// test in this crate. `transaction_counts.rs` says what that cost.
+///
+/// The reference is declared here rather than on `docs` on purpose: adding a
+/// constraint *to* `docs` would change what every test in the crate may write,
+/// where a new child changes nothing until a row exists in it — and only one
+/// test puts one there.
+pub fn mentions() -> TableDef {
+    TableDef::builder("mentions", MENTIONS)
+        .column("id", ValueType::U64)
+        .column("doc_id", ValueType::U64)
+        .primary_key(["id"])
+        .foreign_key(slate_schema::ForeignKeyDef::builder("mentions_doc", DOCS).column("doc_id"))
+        .build()
+        .expect("valid schema")
+}
+
 pub fn catalog() -> Catalog {
     Catalog::from_tables([
         docs(),
@@ -184,6 +208,7 @@ pub fn catalog() -> Catalog {
         sales(),
         prices(),
         retire(),
+        mentions(),
     ])
     .expect("catalog")
 }
@@ -200,6 +225,7 @@ pub fn at(table: &TableDef, column: &str) -> slate_schema::Ordinal {
 pub fn security() -> SecurityCatalog {
     SecurityCatalog::new()
         .grant(Grant::new("app", DOCS, Action::EVERYTHING))
+        .grant(Grant::new("app", MENTIONS, Action::EVERYTHING))
         .grant(Grant::new("app", USERS, Action::EVERYTHING))
         // Four single-action roles on `users`, so a handler that authorises
         // the *wrong* action is caught. With only an `EVERYTHING` role to test
@@ -209,6 +235,14 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("inserter_only", USERS, [Action::Insert]))
         .grant(Grant::new("updater_only", USERS, [Action::Update]))
         .grant(Grant::new("deleter_only", USERS, [Action::Delete]))
+        // Read on the first two tables of a three-input chain and not the
+        // third, which is the only shape that can tell "every input is
+        // authorised" from "the first two are". A role holding none of them is
+        // refused at input 0 and never reaches the question; `reader_only`
+        // holding just `users` is refused at input 1. Both pass for an
+        // authorisation loop that stops early, which a mutation demonstrated.
+        .grant(Grant::new("two_table_reader", USERS, [Action::Read]))
+        .grant(Grant::new("two_table_reader", DOCS, [Action::Read]))
         .policy(Policy::new(
             "own_rows",
             USERS,
@@ -521,6 +555,25 @@ pub fn head_with(
     )
 }
 
+/// A head node that authenticates nobody, serving on a loopback port.
+///
+/// `DenyEveryone` is what `slate-serverd`'s `mode = "deny-all"` installs, and
+/// the banner it prints says "this node authenticates nobody and will refuse
+/// every request". A probe that reaches it is reaching past the strongest
+/// statement the configuration can make.
+pub async fn serving_denied(writer: Arc<MemoryStore>) -> Serving {
+    let leadership = Leadership::new(Arc::new(AlwaysLeader::default()));
+    assert!(leadership.campaign().await, "the fake lease always grants");
+    serve(Head::new(
+        config(),
+        writer,
+        Vec::new(),
+        leadership,
+        Arc::new(DenyEveryone),
+    ))
+    .await
+}
+
 /// Serve a head node on a loopback port the operating system chooses.
 pub async fn serve<S: KvStore + KvReadStore>(head: Head<S>) -> Serving {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -646,6 +699,7 @@ pub fn doc_ids(rows: &[pb::Row]) -> Vec<u64> {
 /// about the check itself sets `schema` to something else.
 pub fn plain_query(table: &str) -> pb::Query {
     pb::Query {
+        window: Vec::new(),
         table: table.to_owned(),
         filter: None,
         order: pb::ScanOrder::Ascending as i32,
@@ -683,6 +737,7 @@ pub fn wire_row(values: Vec<pb::Value>) -> pb::Row {
     pb::Row {
         values,
         computed: Vec::new(),
+        windowed: Vec::new(),
     }
 }
 

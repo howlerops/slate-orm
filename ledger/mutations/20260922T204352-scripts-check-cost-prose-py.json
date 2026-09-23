@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-22T20:43:52+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "11ff82f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the README globs are never read",
+      "old": "    if readmes is not None:",
+      "new": "    if readmes is False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a current claim in the root README is read",
+        "a stale one there is reported",
+        "and a client README is read too, not just the root",
+        "a stale README fails a real run, through main"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

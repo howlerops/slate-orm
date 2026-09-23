@@ -79,6 +79,59 @@ impl Catalog {
             }
         }
         self.tables.push(table);
+
+        // The cross-tenant edge below is refused here as well as in
+        // `validate_foreign_keys`, because `insert` is public and that one is
+        // opt-in. Its doc comment said "call it yourself after building a
+        // catalog with `Catalog::insert`" — and a caller who did not got a
+        // catalog carrying the exact schema finding 1 of the security review
+        // refuses, with the cross-tenant cascade fully live. Demonstrated:
+        // `a_catalog_assembled_by_insert_is_refused_in_either_order` destroyed
+        // another tenant's row before this call existed.
+        //
+        // Only *this* check moves here, and only over edges whose parent is
+        // already present. The rest of `validate_foreign_keys` cannot run
+        // incrementally — a child may be inserted before its parent, and
+        // erroring on the unresolved parent would make a forward reference
+        // impossible, which is the reason that function is separate at all.
+        // This check survives the restriction because the unsafe shape needs
+        // *both* endpoints to be visible, so whichever of the two goes in
+        // second catches it, in either order.
+        if let Err(refusal) = self.refuse_cross_tenant_edges() {
+            // Popped rather than left in place: a rejected insert must not
+            // mutate the catalog, or a caller that handles the error goes on
+            // using a catalog holding the table it was just told was refused.
+            self.tables.pop();
+            return Err(refusal);
+        }
+        Ok(())
+    }
+
+    /// Refuse a referential action from a shared parent to a tenant-scoped
+    /// child, over every edge whose parent is already in the catalog.
+    ///
+    /// The reasoning for the refusal itself is on the copy in
+    /// [`Catalog::validate_foreign_keys`], which is the one a reader looking
+    /// for "why is my schema rejected" will find.
+    fn refuse_cross_tenant_edges(&self) -> Result<()> {
+        for table in &self.tables {
+            for key in table.foreign_keys() {
+                // A parent that is not here yet is a forward reference, not a
+                // violation. `validate_foreign_keys` is what refuses one that
+                // never arrives.
+                let Some(parent) = self.table(key.parent()) else {
+                    continue;
+                };
+                if table.tenant_column().is_some() && parent.tenant_column().is_none() {
+                    return Err(SchemaError::CrossTenantForeignKey {
+                        table: table.name().to_owned(),
+                        parent: parent.name().to_owned(),
+                        foreign_key: key.name().to_owned(),
+                        action: key.on_delete(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -125,6 +178,12 @@ impl Catalog {
     /// insisting it did would mean no table could reference itself or take part
     /// in a cycle. [`Catalog::from_tables`] runs this once every table is in;
     /// call it yourself after building a catalog with [`Catalog::insert`].
+    ///
+    /// One of its checks does *not* wait for this call: a referential action
+    /// from a shared parent to a tenant-scoped child is refused by `insert`
+    /// too. That one is a security refusal rather than a consistency one, and
+    /// leaving it to a call the caller may simply not make left the hole it
+    /// was written to close reachable. See `insert`.
     pub fn validate_foreign_keys(&self) -> Result<()> {
         for table in &self.tables {
             for key in table.foreign_keys() {

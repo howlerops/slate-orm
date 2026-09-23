@@ -45,7 +45,7 @@ use crate::query::Query;
 use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::scalar::Scalar;
-use crate::security::{Action, SecurityCatalog, SecurityContext};
+use crate::security::{Action, Deleted, SecurityCatalog, SecurityContext};
 use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
@@ -1142,8 +1142,19 @@ impl<'a> RecordTransaction<'a> {
         row.validate(table)?;
 
         let primary_key = row.primary_key_values(table);
+        // An update names one key and means the row at it, so a caller holding
+        // `read_deleted` reaches a retired one and restores it by sending null
+        // in the soft-delete column; `check_row` refuses any other value. See
+        // `retired_rows_reachable` for why the grant, and for what a caller
+        // without it sees instead.
         let existing = self
-            .visible_row(context, table, Action::Update, &primary_key)
+            .visible_row_with(
+                context,
+                table,
+                Action::Update,
+                &primary_key,
+                self.retired_rows_reachable(context, table),
+            )
             .await?;
         let Some(existing) = existing else {
             return Err(KernelError::RowNotFound {
@@ -1243,6 +1254,21 @@ impl<'a> RecordTransaction<'a> {
         self.security.authorize(context, table, Action::Insert)?;
         self.security.authorize(context, table, Action::Update)?;
         row.validate(table)?;
+        // The row policy before the read, which is what `write_many` was fixed
+        // to do and this path was not. It reads the key first, so the read
+        // happened for a tenant the caller could not name — and the two
+        // outcomes left by different doors: a key taken in another tenant came
+        // back `RowNotFound` from the visibility check below, a free one came
+        // back `RowCheckFailed` from `check_row` further down. That difference
+        // is security finding 2 on a path the finding did not name, free and
+        // repeatable because neither answer writes anything.
+        //
+        // `Action::Insert` regardless of which branch this turns out to be,
+        // for the reason `write_many` gives: the tenant restriction is the
+        // same expression either way, so a row outside the caller's tenant is
+        // refused before anything is read, and a row inside it that turns out
+        // to exist still takes the full `Action::Update` check below.
+        self.check_row(context, table, Action::Insert, row)?;
 
         let primary_key = row.primary_key_values(table);
         // Read without the policy: a hidden row still occupies the key, so
@@ -1254,10 +1280,16 @@ impl<'a> RecordTransaction<'a> {
         } else {
             Action::Insert
         };
+        // An upsert names the key too, so it reaches a retired row on the same
+        // grant an update does. See `retired_rows_reachable`.
         if let Some(current) = &existing
-            && !self
-                .security
-                .permits_row(context, table, Action::Update, current)?
+            && !self.security.permits_row_with(
+                context,
+                table,
+                Action::Update,
+                current,
+                self.retired_rows_reachable(context, table),
+            )?
         {
             return Err(KernelError::RowNotFound {
                 table: table.name().to_owned(),
@@ -1433,6 +1465,39 @@ impl<'a> RecordTransaction<'a> {
             parents.extend(primary_keys.iter().map(|key| keys::row_key(table, key)));
         }
 
+        // Asked once. It depends on the caller and the table and on nothing
+        // that varies per row, so computing it inside the loop below is work
+        // that cannot change an answer — and a thousand-row upsert would ask
+        // it a thousand times.
+        let retired = self.retired_rows_reachable(context, table);
+
+        // And the filters themselves, for the same reason and with a
+        // measurement behind it rather than an argument. `permits_row_with`
+        // and `check_row` each *build* an `Expr` — the tenant restriction
+        // conjoined with the OR of every applicable policy — and the loop
+        // below called them twice per row.
+        // `ledger/2026-09-20-the-number-that-was-not-there.md` measured this
+        // path, found the grant scan invisible, and named this allocation as
+        // the cost that was left. It is ~7% of a 5,000-row `update_many`.
+        //
+        // **Safe only because a batch is one statement.** A policy is a
+        // function of the context and may read a clock — demonstrated by
+        // `an_undo_window_can_be_a_policy_rather_than_a_role` — so a filter
+        // held across two statements could apply yesterday's window to today's
+        // write. Held across the rows of a single `write_many` it cannot:
+        // every row belongs to one statement the caller submitted at one
+        // instant, and evaluating them against one another's clocks would be
+        // the anomaly rather than the fix.
+        let existing_filter =
+            self.security
+                .row_filter_with(context, table, Action::Update, retired)?;
+        let insert_check =
+            self.security
+                .row_filter_with(context, table, Action::Insert, Deleted::Visible)?;
+        let update_check =
+            self.security
+                .row_filter_with(context, table, Action::Update, Deleted::Visible)?;
+
         // Everything about every row is decided before any of it is written.
         // A check that failed halfway would leave a prefix of the batch
         // buffered, and a caller that committed anyway — having seen the error
@@ -1455,10 +1520,23 @@ impl<'a> RecordTransaction<'a> {
                     });
                 }
                 (Some(current), BulkMode::Upsert | BulkMode::Update) => {
-                    if !self
-                        .security
-                        .permits_row(context, table, Action::Update, current)?
-                    {
+                    // The bulk twin of the single-row `update` and `upsert`:
+                    // these rows were named by primary key, so a caller holding
+                    // `read_deleted` reaches a retired one. See
+                    // `retired_rows_reachable`.
+                    //
+                    // Whichever it is, it drops the soft-delete conjunct only.
+                    // The tenant restriction and the row policy still decide, so
+                    // a row another tenant's policy hides is still `RowNotFound`
+                    // and still indistinguishable from a missing one.
+                    //
+                    // Deliberately not extended to `delete`, `delete_where` or
+                    // `update_where`. A delete of a retired row is already a
+                    // no-op rather than a contradiction, and a predicate did
+                    // not name the row — the line is that naming a primary key
+                    // means meaning *that* row, and matching a predicate means
+                    // meaning the live ones.
+                    if !existing_filter.admits(current) {
                         return Err(KernelError::RowNotFound {
                             table: table.name().to_owned(),
                         });
@@ -1466,12 +1544,32 @@ impl<'a> RecordTransaction<'a> {
                 }
                 (None, BulkMode::Insert | BulkMode::Upsert) => {}
             }
-            let action = if previous.is_some() {
-                Action::Update
-            } else {
-                Action::Insert
-            };
-            self.check_row(context, table, action, row)?;
+            // **The `insert_check` arm here is redundant, and is kept
+            // deliberately.** Every row that reaches it has no `previous`,
+            // which only happens under `Insert` or `Upsert` — and both of
+            // those satisfy `may_insert()`, so the pre-check above has already
+            // run the identical filter over every row in the batch. Swapping
+            // the two arms therefore breaks no test, and that is a fact about
+            // the code rather than a missing case: the `purge_deleted`
+            // predicate in this file carries the same note for the same reason.
+            //
+            // It stays because the redundancy is one edit away from not being
+            // one. A future mode that writes new rows without `may_insert()`,
+            // or a pre-check narrowed to the rows it can cheaply judge, would
+            // make this the only `WITH CHECK` a fresh row ever gets — and the
+            // failure would be a policy silently not applied, which is the
+            // worst kind. `an_upsert_must_satisfy_the_insert_policy_even_for_a
+            // _row_that_exists` pins the pre-check that makes it redundant, so
+            // removing *that* is what fails loudly.
+            self.check_row_against(
+                table,
+                row,
+                if previous.is_some() {
+                    &update_check
+                } else {
+                    &insert_check
+                },
+            )?;
             self.check_foreign_keys(context, table, row, previous.as_ref(), &parents)
                 .await?;
             previous_rows.push(previous);
@@ -1588,6 +1686,15 @@ impl<'a> RecordTransaction<'a> {
     /// child, and skipping it would either leave a dangling reference or make
     /// `RESTRICT` pass while the thing it guards is true. Integrity is not
     /// relative to who is asking.
+    ///
+    /// A child hidden by a *soft delete* is likewise still a child, so
+    /// `RESTRICT` blocks on a retired row. `CASCADE` does not reach one, which
+    /// is the opposite answer from the same question and is explained at the
+    /// two call sites. The consequence worth stating: on a schema that
+    /// soft-deletes its children, a parent stays undeletable until those
+    /// children are *purged*, not merely retired. That is stricter than it was
+    /// and is the point — the alternative leaves a retired row referencing a
+    /// parent that no longer exists, which a restore would then revive.
     ///
     /// What that discloses, stated plainly rather than waved away: a caller who
     /// may delete a parent can learn from a `RESTRICT` refusal that *something*
@@ -2046,8 +2153,13 @@ impl<'a> RecordTransaction<'a> {
                 if foreign_key.on_delete() != ReferentialAction::Cascade {
                     continue;
                 }
+                // Retired children are deliberately *not* cascaded into. The
+                // cascade already ran when they were retired — `remove_row`
+                // walks the graph on the way down — so reaching them again
+                // would re-stamp `deleted_at` and push their purge deadline
+                // out, erasing the retention clock the first delete started.
                 for found in self
-                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key, Deleted::Hidden)
                     .await?
                 {
                     let key = keys::row_key(child, &found.primary_key_values(child));
@@ -2075,21 +2187,62 @@ impl<'a> RecordTransaction<'a> {
                 if foreign_key.on_delete() != ReferentialAction::Restrict {
                     continue;
                 }
+                // Retired children *do* block, which is the opposite of the
+                // cascade arm above and for the same reason the search ignores
+                // row-level security: "a child hidden from the deleter is still
+                // a child". A soft delete hides the row; it does not remove it.
+                // The row is still in storage, still holds the parent's key,
+                // and is still readable with `include_deleted` — so letting the
+                // parent go leaves a reference to nothing, and a restore (which
+                // the retention window exists to allow) would revive a row that
+                // violates a constraint the schema declares.
+                //
+                // Both arms read through one function because they differ in
+                // exactly this and nothing else. Sharing `Deleted::Hidden`
+                // between them is what made `RESTRICT` pass while the thing it
+                // guards was true; the control for it is
+                // `a_restrict_edge_blocks_on_a_retired_child`, which passes a
+                // live child through the same delete and sees it refused.
+                // Gathered rather than refused on the first one, so the error
+                // can say whether *every* blocker is retired. It cannot be
+                // decided per row: a mixture has to report as the ordinary
+                // case, because the live children are what the caller should
+                // deal with first and are the only ones they can see.
+                //
+                // The cost is bounded by the same read either way — the rows
+                // were already collected by `referencing_rows` — so this walks
+                // a vector rather than issuing anything extra.
+                let mut blockers = Vec::new();
                 for found in self
-                    .referencing_rows(&unpoliced, child, foreign_key, &parent_key)
+                    .referencing_rows(
+                        &unpoliced,
+                        child,
+                        foreign_key,
+                        &parent_key,
+                        Deleted::Visible,
+                    )
                     .await?
                 {
                     // A referencing row that is itself being deleted does not
                     // block: the reference goes away with it.
                     let key = keys::row_key(child, &found.primary_key_values(child));
                     if !scheduled.contains(&key) {
-                        return Err(SchemaError::ForeignKeyRestricted {
-                            table: parent.name().to_owned(),
-                            child: child.name().to_owned(),
-                            foreign_key: foreign_key.name().to_owned(),
-                        }
-                        .into());
+                        blockers.push(found);
                     }
+                }
+                if !blockers.is_empty() {
+                    let retired = child.soft_delete().is_some_and(|column| {
+                        blockers
+                            .iter()
+                            .all(|row| !matches!(row.get(column), None | Some(Value::Null)))
+                    });
+                    return Err(SchemaError::ForeignKeyRestricted {
+                        table: parent.name().to_owned(),
+                        child: child.name().to_owned(),
+                        foreign_key: foreign_key.name().to_owned(),
+                        retired,
+                    }
+                    .into());
                 }
             }
         }
@@ -2125,12 +2278,16 @@ impl<'a> RecordTransaction<'a> {
     /// An ordinary planned read, so an index on the referencing columns makes
     /// this a range rather than a scan — which is the difference between a
     /// cascade costing one scan per parent row and costing rather less.
+    ///
+    /// `retired` is the one thing the two callers disagree about, so it is a
+    /// parameter rather than a constant. See each call site.
     async fn referencing_rows<'t>(
         &'t self,
         context: &SecurityContext,
         child: &'t TableDef,
         foreign_key: &ForeignKeyDef,
         parent_key: &[Value],
+        retired: Deleted,
     ) -> Result<Vec<Row>> {
         let filter = Expr::all(
             foreign_key
@@ -2139,8 +2296,10 @@ impl<'a> RecordTransaction<'a> {
                 .zip(parent_key)
                 .map(|(ordinal, value)| Expr::eq(*ordinal, value.clone())),
         );
+        let mut query = Query::all().filter(filter);
+        query.include_deleted = matches!(retired, Deleted::Visible);
         self.reads()
-            .execute(context, child, &Query::all().filter(filter))
+            .execute(context, child, &query)
             .await?
             .collect()
             .await
@@ -2201,8 +2360,9 @@ impl<'a> RecordTransaction<'a> {
     /// for this is almost certainly reaching for `remove_row`.
     fn erase_row(&self, table: &TableDef, row: &Row) -> Result<()> {
         for index in table.indexes().iter().filter(|index| index.admits(row)) {
-            let entry = self.entry_for(table, index, row);
-            self.poison_on_err(self.txn.delete(entry.key))?;
+            for entry in self.entries_for(table, index, row) {
+                self.poison_on_err(self.txn.delete(entry.key))?;
+            }
         }
         self.poison_on_err(
             self.txn
@@ -2346,17 +2506,89 @@ impl<'a> RecordTransaction<'a> {
         action: Action,
         primary_key: &[Value],
     ) -> Result<Option<Row>> {
+        self.visible_row_with(context, table, action, primary_key, Deleted::Hidden)
+            .await
+    }
+
+    /// [`visible_row`](Self::visible_row), saying whether a retired row counts.
+    ///
+    /// `Deleted::Visible` belongs only to a write that *names* this key and
+    /// means the row at it — `update` and `upsert`, which is how a retired row
+    /// is restored. `delete` keeps the default, because a second delete of a
+    /// retired row is a no-op rather than a contradiction.
+    async fn visible_row_with(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+        primary_key: &[Value],
+        deleted: Deleted,
+    ) -> Result<Option<Row>> {
         let Some(row) = self.read_row_unchecked(table, primary_key).await? else {
             return Ok(None);
         };
-        if self.security.permits_row(context, table, action, &row)? {
+        if self
+            .security
+            .permits_row_with(context, table, action, &row, deleted)?
+        {
             Ok(Some(row))
         } else {
             Ok(None)
         }
     }
 
+    /// Whether a write that *names a primary key* may reach a row a soft delete
+    /// retired.
+    ///
+    /// [`Action::ReadDeleted`], the same grant `include_deleted` and
+    /// `purge_deleted` need, and for the reason `purge_deleted` gives about
+    /// itself: acting on a retired row means knowing it is there.
+    ///
+    /// Without the grant the row behaves exactly as a row a *policy* hides
+    /// already does on these paths, which this file settled long before soft
+    /// delete existed: an insert sees the key taken, because "a hidden row
+    /// still occupies the key, so treating it as absent would turn an upsert
+    /// into a silent overwrite of a row the caller may not touch", and an
+    /// update reports it missing. That pair looks like a contradiction and is
+    /// the deliberate answer to a harder question — the alternative hands a
+    /// caller the power to overwrite a row they cannot read.
+    ///
+    /// What *was* a defect, and what this closes, is that a retired row had no
+    /// such caller: the answer was "missing" at every privilege including
+    /// `everything`, so nothing could restore one. Restoring is now an ordinary
+    /// update or upsert made by someone holding `read_deleted`, with null in
+    /// the soft-delete column — which is the sentence the documentation used to
+    /// claim and could not back.
+    fn retired_rows_reachable(&self, context: &SecurityContext, table: &TableDef) -> Deleted {
+        // A table with no soft delete has nothing to reveal, so both answers
+        // build the same filter and the grant cannot matter. Answering without
+        // asking is not only cheaper — on a table nobody retires rows in, a
+        // caller lacking `read_deleted` would otherwise have the grant list
+        // scanned on every named-key write for a decision with one possible
+        // outcome. It also keeps the rule this file states elsewhere: demanding
+        // a grant for a no-op teaches callers to ask for privileges they do not
+        // need, and that rule reads oddly if the code asks anyway.
+        if table.soft_delete().is_none() {
+            return Deleted::Visible;
+        }
+        if self.security.grants(context, table, Action::ReadDeleted) {
+            Deleted::Visible
+        } else {
+            Deleted::Hidden
+        }
+    }
+
     /// Postgres's `WITH CHECK`: refuse to store a row the policy would hide.
+    ///
+    /// The soft-delete column is checked separately and first. Both questions
+    /// used to be answered by one filter, so supplying a retirement timestamp
+    /// came back as a row-level-security refusal on tables that have no
+    /// policies — the wrong place to send anyone, and the first thing a caller
+    /// attempting a restore runs into. Splitting them also means the policy
+    /// check below evaluates with `Deleted::Visible`: by that line the only
+    /// value the column can hold is null, so the conjunct has nothing left to
+    /// decide and leaving it in would only make the two checks able to
+    /// disagree.
     fn check_row(
         &self,
         context: &SecurityContext,
@@ -2364,7 +2596,30 @@ impl<'a> RecordTransaction<'a> {
         action: Action,
         row: &Row,
     ) -> Result<()> {
-        if self.security.permits_row(context, table, action, row)? {
+        let filter = self
+            .security
+            .row_filter_with(context, table, action, Deleted::Visible)?;
+        self.check_row_against(table, row, &filter)
+    }
+
+    /// [`check_row`](Self::check_row) against a filter already built.
+    ///
+    /// The bulk path builds one filter per action for the whole batch; see
+    /// `write_many`. One body rather than two so the rule cannot drift, which
+    /// matters here because the soft-delete guard below is easy to forget in a
+    /// second copy and its absence would be a silently accepted stamp.
+    fn check_row_against(&self, table: &TableDef, row: &Row, filter: &Expr) -> Result<()> {
+        if let Some(column) = table.soft_delete()
+            && !matches!(row.get(column), None | Some(Value::Null))
+        {
+            return Err(KernelError::SoftDeleteColumnSupplied {
+                table: table.name().to_owned(),
+                column: table
+                    .column(column)
+                    .map_or_else(|| column.0.to_string(), |c| c.name().to_owned()),
+            });
+        }
+        if filter.admits(row) {
             Ok(())
         } else {
             Err(KernelError::RowCheckFailed {
@@ -2453,32 +2708,43 @@ impl<'a> RecordTransaction<'a> {
             // leaves an entry pointing at a row the index is not supposed to
             // hold, which reading the index returns and every other access path
             // does not.
-            let new_entry = index.admits(row).then(|| self.entry_for(table, index, row));
-            let old_entry = previous
+            let new_entries = if index.admits(row) {
+                self.entries_for(table, index, row)
+            } else {
+                Vec::new()
+            };
+            let old_entries = previous
                 .as_ref()
                 .filter(|old| index.admits(old))
-                .map(|old| self.entry_for(table, index, old));
+                .map_or_else(Vec::new, |old| self.entries_for(table, index, old));
 
             // An index entry only needs touching when the row's indexed values
             // changed. Rewriting an unchanged key would add a spurious
             // write-write conflict against concurrent writers of other rows
             // that happen to share the slot.
-            if let (Some(old), Some(new)) = (old_entry.as_ref(), new_entry.as_ref())
-                && old.key == new.key
-            {
-                continue;
-            }
+            //
+            // Set membership rather than "the key" now that an index can hold
+            // several: editing one word of a paragraph rewrites two of its
+            // hundred entries, and rewriting the other ninety-eight would make
+            // every writer of a long text conflict with every other. The lists
+            // are short and already sorted — `key_sets` sorts its terms and
+            // an ordinary index has one entry — so a linear scan beats a set.
+            let unchanged = |entry: &IndexEntry, against: &[IndexEntry]| {
+                against.iter().any(|other| other.key == entry.key)
+            };
 
-            if verify_unique
-                && let Some(new) = new_entry.as_ref()
-                && new.enforces_uniqueness
-            {
-                self.check_unique(table, index, new, &primary_key).await?;
+            for old in &old_entries {
+                if !unchanged(old, &new_entries) {
+                    self.poison_on_err(self.txn.delete(old.key.clone()))?;
+                }
             }
-            if let Some(old) = old_entry {
-                self.poison_on_err(self.txn.delete(old.key))?;
-            }
-            if let Some(new) = new_entry {
+            for new in new_entries {
+                if unchanged(&new, &old_entries) {
+                    continue;
+                }
+                if verify_unique && new.enforces_uniqueness {
+                    self.check_unique(table, index, &new, &primary_key).await?;
+                }
                 self.poison_on_err(self.txn.put(new.key, new.value))?;
             }
         }
@@ -2517,13 +2783,20 @@ impl<'a> RecordTransaction<'a> {
         Ok(())
     }
 
-    fn entry_for(&self, table: &TableDef, index: &IndexDef, row: &Row) -> IndexEntry {
-        keys::index_entry(
-            table,
-            index,
-            &index.key_values(row),
-            &row.primary_key_values(table),
-        )
+    /// Every entry `index` holds for `row`.
+    ///
+    /// One, for every index that keys on columns or an expression. **Many**,
+    /// for a full-text index: one per term, which is the cardinality this
+    /// whole layer assumed away until it did not. `IndexDef::key_sets` is the
+    /// one place that difference is decided, so nothing here has to know which
+    /// kind of index it is holding.
+    fn entries_for(&self, table: &TableDef, index: &IndexDef, row: &Row) -> Vec<IndexEntry> {
+        let primary_key = row.primary_key_values(table);
+        index
+            .key_sets(row)
+            .iter()
+            .map(|values| keys::index_entry(table, index, values, &primary_key))
+            .collect()
     }
 
     /// Commit every buffered write atomically.

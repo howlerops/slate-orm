@@ -9,10 +9,15 @@
 //! `cost_calibration` measured two constants against a real S3 server at
 //! **200,000 rows** and nothing above it has been measured:
 //!
-//! - `SCAN_ROW_COST = 0.000125`, which is the claim that a scan returns about
+//! - `SCAN_ROW_COST`, which is the claim that a scan returns about
 //!   **8,000 rows per object-store request**;
-//! - `POINT_READ_COST = 3.0`, which is the claim that a point read costs about
-//!   **three requests**.
+//! - `POINT_READ_COST`, which is the claim that a point read costs about
+//!   **one request**.
+//!
+//! Their values are not restated here. This doc said ~~`POINT_READ_COST = 3.0`~~
+//! for nine tasks after #269 measured 1.0, because a literal copy of a
+//! constant has nothing holding it to the constant. The English figures above
+//! are derived, so `check_cost_prose.py` can and does check them.
 //!
 //! Both are averages over a corpus, not constants of nature, and both could
 //! move with scale for reasons that have nothing to do with the model being
@@ -36,6 +41,29 @@
 //! pseudo-random keys across the whole keyspace and the requests are divided by
 //! the batch.
 //!
+//! **A scan costs what the reads before it left behind.** The headline finding
+//! of this file is not a constant but a variable nothing models. The same full
+//! scan of the same 200,000 rows costs:
+//!
+//! | the store has already | GETs | rows/GET |
+//! | --- | ---: | ---: |
+//! | read nothing at all | 53 | 3,774 |
+//! | served 200 random point reads | 205, 207, 207 | 976 |
+//! | served `analyze` and 400 of them | 371 | 539 |
+//!
+//! Three consecutive scans give the middle row, so this is not "the first one
+//! paid and the rest are free" — a *partially* populated block cache
+//! fragments a scan into many small ranged reads instead of a few large ones,
+//! and more of it fragments it further. `SCAN_ROW_COST` says 8,000 rows per
+//! request, which is none of these; it is what a scan costs when the cache
+//! already holds the whole table, which is the state `cost_calibration`
+//! measures in and says so.
+//!
+//! This is also why that file and this one appeared to disagree by 8× about
+//! the same scan on a byte-identical fixture. They do not: one scans a store
+//! that has done nothing and the other one that has just done 200 point
+//! reads, and both numbers are right.
+//!
 //! The S3 server is `s3s` in this process over a loopback socket, the same
 //! fixture `cost_calibration` and `scan_tuning` use. The absolute wall times
 //! are not AWS's and no claim is made that they are; what transfers is request
@@ -53,6 +81,7 @@
 #[path = "../tests/common/s3server.rs"]
 mod s3server;
 
+use slate_kernel::stats::{POINT_READ_COST, SCAN_ROW_COST};
 use slate_kernel::{
     AccessHint, Action, CmpOp, Expr, Grant, Query, RecordStore, SecurityCatalog, SecurityContext,
     Statistics,
@@ -148,6 +177,7 @@ struct Point {
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     let server = s3server::LocalS3::start("slate-orm").await;
     let counters = server.counters();
     let sizes = scales();
@@ -157,10 +187,29 @@ async fn main() {
     println!("S3 server: `s3s` in this process, over a loopback socket.");
     println!("Scales: {sizes:?}");
     println!();
-    println!("The two calibrated constants, restated so the table below can be read");
-    println!("against them:");
-    println!("  SCAN_ROW_COST  = 0.000125  →  a scan returns ~8,000 rows per request");
-    println!("  POINT_READ_COST = 3.0      →  a point read costs ~3 requests");
+    // Printed from the constants, not restated beside them. They were
+    // restated, and one went stale: this line carried the old point-read
+    // figure for as long as nobody ran the benchmark, which is every run
+    // between #269 re-measuring it and #278 noticing. A benchmark whose
+    // header misreports the model it is measuring against is worse than one
+    // that prints nothing.
+    println!("The two calibrated constants, read from `slate_kernel::stats` so the");
+    println!("table below can be read against them:");
+    println!(
+        "  {:<16}= {:<10} →  a scan returns ~{:.0} rows per request",
+        "SCAN_ROW_COST",
+        SCAN_ROW_COST,
+        1.0 / SCAN_ROW_COST
+    );
+    // Width-padded rather than spaced by hand: the hand-written padding was
+    // measured against the old literals and left two characters out of line
+    // the moment the values became interpolated. A column that drifts when
+    // the value changes is the same defect as a header that says 3.0 when
+    // the constant says 1.0, one order of magnitude smaller.
+    println!(
+        "  {:<16}= {:<10} →  a point read costs {POINT_READ_COST} request(s)",
+        "POINT_READ_COST", POINT_READ_COST
+    );
     println!();
 
     let mut points: Vec<Point> = Vec::new();
@@ -210,8 +259,48 @@ async fn main() {
             continue;
         }
 
+        // A scan on a *pristine* store, before anything else touches it.
+        //
+        // This file measures a full scan at ~205 requests where
+        // `cost_calibration --cold` measures ~28 on a byte-identical fixture,
+        // and repeating the scan does not make it cheaper, so it is not a
+        // cache. The one difference left is that the scan there runs on a
+        // store that has done nothing, and here on one that has just done 200
+        // random point reads. This is that difference, measured.
+        {
+            let pristine = SlateStore::open_s3(path.clone(), server.config())
+                .await
+                .expect("reopen");
+            let catalog = Catalog::from_tables([events()]).expect("catalog");
+            let security = SecurityCatalog::new().grant(Grant::new("r", EVENTS, Action::ALL));
+            let store = RecordStore::new(pristine, catalog, security);
+            let root = SecurityContext::superuser();
+            counters.reset();
+            let counted = {
+                let txn = store.begin().await.unwrap();
+                txn.execute(&root, &events(), &Query::all())
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .len()
+            };
+            assert_eq!(counted as u64, rows);
+            println!(
+                "scan on a pristine store: {} GETs, {:.0} rows/GET",
+                counters.gets(),
+                rows as f64 / counters.gets().max(1) as f64
+            );
+            // Closed, not merely dropped. Two writers on one path fence each
+            // other, and leaving this one holding the lease made every later
+            // measurement fail with `WriterFenced` — which is the storage
+            // layer being right and this file being careless.
+            store.backend().close().await.unwrap();
+        }
+
         // --- reopen, so the data is in object storage and not a memtable ---
-        let backend = SlateStore::open_s3(path, server.config())
+        let backend = SlateStore::open_s3(path.clone(), server.config())
             .await
             .expect("reopen");
         let catalog = Catalog::from_tables([events()]).expect("catalog");
@@ -249,24 +338,45 @@ async fn main() {
             counters.gets()
         );
 
-        counters.reset();
-        let started = Instant::now();
-        let scanned = {
-            let txn = store.begin().await.unwrap();
-            txn.execute(&root, &events(), &Query::all())
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap()
-                .len()
-        };
-        let cold_scan_gets = counters.gets();
-        let cold_scan_seconds = started.elapsed().as_secs_f64();
+        // Three scans back to back, all reported.
+        //
+        // This file measured a *warm* scan costing more than a cold one, which
+        // no cache can do, so the first thing to establish was whether the
+        // count is even stable. It is — 205, 207, 207 — and repeating the scan
+        // does not make it cheaper, which rules out "the first one paid for
+        // the cache". Read with the pristine scan above, the three numbers say
+        // what the variable is: **how scattered the reads before this one
+        // were.** 53 on a store that has read nothing, ~206 after 200 random
+        // point reads, ~370 after `analyze` and 400 of them. A partially
+        // populated block cache fragments a scan'''s reads; it does not serve
+        // them.
+        let mut repeats = Vec::new();
+        let mut scanned = 0usize;
+        let mut cold_scan_seconds = 0.0;
+        for attempt in 0..3 {
+            counters.reset();
+            let started = Instant::now();
+            scanned = {
+                let txn = store.begin().await.unwrap();
+                txn.execute(&root, &events(), &Query::all())
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .len()
+            };
+            if attempt == 0 {
+                cold_scan_seconds = started.elapsed().as_secs_f64();
+            }
+            repeats.push(counters.gets());
+        }
+        let cold_scan_gets = repeats[0];
+        println!("full scan, three times:  {repeats:?} GETs");
         assert_eq!(scanned as u64, rows, "the scan must return every row");
         let cold_scan_rows_per_get = rows as f64 / cold_scan_gets.max(1) as f64;
         println!(
-            "cold full scan:    {rows} rows, {cold_scan_gets} GETs, \
+            "scan after probes: {rows} rows, {cold_scan_gets} GETs, \
              {cold_scan_rows_per_get:.0} rows/GET, {cold_scan_seconds:.2}s"
         );
 
@@ -325,7 +435,7 @@ async fn main() {
         assert_eq!(warm_scanned as u64, rows);
         let warm_scan_rows_per_get = rows as f64 / warm_scan_gets.max(1) as f64;
         println!(
-            "warm full scan:    {rows} rows, {warm_scan_gets} GETs, \
+            "scan after analyze:{rows} rows, {warm_scan_gets} GETs, \
              {warm_scan_rows_per_get:.0} rows/GET, {warm_scan_seconds:.2}s, \
              model predicted {scan_predicted:.1}"
         );
@@ -519,9 +629,13 @@ async fn main() {
             point.analyze_seconds,
         );
     }
+    // Derived, for the reason the header above is derived: this line said
+    // "3 requests per read" from #269 until #278, in the summary a reader of
+    // the run actually reads.
     println!(
-        "\nSCAN_ROW_COST says 8,000 rows per request; POINT_READ_COST says 3 requests\n\
-         per read. Both were measured at 200,000 rows, warm."
+        "\nSCAN_ROW_COST says {:.0} rows per request; POINT_READ_COST says \
+         {POINT_READ_COST} request(s)\nper read. Both were measured at 200,000 rows, warm.",
+        1.0 / SCAN_ROW_COST
     );
 
     println!(

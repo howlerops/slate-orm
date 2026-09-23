@@ -1,0 +1,437 @@
+{
+  "note": "Measurement tables that predate the build stamp (#280, 2026-09-22). The runs behind them are gone and a build line cannot be reconstructed. Entries leave this list when a table is re-measured and stamped; nothing should be added to it. See scripts/check_table_provenance.py.",
+  "frozen": [
+    {
+      "file": "README.md",
+      "line_when_frozen": 371,
+      "header": "| | rows read | wall | plan |",
+      "digest": "ed597dc4a7f0c765"
+    },
+    {
+      "file": "README.md",
+      "line_when_frozen": 219,
+      "header": "| keys | before | after | model says | measured per unit cost |",
+      "digest": "f6e72ae21d67ffd8"
+    },
+    {
+      "file": "docs/clickbench.md",
+      "line_when_frozen": 324,
+      "header": "| per call | |",
+      "digest": "53f4d6163bf8706b"
+    },
+    {
+      "file": "docs/clickbench.md",
+      "line_when_frozen": 101,
+      "header": "| Q | wall | scanned | answer |",
+      "digest": "69e08f91abfb1b2f"
+    },
+    {
+      "file": "docs/clickbench.md",
+      "line_when_frozen": 382,
+      "header": "| | Q1 | 43 queries |",
+      "digest": "80028aaa9c905668"
+    },
+    {
+      "file": "docs/clickbench.md",
+      "line_when_frozen": 352,
+      "header": "| | Q1 | 43 queries |",
+      "digest": "b158848a94cdc57a"
+    },
+    {
+      "file": "docs/correctness.md",
+      "line_when_frozen": 873,
+      "header": "| predicate | rows | estimate before | after |",
+      "digest": "03a75d5bbf7990ff"
+    },
+    {
+      "file": "docs/correctness.md",
+      "line_when_frozen": 699,
+      "header": "| | predicted | actual GETs |",
+      "digest": "2c767933f34c549c"
+    },
+    {
+      "file": "docs/correctness.md",
+      "line_when_frozen": 618,
+      "header": "| correlation | predicate | estimate | actual | error | plan penalty |",
+      "digest": "a7f2436aecde27df"
+    },
+    {
+      "file": "docs/full-text.md",
+      "line_when_frozen": 167,
+      "header": "| rows | scan cost | index cost (hinted) | chosen |",
+      "digest": "bd482448dc14eac8"
+    },
+    {
+      "file": "docs/full-text.md",
+      "line_when_frozen": 179,
+      "header": "| rows | distinct values | chosen |",
+      "digest": "ebfe3dfb333de121"
+    },
+    {
+      "file": "docs/paging-a-join.md",
+      "line_when_frozen": 63,
+      "header": "| side window | nested loop | hash, build left | hash, build right |",
+      "digest": "ee82637049b37dad"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 980,
+      "header": "| | per row | total |",
+      "digest": "00ccf298a0bb26e2"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 263,
+      "header": "| | wall | model said |",
+      "digest": "0271a020af6ad946"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 119,
+      "header": "| operation | time |",
+      "digest": "02faa159bbb7b663"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 550,
+      "header": "| join | rows out | point reads | scanned | wall | plan |",
+      "digest": "0422c21a2433d3ea"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 315,
+      "header": "| keys | before | after | model | measured per unit cost |",
+      "digest": "08215c5bc36a668e"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 537,
+      "header": "| query | rows | point reads | wall | plan |",
+      "digest": "0d3984c1e1e6c082"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1276,
+      "header": "| clients | get ops/s | get p50 | get p99 | get cpu/op | stream ops/s | stream p50 | stream p99 | stream cpu/op |",
+      "digest": "145c2beec39de7b4"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 564,
+      "header": "| operation | before | now |",
+      "digest": "15ac5e08f01f8809"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 782,
+      "header": "| | SlateDB arm | `MemoryStore` arm |",
+      "digest": "15b590c0c2cdf5b4"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1024,
+      "header": "| client | one row at a time | in one batch | ratio |",
+      "digest": "17ab65353b482904"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 353,
+      "header": "| | before | after |",
+      "digest": "1884d7dd21e7e660"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 106,
+      "header": "| query | rows | point reads | scans | wall | plan chosen |",
+      "digest": "19cca4a02cd38543"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 202,
+      "header": "| | before | after |",
+      "digest": "1a83a8163774672e"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1212,
+      "header": "| term | tolerates a renewal stall of | worst-case write outage after a crash |",
+      "digest": "25421a3888ed85dc"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1449,
+      "header": "| open transactions | ops/s | p50 | p90 | p99 |",
+      "digest": "3154a59fe4f1e342"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 996,
+      "header": "| | per row |",
+      "digest": "37fa79d58eabf128"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 339,
+      "header": "| | wall | model said |",
+      "digest": "3baf5a832135f197"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 765,
+      "header": "| operation | over gRPC | in process | difference |",
+      "digest": "412f78e6b0d8b621"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1959,
+      "header": "| phase | arm | cold GETs | GETs/op, warm | wall clock |",
+      "digest": "45bddd33c10b7887"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1638,
+      "header": "| rows | load | per row | PUTs | GETs during load |",
+      "digest": "4ea9392ec36db81c"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1597,
+      "header": "| | the model says | measured |",
+      "digest": "5171bf0ca487a02c"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 887,
+      "header": "| batch | 118 | 120 | 122 | 124 | 125 | 126 | 127 | 128 | 130 |",
+      "digest": "53ebe17b1c9005d2"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1402,
+      "header": "| clients | 128 | 64 | 32 | 16 | 8 | 4 | 2 | 1 |",
+      "digest": "580c3791da1e8e23"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 914,
+      "header": "| batch | 8 | 16 | 24 | 32 | 48 | 64 | 96 | 124 | 126 | 256 |",
+      "digest": "5c5129a3ff62622e"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1099,
+      "header": "| | |",
+      "digest": "6198fa48329fa216"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1496,
+      "header": "| | server CPU over 600 ms |",
+      "digest": "61ff3166e8f72943"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1357,
+      "header": "| clients | ops/s | p50 | p90 | p99 | worst | cpu/op |",
+      "digest": "6ad962fb2efa8ec4"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1258,
+      "header": "| clients | ops/s | [min \u2013 max] | p50 | p99 | cores | srv | cli | cpu/op |",
+      "digest": "6d52852aa2537b00"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1751,
+      "header": "| | total | per row |",
+      "digest": "7015d9e6181649dc"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1177,
+      "header": "| term | takeover after a crash (tight poll) | at the real campaign cadence | after a graceful release |",
+      "digest": "706a292f370351f1"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 829,
+      "header": "| batch | messages | drain, best of 21 | rows/s | first row, median | first row, best |",
+      "digest": "7177e4fc03cc55aa"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1795,
+      "header": "| | 100,000 rows |",
+      "digest": "795c9ec0d5d2ca06"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 161,
+      "header": "| query | before | after |",
+      "digest": "7f50ac3a7763446f"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1072,
+      "header": "| | |",
+      "digest": "87f40d5036f8c08a"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1147,
+      "header": "| | |",
+      "digest": "897a9ac21a0430af"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1135,
+      "header": "| `Freshness::Any` over gRPC | |",
+      "digest": "93433c334e804688"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1287,
+      "header": "| clients | write ops/s | [min \u2013 max] | p50 | p99 | cores | cpu/op |",
+      "digest": "98bd1ac1ed9f0305"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1469,
+      "header": "| | ops/s | p50 | p90 | p99 |",
+      "digest": "9c0d43cbe7b61902"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 713,
+      "header": "| | ops/s | p50 | p99 | worst | delayed ACKs /op |",
+      "digest": "a44fd6322ccd8a77"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1084,
+      "header": "| | over gRPC |",
+      "digest": "aed05af7a4ce122e"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 385,
+      "header": "| setting | S3 GETs | forward | reversed |",
+      "digest": "b081fe7201eb0eaf"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1514,
+      "header": "| arm | ops/s | p50 | p90 | p99 | worst | renewals in the arm |",
+      "digest": "b7a36dce0b6d5527"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 148,
+      "header": "| | before | after |",
+      "digest": "bf65a9fbbc77a48f"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 754,
+      "header": "| operation | over gRPC | in process | difference |",
+      "digest": "c4c1128a416327ae"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 2164,
+      "header": "| | poll 50 ms | poll 10 s (what ships) |",
+      "digest": "c5547ae8b114294f"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1431,
+      "header": "| | |",
+      "digest": "ce0e9d1913d13298"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 880,
+      "header": "| batch | 118 | 120 | 122 | **124** | **125** | **126** | 127 | 128 | 130 |",
+      "digest": "cf596d78b5292541"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1389,
+      "header": "| clients | 1 | 2 | 4 | 8 | 16 | 32 | **64** | **128** |",
+      "digest": "d2154ca719a139f9"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 223,
+      "header": "| | rows read | wall | chosen |",
+      "digest": "db88f5bb0795be32"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1323,
+      "header": "| clients | ops/s | cores the process got | cpu/op |",
+      "digest": "dc14d43214503c32"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1766,
+      "header": "| | per row |",
+      "digest": "dfb2403a13ddf3d1"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 2096,
+      "header": "| | S3 GETs | wall clock | delayed ACKs/scan |",
+      "digest": "e0b8076bae4c1978"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 294,
+      "header": "| | model | measured |",
+      "digest": "e2bc3f6451170764"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1561,
+      "header": "| 200,000 rows | before `analyze` | after `analyze` |",
+      "digest": "e3be39ffb2084316"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1705,
+      "header": "| rows | build `Row`s | `insert_many` | rate | `analyze` | RSS | bytes/row |",
+      "digest": "ece011cf61244e9e"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 1574,
+      "header": "| the store has already | GETs | rows/GET |",
+      "digest": "ef6d21e94f028727"
+    },
+    {
+      "file": "docs/performance.md",
+      "line_when_frozen": 557,
+      "header": "| write | rows | point reads | wall |",
+      "digest": "fdc386de5e59a752"
+    },
+    {
+      "file": "docs/security-review.md",
+      "line_when_frozen": 180,
+      "header": "| what is true in tenant B | what tenant A gets back |",
+      "digest": "541dc7f09b100f96"
+    },
+    {
+      "file": "docs/topology.md",
+      "line_when_frozen": 112,
+      "header": "| poll | `AtLeast(just-committed)` | fell back to the writer |",
+      "digest": "45a5759457b6793a"
+    },
+    {
+      "file": "docs/views.md",
+      "line_when_frozen": 272,
+      "header": "| | lines |",
+      "digest": "7fb9104c08929a9d"
+    }
+  ]
+}

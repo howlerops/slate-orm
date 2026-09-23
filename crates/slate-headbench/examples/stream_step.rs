@@ -139,6 +139,7 @@ const BASE: Arm = Arm {
 };
 
 fn main() {
+    slate_slatedb::announce();
     let requested: Vec<String> = std::env::args().skip(1).collect();
     let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
 
@@ -428,7 +429,7 @@ async fn seed<S: KvStore + KvReadStore>(
 async fn warm(client: &mut RecordsClient<Channel>) {
     for _ in 0..2_000 {
         let _ = client
-            .leadership(tonic::Request::new(pb::LeadershipRequest {}))
+            .leadership(principal_request(pb::LeadershipRequest {}, TENANT))
             .await
             .expect("leadership");
     }

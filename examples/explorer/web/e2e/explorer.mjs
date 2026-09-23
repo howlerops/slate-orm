@@ -192,6 +192,70 @@ try {
     }
   });
 
+  await check("a view narrows the rows, and the policy narrows them again", async () => {
+    // The whole of `docs/views.md` §1, in a browser: a view is substituted
+    // away before planning, so the *base* table's row policy is the one that
+    // runs. A view carrying its own `TableId` — the design §1 refuses — would
+    // have no policy at all and hand a reader every row the view admits, and
+    // this is the check that would see it.
+    const rows = page.locator(".panel:has(h2:text-is('Rows'))");
+    const pick = (name) =>
+      rows.locator('.field:has(span:text-is("table")) select').selectOption(name);
+    const count = (body) => body.trim().split("\n").length;
+
+    const seen = {};
+    for (const [key, identity, table] of [
+      ["books", "app", "books"],
+      ["view", "app", "classics"],
+      ["reader", "reader", "classics"],
+    ]) {
+      await at(page, { identity, panel: "rows" });
+      await pick(table);
+      await rows.locator('.field:has(span:text-is("value")) input').fill("");
+      await settled(page);
+      seen[key] = await rows.locator("tbody").innerText();
+    }
+
+    if (!(count(seen.view) < count(seen.books))) {
+      throw new Error(
+        `the view did not narrow: ${count(seen.books)} rows from books, ${count(seen.view)} through it`,
+      );
+    }
+    if (!(count(seen.reader) < count(seen.view))) {
+      throw new Error(
+        `the row policy did not narrow the view: ${count(seen.view)} rows as app, ${count(seen.reader)} as reader`,
+      );
+    }
+    // `classics` is `year < 1980` and `modern_only` is `year >= 1960`, so the
+    // 1950s books are inside the view and outside the policy. Asserting the
+    // decade rather than only the counts, because two arbitrary numbers
+    // shrinking proves less than the right rows disappearing.
+    if (!/19[0-5]\d/.test(seen.view)) {
+      throw new Error("the view shows no pre-1960 book, so the next assertion proves nothing");
+    }
+    if (/19[0-5]\d/.test(seen.reader)) {
+      throw new Error("a reader can see a pre-1960 book through the view");
+    }
+    if (/19[89]\d|199\d/.test(seen.view)) {
+      throw new Error("the view shows a book from 1980 or later, so its own predicate did nothing");
+    }
+
+    // And the plan panel refuses, because `explain` is not a path that reads
+    // through a view. Lowercased for the reason the reader-plan check below
+    // gives: the stylesheet renders the kind in caps.
+    const plan = page.locator(".panel:has(h2:text-is('The plan'))");
+    const refusal = (await plan.innerText()).toLowerCase();
+    if (!refusal.includes("is a view over")) {
+      throw new Error(`the plan panel did not name the view: ${refusal.slice(0, 200)}`);
+    }
+
+    // Put the switcher back, so the checks after this one open on `books`
+    // as they always have.
+    await at(page, { identity: "app", panel: "rows" });
+    await pick("books");
+    await settled(page);
+  });
+
   await check("a reader is refused a plan, and told it is the database refusing", async () => {
     await at(page, { identity: "reader", panel: "rows" });
     const plan = page.locator(".panel:has(h2:text-is('The plan'))");
@@ -460,6 +524,29 @@ try {
     if (!summary.includes("rows returned 0")) throw new Error(`returned: ${summary}`);
     const rows = await panel.locator("tbody tr").count();
     if (rows !== 0) throw new Error(`rows were rendered without \`returning\`: ${rows}`);
+  });
+
+  // The undo window, asserted on the thing it exists to show rather than on
+  // having rendered. The four badges are four separate claims and the third and
+  // fourth are the ones a broken restore would get wrong.
+  await check("a retired row goes invisible, and comes back the same row", async () => {
+    await at(page, { panel: "soft delete" });
+    const panel = page.locator('.panel:has(h2:text-is("Soft delete, and undo"))');
+    await panel.locator('[data-test="restore-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="restore-summary"]').innerText();
+    if (!summary.includes("retired first yes")) throw new Error(`premise: ${summary}`);
+    // The whole point of a soft delete: an ordinary read stops returning it.
+    if (!summary.includes("an ordinary read saw 0")) throw new Error(`hidden: ${summary}`);
+    // And the whole point of the undo: it comes back to an ordinary read.
+    if (!summary.includes("after the undo it sees 1")) throw new Error(`back: ${summary}`);
+    if (!summary.includes("still stamped 0")) throw new Error(`stamp: ${summary}`);
+    // Carried through, which is what says it is the same row and not a fresh
+    // one written at the key it left free — the difference the badges cannot
+    // show, because a replacement reports the same id and the same "not
+    // stamped".
+    const note = await panel.locator(".note").last().innerText();
+    if (!note.includes("pending")) throw new Error(`status not carried through: ${note}`);
   });
 
   await check("the two atomicities leave different numbers of rows", async () => {

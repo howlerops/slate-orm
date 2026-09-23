@@ -161,6 +161,7 @@ fn build(table: &TableDef, given: &toml::value::Table) -> Started<Row> {
             Some(value) => value::from_toml(
                 value,
                 column.value_type(),
+                column.element_type(),
                 &format!("column `{}`", column.name()),
             )?,
             // A dropped column holds nothing and a nullable one holds null; a

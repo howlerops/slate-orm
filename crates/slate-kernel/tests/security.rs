@@ -485,8 +485,9 @@ async fn a_policy_holds_on_an_index_scan_too() {
     // Pinned to the index rather than left to the planner. The subject here is
     // that the tenant prefix bounds an index scan, not which path the cost
     // model prefers — and on a table this small it now prefers a scan, because
-    // a point read costs about three object-store requests and scanning the
-    // whole table costs one. Forcing the path keeps this test about security.
+    // a point read costs one object-store request and scanning the whole table
+    // costs about one too, for every row rather than for each. Forcing the path
+    // keeps this test about security.
     let secured_plan = slate_kernel::plan_hinted(
         &table,
         std::sync::Arc::new(secured.clone()),

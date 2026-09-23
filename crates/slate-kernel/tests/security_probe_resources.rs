@@ -1,10 +1,17 @@
 //! What one request can make the server allocate or compute.
 //!
-//! A join has [`slate_kernel::DEFAULT_BUILD_LIMIT`] and reports
-//! `JoinBuildTooLarge` rather than dying. Nothing else that holds unbounded
-//! state per request has an equivalent, and nothing bounds the *work* an
-//! `IN` list costs per row. These are measurements rather than assertions
-//! about a threshold: each records what is currently unbounded.
+//! Written when a join's [`slate_kernel::DEFAULT_BUILD_LIMIT`] was the only
+//! budget in the system and the rest of this file recorded what was unbounded.
+//! Finding 7 of the security review closed that: `ExecutionLimits` gives
+//! `GROUP BY`, `COUNT(DISTINCT)` and an unlimited `ORDER BY` a ceiling each,
+//! and the `IN` list's per-row cost went away rather than being capped.
+//!
+//! So the file now holds three kinds of test, and the distinction is worth
+//! keeping when adding one. The `..._below_the_ceiling` tests pin that a
+//! ceiling did not become a silent truncation — they are the old measurements,
+//! still true. The `limits` module pins that each ceiling *fires*, naming the
+//! limit. The last section pins that the ceilings reach every path that holds
+//! the state, and that the shipped defaults are finite at all.
 
 #![allow(
     clippy::unwrap_used,
@@ -14,7 +21,8 @@
 )]
 
 use slate_kernel::{
-    Action, Aggregate, Expr, Grant, Query, RecordStore, SecurityCatalog, SecurityContext, SortKey,
+    Action, Aggregate, Chain, ExecutionLimits, Expr, Grant, Grouping, Join, JoinSchema, JoinStep,
+    KernelError, Query, RecordStore, SecurityCatalog, SecurityContext, SortKey,
     memory::MemoryStore,
 };
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
@@ -201,7 +209,11 @@ async fn a_group_by_holds_every_distinct_key_below_the_ceiling() {
     );
 }
 
-/// `COUNT(DISTINCT)` holds every distinct encoded value, with no cap.
+/// `COUNT(DISTINCT)` holds every distinct encoded value *below* the ceiling.
+///
+/// Was "with no cap", which stopped being true when `max_distinct` landed.
+/// The test is unchanged and still worth having: it pins that the cap does not
+/// truncate a count that fits.
 #[tokio::test]
 async fn count_distinct_holds_every_value_below_the_ceiling() {
     let store = seeded().await;
@@ -221,7 +233,10 @@ async fn count_distinct_holds_every_value_below_the_ceiling() {
 /// An unlimited `ORDER BY` materialises the whole result before the first row.
 ///
 /// With a limit the executor uses a bounded heap; without one it collects
-/// everything, and nothing caps that.
+/// everything, up to `max_sort_rows`. The second half of that sentence used to
+/// read "and nothing caps that" — see `limits::an_unlimited_sort_past_the_\
+/// ceiling_is_refused_but_a_limited_one_is_not` for the cap. This still pins
+/// that a result which fits under the ceiling comes back whole.
 #[tokio::test]
 async fn an_unlimited_sort_still_materialises_everything_below_the_ceiling() {
     let store = seeded().await;
@@ -386,5 +401,151 @@ mod limits {
             .await
             .expect("collecting the window");
         assert_eq!(rows.len(), 5);
+    }
+}
+
+// --- the second Grouper, and the defaults themselves ------------------------
+//
+// **A correction, since the first version of this block claimed more.** I set
+// out believing the ceilings above were untested, on the evidence that
+// mutating `ExecutionLimits::new_default` to return `unbounded()` survives all
+// 55 kernel suites. The `limits` module above disproves the claim: all three
+// ceilings are asserted, with the error variant and the limit it names, and
+// the `LIMIT`-uses-the-bounded-heap mitigation too.
+//
+// What that surviving mutation actually shows is narrower and still real. Every
+// test up there builds its store with `with_limits(...)`, so none of them
+// touches the **defaults**. A change making `new_default` unbounded would ship
+// a node with no ceilings at all and every suite would stay green. That is one
+// test, below.
+//
+// The second gap is not about limits being enforced but about *where*.
+// `SecuredReads` builds three `Grouper`s — single table, join, chain — and the
+// module above exercises one. A limit threaded into one constructor and not
+// its siblings is the shape that left finding 1's refusal covering one catalog
+// constructor of two, three commits ago, so the other two are asserted rather
+// than read off the source.
+
+const SECOND: TableId = TableId(2);
+
+fn other() -> TableDef {
+    TableDef::builder("u", SECOND)
+        .column("id", ValueType::U64)
+        .column("t_id", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema")
+}
+
+fn security_both() -> SecurityCatalog {
+    SecurityCatalog::new()
+        .grant(Grant::new("app", T, Action::ALL))
+        .grant(Grant::new("app", SECOND, Action::ALL))
+}
+
+/// Two tables, one row each per id, under a ceiling the fixture passes.
+async fn joined_under(limits: ExecutionLimits) -> RecordStore<MemoryStore> {
+    let catalog = Catalog::from_tables([table(), other()]).expect("catalog");
+    let store = RecordStore::new(MemoryStore::new(), catalog, security_both()).with_limits(limits);
+    let root = SecurityContext::superuser();
+    let txn = store.begin().await.unwrap();
+    for id in 0..100u64 {
+        txn.insert(
+            &root,
+            &table(),
+            &Row::new(vec![Value::U64(id), Value::I64(id as i64)]),
+        )
+        .await
+        .unwrap();
+        txn.insert(
+            &root,
+            &other(),
+            &Row::new(vec![Value::U64(id), Value::U64(id)]),
+        )
+        .await
+        .unwrap();
+    }
+    txn.commit().await.unwrap();
+    store
+}
+
+/// The same ceiling, on the `Grouper` a *join* builds.
+#[tokio::test]
+async fn a_grouped_join_past_the_ceiling_is_refused_too() {
+    let limits = ExecutionLimits {
+        max_groups: 10,
+        ..ExecutionLimits::default()
+    };
+    let store = joined_under(limits).await;
+    let txn = store.begin().await.unwrap();
+    let schema = JoinSchema::over([&table(), &other()]);
+    let join = Join::equating(Ordinal(0), Ordinal(1));
+    // 100 distinct keys against a ceiling of 10, as above.
+    let grouping = Grouping::by([schema.left(Ordinal(1))], &[Aggregate::Count]);
+    let error = txn
+        .group_by_join(&app(), &table(), &other(), &join, &grouping)
+        .await
+        .expect_err("a grouped join past the ceiling must refuse");
+    assert!(
+        matches!(error, KernelError::TooManyGroups { limit: 10 }),
+        "expected TooManyGroups naming 10, got {error:?}"
+    );
+}
+
+/// And the third `Grouper`: the one a *chain* builds.
+///
+/// A two-step chain over the same two tables, so this differs from the join
+/// above in which code path it takes and in nothing else — which is the point.
+/// `SecuredReads::grouped_chain` has its own `Grouper::with_limits` call, and
+/// "the other two sites look the same" is a reading, not a test.
+#[tokio::test]
+async fn a_grouped_chain_past_the_ceiling_is_refused_too() {
+    let limits = ExecutionLimits {
+        max_groups: 10,
+        ..ExecutionLimits::default()
+    };
+    let store = joined_under(limits).await;
+    let txn = store.begin().await.unwrap();
+    let schema = JoinSchema::over([&table(), &other()]);
+    let step = JoinStep::equating(schema.at(0, Ordinal(0)), Ordinal(1));
+    let chain = Chain::start().join(step);
+    let grouping = Grouping::by([schema.at(0, Ordinal(1))], &[Aggregate::Count]);
+    let owned = [table(), other()];
+    let tables: Vec<&TableDef> = owned.iter().collect();
+    let error = txn
+        .group_by_chain(&app(), &tables, &chain, &grouping)
+        .await
+        .expect_err("a grouped chain past the ceiling must refuse");
+    assert!(
+        matches!(error, KernelError::TooManyGroups { limit: 10 }),
+        "expected TooManyGroups naming 10, got {error:?}"
+    );
+}
+
+/// The shipped defaults are finite.
+///
+/// Every other test here sets its own ceiling, so all of them pass against a
+/// `new_default` that returns `ExecutionLimits::unbounded()` — which would be
+/// a node with none of finding 7's protections, shipped green. Asserted as an
+/// upper bound rather than exact values: the constants are documented as
+/// untuned and a deployment is expected to change them, so pinning the numbers
+/// here would make tuning them a test failure. What must not change silently
+/// is that they *exist*.
+#[test]
+fn the_default_limits_are_not_unbounded() {
+    let defaults = ExecutionLimits::default();
+    assert_ne!(
+        defaults,
+        ExecutionLimits::unbounded(),
+        "the shipped defaults refuse nothing; finding 7 is reopened for every \
+         deployment that does not set its own"
+    );
+    for (name, value) in [
+        ("max_groups", defaults.max_groups),
+        ("max_distinct", defaults.max_distinct),
+        ("max_sort_rows", defaults.max_sort_rows),
+    ] {
+        assert!(value < usize::MAX, "{name} is unbounded by default");
+        assert!(value > 0, "{name} is zero, which refuses every query");
     }
 }

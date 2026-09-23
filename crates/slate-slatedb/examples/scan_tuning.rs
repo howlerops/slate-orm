@@ -35,6 +35,20 @@ use std::time::Instant;
 const EVENTS: TableId = TableId(1);
 const ROWS: u64 = 20_000;
 
+/// `SCALE_ROWS` overrides it, the same name `cost_at_scale` takes.
+///
+/// One name per crate rather than one per example: a smoke run has to shrink
+/// every fixture it meets, and a runner that needs a different variable for
+/// each is a list nobody keeps current. The default is what
+/// `docs/performance.md` records and is unchanged.
+fn rows() -> u64 {
+    std::env::var("SCALE_ROWS")
+        .ok()
+        .and_then(|value| value.split(',').next().unwrap_or("").parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
+
 fn events() -> TableDef {
     TableDef::builder("events", EVENTS)
         .column("id", ValueType::U64)
@@ -71,7 +85,7 @@ async fn load(path: &str, config: slate_slatedb::S3Config) {
     let store = RecordStore::new(backend.clone(), catalog(), security());
     let root = SecurityContext::superuser();
 
-    for chunk in (0..ROWS).collect::<Vec<_>>().chunks(1_000) {
+    for chunk in (0..rows()).collect::<Vec<_>>().chunks(1_000) {
         let rows: Vec<Row> = chunk.iter().map(|id| row(*id)).collect();
         let txn = store.begin().await.expect("begin");
         txn.insert_many(&root, &events(), &rows)
@@ -115,6 +129,7 @@ async fn scan_once(
 
 #[tokio::main]
 async fn main() {
+    slate_slatedb::announce();
     let server = s3server::LocalS3::start("slate-orm").await;
     let counters = server.counters();
 
@@ -159,7 +174,10 @@ async fn main() {
         paths.push(path);
     }
 
-    println!("{ROWS} rows over an in-process S3 server, read back after a reopen");
+    println!(
+        "{} rows over an in-process S3 server, read back after a reopen",
+        rows()
+    );
     println!(
         "Each setting is measured twice: once in this order and once reversed, \n\
          so a warming server cannot be mistaken for a faster plan.\n"
@@ -174,7 +192,7 @@ async fn main() {
     for (index, (_, tuning)) in settings.iter().enumerate() {
         let (rows, wall, gets) =
             scan_once(&paths[index], server.config(), *tuning, &counters).await;
-        assert_eq!(rows as u64, ROWS, "a scan lost rows");
+        assert_eq!(rows as u64, self::rows(), "a scan lost rows");
         forward.push((wall, gets));
     }
 
@@ -182,7 +200,7 @@ async fn main() {
     for (index, (_, tuning)) in settings.iter().enumerate().rev() {
         let (rows, wall, gets) =
             scan_once(&paths[index], server.config(), *tuning, &counters).await;
-        assert_eq!(rows as u64, ROWS, "a scan lost rows");
+        assert_eq!(rows as u64, self::rows(), "a scan lost rows");
         reversed[index] = (wall, gets);
     }
 

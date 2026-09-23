@@ -46,6 +46,7 @@ use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     let mut args = std::env::args().skip(1);
     let path = args.next().map_or_else(
         || {

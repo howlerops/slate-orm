@@ -308,6 +308,34 @@ out.badZone = await type(
 );
 out.badZoneWhy = await page.locator('[data-app="grid"] .refusal').innerText();
 
+// 9c4c. A window function, in the browser. The kernel's suite covers the
+//       arithmetic and the Rust wasm suite covers the lowering; what is only
+//       testable here is that a `window` field survives serde in both
+//       directions through the wasm boundary, and that the grid heads the
+//       extra column with the call rather than with its ordinal — the two
+//       halves the tests either side of that boundary would both pass with
+//       the field dropped in the middle.
+//
+//       Ordered and limited so the assertion is a fact rather than a count:
+//       the five shortest trips from zone 132 are numbered 1..5 by the window,
+//       whatever else is in the table. Sorted before comparing, because two
+//       trips of equal duration may be numbered either way round and the query
+//       sort is not the window's.
+out.windowed = await type(
+  "SELECT pickup_zone, duration, ROW_NUMBER() OVER (PARTITION BY pickup_zone ORDER BY duration) " +
+  "FROM trips WHERE pickup_zone = 132 ORDER BY duration LIMIT 5",
+);
+out.windowedRows = await page.locator('[data-app="grid"] tbody tr').allInnerTexts();
+await page.locator('[data-tab="spec"]').click();
+out.windowedSpec = await page.locator('[data-app="spec"]').innerText();
+await page.locator('[data-tab="results"]').click();
+// And the one shape the front end refuses rather than lowering: a grouping
+// folds the rows a window answers per.
+out.windowGrouped = await type(
+  "SELECT pickup_zone, ROW_NUMBER() OVER (ORDER BY pickup_zone) FROM trips GROUP BY pickup_zone",
+);
+out.windowGroupedWhy = await page.locator('[data-app="grid"] .refusal').innerText();
+
 // 9c5. A computed column on a *join*, which was refused outright until the
 //      kernel grew somewhere to put it. Clicked from the sidebar, because the
 //      example is the thing a reader will actually run.
@@ -617,8 +645,12 @@ def main() -> int:
         f"tables: {seen['tables']}",
     )
     check(
+        # Three: `trips.pickup_zone`, `books.author_id`, and `books.title`,
+        # which is the inverted one. The tree does not distinguish an inverted
+        # index from an ordinary one and does not claim to — the mark says the
+        # column is indexed, which it is.
         "and marks the indexed columns and the primary keys",
-        len(seen["indexMarks"]) == 2 and len(seen["keyMarks"]) == 4,
+        len(seen["indexMarks"]) == 3 and len(seen["keyMarks"]) == 4,
         f"idx: {seen['indexMarks']}, pk: {seen['keyMarks']}",
     )
     check(
@@ -721,8 +753,10 @@ def main() -> int:
         f"console hidden {storage['consoleHidden']}, tree hidden {storage['treeHidden']}",
     )
     check(
+        # Seven: four tables' rows, and three indexes — `by_pickup_zone`,
+        # `by_author` and `by_title_text`.
         "the whole database is there: every table and every index",
-        len(storage["leaves"]) == 6
+        len(storage["leaves"]) == 7
         and any(
             "trips/" in line and "100,000 keys" in line for line in storage["leaves"]
         )
@@ -981,6 +1015,27 @@ def main() -> int:
         '"zone": "America/New_York"' in seen["namedSpec"].replace("\n", " ")
         or '"zone":"America/New_York"' in seen["namedSpec"].replace("\n", " "),
         f"{seen['namedSpec'][:200]!r}",
+    )
+    numbered = sorted(int(row.split("\t")[-1]) for row in seen["windowedRows"])
+    check(
+        "a window function is answered in the browser, in its own column",
+        seen["windowed"]["refusal"] == 0
+        and seen["windowed"]["headers"][-1].lower() == "row_number() over"
+        and numbered == [1, 2, 3, 4, 5],
+        f"{seen['windowed']['headers'][-1:]!r} {numbered}",
+    )
+    check(
+        "the window reaches the spec rather than being applied and forgotten",
+        '"window"' in seen["windowedSpec"]
+        and '"row_number"' in seen["windowedSpec"]
+        and '"partitionBy"' in seen["windowedSpec"],
+        f"{seen['windowedSpec'][:240]!r}",
+    )
+    check(
+        "a window beside a GROUP BY is refused rather than quietly dropped",
+        seen["windowGrouped"]["refusal"] == 1
+        and "one value per input row" in seen["windowGroupedWhy"],
+        f"{seen['windowGroupedWhy']!r}",
     )
     check(
         "a zone the table does not have is refused, and the refusal lists them",

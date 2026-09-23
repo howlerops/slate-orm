@@ -49,8 +49,20 @@
 //!
 //! - It is same-tenant only. A tenant-scoped table puts the tenant in the key
 //!   prefix, so a key in another tenant is a different key and there is no
-//!   collision to observe. (Finding 2 in `docs/security-review.md` was a
-//!   separate path where the same bit *did* cross tenants; that one is fixed.)
+//!   collision to observe.
+//!
+//!   **That bound is about collisions, and it is not the only way the bit can
+//!   cross a tenant.** Finding 2 in `docs/security-review.md` was a path that
+//!   read storage *before* deciding the row policy, so the error said which
+//!   answer the read had given — no collision needed. It was fixed in
+//!   `write_many`, and this paragraph said so while the single-row `upsert`
+//!   went on doing it: a key taken in another tenant came back `RowNotFound`
+//!   from the visibility check, a free one `RowCheckFailed` from the policy.
+//!   Fixed now, and every write path is held to it by
+//!   `no_key_naming_write_path_answers_differently_for_another_tenants_key`.
+//!   The lesson for a reader of this paragraph: "no collision to observe" does
+//!   not mean "nothing to observe", and the ordering of the read against the
+//!   policy is the other half.
 //! - It requires the attacker to be able to name the key. A primary key that is
 //!   a UUID, or drawn from a sequence the attacker cannot read, leaves nothing
 //!   to probe for — the oracle answers a question the attacker cannot ask.
@@ -403,15 +415,7 @@ impl SecurityCatalog {
         table: &TableDef,
         action: Action,
     ) -> crate::Result<()> {
-        if context.is_superuser() {
-            return Ok(());
-        }
-        let permitted = self.grants.iter().any(|g| {
-            g.table == table.id()
-                && g.actions.contains(&action)
-                && context.principal.roles.contains(&g.role)
-        });
-        if permitted {
+        if self.grants(context, table, action) {
             Ok(())
         } else {
             Err(KernelError::AccessDenied {
@@ -419,6 +423,26 @@ impl SecurityCatalog {
                 action: action.name(),
             })
         }
+    }
+
+    /// Whether `context` holds `action` on `table`, as a question rather than
+    /// a refusal.
+    ///
+    /// The primitive, with [`authorize`](Self::authorize) as the refusal built
+    /// on top rather than the other way round. That direction matters: a
+    /// `grants` written as `authorize(..).is_ok()` builds and throws away an
+    /// `AccessDenied` — two `String` allocations — every time the answer is
+    /// *no*, which is the common answer on the path that asks. Asking has one
+    /// caller today, whether a write may reach a row a soft delete retired,
+    /// and that caller is on a bulk write path.
+    #[must_use]
+    pub fn grants(&self, context: &SecurityContext, table: &TableDef, action: Action) -> bool {
+        context.is_superuser()
+            || self.grants.iter().any(|g| {
+                g.table == table.id()
+                    && g.actions.contains(&action)
+                    && context.principal.roles.contains(&g.role)
+            })
     }
 
     /// The mandatory predicate for `context` on `table` and `action`.
@@ -520,6 +544,29 @@ impl SecurityCatalog {
         action: Action,
         row: &Row,
     ) -> crate::Result<bool> {
-        Ok(self.row_filter(context, table, action)?.admits(row))
+        self.permits_row_with(context, table, action, row, Deleted::Hidden)
+    }
+
+    /// [`permits_row`](Self::permits_row), saying whether a retired row counts.
+    ///
+    /// The soft-delete conjunct is the only thing `Deleted::Visible` drops. The
+    /// tenant restriction and the row policy are still applied, which is what
+    /// makes this usable on a write path: "this caller may write this row" and
+    /// "this row is retired" are different questions, and only the second one
+    /// has an answer that depends on why the caller is asking.
+    ///
+    /// # Errors
+    /// If the tenant restriction cannot be built.
+    pub fn permits_row_with(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: Action,
+        row: &Row,
+        deleted: Deleted,
+    ) -> crate::Result<bool> {
+        Ok(self
+            .row_filter_with(context, table, action, deleted)?
+            .admits(row))
     }
 }

@@ -20,11 +20,13 @@ import {
   caseWhen,
   add,
   and,
+  type AccessHint,
   type Atomicity,
   col,
   computed0,
   compare,
   concat,
+  contains,
   count,
   Client,
   distance,
@@ -62,6 +64,15 @@ import {
   upper,
   vector,
   year,
+  rowNumber,
+  rank,
+  denseRank,
+  lag,
+  lead,
+  aggregateOver,
+  over,
+  sumOf,
+  key0,
   and as andOf,
   or as orOf,
   SlateError,
@@ -72,14 +83,49 @@ import {
   type JoinQuery,
   type JoinType,
   type Ordinal,
+  type Column as ColumnRef,
   type Query,
   type Scalar,
   type Session,
   type Step,
   type Value,
+  type Window,
+  answers,
+  usingIndex,
+  usingTableScan,
 } from "@slate-orm/client";
 
-import { TABLES as CATALOG } from "./schema.js";
+import {
+  EditionsForeignKeys,
+  SalesForeignKeys,
+  TABLES as CATALOG,
+  VIEWS as CATALOG_VIEWS,
+  decodeAuthors,
+  decodeBooks,
+  decodeEditions,
+  decodeSales,
+  decodeShipments,
+  encodeBooks,
+  encodeShipments,
+  isRetiredShipments,
+  restoredShipments,
+} from "./schema.js";
+import type { Shipments } from "./schema.js";
+
+// The shipment the restore handlers own.
+//
+// Below the purge handler's ids on purpose. The purge case lists what survives
+// at `id >= 8401`, so a row this handler left behind there would change that
+// case's answer depending on which ran first — the ordering bug that case's own
+// comment records having been bitten by.
+const restoreId = 8301n;
+
+// Ordinals of the `books` columns `/api/window` names, so a schema change
+// moves one literal rather than five.
+const BOOK_ID = 0;
+const BOOK_AUTHOR_ID = 1;
+const BOOK_TITLE = 2;
+const BOOK_YEAR = 3;
 import { decode, encode, encodeRow, formatFloat } from "./values.js";
 
 /**
@@ -96,6 +142,19 @@ const IDENTITIES: Record<string, Identity> = {
 };
 
 const TABLES = ["authors", "books", "sales", "shipments"];
+
+/**
+ * The demo's one view, held apart from `TABLES` rather than added to it.
+ *
+ * Only `/api/query` accepts one, which is exactly the handler the server opted
+ * in: everything else answers "`classics` is a view over `books`, and only a
+ * plain query can read through one".
+ *
+ * Derived from the generated declaration rather than listed here, so the
+ * allowlist and the schema this client declares cannot name different views.
+ * `scripts/codegen.py` emits both from the catalog.
+ */
+const VIEWS = Object.keys(CATALOG_VIEWS);
 
 interface FilterSpec {
   op: string;
@@ -168,7 +227,7 @@ interface QuerySpec {
 }
 
 function buildQuery(spec: QuerySpec): Query {
-  if (!spec.table || !TABLES.includes(spec.table)) {
+  if (!spec.table || !(TABLES.includes(spec.table) || VIEWS.includes(spec.table))) {
     throw new Error(`no such table: ${spec.table}`);
   }
   const filter = buildFilter(spec.filter);
@@ -200,18 +259,164 @@ class Adapter {
       // `scripts/codegen.py`, so the check cannot be satisfied by a
       // declaration that merely agrees with itself — which is what a
       // hand-typed one would be.
-      this.clients[name] = Client.connect(head, identity).declaring(CATALOG);
+      // Views as well as tables. A client that declared the tables alone
+      // would send a claim for a read of `books` and none for a read of
+      // `classics`, so the view's read — the one most likely to be written
+      // against a stale idea of the base table's columns — would be the
+      // unchecked one. The server verifies a view's claim under the view's
+      // own name, so there is nothing to opt out of.
+      this.clients[name] = Client.connect(head, identity).declaring({
+        ...CATALOG,
+        ...CATALOG_VIEWS,
+      });
     }
   }
 
   async meta(): Promise<unknown> {
     const status = await this.clients["app"]!.leadership();
-    return { sdk: "node", leader: status.leader, tables: TABLES };
+    // `views` beside `tables` and not among them; see `VIEWS`.
+    return { sdk: "node", leader: status.leader, tables: TABLES, views: VIEWS };
   }
 
   async query(session: Session, body: QuerySpec): Promise<unknown> {
     const rows = await session.query(buildQuery(body)).collect();
     return { rows: rows.map(encodeRow) };
+  }
+
+  /**
+   * A window function, one value per input row. See CONTRACT.md.
+   *
+   * Fixed shape, like `/api/join`: the demo is about which window, not about a
+   * general window builder, and three implementations of one would be three
+   * places for the same expression language to drift.
+   */
+  async window(
+    session: Session,
+    body: { function?: string; partition?: boolean; running?: boolean; limit?: number },
+  ): Promise<unknown> {
+    // The order is the *window's*, not the query's, and whether there is one
+    // is what turns an aggregate's frame from the whole partition into a
+    // running value. The ranking functions and lag/lead always get one: the
+    // server refuses them without, because the answer would be a number for
+    // an order nobody asked for.
+    let ordered = body.running === true;
+    let fn: Window;
+    switch (body.function) {
+      case "rowNumber":
+        [fn, ordered] = [rowNumber(), true];
+        break;
+      case "rank":
+        [fn, ordered] = [rank(), true];
+        break;
+      case "denseRank":
+        [fn, ordered] = [denseRank(), true];
+        break;
+      case "lag":
+        [fn, ordered] = [lag(key0(BOOK_YEAR), 1), true];
+        break;
+      case "lead":
+        [fn, ordered] = [lead(key0(BOOK_YEAR), 1), true];
+        break;
+      case "sum":
+        fn = aggregateOver(sumOf(key0(BOOK_YEAR)));
+        break;
+      case "count":
+        fn = aggregateOver(count());
+        break;
+      default:
+        throw new Error(`no such window function: ${body.function}`);
+    }
+    const partition: ColumnRef[] = body.partition ? [key0(BOOK_AUTHOR_ID)] : [];
+    const order = ordered
+      ? [{ column: BOOK_YEAR, direction: "asc" as const }]
+      : [];
+
+    // `author_id <= 6` keeps out book 19, whose author matches nobody: it is
+    // here for the outer joins and would be a partition of one in every
+    // answer. The query's own sort is by id, so the three adapters compare
+    // row for row rather than in whatever order the scan produced.
+    const stream = session.query({
+      table: "books",
+      filter: le(BOOK_AUTHOR_ID, uint(6)),
+      sort: [{ column: BOOK_ID, direction: "asc" }],
+      // Spread rather than `limit: body.limit`, because
+      // `exactOptionalPropertyTypes` makes an explicit `undefined` a different
+      // thing from an absent field — and a `Query` with no limit is the latter.
+      ...(body.limit === undefined ? {} : { limit: body.limit }),
+      window: [over(fn, { partition, order })],
+    });
+    const rows: unknown[] = [];
+    for await (const row of stream.withComputed()) {
+      rows.push({
+        row: encodeRow(row.values),
+        // Its own list, because it is its own list on the wire: a window value
+        // is not a column and not a computed value, and an adapter folding it
+        // into `row` would return something a caller reads as a different
+        // thing.
+        windowed: encodeRow(row.windowed),
+      });
+    }
+    return { rows };
+  }
+
+  /**
+   * Full-text over `books.title`, by index or by scan. See CONTRACT.md.
+   *
+   * `body.text` goes across whole. Splitting it here would be a fourth
+   * tokenizer beside the server's, and a client that split differently finds
+   * fewer rows than the table holds with nothing anywhere reporting it.
+   */
+  async search(
+    session: Session,
+    body: { text?: string; path?: string; limit?: number },
+  ): Promise<unknown> {
+    let hint: AccessHint;
+    switch (body.path) {
+      case "index":
+        hint = usingIndex("by_title_text");
+        break;
+      case "scan":
+        hint = usingTableScan();
+        break;
+      default:
+        throw new Error(`no such access path: ${body.path}`);
+    }
+
+    const query: Query = {
+      table: "books",
+      filter: contains(BOOK_TITLE, body.text ?? ""),
+      sort: [{ column: BOOK_ID, direction: "asc" }],
+      // Spread rather than `limit: body.limit`, for the reason `window` gives:
+      // `exactOptionalPropertyTypes` makes an explicit `undefined` a different
+      // thing from an absent field.
+      ...(body.limit === undefined ? {} : { limit: body.limit }),
+      hint,
+    };
+
+    // Explained before it is run, because the access path is the only thing
+    // that tells the two requests apart: the rows are identical by
+    // construction and an adapter ignoring `path` would look correct.
+    //
+    // A caller without the `explain` grant gets `null` here rather than a
+    // refusal. EXPLAIN is privileged on purpose — a plan is costed against
+    // statistics covering rows the caller's policy hides — and the demo's
+    // `reader` role does not have it. Refusing the whole search over a
+    // diagnostic would make full-text the one feature a restricted reader
+    // cannot use at all, which is a bigger hole than an absent field. Only
+    // `permission-denied` is swallowed; every other failure is still the
+    // request's failure.
+    let access: string | null = null;
+    try {
+      access = (await session.explain(query)).access;
+    } catch (error) {
+      if (!(error instanceof SlateError) || error.kind !== "permission-denied") throw error;
+    }
+
+    const rows: unknown[] = [];
+    for await (const row of session.query(query)) {
+      rows.push(encodeRow(row));
+    }
+    return { rows, access };
   }
 
   /**
@@ -232,16 +437,20 @@ class Adapter {
   ): Promise<unknown> {
     const parents = body.way === "parents";
     const keys = (body.keys ?? []).map(decode);
+    // The key, from the generated declaration rather than three string
+    // literals. `answers` is the reason: the table a read decodes as is
+    // `sales` one way and `books` the other, and it used to be written out
+    // here and again in `path` below. The wrong one is refused by the schema
+    // check rather than mis-decoded — measured in Go, see the type's own
+    // comment — so this is a convenience, not a fix for a silent bug.
+    const key = SalesForeignKeys["sale_book"]!;
+    const way = parents ? "parents" : "children";
     // `through` is overridable only so the conformance corpus can name a key
     // that does not exist and compare the three refusals, which is the one
     // thing about this call the three could spell differently.
     const groups = await session.related(
-      parents ? "books" : "sales",
-      {
-        on: "sales",
-        through: body.through || "sale_book",
-        way: parents ? "parents" : "children",
-      },
+      answers(key, way),
+      { on: key.child, through: body.through || key.name, way },
       keys,
     );
     // A group per key the caller sent, in the caller's order, including the
@@ -272,9 +481,20 @@ class Adapter {
     body: { keys?: Record<string, unknown>[] },
   ): Promise<unknown> {
     const keys = (body.keys ?? []).map(decode);
+    // Both steps from the generated declaration, so the `table` beside each
+    // is the catalog's answer rather than this file's memory of it. The two
+    // go in opposite directions, which is exactly where `answers` earns its
+    // keep.
+    const up = SalesForeignKeys["sale_book"]!;
+    const down = EditionsForeignKeys["edition_book"]!;
     const steps: Step[] = [
-      { on: "sales", through: "sale_book", way: "parents", table: "books" },
-      { on: "editions", through: "edition_book", way: "children", table: "editions" },
+      { on: up.child, through: up.name, way: "parents", table: answers(up, "parents") },
+      {
+        on: down.child,
+        through: down.name,
+        way: "children",
+        table: answers(down, "children"),
+      },
     ];
     const trees = await session.relatedPath(steps, keys);
     const through = await session.relatedThrough(steps, keys);
@@ -664,18 +884,25 @@ class Adapter {
     // Clean slate. A predicate delete is the tidiest way to say "whatever is
     // left from last time", and it exercises the feature on the way in.
     await session.deleteWhere({ table: "books", filter: mine });
+    // Built through the *generated* encoder rather than as a positional list.
+    // The eight values this replaces were in catalog order with nothing
+    // checking the order or the tags — and `int` and `uint` are both `bigint`
+    // here, so a swapped pair typechecks and is refused by the server. It is
+    // also what stops the encoders being generated, compiled and never called.
     const rows: Value[][] = [];
     for (let n = 0n; n < 4n; n++) {
-      rows.push([
-        uint(first + n),
-        uint(1n),
-        { kind: "string", value: `Predicate ${n}` },
-        { kind: "int", value: 2000n + n },
-        { kind: "float", value: 3 },
-        { kind: "int", value: 1767225600n },
-        vector([0.1, 0.2, 0.3, 0.4]),
-        units(1000n),
-      ]);
+      rows.push(
+        encodeBooks({
+          id: first + n,
+          author_id: 1n,
+          title: `Predicate ${n}`,
+          year: 2000n + n,
+          rating: 3,
+          released: 1767225600n,
+          embedding: [0.1, 0.2, 0.3, 0.4],
+          price: 1000n,
+        }),
+      );
     }
     await session.insert("books", ...rows);
 
@@ -872,7 +1099,7 @@ class Adapter {
    * puts them back, which is the same trick `conditionalDelete` uses.
    */
   async purge(session: Session): Promise<unknown> {
-    const ids = [9401n, 9402n, 9403n];
+    const ids = [8401n, 8402n, 8403n];
     // A purge is **table-wide** — it takes an instant, not a predicate — so it
     // also erases the row the demo seeder retired. Left alone that made this
     // case depend on which adapter ran first: the first purged three rows and
@@ -923,6 +1150,295 @@ class Adapter {
     ]);
     await session.delete("shipments", [uint(603n)]);
     return answer;
+  }
+
+  /**
+   * Puts `restoreId` in the table, retired, and hands back the decoded row.
+   *
+   * Upsert then delete, because a row cannot be created already retired — the
+   * stamp is the server's clock and `delete` is the only path that sets it.
+   * The upsert is also what makes this idempotent now that an upsert at a
+   * retired row's key restores it rather than reporting it missing, which is
+   * the very behaviour these two handlers exist to demonstrate.
+   */
+  private async retireRestoreRow(session: Session): Promise<Shipments> {
+    await session.upsert("shipments", [
+      uint(restoreId),
+      uint(10n),
+      str("pending"),
+      nullValue,
+    ]);
+    await session.delete("shipments", [uint(restoreId)]);
+    const stream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+      includeDeleted: true,
+    });
+    const rows = await stream.collect();
+    if (rows.length !== 1) {
+      throw new Error(`expected one retired shipment, got ${rows.length}`);
+    }
+    return decodeShipments(rows[0]!);
+  }
+
+  /**
+   * Erases this handler's row and puts the seeder's retired one back.
+   *
+   * The same shape `purge` uses, and for the same reason: three adapters run
+   * every case against one database in turn, so a case that leaves a row
+   * behind makes the next adapter's answer depend on the order. A purge is
+   * table-wide, so it takes the seeder's row 603 with it and 603 has to be
+   * re-retired afterwards.
+   */
+  private async leaveShipmentsAsFound(session: Session): Promise<void> {
+    await session.delete("shipments", [uint(restoreId)]);
+    await session.purgeDeleted(
+      "shipments",
+      BigInt(Math.floor(Date.now() / 1000)) + 3600n,
+    );
+    await session.upsert("shipments", [
+      uint(603n),
+      uint(13n),
+      str("pending"),
+      nullValue,
+    ]);
+    await session.delete("shipments", [uint(603n)]);
+  }
+
+  /**
+   * Brings a retired row back, through the generated helper.
+   *
+   * A retired row used to be writable by nobody at any privilege, so the only
+   * thing that could happen to one was being erased. This is the other half of
+   * a retention window, and the reason it is a conformance case is that all
+   * three clients now generate a `restored` helper and all three have to agree
+   * about what it produces and what the server does with it.
+   *
+   * The answer carries the row's state at three points rather than just the
+   * last, because "it is live now" is also what a handler that quietly
+   * re-inserted a fresh row would report.
+   */
+  async restore(session: Session): Promise<unknown> {
+    const retired = await this.retireRestoreRow(session);
+
+    // An ordinary read, with no `includeDeleted`: the row is invisible.
+    const hiddenStream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+    });
+    const hidden = (await hiddenStream.collect()).map((row) =>
+      Number((row[0] as { value: bigint }).value),
+    );
+
+    // The restore. `restoredShipments` is generated from the catalog — it
+    // clears whichever column the catalog names as the stamp — and the update
+    // is ordinary, because there is no restore verb.
+    await session.update("shipments", encodeShipments(restoredShipments(retired)));
+
+    const backStream = await session.query({
+      table: "shipments",
+      filter: eq(0, uint(restoreId)),
+    });
+    const back = (await backStream.collect()).map((row) => decodeShipments(row));
+    const answer = {
+      retired_before: isRetiredShipments(retired),
+      hidden_while_retired: hidden,
+      visible_after: back.map((row) => Number(row.id)),
+      retired_after: back.map((row) => isRetiredShipments(row)),
+      // Every other column carried through, which is what separates a restore
+      // from an insert of a fresh row at the same key.
+      status_after: back.map((row) => row.status),
+      book_id_after: back.map((row) => Number(row.book_id)),
+    };
+    await this.leaveShipmentsAsFound(session);
+    return answer;
+  }
+
+  /**
+   * Writes the retired row back exactly as `includeDeleted` gave it.
+   *
+   * The mistake anybody restoring by hand makes first, and the reason the
+   * refusal is its own error rather than a row-level-security one: the
+   * soft-delete column is the server's to write. Here so that the three
+   * clients are compared on the reason token and the message, not only on the
+   * happy path.
+   *
+   * The write is refused, so the row is left retired and the cleanup is the
+   * same one the happy path does.
+   */
+  async restoreUnchanged(session: Session): Promise<unknown> {
+    const retired = await this.retireRestoreRow(session);
+    try {
+      await session.update("shipments", encodeShipments(retired));
+    } finally {
+      await this.leaveShipmentsAsFound(session);
+    }
+    // Reached only if the server stopped refusing, which is a disagreement
+    // worth failing loudly on rather than reporting as an answer.
+    throw new Error("the server accepted a caller-supplied deleted_at");
+  }
+
+  /**
+   * Sends two shipments an independent batch will refuse, one for two reasons
+   * and one for a single reason.
+   *
+   * The gap this closes: a batch reports each failure as *data* inside a
+   * successful response, so there are no trailers and no
+   * `grpc-status-details-bin`. A caller submitting a form as a batch got the
+   * reason token and the prose and nothing to put beside a field. The server
+   * now carries the same blob in the message body.
+   *
+   * Both rows are refused, so nothing is written and there is nothing to undo
+   * — and the two refusals differ, which is what makes the case say more than
+   * "a batch can fail": 9498 breaks `status_known` and `id_is_seeded`, 9497
+   * breaks only `id_is_seeded`, and an adapter reporting one list for both
+   * would be caught here rather than looking plausible.
+   */
+  async badBatch(session: Session): Promise<unknown> {
+    const result = await session.batch({
+      atomicity: "independent",
+      operations: [
+        {
+          kind: "insert",
+          table: "shipments",
+          rows: [[uint(9498n), uint(10n), str("teleported"), nullValue]],
+        },
+        {
+          kind: "insert",
+          table: "shipments",
+          rows: [[uint(9497n), uint(10n), str("pending"), nullValue]],
+        },
+      ],
+    });
+    return {
+      outcomes: result.outcomes.map((one) => {
+        if (!one.error) {
+          // Reached only if the server stopped enforcing a check, which is a
+          // disagreement worth failing loudly on.
+          throw new Error("the server accepted a row two checks refuse");
+        }
+        return {
+          kind: one.error.kind,
+          reason: one.error.reason,
+          violations: one.error.violations.map((violation) => ({
+            check: violation.check,
+            column: violation.column,
+          })),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Reads two rows and decodes them with the *generated* decoders.
+   *
+   * The gap this closes, recorded when the decoders were first executed: every
+   * test of them builds values by hand, so all three suites agree with their
+   * own idea of what the server sends. A value arriving as `int` where the
+   * schema says `uint` would pass every one of them and fail here — the only
+   * failure the decoders exist to catch that a hand-built row cannot show.
+   *
+   * It is also the first thing that *calls* a generated decoder outside a
+   * test. They were generated, compiled, typechecked and run against fixtures,
+   * and no code path used one.
+   *
+   * `books` 10 covers uint, string, int, decimal and vector; `shipments` 600
+   * covers the nullable column and the enumerated one. `rating` is left out on
+   * purpose: a float's spelling is the one thing three languages will not
+   * agree on without a shared formatter, the corpus pins it elsewhere, and
+   * this case is about *decoding* rather than rendering.
+   */
+  async typed(session: Session): Promise<unknown> {
+    const bookRow = await session.get("books", [uint(10n)]);
+    if (!bookRow) throw new Error("the seeded book is not there");
+    const book = decodeBooks(bookRow);
+
+    const shipmentRow = await session.get("shipments", [uint(600n)]);
+    if (!shipmentRow) throw new Error("the seeded shipment is not there");
+    const shipment = decodeShipments(shipmentRow);
+
+    // The other three tables, added because two of five decoders having a live
+    // row meant "the decoders agree with the server" held for the two somebody
+    // picked. They carry no value *shape* the first two do not — their point is
+    // the column list, checked against the real catalog rather than a fixture
+    // written from it.
+    const authorRow = await session.get("authors", [uint(1n)]);
+    if (!authorRow) throw new Error("the seeded author is not there");
+    const author = decodeAuthors(authorRow);
+
+    const saleRow = await session.get("sales", [uint(100n)]);
+    if (!saleRow) throw new Error("the seeded sale is not there");
+    const sale = decodeSales(saleRow);
+
+    const editionRow = await session.get("editions", [uint(500n)]);
+    if (!editionRow) throw new Error("the seeded edition is not there");
+    const edition = decodeEditions(editionRow);
+
+    // Every integer as a decimal string, because these are `bigint` here and
+    // JSON numbers are doubles. The demo's other handlers agree.
+    return {
+      book: {
+        id: String(book.id),
+        author_id: String(book.author_id),
+        title: book.title,
+        year: String(book.year),
+        // A decimal is a count of the smallest unit; the scale lives in the
+        // schema and the row type does not know it.
+        price: String(book.price),
+        dimensions: book.embedding.length,
+      },
+      shipment: {
+        id: String(shipment.id),
+        book_id: String(shipment.book_id),
+        status: shipment.status,
+        deleted_at: shipment.deleted_at === null ? "null" : String(shipment.deleted_at),
+        // Through the generated accessor; see the Go adapter for why.
+        retired: isRetiredShipments(shipment),
+      },
+      author: {
+        id: String(author.id),
+        // `name` and `country` are both strings and adjacent, so a decoder one
+        // ordinal out would read a plausible value. The seeded values differ,
+        // which is what makes that visible here.
+        name: author.name,
+        country: author.country,
+        born: String(author.born),
+      },
+      sale: {
+        id: String(sale.id),
+        book_id: String(sale.book_id),
+        units: String(sale.units),
+      },
+      edition: {
+        id: String(edition.id),
+        book_id: String(edition.book_id),
+        format: edition.format,
+      },
+    };
+  }
+
+  /**
+   * Writes a shipment that breaks two of its table's checks at once.
+   *
+   * Two, not one, and that is the point: `violations` is a *list*, decoded by
+   * counting up from a count, and reading one failure is different code from
+   * reading several. `"teleported"` breaks `status_known` and `id` 9499 breaks
+   * `id_is_seeded`, so the refusal carries both — in the order `head.toml`
+   * declares them, which is not the order the row breaks them in.
+   *
+   * The row is never written, so there is nothing to clean up — the one
+   * convenience a refusal case has over `purge` above.
+   */
+  async badStatus(session: Session): Promise<unknown> {
+    await session.upsert("shipments", [
+      uint(9499n),
+      uint(10n),
+      str("teleported"),
+      nullValue,
+    ]);
+    // Reached only if the server stopped enforcing the check, which is a
+    // disagreement worth failing loudly on rather than reporting as an answer.
+    throw new Error("the server accepted a status no CHECK admits");
   }
 
   async conditionalDelete(
@@ -997,6 +1513,8 @@ async function main(): Promise<void> {
   const routes: Record<string, (s: Session, b: never) => Promise<unknown>> = {
     "/api/meta": () => adapter.meta(),
     "/api/query": (s, b) => adapter.query(s, b),
+    "/api/window": (s, b) => adapter.window(s, b),
+    "/api/search": (s, b) => adapter.search(s, b),
     "/api/join": (s, b) => adapter.join(s, b),
     "/api/aggregate": (s, b) => adapter.aggregate(s, b),
     "/api/explain": (s, b) => adapter.explain(s, b),
@@ -1011,6 +1529,11 @@ async function main(): Promise<void> {
     "/api/conditional-update": (s, b) => adapter.conditionalUpdate(s, b),
     "/api/conditional-delete": (s, b) => adapter.conditionalDelete(s, b),
     "/api/purge": (s) => adapter.purge(s),
+    "/api/restore": (s) => adapter.restore(s),
+    "/api/restore-unchanged": (s) => adapter.restoreUnchanged(s),
+    "/api/bad-status": (s) => adapter.badStatus(s),
+    "/api/typed": (s) => adapter.typed(s),
+    "/api/bad-batch": (s) => adapter.badBatch(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
   };
 
@@ -1050,10 +1573,31 @@ async function main(): Promise<void> {
             // client that silently stopped decoding the details blob would
             // otherwise report the same body as one that decoded it and found
             // nothing.
+            // `violations` is the same argument one level down. The token
+            // says *that* a row broke a check; this says which ones, and it
+            // is the part each client decodes by hand out of
+            // `ErrorInfo.metadata`. Three hand-written decoders is exactly
+            // the shape of thing that drifts, and each client's unit tests
+            // decode a captured fixture — which proves each agrees with a
+            // recording, not that they agree with each other against a live
+            // server. This is where that is checked. Always present, `[]`
+            // included, for the reason `reason` is.
+            //
+            // Spread into fresh objects rather than passed through, so the
+            // JSON is this adapter's shape and not one client's: Python
+            // spells an absent column `None` and this one spells it `""`,
+            // which is each language's own idiom and not a disagreement
+            // about what the server said. The flattening is what `kindName`
+            // already does for status codes.
             error: {
               kind: kindName(error),
               message: error.message.replace(/^[a-z-]+: /, ""),
               reason: error.reason,
+              violations: error.violations.map((one) => ({
+                check: one.check,
+                column: one.column,
+                message: one.message,
+              })),
             },
           });
           return;

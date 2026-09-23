@@ -21,7 +21,30 @@ use slate_tuple::{
 use uuid::Uuid;
 
 /// Generate a value together with the type tag needed to decode it.
+///
+/// An array is drawn as often as any single element kind, from
+/// [`any_element`]. That is what puts arrays through *every* property in this
+/// file rather than through hand-picked cases: `docs/arrays.md` argued
+/// shorter-is-less from five examples it chose, all of them `I64`, compared
+/// against a stand-in that modelled the integer encoding rather than calling
+/// it. `byte_order_matches_value_order` is the oracle that argument wanted —
+/// it compares real encodings against `Value`'s own order, over heterogeneous
+/// elements and in both directions.
 fn any_value() -> impl Strategy<Value = Value> {
+    prop_oneof![
+        // Uniform across ten outcomes: nine element kinds sharing weight 9,
+        // and the array taking the tenth.
+        9 => any_element(),
+        1 => proptest::collection::vec(any_element(), 0..5).prop_map(Value::Array),
+    ]
+}
+
+/// Everything an array may contain, which is everything but another array.
+///
+/// Nesting is refused by the decoder — `ValueType::Array` cannot name an inner
+/// element type, so a nested array is a value no column can describe. Drawing
+/// one here would generate a value this crate declines to round-trip.
+fn any_element() -> impl Strategy<Value = Value> {
     prop_oneof![
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
@@ -280,6 +303,9 @@ fn cross_type_order_is_the_documented_rank() {
         Value::Uuid(Uuid::nil()),
         Value::Vector(Vec::new()),
         Value::Vector(vec![f32::NEG_INFINITY]),
+        Value::Array(Vec::new()),
+        Value::Array(vec![Value::Null]),
+        Value::Array(vec![Value::I64(0)]),
     ];
     for pair in ascending.windows(2) {
         let (lo, hi) = (&pair[0], &pair[1]);
@@ -289,6 +315,103 @@ fn cross_type_order_is_the_documented_rank() {
             "encoding of {lo:?} should sort below {hi:?}"
         );
     }
+}
+
+/// `any_value` draws every `ValueType`, held to the enum rather than to a list.
+///
+/// The properties above are only as wide as this generator, and a generator
+/// that quietly stops covering a type turns a suite green by covering less.
+/// That is not hypothetical here: the same defect in `untrusted.rs` meant the
+/// adversarial decoder suite never once produced a `Decimal`, for as long as
+/// `Decimal` had existed.
+///
+/// Sampled rather than introspected, because a `prop_oneof!` cannot be asked
+/// what it can produce. 2000 draws over 10 equally weighted outcomes leaves a
+/// miss at 10·(9/10)^2000 ≈ 10^-91, and `TestRunner::deterministic` seeds it,
+/// so this is a check rather than a flake.
+#[test]
+fn any_value_draws_every_type() {
+    use proptest::strategy::ValueTree as _;
+    use proptest::test_runner::TestRunner;
+
+    let strategy = any_value();
+    let mut runner = TestRunner::deterministic();
+    let mut seen: std::collections::BTreeSet<ValueType> = std::collections::BTreeSet::new();
+    let mut nulls = 0;
+    for _ in 0..2000 {
+        match strategy.new_tree(&mut runner).expect("a value").current() {
+            Value::Null => nulls += 1,
+            other => {
+                seen.insert(other.value_type().expect("a typed value has a type"));
+            }
+        }
+    }
+
+    let wanted: std::collections::BTreeSet<ValueType> = ValueType::ALL.iter().copied().collect();
+    assert_eq!(
+        seen, wanted,
+        "any_value and ValueType::ALL disagree; every property in this file \
+         is only as wide as this generator"
+    );
+    // `Null` has no `ValueType`, so the set comparison cannot see it.
+    assert!(nulls > 0, "any_value stopped generating Null");
+}
+
+/// The two array orderings a plausible wrong encoding gets wrong.
+///
+/// `docs/arrays.md` argued both from a stand-in that *modelled* the integer
+/// encoding rather than calling it, which is an argument about the model. This
+/// runs them through the real encoder. `byte_order_matches_value_order` covers
+/// the space; these two name the cases and say which mistake each one catches,
+/// so a future change that breaks one gets told what it broke.
+#[test]
+fn array_ordering_regressions() {
+    let of = |ns: &[i64]| Value::Array(ns.iter().copied().map(Value::I64).collect());
+    let enc = |v: &Value| encode(core::slice::from_ref(v));
+
+    // A length prefix gets this one backwards: one element is fewer than two,
+    // so `[2]` would sort first, before any element was compared.
+    assert!(of(&[1, 2]) < of(&[2]), "premise");
+    assert!(
+        enc(&of(&[1, 2])) < enc(&of(&[2])),
+        "a length-prefixed array would sort [2] first"
+    );
+
+    // A terminator that is not below every element tag gets this one wrong:
+    // `[0]` reaches its terminator where `[0, 1]` has the tag of a second
+    // element, so the terminator has to be the smaller byte. `NUL` is 0x00 and
+    // the lowest tag is NULL at 0x01.
+    assert!(of(&[0]) < of(&[0, 1]), "premise");
+    assert!(
+        enc(&of(&[0])) < enc(&of(&[0, 1])),
+        "the array terminator must sort below every element tag"
+    );
+
+    // And the whole ladder, including the empty array, which is the shortest
+    // prefix there is.
+    let ladder = [of(&[]), of(&[1]), of(&[1, 2]), of(&[2]), of(&[2, 0])];
+    for pair in ladder.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "{:?} should sort below {:?}",
+            pair[0],
+            pair[1]
+        );
+        assert!(
+            enc(&pair[0]) < enc(&pair[1]),
+            "encoding of {:?} should sort below {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+
+    // Heterogeneous elements, which the note explicitly did not cover: the
+    // schema makes an array homogeneous, but a hostile encoding need not, and
+    // element-wise comparison has to inherit the cross-type order either way.
+    let mixed_lo = Value::Array(vec![Value::Bool(true), Value::I64(5)]);
+    let mixed_hi = Value::Array(vec![Value::Str("a".into()), Value::I64(0)]);
+    assert!(mixed_lo < mixed_hi, "premise: bool ranks below string");
+    assert!(enc(&mixed_lo) < enc(&mixed_hi));
 }
 
 #[test]

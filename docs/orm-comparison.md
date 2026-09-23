@@ -54,9 +54,41 @@ seven ORMs above, `slate-orm` is at or ahead of the field on:
   drifted from the catalog is refused rather than answered from the wrong
   column.
 
-## Missing: the two that matter most
+## ~~Missing: the two that matter most~~ — both built
 
-### 1. Predicate writes — `UPDATE … WHERE` and `DELETE … WHERE`
+> **Both closed, and this section is kept rather than deleted.** The two items
+> below were the audit's headline gaps and are the P1 and P2 of the plan at the
+> end of this file, which marks both **built**. The top of the document went on
+> saying they were missing — so a reader who stopped at the section titled
+> "the two that matter most" was told the product lacks its own predicate
+> writes and its own cross-language relations.
+>
+> The greps each claim names now return the opposite of what the claim says,
+> which is exactly the instruction this file's preamble gives: *"the grep that
+> established each one is named so the next reader can re-run it rather than
+> trust this file — which will go stale, and this paragraph is the instruction
+> for what to do when it has."* Re-run, and the evidence is below each heading.
+>
+> The original text is struck through rather than removed, because what a
+> project judged its two worst gaps — and then closed — is worth more to a
+> reader than a file that has never admitted to one.
+
+### ~~1. Predicate writes — `UPDATE … WHERE` and `DELETE … WHERE`~~ — built
+
+**Now:** `RecordTransaction::delete_where` and `update_where` in
+`crates/slate-kernel/src/record.rs`, `DeleteWhere` and `UpdateWhere` on the
+wire, and all three clients — `delete_where`/`update_where` in Python and
+TypeScript, `predicate_write.go` in Go, and both inside a batch. `update_where`
+takes `(Ordinal, Scalar)` assignments evaluated against the row as it was read,
+so `views = views + 1` is one write rather than the read-modify-write the text
+below complains about. Both take an `at_most` ceiling and refuse past it rather
+than running away. See **P1** at the end of this file.
+
+`grep -rn "fn delete_many\|delete_where" crates/` — the grep the text below
+cites as returning nothing — now returns the kernel method, its callers and its
+tests.
+
+Struck through, original kept:
 
 > **Since this audit was written, this is built in the kernel and the record
 > layer.** The description below is what was found, kept because the reasoning
@@ -88,7 +120,18 @@ policy predicate, and write — inside one transaction, with index maintenance
 per row. That is kernel work, not a convenience wrapper, and doing it in a
 wrapper is exactly the non-atomic version we already have.
 
-### 2. Relations do not cross the wire
+### ~~2. Relations do not cross the wire~~ — built
+
+**Now:** a `Related` RPC in the proto, `related()` in the Python and TypeScript
+clients and `related.go` in Go, plus `through` and nested loading (**N1**). The
+batched load is reachable from all four languages, not only Rust. See **P2**
+and **P4** at the end of this file.
+
+`grep -cin "relat\|preload\|include"` over the proto — cited below as
+returning 1 — now returns the `Related` request, response and relation
+messages.
+
+Struck through, original kept:
 
 **Evidence.** `#[derive(Record)]` accepts `has_many` and `belongs_to` and emits
 a `Related` impl (`crates/slate-derive/src/lib.rs:629`). The proto mentions
@@ -107,18 +150,18 @@ then did not ship it to the three audiences most likely to need it.
 
 | Gap | Who has it | Evidence it is absent here |
 | --- | --- | --- |
-| Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | `slate-kernel/src/migrate.rs` plans and applies a diff but nothing *writes* the target catalog for you |
+| Generated migrations from a schema diff | Drizzle Kit, Prisma Migrate, Alembic autogenerate | **Blocked, not unbuilt — and the row used to imply otherwise.** `migrate.rs` plans and applies a diff, and nothing writes the target catalog for you *because the store does not keep one*. `TableState` — the whole of what a table's meta record holds — is a schema version, a `u64` FNV-1a **fingerprint** and the list of built index ids. There are no column names, no types and no primary key anywhere in the keyspace, and `decode_state` takes a `&TableDef` as an argument precisely because its own bytes are not self-describing. A fingerprint is one-way by construction; you cannot generate a catalog from it. <br><br>The second reading does not apply either: Drizzle and Prisma generate a migration *file* from two schemas, and here there is no file — the catalog **is** the artifact and the diff is computed at startup, which `--plan` already prints. <br><br>So the work this row names is really *"persist the schema, not only its fingerprint"* — a storage-format change with its own migration — and only then a generator. That is a different and much larger item than "write the generator", which is what the row said for as long as it stood. <br><br>**Now designed**, in [`persisting-the-schema.md`](persisting-the-schema.md): store exactly the fingerprint's inputs plus column names (so a diff can say `email` rather than "column 3"), and nothing the fingerprint deliberately excludes, or the diff reports changes that are not migrations; read format 1 and 2 and rewrite lazily per table, so there is no flag day and "I do not know this table's previous shape" is a permanent answer rather than a transition; one record, not two. And the first deliverable is **not** the generator — it is the refusal saying `column 2 `email` was string and is now u64` instead of two hex numbers, which exercises the whole persistence where being wrong is cheapest. The note also questions this row's premise: a generator emits a migration *file*, and there is none here. <br><br>**The storage half is now built**, which unblocks the rest of this row: `TableState` carries a `StoredSchema`, records are written as format 2 and read as either, the record of a table that has nothing else to do is upgraded by a visible `Step::RecordSchema`, and a layout refusal names the column — `column 1 \`email\` was string and is now u64`. What remains is the question the note raises rather than a missing capability: this store has no migration file for a generator to emit, so "generated migrations" here most plausibly means `--plan` naming the column-level changes, which it now can. Somebody should re-read what Drizzle Kit and Alembic actually produce and decide whether that is the same thing. <br><br>**And the schema buys a capability, not only a better message**: an *additive* change is now applied rather than refused. `evolution()` tells an appended column from a retyped one — the distinction a single fingerprint cannot make, and which this table's own migration row used to record as the sharpest limitation of the hash — so adding a nullable column is a `Step::WidenSchema` that writes one key, reads no row and rewrites none. A retype, a narrowing, and an append declared at a version rows were already written at are all still refused, each by name. What a competitor's `ALTER TABLE ... ADD COLUMN` does at the table level, this does at the metadata level and in constant time, because the row format already carries the version it was written at |
 | ~~Generated *types* from the catalog~~ | Drizzle, Prisma | **Built** — `scripts/codegen.py` generates both the schema declaration and a typed row per table for all three clients, and CI diffs them. What is still hand-written is the *call*: a query answers `Value`s and the caller passes them to the generated decoder |
-| Validations / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | `CHECK` is a declarative constraint in the catalog and covers part of this; what it cannot do is name a column, report more than one failure, or reach a client. Designed out in [`validation.md`](validation.md), which recommends refusing hooks |
+| ~~Validations~~ / changesets / lifecycle hooks | Ecto, ActiveRecord, SQLAlchemy events | **Half built.** `CHECK` names a column and carries a message (`CheckDef::column`, `CheckDef::message`), `SchemaError::CheckViolation` reports **every** failing check rather than the first, and the whole list reaches all three clients as a typed failure with tests in each (`test_details.py`, `details_test.go`, `details.test.ts`). The three things this row said `CHECK` could not do, it does. What is still absent is *hooks* — before/after callbacks running caller code on a write — and those are designed out in [`validation.md`](validation.md) rather than missing |
 | ~~Automatic `created_at` / `updated_at`~~ | ActiveRecord, Ecto, Prisma | **Built** — `#[record(created_at)]`, or `managed = "created_at"` in the daemon's TOML; see below |
-| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. Kernel and daemon config only, not on the wire; see below |
-| Window functions | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` |
-| CTEs / recursive queries | SQLAlchemy, Drizzle, Diesel | no plan node |
-| Set operations (`UNION`/`INTERSECT`/`EXCEPT`) | all | refused by name in the SQL front end; no spec node |
-| Views | Drizzle, SQLAlchemy | none |
-| Array / list column type | Drizzle, SQLAlchemy, Ecto | `ValueType` has no `Array` |
-| Full-text search | Drizzle, SQLAlchemy | none; `LIKE`/`ILIKE`/regex only |
-| Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | `slate-serverd --seed` loads a static TOML fixture; nothing *generates* rows, and no client or the Rust library can seed at all — see below |
+| ~~Soft delete as a first-class concept~~ | ActiveRecord (gems), Prisma (pattern) | **Built** — `soft_delete = "deleted_at"` on a table; `delete` stamps and every read hides. `include_deleted`, `purge_deleted` and restoring a retired row are all on the wire behind `read_deleted`. See below |
+| ~~Window functions~~ **built, on the wire, and in all three clients** | SQLAlchemy, Drizzle, Diesel | aggregates are `Count, CountColumn, Min, Max, Sum, Avg, CountDistinct` — **and this is a new operator, not new variants.** `Grouper` holds `HashMap<encoded_key, (Vec<Value>, Accumulators)>`: it folds each row into its group's accumulators and **discards the row**. A window function emits one output row per *input* row, with a value computed over the partition — the opposite cardinality. So it cannot be added to the aggregate list; it needs an operator that preserves rows, which also changes what `max_groups` and `max_sort_rows` are bounding. <br><br>**That operator is built**, in `slate-kernel/src/window.rs`, and the row's prediction held in both halves. It preserves rows: `Query::window` appends one value per row after the computed values, at an ordinal everything downstream addresses the ordinary way. And the ceilings did change — a fourth one, `max_window_rows`, because the existing three do not describe it: an `ORDER BY` with a `LIMIT` sorts with a bounded heap, and a window has no such escape, since it is computed *before* the limit applies. `ROW_NUMBER() OVER (…) … LIMIT 10` must number every row before it can know which ten. <br><br>`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and any ordinary aggregate `OVER` a partition, with SQL's own frame rule: whole-partition without an `ORDER BY`, running through the current row's **peer group** with one. That peer half is `RANGE` rather than `ROWS` and is where a plausible implementation goes wrong silently — rows tied on the order column all see the value that includes all of them. Explicit frames (`ROWS BETWEEN 3 PRECEDING …`) are not offered, and the refusals are named: an unordered rank, a running `COUNT(DISTINCT)`, an offset of zero, and a window over a keyset page. <br><br>**And it crosses the wire.** `Query.window` carries a `Window` beside the aggregates, a window's value comes back in `Row.windowed` — a third list, so a client does no ordinal arithmetic and adding a column to a table moves nothing — and `ColumnRef.windowed` names one from a `SortKey` and from nowhere else, which is SQL's own rule: a window is computed after `WHERE` and before `ORDER BY`, so a filter cannot see one. A window on a join input, on a grouped input, or on a keyset page is refused by name, as is a function carrying a field it does not use. The round-trip property test generates windows and the daemon is checked end to end against the `Aggregate` RPC as an oracle. <br><br>**And all three SDKs can ask for one.** Python spells it `Window.row_number().over(partition=[q.c.kind], order=[asc(q.c.id)])` and reads the value back with `row.windowed(0)`; Go and TypeScript the same shape in their own idiom, each with the values in their own list — `RowStream.Windowed()`, `row.windowed`. Two things the clients had to get right that the kernel could not check for them: Go sends **only the field the function uses**, because a zero-valued `Aggregate` there is a real `COUNT(*)` and a rank carrying one is refused by name rather than ignored; and a window value has no declared type, so a bare `1` in a comparison is refused before the request is built. <br><br>**And the workbench's SQL front end writes it.** `ROW_NUMBER() OVER (PARTITION BY author_id ORDER BY id)` parses, lowers onto `QuerySpec.window`, and comes back under a header naming the call. The interesting part is not the grammar: a window lands at `columns + compute.len() + i` and `compute.len()` is not final until the whole statement is read — `ORDER BY round(year)` registers a computed column *after* the select list has been walked — so a window reference is parked and rewritten once, at the end. Getting that wrong does not fail; it reads the neighbouring column under the window's header. What the front end still refuses is a window over a join or beside a `GROUP BY`, and a call inside `OVER (…)`; all three are refused by name, and the join one gives the kernel's own reason |
+| CTEs / recursive queries — **answered: two thirds Refused, one third the views row** | SQLAlchemy, Drizzle, Diesel | `WITH` covers three constructs with three answers, and calling all of them Missing was wrong about two. **Recursive:** Refused — a fixpoint is a loop whose trip count is in the data, and a statement compiles to one plan with nothing to iterate; it is also the one shape whose cost no per-request ceiling describes. **Referenced more than once:** Refused for the `UNION` reason exactly — computing it once and reading it twice is a second plan in the same statement, and delivering the shape without the compute-once property would be a performance trap dressed as a feature. **Non-recursive, referenced once:** Missing, and **it is the same mechanism as views** — it inlines into the outer spec before planning, which is word for word what the views row says has to be structural, and for the same security reason: give the CTE a synthetic `TableId` so `table_by_name` finds it and every grant and policy keys on that id instead of the base table's. Worked through in [`ctes.md`](ctes.md); the parser now refuses `WITH` by name with the split rather than "found `WITH`" |
+| Set operations (`UNION`/`INTERSECT`/`EXCEPT`) | all | **Refused, and filed in the wrong section for as long as this row stood.** The SQL front end refuses them by name *with the reasoning*, which is this file's own definition of Refused rather than Missing: "a statement compiles to one query spec — one table, one filter set, one plan — and the spec has no set operator". For `UNION` it adds the part that matters: combining two answers is easy, and "it is the deduplication across them that nothing here can do, because each statement is planned and executed on its own." The reasoning was written in an error message instead of here, which is why it read as an omission |
+| Views — **designed, not built** | Drizzle, SQLAlchemy | none yet, and [`views.md`](views.md) settles the shape before any code. A view is a name bound to a `QuerySpec`, **not** a `TableDef`: give it a `TableId` and `row_filter_with` keys RLS and every policy on the view's id instead of the base table's, which is not an error but `Expr::True` over the base rows. Substituting before planning means `security.rs` needs no new case at all. **The second half the row never stated: a view here cannot be a privilege boundary.** Postgres views run with their owner's rights; `Grant { role, table, actions }` has no owner to run as, so a caller needs the grant on every base table — and having it could read the columns the view leaves out. "Give the analysts a narrowed view" is *the* reason people reach for views and it does not work here; column-level grants are the feature that would. Writes through a view are refused. [`ctes.md`](ctes.md) shows a single-reference CTE is the same expansion, so the two rows are one piece of work. `CREATE` is now refused by name saying so. Grants and policies are keyed on `TableId` (`Grant { table: TableId }`, `Policy { table: TableId }`), and a query resolves its table by name through `Catalog::table_by_name`. Give a view its own `TableId` so that lookup finds it, and every grant and policy check keys on the *view's* id — a caller granted the view reads the base table's rows with the base table's policy never consulted. The safe shape is that a view expands to its underlying spec *before* planning, so the base table's id is what reaches the policy, and that has to be structural rather than a convention somebody remembers |
+| ~~Array / list column type~~ **built, generated, and writable in a predicate** | Drizzle, SQLAlchemy, Ecto | `ValueType::Array` exists, `array_column(name, element)` declares one, and the kernel stores, reads, compares and sorts arrays — element-wise with a shorter list first, from a terminated encoding rather than a length prefix, which is the one decision a serialisation format would get backwards. Decided in [`arrays.md`](arrays.md) and built in `crates/slate-kernel/tests/arrays.rs`. The wire carries one, `slate-serverd` declares one as `type = "array", element = "str"`, and Go, Python and TypeScript each send and receive one — proved against a real node in each. **Both are now closed.** `scripts/codegen.py` emits an array column in all three languages, carrying the element type into the declaration the fingerprint hashes and checking every element on the way in and out — Go and TypeScript hold tagged elements, so a cast without that check is a lie the compiler cannot see. The predicate parser takes `tags = ['a', 'b']`, with the column deciding the element type and with nesting, a `NULL` element and a column reference inside a list each refused for a reason the kernel already had. The demo's catalog carries a `posts` table with two array columns of different element types so that the generated decoders and encoders are *run* in all three languages, not only compiled — the gap this repository closed as CG1 and G5 for other types, and one a new feature would otherwise have quietly reopened. An array is still refused in a key and an index, because the question asked of one is *containment* — one index entry per element, the same new cardinality full-text search needs |
+| ~~Full-text search~~ **built, on the wire, and in all three clients** | Drizzle, SQLAlchemy | the row was right about where the work was: not a tokenizer, but that every index here wrote *one entry per row*. `entry_for` returned a single `IndexEntry` and the write path, the unique-slot check, the delete path and the planner all assumed it. **That is what changed.** `IndexDef::key_sets` returns one key list for an ordinary index and one per term for a text one, and it is the only place the cardinality is decided; the write path now compares two *sets* of keys, so editing one word of a paragraph rewrites two of its hundred entries rather than all of them. The key type is unchanged — a term is a `Str` and so is the column — so nothing that reads an entry back needed touching. <br><br>`IndexBuilder::text()` declares one, `Expr::contains(column, text)` searches it, and the search text goes through **the same tokenizer the write path runs**, which is the one property that cannot be got wrong quietly: a caller splitting their own search finds fewer rows than the table holds and only a comparison against a scan says so. Conjunctive, null is Unknown, an empty search matches nothing, and no stemming, stop words or normalisation — each refused with its reason in [`full-text.md`](full-text.md). Four declarations are refused: unique, two columns, a non-string column, an expression. <br><br>**And the costing is the finding.** An inverted index is ranged on one term and costed the ordinary way — at which point the planner prefers a table scan, because a non-covering index here is worth taking only when it returns about one row in 8,000 (`SCAN_ROW_COST / POINT_READ_COST`, both measured). That is true of every secondary index and not of text in particular, and a test asserts the equivalence so a future change that costs the text path specially has to break it deliberately. Of the two things named as able to move it, one has been measured and did not: ascending row reads under one term coalesce *exactly* as an ordinary index's equality does, because an index entry ends in the primary key and both walks ascend. It moved something else — `POINT_READ_COST` was 3.0 on a figure that no longer reproduces anywhere and is now 1.0, which is why the crossover reads one in 8,000 and read one in 24,000 before. A per-term posting count is still open. `using_index` reaches it meanwhile. <br><br>**And it reaches outwards.** `Expr.contains` on the wire carries the search *text* and not a term list, so the server tokenizes with the same function its write path did — four tokenizers would be four chances to split differently and find fewer rows, with no error anywhere. `text = true` declares one in `slate-serverd`'s TOML, and Python, Go and TypeScript each search one against a real node. Each of those tests *hints* onto the index and compares its plan against a table scan's before comparing rows, because at four rows the planner would take the scan and the test would pass with the index deleted — which also closed a three-client asymmetry on the way: Go and TypeScript had no access hint at all until this work, so neither could have reached the index to test it. The SQL front end takes `WHERE title CONTAINS 'the heaven'` — infix, because neither SQL Server's `CONTAINS(col, 'x')` nor Postgres's `@@ to_tsquery('x')` is standard and infix is the shape this grammar already has — over a text index on the workbench's `books`. The demo's web UI has no search box, deliberately: it calls 12 of the adapters' 24 endpoints and windows, chains and nearest-neighbour are conformance-only too — the UI demonstrates the SDK and identity switchers, the conformance runner demonstrates the surface |
+| Factories for seed data | Drizzle, Prisma (seed scripts), ActiveRecord (FactoryBot) | **Half refused, half open.** "No client can seed" is a decision with the reasoning already written, in `seed.rs`: seeding writes as `SecurityContext::superuser`, because the rows must land before the grants they will be read under exist, and the module is explicit that this is "the only reason the word `superuser` appears in this crate… neither reachable from the wire". A client-reachable seed is a superuser write path from the wire, which is exactly what that argument designs out. **Built, in Rust.** `slate_orm::Factory` generates rows from the `TableDef` — types, nullability, defaults, sequenced keys and unique columns, cycled foreign keys — and refuses by name what it cannot guess. The entry point was never missing either: `insert_records` under `SecurityContext::superuser()` is the same call `--seed` makes. `tests/factory.rs` writes a thousand generated rows through a real store; `tests/seeding.rs` is the entry point on its own |
 
 > **Built: automatic timestamps.** `#[record(created_at)]` and
 > `#[record(updated_at)]` on an `i64` field, or `managed = "created_at"` on a
@@ -173,11 +216,57 @@ then did not ship it to the three audiences most likely to need it.
 > already-retired row is a no-op rather than a second stamp — the row is
 > invisible to `delete` for the same reason it is invisible to `get`.
 >
-> Two things it is not. `include_deleted` is a kernel-level flag and is **not
-> on the wire**: "show me the deleted ones" is a privileged read and the
-> protocol has no way to say who may make it, so shipping the flag before that
-> question is answered would put the decision in the caller's hands. And there
-> is no `restore`; un-deleting is an ordinary update through the kernel.
+> **A foreign key asks the opposite question of the two arms.** `CASCADE` does
+> not reach a child that is already retired: that child's own cascade ran when
+> it was retired, and re-stamping it would push its purge deadline out and
+> restart a retention window nobody restarted. `RESTRICT` *does* block on one,
+> for the same reason the referencing search already ignores row-level
+> security — a hidden child is still a child. Letting the parent go would leave
+> a row that still holds its key, is still readable with `include_deleted`, and
+> would violate its own foreign key the moment anybody restored it. The
+> consequence for a deployment: a parent stays undeletable until its retired
+> children are **purged**, not merely retired. Both answers came out of one
+> shared read until a probe found the `RESTRICT` half wrong; see
+> `ledger/2026-09-20-a-child-that-is-still-a-child.md`.
+>
+> `include_deleted` **is** on the wire now, as its own action: `read_deleted`,
+> which neither `read` nor the `all` shorthand implies. It was withheld at
+> first because the protocol had no way to say who may make that read, and the
+> action is the answer to that question rather than a way around it.
+>
+> **Restoring is an ordinary update, and now actually is.** The sentence stood
+> here for a while while being false: an update at a retired row's key was
+> refused as `NotFound` at every privilege including `everything`, while an
+> insert at the same key was refused as `AlreadyExists`, so the row was present
+> to one write and absent to three and nothing could bring it back. The four
+> paths that name a primary key now agree, and the rule that makes them agree is
+> worth stating because it is the whole design:
+>
+> **A write that names a primary key means the row at that key. A write that
+> matches a predicate means the live ones.** So `update`, `upsert`,
+> `update_many` and `upsert_many` reach a retired row and restore it by sending
+> null in the soft-delete column; `insert` still reports the key taken, because
+> succeeding would silently overwrite the row the retention window exists to
+> keep; and `update_where`, `delete_where` and `delete` are untouched — a
+> predicate did not name the row, and re-deleting a retired one is a no-op
+> rather than a contradiction.
+>
+> **It takes `read_deleted`**, the grant `include_deleted` and `purge_deleted`
+> already take, for the reason `purge_deleted` gives about itself: acting on a
+> retired row means knowing it is there. Without it the row behaves exactly as a
+> row a *policy* hides has always behaved on these paths — the key is taken and
+> there is nothing there to update — which looks like a contradiction and is the
+> deliberate answer to a harder question, since the alternative hands a caller
+> the power to overwrite a row they cannot read.
+>
+> The soft-delete column is **not the caller's to write**, on any path. A row
+> carrying a timestamp is refused with `SOFT_DELETE_COLUMN_SUPPLIED` /
+> `InvalidArgument`, naming the column. That is its own error because it is what
+> anyone attempting a restore by hand hits first — read the row with
+> `include_deleted`, edit a field, write it back — and it used to surface as
+> "row-level security forbids writing this row" on tables with no policies at
+> all, which sends the reader to the grants instead of to the one column that is
+> the problem.
 >
 > A check refusing a soft-delete column in the primary key was written and then
 > **removed**: a mutation showed no input could reach it, because the column
@@ -258,11 +347,51 @@ then did not ship it to the three audiences most likely to need it.
 > There is no *factory*: nothing generates a plausible row, sequences an id, or
 > builds a graph of related records, so a fixture of a thousand rows is a
 > thousand lines of TOML somebody wrote. And it is reachable only from the
-> daemon's command line — the Rust library has no seeding helper and neither do
-> the Python, Go or TypeScript clients, so a test suite in any of them writes
-> its fixture with the ordinary write path, which is not wrong and is not a
-> feature either. The row is rewritten rather than removed: something exists,
-> and it is not what the comparison is about.
+> daemon's command line **from a client**; the Python, Go and TypeScript SDKs
+> have no seeding call and by design cannot, because seeding is a superuser
+> write and `seed.rs` designs a superuser write path out of the wire.
+>
+> **The Rust library is the exception, and this note said otherwise.** It has
+> no function *named* seed, which is what the sentence above used to be about,
+> but it has the entry point: `insert_records` under
+> `SecurityContext::superuser()` is what `--seed` itself reduces to once the
+> TOML is parsed, and `crates/slate-orm/tests/seeding.rs` runs it — two rows
+> landing for two owners whose policy would refuse either of them, read back by
+> each owner afterwards. The second test in that file is why the first means
+> anything: the same two rows under an ordinary context are refused, so the
+> superuser step is load-bearing rather than ceremonial. Claiming "no entry
+> point" for a two-line call that the daemon already uses was a gap invented by
+> not looking, which is the failure this table exists to avoid.
+>
+> **And the factory is now built**, which is the half that really was missing.
+> `slate_orm::Factory` takes a `TableDef` and produces `Row`s from it: the
+> table already knows every column's type, whether it is nullable, what its
+> `DEFAULT` is, whether the store writes it, which columns are the key and
+> which are in a unique index, and what the `CHECK` constraints are. The
+> design decisions worth naming here are the ones that were not obvious:
+>
+> - **A value is a function of (seed, column, row index), not a draw from a
+>   stream.** So `rows(1_000)[7]` and `row(7)` are the same row, ten rows are a
+>   prefix of a thousand, and adding a column to the table changes only that
+>   column. Under a stream, every one of those is false.
+> - **Keys and unique columns are sequenced, not drawn**, and their `DEFAULT`
+>   is deliberately ignored: a default cannot serve two rows of a unique
+>   column, and a drawn one collides by birthday long before a fixture gets
+>   large. This is what makes a thousand-row batch insertable, which is the
+>   whole job.
+> - **The soft-delete column is left null by rule**, not by draw. It is
+>   nullable, the ordinary rule fills nullable columns, and a filled one would
+>   mean every seeded row arrives already retired and the fixture reads back
+>   empty — the worst failure available here, because it looks like the seed
+>   did nothing.
+> - **What it will not guess, it refuses by name**: a `CHECK` its rows fail, a
+>   vector column (the dimension is not in the schema), a `bool` in the key.
+>   Each names the column and the `set` or `cycle` call that fixes it, because
+>   the alternative is a `CheckViolation` surfacing from inside a batch insert
+>   with no indication of which row caused it.
+>
+> The row is rewritten rather than removed: the client half stays refused, and
+> that is a decision rather than a gap.
 
 > **Built: "Per-request logging and metrics".** `[observability] request_log`
 > writes a line per call — method, gRPC status, time to the response head — and
@@ -848,10 +977,18 @@ as a named refusal.
 >   and was caught only by the conformance runner. All three clients now have a
 >   test that goes through their error constructor.
 >
-> *Stops at* the token, as written below. Also stops at `NOT_LEADER`: it is a
-> token now, but `slate-leader` stays the discriminator, because a client that
-> reads the trailer and not the blob still follows the redirect and a working
-> mechanism is not worth churning.
+> ~~*Stops at* the token, as written below.~~ **Superseded.** The three clients
+> read the `ErrorInfo.metadata` of a check violation too — `violations`, and
+> `check.N`/`column.N`/`message.N` indexed from zero — because those keys are
+> the one *specified* family in a map whose other keys vary per variant. A
+> refused form gets a typed list rather than a sentence to parse. And a batched
+> refusal gets the same list: `BatchError` carries the whole blob, since a
+> batch has no trailers to put it in. The token is still the only thing read
+> from a failure that is *not* a check violation.
+>
+> Also stops at `NOT_LEADER`: it is a token now, but `slate-leader` stays the
+> discriminator, because a client that reads the trailer and not the blob still
+> follows the redirect and a working mechanism is not worth churning.
 
 All three clients drop `grpc-status-details-bin`, each with a comment saying so.
 The stable reason token therefore reaches a caller only when the failure was
@@ -868,7 +1005,9 @@ now rather than a reason it stays skipped.
 failure, which is the only check that stops one client decoding it differently.
 Mutation: drop the decode, in each, and a named case must fail.
 
-*Stops at.* The token. Not the rest of the details message.
+*Stops at.* The token. Not the rest of the details message. (Superseded — see
+the note above: the check-violation keys are read as well, on the lone path and
+the batched one.)
 
 ### N5 — The demo shows none of the last three features — **built**
 
@@ -1204,7 +1343,7 @@ rather than merely named.
 ## What neither plan does
 
 Neither closes the whole table. Window functions, CTEs, views, arrays,
-full-text search and set operations are all real absences and none of them is
+full-text search and set operations were all real absences and none of them was
 in either six. They are planner and kernel work of a different size, and doing
 any of them before predicate writes and wire relations would have been building
 the interesting thing instead of the needed one. That argument still holds for
@@ -1251,9 +1390,35 @@ declared `WHERE deleted_at IS NULL` stops admitting a row when it is retired,
 so the entry goes and the slot is reusable. Half the original sentence was
 wrong about the mechanism and half was right.
 
-Generated migrations and client codegen are also out of both, and are the two
-table rows most likely to be worth a plan of their own next. Codegen in
-particular would turn `SchemaCheck`'s run-time drift refusal into a
-compile-time one in three languages, which is a bigger and better change than
-anything in the second six — and a bad reason to delay the six edges that are
-already half-built.
+~~Generated migrations are also out of both, and remain the table row most
+likely to be worth a plan of its own next.~~ **They got the plan** —
+[`persisting-the-schema.md`](persisting-the-schema.md) — and the plan's first
+finding was that the row was asking for the wrong thing. The blocker was never
+the generator; it was that the keyspace held a one-way hash of the schema and
+not the schema, so there was nothing to diff against. That is built now, and
+with it an additive change applies instead of being refused. What is left of
+the row is a product question, not a storage one: a generator emits a migration
+*file*, and the catalog here **is** the artifact.
+
+> **Built, and the prediction about it was wrong: client codegen.** This
+> paragraph used to name codegen alongside generated migrations and claim it
+> "would turn `SchemaCheck`'s run-time drift refusal into a compile-time one in
+> three languages". Codegen shipped, and it did neither half of that.
+>
+> It is not compile-time. `scripts/codegen.py --check` regenerates the
+> declarations and diffs them against the committed files in CI; a catalog
+> change nobody regenerated fails that step. None of the three type systems is
+> involved — the generated files mention the fingerprint only in comments, and
+> it is computed from the declaration at run time, as before. Making a type
+> carry it would mean the client's declaration and the server's catalog agreeing
+> at *compile* time, which means having the server at compile time.
+>
+> Nor did it replace the run-time refusal, and it must not: the check exists for
+> a deployed client older than the catalog the running server holds, which is a
+> state no amount of generation at build time can rule out. What codegen added
+> is an *earlier* check for the case where both are built together. Two checks
+> at two moments, not one moved.
+>
+> The word doing the damage was "turn". A prediction shaped as "X becomes Y"
+> reads as a plan to delete Y, and the reason to keep Y was the part the
+> prediction never examined.

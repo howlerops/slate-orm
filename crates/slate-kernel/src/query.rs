@@ -144,6 +144,18 @@ pub struct Query {
     /// addresses it the ordinary way and never has to learn what an expression
     /// is. [`Query::computed`] does that arithmetic.
     pub compute: Vec<crate::scalar::Scalar>,
+    /// Values computed over a partition, one per row, appended after
+    /// [`Query::compute`].
+    ///
+    /// The `i`th appears at ordinal `table.columns().len() + compute.len() +
+    /// i`, which [`Query::windowed`] does. **After** the computed values
+    /// rather than before, because a window may partition by or order on one
+    /// and a computed value may not read a window — the dependency runs one
+    /// way, and the ordinals say so.
+    ///
+    /// Note what this costs: a window holds every selected row, so a query
+    /// carrying one never streams. See [`crate::window`].
+    pub window: Vec<crate::window::Window>,
     /// Resume after this primary key. See [`Query::after`].
     pub after: Option<Vec<Value>>,
     /// Whether this read will be resumed from a cursor. See [`Query::paging`].
@@ -176,6 +188,7 @@ impl Query {
             offset: 0,
             hint: None,
             compute: Vec::new(),
+            window: Vec::new(),
             after: None,
             paging: false,
             include_deleted: false,
@@ -318,6 +331,24 @@ impl Query {
     pub fn computing<I: IntoIterator<Item = crate::scalar::Scalar>>(mut self, values: I) -> Self {
         self.compute = values.into_iter().collect();
         self
+    }
+
+    /// Compute values over a partition. See [`Query::window`].
+    #[must_use]
+    pub fn windowing<I: IntoIterator<Item = crate::window::Window>>(mut self, windows: I) -> Self {
+        self.window = windows.into_iter().collect();
+        self
+    }
+
+    /// Where the `index`th window value lands, given the table and how many
+    /// computed values come before it.
+    ///
+    /// Takes the compute count rather than reading it off a query, for the
+    /// reason [`Query::computed`] is a free function: a caller names the
+    /// ordinal while still building the query that produces it.
+    #[must_use]
+    pub fn windowed(table: &slate_schema::TableDef, computes: usize, index: usize) -> Ordinal {
+        Ordinal(table.columns().len() + computes + index)
     }
 
     /// Where the `index`th computed value lands, given the table it is over.

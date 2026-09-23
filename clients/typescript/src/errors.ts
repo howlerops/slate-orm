@@ -1,6 +1,6 @@
 import { status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
 
-import { DETAILS_KEY, reasonOf } from "./details.js";
+import { type CheckFailure, DETAILS_KEY, checkFailuresOf, reasonOf } from "./details.js";
 
 /** The trailer a redirect carries, naming the node to try instead. */
 export const LEADER_KEY = "slate-leader";
@@ -108,6 +108,19 @@ export class SlateError extends Error {
    * error, which is data inside a response that did succeed.
    */
   readonly requestId: string;
+  /**
+   * Every `CHECK` a refused row violated, in declaration order.
+   *
+   * Empty for every failure that is not a check violation, which is almost all
+   * of them. Each entry carries the constraint's name, the column it is about
+   * and the sentence to show — so a form puts the message beside the field
+   * rather than parsing it out of `message`, which is prose and carries no
+   * stability promise.
+   *
+   * The server reports every failing check rather than the first, so a row
+   * with three bad fields produces three entries and one round trip.
+   */
+  readonly violations: readonly CheckFailure[];
 
   constructor(
     kind: Kind,
@@ -117,11 +130,13 @@ export class SlateError extends Error {
     leader?: string,
     reason = "",
     requestId = "",
+    violations: readonly CheckFailure[] = [],
   ) {
     super(leader ? `${kind}: ${message} (leader ${leader})` : `${kind}: ${message}`);
     this.name = "SlateError";
     this.reason = reason;
     this.requestId = requestId;
+    this.violations = violations;
     this.kind = kind;
     this.code = code;
     this.trailers = trailers;
@@ -159,10 +174,25 @@ export function fromBatchError(failed: {
   code?: number;
   message?: string;
   reason?: string;
+  details?: Uint8Array;
 }): SlateError {
   const code = (failed.code ?? 2) as GrpcStatus;
   const kind = BY_CODE[code] ?? "internal";
-  return new SlateError(kind, failed.message ?? "", code, {}, undefined, failed.reason ?? "");
+  // `details` is the same `google.rpc.Status` blob a lone failure carries in
+  // `grpc-status-details-bin`, put in the message body by the server because a
+  // batch has no trailers. Decoded by the same function the lone path uses, so
+  // a form submitted as a batch gets the same typed failures as one submitted
+  // alone. It used to be the one field a batched failure could not have.
+  return new SlateError(
+    kind,
+    failed.message ?? "",
+    code,
+    {},
+    undefined,
+    failed.reason ?? "",
+    "",
+    failed.details ? checkFailuresOf(failed.details) : [],
+  );
 }
 
 /**
@@ -205,6 +235,7 @@ export function fromServiceError(error: ServiceError, requestId = ""): SlateErro
     leader,
     reasonFromMetadata(error),
     requestId,
+    violationsFromMetadata(error),
   );
 }
 
@@ -221,4 +252,21 @@ function reasonFromMetadata(error: ServiceError): string {
     if (typeof value !== "string") return reasonOf(value);
   }
   return "";
+}
+
+/**
+ * The typed check failures in the call's `grpc-status-details-bin`, or none.
+ *
+ * Decodes the blob a second time rather than returning both from one pass.
+ * Every failure would pay for the check-violation walk otherwise, and check
+ * violations are a small fraction of failures — whereas `reason` is populated
+ * on all of them. The second decode happens only on the refusals that carry
+ * something to find, and a failure path is not where microseconds are won.
+ */
+function violationsFromMetadata(error: ServiceError): readonly CheckFailure[] {
+  const values = error.metadata?.get?.(DETAILS_KEY) ?? [];
+  for (const value of values) {
+    if (typeof value !== "string") return checkFailuresOf(value);
+  }
+  return [];
 }

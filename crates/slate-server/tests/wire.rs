@@ -33,7 +33,7 @@ use proptest::strategy::ValueTree as _;
 use slate_kernel::query::{AccessHint, NullsOrder, Query, SortKey};
 use slate_kernel::{
     Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, JoinSchema, Metric, Projection, Scalar,
-    ScanOrder, TimeUnit,
+    ScanOrder, TimeUnit, Window, WindowFunction,
 };
 use slate_schema::{IndexId, Ordinal};
 use slate_server::convert::{
@@ -42,7 +42,7 @@ use slate_server::convert::{
     row_to_proto, scalar_from_proto, scalar_to_proto, value_from_proto, value_to_proto,
 };
 use slate_server::proto as pb;
-use slate_tuple::{Direction, Value};
+use slate_tuple::{Direction, Value, ValueType};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -71,6 +71,33 @@ fn any_value() -> impl Strategy<Value = Value> {
         .prop_map(Value::F64),
         any::<[u8; 16]>().prop_map(|bytes| Value::Uuid(Uuid::from_bytes(bytes))),
         prop::collection::vec(any::<f32>(), 0..8).prop_map(Value::Vector),
+        // `Decimal` was missing here from the day it was added, and so was
+        // this file's expected list — so the round trip has never once
+        // converted one. See `the_value_generator_reaches_every_variant`,
+        // which is the guard that was supposed to catch exactly this and
+        // could not, because it compared the generator against a list
+        // maintained by the same hand.
+        any::<i64>().prop_map(Value::Decimal),
+        // Elements are drawn from the same set minus arrays, because the
+        // server refuses a nested one — see `value_from_proto`.
+        prop::collection::vec(any_element(), 0..5).prop_map(Value::Array),
+    ]
+}
+
+/// What may appear inside an array on the wire: anything but another array.
+fn any_element() -> impl Strategy<Value = Value> {
+    prop_oneof![
+        Just(Value::Null),
+        any::<bool>().prop_map(Value::Bool),
+        prop::collection::vec(any::<u8>(), 0..8)
+            .prop_map(|bytes| Value::Bytes(bytes::Bytes::from(bytes))),
+        ".{0,8}".prop_map(Value::Str),
+        any::<i64>().prop_map(Value::I64),
+        any::<u64>().prop_map(Value::U64),
+        any::<f64>().prop_map(Value::F64),
+        any::<i64>().prop_map(Value::Decimal),
+        any::<[u8; 16]>().prop_map(|bytes| Value::Uuid(Uuid::from_bytes(bytes))),
+        prop::collection::vec(any::<f32>(), 0..4).prop_map(Value::Vector),
     ]
 }
 
@@ -122,6 +149,14 @@ fn any_expr() -> impl Strategy<Value = Expr> {
         ),
         (any_ordinal(), prop::collection::vec(any_value(), 0..4))
             .prop_map(|(column, values)| Expr::In { column, values }),
+        // Built through `Expr::contains`, which tokenizes, rather than from a
+        // hand-made term list: the wire carries the search *text*, so the
+        // round trip is only faithful if tokenizing a join of the terms gives
+        // the terms back. A generator that produced terms directly would never
+        // put that to the test, and the alphabet below is punctuation-heavy on
+        // purpose so the tokenizer has separators to find.
+        (any_ordinal(), "[a-zA-Z0-9 ,.:-]{0,12}")
+            .prop_map(|(column, text): (Ordinal, String)| Expr::contains(column, &text)),
     ];
     leaf.prop_recursive(3, 12, 3, |inner| {
         prop_oneof![
@@ -129,6 +164,60 @@ fn any_expr() -> impl Strategy<Value = Expr> {
             prop::collection::vec(inner.clone(), 0..3).prop_map(Expr::Or),
             inner.prop_map(|e| Expr::Not(Box::new(e))),
         ]
+    })
+}
+
+/// One sort key over the `docs` fixture's columns.
+fn any_sort_key() -> impl Strategy<Value = SortKey> {
+    (
+        any_ordinal(),
+        prop_oneof![Just(Direction::Asc), Just(Direction::Desc)],
+        prop_oneof![Just(NullsOrder::First), Just(NullsOrder::Last)],
+    )
+        .prop_map(|(column, direction, nulls)| SortKey {
+            column,
+            direction,
+            nulls,
+        })
+}
+
+/// A window the kernel would accept.
+///
+/// Two arms rather than one, because the `ORDER BY` is not free-floating: a
+/// ranking function refuses without one and a running `COUNT(DISTINCT)`
+/// refuses *with* one, so generating the order independently of the function
+/// would spend most cases on inputs `Window::new` rejects — and `expect` below
+/// would then be testing the generator rather than the round trip.
+fn any_window() -> impl Strategy<Value = Window> {
+    let ordered = (
+        prop_oneof![
+            Just(WindowFunction::RowNumber),
+            Just(WindowFunction::Rank),
+            Just(WindowFunction::DenseRank),
+            (any_ordinal(), 1_usize..4)
+                .prop_map(|(column, offset)| WindowFunction::Lag { column, offset }),
+            (any_ordinal(), 1_usize..4)
+                .prop_map(|(column, offset)| WindowFunction::Lead { column, offset }),
+            Just(WindowFunction::Over(Aggregate::Count)),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Sum(c))),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Max(c))),
+        ],
+        prop::collection::vec(any_ordinal(), 0..3),
+        prop::collection::vec(any_sort_key(), 1..3),
+    );
+    // The unordered half, which is the *only* place a whole-partition frame
+    // and a windowed `COUNT(DISTINCT)` are reachable.
+    let unordered = (
+        prop_oneof![
+            Just(WindowFunction::Over(Aggregate::Count)),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::Avg(c))),
+            any_ordinal().prop_map(|c| WindowFunction::Over(Aggregate::CountDistinct(c))),
+        ],
+        prop::collection::vec(any_ordinal(), 0..3),
+        Just(Vec::new()),
+    );
+    prop_oneof![ordered, unordered].prop_map(|(function, partition, order)| {
+        Window::new(function, partition, order).expect("the generator only builds valid windows")
     })
 }
 
@@ -172,10 +261,24 @@ fn any_query() -> impl Strategy<Value = Query> {
         ],
     )
         // A second tuple because `prop::strategy` tuples stop at twelve arms
-        // and the first is full; `any::<bool>()` is the whole of it.
-        .prop_flat_map(|first| (Just(first), any::<bool>()))
+        // and the first is full.
+        .prop_flat_map(|first| {
+            (
+                Just(first),
+                any::<bool>(),
+                // Two at most, and that is deliberate rather than a cost
+                // saving: one window cannot catch a converter that drops the
+                // *second*, and the two also exercise the path where a pair
+                // shares a specification.
+                prop::collection::vec(any_window(), 0..3),
+            )
+        })
         .prop_map(
-            |((filter, order, projection, sort, limit, offset, hint, after), include_deleted)| {
+            |(
+                (filter, order, projection, sort, limit, offset, hint, after),
+                include_deleted,
+                window,
+            )| {
                 Query {
                     filter,
                     order,
@@ -185,6 +288,11 @@ fn any_query() -> impl Strategy<Value = Query> {
                     offset,
                     hint,
                     compute: Vec::new(),
+                    // Generated now that there is a message for it to survive.
+                    // The comment this replaces said it would become generated
+                    // when there was one — which is what happened, and is the
+                    // second time this file has recorded that transition.
+                    window,
                     // `paging` is implied by `after` on the way in and is set by
                     // `Query::after`, so a generated `after` must carry it or the
                     // round trip compares a value the builder cannot produce.
@@ -239,10 +347,79 @@ proptest! {
     }
 }
 
+/// Every `Expr` variant the round trip could carry, generated.
+///
+/// The same argument as `the_value_generator_reaches_every_variant` below, one
+/// type over, and written because `Expr::Contains` arrived,
+/// `a_predicate_survives_the_round_trip` went on passing, and a mutation that
+/// sent an empty search text survived — the generator had never produced one.
+///
+/// The expected set is `Expr::NODE_NAMES` minus one, and the subtraction is
+/// the point: `NODE_NAMES` is pinned to the enum by a wildcard-free match
+/// inside `slate-kernel`, where a `#[non_exhaustive]` enum can be matched
+/// exhaustively and here it cannot. A fourteenth node fails *there*, and then
+/// fails here until the generator produces one.
+#[test]
+fn the_expression_generator_reaches_every_variant() {
+    /// `InSorted` is not a wire node.
+    ///
+    /// It is what `Expr::prepared` rewrites an `In` into for the executor —
+    /// values sorted behind an `Arc` so a row costs a binary search — and
+    /// `expr_to_proto` has no arm for it because nothing ever sends one. It is
+    /// named here rather than left out of `NODE_NAMES`, so that the list stays
+    /// the enum's and this file states its own exception.
+    const NOT_ON_THE_WIRE: [&str; 1] = ["in_sorted"];
+
+    // Recursive, because `and`, `or` and `not` only ever appear wrapping
+    // something and a top-level count would miss whichever leaf they hid.
+    fn walk(expr: &Expr, seen: &mut BTreeSet<&'static str>) {
+        seen.insert(expr.node_name());
+        match expr {
+            Expr::And(parts) | Expr::Or(parts) => {
+                for part in parts {
+                    walk(part, seen);
+                }
+            }
+            Expr::Not(inner) => walk(inner, seen),
+            _ => {}
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let strategy = any_expr();
+    for _ in 0..2_000 {
+        walk(
+            &strategy.new_tree(&mut runner).expect("an expr").current(),
+            &mut seen,
+        );
+    }
+    let expected: BTreeSet<&str> = Expr::NODE_NAMES
+        .into_iter()
+        .filter(|node| !NOT_ON_THE_WIRE.contains(node))
+        .collect();
+    assert_eq!(
+        seen, expected,
+        "the generator never produced some variants, so the round trip never tested them"
+    );
+}
+
 /// A property suite is only as good as what its generators reach.
 ///
 /// Written after the codec bug where a generator had never been extended to
-/// produce vectors, so the vector path passed every case by never being tried.
+/// produce vectors, so the vector path passed every case by never being tried
+/// — and then this test repeated the mistake it was written against. It
+/// compared `any_value` to a **hand-written list of nine names**, and both
+/// were missing `decimal`, so from the day decimals were added until now the
+/// wire round trip never converted one and this guard said everything was
+/// covered.
+///
+/// The expected set is now `ValueType::ALL` plus `"null"`, which is not a list
+/// anybody maintains: `ALL` is held to the enum by a compiler-checked
+/// exhaustive match inside `slate-tuple`, so a new variant fails *there*, and
+/// then fails here until the generator produces one. `Value::type_name` gives
+/// the same names from the same source, so the two sides cannot drift apart
+/// either.
 #[test]
 fn the_value_generator_reaches_every_variant() {
     let mut seen = BTreeSet::new();
@@ -250,107 +427,65 @@ fn the_value_generator_reaches_every_variant() {
     let strategy = any_value();
     for _ in 0..500 {
         let value = strategy.new_tree(&mut runner).expect("a value").current();
-        seen.insert(variant_of(&value));
+        seen.insert(value.type_name());
     }
-    let expected: BTreeSet<&str> = [
-        "null", "bool", "bytes", "str", "i64", "u64", "f64", "uuid", "vector",
-    ]
-    .into_iter()
-    .collect();
+    let mut expected: BTreeSet<&str> = ValueType::ALL.iter().map(|kind| kind.name()).collect();
+    // Null has no `ValueType` — nullability is a column property — so it is
+    // the one name that has to be added by hand, and it is a constant rather
+    // than a list that can go one short.
+    expected.insert("null");
     assert_eq!(
         seen, expected,
         "the generator never produced some variants, so the round trip never tested them"
     );
 }
 
-fn variant_of(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Bytes(_) => "bytes",
-        Value::Str(_) => "str",
-        Value::I64(_) => "i64",
-        Value::U64(_) => "u64",
-        Value::F64(_) => "f64",
-        Value::Uuid(_) => "uuid",
-        Value::Vector(_) => "vector",
-        other => panic!("a new Value variant is not covered here: {other:?}"),
-    }
-}
-
+/// The array generator reaches everything the outer one does, bar arrays.
+///
+/// Same argument as above, one level down: `a_value_survives_the_round_trip`
+/// converts an array by converting its elements, so an element kind the
+/// generator never produces is an element kind the round trip never sees.
 #[test]
-fn the_expression_generator_reaches_every_variant() {
+fn the_array_element_generator_reaches_every_variant_but_array() {
     let mut seen = BTreeSet::new();
     let mut runner = proptest::test_runner::TestRunner::deterministic();
-    let strategy = any_expr();
+    let strategy = any_element();
     for _ in 0..500 {
-        collect_variants(
-            &strategy.new_tree(&mut runner).expect("an expr").current(),
-            &mut seen,
-        );
+        let value = strategy.new_tree(&mut runner).expect("a value").current();
+        seen.insert(value.type_name());
     }
-    let expected: BTreeSet<&str> = [
-        "true",
-        "false",
-        "compare",
-        "compare_columns",
-        "is_null",
-        "like",
-        "matches",
-        "in",
-        "and",
-        "or",
-        "not",
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(seen, expected, "some Expr variants were never generated");
+    let mut expected: BTreeSet<&str> = ValueType::ALL
+        .iter()
+        .filter(|kind| **kind != ValueType::Array)
+        .map(|kind| kind.name())
+        .collect();
+    expected.insert("null");
+    assert_eq!(seen, expected);
 }
 
-fn collect_variants(expr: &Expr, into: &mut BTreeSet<&'static str>) {
-    match expr {
-        Expr::True => {
-            into.insert("true");
-        }
-        Expr::False => {
-            into.insert("false");
-        }
-        Expr::Compare { .. } => {
-            into.insert("compare");
-        }
-        Expr::CompareColumns { .. } => {
-            into.insert("compare_columns");
-        }
-        Expr::IsNull { .. } => {
-            into.insert("is_null");
-        }
-        Expr::Like { .. } => {
-            into.insert("like");
-        }
-        Expr::Matches { .. } => {
-            into.insert("matches");
-        }
-        Expr::In { .. } => {
-            into.insert("in");
-        }
-        Expr::And(parts) => {
-            into.insert("and");
-            for part in parts {
-                collect_variants(part, into);
-            }
-        }
-        Expr::Or(parts) => {
-            into.insert("or");
-            for part in parts {
-                collect_variants(part, into);
-            }
-        }
-        Expr::Not(inner) => {
-            into.insert("not");
-            collect_variants(inner, into);
-        }
-        other => panic!("a new Expr variant is not covered here: {other:?}"),
-    }
+/// A nested array is refused, with a `Status` rather than a panic or a stack.
+///
+/// The depth here is chosen by whoever sends the message, which is why this is
+/// the server's refusal and not only the kernel's: refusing at depth one means
+/// there is no depth to bound.
+#[test]
+fn a_nested_array_is_refused() {
+    use pb::value::Kind;
+    let inner = pb::Value {
+        kind: Some(Kind::ArrayValue(pb::ArrayValue { elements: vec![] })),
+    };
+    let outer = pb::Value {
+        kind: Some(Kind::ArrayValue(pb::ArrayValue {
+            elements: vec![inner],
+        })),
+    };
+    let error = value_from_proto(&outer).expect_err("an array of arrays must be refused");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert!(
+        error.message().contains("element type"),
+        "the refusal should say why: {}",
+        error.message()
+    );
 }
 
 /// Proof that the round trip is sharp enough to see a dropped flag.

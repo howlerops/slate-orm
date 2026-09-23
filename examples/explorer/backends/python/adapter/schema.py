@@ -12,22 +12,24 @@ two cannot drift.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from slate import Column, Table, ValueType
-from slate.values import Null, Units
+from slate.values import NULL, Array, Null, Units, Vector, i64, u64
 
 __all__ = [
     "AUTHORS",
     "BOOKS",
     "BY_NAME",
     "EDITIONS",
+    "POSTS",
     "SALES",
     "SHIPMENTS",
     "Authors",
     "Books",
     "Editions",
+    "Posts",
     "Sales",
     "Shipments",
 ]
@@ -76,12 +78,41 @@ SALES = Table(
     primary_key=["id"],
 )
 
+SALES_FOREIGN_KEYS = {
+    "sale_book": {
+        "name": "sale_book",
+        "child": "sales",
+        "parent": "books",
+        "on_delete": "restrict",
+    },
+}
+
 EDITIONS = Table(
     "editions",
     [
         Column("id", ValueType.U64),
         Column("book_id", ValueType.U64),
         Column("format", ValueType.STR),
+    ],
+    primary_key=["id"],
+)
+
+EDITIONS_FOREIGN_KEYS = {
+    "edition_book": {
+        "name": "edition_book",
+        "child": "editions",
+        "parent": "books",
+        "on_delete": "restrict",
+    },
+}
+
+POSTS = Table(
+    "posts",
+    [
+        Column("id", ValueType.U64),
+        Column("title", ValueType.STR),
+        Column("tags", ValueType.ARRAY, element=ValueType.STR),
+        Column("sizes", ValueType.ARRAY, element=ValueType.I64),
     ],
     primary_key=["id"],
 )
@@ -103,9 +134,37 @@ SHIPMENTS_CHECKS = {
         "message": "Status must be pending, shipped or delivered.",
         "predicate": "status in ('pending', 'shipped', 'delivered')",
     },
+    "id_is_seeded": {
+        "column": "id",
+        "message": "Shipment ids above 9000 are reserved for the demo's own handlers.",
+        "predicate": "id < 9000",
+    },
 }
 
-BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, SHIPMENTS,)}
+SHIPMENTS_FOREIGN_KEYS = {
+    "shipment_book": {
+        "name": "shipment_book",
+        "child": "shipments",
+        "parent": "books",
+        "on_delete": "restrict",
+    },
+}
+
+BY_NAME = {table.name: table for table in (AUTHORS, BOOKS, SALES, EDITIONS, POSTS, SHIPMENTS,)}
+
+#: The views the catalog declares, for `Query(VIEWS_BY_NAME[name])`.
+#:
+#: Each is its base table's columns under the view's name, built from
+#: the declaration above rather than written out again. A view may not
+#: narrow columns, so its ordinals are its base table's and there is
+#: nothing here that could disagree; the server checks a claim about a
+#: view under the view's own name against exactly those columns.
+#:
+#: Separate from `BY_NAME` because a view is not a table: only a plain
+#: query reads through one, and every other request naming it is
+#: refused.
+CLASSICS = Table("classics", BOOKS.columns, BOOKS.primary_key)
+VIEWS_BY_NAME = {view.name: view for view in (CLASSICS,)}
 
 
 def _field(values: Sequence[object], at: int, table: str, column: str,
@@ -133,6 +192,34 @@ def _field(values: Sequence[object], at: int, table: str, column: str,
     return value
 
 
+def _elements(values: Sequence[object], at: int, table: str, column: str,
+              kind: type | tuple[type, ...], nullable: bool) -> object:
+    """One array column, with every element checked.
+
+    `_field` stops at the list. Its elements arrive already decoded to
+    native Python — an `Array` of `str`, not of tagged values — so a
+    caller reading one *looks* right whatever the column declared, and a
+    declaration naming the wrong element type would be found by the
+    server rather than here. The element type is not on the wire, so
+    this is the only place on this side that can notice.
+    """
+    value = _field(values, at, table, column, Array, nullable)
+    if not isinstance(value, Array):
+        # `_field` returns `None` exactly when the column was null and
+        # nullable; it has already refused anything that is neither.
+        # Spelled as the `isinstance` rather than `is None` because a
+        # checker cannot narrow `object` minus `None` to something
+        # iterable, and the loop below needs it to.
+        return value
+    for index, element in enumerate(value):
+        if not isinstance(element, kind):
+            raise TypeError(
+                f"{table}.{column}[{index}] is {type(element).__name__}, "
+                f"not the declared {kind}"
+            )
+    return value
+
+
 @dataclass(frozen=True)
 class Authors:
     """A row of `authors`, decoded."""
@@ -155,6 +242,15 @@ class Authors:
             country=cast("str", _field(values, 2, "authors", "country", str, False)),
             born=cast("int", _field(values, 3, "authors", "born", int, False)),
         )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `authors`."""
+        return [
+            u64(self.id),
+            self.name,
+            self.country,
+            i64(self.born),
+        ]
 
 
 @dataclass(frozen=True)
@@ -188,6 +284,19 @@ class Books:
             price=cast("Units", _field(values, 7, "books", "price", Units, False)),
         )
 
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `books`."""
+        return [
+            u64(self.id),
+            u64(self.author_id),
+            self.title,
+            i64(self.year),
+            self.rating,
+            i64(self.released),
+            Vector(self.embedding),
+            self.price,
+        ]
+
 
 @dataclass(frozen=True)
 class Sales:
@@ -210,6 +319,14 @@ class Sales:
             units=cast("int", _field(values, 2, "sales", "units", int, False)),
         )
 
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `sales`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            i64(self.units),
+        ]
+
 
 @dataclass(frozen=True)
 class Editions:
@@ -231,6 +348,47 @@ class Editions:
             book_id=cast("int", _field(values, 1, "editions", "book_id", int, False)),
             format=cast("str", _field(values, 2, "editions", "format", str, False)),
         )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `editions`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            self.format,
+        ]
+
+
+@dataclass(frozen=True)
+class Posts:
+    """A row of `posts`, decoded."""
+
+    id: int
+    title: str
+    tags: Sequence[str]
+    sizes: Sequence[int]
+
+    @classmethod
+    def from_row(cls, values: Sequence[object]) -> Posts:
+        """Decode a row of `posts`, by ordinal."""
+        if len(values) != 4:
+            raise ValueError(
+                f"posts has 4 columns, got {len(values)}"
+            )
+        return cls(
+            id=cast("int", _field(values, 0, "posts", "id", int, False)),
+            title=cast("str", _field(values, 1, "posts", "title", str, False)),
+            tags=cast("Sequence[str]", _elements(values, 2, "posts", "tags", str, False)),
+            sizes=cast("Sequence[int]", _elements(values, 3, "posts", "sizes", int, False)),
+        )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `posts`."""
+        return [
+            u64(self.id),
+            self.title,
+            Array(self.tags),
+            Array([i64(_e) for _e in self.sizes]),
+        ]
 
 
 @dataclass(frozen=True)
@@ -255,3 +413,32 @@ class Shipments:
             status=cast("Literal['pending', 'shipped', 'delivered']", _field(values, 2, "shipments", "status", str, False)),
             deleted_at=cast("int | None", _field(values, 3, "shipments", "deleted_at", int, True)),
         )
+
+    def to_row(self) -> list[object]:
+        """Encode this row in the column order of `shipments`."""
+        return [
+            u64(self.id),
+            u64(self.book_id),
+            self.status,
+            NULL if self.deleted_at is None else i64(self.deleted_at),
+        ]
+
+    @property
+    def retired(self) -> bool:
+        """Whether this row has been soft-deleted."""
+        return self.deleted_at is not None
+
+    def restored(self) -> Shipments:
+        """This row with its soft delete cleared, ready to write back.
+
+        Restoring is an ordinary `update` or `upsert` — there is no
+        restore verb — so this only clears the column; sending it is
+        the caller's. It needs the `read_deleted` action, the same
+        grant `include_deleted` needs, because a write that names a
+        retired row's key reaches it only for a caller who may see it.
+
+        Writing the row back *unchanged* does not work and is not
+        meant to: the column is the server's, and a row carrying a
+        timestamp is refused naming that column.
+        """
+        return replace(self, deleted_at=None)

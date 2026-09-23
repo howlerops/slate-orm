@@ -9,7 +9,8 @@
 //! they carry the primary key as a suffix.
 //!
 //! Type codes are chosen so that comparing the code bytes gives the cross-type
-//! order `null < bool < bytes < string < integer < double < uuid`:
+//! order `null < bool < bytes < string < integer < decimal < double < uuid <
+//! vector < array`, which is the order [`Value`]'s own `Ord` gives:
 //!
 //! | code(s)      | element                                       |
 //! |--------------|-----------------------------------------------|
@@ -20,6 +21,8 @@
 //! | `0x0D..=0x1D`| integer, `0x15` is zero (see below)           |
 //! | `0x21`       | `f64`, 8 bytes, order-preserving bit flip     |
 //! | `0x22`       | UUID, 16 raw bytes                            |
+//! | `0x23`       | vector, `u32` count then that many `f32`      |
+//! | `0x24`       | array, elements in full then `0x00`           |
 //!
 //! **Invariant: every element's encoding is prefix-free** — no encoded element
 //! is a proper prefix of another. This is what makes elements composable: two
@@ -108,6 +111,21 @@ mod codes {
     pub(super) const F64: u8 = 0x21;
     pub(super) const UUID: u8 = 0x22;
     pub(super) const VECTOR: u8 = 0x23;
+    /// Array: this code, every element in full, then `NUL`.
+    ///
+    /// Terminated rather than length-prefixed, which is the one decision in
+    /// the encoding that could have gone the other way and been wrong. A
+    /// count sorts `[2]` below `[1, 2]`, because one is less than two before
+    /// any element is looked at; a terminator sorts them the way lists sort,
+    /// because `NUL` is below every element tag (`NULL` is `0x01`) so the
+    /// shorter list meets its end where the longer one still has a value.
+    ///
+    /// No escaping at this level, which is the part that looks unsafe and is
+    /// not. An element body may well contain a `0x00`, but the array decoder
+    /// never scans for the terminator: it reads elements one at a time, each
+    /// consuming exactly its own bytes, so `0x00` is only ever examined on an
+    /// element boundary — where no tag can be `0x00`.
+    pub(super) const ARRAY: u8 = 0x24;
 
     pub(super) const NUL: u8 = 0x00;
     pub(super) const ESCAPE: u8 = 0xFF;
@@ -202,6 +220,16 @@ impl Sink<'_> {
         }
         self.push(codes::NUL);
         self.push(codes::NUL);
+    }
+
+    /// Encode a nested element into the same buffer.
+    ///
+    /// A `Sink` borrows the output vector for its whole life, so an array —
+    /// whose elements are encoded by recursing on that vector — cannot reach
+    /// it any other way. Reborrowing through the sink rather than dropping it
+    /// keeps every arm of the encoder looking the same.
+    fn push_element(&mut self, value: &Value, direction: Direction) {
+        encode_value_into(self.buf, value, direction);
     }
 
     fn push_int(&mut self, negative: bool, magnitude: u64) {
@@ -310,6 +338,14 @@ pub fn encode_value_into(out: &mut Vec<u8>, value: &Value, direction: Direction)
         Value::Uuid(u) => {
             sink.push(codes::UUID);
             sink.extend(u.as_bytes());
+        }
+        Value::Array(elements) => {
+            sink.push(codes::ARRAY);
+            for element in elements {
+                sink.push_element(element, direction);
+            }
+            // See `codes::ARRAY` for why this is a terminator and not a count.
+            sink.push(codes::NUL);
         }
     }
 }
@@ -520,6 +556,7 @@ impl<'a> TupleReader<'a> {
             codes::DECIMAL => "decimal",
             codes::UUID => "uuid",
             codes::VECTOR => "vector",
+            codes::ARRAY => "array",
             _ => {
                 return Err(TupleError::UnknownTypeCode {
                     offset: start,
@@ -537,6 +574,7 @@ impl<'a> TupleReader<'a> {
                 | (codes::UUID, ValueType::Uuid)
                 | (codes::VECTOR, ValueType::Vector)
                 | (codes::DECIMAL, ValueType::Decimal)
+                | (codes::ARRAY, ValueType::Array)
         );
         if !matches {
             return Err(TupleError::TypeMismatch {
@@ -555,7 +593,15 @@ impl<'a> TupleReader<'a> {
     /// otherwise, since the two share an encoding. Use [`TupleReader::read`]
     /// whenever the schema is known; this exists for tooling and diagnostics.
     pub fn read_dynamic(&mut self, direction: Direction) -> Result<Value> {
-        let mask = direction.mask();
+        self.read_dynamic_masked(direction.mask())
+    }
+
+    /// [`TupleReader::read_dynamic`] with the mask already resolved.
+    ///
+    /// Split out for the array decoder, which has a mask and no `Direction`:
+    /// reconstructing one from the mask would be a second place that has to
+    /// agree with [`Direction::mask`], and the compiler would not check it.
+    fn read_dynamic_masked(&mut self, mask: u8) -> Result<Value> {
         let start = self.pos;
         let code = self.byte(mask)?;
 
@@ -640,10 +686,47 @@ impl<'a> TupleReader<'a> {
                 }
                 Ok(Value::Vector(elements))
             }
+            codes::ARRAY => self.read_array(mask),
             _ => Err(TupleError::UnknownTypeCode {
                 offset: start,
                 code,
             }),
+        }
+    }
+
+    /// Decode an array body: elements until the terminator.
+    ///
+    /// Elements come back dynamically typed rather than schema-directed,
+    /// which for integers means `I64` where it fits and `U64` otherwise —
+    /// the same answer [`TupleReader::read_dynamic`] gives a bare integer, and
+    /// the same *bytes* either way, so nothing about the ordering or the
+    /// round trip depends on which one you get.
+    ///
+    /// **An array inside an array is refused, not counted.** Decision 3 of
+    /// `docs/arrays.md` declines nesting at the schema level because
+    /// [`ValueType::Array`] is fieldless and cannot name an inner element
+    /// type. A decoder that accepted what the schema cannot express would be
+    /// recursing to a depth its caller chooses, on bytes that need not have
+    /// come from this encoder — the stack-overflow shape the wire's
+    /// expression converter already carries an explicit ceiling against.
+    /// Refusing outright is both cheaper than a ceiling and the truth about
+    /// what this version stores.
+    fn read_array(&mut self, mask: u8) -> Result<Value> {
+        let mut elements = Vec::new();
+        loop {
+            let at = self.pos;
+            let code = self.byte(mask)?;
+            if code == codes::NUL {
+                return Ok(Value::Array(elements));
+            }
+            if code == codes::ARRAY {
+                return Err(TupleError::UnknownTypeCode { offset: at, code });
+            }
+            // Rewound because every element decoder reads its own tag. Peeking
+            // rather than dispatching here is what keeps this loop from being
+            // a second copy of `read_dynamic`'s table.
+            self.pos = at;
+            elements.push(self.read_dynamic_masked(mask)?);
         }
     }
 
@@ -697,6 +780,33 @@ impl<'a> TupleReader<'a> {
                 let count = self.take_u32(mask)?;
                 self.advance(count as usize * 4)
             }
+            // An array has no length prefix, so skipping one is reading one
+            // without keeping it. The saving over `read_array` is the `Value`
+            // per element, which is the whole reason `skip` exists.
+            //
+            // The nesting refusal is written out again rather than shared,
+            // and that is a real cost: it is a second place that has to agree
+            // with the decoder, exactly the hazard the `DECIMAL` arm above
+            // avoids by recursing. Sharing is what would break here — the two
+            // differ in precisely the thing `skip` is for — so
+            // `a_deeply_nested_array_is_refused_rather_than_recursed` asserts
+            // the refusal at both entry points, and `skipping_agrees_with_decoding`
+            // holds the lengths together over generated arrays.
+            codes::ARRAY => loop {
+                let at = self.pos;
+                let inner = self.byte(mask)?;
+                if inner == codes::NUL {
+                    return Ok(());
+                }
+                if inner == codes::ARRAY {
+                    return Err(TupleError::UnknownTypeCode {
+                        offset: at,
+                        code: inner,
+                    });
+                }
+                self.pos = at;
+                self.skip(direction)?;
+            },
             _ => Err(TupleError::UnknownTypeCode {
                 offset: start,
                 code,

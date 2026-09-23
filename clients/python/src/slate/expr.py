@@ -85,6 +85,9 @@ class _Kind(enum.Enum):
     JOINED_COMPUTED = "joined_computed"
     GROUP_KEY = "group_key"
     AGGREGATE = "aggregate"
+    #: The `n`th value the query's windows produce. Nameable from a sort key
+    #: and from nothing else — see `windowed_ref`.
+    WINDOWED = "windowed"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -186,6 +189,24 @@ class ColumnRef:
     def not_like(self, pattern: str, *, insensitive: bool = False) -> Expr:
         """`self NOT LIKE pattern`."""
         return _Like(self, pattern, negated=True, insensitive=insensitive)
+
+    def contains(self, text: str) -> Expr:
+        """Every term of `text` is a term of `self`: full-text search.
+
+        The search is sent as written and tokenized by the *server*, with the
+        same function its write path tokenized the column with. This client
+        deliberately does no splitting of its own: a client that split
+        differently would find fewer rows than the table holds, with no error
+        anywhere to say so.
+
+        Conjunctive — every term must appear. For a disjunction, `or_` two of
+        these. A phrase is not expressible: the index holds no positions.
+
+        A text index makes this a lookup rather than a scan, but it does not
+        have to exist. Without one the server evaluates the same predicate
+        row by row and returns the same rows.
+        """
+        return _Contains(self, text)
 
     def matches(self, pattern: str, *, insensitive: bool = False) -> Expr:
         """`self ~ pattern`, a regular-expression match.
@@ -340,6 +361,17 @@ class _Like(Expr):
                 negated=self.negated,
                 insensitive=self.insensitive,
             )
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Contains(Expr):
+    column: ColumnRef
+    text: str
+
+    def to_proto(self) -> pb.Expr:
+        return pb.Expr(
+            contains=pb.Contains(column=self.column.to_proto(), text=self.text)
         )
 
 
@@ -504,6 +536,21 @@ class _TableLike(Protocol):
     def ordinal_of(self, name: str) -> int | None: ...
 
     def type_of(self, name: str) -> ValueType | None: ...
+
+
+def windowed_ref(index: int) -> ColumnRef:
+    """The `index`th value the query's windows produce.
+
+    Usable in a **sort key and nowhere else**, which is SQL's own rule rather
+    than a limitation here: a window is computed after `WHERE` and before
+    `ORDER BY`, so a filter naming one would be asking for a value that does
+    not exist yet. The server refuses it by name and says so; this is the
+    sentence that saves the round trip.
+
+    `input` is zero, as it is for a group key: the value belongs to the request
+    rather than to one of its tables.
+    """
+    return ColumnRef(input=0, kind=_Kind.WINDOWED, index=index, label=f"window {index}")
 
 
 def computed_ref(input: int, index: int) -> ColumnRef:

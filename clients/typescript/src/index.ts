@@ -26,7 +26,13 @@ export {
   type JoinPage,
   type Page,
 } from "./client.js";
-export { SlateError, isKind, LEADER_KEY, REQUEST_ID_KEY, type Kind } from "./errors.js";
+export {
+  SlateError,
+  isKind,
+  LEADER_KEY,
+  REQUEST_ID_KEY,
+  type Kind,
+} from "./errors.js";
 export {
   type Scalar,
   type TimeUnit,
@@ -75,6 +81,7 @@ export {
   unitsToString,
   uuid,
   vector,
+  array,
   valuesEqual,
   valueKey,
   formatUuid,
@@ -99,6 +106,10 @@ export {
   like,
   ilike,
   notLike,
+  contains,
+  usingIndex,
+  usingTableScan,
+  type AccessHint,
   and,
   or,
   not,
@@ -118,6 +129,16 @@ export {
   newJoin,
   at,
   key0,
+  windowed,
+  type Window,
+  type WindowFunction,
+  rowNumber,
+  rank,
+  denseRank,
+  lag,
+  lead,
+  aggregateOver,
+  over,
   computedAt,
   computed0,
   joinComputed,
@@ -150,10 +171,12 @@ export {
   type Group,
 } from "./join.js";
 export {
+  answers,
   fingerprint,
   ordinalOf,
   type CheckRule,
   type ColumnDef,
+  type ForeignKey,
   type ColumnType,
   type Schemas,
   type TableDef,

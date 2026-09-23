@@ -22,6 +22,9 @@ const (
 	// TypeDecimal is an exact decimal. The scale is not part of the type; see
 	// [ColumnDef.Scale].
 	TypeDecimal ColumnType = "decimal"
+	// TypeArray is a homogeneous list. The element type is not part of the
+	// type; see [ColumnDef.Element].
+	TypeArray ColumnType = "array"
 )
 
 // ColumnDef is one column of a [TableDef].
@@ -39,6 +42,14 @@ type ColumnDef struct {
 	// wire carries units and never the scale, so the fingerprint is the only
 	// place this can be caught.
 	Scale int
+	// Element is what a [TypeArray] column's elements are. Empty and
+	// meaningless for every other type.
+	//
+	// In the fingerprint, by exactly the argument [ColumnDef.Scale] gives one
+	// type over: it addresses no column, and a client that has it wrong reads
+	// the *right* column and decodes every element as the wrong type, with
+	// the wire carrying no element type to notice by.
+	Element ColumnType
 }
 
 // TableDef is this client's declaration of a table.
@@ -123,6 +134,9 @@ func (t TableDef) Fingerprint() uint64 {
 		// wrong column and usually shows, a wrong scale reads the right column
 		// and renders every value a power of ten out, for ever, with nothing
 		// anywhere reporting it. The wire carries units and never the scale.
+		if column.Type == TypeArray {
+			h.text(string(column.Element))
+		}
 		if column.Type == TypeDecimal {
 			h.number(column.Scale)
 		}
@@ -190,4 +204,63 @@ type CheckRule struct {
 	Message string
 	// The text the predicate was parsed from, or "" for a check built in Rust.
 	Predicate string
+}
+
+// ForeignKey is one foreign key, as the catalog publishes it.
+//
+// Data, like [CheckRule], and for the same reason: nothing here enforces
+// anything, because the server does. What it carries is the one fact a caller
+// cannot derive — which table a [Relation] read as [Parents] answers with.
+//
+// [Relation] names a relationship by the child table and the key's name and
+// stops there, deliberately: a client that described the relationship could
+// describe it differently from the next client. But [Session.Related] also
+// needs the table its rows decode as, which for [Parents] is the *parent* and
+// is nowhere in the client. Before this it was a string the caller typed from
+// memory.
+//
+// What the wrong one costs was measured rather than assumed, by making
+// [ForeignKey.Answers] return the child either way and running the three-SDK
+// conformance suite: **the server refuses it**. `Related` sends the named
+// table's declaration, so the schema check sees `sales`' columns claimed for
+// `books` and says so at length. That is the good failure and it is why this
+// is a convenience rather than a fix for a silent bug — but it is only good
+// while the two tables' declarations *differ*. Two that fingerprint alike
+// would be decoded positionally against each other with nothing said.
+type ForeignKey struct {
+	// The key's name, which is what [Relation.Through] wants.
+	Name string
+	// The table holding the key. [Relation.On], either direction.
+	Child string
+	// The table it points at. The table [Parents] answers with.
+	Parent string
+	// "restrict" or "cascade", as the catalog spells it. Data only: the
+	// server applies it and this client never does.
+	OnDelete string
+}
+
+// Children reads the rows holding this key — a book's sales.
+//
+// Pairs with [ForeignKey.Child], which is the table the rows come back as.
+func (k ForeignKey) Children() Relation {
+	return Relation{On: k.Child, Through: k.Name, Way: Children}
+}
+
+// Parents reads the rows this key points at — a sale's book.
+//
+// Pairs with [ForeignKey.Parent], which is the table the rows come back as.
+func (k ForeignKey) Parents() Relation {
+	return Relation{On: k.Child, Through: k.Name, Way: Parents}
+}
+
+// Answers is the table a read this way decodes as.
+//
+// The whole reason this type exists: [Session.Related] takes the table
+// separately because it does not hold the catalog, and getting it wrong reads
+// one table's rows against another's ordinals.
+func (k ForeignKey) Answers(way Way) string {
+	if way == Parents {
+		return k.Parent
+	}
+	return k.Child
 }

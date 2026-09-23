@@ -53,8 +53,8 @@ impl Kind {
 /// `if`s: a chain that tested `<` before `<=` would parse `size <= 3` as
 /// `size < (= 3)` and fail somewhere else entirely.
 const PUNCTUATION: &[&str] = &[
-    "<>", "<=", ">=", "!=", "!~*", "!~", "~*", "~", "=", "<", ">", "(", ")", ",", "+", "-", "*",
-    "/",
+    "<>", "<=", ">=", "!=", "!~*", "!~", "~*", "~", "=", "<", ">", "(", ")", "[", "]", ",", "+",
+    "-", "*", "/",
 ];
 
 /// Split `source` into tokens.

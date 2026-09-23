@@ -37,6 +37,24 @@ use slate_tuple::{Value, ValueType};
 const EVENTS: TableId = TableId(1);
 const ROWS: u64 = 20_000;
 
+/// Rows this runs over, overridable with `KERNELBENCH_ROWS`.
+///
+/// `scripts/run_examples.sh --smoke` sets it small: CI's job is to prove this
+/// still executes against the current tree, and the numbers a smoke run prints
+/// are worthless — the file says so rather than letting a reader trust them.
+/// A run with the variable unset is the recorded size, which is what
+/// `docs/performance.md` quotes.
+///
+/// `row_count` rather than `rows`, which is taken: `fn rows(correlation,
+/// domain)` below builds the seeded rows themselves.
+fn row_count() -> u64 {
+    std::env::var("KERNELBENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ROWS)
+}
+
 /// Distinct values per column. Both columns share this domain, so a perfectly
 /// correlated pair is `a == b`.
 ///
@@ -103,7 +121,7 @@ impl Rng {
 fn rows(correlation: f64, domain: u64) -> Vec<Row> {
     let mut rng = Rng(0x2545_F491_4F6C_DD1D);
     let threshold = (correlation * 1000.0) as u64;
-    (0..ROWS)
+    (0..row_count())
         .map(|id| {
             let a = rng.below(domain);
             let b = if rng.below(1000) < threshold {
@@ -232,11 +250,11 @@ async fn measure(store: &RecordStore<MemoryStore>, filter: &Expr) -> Outcome {
     let costs = [
         ("by_a", true_cost(by_a, by_a)),
         ("by_b", true_cost(by_b, by_b)),
-        ("scan", true_cost(ROWS as usize, 0)),
+        ("scan", true_cost(row_count() as usize, 0)),
     ];
 
     let (access, chosen_cost) = match &explained.access {
-        AccessSummary::TableScan => ("TableScan", true_cost(ROWS as usize, 0)),
+        AccessSummary::TableScan => ("TableScan", true_cost(row_count() as usize, 0)),
         AccessSummary::IndexScan { index, .. } | AccessSummary::IndexOnlyScan { index, .. } => {
             let cost = costs
                 .iter()
@@ -244,7 +262,7 @@ async fn measure(store: &RecordStore<MemoryStore>, filter: &Expr) -> Outcome {
                 .map_or(f64::NAN, |(_, c)| *c);
             ("IndexScan", cost)
         }
-        _ => ("other", true_cost(ROWS as usize, 0)),
+        _ => ("other", true_cost(row_count() as usize, 0)),
     };
 
     Outcome {
@@ -294,18 +312,20 @@ async fn count_matching(store: &RecordStore<MemoryStore>, filter: &Expr) -> usiz
 
 #[tokio::main]
 async fn main() {
+    slate_kernel::build::announce();
     println!(
-        "Correlated-column estimates, {ROWS} rows. The planner assumes the two\n\
+        "Correlated-column estimates, {} rows. The planner assumes the two\n\
          columns are independent and multiplies their selectivities; the data\n\
-         says otherwise by the amount in `corr`.\n"
+         says otherwise by the amount in `corr`.\n",
+        row_count()
     );
 
     for domain in DOMAINS {
-        let each = ROWS / domain;
+        let each = row_count() / domain;
         println!(
             "\n{domain} distinct values per column, so one value is about {each} rows \
              ({:.0}% of the table).",
-            100.0 * each as f64 / ROWS as f64
+            100.0 * each as f64 / row_count() as f64
         );
         println!(
             "{:>6}  {:>10}  {:>9}  {:>8}  {:>9}  {:>12}  {:>10}",

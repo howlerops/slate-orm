@@ -37,11 +37,17 @@ repository that compares the clients to each other.
 ### `GET /api/meta`
 
 ```json
-{"sdk": "go", "leader": true, "tables": ["authors", "books", "sales"]}
+{"sdk": "go", "leader": true, "tables": ["authors", "books", "sales"],
+ "views": ["classics"]}
 ```
 
 `sdk` is the only field that legitimately differs between adapters, and the
 conformance runner excludes it.
+
+`views` is a separate list and not part of `tables`, because a view is not a
+table: it has no id, no index and no write path, and a generator reading a
+catalog emits a row type per table. A view named among them would be described
+as something it cannot be.
 
 ### `POST /api/query`
 
@@ -57,6 +63,20 @@ conformance runner excludes it.
 ```
 
 → `{"rows": [[{"u64":"10"}, ...], ...], "servedBy": "writer"}`
+
+`table` may name a view as well as a table. `/api/query` is the only endpoint
+that accepts one — that is not an adapter convention but the server's: exactly
+one handler reads through a view, and every other answers *"`classics` is a
+view over `books`, and only a plain query can read through one"*. All three
+adapters therefore send a view name on `/api/explain` too, and all three
+surface that same refusal; the conformance runner has a case for it.
+
+A view returns its base table's columns, in its base table's order, because a
+view may not narrow them (`docs/views.md`). So a client that holds a schema
+declares a view as its base table's columns under the view's name, and the
+server verifies exactly that — the fingerprint is checked under the name the
+request used. Nothing about the response shape differs from a read of the
+table.
 
 `filter` is `null`, or one of:
 
@@ -100,6 +120,93 @@ three SDKs, and so what this compares, is how each spells the third input's
 attachment — it joins back to the *second* input, and a client that attached it
 to the first would produce a cross join with exactly the right number of
 columns.
+
+### `POST /api/window`
+
+```json
+{"function": "rowNumber"|"rank"|"denseRank"|"lag"|"lead"|"sum"|"count",
+ "partition": true, "running": false, "limit": 20}
+```
+
+Over `books`, filtered to `author_id <= 6`, sorted by `id` ascending and
+limited. Fixed shape, like `/api/join`: a general window builder over HTTP
+would be a second query language to keep three implementations of.
+
+- `partition` true partitions by `author_id`; false is one partition over the
+  whole result, which is what SQL means by omitting the clause.
+- The window's own `ORDER BY` is `year` ascending. It is always present for
+  the ranking functions and for `lag`/`lead` — the server refuses those
+  without one — and present for `sum`/`count` only when `running` is true.
+  That is not a spelling: it is the standard's default frame changing from the
+  whole partition to a running value through the current row's peers.
+- `lag` and `lead` read `year`, one row away. `sum` sums `year`; `count` is
+  `COUNT(*)`.
+
+→ `{"rows": [{"row": [tagged, ...], "windowed": [tagged, ...]}, ...]}`
+
+The two lists are separate in the answer because they are separate on the
+wire. A window value is not a column and not a computed value, and an adapter
+folding it into `row` would return something a caller reads as a different
+thing — which is the failure the three lists exist to prevent and the one that
+looks like working software until somebody adds a column.
+
+The filter keeps out book 19, whose `author_id` is 99 so the outer joins have
+an unmatched side: it would be a partition of one in every answer here. And
+note what the demo's data does *not* have — two books by one author in the
+same year — so `rank` and `denseRank` agree on every row of it. The tie case
+is covered in each client's own suite and in the kernel's; this compares the
+three SDKs to each other.
+
+### `POST /api/search`
+
+```json
+{"text": "the games", "path": "index"|"scan", "limit": 20}
+```
+
+Full-text over `books.title`, sorted by `id` ascending and limited. The
+adapter sends the caller's `text` **unsplit**: the server tokenizes it with the
+same function its write path tokenized the column with, and an adapter that
+split it here would be a fourth tokenizer and a fourth chance to find fewer
+rows than the table holds.
+
+- `path` chooses the access path by hint. `index` asks for `by_title_text`,
+  `scan` asks for the table. Both must return the same rows — that is the
+  point of offering the choice — and their *plans* must differ.
+- The planner would take the scan either way at eleven books. A non-covering
+  index is worth taking at about one row in 24,000 (`docs/full-text.md`
+  measures it), so without the hint this endpoint could not reach the index at
+  all and would be demonstrating a table scan.
+
+→ `{"rows": [[tagged, ...], ...], "access": "<the plan's access path>" | null}`
+
+`access` comes from an `EXPLAIN` of the same query, and it is in the answer
+rather than the log because it is the only thing that distinguishes the two
+paths: the rows are identical by construction.
+
+**It is `null` for a caller without the `explain` grant**, which the demo's
+`reader` is. `EXPLAIN` is privileged deliberately — a plan is costed against
+statistics covering rows the caller's policy hides — so an endpoint that
+always explained would be one a restricted reader could not use at all, and
+full-text would be the only feature with that property. The rows are served
+either way. All three adapters swallow `PERMISSION_DENIED` from the explain
+and nothing else; a search that fails for any other reason still fails. An adapter that ignored `path`
+would agree with the others on every row and disagree here, which is why the
+conformance runner requires the two to differ.
+
+The terms are conjunctive: `"the games"` finds only *The Player of Games*,
+because it is the one title holding both words. `"the"` finds six — counted
+from the running demo, not from the seed file by eye, which is how the first
+draft of this paragraph said five. A term is a whole word — `"game"` finds
+nothing — which is the line between this and `LIKE '%game%'`, and the reason
+both exist.
+
+**This endpoint cannot show that the index is inverted.** Declaring
+`by_title_text` without `text = true` answers identically, down to the plan
+summary: an ordinary index on `title` takes the same hint and the summary
+names the index but not its key range. That the entries are per-term is
+asserted in `slate-serverd`'s schema tests and the kernel's, which is where a
+claim about a storage shape belongs; a comparison of three SDKs to each other
+could never catch it, because all three would be equally wrong.
 
 ### `POST /api/aggregate`
 

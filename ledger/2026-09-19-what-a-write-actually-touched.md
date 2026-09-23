@@ -87,17 +87,20 @@ way.
 
 ## What this does not do
 
-**Writes inside a transaction are not counted.** `autocommit` is the funnel for
-standalone writes; a transaction commits through the session machinery and
-never passes this hook. So the metric undercounts on any deployment that uses
-transactions, and nothing says so at the scrape. That is a real gap and the
-honest reason it is not closed here is that the session path has no equivalent
-single funnel — every command applies separately and the commit is elsewhere.
+~~**Writes inside a transaction are not counted.**~~ **Closed** — see
+`2026-09-19-what-a-transaction-wrote.md`. It was a real gap and the reason
+given here for leaving it ("the session path has no equivalent single funnel")
+was only half the story: the harder half is that a transaction's writes have
+not happened yet when they are applied, so the counting needed somewhere to
+*wait*, not just somewhere to hook. A tally per transaction, reported on a
+successful commit, is what that turned out to be.
 
-**Nothing scrapes it in a test.** The counter is asserted through
-`Counters::prometheus` and the observer through a recording double; no test
-starts a daemon, runs a purge and reads `/metrics` over a socket. The three
-pieces are each covered and their composition is one line in `serve.rs`.
+~~**Nothing scrapes it in a test.**~~ **Closed**, and the claim was too broad
+as written: `observing.rs` already scraped `/metrics` over a real socket from a
+real process — for the *request* counters. What had no end-to-end coverage was
+`slate_rows_written_total` and the one line in `serve.rs` that attaches the
+observer. `a_scrape_reports_the_rows_a_write_touched` covers both now; see
+`2026-09-19-the-counter-nobody-scraped.md`.
 
 No alert or dashboard ships with it, and there is still no scheduler — an
 operator wanting a nightly purge writes their own cron against the RPC.

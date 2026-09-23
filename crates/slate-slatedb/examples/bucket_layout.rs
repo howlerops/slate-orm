@@ -44,6 +44,14 @@ struct Entry {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json = std::env::args().any(|a| a == "--json");
+    // Human mode only. `--json` writes the committed `site/data/bucket.json`
+    // straight to stdout, and a build line above it would be a syntax error
+    // in the artifact rather than provenance on it. The JSON's own
+    // `provenance` block records the schema and row counts it was taken
+    // against and does *not* yet carry the build; see #280's entry.
+    if !json {
+        slate_slatedb::announce();
+    }
     let root = std::env::temp_dir().join(format!("slate-bucket-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
 

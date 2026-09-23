@@ -15,15 +15,16 @@
 //! |---|---|---|
 //! | open a scan | 1.0 | one request |
 //! | one row from a scan | 0.000125 | measured: readahead returns ~8,000 rows per request |
-//! | one point read | 3.0 | measured: reaching a row by index takes three requests |
-//! | `n` overlapped reads | `3n` | concurrency hides latency; it does not do less work |
+//! | one point read | 1.0 | measured: one request per row sharing no block |
+//! | `n` overlapped reads | `n` | concurrency hides latency; it does not do less work |
 //! | `k` disjoint ranges of one index | `k` opens | each range is its own iterator, walked in turn |
 //!
 //! The ratio decides when an index is worth using, and since the recalibration
 //! that is a statement about *absolute* numbers rather than percentages: a
 //! non-covering index scan beats a table scan of `n` rows only while it fetches
-//! fewer than `n / 24000` of them. At a million rows that is forty rows, not
-//! six per cent of a million.
+//! fewer than `n / 8000` of them. At a million rows that is a hundred and
+//! twenty-five rows, not six per cent of a million. It read `n / 24000` until
+//! `POINT_READ_COST` was re-measured; same shape, a third less severe.
 //!
 //! Splitting an `IN` into a range per value pays the same arithmetic with the
 //! opens added: `k` ranges start `k` requests in the red and win by fetching
@@ -68,14 +69,137 @@ pub const SCAN_OPEN_COST: f64 = 1.0;
 /// It depends on row width, so it is an average rather than a constant of
 /// nature: wider rows fit fewer per block. Eight thousand is what this corpus
 /// gives with a realistic row and the default 1 MiB readahead.
+///
+/// **It also depends on the block cache, by 7×, and this number is the best
+/// case.** The same scan of the same 200,000 rows costs a different amount
+/// depending only on what the store read *before* it — a partially populated
+/// cache fragments one scan into many small ranged reads rather than serving
+/// it:
+///
+/// | the store had already | rows per request |
+/// | --- | ---: |
+/// | the whole table cached | 8,000 — this constant |
+/// | read nothing at all | 3,774 |
+/// | served 200 random point reads | 980 |
+/// | served `analyze` and 400 point reads | 542 |
+///
+/// So a scan is charged between 1× and 15× less than it costs, depending on a
+/// state nothing here represents. Nothing in [`TableStats`] carries it, and
+/// inventing a statistic for it is a design question rather than a
+/// calibration: what a *server* should assume about its own cache depends on
+/// its workload, not on its data. The four figures are one fixture, one row
+/// width, one scale.
+///
+/// `slate-slatedb`'s `cost_at_scale` example produces the last three; see
+/// `ledger/2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md`
+/// for why the two examples that looked like they disagreed did not.
+///
+/// # What moving it costs, measured
+///
+/// Every candidate above flips plan decisions this crate has named tests for.
+/// Each value was set and `cargo test -p slate-kernel --no-fail-fast` run
+/// against 689 passing tests; the failures nest, so a dearer scan is strictly
+/// more disruptive:
+///
+/// | rows per request | tests that fail | the new ones |
+/// | ---: | ---: | --- |
+/// | 8,000 — this constant | 0 | |
+/// | 3,774 | 4 | `a_large_set_goes_back_to_a_scan`, `the_planner_picks_a_loop_only_for_a_small_outer_side`, `plans_match_the_committed_snapshot`, `the_fixture_and_the_cost_model_agree_on_rows_per_block` |
+/// | 980 | 5 | `a_wide_in_loses_to_a_table_scan` |
+/// | 542 | 6 | `the_planner_picks_a_loop_when_the_accumulated_side_is_small` |
+///
+/// Two of those are mechanical — the snapshot, and the latency fixture that
+/// holds the same rows-per-block figure and has its own test saying to change
+/// both together. The other four are access-path choices.
+///
+/// **The headroom is about 1.3×, bisected.**
+/// `a_large_set_goes_back_to_a_scan` holds at `0.000_150` and has flipped by
+/// `0.000_180`, against the `0.000_125` here. So the constant sits closer to
+/// flipping a named decision than the spread of its own calibration — 7× —
+/// and the mildest honest recalibration, the completely cold store, is 2.1×
+/// away and past the edge.
+///
+/// That is the argument for leaving it rather than a reason it is right:
+/// there is no single value, because the measurement depends on a cache state
+/// the model has no input for. Under-charging a scan is how
+/// `cost_at_scale` comes to pick one that is 11× slower at 200,000 rows.
+/// Over-charging it turns a four-hundred-key `IN` into four hundred point
+/// reads on a table that is entirely cached, which is the other direction and
+/// no better. Both are wrong; only one is the status quo.
 pub const SCAN_ROW_COST: f64 = 0.000_125;
 
 /// Cost of one point read.
 ///
-/// Measured at **three requests per read**, not one: following an index entry
-/// to its row goes through more than a single object fetch. 400 rows reached
-/// by index cost 1,217 requests.
-pub const POINT_READ_COST: f64 = 3.0;
+/// **One request per row reached through an index.**
+///
+/// ~~Measured at three requests per read, not one: following an index entry to
+/// its row goes through more than a single object fetch. 400 rows reached by
+/// index cost 1,217 requests.~~ ~~Re-measured later at 3.40–3.57 on a
+/// pseudo-random walk, and left at 3.0 as within the spread.~~ **Neither
+/// figure reproduces.** Four measurements, three benchmarks, two fixtures,
+/// both cache states, all taken on one machine on one day:
+///
+/// | measurement | requests per row |
+/// | --- | ---: |
+/// | `cost_calibration`, forced index, 400 of 200,000, warm | 1.02 |
+/// | `cost_calibration`, the same, cold | 1.09 |
+/// | `cost_at_scale`, 200 probes on a pseudo-random walk, cold / warm | 1.16 / 0.96 |
+/// | `ascending_walk`, ordinary and inverted index, stride 500 | 1.015 |
+///
+/// Nothing produces 3 **on the build that ships today**, and #278 found what
+/// changed. It is none of the three things guessed at here — not a SlateDB
+/// release, a block size, or the readahead `#34` turned on. It is
+/// `slate-slatedb`'s `cache` feature, which `docs/performance.md`'s finding 8
+/// turned on after this constant was calibrated: SlateDB's block and metadata
+/// caches were compiled out, so every index entry and every row went to object
+/// storage separately.
+///
+/// The same `cost_calibration`, same machine, same 200,000 rows, one session
+/// apart:
+///
+/// | build | forced index, 400 rows | per row |
+/// | --- | ---: | ---: |
+/// | `--no-default-features --features aws` (as calibrated) | 1,221 GETs | **3.05** |
+/// | default, with `cache` (as shipped) | 414 GETs | **1.04** |
+///
+/// **1,221 is the recorded figure to the unit** — the struck-through sentence
+/// above says 1,217 and the comments in `join.rs` and `chain.rs` said 1,221.
+/// So the old number was right about the old build and the new number is right
+/// about this one; neither measurement was ever wrong, and the constant was
+/// three times its value for exactly as long as the cache was missing.
+///
+/// The scan side did not move: 29 GETs for the full scan on both arms. A cost model wrong by 3× in the direction of "never use an
+/// index" is the same class of error as the one this constant was introduced
+/// to fix, pointing the other way.
+///
+/// **1.0 rather than 1.02, because it is a bound with a meaning**: one
+/// object-store request for a row that shares its block with no neighbour. No
+/// measurement here exceeds it. Rows that *do* share blocks cost far less —
+/// `ascending_walk` reads 0.043 per row over a contiguous run — so the honest
+/// shape is a function of how clustered a predicate's matches are, which the
+/// planner could know and does not. That is the next measurement, not this one.
+///
+/// ~~**The scan side is not settled and was not changed.** `cost_calibration`
+/// and `cost_at_scale` disagree about what a cold full scan of the same
+/// 200,000-row fixture costs — 58 requests against 205 — and until that is
+/// understood, moving `SCAN_ROW_COST` would be calibrating against a
+/// measurement one of the two says is wrong.~~
+///
+/// **The disagreement was understood and neither file was wrong**: the two
+/// scans ran against different cache states, and `SCAN_ROW_COST` above now
+/// carries all four. The scan side is still not settled, for a different and
+/// better-stated reason — there are now three measured values spanning 7×, and
+/// picking one is a decision about which cache state a planner should assume
+/// rather than a calibration.
+///
+/// That matters here because the two constants are compared against each
+/// other, and at 200,000 rows on this fixture the comparison now comes out
+/// wrong in a way the file says out loud: `cost_at_scale` prints `chose
+/// TableScan but Index is faster — WRONG at this scale`. The index issues 368
+/// requests against the scan's 370 — a tie in this unit — and finishes 11×
+/// sooner, while the model calls it 15× worse, because the scan is charged at
+/// the cached rate and measured at the fragmented one.
+pub const POINT_READ_COST: f64 = 1.0;
 
 /// What `n` point reads cost when issued `depth` at a time.
 ///
@@ -121,6 +245,32 @@ pub const COLUMN_RANGE_SELECTIVITY: f64 = 0.33;
 /// values sort, and `'%google%'` asks about substrings, which says nothing
 /// about sort position.
 pub const LIKE_SELECTIVITY: f64 = 0.1;
+
+/// How much of a table one search term is expected to keep.
+///
+/// A thousandth, and a guess — the same kind of guess [`LIKE_SELECTIVITY`] is
+/// and for a sharper reason: a histogram describes where a *column's values*
+/// sort, and a term is not one of them. What would answer this is the inverted
+/// index's own distribution, how many rows hold each term, which is a second
+/// statistic over a structure that can carry millions of distinct keys and is
+/// not collected.
+///
+/// The basis for the number is the same one [`ColumnStats::default`] uses, one
+/// order the other way: an un-analysed column is assumed to have a hundred
+/// distinct values, and a text column's *vocabulary* is far larger than a
+/// categorical column's value set — a few thousand distinct words out of a
+/// corpus of short titles is ordinary. A thousandth is that assumption.
+///
+/// **It was 0.05 first, and that made the index unreachable.** Not by a
+/// little: at a twentieth the planner chose a table scan at every size from a
+/// thousand rows to a million, because a twentieth of a large table is a great
+/// many point reads and a scan streams. The measurement is in the ledger
+/// entry; what it demonstrates is that a selectivity guess on a non-covering
+/// index is not a detail, it is whether the index is ever used at all.
+///
+/// Getting it wrong costs a plan, never an answer: the residual re-checks
+/// every term on every row the scan admits, whichever path produced it.
+pub const TERM_SELECTIVITY: f64 = 0.001;
 
 /// Cost of one comparison level when sorting a row: CPU only, no I/O, so
 /// several orders of magnitude below a round trip.
@@ -490,6 +640,22 @@ impl TableStats {
                     _ => LIKE_SELECTIVITY,
                 };
                 if *negated { 1.0 - matched } else { matched }
+            }
+            // Each term independently, which is the same independence
+            // assumption the rest of this file makes and is *more* wrong here:
+            // words in one document correlate strongly, so two terms of a
+            // phrase keep far more than a twentieth of a twentieth. Floored at
+            // one row rather than allowed to reach zero, because a plan
+            // costing an empty result reads nothing and a search that matches
+            // one document is the case this index exists for.
+            //
+            // No terms is no rows: see `Expr::Contains`.
+            Expr::Contains { terms, .. } => {
+                if terms.is_empty() {
+                    return 0.0;
+                }
+                let independent = TERM_SELECTIVITY.powi(terms.len().min(8) as i32);
+                independent.max(1.0 / (self.row_count.max(1)) as f64)
             }
             // A regular expression says nothing about where its matches sort,
             // whatever it is anchored on — `^abc` is a prefix, but so is

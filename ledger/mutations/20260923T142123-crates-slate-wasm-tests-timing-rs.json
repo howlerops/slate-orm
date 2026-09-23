@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-23T14:21:23+00:00",
+  "file": "crates/slate-wasm/tests/timing.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "timing"
+  ],
+  "commit": "75947af",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the samples come back in the wrong order",
+      "old": "    bests\n        .into_iter()",
+      "new": "    bests\n        .into_iter()\n        .rev()",
+      "verdict": "caught",
+      "caught_by": [
+        "the_reported_time_grows_with_the_work"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the worst sample is kept instead of the best",
+      "old": "            if slot.as_ref().is_none_or(|best| run.kernel < best.kernel) {",
+      "new": "            if slot.as_ref().is_none_or(|best| run.kernel > best.kernel) {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only the first statement is ever sampled",
+      "old": "        for (slot, sql) in bests.iter_mut().zip(statements) {",
+      "new": "        for (slot, sql) in bests.iter_mut().zip(statements.iter().cycle().take(1).chain(statements.iter().skip(1))) {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

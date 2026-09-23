@@ -100,8 +100,9 @@ not a generator change, and it is not started.
 Joins and chains get nothing. Their rows belong to no single table, so there is
 no table to name a type after, and the generator does not try.
 
-No write side. There is no `to_row`, so building a row to insert is still a
-positional list, which is the same failure in the other direction and was not
+~~No write side. There is no `to_row`, so building a row to insert is still a
+positional list, which is the same failure in the other direction~~ —
+**closed**, see `2026-09-20-the-write-side-of-the-same-mistake.md`. It was not
 in this change's scope.
 
 The Go and TypeScript decoders are **compiled but not executed** by any test.
