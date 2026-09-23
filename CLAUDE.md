@@ -50,6 +50,13 @@ missing test — write it rather than hide it. Several of this repository's wors
 bugs were found exactly this way, and several tests exist only because a
 mutation survived.
 
+**First check the mutation was a change.** `&x.clone()` for `&x`, or
+`if true { x } else { x }` for `x`, compile to the same behaviour and survive
+everything; `mutate.py` verifies the anchor occurs once, never that the
+replacement differs. Three in one session, and one was nearly written up as an
+untested cross-tenant guard. An equivalent mutation arrives looking exactly
+like a discovery.
+
 Use `scripts/mutate.py` rather than a hand-rolled `sed` and a grep for
 `FAILED`, because doing it by hand fails in three ways that all look like
 success, and all three were met in one session: the anchor string moves under

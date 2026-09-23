@@ -725,7 +725,19 @@ def main() -> int:
             "a surviving mutation fails loudly rather than scrolling past",
             spec('{"name": "m", "old": "ORIGINAL", "new": "ORIGINAL_BUT_HARMLESS"}'),
             1,
-            ["SURVIVED", "missing test or redundant code"],
+            # The message must offer the equivalent-mutation cause *first*.
+            # #296: three mutations in one session were `&x.clone()` or
+            # `if true { x } else { x }` — no change at all — and each
+            # survived meaninglessly while the message insisted a survivor is
+            # a missing test or redundant code. One was nearly written up as an
+            # untested cross-tenant guard. The script checks that `old` occurs
+            # once, never that `new` behaves differently, so it cannot detect
+            # this; the least it can do is name it.
+            [
+                "SURVIVED",
+                "the mutation may not be a change",
+                "missing test or redundant code",
+            ],
         ),
         case(
             "a survivor with a recorded reason is accepted",

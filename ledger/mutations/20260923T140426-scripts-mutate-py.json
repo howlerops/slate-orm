@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-23T14:04:26+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "ea173da",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the equivalent-mutation cause is dropped from the message",
+      "old": "                    \"       Three causes, and the third is the one to rule out \"\n                    \"first: the mutation may not be a change.\\n\"",
+      "new": "                    \"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a surviving mutation fails loudly rather than scrolling past"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the survivor message is silenced entirely",
+      "old": "                    f\"  !!   {mutation.name}: SURVIVED ({reported} suites ran).\\n\"",
+      "new": "                    f\"  ..   {mutation.name}: ok ({reported} suites ran).\\n\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a surviving mutation fails loudly rather than scrolling past"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

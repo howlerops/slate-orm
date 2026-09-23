@@ -612,9 +612,15 @@ def scored(
             else:
                 print(
                     f"  !!   {mutation.name}: SURVIVED ({reported} suites ran).\n"
-                    "       A surviving mutation is a missing test or redundant "
-                    "code. Write the test, or record why it cannot be caught\n"
-                    "       with `expect_survivor`."
+                    "       Three causes, and the third is the one to rule out "
+                    "first: the mutation may not be a change.\n"
+                    "       This script checks that `old` occurs exactly once, "
+                    "never that `new` behaves differently —\n"
+                    "       `&x.clone()` and `if true { x } else { x }` both "
+                    "survive everything and mean nothing.\n"
+                    "       Otherwise it is a missing test or redundant code: "
+                    "write the test, or record why it\n"
+                    "       cannot be caught with `expect_survivor`."
                 )
                 note(entry, mutation, "survived", failures, reported)
                 problems += 1
