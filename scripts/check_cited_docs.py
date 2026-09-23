@@ -63,6 +63,10 @@ FIXTURES: dict[str, str] = {
     "scripts/check_cited_docs.py": (
         "this file, whose docstring names the paths it deliberately does not check"
     ),
+    "scripts/check_mutation_claims.py": (
+        "its docstring shows the entry-filename shape it matches, "
+        "`ledger/<date>-a-slug.md`, which is a pattern rather than a file"
+    ),
     "scripts/test_check_cited_docs.py": (
         "writes temporary trees containing invented `docs/…` paths, for the same "
         "reason the cited-tests guard does"

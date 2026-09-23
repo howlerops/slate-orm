@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-23T09:32:03+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "cb9af18",
+  "python": "3.11.15",
+  "outcome": "baseline-red",
+  "cases": []
+}

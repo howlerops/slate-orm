@@ -1,0 +1,105 @@
+{
+  "at": "2026-09-23T09:25:27+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "cb9af18",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the date scope lets every old entry in",
+      "old": "        if not stamped or stamped.group(1) < FIRST_DAY:",
+      "new": "        if not stamped or stamped.group(1) < \"1970-01-01\":",
+      "verdict": "caught",
+      "caught_by": [
+        "an entry from before the rule is exempt",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the first day is treated as exempt",
+      "old": "        if not stamped or stamped.group(1) < FIRST_DAY:",
+      "new": "        if not stamped or stamped.group(1) <= FIRST_DAY:",
+      "verdict": "caught",
+      "caught_by": [
+        "an entry counting mutations with no citation is refused",
+        "one citing a record that exists passes",
+        "a citation to a record that is not there is refused",
+        "and the first day is inside the rule, not outside it",
+        "claiming every mutation was caught beside a survivor is refused",
+        "an expected survivor still contradicts `all caught`",
+        "an entry that does not claim a clean sweep is fine beside a survivor",
+        "a malformed record does not crash the guard"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing citation is accepted",
+      "old": "        if not cited:",
+      "new": "        if cited or True:",
+      "verdict": "caught",
+      "caught_by": [
+        "one citing a record that exists passes",
+        "an entry that does not claim a clean sweep is fine beside a survivor",
+        "a malformed record does not crash the guard",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a cited record that is absent is accepted",
+      "old": "            if not record.is_file():",
+      "new": "            if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a citation to a record that is not there is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an expected survivor stops counting as a survivor",
+      "old": "        if str(case.get(\"verdict\", \"\")).startswith(\"survived\")",
+      "new": "        if str(case.get(\"verdict\", \"\")) == \"survived\"",
+      "verdict": "caught",
+      "caught_by": [
+        "an expected survivor still contradicts `all caught`"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the clean-sweep contradiction is never reported",
+      "old": "            if claims_clean and left:",
+      "new": "            if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "claiming every mutation was caught beside a survivor is refused",
+        "an expected survivor still contradicts `all caught`"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a count is not required to call it a claim",
+      "old": "        if not COUNT.search(text):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "prose about mutation without a count is not a claim",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

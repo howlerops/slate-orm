@@ -63,8 +63,12 @@ place to re-narrate a withdrawn figure, and the ledger already holds it.
 
 ## Evidence
 
-Five mutations. Four caught immediately; the fifth — dropping the en dash from
-the range — **survived**, and the reason is worth keeping: without it the
+Five mutations, recorded in
+[`ledger/mutations/20260923T084319-scripts-check-cost-prose-py.json`](mutations/20260923T084319-scripts-check-cost-prose-py.json),
+and the re-run after the missing case was written in
+[`ledger/mutations/20260923T084353-scripts-check-cost-prose-py.json`](mutations/20260923T084353-scripts-check-cost-prose-py.json).
+Four caught immediately; the fifth — dropping the en dash from the range —
+**survived**, and the reason is worth keeping: without it the
 pattern still fires, on the `19%` alone, so only the text quoted back in the
 message changes. Counts could not see it. A case asserting the message quotes
 the whole range catches it, and a message that misquotes the sentence it is
