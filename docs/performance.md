@@ -2112,6 +2112,49 @@ a cache state the model has no input for, and there is now a second axis it
 has no input for either. A model that charged scans sub-linearly would fit
 these six numbers better and would still be guessing at the cache.
 
+### 8d. The loader cliff is not `l0_sst_size_bytes`, and the test did not need the cliff
+
+`README.md` carried this from #118: the loader stops being linear between
+500,000 and 600,000 rows, four attempts past that never finished, SlateDB's
+default 64 MiB `l0_sst_size_bytes` "lines up suspiciously well", **and the size
+that would settle it is the size that will not finish.**
+
+That last clause is the interesting one, and it is wrong. It assumes the test
+has to run *at* the cliff. SlateDB pauses writers when L0 fills, and L0's
+capacity is `l0_max_ssts` × `l0_sst_size_bytes` — 8 × 64 MiB by default. If
+that is the mechanism, shrinking the knob shrinks L0 in proportion and **the
+cliff comes down to meet you**.
+
+```
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+```
+
+`cargo run --release -p slate-slatedb --example loader_cliff`, 120,000 rows in
+chunks of 10,000, timing each chunk.
+
+| `l0_sst_size_bytes` | `max_unflushed_bytes` | L0 capacity | load | slow chunks |
+|---|---|---:|---:|---|
+| 64 MiB (stock) | 1 GiB (stock) | 512 MiB | 2.4 s | none |
+| 8 MiB | 1 GiB | 64 MiB | 2.4 s | none |
+| 128 MiB (stock l0) | 128 MiB | 512 MiB | 2.4 s | none |
+| **4 MiB** | **8 MiB** | **32 MiB** | 2.6 – 2.7 s | one, at 90–100k |
+
+**Shrinking L0 sixteenfold does not move a cliff into a load that is flat
+without it.** If L0 capacity set the cliff at 500,000 rows, 32 MiB of it should
+have produced one before 31,000. Three runs at the tightest setting give one
+slow chunk each — 0.31 s, 0.40 s, 0.31 s against a 0.21 s baseline, at 90,000
+or 100,000 rows — and a total load 12% slower. That is backpressure being
+touched, and it is not what "four attempts never finished" describes.
+
+The run says why, in a column that was there for another reason: **120,000 rows
+issue under thirty PUTs.** At these sizes the data is barely reaching L0 at
+all, so a knob governing L0 has almost nothing to govern.
+
+What is now known: the cliff is above 400,000 rows — [§8c](#8c-doubling-the-table-does-not-double-the-requests--a-scan-gets-cheaper-per-row-as-it-grows)
+loaded that on stock settings — and it is not set in proportion to either
+write-backpressure knob. One place fewer to look, which is the whole return on
+a negative result.
+
 ### 9. The in-process S3 server had Nagle on too, and it is inside the readahead table
 
 **Fixed**: `crates/slate-slatedb/tests/common/s3server.rs` sets `TCP_NODELAY`

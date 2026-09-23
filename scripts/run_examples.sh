@@ -65,7 +65,7 @@ binaries_dir=${BINARIES_DIR:-$root/target/debug/examples}
 # nothing. Unlike that crate, all five of theirs already worked.
 case "$crate" in
     slate-headbench) least=5 ;;
-    slate-slatedb) least=8 ;;
+    slate-slatedb) least=9 ;;
     slate-kernel) least=4 ;;
     slate-orm) least=1 ;;
     *) echo "no expected example count for $crate; add one to run_examples.sh" >&2; exit 2 ;;

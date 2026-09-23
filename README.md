@@ -1306,11 +1306,16 @@ Not built:
       about the constant being low came from a build with the block cache
       compiled out, and went when that build did — see
       [`performance.md`](docs/performance.md) finding 8
-- [ ] What that loader cliff is. The row width and SlateDB's default 64 MB
-      `l0_sst_size_bytes` line up suspiciously well with where it happens, and
-      it is not machine load (400k and 500k took the same time at load 8.6 as
-      at 2.5). Reproducible, unattributed, and the size that would settle it is
-      the size that will not finish
+- [ ] What that loader cliff is. **Not `l0_sst_size_bytes`** — that
+      hypothesis sat here from #118 until #292 tested it and it failed.
+      SlateDB applies write backpressure when L0 fills, so if L0's capacity
+      set the cliff, shrinking `l0_sst_size_bytes` should move it down in
+      proportion; shrinking it 16x and `max_unflushed_bytes` 128x moves
+      nothing, and a 120,000-row load stays flat either way. It is also not
+      machine load (400k and 500k took the same time at load 8.6 as at 2.5).
+      Still reproducible, still unattributed, and now with one fewer place to
+      look. `cargo run --release -p slate-slatedb --example loader_cliff` is
+      the instrument
 - [ ] A ~250 µs residual rise in first-row latency near a batch of 125, left
       after the 2.3 ms step turned out to be the socket. Consistent with the
       per-row cost of a larger batch and at the edge of this harness's

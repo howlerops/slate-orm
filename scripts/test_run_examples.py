@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,8 +27,30 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = ROOT / "scripts/run_examples.sh"
 
-#: The floor `run_examples.sh` holds `slate-slatedb` to.
-LEAST = 8
+#: The floor `run_examples.sh` holds `slate-slatedb` to, read from the script
+#: rather than restated here.
+#:
+#: It was `LEAST = 8`, a second copy of a number that lives in a `case` arm one
+#: file over — and #292 added a ninth example, bumped the arm, and turned four
+#: of these cases red on a fixture that had nothing to do with the change. A
+#: constant copied into a test is a constant that goes stale in a test, which
+#: is the same defect as one copied into prose, with a worse failure mode: it
+#: fails the next unrelated change rather than the reader.
+def _least(crate: str = "slate-slatedb") -> int:
+    found = re.search(
+        rf"^\s*{re.escape(crate)}\)\s*least=(\d+)",
+        RUNNER.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if not found:
+        raise SystemExit(
+            f"no `least=` arm for {crate} in {RUNNER.name}; this test cannot "
+            "know what floor to build a fixture against."
+        )
+    return int(found.group(1))
+
+
+LEAST = _least()
 
 
 def fixture(directory: pathlib.Path, scripts: dict[str, str]) -> tuple[pathlib.Path, pathlib.Path]:
