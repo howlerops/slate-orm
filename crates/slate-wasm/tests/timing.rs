@@ -82,34 +82,42 @@ fn best(playground: &Playground, sql: &str, runs: usize) -> Run {
         .expect("at least one run")
 }
 
-/// The least-disturbed reading of each of two statements, sampled alternately.
+/// The least-disturbed reading of each of several statements, sampled
+/// round-robin.
 ///
-/// Two separate batches of `best` is what this was, and it is flaky on a busy
+/// Separate batches of `best` is what this was, and it is flaky on a busy
 /// machine: whichever statement happens to be sampled during a bad patch loses,
 /// and under four spinning CPUs the pair inverted by 2.6× — far past any
-/// threshold that still catches the mutation. Alternating puts both through the
-/// same weather.
+/// threshold that still catches the mutation. Round-robin puts all of them
+/// through the same weather.
+///
+/// It took a slice in #297, after CI failed `the_reported_time_grows_with_the_work`
+/// at zone 563.469 ms against scan 558.564 ms. That test was still on three
+/// separate `best` batches — the exact pattern this paragraph was written
+/// about, left behind when the fix was applied to the pair below it. Measured
+/// alone the two are 355 ms and 650 ms, so the ordering is not marginal and
+/// never was; what inverted it was sampling the two under different load.
 ///
 /// Minimum rather than median, and on the *kernel* reading rather than the
 /// outer one, because contention only ever adds: the smallest of many samples
 /// is the closest thing to the cost with nothing else running, which is the
 /// quantity the comparison is about.
-fn paired(playground: &Playground, left: &str, right: &str, runs: usize) -> (Run, Run) {
-    let mut best_left: Option<Run> = None;
-    let mut best_right: Option<Run> = None;
-    let keep = |slot: &mut Option<Run>, run: Run| {
-        if slot.as_ref().is_none_or(|best| run.kernel < best.kernel) {
-            *slot = Some(run);
-        }
-    };
+fn round_robin(playground: &Playground, statements: &[&str], runs: usize) -> Vec<Run> {
+    // Built by iterating rather than `vec![None; n]`, which would need `Run:
+    // Clone` for no reason other than the constructor.
+    let mut bests: Vec<Option<Run>> = (0..statements.len()).map(|_| None).collect();
     for _ in 0..runs {
-        keep(&mut best_left, timed(playground, left));
-        keep(&mut best_right, timed(playground, right));
+        for (slot, sql) in bests.iter_mut().zip(statements) {
+            let run = timed(playground, sql);
+            if slot.as_ref().is_none_or(|best| run.kernel < best.kernel) {
+                *slot = Some(run);
+            }
+        }
     }
-    (
-        best_left.expect("at least one run"),
-        best_right.expect("at least one run"),
-    )
+    bests
+        .into_iter()
+        .map(|slot| slot.expect("at least one run"))
+        .collect()
 }
 
 #[test]
@@ -146,14 +154,22 @@ fn the_reported_time_grows_with_the_work() {
     // page's own headline: on object storage a point read costs about as much
     // as scanning 24,000 rows, so an index that still has to fetch rows loses.
     // It is here for the row count, not the access path.
-    let point = best(&playground, "SELECT * FROM trips WHERE id = 500", 5).kernel;
-    let zone = best(
+    //
+    // Round-robin rather than three `best` batches, which is what this was
+    // until CI inverted the last two at 563 ms against 558 ms. Sampled alone
+    // they are about 355 ms and 650 ms, so the ordering was never marginal —
+    // the batches simply met different weather, which is the failure
+    // `round_robin` exists for and which this test had been left out of.
+    let sampled = round_robin(
         &playground,
-        "SELECT * FROM trips WHERE pickup_zone = 132",
+        &[
+            "SELECT * FROM trips WHERE id = 500",
+            "SELECT * FROM trips WHERE pickup_zone = 132",
+            "SELECT * FROM trips",
+        ],
         5,
-    )
-    .kernel;
-    let scan = best(&playground, "SELECT * FROM trips", 5).kernel;
+    );
+    let (point, zone, scan) = (sampled[0].kernel, sampled[1].kernel, sampled[2].kernel);
 
     assert!(
         point < zone,
@@ -205,7 +221,8 @@ fn the_clock_stops_before_the_rows_are_rendered() {
             1.15,
         ),
     ] {
-        let (select, group) = paired(&playground, plain, grouped, 9);
+        let sampled = round_robin(&playground, &[plain, grouped], 9);
+        let (select, group) = (&sampled[0], &sampled[1]);
 
         // Both halves must have run the same plan, or the comparison is
         // between two different amounts of kernel work and proves nothing.
