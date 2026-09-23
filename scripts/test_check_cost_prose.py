@@ -316,6 +316,53 @@ def main() -> int:
     if not ok:
         print(f"        exit {code}: {out.getvalue()}")
 
+    # An error-claim about a constant is refused, not verified (#291).
+    for name, page, want_seen, want_wrong in [
+        ("an error-claim about a constant is refused",
+         "`POINT_READ_COST` is 13-19% low at 200k.\n", 0, 1),
+        ("an en dash in the range reads the same",
+         "`POINT_READ_COST` is 13\u201319% low at 200k.\n", 0, 1),
+        ("so does a single figure, and the other constant",
+         "SCAN_ROW_COST sits 20% high on this fixture.\n", 0, 1),
+        # The escape hatch, which is the point: the class becomes checkable
+        # by construction or explicitly exempt, never silently unchecked.
+        ("a marked one is history and passes",
+         "<!-- not a cost-model claim -->\n\n"
+         "`POINT_READ_COST` was 13-19% low on a build with no cache.\n", 0, 0),
+        ("a struck one passes too, like any other history",
+         "~~`POINT_READ_COST` is 13-19% low at 200k.~~\n", 0, 0),
+        # Not this pattern's business: a measurement that happens to be a
+        # percentage, which is most of this repository's prose.
+        ("a percentage that is not about a constant is left alone",
+         "A 5,000-row `update_many` came out ~7% off.\n", 0, 0),
+        # The `[^.\n]` in the pattern is what stops this: a constant stated
+        # checkably in one sentence and an unrelated percentage in the next
+        # must read as one claim and no refusal, not as an error-claim
+        # spanning the full stop.
+        ("a full stop separates a real claim from a later percentage",
+         "`POINT_READ_COST = 1.0`. Some other thing is 40% off.\n", 1, 0),
+    ]:
+        seen, wrong = run_markdown(page)
+        ok = seen == want_seen and len(wrong) == want_wrong
+        ran += 1
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        wanted {want_seen} seen and {want_wrong} refused, "
+                  f"got {seen} and {wrong}")
+
+    # Counting the refusal is not enough: dropping the en dash from the range
+    # still fires, on the `19%` alone, and only the text the message quotes
+    # back changes. A message that misquotes the sentence it is complaining
+    # about sends the author looking for something they did not write.
+    _, wrong = run_markdown("`POINT_READ_COST` is 13\u201319% low at 200k.\n")
+    ok = len(wrong) == 1 and "13\u201319%" in wrong[0]
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  the refusal quotes the whole range it saw")
+    if not ok:
+        print(f"        got {wrong}")
+
     # The README tree (#288). Without these the whole `readmes` path was
     # dead weight as far as the suite was concerned: disabling it outright,
     # and dropping `main`'s threading of it, both survived mutation.

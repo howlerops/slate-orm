@@ -182,6 +182,34 @@ PER_REQUEST = re.compile(
 #: for nine tasks. The declaration in `stats.rs` is the one copy that is not
 #: a restatement, so a `pub const` line is skipped.
 RESTATED = re.compile(r"\b(POINT_READ_COST|SCAN_ROW_COST)\s*=\s*([0-9._]+)")
+#: "`POINT_READ_COST` is 13-19% low at 200k" — a claim about a constant's
+#: *error* rather than its value, which nothing here can check.
+#:
+#: This is the shape that actually went stale. It sat unstruck in `README.md`
+#: while `docs/performance.md` carried the same sentence struck through as
+#: history, and #288 widened the guard to that file without being able to
+#: catch it — because verifying "13-19% low" needs the measurement the error
+#: is against, and hard-coding a measurement into this file is the defect it
+#: exists to prevent.
+#:
+#: So this does not verify. It *refuses*: an error-claim about a named
+#: constant has to be restated as a value the patterns above can check — "a
+#: point read costs 1 request" — or marked, like any other unverifiable
+#: passage. That converts the class by construction instead of leaving it
+#: invisible, which is the same trade `expect_survivor` and the frozen table
+#: roster make: a claim you are forced to write checkably, or forced to
+#: exempt by hand, is one that stays true.
+#:
+#: Anchored on the constant's name within one sentence, because the general
+#: shape — any percentage beside any word like "low" — is most of this
+#: repository's prose. `update_many` being "~7% off" is a measurement, not a
+#: claim about a constant.
+UNVERIFIABLE = re.compile(
+    r"(POINT_READ_COST|SCAN_ROW_COST)[^.\n]{0,60}?"
+    r"([0-9]+(?:\s*[\u2013-]\s*[0-9]+)?\s*%)\s*"
+    r"(low|high|off|out|under|over)\b",
+    re.IGNORECASE,
+)
 #: "saves scanning some twenty-four thousand rows" / "n > 8000k"
 CROSSOVER = re.compile(
     r"(?:saves? scanning (?:about |some |something like )?"
@@ -462,6 +490,19 @@ def check(
                         f"rows per request; 1 / SCAN_ROW_COST is "
                         f"{per_request:g}."
                     )
+            # Refused rather than checked -- see UNVERIFIABLE. Not counted in
+            # `seen`, because `seen` is how many claims were *verified* and
+            # this one cannot be; counting it would inflate the number that
+            # says how much this guard actually covers.
+            for match in UNVERIFIABLE.finditer(current):
+                wrong.append(
+                    f"{named(path)}:{chunk.where()} says {match.group(1)} is "
+                    f"{match.group(2)} {match.group(3)}, which states an error "
+                    f"rather than a value, so nothing can check it.\n"
+                    f"  Restate it as the value — `a point read costs 1 "
+                    f"request` — so the patterns here read it, or write\n"
+                    f"  `{NOT_A_CLAIM}` above it if it is narrating history."
+                )
             for match in CROSSOVER.finditer(current):
                 written = match.group(1) or match.group(2)
                 value = number(written, thousands=match.group(1) is not None)

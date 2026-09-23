@@ -1302,10 +1302,10 @@ Not built:
       the first second point this model has had: doubling the rows multiplies
       the requests by only 1.11-1.51x depending on cache state, so a scan gets
       *cheaper per row* as the table grows — a direction the model, which
-      charges scans linearly, cannot express. This bullet used to cite
-      a 1,223-against-1,217 reproduction and conclude `POINT_READ_COST` was
-      "13–19% low"; both belonged to a build with the cache compiled out, and
-      went when that build did
+      charges scans linearly, cannot express. What this bullet used to claim
+      about the constant being low came from a build with the block cache
+      compiled out, and went when that build did — see
+      [`performance.md`](docs/performance.md) finding 8
 - [ ] What that loader cliff is. The row width and SlateDB's default 64 MB
       `l0_sst_size_bytes` line up suspiciously well with where it happens, and
       it is not machine load (400k and 500k took the same time at load 8.6 as
