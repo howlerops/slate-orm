@@ -6,7 +6,7 @@
 # Four crates here hold benchmarks that `cargo` builds and nothing ran.
 # `slate-headbench`'s five had four broken at once — three by `leadership`
 # gaining authentication, a fourth by `EXPLAIN` becoming privileged — and were
-# found only when #265 ran them. `slate-slatedb`'s eight are where the
+# found only when #265 ran them. `slate-slatedb`'s nine are where the
 # planner's two cost constants come from, and running them in #269 and #270
 # found that one measured a warm cache while claiming to be cold and another
 # fenced itself by opening a second writer. A benchmark nobody runs is a
@@ -91,7 +91,7 @@ fi
 cd "$root"
 echo "Building $count examples in $crate…"
 # Incremental off, for the reason `CLAUDE.md` gives: it roughly halves what a
-# build leaves on disk, and linking eight binaries against slatedb, s3s and
+# build leaves on disk, and linking nine binaries against slatedb, s3s and
 # tonic is one of the places this container runs out. The failure does not say
 # ENOSPC — it says `rustc-LLVM ERROR: IO failure` and a linker `Bus error`, and
 # reads exactly like broken code. Nothing here is incremental anyway: this

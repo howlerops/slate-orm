@@ -169,11 +169,17 @@ fn bytes_on_disk(path: &Path) -> u64 {
 /// rather than printing a quiet 0.
 ///
 /// It is its own function rather than an `assert!` inline in `main` because
-/// `cargo test --example` never runs `main`. Left inline, the one check here
-/// that guards every reported number would be the one thing no unit test could
-/// reach — and on this container the runner that *does* reach it cannot be
-/// built, because nine debug example binaries exhaust the disk. A guard whose
-/// only witness is a suite you cannot run is a guard nobody has seen fire.
+/// `cargo test --example` never runs `main`, so left inline the one check that
+/// guards every reported number would be reachable only through
+/// `run_examples.sh`. Split out, `a_load_that_wrote_nothing_is_refused` covers
+/// the condition directly.
+///
+/// The runner does reach it, and does run on this container — in `--release`,
+/// per the recipe in `CLAUDE.md`; it is the *debug* build of these nine
+/// examples that exhausts the disk. Breaking the directory walk so a real
+/// store reads as empty fails here as `loader_cliff, exit 101`, which is this
+/// guard firing. An earlier version of this comment said the suite could not
+/// be run at all, and a mutation was recorded unverifiable on that basis.
 fn assert_wrote_something(on_disk: u64, total: u64) {
     assert!(
         on_disk > 0,

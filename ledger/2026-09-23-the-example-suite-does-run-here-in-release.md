@@ -5,7 +5,21 @@
 - **Touches:** `CLAUDE.md`
 - **Kind:** correcting an exemption I wrote three hours ago, by doing the thing it said could not be done
 
+## Supersedes
+
+[`ledger/mutations/20260923T132547-crates-slate-slatedb-examples-loader-cliff-rs.json`](mutations/20260923T132547-crates-slate-slatedb-examples-loader-cliff-rs.json)
+records an `expect_survivor` whose stated reason — "on this container it cannot
+be built: nine debug example binaries exhaust the disk" — is false as written.
+The record stays as run, per `ledger/README.md`; this entry is the correction it
+links forward to. The claim is true only of the default profile.
+
 ## What changed
+
+The doc comment on `assert_wrote_something` in `loader_cliff.rs` said the same
+thing in the source itself, ending "a guard whose only witness is a suite you
+cannot run is a guard nobody has seen fire". It now says which profile, and
+names the mutation that shows the guard firing. `run_examples.sh` called these
+"eight binaries" in two comments; there are nine.
 
 `CLAUDE.md` now carries the recipe:
 
