@@ -320,6 +320,23 @@ a primary key or an index, at schema-definition time, because its order is
 deterministic but says nothing about similarity — an index on one would sort
 correctly and answer nothing.
 
+### Full text is a different index *cardinality*
+
+`WHERE title CONTAINS 'the heaven'`, against an index declared `text = true`.
+
+The interesting part is not the tokenizer. Every index in this kernel wrote
+exactly one entry per row, and the write path, the unique-slot check, the
+delete path and the planner all assumed it. An inverted index writes one entry
+per *term* per row, so this is not a new index expression — it is a new index
+shape, and `IndexDef::key_sets(row) -> Vec<Vec<Value>>` is the one place that
+now decides how many entries a row writes.
+
+The planner ranges the index on one term and filters the rest per row, so a
+two-word phrase narrows by its first word. There is no ranking, no stemming and
+no stop words: a match is a match, returned in the order the index walks. That
+is a smaller promise than a search engine makes, and it is the one the storage
+layer can keep without a second system.
+
 ### Joins
 
 ```rust
@@ -412,6 +429,26 @@ thing to look at when a chain is slow and the estimate said it would not be:
 every team -> actors -> events   2500 rows   3 scans, 3010 rows read   80 ms   [10, 500, 2500]
 one team   -> actors -> events    250 rows   2 scans, 3000 rows read   75 ms   [1, 50, 250]
 ```
+
+### Windows keep the rows
+
+`row_number`, `rank`, `dense_rank`, `lag`, `lead` and the aggregates, over a
+`PARTITION BY` and an order:
+
+```sql
+SELECT title, rank() OVER (PARTITION BY author ORDER BY sales DESC) FROM books
+```
+
+A window is *row-preserving*. Every input row comes back with a value attached,
+which is the whole difference from `GROUP BY`, where rows collapse into one per
+key. The pass is a separate operator for that reason rather than a mode of the
+aggregate path.
+
+**A window is single-table.** There is no window over a join or a chain, in the
+kernel or on the wire, and the refusal says so rather than dropping the clause.
+`COUNT(DISTINCT …) OVER (… ORDER BY …)` is refused too: a distinct count over a
+moving frame is a different algorithm, and approximating it silently would be
+worse than declining.
 
 ### Relationships are loaded, not lazily fetched
 
@@ -525,6 +562,21 @@ caller meant — and there is no auto-increment, no trigger and no generated
 column. The row written is the row sent, so returning it would hand the caller
 its own request back.
 
+### A soft delete retires a row, and a purge really erases it
+
+A table marked `soft_delete` retires a row instead of erasing it. Reads skip
+it, the primary key stays taken, and every write path — not merely the obvious
+one — treats it the same way, which is the part that took the tests.
+
+Reading retired rows requires `include_deleted`, and that is a **privileged**
+read rather than a flag any caller may set: a soft delete that anyone can see
+through is not a delete. A retired row can be restored.
+
+Retired rows are not immortal. `purge_deleted` erases them past a retention
+window and is counted in `/metrics` like any other write. A `RESTRICT` foreign
+key still blocks on a retired child: the row is hidden, not gone, and treating
+it as gone would let a delete orphan a live reference.
+
 ### A batch is a round trip, a transaction is a guarantee
 
 Several writes in one request, and the caller has to say which of the two they
@@ -574,6 +626,26 @@ detects changes made by writers who *remembered to bump it* — a convention eve
 call site has to keep, where the one who forgets is the one whose edit is lost.
 The check costs no extra round trip: `update` already reads the row to enforce
 the row policy.
+
+### Arrays sort by prefix, which decides the encoding
+
+A column can hold a list. The element type lives on the *column* rather than in
+the type — `tags` is an array of strings, not a distinct `ArrayOfString` —
+which keeps `ValueType` a fieldless `Copy` enum.
+
+Arrays compare lexicographically with shorter-is-less: `[] < [1] < [1, 2] <
+[2]`. Prefix order, the way a word list sorts.
+
+That ordering is why an array is **terminated** in the key encoding rather than
+length-prefixed. A length prefix sorts `[2]` before `[1, 2]`, because one is
+less than two before any element is compared — and the tuple codec's entire
+contract is that byte order is value order. The terminator costs a byte per
+array and keeps the contract.
+
+**An array cannot be a primary key and cannot be indexed.** Both are refused
+rather than half-supported: indexing a list is the inverted index above, a
+different shape with a different cost, and conflating them would make one
+quietly wrong.
 
 ### There is no date type, and an enum is its own name
 
@@ -706,6 +778,23 @@ The fingerprint covers what decides how bytes are read — column count, types,
 nullability, drops, the primary key, the tenant column, a decimal's scale — and
 deliberately **not** names, because a rename moves no bytes and must not look
 like a migration.
+
+### A view is a name, not a grant
+
+A view is a named query, declared as `[[views]]` in the server's TOML and
+validated when the process loads it — not a `CREATE VIEW` arriving over the
+wire, because the wire carries no SQL. A read that names a view gets the view's
+filter `AND` its own, and the order of composition does not change the answer.
+
+**A view cannot widen what a caller may see.** Row-level security composes on
+top, so a view over a table the caller has no grant for returns nothing rather
+than leaking through the view's definition. This is deliberately the opposite
+of `SECURITY DEFINER` in most SQL databases, where a view is exactly the tool
+for granting narrowed access — so it is worth knowing before designing around
+it, and the refusal messages say it rather than leaving it to be discovered.
+
+Writes through a view are refused by construction rather than by vigilance, as
+is a view whose own `FROM` names another view.
 
 ### Schemas are code, and so are policies
 
@@ -938,6 +1027,30 @@ Built and tested:
       `length(url)`) rather than read out of it, with `analyze` evaluating the
       expression so the estimate is measured rather than assumed, and a covering
       scan that answers from the entry it is already holding
+- [x] Window functions — `row_number`, `rank`, `dense_rank`, `lag`, `lead` and
+      the aggregates, over a `PARTITION BY` and an order, row-preserving rather
+      than collapsing. On the wire, in all three clients, and `OVER` in the SQL
+      front end. Single-table: a window over a join or a chain is refused, not
+      silently dropped
+- [x] Array columns — the element type on the column rather than in the type,
+      ordered lexicographically with shorter-is-less so `[1] < [1, 2] < [2]`,
+      which is why the encoding terminates rather than length-prefixes. Refused
+      in a key and in an index, both deliberately
+- [x] Full-text search — `CONTAINS` against an inverted index declared
+      `text = true`, which is a new index *cardinality*: one entry per term per
+      row, where every other index here writes one per row. The planner ranges
+      the index on one term and filters the rest. No ranking, stemming or stop
+      words
+- [x] Views — a named query declared as `[[views]]` in the server's TOML and
+      validated at load, composing with row-level security as an `AND`. A view
+      is sugar, not a grant: it cannot widen what a caller may see, which is
+      the opposite of `SECURITY DEFINER`. Writes through a view, and a view
+      whose `FROM` names another view, are refused by construction
+- [x] Soft delete — `soft_delete` retires a row instead of erasing it; reads
+      skip it, the key stays taken, `include_deleted` is a privileged read
+      rather than a flag anyone can set, a retired row can be restored, and
+      `purge_deleted` erases past a retention window. A `RESTRICT` edge still
+      blocks on a retired child
 - [x] A computed value's inputs are read and are *not* part of the answer.
       `SELECT id, lower(title)` returns `title` as null unless it is asked for;
       an entry keyed on `lower(title)` cannot produce `title`, so no path may,

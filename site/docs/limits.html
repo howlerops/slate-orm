@@ -85,6 +85,17 @@
         and a dialect.
       </p>
       <p>
+        <strong>The newest features stop where they stop.</strong> A window
+        function is single-table — there is none over a join or a chain, and
+        <code>COUNT(DISTINCT …)</code> over a moving frame is refused rather
+        than approximated. An array column cannot be a primary key and cannot
+        be indexed. Full-text search has no ranking, no stemming and no stop
+        words: a match is a match. A view is read-only, cannot be defined over
+        another view, and — unlike <code>SECURITY DEFINER</code> — cannot
+        widen what a caller may see, because row-level security composes on
+        top of it rather than under it.
+      </p>
+      <p>
         <strong>No in-place promotion</strong> of a read replica to writer —
         promotion is a restart. No multi-writer. No cross-shard transactions,
         because there is no sharding.
