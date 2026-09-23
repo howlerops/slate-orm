@@ -67,6 +67,11 @@ FIXTURES: dict[str, str] = {
         "its docstring shows the entry-filename shape it matches, "
         "`ledger/<date>-a-slug.md`, which is a pattern rather than a file"
     ),
+    "scripts/test_check_retired_claims.py": (
+        "writes temporary trees containing `ledger/e.md` and `ledger/gone.md` "
+        "and runs the retired-claims checker over them; the second is missing "
+        "on purpose, to prove that checker refuses a retirement citing nothing"
+    ),
     "scripts/test_check_cited_docs.py": (
         "writes temporary trees containing invented `docs/…` paths, for the same "
         "reason the cited-tests guard does"

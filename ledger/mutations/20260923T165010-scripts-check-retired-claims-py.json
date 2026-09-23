@@ -1,0 +1,105 @@
+{
+  "at": "2026-09-23T16:50:10+00:00",
+  "file": "scripts/check_retired_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_retired_claims.py"
+  ],
+  "commit": "43da044",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "lines are not joined, so a wrapped claim is missed",
+      "old": "                out.append(\" \")",
+      "new": "                out.append(\"\\n\")",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found on one line: wanted 1 problems, got 0",
+        "the claim is found when it wraps: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "strikethrough stops exempting a withdrawal",
+      "old": "    for struck in STRUCK.finditer(flat):\n        if struck.start() <= start and end <= struck.end():\n            return True",
+      "new": "    for struck in STRUCK.finditer(flat):\n        if struck.start() <= start and end <= struck.end():\n            pass",
+      "verdict": "caught",
+      "caught_by": [
+        "strikethrough exempts a withdrawal: wanted 0 problems, got 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a one-word phrase is accepted into the registry",
+      "old": "        if len(phrase.split()) < 3:",
+      "new": "        if len(phrase.split()) < 0:",
+      "verdict": "caught",
+      "caught_by": [
+        "a phrase under three words is refused: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty registry no longer fails",
+      "old": "    if phrases == 0:",
+      "new": "    if phrases == -1:",
+      "verdict": "caught",
+      "caught_by": [
+        "an empty registry passed, which it must not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a retirement naming a missing entry is accepted",
+      "old": "        if not cited or not (root / cited).is_file():",
+      "new": "        if not cited and not (root / cited).is_file():",
+      "verdict": "caught",
+      "caught_by": [
+        "a retirement naming no entry is refused: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the NOT_A_CLAIM marker stops exempting",
+      "old": "    return any(MARKER in raw_lines[i] for i in range(lo, hi))",
+      "new": "    return False",
+      "verdict": "caught",
+      "caught_by": [
+        "NOT_A_CLAIM exempts a quotation: wanted 0 problems, got 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "vendored trees are scanned after all",
+      "old": "            if any(part in SKIP_DIRS for part in path.relative_to(root).parts):\n                continue",
+      "new": "            if False:\n                continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a vendored tree is skipped: wanted 0 problems, got 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ledger is scanned like the live tree",
+      "old": "ROOTS = (\"crates\", \"clients\", \"docs\", \"examples\", \"scripts\", \"site\")",
+      "new": "ROOTS = (\"crates\", \"clients\", \"docs\", \"examples\", \"scripts\", \"site\", \"ledger\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a ledger entry keeps the old wording: wanted 0 problems, got 1",
+        "a tree with no scannable file passed, which it must not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
