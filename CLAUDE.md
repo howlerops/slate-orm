@@ -182,6 +182,23 @@ that is set and missing is a hard error, never a silent fall back to building.
   rather than three false alarms about your code.
 - `cargo test` stops at the first failing binary. Use `--no-fail-fast` before
   concluding how much is broken.
+- **`run_examples.sh` will not build its examples in debug on this container**,
+  and the failure is the ENOSPC-in-disguise above: `LLVM ERROR: IO failure on
+  output stream` and a linker `Bus error`, met three times in one session, once
+  with `df` reporting 8.0K free. Measured: the nine `slate-slatedb` examples are
+  **131 MB at `--release`** against well over 1.4 GB in debug, which is
+  `-C debuginfo=2` and nothing else. The script already takes both knobs it
+  needs, so build them yourself and point it at them:
+
+  ```sh
+  CARGO_INCREMENTAL=0 cargo build --release -p slate-slatedb --examples
+  SKIP_BUILD=1 BINARIES_DIR=$PWD/target/release/examples \
+      sh scripts/run_examples.sh slate-slatedb --smoke
+  ```
+
+  CI has room and builds in debug; this is for here. An earlier entry recorded
+  the suite as simply unrunnable on this container, which was true only of the
+  default profile.
 - **A skip is green.** The Python harness used to *skip* its whole suite when
   `cargo` was absent, which in CI reads as a passing suite that started no
   server and exercised nothing. Prefer a hard error to a skip whenever the

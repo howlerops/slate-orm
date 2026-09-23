@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-23T15:04:03+00:00",
+  "file": "crates/slate-slatedb/examples/loader_cliff.rs",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "cargo build -q --release -p slate-slatedb --examples && SKIP_BUILD=1 BINARIES_DIR=/home/user/slate-orm/target/release/examples sh scripts/run_examples.sh slate-slatedb --smoke"
+  ],
+  "commit": "3b9376f",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the empty-store assertion is never called from the run",
+      "old": "    assert_wrote_something(on_disk, total);",
+      "new": "",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
