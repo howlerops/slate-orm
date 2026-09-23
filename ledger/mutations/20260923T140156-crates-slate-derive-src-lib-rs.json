@@ -1,0 +1,60 @@
+{
+  "at": "2026-09-23T14:01:56+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-derive",
+    "--lib"
+  ],
+  "commit": "570baa6",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an Enum variant carrying data is accepted, and its data dropped",
+      "old": "        if !matches!(variant.fields, Fields::Unit) {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::a_variant_carrying_data_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty enum is accepted",
+      "old": "    if data.variants.is_empty() {",
+      "new": "    if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::an_empty_enum_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two variants storing one name are accepted",
+      "old": "    for pair in seen.windows(2) {",
+      "new": "    for pair in seen.windows(2).take(0) {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::two_variants_storing_one_name_are_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal helper accepts generated code as a refusal",
+      "old": "            Ok(_) => panic!(\"expected a refusal, got generated code:\\n{source}\"),",
+      "new": "            Ok(_) => String::from(\"carrying data at least one variant Cash is for enums\"),",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

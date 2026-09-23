@@ -1,0 +1,102 @@
+{
+  "at": "2026-09-23T13:52:40+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--doc"
+  ],
+  "commit": "570baa6",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a second only_where is accepted, so one predicate is silently lost",
+      "old": "            if predicate.is_some() {",
+      "new": "            if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 190) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "belongs_to local names a field that does not exist",
+      "old": "            if !fields.iter().any(|f| f.ident == *name) {",
+      "new": "            if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 301) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "has_many without foreign is accepted",
+      "old": "        if spec.has_many && spec.foreign.is_none() {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 321) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "belongs_to without local is accepted",
+      "old": "        if !spec.has_many && spec.local.is_none() {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 363) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "has_many on a composite key defaults across tenants",
+      "old": "            if keys != 1 {",
+      "new": "            if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 341) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "an Enum variant carrying data is accepted, and its data dropped",
+      "old": "        if !matches!(variant.fields, Fields::Unit) {",
+      "new": "        if false {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty enum is accepted",
+      "old": "    if data.variants.is_empty() {",
+      "new": "    if false {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "two variants storing the same name are accepted",
+      "old": "    for pair in seen.windows(2) {",
+      "new": "    for pair in seen.windows(2).take(0) {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Enum (line 424) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

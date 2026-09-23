@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-23T13:54:33+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-derive",
+    "--lib"
+  ],
+  "commit": "570baa6",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an Enum variant carrying data is accepted, and its data dropped",
+      "old": "        if !matches!(variant.fields, Fields::Unit) {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::a_variant_carrying_data_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty enum is accepted",
+      "old": "    if data.variants.is_empty() {",
+      "new": "    if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::an_empty_enum_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a struct is accepted by #[derive(Enum)]",
+      "old": "    let Data::Enum(data) = &input.data else {",
+      "new": "    let Data::Enum(data) = &input.data.clone() else {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

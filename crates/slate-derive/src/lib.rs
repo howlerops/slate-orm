@@ -1168,3 +1168,72 @@ fn expand_enum(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     })
 }
+
+#[cfg(test)]
+// The same pair `slate-kernel`'s own test modules allow: a fixture that will
+// not parse and a refusal that does not arrive are both this suite failing,
+// and `expect`/`panic` say so at the line rather than through a `Result` no
+// caller reads.
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::expand_enum;
+
+    /// What `expand_enum` says when it refuses, not merely that it refuses.
+    ///
+    /// The `compile_fail` doctests on `slate_orm::Enum` cannot make this
+    /// distinction, and #295 found out the hard way: removing the
+    /// variant-carrying-data check and the empty-enum check left both
+    /// doctests still passing, because the *generated* code does not compile
+    /// for those shapes either. The shape is refused either way — what the
+    /// checks buy is the message, and a `compile_fail` block cannot read one.
+    ///
+    /// So the safety property was never at risk; the diagnostic was, and it is
+    /// the entire reason these two checks exist. Their own comments say so:
+    /// "a compile error here beats a `match` with no arms later".
+    fn refusal(source: &str) -> String {
+        let parsed = syn::parse_str(source).expect("the fixture itself must parse");
+        match expand_enum(&parsed) {
+            Ok(_) => panic!("expected a refusal, got generated code:\n{source}"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_variant_carrying_data_is_refused_by_name() {
+        let said = refusal("enum Event { Opened, Closed(String) }");
+        assert!(
+            said.contains("carrying data"),
+            "the message should say what is wrong, got: {said}"
+        );
+    }
+
+    #[test]
+    fn an_empty_enum_is_refused_by_name() {
+        let said = refusal("enum Nothing {}");
+        assert!(
+            said.contains("at least one variant"),
+            "the message should say what is wrong, got: {said}"
+        );
+    }
+
+    /// The other two refusals the doctests cover, tested the same way so that
+    /// all four Enum diagnostics are held to the same standard rather than
+    /// only the two that happened to survive a mutation.
+    #[test]
+    fn two_variants_storing_one_name_are_refused_by_name() {
+        let said = refusal("enum Payment { Cash, #[record(rename = \"Cash\")] Coins }");
+        assert!(
+            said.contains("Cash"),
+            "the message should name the collision, got: {said}"
+        );
+    }
+
+    #[test]
+    fn a_struct_is_refused_by_name() {
+        let said = refusal("struct Payment { kind: String }");
+        assert!(
+            said.contains("is for enums"),
+            "the message should point at the right derive, got: {said}"
+        );
+    }
+}

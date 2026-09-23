@@ -1,0 +1,69 @@
+{
+  "at": "2026-09-23T14:02:23+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-derive",
+    "--lib"
+  ],
+  "commit": "570baa6",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an Enum variant carrying data is accepted, and its data dropped",
+      "old": "        if !matches!(variant.fields, Fields::Unit) {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::a_variant_carrying_data_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty enum is accepted",
+      "old": "    if data.variants.is_empty() {",
+      "new": "    if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::an_empty_enum_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two variants storing one name are accepted",
+      "old": "    for pair in seen.windows(2) {",
+      "new": "    for pair in seen.windows(2).take(0) {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::two_variants_storing_one_name_are_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a struct reaching expand_enum is accepted",
+      "old": "    let Data::Enum(data) = &input.data else {",
+      "new": "    let Data::Enum(data) = (if true { &input.data } else { &input.data }) else {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal helper returns a satisfying string instead of panicking",
+      "old": "            Ok(_) => panic!(\"expected a refusal, got generated code:\\n{source}\"),",
+      "new": "            Ok(_) => String::from(\"carrying data at least one variant Cash is for enums\"),",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "This mutates the test helper, not the code under test. Making an assertion vacuous always survives, because a suite does not test itself \u2014 the four assertions are satisfied by a helper that returns their substrings without ever calling expand_enum. Kept in the spec rather than dropped so the record shows it was tried and why it proves nothing; the production-side equivalents are the four cases above it."
+    }
+  ],
+  "restored_clean": true
+}
