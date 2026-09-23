@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-23T13:39:10+00:00",
+  "file": "crates/slate-schema/src/table.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "soft_delete_derive"
+  ],
+  "commit": "8ec0f33",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a non-nullable soft-delete column is accepted, emptying the table",
+      "old": "                if !col.nullable {",
+      "new": "                if false {",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": false
+}

@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-23T13:43:33+00:00",
+  "file": "crates/slate-schema/src/table.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "soft_delete_derive"
+  ],
+  "commit": "8ec0f33",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a soft-delete column of any type is accepted",
+      "old": "                if col.ty != ValueType::I64 {",
+      "new": "                if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_soft_delete_column_that_is_not_a_timestamp_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

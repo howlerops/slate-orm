@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-23T13:46:28+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "8ec0f33",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "names cannot contain spaces again, hiding every doctest",
+      "old": "        re.compile(r\"^test (.+?)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "new": "        re.compile(r\"^test (\\S+)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a failing doctest is read as a catch, and named by its location"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the should-panic suffix is swallowed into the name",
+      "old": "        re.compile(r\"^test (.+?)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "new": "        re.compile(r\"^test (.+?)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE)  # noqa: E501\n        if False else re.compile(r\"^test (.+?) \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a failing should_panic test is read as a catch, not as unreadable"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the report pattern accepts anything, so nothing-ran reads as a pass",
+      "old": "        re.compile(r\"^test result:\", re.MULTILINE),\n    ),\n    # The house style",
+      "new": "        re.compile(r\"\", re.MULTILINE),\n    ),\n    # The house style",
+      "verdict": "caught",
+      "caught_by": [
+        "a mutation that does not build is not mistaken for a survivor",
+        "node output read as libtest reports nothing rather than a pass",
+        "--help lists exactly the dialects the table holds (missing ['rust'], invented [])"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

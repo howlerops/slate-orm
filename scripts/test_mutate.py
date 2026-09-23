@@ -44,6 +44,39 @@ else:
 '''
 
 
+#: The same stand-in, for a suite whose only failing test is a `should_panic`
+#: one. libtest inserts ` - should panic` between the name and the dots, which
+#: the `rust` pattern missed until #294 — a caught mutation then reported as
+#: unreadable. The exact line was taken from `rustc --test` on a two-test file,
+#: not written from memory.
+SHOULD_PANIC_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "MUTATED" in text:
+    print("test refuses_the_bad_shape - should panic ... FAILED")
+    print("test result: FAILED. 0 passed; 1 failed; 0 ignored")
+else:
+    print("test result: ok. 1 passed; 0 failed; 0 ignored")
+'''
+
+
+#: The same stand-in, for a suite whose only failing test is a doctest.
+#: libtest names a doctest by its location — `path.rs - Item (line N)`, with a
+#: `- compile` suffix for a `compile_fail` one — so the name is full of spaces
+#: and the old `(\S+)` capture could not match any of it. Every doctest in this
+#: repository was therefore invisible to the mutation runner. Taken from a real
+#: `cargo test -p slate-orm --doc`.
+DOCTEST_FAKE = '''
+import sys
+text = open(sys.argv[1]).read()
+if "MUTATED" in text:
+    print("test crates/slate-orm/src/lib.rs - Record (line 341) - compile fail ... FAILED")
+    print("test result: FAILED. 0 passed; 1 failed; 0 ignored")
+else:
+    print("test result: ok. 1 passed; 0 failed; 0 ignored")
+'''
+
+
 #: The same stand-in, speaking pytest. `-q` prints `FAILED path::name` in the
 #: short summary and a closing `N passed in Xs` — neither of which the other
 #: two dialects match, which is the whole reason this one exists.
@@ -212,6 +245,10 @@ def case(
         go_fake.write_text(GO_FAKE)
         quiet_cargo = home / "quiet_cargo.py"
         quiet_cargo.write_text(QUIET_CARGO_FAKE)
+        should_panic = home / "should_panic_fake.py"
+        should_panic.write_text(SHOULD_PANIC_FAKE)
+        doctest_fake = home / "doctest_fake.py"
+        doctest_fake.write_text(DOCTEST_FAKE)
         spec = (
             body.replace("__SUBJECT__", str(subject))
             .replace("__FAKE__", f'"{sys.executable}", "{fake}", "{subject}"')
@@ -222,6 +259,14 @@ def case(
             )
             .replace("__NODE__", f'"{sys.executable}", "{node_fake}", "{subject}"')
             .replace("__GO__", f'"{sys.executable}", "{go_fake}", "{subject}"')
+            .replace(
+                "__SHOULD_PANIC__",
+                f'"{sys.executable}", "{should_panic}", "{subject}"',
+            )
+            .replace(
+                "__DOCTEST__",
+                f'"{sys.executable}", "{doctest_fake}", "{subject}"',
+            )
             .replace(
                 "__QUIET_CARGO__",
                 f'"{sys.executable}", "{quiet_cargo}", "{subject}"',
@@ -617,6 +662,41 @@ def main() -> int:
             '{"name": "m", "old": "I", "new": "1"}]}',
             1,
             ["occurs 2 times"],
+        ),
+        case(
+            "a failing should_panic test is read as a catch, not as unreadable",
+            '{"file": "__SUBJECT__", "dialect": "rust", "command": [__SHOULD_PANIC__], '
+            '"cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "refuses_the_bad_shape"],
+            # The bug this is for: ` - should panic` between the name and the
+            # dots meant the pattern missed the line, so a *caught* mutation
+            # reported UNREADABLE — which reads as "your command is wrong" and
+            # sends the next person to fix a command that was already right.
+            # The reported name must also come back bare: a capture that
+            # swallowed the suffix would name a test nobody can run. Rejecting
+            # `should panic ...` was the first attempt and it let that through
+            # — the swallowed form reports as `NAME - should panic`, with no
+            # dots, so the string being rejected never appeared either way. A
+            # reject that cannot fire is the absence-checking version of a
+            # guard that never runs.
+            ["UNREADABLE", "- should panic"],
+        ),
+        case(
+            "a failing doctest is read as a catch, and named by its location",
+            '{"file": "__SUBJECT__", "dialect": "rust", "command": [__DOCTEST__], '
+            '"cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            0,
+            ["ok   m", "lib.rs - Record (line 341) - compile fail"],
+            # Doctests were wholly invisible before #294: every name libtest
+            # gives one contains spaces, so the capture matched nothing and a
+            # mutation a `compile_fail` doctest really caught came back
+            # UNREADABLE. `- compile fail` stays in the reported name because
+            # without it the line number is all a reader has. That exact
+            # suffix is what a failing `compile_fail` doctest prints — copied
+            # from the run that proved the cross-tenant `has_many` refusal is
+            # defended, not invented for the fixture.
+            ["UNREADABLE"],
         ),
         case(
             "a command whose failures cannot be read is refused, not scored",

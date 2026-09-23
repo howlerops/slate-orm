@@ -158,8 +158,32 @@ RECORDS = Path(os.environ.get("MUTATE_RECORDS", ROOT / "ledger" / "mutations"))
 DIALECTS = {
     # libtest: `test some_name ... FAILED`, and `test result: ok. 12 passed`
     # once per test binary that actually ran.
+    #
+    # `(.+?)` and not `(\S+)`, because two of libtest's four name shapes
+    # contain spaces and the strict version could match neither:
+    #
+    #   test a_unit_test ... FAILED
+    #   test a_unit_test - should panic ... FAILED
+    #   test crates/slate-orm/src/lib.rs - Enum (line 387) ... FAILED
+    #   test crates/slate-orm/src/factory.rs - factory (line 15) - compile ... FAILED
+    #
+    # So a mutation caught by a `#[should_panic]` test, or by *any doctest at
+    # all*, scored as UNREADABLE — which reads as "your command is wrong" and
+    # sends the next person to fix a command that was already right. Both were
+    # met in one session: the first mutating `loader_cliff`'s empty-store check
+    # (#293), the second checking whether a `compile_fail` doctest defends the
+    # cross-tenant `has_many` refusal (#294). It does; nothing could say so.
+    #
+    # Each shape was read off a real run rather than recalled — the first two
+    # from `rustc --test` on a two-test file, the last two from
+    # `cargo test -p slate-orm --doc`.
+    #
+    # ` - should panic` is stripped from the capture and ` - compile` is not,
+    # deliberately: the point of the name is that a reader can re-run it, and
+    # `cargo test a_unit_test` works while `cargo test "a_unit_test - should
+    # panic"` does not. A doctest's name is its location either way.
     "rust": (
-        re.compile(r"^test (\S+) \.\.\. FAILED\s*$", re.MULTILINE),
+        re.compile(r"^test (.+?)(?: - should panic)? \.\.\. FAILED\s*$", re.MULTILINE),
         re.compile(r"^test result:", re.MULTILINE),
     ),
     # The house style of `scripts/test_*.py`: `ok    name` / `FAIL  name`, and
