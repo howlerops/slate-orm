@@ -1,0 +1,72 @@
+{
+  "at": "2026-09-23T13:25:47+00:00",
+  "file": "crates/slate-slatedb/examples/loader_cliff.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-slatedb",
+    "--example",
+    "loader_cliff"
+  ],
+  "commit": "7538095",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the walk stops at the top level instead of recursing",
+      "old": "            Ok(kind) if kind.is_dir() => bytes_on_disk(&entry.path()),",
+      "new": "            Ok(kind) if kind.is_dir() => 0,",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::sums_every_file_at_every_depth"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "files are counted rather than weighed",
+      "old": "            Ok(kind) if kind.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),",
+      "new": "            Ok(kind) if kind.is_file() => 1,",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::sums_every_file_at_every_depth"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing directory panics instead of weighing nothing",
+      "old": "    let Ok(entries) = std::fs::read_dir(path) else {\n        return 0;\n    };",
+      "new": "    let entries = std::fs::read_dir(path).expect(\"read_dir\");",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::empty_and_missing_both_weigh_nothing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the empty-store assertion never fires",
+      "old": "        on_disk > 0,",
+      "new": "        on_disk >= 0,",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::a_load_that_wrote_nothing_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the assertion is not called from the run at all",
+      "old": "    assert_wrote_something(on_disk, total);",
+      "new": "",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "The call site is in `main`, which `cargo test --example` never runs. The runner that does reach it is `run_examples.sh slate-slatedb --smoke`, and on this container it cannot be built: nine debug example binaries exhaust the disk, and the build dies at `collect2: fatal error: ld terminated with signal 7 [Bus error]` with 131 MB free. Tried twice, once after reclaiming to 1.91 GB. The condition itself is covered by a_load_that_wrote_nothing_is_refused; what is uncovered is only that `main` still calls it."
+    }
+  ],
+  "restored_clean": true
+}

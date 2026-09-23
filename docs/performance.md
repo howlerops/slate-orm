@@ -2349,6 +2349,75 @@ again:
   this sweep's to edit. The fixture here is keyed by `u64` and would show
   nothing.
 
+### 8e. The loader cliff does not reproduce, and the knob #292 cleared does set where the bump is
+
+Section 7 recorded that the loader stops being linear between 500,000 and
+600,000 rows, that 600,000 "did not finish in five minutes, on three attempts",
+and that the disk under the in-process S3 server was the other candidate and
+"still not ruled out". §8d then tested the `l0_sst_size_bytes` hypothesis and
+reported it failed. Two of those three statements need correcting.
+
+**The disk is not it, and now it can be weighed.** `s3s_fs` is a filesystem
+backend, so every byte written through the fake S3 lands in a temporary
+directory — and nothing measured it, because the counters count *requests* and
+a 120,000-row load issues under thirty. `loader_cliff` now walks that directory
+each chunk:
+
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+| rows | wall | PUTs | on disk | bytes a row |
+|---:|---:|---:|---:|---:|
+| 120,000 | 2.4 s | 30 | 27.1 MiB | 236 |
+| 600,000 | 12.6 / 12.8 / 12.6 s | 135 | 136.3 MiB | 238 |
+| 1,000,000 | 22.0 / 23.2 / 22.5 s | 224 | 227.3 MiB | 238 |
+
+238 bytes a row, flat over a factor of eight. A million rows is 227 MiB, so the
+sizes section 7 could not finish were never close to this container's free
+space. That candidate is closed.
+
+**600,000 rows loads in 12.6 seconds, and a million in 22.** Three runs each,
+identical PUT counts and identical bytes. Whatever section 7 hit, it does not
+reproduce on this build — and a million rows, which that section's "the
+constants at a million rows remain unmeasured" was waiting on, is now a size
+that runs in under half a minute.
+
+**But §8d's headline is too strong, and this is the correction.** That section
+concluded "not `l0_sst_size_bytes`", having found no level shift at any
+setting. There is no level shift — that part stands. What it missed is that
+there *is* a real, reproducible event, and the knob places it exactly:
+
+build: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+| `l0_sst_size_bytes` | on-disk jumps at | interval |
+|---|---|---:|
+| 8 MiB | 70k, 130k, 190k rows | ~60,000 rows |
+| 16 MiB | 140k rows | ~130,000 rows |
+| 64 MiB (stock) | 510k rows | ~510,000 rows |
+
+Doubling the knob doubles the interval; multiplying it by eight multiplies the
+interval by about eight. At each jump the directory nearly doubles (56 → 111
+MiB at the stock setting) and the PUT rate leaps from 2 a chunk to 9, 3, 3 —
+a compaction, writing the new SSTs before the old ones go. It costs about
+0.3 seconds and the loader returns to 50,000 rows a second in the next chunk.
+
+So the #118 hypothesis named the right knob for the wrong reason. It is not
+write backpressure, and L0 never fills — §8d established both, and they remain
+established. It is compaction scheduling, and the stock 64 MiB puts the first
+one at ~510,000 rows: **inside the 500,000–600,000 band section 7 recorded the
+cliff in.** A hypothesis can name the right place and the wrong mechanism, and
+§8d refuted the mechanism while reporting it had cleared the knob.
+
+**What this does not settle.** It does not explain the original observation. A
+0.3-second compaction is not five minutes, so either that machine turned the
+same compaction into something far worse — plausible, and untested, because
+nothing recorded what else was running — or it was something this build no
+longer does. The honest statement is that the cliff is **not reproducible
+here**, not that it never happened; four recorded attempts are evidence about
+some machine, and this is evidence about this one.
+
+It is also one fixture, ~110 bytes a row serialised, against a loopback `s3s`
+on a container with 16 GB of memory. Row counts here are properties of that.
+
 ## Paging by key, and loading relations in one read
 
 Two measurements from the record layer rather than the storage engine. Both are

@@ -105,10 +105,23 @@ pub struct LocalS3 {
     server: JoinHandle<()>,
     counters: Arc<S3Counters>,
     // Held so the backing directory outlives the server.
-    _directory: tempfile::TempDir,
+    directory: tempfile::TempDir,
 }
 
 impl LocalS3 {
+    /// Where the server keeps its objects, on real disk.
+    ///
+    /// `s3s_fs` is a filesystem backend, not an in-memory one, so everything
+    /// written through this server lands under a temporary directory and
+    /// competes for the same free space as the build tree. That is invisible
+    /// from the request counters — they count requests, not bytes — and
+    /// `performance.md` has carried "the disk under the in-process S3 server"
+    /// as an unruled-out explanation for the loader cliff since #118. An
+    /// example cannot weigh what it cannot see.
+    pub fn directory(&self) -> &std::path::Path {
+        self.directory.path()
+    }
+
     /// Start a server with `bucket` already created.
     pub async fn start(bucket: &str) -> Self {
         let directory = tempfile::tempdir().expect("temp dir");
@@ -166,7 +179,7 @@ impl LocalS3 {
             bucket: bucket.to_owned(),
             server,
             counters,
-            _directory: directory,
+            directory,
         }
     }
 

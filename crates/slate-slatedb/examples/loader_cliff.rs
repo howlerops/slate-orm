@@ -37,6 +37,30 @@
 //! about. The claim under test needs no such number: run this at two values
 //! of `L0_SST_MB` and see whether the cliff moves in proportion to the knob.
 //!
+//! # What it found
+//!
+//! Both halves, and the second corrects the first.
+//!
+//! There is **no cliff** on this build: 600,000 rows load in 12.6 seconds and
+//! a million in 22, three runs each, against a recorded "did not finish in
+//! five minutes, on three attempts". The disk is not it either — the `MiB on
+//! disk` column exists because nothing had ever weighed the fake S3's
+//! directory, and the store turns out to want 238 bytes a row, so the sizes
+//! that would not finish were never near this container's free space.
+//!
+//! But there **is** a reproducible event, and `l0_sst_size_bytes` places it
+//! linearly: a compaction every ~510,000 rows at the stock 64 MiB, every
+//! ~130,000 at 16 MiB, every ~60,000 at 8 MiB. The directory nearly doubles,
+//! PUTs jump from 2 a chunk to 9, and the chunk takes about 0.3 s longer.
+//! The first one at the stock setting lands inside the 500,000–600,000 band
+//! the cliff was recorded in.
+//!
+//! So the knob hypothesis was right about *where* and wrong about *why*, and
+//! the run above that cleared it went too far: it tested backpressure, which
+//! really is not the mechanism, and concluded the knob had no part. Reading
+//! only the timing column is what made that possible — the disk column is
+//! what separates "nothing happens" from "something happens and it is small".
+//!
 //! # What this cannot say
 //!
 //! It measures one row shape against a loopback `s3s`, so the *rows* at which
@@ -65,6 +89,7 @@ use slate_slatedb::SlateStore;
 use slate_tuple::{Value, ValueType};
 use slatedb::Db;
 use slatedb::config::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -107,6 +132,54 @@ fn env_mb(name: &str, fallback: usize) -> usize {
         .and_then(|value| value.parse().ok())
         .filter(|n| *n > 0)
         .unwrap_or(fallback)
+}
+
+/// Bytes the fake S3 server is holding on real disk.
+///
+/// `s3s_fs` writes objects to a temporary directory, so a load competes for
+/// free space with everything else on this container. Nothing measured that
+/// before: the request counters count *requests*, and a 120,000-row load
+/// issues under thirty of them, so PUT counts say nothing about volume.
+/// `performance.md` has listed the disk as an unruled-out cause of the loader
+/// cliff since #118 while giving no way to weigh it.
+///
+/// Walks rather than shelling out to `du`, so the number is the same on any
+/// machine that can run the example, and sums apparent size rather than
+/// blocks — what the store *wrote*, not how the filesystem rounded it.
+fn bytes_on_disk(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => bytes_on_disk(&entry.path()),
+            Ok(kind) if kind.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// A load that left nothing on disk did not happen.
+///
+/// The disk column is the whole point of this example now, and a reported
+/// number nothing checks is the defect half this repository's corrections have
+/// been about. `run_examples.sh` runs this at 2,000 rows, so a walk that
+/// stopped recursing — or an `s3s_fs` that stopped writing — fails there
+/// rather than printing a quiet 0.
+///
+/// It is its own function rather than an `assert!` inline in `main` because
+/// `cargo test --example` never runs `main`. Left inline, the one check here
+/// that guards every reported number would be the one thing no unit test could
+/// reach — and on this container the runner that *does* reach it cannot be
+/// built, because nine debug example binaries exhaust the disk. A guard whose
+/// only witness is a suite you cannot run is a guard nobody has seen fire.
+fn assert_wrote_something(on_disk: u64, total: u64) {
+    assert!(
+        on_disk > 0,
+        "loaded {total} rows and the server's directory is empty: either the \
+         walk is broken or nothing was written"
+    );
 }
 
 fn events() -> TableDef {
@@ -180,10 +253,10 @@ async fn main() {
 
     counters.reset();
     println!(
-        "{:>10}  {:>9}  {:>10}  {:>12}",
-        "rows", "chunk s", "rows/s", "PUTs so far"
+        "{:>10}  {:>9}  {:>10}  {:>12}  {:>12}",
+        "rows", "chunk s", "rows/s", "PUTs so far", "MiB on disk"
     );
-    println!("{:-<48}", "");
+    println!("{:-<62}", "");
 
     let mut written = 0u64;
     let mut timings: Vec<(u64, f64)> = Vec::new();
@@ -206,21 +279,29 @@ async fn main() {
         written = chunk_end;
         timings.push((written, seconds));
         println!(
-            "{:>10}  {:>9.2}  {:>10.0}  {:>12}",
+            "{:>10}  {:>9.2}  {:>10.0}  {:>12}  {:>12.1}",
             written,
             seconds,
             CHUNK as f64 / seconds.max(1e-9),
-            counters.puts()
+            counters.puts(),
+            bytes_on_disk(server.directory()) as f64 / (1024.0 * 1024.0)
         );
     }
     let wall = started.elapsed().as_secs_f64();
     store.backend().close().await.expect("close");
 
     println!();
+    let on_disk = bytes_on_disk(server.directory());
     println!(
         "loaded {total} rows in {wall:.1}s, {} PUTs",
         counters.puts()
     );
+    println!(
+        "on disk           : {:.1} MiB, {:.0} bytes a row",
+        on_disk as f64 / (1024.0 * 1024.0),
+        on_disk as f64 / total as f64
+    );
+    assert_wrote_something(on_disk, total);
 
     // A level shift, not a single slow chunk. The first quarter is the
     // baseline because it is before any plausible cliff at these sizes; a
@@ -237,5 +318,67 @@ async fn main() {
             println!("observed cliff    : first slow chunk ends at {at} rows ({seconds:.2}s)")
         }
         None => println!("observed cliff    : none — every chunk stayed under {threshold:.2}s"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{assert_wrote_something, bytes_on_disk};
+
+    /// The walk recurses, and sums apparent size rather than counting files.
+    ///
+    /// Built rather than pointed at a real store: a store's layout is
+    /// SlateDB's to change, and a test that breaks when it does would be
+    /// testing the dependency. What is this example's own is the arithmetic.
+    #[test]
+    fn sums_every_file_at_every_depth() {
+        let root = tempfile::tempdir().expect("temp dir");
+        std::fs::write(root.path().join("a"), vec![0u8; 10]).expect("write a");
+        let nested = root.path().join("sub").join("deeper");
+        std::fs::create_dir_all(&nested).expect("create nested");
+        std::fs::write(root.path().join("sub").join("b"), vec![0u8; 5]).expect("write b");
+        std::fs::write(nested.join("c"), vec![0u8; 7]).expect("write c");
+
+        assert_eq!(bytes_on_disk(root.path()), 22);
+    }
+
+    /// An empty directory weighs nothing, and so does one that is not there.
+    ///
+    /// The second case is why the walk returns 0 rather than panicking on a
+    /// missing path: it is called once per chunk while the server is running,
+    /// and a measurement that aborts the run it is measuring is worse than a
+    /// measurement that reads low for one line.
+    #[test]
+    fn empty_and_missing_both_weigh_nothing() {
+        let root = tempfile::tempdir().expect("temp dir");
+        assert_eq!(bytes_on_disk(root.path()), 0);
+        assert_eq!(bytes_on_disk(&root.path().join("not-there")), 0);
+    }
+
+    /// The empty store is refused, which is what makes every disk figure here
+    /// a measurement rather than a print statement.
+    ///
+    /// `catch_unwind` rather than `#[should_panic]`, and the reason is about
+    /// the tooling: libtest prints a failing should-panic case as
+    /// `test NAME - should panic ... FAILED`, and `scripts/mutate.py` reads
+    /// `test NAME ... FAILED`, so the extra words make a *caught* mutation
+    /// score as unreadable. Verified by hitting it. A test whose failures the
+    /// mutation runner cannot read is a test that cannot defend the code.
+    #[test]
+    fn a_load_that_wrote_nothing_is_refused() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(|| assert_wrote_something(0, 2_000));
+        std::panic::set_hook(previous);
+        assert!(outcome.is_err(), "an empty store was accepted");
+    }
+
+    /// And a single byte is enough to say the write path ran. The threshold is
+    /// deliberately not a per-row floor: this example is the thing that
+    /// *measures* bytes a row, so a floor here would be the recorded literal
+    /// #292 refused to print.
+    #[test]
+    fn one_byte_is_enough() {
+        assert_wrote_something(1, 2_000);
     }
 }

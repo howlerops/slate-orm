@@ -1296,26 +1296,32 @@ Not built:
 - [ ] The cost model above 200,000 rows. At 200k it now checks out on a
       release build with the block cache on: 408 requests served for 400
       primary-key reads across three runs, so a point read costs 1 request to
-      about 2%. The loader still stops being linear somewhere between 500,000
-      and 600,000 rows and four attempts past that never finished, so the
-      constants at a million rows remain unmeasured. 400,000 does fit, and is
-      the first second point this model has had: doubling the rows multiplies
+      about 2%. A million rows now loads in 22 seconds — see
+      [`performance.md`](docs/performance.md) §8e — so the size this bullet
+      called unreachable is reachable, and the constants there are unmeasured
+      only because nobody has run the calibration at it yet. 400,000 was the
+      first second point this model had: doubling the rows multiplies
       the requests by only 1.11-1.51x depending on cache state, so a scan gets
       *cheaper per row* as the table grows — a direction the model, which
       charges scans linearly, cannot express. What this bullet used to claim
       about the constant being low came from a build with the block cache
       compiled out, and went when that build did — see
       [`performance.md`](docs/performance.md) finding 8
-- [ ] What that loader cliff is. **Not `l0_sst_size_bytes`** — that
-      hypothesis sat here from #118 until #292 tested it and it failed.
-      SlateDB applies write backpressure when L0 fills, so if L0's capacity
-      set the cliff, shrinking `l0_sst_size_bytes` should move it down in
-      proportion; shrinking it 16x and `max_unflushed_bytes` 128x moves
-      nothing, and a 120,000-row load stays flat either way. It is also not
-      machine load (400k and 500k took the same time at load 8.6 as at 2.5).
-      Still reproducible, still unattributed, and now with one fewer place to
-      look. `cargo run --release -p slate-slatedb --example loader_cliff` is
-      the instrument
+- [x] ~~What that loader cliff is.~~ **It does not reproduce.** 600,000 rows
+      load in 12.6 seconds and a million in 22, three runs each, against a
+      recorded "did not finish in five minutes, on three attempts". The disk
+      under the in-process S3 server — the other candidate section 7 left open
+      — is closed too: the store weighs 238 bytes a row, so a million rows is
+      227 MiB and the sizes that would not finish were never near this
+      container's free space. What *is* there is a compaction every ~510,000
+      rows at the stock setting, costing about 0.3 s. **`l0_sst_size_bytes`
+      places it**, linearly: 8 MiB puts it every ~60,000 rows, 16 MiB every
+      ~130,000. So #118 named the right knob and #292 — reading only the
+      backpressure mechanism, which really is not it — cleared that knob too
+      broadly. Not explained: what the original machine turned that compaction
+      into. See [`performance.md`](docs/performance.md) §8e;
+      `cargo run --release -p slate-slatedb --example loader_cliff` is the
+      instrument
 - [ ] A ~250 µs residual rise in first-row latency near a batch of 125, left
       after the 2.3 ms step turned out to be the socket. Consistent with the
       per-row cost of a larger batch and at the edge of this harness's
