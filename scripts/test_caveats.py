@@ -196,6 +196,40 @@ def main() -> int:
         1,
     )
 
+    # The two bugs the paragraph-boundary fix was for, one in each direction.
+    case(
+        "the first caveat of a section is found",
+        {"ledger/a.md": "# E\n\n## What this does not do\n\n**The first one.** Body.\n"},
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "emphasis at a line break is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "**A real one.** A sentence that wraps so that it is\n"
+                "**12** of 24, not 11, which is emphasis and not a caveat.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a struck-through withdrawal is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "~~**Withdrawn.** It was closed later.~~\n\n"
+                "**Still open.** Body.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
     # The never-fires guard: a ledger that moved finds nothing and reads
     # exactly like a repository that never wrote a caveat down.
     with tempfile.TemporaryDirectory() as directory:

@@ -49,7 +49,13 @@ LEDGER = ROOT / "ledger"
 STATUS = ROOT / "docs" / "caveat-status.json"
 SKIP = {"README.md", "TEMPLATE.md"}
 SECTION = re.compile(r"^## What this does not do\s*$(.*?)(?=^## |\Z)", re.M | re.S)
-BULLET = re.compile(r"^\*\*(.+?)\*\*", re.M | re.S)
+#: A caveat leads its *paragraph*: a blank line, then `**`. Emphasis that
+#: merely happens to start a wrapped line is not a caveat, and counting it
+#: as one inflated the first run — `**12**` in the middle of a sentence in
+#: `2026-09-21-the-demo-ui-is-a-subset-on-purpose.md` was read as a bullet.
+#: A struck-through paragraph is a *withdrawn* caveat and is already
+#: excluded, because `~~` opens it rather than `**`.
+BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
 VERDICTS = ("open", "closed", "deliberate", "untriaged")
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
@@ -72,7 +78,13 @@ def caveats(root: Path = ROOT) -> list[dict[str, str]]:
         section = SECTION.search(path.read_text(encoding="utf-8", errors="replace"))
         if not section:
             continue
-        for bullet in BULLET.findall(section.group(1)):
+        # Prefixed with a blank line because `SECTION`'s `\s*$` eats one of the
+        # two newlines after the heading, leaving the section's *first* bullet
+        # without the paragraph boundary `BULLET` requires. Found by two
+        # orphaned verdicts when the pattern was tightened: normalising the
+        # boundary here is safer than loosening the pattern, which is what let
+        # mid-paragraph emphasis in as a caveat in the first place.
+        for bullet in BULLET.findall("\n\n" + section.group(1)):
             found.append({"entry": path.name, "claim": " ".join(bullet.split())})
     return found
 

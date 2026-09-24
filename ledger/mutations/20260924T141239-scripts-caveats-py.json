@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-24T14:12:39+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "9a0883a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a caveat need not lead its paragraph, so emphasis counts",
+      "old": "BULLET = re.compile(r\"(?:\\A|\\n[ \\t]*\\n)[ \\t]*\\*\\*(.+?)\\*\\*\", re.S)",
+      "new": "BULLET = re.compile(r\"^\\*\\*(.+?)\\*\\*\", re.M | re.S)",
+      "verdict": "caught",
+      "caught_by": [
+        "emphasis at a line break is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the boundary is not normalised, so a first caveat is lost",
+      "old": "BULLET.findall(\"\\n\\n\" + section.group(1))",
+      "new": "BULLET.findall(section.group(1))",
+      "verdict": "caught",
+      "caught_by": [
+        "a bullet with no verdict is untriaged: untriaged: wanted 2, got 1",
+        "a verdict is read by the opening of its bullet: open: wanted 1, got 0; problems: wanted 0, got 1 ['a.md::It does not do the first thing.']",
+        "a reworded bullet orphans its verdict, and says so: untriaged: wanted 2, got 1",
+        "closed without naming what closed it is refused: closed: wanted 1, got 0",
+        "deliberate without naming the reasoning is refused: deliberate: wanted 1, got 0",
+        "an unknown verdict is refused and counted untriaged: untriaged: wanted 2, got 1",
+        "README and TEMPLATE are not entries: untriaged: wanted 2, got 1",
+        "a verdict survives an edit past the key's cut: open: wanted 1, got 0; problems: wanted 0, got 1 ['a.md::It does not cover the case where a sentence runs on well pas']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
