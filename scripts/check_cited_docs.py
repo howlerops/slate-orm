@@ -67,6 +67,11 @@ FIXTURES: dict[str, str] = {
         "its docstring shows the entry-filename shape it matches, "
         "`ledger/<date>-a-slug.md`, which is a pattern rather than a file"
     ),
+    "scripts/test_caveats.py": (
+        "writes temporary ledgers containing `ledger/a.md`, `ledger/README.md` "
+        "and `ledger/TEMPLATE.md` and runs the caveat tracker over them; the "
+        "paths describe those trees, not this repository"
+    ),
     "scripts/test_check_retired_claims.py": (
         "writes temporary trees containing `ledger/e.md` and `ledger/gone.md` "
         "and runs the retired-claims checker over them; the second is missing "

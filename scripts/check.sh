@@ -109,6 +109,8 @@ table-provenance|.|python3 scripts/check_table_provenance.py
 table-provenance-guard|.|python3 scripts/test_check_table_provenance.py
 mutation-claims|.|python3 scripts/check_mutation_claims.py
 mutation-claims-guard|.|python3 scripts/test_check_mutation_claims.py
+caveats|.|python3 scripts/caveats.py
+caveats-guard|.|python3 scripts/test_caveats.py
 retired-claims|.|python3 scripts/check_retired_claims.py
 retired-claims-guard|.|python3 scripts/test_check_retired_claims.py
 reclaim-guard|.|python3 scripts/test_reclaim.py

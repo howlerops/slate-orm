@@ -1,0 +1,78 @@
+{
+  "at": "2026-09-24T07:17:47+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "54d9681",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an orphaned verdict is no longer reported",
+      "old": "    orphans = sorted(set(status) - seen)",
+      "new": "    orphans = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a reworded bullet orphans its verdict, and says so: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "closed no longer has to name what closed it",
+      "old": "        if verdict in (\"closed\", \"deliberate\") and not status.get(k, {}).get(\"by\"):",
+      "new": "        if False and not status.get(k, {}).get(\"by\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "closed without naming what closed it is refused: problems: wanted 1, got 0 []",
+        "deliberate without naming the reasoning is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unknown verdict is accepted",
+      "old": "        if verdict not in VERDICTS:",
+      "new": "        if verdict in VERDICTS and False:",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the key is the whole claim, so a late typo fix orphans it",
+      "old": "KEY = 60",
+      "new": "KEY = 10000",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "README and TEMPLATE are read as entries",
+      "old": "        if path.name in SKIP:\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "README and TEMPLATE are not entries: untriaged: wanted 2, got 6"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires guard stops firing",
+      "old": "    if total == 0:",
+      "new": "    if total == -1:",
+      "verdict": "caught",
+      "caught_by": [
+        "an empty ledger passed, which it must not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

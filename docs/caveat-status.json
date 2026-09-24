@@ -1,0 +1,239 @@
+{
+ "note": "One verdict per ledger caveat, keyed by entry filename and the first 60 characters of the bullet. See scripts/caveats.py for what the verdicts mean and why they live here rather than in the entries. An entry is dated and append-only; the status of a claim is not the claim.",
+ "verdicts": [
+  {
+   "entry": "2026-09-23-a-counted-claim-must-name-its-run.md",
+   "key": "It does not verify that a cited run is the right one.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-a-counted-claim-must-name-its-run.md",
+   "key": "It reads one shape of claim.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-a-counted-claim-must-name-its-run.md",
+   "key": "It cannot see a hand-run mutation",
+   "verdict": "deliberate",
+   "by": "CLAUDE.md requires scripts/mutate.py; a hand-run mutation is the thing it tells you not to do"
+  },
+  {
+   "entry": "2026-09-23-a-counted-claim-must-name-its-run.md",
+   "key": "`FIRST_DAY` is a date in a file.",
+   "verdict": "deliberate",
+   "by": "a start date has to live somewhere; a file is the auditable place"
+  },
+  {
+   "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
+   "key": "It does not stop an equivalent mutation being written",
+   "verdict": "deliberate",
+   "by": "equivalent-mutation detection is undecidable — scripts/mutate.py says so"
+  },
+  {
+   "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
+   "key": "It is a message, not a mechanism",
+   "verdict": "deliberate",
+   "by": "same undecidability; a message is what the tool can honestly do"
+  },
+  {
+   "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
+   "key": "The three equivalent mutations are mine and recent.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
+   "key": "A claim nobody declares is a claim it cannot see.",
+   "verdict": "deliberate",
+   "by": "undecidable, per scripts/check_retired_claims.py"
+  },
+  {
+   "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
+   "key": "Three phrases is not coverage.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
+   "key": "Matching is literal.",
+   "verdict": "deliberate",
+   "by": "literal matching chosen over fuzzy so a failure is worth reading"
+  },
+  {
+   "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
+   "key": "`NOT_A_CLAIM` is checked within three lines either side of t",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
+   "key": "It reads one phrasing.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
+   "key": "It cannot tell history from a live claim",
+   "verdict": "deliberate",
+   "by": "no pattern can tell history from a live claim; NOT_A_CLAIM is the escape"
+  },
+  {
+   "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
+   "key": "The marker is still chunk-granular",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
+   "key": "It guards `crates/`, `docs/` and the READMEs",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
+   "key": "No prose is mutation-tested",
+   "verdict": "deliberate",
+   "by": "prose has nothing to mutate; the guards check links, citations and figures"
+  },
+  {
+   "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
+   "key": "It does not audit the rest of the surface the same way.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
+   "key": "The client-facing docs were not touched.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
+   "key": "It does not say what the cliff is.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
+   "key": "It never reproduced the cliff.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
+   "key": "One row shape, one machine, a loopback `s3s`.",
+   "verdict": "deliberate",
+   "by": "a measurement states its fixture; widening it is a new measurement"
+  },
+  {
+   "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
+   "key": "The example is not in CI's measured path",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
+   "key": "It does not explain the original observation.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
+   "key": "It does not measure the cost model at a million rows.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
+   "key": "The compaction's cost is measured on an idle container with ",
+   "verdict": "deliberate",
+   "by": "the container is the measurement's stated condition"
+  },
+  {
+   "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
+   "key": "One fixture, ~110 bytes a row serialised, one loopback `s3s`",
+   "verdict": "deliberate",
+   "by": "one fixture, stated"
+  },
+  {
+   "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
+   "key": "`mutate.py` cannot read a `should_panic` failure",
+   "verdict": "closed",
+   "by": "ledger/2026-09-23-the-mutation-runner-could-not-read-a-doctest.md — #294 taught mutate.py the should_panic shape"
+  },
+  {
+   "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
+   "key": "It does not make the whole suite runnable.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
+   "key": "It does not close the gap it was meant to.",
+   "verdict": "deliberate",
+   "by": "removing an assertion that would have passed is unobservable; true of every passing assertion"
+  },
+  {
+   "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
+   "key": "131 MB and 1.4 GB are one measurement each",
+   "verdict": "deliberate",
+   "by": "the ratio is the point, not the numbers"
+  },
+  {
+   "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
+   "key": "It does not re-verify the repository's doctests.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
+   "key": "It does not clear the history.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
+   "key": "The four shapes are the four I found.",
+   "verdict": "deliberate",
+   "by": "the four shapes found; libtest has others not provoked"
+  },
+  {
+   "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
+   "key": "I could not reproduce the inversion.",
+   "verdict": "deliberate",
+   "by": "reported as unreproduced rather than claimed"
+  },
+  {
+   "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
+   "key": "Round-robin does not make the comparison load-proof",
+   "verdict": "deliberate",
+   "by": "load-fair, not load-proof — stated and chosen"
+  },
+  {
+   "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
+   "key": "The third mutation I tried was a no-op",
+   "verdict": "deliberate",
+   "by": "recorded as a no-op, which is the finding"
+  },
+  {
+   "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
+   "key": "Three of my own mutations this session were equivalent code",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
+   "key": "It does not cover the `Record` doctests outside those eight.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
+   "key": "It does not check the message text a user sees for the other",
+   "verdict": "open",
+   "by": ""
+  }
+ ]
+}
