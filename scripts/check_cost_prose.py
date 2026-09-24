@@ -72,10 +72,17 @@ stale sentence in `latency.rs`, a file eight rounds of sweeping by hand had
 never flagged. A guard aimed at the right tree and the wrong shape reads as
 thorough and is not.
 
-`docs/` is still out of scope, and deliberately: `correctness.md` narrates the
-history of these numbers at length, and a guard that cannot tell "it costs
-three" from "it cost three until #269" would either fire on every paragraph or
-need an exemption per paragraph. `site/check/docs.py` is that tree's guard.
+`site/` is out of scope, and deliberately: `site/check/docs.py` is that tree's
+guard, and the pages there restate figures this one already checks at their
+source.
+
+`docs/` *was* out of scope for the same reason until #283 — `correctness.md`
+narrates the history of these numbers at length, and a guard that cannot tell
+"it costs three" from "it cost three until #269" fires on every paragraph. What
+changed is not that the problem went away but that `NOT_A_CLAIM` gave the
+narration somewhere to say so, which is why the marker exists at all. This
+paragraph said `docs/` was still excluded until #302 read the code: the
+widening landed in the constants and in the paragraph above, and not here.
 
 A passage that is deliberately historical — a withdrawn figure kept legible
 with a strikethrough, which `ledger/README.md` asks for — is not a claim about

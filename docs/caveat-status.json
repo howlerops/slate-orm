@@ -234,6 +234,312 @@
    "key": "It does not check the message text a user sees for the other",
    "verdict": "open",
    "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
+   "key": "It does not backfill.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
+   "key": "Nothing checks that a ledger entry's mutation claims match a",
+   "verdict": "closed",
+   "by": "ledger/2026-09-23-a-counted-claim-must-name-its-run.md — #290 built check_mutation_claims.py"
+  },
+  {
+   "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
+   "key": "A record is written by the script, so a hand-run mutation st",
+   "verdict": "deliberate",
+   "by": "CLAUDE.md requires mutate.py; a hand-run mutation is what it tells you not to do"
+  },
+  {
+   "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
+   "key": "The directory grows without bound",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "It does not stamp a single existing table.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "It does not record the commit, the machine or the wall-clock",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "`docs/` prose is still unguarded.",
+   "verdict": "closed",
+   "by": "#283 widened check_cost_prose.py to docs/; verified at scripts/check_cost_prose.py:401"
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "The stamp's `slatedb` version is the only dependency version",
+   "verdict": "closed",
+   "by": "ledger/2026-09-22 #285 — the stamp carries foyer, object_store, slatedb and tokio"
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "Nothing checks that a *recorded* table carries the line.",
+   "verdict": "closed",
+   "by": "#282 built check_table_provenance.py"
+  },
+  {
+   "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
+   "key": "`clients/python/testserver` is outside the swept tree",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-recipe-nobody-could-test.md",
+   "key": "It does not detect ENOSPC or run itself.",
+   "verdict": "deliberate",
+   "by": "reclaim.py is a tool you run, not a daemon"
+  },
+  {
+   "entry": "2026-09-22-a-recipe-nobody-could-test.md",
+   "key": "It does not know what another build is using.",
+   "verdict": "deliberate",
+   "by": "another build's working set is not knowable from outside it"
+  },
+  {
+   "entry": "2026-09-22-a-recipe-nobody-could-test.md",
+   "key": "It only sweeps `target/`.",
+   "verdict": "deliberate",
+   "by": "target/ is where the space goes; sweeping wider risks user files"
+  },
+  {
+   "entry": "2026-09-22-a-recipe-nobody-could-test.md",
+   "key": "`--dry-run`'s byte count can exceed what a real run frees",
+   "verdict": "deliberate",
+   "by": "a dry run cannot know what a concurrent build will hold open"
+  },
+  {
+   "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
+   "key": "It does not retro-fit provenance onto the 70 legacy tables.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
+   "key": "Nothing currently in `docs/` is stamped.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
+   "key": "Content-pinning will fire on a typo fix.",
+   "verdict": "deliberate",
+   "by": "content-pinning is the point: a table's numbers changing is what must be re-stamped"
+  },
+  {
+   "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
+   "key": "The classifier is a heuristic and will be wrong again.",
+   "verdict": "deliberate",
+   "by": "a heuristic, stated as one"
+  },
+  {
+   "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
+   "key": "It reads `docs/` only.",
+   "verdict": "closed",
+   "by": "#288 — check_table_provenance.py reads README_GLOBS as well as docs/"
+  },
+  {
+   "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
+   "key": "It does not reach a million rows",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
+   "key": "Two points are a line through two points.",
+   "verdict": "deliberate",
+   "by": "two points, stated as two points"
+  },
+  {
+   "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
+   "key": "It does not change any constant or any plan.",
+   "verdict": "deliberate",
+   "by": "a measurement that moves no constant is still a measurement"
+  },
+  {
+   "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
+   "key": "The fixture is one shape.",
+   "verdict": "deliberate",
+   "by": "one fixture, stated"
+  },
+  {
+   "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
+   "key": "It is still a loopback measurement",
+   "verdict": "deliberate",
+   "by": "loopback, stated"
+  },
+  {
+   "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
+   "key": "It does not re-examine the other two commits' reasoning, onl",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
+   "key": "Finding 7 gives a range, not a line.",
+   "verdict": "deliberate",
+   "by": "a range is the honest form for that finding"
+  },
+  {
+   "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
+   "key": "The lockfile bound is twelve levels, chosen and not measured",
+   "verdict": "deliberate",
+   "by": "a depth bound chosen and said to be chosen"
+  },
+  {
+   "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
+   "key": "`clients/python/testserver` is still outside the swept tree",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
+   "key": "Nothing checks that a recorded table kept its build line.",
+   "verdict": "closed",
+   "by": "#282 built check_table_provenance.py"
+  },
+  {
+   "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+   "key": "It does not stamp the versions of anything above `slate-slat",
+   "verdict": "closed",
+   "by": "ledger/2026-09-22 #285 — four dependencies stamped"
+  },
+  {
+   "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+   "key": "A duplicated dependency is reported but has never happened.",
+   "verdict": "deliberate",
+   "by": "reported-but-never-seen is the correct state for a guard against a shape that has not occurred"
+  },
+  {
+   "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+   "key": "`mutate.py`'s refusal cannot catch a dialect that reads *too",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+   "key": "The `-q` defect is latent, not historical — and this paragra",
+   "verdict": "deliberate",
+   "by": "recorded as latent, and the paragraph it replaced was withdrawn in writing"
+  },
+  {
+   "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
+   "key": "It does not settle `SCAN_ROW_COST`.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
+   "key": "It measures a warm store only.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
+   "key": "It is a loopback measurement.",
+   "verdict": "deliberate",
+   "by": "loopback, stated"
+  },
+  {
+   "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
+   "key": "One table on that page is stamped and seventy are not.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
+   "key": "The re-measurement was not repeated at scale",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
+   "key": "It reads `docs/` only.",
+   "verdict": "closed",
+   "by": "#288 — check_cost_prose.py reads README_GLOBS as well as docs/"
+  },
+  {
+   "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
+   "key": "The marker is coarse.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
+   "key": "Fenced blocks are unread.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
+   "key": "Nothing checks that a marker is still deserved.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
+   "key": "It does not check the shape that was wrong.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
+   "key": "It does not read `site/`",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
+   "key": "Two of 74 tables were added to the frozen roster, not stampe",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
+   "key": "`examples/batchbench/README.md` duplicates a `docs/performan",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
+   "key": "It does not run the example.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
+   "key": "A claim split across a Rust string literal's backslash-conti",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
+   "key": "The `~~` exemption is coarser than the guard now needs.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
+   "key": "It still reads Rust only, and only two constants.",
+   "verdict": "open",
+   "by": ""
+  },
+  {
+   "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
+   "key": "The general defect from #278 is still open.",
+   "verdict": "open",
+   "by": ""
   }
  ]
 }

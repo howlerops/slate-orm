@@ -18,6 +18,12 @@
       "retired_by": "ledger/2026-09-23-the-example-suite-does-run-here-in-release.md",
       "why": "slate-slatedb has nine examples, and has since one was added.",
       "instead": "nine binaries"
+    },
+    {
+      "phrase": "docs/ is still out of scope, and deliberately",
+      "retired_by": "ledger/2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
+      "why": "check_cost_prose.py has walked docs/ since #283; the docstring paragraph was left behind by that widening.",
+      "instead": "site/ is out of scope; docs/ is read, with NOT_A_CLAIM for historical narration."
     }
   ]
 }
