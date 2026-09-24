@@ -322,3 +322,38 @@ func TestADecimalsScaleIsPartOfTheFingerprint(t *testing.T) {
 		t.Error("two scales hashed alike, which is the whole point")
 	}
 }
+
+// AsView renames a declaration and copies what it shares.
+//
+// The copy is the point: `TableDef` holds slices, and a view built by
+// reference would let an append to either declaration's `Columns` be seen by
+// the other — which produces a wrong ordinal, and a silently mis-decoded row
+// rather than an error.
+func TestAsViewCopiesWhatItShares(t *testing.T) {
+	base := docsTable()
+	view := base.AsView("recent_docs")
+
+	if view.Name != "recent_docs" {
+		t.Fatalf("name = %q, want recent_docs", view.Name)
+	}
+	if len(view.Columns) != len(base.Columns) {
+		t.Fatalf("columns = %d, want %d", len(view.Columns), len(base.Columns))
+	}
+	for i := range base.Columns {
+		if view.Columns[i] != base.Columns[i] {
+			t.Fatalf("column %d = %+v, want %+v", i, view.Columns[i], base.Columns[i])
+		}
+		got, ok := view.Ordinal(base.Columns[i].Name)
+		if !ok || int(got) != i {
+			t.Fatalf("ordinal of %q = %d %v, want %d true", base.Columns[i].Name, got, ok, i)
+		}
+	}
+
+	// A view may not narrow columns, so its fingerprint over the same columns
+	// is the base table's claim under another name — the server checks it that
+	// way, and a divergence here would be a claim the server rejects.
+	view.Columns[0].Name = "mutated"
+	if base.Columns[0].Name == "mutated" {
+		t.Fatal("writing the view's column changed the base table's: the slice is shared")
+	}
+}

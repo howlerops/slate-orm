@@ -134,6 +134,24 @@ class Table:
         object.__setattr__(self, "columns", resolved)
         object.__setattr__(self, "primary_key", tuple(primary_key))
 
+    def as_view(self, name: str) -> "Table":
+        """This table's columns and key, under a view's name.
+
+        A view may not narrow columns — `docs/views.md` refuses a projection,
+        because it would make the caller's ordinals *view* ordinals rather than
+        the base table's — so a view's declaration is exactly its base table's
+        with the name changed. The server checks a claim about a view under the
+        view's own name against those same columns.
+
+        The generated module builds its `VIEWS` this way already, inline. This
+        is the same construction, owned by the library, so that a hand-written
+        declaration can name a view without knowing that a view's ordinals are
+        its base table's — which is the fact a caller most easily gets wrong,
+        and the one that produces a silently mis-decoded row rather than an
+        error.
+        """
+        return Table(name, self.columns, self.primary_key)
+
     @property
     def width(self) -> int:
         """How many columns the table declares."""

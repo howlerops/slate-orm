@@ -82,6 +82,29 @@ func (t TableDef) Ordinal(name string) (Ordinal, bool) {
 	return 0, false
 }
 
+// AsView returns this table's columns and key under a view's name.
+//
+// A view may not narrow columns — `docs/views.md` refuses a projection,
+// because it would make the caller's ordinals *view* ordinals rather than the
+// base table's — so a view's declaration is exactly its base table's with the
+// name changed, and the server checks a claim about a view under the view's
+// own name against those same columns.
+//
+// The generated file builds its views this way already, inline. Owning the
+// construction here lets a hand-written declaration name a view without
+// knowing that a view's ordinals are its base table's, which is the fact most
+// easily got wrong and the one that mis-decodes a row rather than erroring.
+//
+// Columns is copied: a TableDef holds a slice, and two declarations sharing
+// one backing array would let a later append to either be seen by both.
+func (t TableDef) AsView(name string) TableDef {
+	columns := make([]ColumnDef, len(t.Columns))
+	copy(columns, t.Columns)
+	key := make([]string, len(t.PrimaryKey))
+	copy(key, t.PrimaryKey)
+	return TableDef{Name: name, Columns: columns, PrimaryKey: key}
+}
+
 // FNV-1a, 64-bit.
 const (
 	fnvOffset uint64 = 0xcbf2_9ce4_8422_2325

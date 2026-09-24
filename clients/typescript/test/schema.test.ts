@@ -3,7 +3,9 @@ import { after, test } from "node:test";
 
 import { start, type Serving } from "./harness.js";
 import {
+  asView,
   fingerprint,
+  ordinalOf,
   int,
   isKind,
   SlateError,
@@ -304,4 +306,35 @@ test("a decimal's scale is part of the fingerprint", () => {
   assert.equal(fingerprint(priced(2)), 0xdab8856481bc4a6dn);
   assert.equal(fingerprint(priced(4)), 0xdaba08fbb666133fn);
   assert.notEqual(fingerprint(priced(2)), fingerprint(priced(4)));
+});
+
+// `asView` — a view's declaration is its base table's, renamed.
+//
+// A free function because `TableDef` is an interface. The copies are the
+// point: both arrays are mutable behind `readonly` fields, so a view built by
+// reference would let a push to either be seen by both, which produces a wrong
+// ordinal and a silently mis-decoded row rather than an error.
+test("asView renames a declaration and copies what it shares", () => {
+  const base: TableDef = {
+    name: "books",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "title", type: "string" },
+    ],
+    primaryKey: ["id"],
+  };
+
+  const view = asView(base, "recent_books");
+  assert.equal(view.name, "recent_books");
+  assert.deepEqual(view.columns, base.columns);
+  assert.deepEqual(view.primaryKey, base.primaryKey);
+  for (const column of base.columns) {
+    assert.equal(ordinalOf(view, column.name), ordinalOf(base, column.name));
+  }
+
+  view.columns.push({ name: "added", type: "string" });
+  assert.equal(base.columns.length, 2, "the base table shares the view's array");
+
+  view.primaryKey.push("title");
+  assert.deepEqual(base.primaryKey, ["id"], "the base table shares the view's key");
 });
