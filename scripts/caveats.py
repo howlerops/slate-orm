@@ -21,7 +21,19 @@ records a verdict per caveat. The verdicts are:
   * `deliberate` &mdash; a decision with reasoning written down, not a backlog
     item. `by` names where the reasoning lives. Reversing it is a design
     conversation, not a chore, and counting it as debt misreads the ledger.
+  * `moment` &mdash; a statement about one run, one commit or one moment,
+    which cannot be "still true" because it was never a standing claim.
+    "It does not prove CI is green", "the deployed job's steps have run
+    exactly once each", "the panel no longer exists". There is nothing to
+    do and nothing to reverse, so counting it as either work or a decision
+    misreads it. `by` is not required: the entry's own date is the context.
   * `untriaged` &mdash; the default. Not yet read.
+
+The fifth verdict was added while triaging, because 677 caveats could not be
+sorted into the first four without lying about roughly one in twelve of them.
+A caveat that says a check had run once is not debt, not a decision, and not
+closed by anything — it simply stopped being current, and `open` would have
+put it on a backlog where it would be read as work forever.
 
 WHY A SEPARATE FILE RATHER THAN EDITING THE ENTRIES
 
@@ -56,7 +68,7 @@ SECTION = re.compile(r"^## What this does not do\s*$(.*?)(?=^## |\Z)", re.M | re
 #: A struck-through paragraph is a *withdrawn* caveat and is already
 #: excluded, because `~~` opens it rather than `**`.
 BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
-VERDICTS = ("open", "closed", "deliberate", "untriaged")
+VERDICTS = ("open", "closed", "deliberate", "moment", "untriaged")
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
 #: does not orphan the verdict.
@@ -124,7 +136,35 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
     return counts, problems, orphans
 
 
+def listing(verdict: str, root: Path = ROOT) -> list[str]:
+    """Every caveat with `verdict`, as `entry: claim` lines, entry order.
+
+    The counts alone could not answer the question this file's header poses
+    — "what is left to do" — because a number is not a list. Reading the
+    JSON by hand was the workaround, which is the same workaround as
+    reading 196 entries, only shorter.
+    """
+    status = load(root)
+    out = []
+    for c in caveats(root):
+        k = f"{c['entry']}::{key(c['claim'])}"
+        if status.get(k, {}).get("verdict", "untriaged") == verdict:
+            out.append(f"{c['entry']}: {c['claim']}")
+    return out
+
+
 def main(root: Path = ROOT) -> int:
+    argv = sys.argv[1:]
+    if argv:
+        want = argv[0].removeprefix("--")
+        if want not in VERDICTS:
+            print(f"usage: caveats.py [--{' | --'.join(VERDICTS)}]")
+            return 2
+        lines = listing(want, root)
+        for line in lines:
+            print(line)
+        print(f"{len(lines)} {want}")
+        return 0
     counts, problems, orphans = report(root)
     total = sum(counts.values())
     for problem in problems:
