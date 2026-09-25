@@ -53,6 +53,20 @@ fn books() -> TableDef {
         .expect("a valid schema")
 }
 
+/// A second table, so a join can be written.
+///
+/// A view is single-table today (`docs/views.md` §5), so this exists for the
+/// grammar test below rather than for the view path.
+fn authors() -> TableDef {
+    TableDef::builder("authors", TableId(2))
+        .column("id", ValueType::U64)
+        .column("name", ValueType::Str)
+        .column("country", ValueType::Str)
+        .primary_key(["id"])
+        .build()
+        .expect("a valid schema")
+}
+
 /// The one statement kind a view is, parsed.
 fn select(text: &str) -> QuerySpec {
     let tables = [books()];
@@ -165,4 +179,54 @@ fn the_spec_round_trips_through_json() {
     let text = serde_json::to_string(&spec).expect("serialisable");
     let back: QuerySpec = serde_json::from_str(&text).expect("deserialisable");
     assert_eq!(back, spec);
+}
+
+#[test]
+fn a_join_groups_by_more_than_one_key() {
+    // The grammar comment in `sql.rs` said "on a join: one GROUP BY key" long
+    // after `JoinSpec::group_by` became a `Vec<u32>` and the parser started
+    // accepting a list. Nothing executed the claim either way, so it survived
+    // the change that falsified it.
+    //
+    // This is the test that would have caught it. It is here rather than in
+    // `slate-wasm`'s suite for the reason at the top of this file: the claim
+    // is about *the grammar*, not about what the browser happens to send.
+    let tables = [books(), authors()];
+    let text = "SELECT books.author_id, books.year, count(*) \
+                FROM books JOIN authors ON books.author_id = authors.id \
+                GROUP BY books.author_id, books.year";
+    let parsed = parse(text, &Schema(&tables))
+        .unwrap_or_else(|e| panic!("two group keys on a join were refused: {}", e.message));
+    match parsed.statement {
+        Statement::Join(spec) => assert_eq!(
+            spec.group_by.len(),
+            2,
+            "both keys should reach the spec, got {:?}",
+            spec.group_by
+        ),
+        other => panic!("parsed as {other:?}, not a join"),
+    }
+}
+
+#[test]
+fn a_single_table_groups_by_more_than_one_key() {
+    // The join case above had a sibling that no test in *this* crate covered:
+    // mutating the single-table `GROUP BY` loop to stop after one key survived
+    // `cargo test -p slate-sql`. The coverage existed, in `slate-wasm`'s 226
+    // tests, which is the coupling the header of this file argues against —
+    // a non-browser caller breaking would be caught only if the browser
+    // happened to care.
+    let tables = [books()];
+    let text = "SELECT author_id, year, count(*) FROM books GROUP BY author_id, year";
+    let parsed = parse(text, &Schema(&tables))
+        .unwrap_or_else(|e| panic!("two group keys were refused: {}", e.message));
+    match parsed.statement {
+        Statement::Select(spec) => assert_eq!(
+            spec.group_by.len(),
+            2,
+            "both keys should reach the spec, got {:?}",
+            spec.group_by
+        ),
+        other => panic!("parsed as {other:?}, not a single-table read"),
+    }
 }

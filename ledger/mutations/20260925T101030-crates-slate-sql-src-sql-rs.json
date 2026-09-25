@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-25T10:10:30+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "e51ad99",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "GROUP BY stops after the first key",
+      "old": "                spec.group_by.push(ordinal);\n                if !self.eat_symbol(\",\") {\n                    break;\n                }",
+      "new": "                spec.group_by.push(ordinal);\n                if true {\n                    break;\n                }",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

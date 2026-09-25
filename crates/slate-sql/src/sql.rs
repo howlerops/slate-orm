@@ -31,7 +31,7 @@
 //!         [ ORDER BY <col | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //!
-//!         -- on a join: one GROUP BY key, and ORDER BY needs it
+//!         -- on a join: ORDER BY needs a GROUP BY
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
 //! DELETE  FROM <table> WHERE <pk> = <literal>
