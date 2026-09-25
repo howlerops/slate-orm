@@ -315,3 +315,266 @@ fn the_other_order_of_mixing_is_refused_too() {
         error.message
     );
 }
+
+// --- the grammar block, line by line ---------------------------------------
+//
+// `sql.rs`'s module documentation opens with the grammar "in full", and a
+// reader takes it as the specification. Its *name* lists are checked
+// mechanically by `sql::grammar`; its productions cannot be, so each line has
+// a case here that parses the thing it describes. Both kinds exist because the
+// block had gone stale in both ways at once: the call list was three weeks
+// behind `month_start`, and the `WHERE` line said `AND` only on the day after
+// `OR` landed.
+//
+// A case that merely parses is weak, deliberately. The point is not to
+// re-test the parser — the suites above and in `slate-wasm` do that — but to
+// make a line of the block that stops being true *fail* rather than mislead.
+
+/// Parse against both tables, for the lines that need a join.
+fn parse_two(text: &str) -> slate_sql::sql::Parsed {
+    let tables = [books(), authors()];
+    parse(text, &Schema(&tables)).unwrap_or_else(|e| panic!("{text}: {}", e.message))
+}
+
+fn refuse_two(text: &str) -> String {
+    let tables = [books(), authors()];
+    parse(text, &Schema(&tables))
+        .err()
+        .unwrap_or_else(|| panic!("{text} was accepted and the grammar says it is refused"))
+        .message
+}
+
+#[test]
+fn the_select_line_takes_a_star_a_list_and_distinct() {
+    // `SELECT [DISTINCT] <* | item-list> FROM <table> [AS <alias>]`
+    select("SELECT * FROM books");
+    select("SELECT id, title FROM books");
+    select("SELECT DISTINCT author_id FROM books");
+
+    // The alias, both spellings — `AS` is optional in the grammar and in SQL.
+    // On a *join*, because an alias on a single table is refused: an alias
+    // exists to tell two readings of one table apart, and one reading has
+    // nothing to tell apart. The first version of this case wrote `FROM books
+    // AS b` on its own and failed, which is the `AS only where a table is
+    // read more than once` line the block did not have until it did.
+    parse_two("SELECT * FROM books AS b JOIN authors ON b.author_id = authors.id");
+    parse_two("SELECT * FROM books b JOIN authors ON b.author_id = authors.id");
+    let message = refuse_two("SELECT b.title FROM books AS b");
+    assert!(
+        message.contains("alias"),
+        "an alias on a lone table should be refused by name: {message}"
+    );
+}
+
+#[test]
+fn an_ungrouped_join_takes_a_star_and_nothing_else() {
+    // The `--` note this audit added. A projection on a joined row would be a
+    // projection in the *joined* ordinal space, which is not what a reader
+    // writing `books.title` means, so it is refused rather than guessed at.
+    parse_two("SELECT * FROM books JOIN authors ON books.author_id = authors.id");
+    let message =
+        refuse_two("SELECT books.title FROM books JOIN authors ON books.author_id = authors.id");
+    assert!(
+        message.contains("SELECT *"),
+        "the refusal should say what to write instead: {message}"
+    );
+    // And a GROUP BY lifts it, because a grouped answer's select list *is* its
+    // shape. Without this the case above would read as "a join cannot
+    // project", which is wrong.
+    parse_two(
+        "SELECT authors.name, count(*) FROM books JOIN authors ON books.author_id = authors.id \
+         GROUP BY authors.name",
+    );
+}
+
+#[test]
+fn the_join_line_repeats_and_a_repeat_is_a_chain() {
+    // `( JOIN <table> [AS <alias>] ON <ref> = <ref> )*` — the `*` is the part
+    // the old block got wrong: it showed one optional JOIN, and a second one
+    // has been a chain since `ledger/2026-09-15-three-tables-in-the-front-end.md`.
+    let one = parse_two("SELECT * FROM books JOIN authors ON books.author_id = authors.id");
+    assert!(
+        matches!(one.statement, Statement::Join(_)),
+        "one JOIN is a join: {:?}",
+        one.statement
+    );
+
+    let tables = [books(), authors()];
+    let two = parse(
+        "SELECT a.name, count(*) FROM books \
+         JOIN authors AS a ON books.author_id = a.id \
+         JOIN authors AS b ON books.author_id = b.id \
+         GROUP BY a.name",
+        &Schema(&tables),
+    )
+    .unwrap_or_else(|e| panic!("a two-JOIN chain: {}", e.message));
+    assert!(
+        matches!(two.statement, Statement::Chain(_)),
+        "two JOINs are a chain: {:?}",
+        two.statement
+    );
+}
+
+#[test]
+fn the_order_by_line_needs_a_group_by_on_a_join() {
+    // The first `--` note under the block. It had no case here at all, which
+    // `ledger/2026-09-25-the-grammar-comment-outlived-the-grammar.md` recorded
+    // as a caveat: the note was corrected that morning and still nothing
+    // executed it.
+    //
+    // Grouped, it parses and the sort is over *groups*.
+    parse_two(
+        "SELECT authors.name, count(*) FROM books JOIN authors ON books.author_id = authors.id \
+         GROUP BY authors.name ORDER BY count(*) DESC",
+    );
+    // Ungrouped, it is refused — and the refusal explains rather than just
+    // rejecting, because `Join` has no sort field: the kernel orders groups,
+    // not joined rows. `SELECT *`, because an ungrouped join takes nothing
+    // else and the projection refusal would otherwise fire first and this
+    // case would pass on the wrong error.
+    let message = refuse_two(
+        "SELECT * FROM books JOIN authors ON books.author_id = authors.id \
+         ORDER BY books.id",
+    );
+    assert!(
+        message.to_lowercase().contains("group by"),
+        "the refusal should send the reader to GROUP BY: {message}"
+    );
+}
+
+#[test]
+fn a_joins_where_takes_and_only() {
+    // The second `--` note, added with the `OR` work and never executed: a
+    // join's conditions are split by side so each scan is narrowed before the
+    // hash join runs, and a disjunction spanning both sides cannot be split
+    // that way.
+    parse_two(
+        "SELECT * FROM books JOIN authors ON books.author_id = authors.id \
+         WHERE books.year >= 1970 AND authors.country = 'US'",
+    );
+    let message = refuse_two(
+        "SELECT * FROM books JOIN authors ON books.author_id = authors.id \
+         WHERE books.year >= 1970 OR authors.country = 'US'",
+    );
+    assert!(
+        !message.is_empty(),
+        "an ORed WHERE on a join must be refused with a reason"
+    );
+}
+
+#[test]
+fn an_ored_having_reaches_a_chain() {
+    // `HAVING ... OR ...` on three inputs. The module documentation claims
+    // `OR` in a `HAVING` works "on a single table, a join and a chain alike",
+    // and only the first two had a case — recorded as `No chain case` in
+    // `ledger/2026-09-25-or-in-having-too.md`.
+    let tables = [books(), authors()];
+    let parsed = parse(
+        "SELECT a.name, count(*) FROM books \
+         JOIN authors AS a ON books.author_id = a.id \
+         JOIN authors AS b ON books.author_id = b.id \
+         GROUP BY a.name HAVING count(*) > 5 OR count(*) < 2",
+        &Schema(&tables),
+    )
+    .unwrap_or_else(|e| panic!("an ORed HAVING on a chain: {}", e.message));
+    match parsed.statement {
+        Statement::Chain(spec) => {
+            assert_eq!(spec.having_any_of.len(), 2, "both arms should be disjuncts");
+            assert!(
+                spec.having.is_empty(),
+                "an all-OR HAVING has no conjuncts: {:?}",
+                spec.having
+            );
+        }
+        other => panic!("expected a chain, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_limit_and_offset_line_takes_integers_and_is_optional() {
+    // `[ LIMIT <int> ] [ OFFSET <int> ]`
+    assert_eq!(select("SELECT * FROM books").limit, None);
+    assert_eq!(select("SELECT * FROM books LIMIT 5").limit, Some(5));
+    let both = select("SELECT * FROM books LIMIT 5 OFFSET 2");
+    assert_eq!((both.limit, both.offset), (Some(5), 2));
+}
+
+#[test]
+fn every_operator_the_grammar_lists_parses() {
+    // `= != <> < <= > >=`, `LIKE`, `ILIKE`, `~`, `IN`, `NOT IN`, `CONTAINS`.
+    // A name list again, and one that nothing checks mechanically — the
+    // operators are not a table in the parser the way the calls are, so this
+    // is a case per spelling rather than a comparison.
+    for clause in [
+        "year = 1970",
+        "year != 1970",
+        "year <> 1970",
+        "year < 1970",
+        "year <= 1970",
+        "year > 1970",
+        "year >= 1970",
+        "title LIKE 'The %'",
+        "title ILIKE 'the %'",
+        "title ~ '^The'",
+        "year IN (1970, 1971)",
+        "year NOT IN (1970, 1971)",
+    ] {
+        select(&format!("SELECT * FROM books WHERE {clause}"));
+    }
+}
+
+#[test]
+fn the_write_statements_parse_as_the_block_writes_them() {
+    let tables = [books()];
+    for (text, what) in [
+        ("INSERT INTO books VALUES (1, 2, 'a', 1970)", "INSERT"),
+        ("UPDATE books SET title = 'b' WHERE id = 1", "UPDATE"),
+        ("DELETE FROM books WHERE id = 1", "DELETE"),
+    ] {
+        parse(text, &Schema(&tables))
+            .unwrap_or_else(|e| panic!("the block's {what} line does not parse: {}", e.message));
+    }
+}
+
+#[test]
+fn statements_are_separated_by_a_semicolon_by_split_not_by_parse() {
+    // The one line of the block that is about the *buffer* rather than about
+    // a statement. It said "Statements may be separated by `;`" beside the
+    // grammar, which reads as a property of `parse` — and `parse` answers
+    // "unexpected `;`". `split` is what separates them, and the difference
+    // matters to a caller: the workbench splits then parses each piece so an
+    // error can be reported against the editor's buffer, and `slate-serverd`
+    // resolving a view parses one statement directly.
+    let tables = [books()];
+    let text = "SELECT * FROM books; SELECT id FROM books LIMIT 1";
+    assert!(
+        parse(text, &Schema(&tables)).is_err(),
+        "parse takes one statement; the grammar block used to imply otherwise"
+    );
+    let pieces = slate_sql::sql::split(text);
+    assert_eq!(pieces.len(), 2, "split should find two: {pieces:?}");
+    for (at, piece) in pieces {
+        parse(&piece, &Schema(&tables))
+            .unwrap_or_else(|e| panic!("the statement at {at}: {}", e.message));
+    }
+}
+
+#[test]
+fn the_refused_keywords_really_refuse() {
+    // The block says `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS` and `NOT EXISTS`
+    // are refused by name with a reason. `sql::grammar` checks the
+    // documentation mentions them; this checks the parser does.
+    for text in [
+        "SELECT * FROM books UNION SELECT * FROM books",
+        "SELECT * FROM books INTERSECT SELECT * FROM books",
+        "SELECT * FROM books EXCEPT SELECT * FROM books",
+        "SELECT * FROM books WHERE EXISTS (SELECT id FROM authors)",
+        "SELECT * FROM books WHERE NOT EXISTS (SELECT id FROM authors)",
+    ] {
+        let message = refuse_two(text);
+        assert!(
+            message.contains("not supported"),
+            "{text} should be refused with a reason, got: {message}"
+        );
+    }
+}

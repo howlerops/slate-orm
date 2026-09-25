@@ -23,23 +23,70 @@
 //! # The grammar, in full
 //!
 //! ```text
-//! SELECT  <* | item-list> FROM <table>
-//!         [ JOIN <table> ON <col> = <col> ]
-//!         [ WHERE <cond> (AND <cond>)* ]
-//!         [ GROUP BY <col> (, ...)* ]
-//!         [ HAVING <group-cond> (AND <group-cond>)* ]
-//!         [ ORDER BY <col | aggregate> [ASC|DESC] (, ...)* ]
+//! SELECT  [DISTINCT] <* | item-list> FROM <table> [AS <alias>]
+//!         ( JOIN <table> [AS <alias>] ON <ref> = <ref> )*
+//!         [ WHERE <cond> ((AND <cond>)* | (OR <cond>)*) ]
+//!         [ GROUP BY <item> (, <item>)* ]
+//!         [ HAVING <group-cond> ((AND <group-cond>)* | (OR <group-cond>)*) ]
+//!         [ ORDER BY <item | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //!
+//!         -- an ungrouped JOIN takes SELECT * and nothing else
 //!         -- on a join: ORDER BY needs a GROUP BY
+//!         -- a join's WHERE takes AND only
+//!         -- AS only where a table is read more than once
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
 //! DELETE  FROM <table> WHERE <pk> = <literal>
 //! ```
 //!
+//! **This block is checked.** `the_grammar_block_names_every_computed_call`
+//! and its neighbours below read this module's own source and compare the
+//! names in the prose against the parser's tables, because every list here
+//! had gone stale at least once: the `AND`-only `WHERE` and `HAVING` lines
+//! outlived the `OR` work by one commit, and the call list below outlived
+//! `month_start` and `year_start` by ten days. What a test cannot check is
+//! the *shape* of the productions above, so each one has a case in
+//! `tests/front_end.rs` that parses the thing it describes.
+//!
 //! `<cond>` is `col <op> literal`, with `op` one of `= != <> < <= > >=`,
-//! `LIKE`, `ILIKE` or `~` (a regular expression). Statements may be separated
-//! by `;`.
+//! `LIKE`, `ILIKE`, `~` (a regular expression), `IN (<literal>, ...)`,
+//! `NOT IN (...)` or `CONTAINS <literal>` (a full-text search).
+//!
+//! A buffer may hold several statements separated by `;`, and [`split`] is
+//! what separates them — [`parse`] takes one statement and refuses a `;`. The
+//! distinction matters to a caller: the workbench splits and then parses each
+//! piece, so an error can be reported against the buffer the editor holds,
+//! and `slate-serverd` resolving a view parses one statement directly.
+//!
+//! A `<ref>` in a `JOIN ... ON` is `col` or `alias.col`; an alias is what lets
+//! a chain reach one table twice, and without one the second mention of a
+//! table is ambiguous and refused. More than one `JOIN` is a **chain**, which
+//! joins each input to an earlier one rather than all of them to the first.
+//!
+//! `AS` on a table nothing else names is **refused**, not ignored: an alias
+//! exists to tell two readings of one table apart, and a single-table read has
+//! nothing to tell apart. Accepting it would let `SELECT b.title FROM books AS
+//! b` mean something in one statement and nothing in another.
+//!
+//! An **ungrouped join** returns whole rows and takes `SELECT *`. A projection
+//! there would be a projection in the joined row's ordinal space, which is not
+//! what a reader writing `books.title` means; the refusal says so. `GROUP BY`
+//! changes that, because a grouped answer is keys and aggregates and the
+//! select list *is* the shape.
+//!
+//! `DISTINCT` is a grouping with keys and no aggregates, which is what it is:
+//! the distinct combinations of the selected columns. It may not be combined
+//! with an aggregate in the same statement.
+//!
+//! An item may also be a **window**: `rank() OVER (PARTITION BY <col> ORDER BY
+//! <col>)`, which computes per row rather than per group and so does not make
+//! the statement a grouping.
+//!
+//! `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS` and `NOT EXISTS` are refused by
+//! name, each with the reason: a statement compiles to one query spec, which
+//! has no set operator, and `EXISTS` is correlated. The refusals are the
+//! feature — see `ledger/2026-09-16-a-subquery-is-two-reads-not-an-operator.md`.
 //!
 //! An `<item>` is a column, an aggregate, or a **call**: `hour(pickup_time)`,
 //! `round(distance)`. A call is a value computed per row and appended after
@@ -48,7 +95,16 @@
 //! select list, once in `GROUP BY` — names one computed column, not two.
 //!
 //! The calls are `hour`, `minute`, `second`, `year`, `month`, `day`,
-//! `day_of_week`, `date` and `round`. There is no date *type*: a timestamp is
+//! `day_of_week`, `date`, `month_start`, `year_start` and `round`.
+//!
+//! The aggregates are `count`, `min`, `max`, `sum` and `avg`.
+//!
+//! Both sentences end at their first full stop and hold nothing but backticked
+//! names, because `grammar::the_grammar_block_names_every_computed_call` reads
+//! them that way. Write prose about a call in the next paragraph, not in the
+//! list.
+//!
+//! There is no date *type*: a timestamp is
 //! seconds since the epoch in an integer column, `day` is the day of the month
 //! as `EXTRACT(DAY FROM t)` is in SQL, and `date` returns midnight of the day
 //! as epoch seconds so that grouping by it orders chronologically.
@@ -3485,6 +3541,153 @@ impl SelectItem {
             | Self::Aggregate { at, .. }
             | Self::Call { at, .. }
             | Self::Window { at, .. } => *at,
+        }
+    }
+}
+
+/// The module's grammar block, checked against the parser's own tables.
+///
+/// # Why this is here rather than in `tests/`
+///
+/// It reads private constants — `TIME_FUNCTIONS`, `AGGREGATES` — and the
+/// module's own source text. An integration test can do neither without
+/// exporting them, and exporting a table so a test can see it makes the table
+/// part of the crate's surface for no other reason.
+///
+/// # Why it exists at all
+///
+/// Every list in that block had gone stale. `WHERE <cond> (AND <cond>)*` was
+/// wrong for one commit, from the afternoon `OR` landed until the audit that
+/// wrote this; the call list was missing `month_start` and `year_start` for
+/// ten days, added by
+/// `ledger/2026-09-15-a-month-is-not-a-number-of-seconds.md` and
+/// `ledger/2026-09-15-the-year-there-was-no-year-to-key-on.md`, and never
+/// written down here. Both are the same failure: a name list maintained by
+/// whoever remembers, which `CLAUDE.md` names as the thing never to ask a
+/// human to keep in step.
+///
+/// What this cannot check is the *shape* of the productions — that
+/// `[ LIMIT <int> ]` really is optional and really takes an integer. Those
+/// have cases in `tests/front_end.rs` instead, one per line of the block.
+#[cfg(test)]
+mod grammar {
+    use super::{AGGREGATES, TIME_FUNCTIONS};
+
+    /// This file's own text, so the doc comment can be read as data.
+    const SOURCE: &str = include_str!("sql.rs");
+
+    /// The backticked names in the sentence that starts with `marker`.
+    ///
+    /// Bounded by the first full stop rather than by a following phrase. The
+    /// first version of this looked for the sentence that comes *after* the
+    /// list, and that sentence was wrapped across two `//!` lines, so the
+    /// search ran past the end of the doc comment and collected every
+    /// backtick in the file — 800 of them, including this function's own
+    /// source. It failed, loudly, which is the only reason it is not still
+    /// there; a delimiter that can silently over-match is a delimiter to
+    /// replace rather than to fix.
+    fn documented(marker: &str) -> Vec<String> {
+        let start = SOURCE
+            .find(marker)
+            .unwrap_or_else(|| panic!("the prose beginning {marker:?} has been reworded"));
+        let rest = &SOURCE[start + marker.len()..];
+        let end = rest
+            .find('.')
+            .expect("the sentence listing these names has no full stop to end it");
+        let sentence = rest[..end].replace("//!", " ");
+        assert!(
+            !sentence.contains("```"),
+            "{marker:?} ran into a code fence, so the full stop bounding it has gone"
+        );
+        backticked(&sentence)
+    }
+
+    fn backticked(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('`') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('`') else { break };
+            out.push(rest[..close].to_string());
+            rest = &rest[close + 1..];
+        }
+        out
+    }
+
+    #[test]
+    fn the_grammar_block_names_every_computed_call() {
+        let mut documented = documented("//! The calls are ");
+        documented.sort();
+        let mut actual: Vec<String> = TIME_FUNCTIONS.iter().map(|n| (*n).to_string()).collect();
+        actual.sort();
+        assert_eq!(
+            documented, actual,
+            "the prose's call list and TIME_FUNCTIONS disagree; the prose is the one a \
+             reader believes, and it has been wrong before"
+        );
+    }
+
+    #[test]
+    fn the_grammar_block_names_every_aggregate() {
+        // The aggregate list is new. Before it, the documentation named
+        // `count`, `max`, `sum` and `avg` in passing examples and never
+        // mentioned `min` at all — which is how this test found its first
+        // defect: a reader working from the module documentation had no way
+        // to learn that `min` exists.
+        let mut documented = documented("//! The aggregates are ");
+        documented.sort();
+        let mut actual: Vec<String> = AGGREGATES.iter().map(|n| (*n).to_string()).collect();
+        actual.sort();
+        assert_eq!(
+            documented, actual,
+            "the prose's aggregate list and AGGREGATES disagree"
+        );
+    }
+
+    #[test]
+    fn the_where_and_having_lines_admit_or() {
+        // The specific staleness this module shipped with for a commit: `OR`
+        // landed in both clauses and the block still read `(AND <cond>)*`. A
+        // reader takes the block as the specification, so it said the feature
+        // did not exist.
+        let block = SOURCE
+            .split("//! ```text")
+            .nth(1)
+            .and_then(|rest| rest.split("//! ```").next())
+            .expect("the grammar block is no longer a ```text fence");
+        for clause in ["WHERE", "HAVING"] {
+            let line = block
+                .lines()
+                .find(|line| line.contains(&format!("[ {clause} ")))
+                .unwrap_or_else(|| panic!("no {clause} line in the grammar block"));
+            assert!(
+                line.contains("OR"),
+                "the {clause} line does not mention OR, which the parser accepts: {line}"
+            );
+            assert!(
+                line.contains("AND"),
+                "the {clause} line does not mention AND: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refused_keywords_are_all_named() {
+        // A refusal is a feature here — `ledger/2026-09-18-subqueries-exists-
+        // and-union.md` argues the whole point of refusing is that the reader
+        // is told — and a refusal the documentation does not mention is a
+        // refusal the reader meets as a surprise.
+        let doc: String = SOURCE
+            .lines()
+            .take_while(|line| line.starts_with("//!") || line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in ["UNION", "INTERSECT", "EXCEPT", "EXISTS", "NOT EXISTS"] {
+            assert!(
+                doc.contains(name),
+                "`{name}` is refused by name in this parser and the module documentation \
+                 does not say so"
+            );
         }
     }
 }

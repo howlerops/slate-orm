@@ -4672,20 +4672,20 @@
     {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
       "key": "It does not audit the rest of the grammar block.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "crates/slate-sql/src/sql.rs `mod grammar` and ten cases in tests/front_end.rs; ledger/2026-09-25-the-grammar-block-is-checked-now.md"
     },
     {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
       "key": "It does not check `ORDER BY needs a GROUP BY` either.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "crates/slate-sql/src/sql.rs `mod grammar` and ten cases in tests/front_end.rs; ledger/2026-09-25-the-grammar-block-is-checked-now.md"
     },
     {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
       "key": "No chain case.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "crates/slate-sql/src/sql.rs `mod grammar` and ten cases in tests/front_end.rs; ledger/2026-09-25-the-grammar-block-is-checked-now.md"
     },
     {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
@@ -4783,6 +4783,29 @@
     {
       "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
       "key": "The `EXPECTED_REFUSALS` idiom now has a fourth copy.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The operator list is still unchecked.",
+      "verdict": "deliberate",
+      "by": "this entry: the parser holds the operators as match arms, and a table existing only to be checked is a worse trade"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The productions are checked by example, not by shape.",
+      "verdict": "deliberate",
+      "by": "this entry: a grammar engine fed the block would be a second implementation with an exception per refusal"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The prose outside the lists is unchecked",
+      "verdict": "deliberate",
+      "by": "this entry: explanation rather than specification; no test can tell whether one stopped being true"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "Neither `docs/` nor the site was audited the same way.",
       "verdict": "open"
     }
   ]

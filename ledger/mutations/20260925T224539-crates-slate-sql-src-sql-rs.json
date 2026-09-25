@@ -1,0 +1,73 @@
+{
+  "at": "2026-09-25T22:45:39+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "b29a3d1",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the prose's call list must match TIME_FUNCTIONS",
+      "old": "//! `day_of_week`, `date`, `month_start`, `year_start` and `round`.",
+      "new": "//! `day_of_week`, `date`, `year_start` and `round`.",
+      "verdict": "caught",
+      "caught_by": [
+        "sql::grammar::the_grammar_block_names_every_computed_call"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the prose's aggregate list must match AGGREGATES",
+      "old": "//! The aggregates are `count`, `min`, `max`, `sum` and `avg`.",
+      "new": "//! The aggregates are `count`, `max`, `sum` and `avg`.",
+      "verdict": "caught",
+      "caught_by": [
+        "sql::grammar::the_grammar_block_names_every_aggregate"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the WHERE line must still admit OR",
+      "old": "//!         [ WHERE <cond> ((AND <cond>)* | (OR <cond>)*) ]",
+      "new": "//!         [ WHERE <cond> (AND <cond>)* ]",
+      "verdict": "caught",
+      "caught_by": [
+        "sql::grammar::the_where_and_having_lines_admit_or"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the HAVING line must still admit OR",
+      "old": "//!         [ HAVING <group-cond> ((AND <group-cond>)* | (OR <group-cond>)*) ]",
+      "new": "//!         [ HAVING <group-cond> (AND <group-cond>)* ]",
+      "verdict": "caught",
+      "caught_by": [
+        "sql::grammar::the_where_and_having_lines_admit_or"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refused keyword must stay documented",
+      "old": "//! `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS` and `NOT EXISTS` are refused by",
+      "new": "//! `UNION`, `INTERSECT`, `EXCEPT` and `NOT EXIST` are refused by",
+      "verdict": "caught",
+      "caught_by": [
+        "sql::grammar::the_refused_keywords_are_all_named"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
