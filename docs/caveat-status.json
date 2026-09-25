@@ -4840,7 +4840,8 @@
     {
       "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
       "key": "It reads one page.",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "scripts/check_site_claims.py now reads every page under site/, README.md and docs/*.md; ledger/2026-09-25-the-claims-guard-reaches-past-one-page.md"
     },
     {
       "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
@@ -4858,6 +4859,29 @@
       "key": "`UNCHECKED` has four entries and the page has more than four",
       "verdict": "deliberate",
       "by": "this entry: the four are the ones a reader would take as fact; where the line falls is a judgement"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "It still checks numbers and names, not sentences.",
+      "verdict": "deliberate",
+      "by": "this entry: a check whose failures are arguments is not a check this repository's guards can be"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "`docs/*.md` is read for claims and not for its own numbers.",
+      "verdict": "deliberate",
+      "by": "this entry: check_table_provenance.py and check_cost_prose.py own the measurements"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "The refusals chain has a weak link this does not fix.",
+      "verdict": "deliberate",
+      "by": "this entry: a reworded sentence fails loudly, because the list is asserted non-empty; the parser refuses in three places and a regex over Rust control flow is a parser for Rust"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "Nothing checks the *examples* on the pages run.",
+      "verdict": "open"
     }
   ]
 }

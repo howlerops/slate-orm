@@ -27,12 +27,27 @@ PAGE = """<html><body>
 <p>the closest blueprint is something a test cannot settle.</p>
 <ul class="chips"><li>Python · Go · TypeScript</li><li>No <code>unsafe</code></li></ul>
 <p>100,000 real New York yellow-taxi trips, joined to their own 265-zone lookup.</p>
+<p>UNION, INTERSECT, EXCEPT, EXISTS and NOT EXISTS are refused.</p>
 <pre>Table Scan on trips  (rows=100000 cost=13.50)</pre>
 </body></html>
 """
 
+#: A second page that repeats the fixture's size, so the widened checks have
+#: something to be widened *to*. Without it they pass on one page and the
+#: "found on more than one page" floor fails, which is the floor doing its job.
+OTHER = "<html><body><p>over 100,000 real New York taxi trips, 265 zones.</p></body></html>\n"
+
 CLEAN: dict[str, str] = {
     "site/index.html": PAGE,
+    "site/docs/other.html": OTHER,
+    # `sql.rs` is not a crate root, so the crate it implies needs one too —
+    # and the guard reporting its absence is correct behaviour, not noise.
+    "crates/slate-sql/src/lib.rs": "#![forbid(unsafe_code)]\n",
+    "crates/slate-sql/src/sql.rs": (
+        "//! `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS` and `NOT EXISTS` are refused by\n"
+        "//! name, each with the reason.\n"
+        "#![forbid(unsafe_code)]\n"
+    ),
     "site/data/make-trips.py": "SAMPLE = 100_000\n",
     "crates/slate-wasm/src/taxi_zones.csv": "id,name\n" + "".join(f"{i},z{i}\n" for i in range(265)),
     "crates/slate-kernel/src/lib.rs": "#![forbid(unsafe_code)]\n",
@@ -138,6 +153,60 @@ def main() -> int:
             # wrote any more is the failure every roster here has had.
             {"site/index.html": PAGE.replace("the closest blueprint is", "we now say")},
             {"UNCHECKED names"},
+        ),
+        case(
+            "a second page with a stale trip count is reported",
+            # The caveat this widening closes: the first version read
+            # `site/index.html` and nothing else, and the fixture's size is
+            # claimed on five other pages.
+            {"site/docs/other.html": OTHER.replace("100,000", "250,000")},
+            {"states the fixture's"},
+        ),
+        case(
+            "a second page with a stale zone count is reported",
+            {"site/docs/other.html": OTHER.replace("265 zones", "300 zones")},
+            {"states the CSV's"},
+        ),
+        case(
+            "a trip count in a code block is not a claim",
+            # The false positive the first draft produced: the landing page's
+            # hero prints `132  4,837` above a line reading `Table Scan on
+            # trips`, and with whitespace collapsed that reads as a claim.
+            {"site/docs/other.html": OTHER + "<pre>132  4,837\nTable Scan on New York trips</pre>"},
+            set(),
+        ),
+        case(
+            "a different trip count that is not the fixture's is left alone",
+            # `docs/performance.md` reports loading the whole of January 2024,
+            # which is 2,964,619 trips and correct. A guard that demanded every
+            # trip count equal the workbench's would have demanded that be
+            # wrong, and the first draft did.
+            {"docs/performance.md": "Loading 2,964,619 real January-2024 yellow-taxi trips.\n"},
+            set(),
+        ),
+        case(
+            "a pattern that has stopped matching is reported, not passed",
+            {"site/docs/other.html": None, "site/index.html": PAGE.replace("New York ", "")},
+            {"found on more than one page"},
+        ),
+        case(
+            "a keyword the parser refuses and the docs never name is reported",
+            {"site/index.html": PAGE.replace("EXCEPT, ", "")},
+            {"named in the docs"},
+        ),
+        case(
+            "the refused keywords are read from the parser, not from a list here",
+            # Add one to the module documentation and the docs must name it.
+            {
+                # `sql.rs` is not a crate root, so the crate it implies needs one too —
+    # and the guard reporting its absence is correct behaviour, not noise.
+    "crates/slate-sql/src/lib.rs": "#![forbid(unsafe_code)]\n",
+    "crates/slate-sql/src/sql.rs": (
+                    "//! `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS`, `NOT EXISTS` and "
+                    "`LATERAL` are refused by\n//! name.\n#![forbid(unsafe_code)]\n"
+                )
+            },
+            {"named in the docs"},
         ),
         case(
             "a missing landing page is reported rather than passing empty",

@@ -71,6 +71,76 @@ UNCHECKED: dict[str, str] = {
 }
 
 
+#: The *fixture's* trip count, as the pages state it.
+#:
+#: Narrower than "a number near the word trips", and it has to be: this
+#: repository legitimately states more than one trip count.
+#: `docs/performance.md` reports loading **2,964,619** — the whole of January
+#: 2024, which is the point of that measurement — and a guard demanding every
+#: trip count equal the workbench's would have demanded that one be wrong. The
+#: first draft did exactly that, and the failure is the reason this pattern
+#: names the fixture rather than the noun.
+#:
+#: So a match needs "New York" beside it, or the phrase "N-trip sample" that
+#: `storage.html` uses. Four digits without a comma are excluded separately:
+#: `2024 yellow-trip data` is a year, and that was the other false positive.
+TRIP_COUNT = re.compile(
+    r"(\d{1,3}(?:,\d{3})+|\d{5,})(?:[^<]{0,40}?New York[^<]{0,30}?\btrips?\b"
+    r"|-trip sample)",
+    re.I,
+)
+ZONE_COUNT = re.compile(r"(\d{2,4})[- ]zones?\b", re.I)
+
+
+def prose(text: str) -> str:
+    """The page with its code blocks removed, and its whitespace collapsed.
+
+    Sample output is not a claim. The landing page's hero block prints
+    `132  4,837` above a line reading `Table Scan on trips`, and with
+    whitespace collapsed that is a number beside the word — which the first
+    draft reported as the page claiming 4,837 trips.
+
+    Collapsing whitespace is not optional either: the landing page wraps
+    "100,000 real New York / yellow-taxi trips" across a line, so a
+    line-bounded pattern misses the one page this check started with.
+    """
+    without_code = re.sub(r"<pre\b.*?</pre>|<code\b.*?</code>|```.*?```", " ", text, flags=re.S)
+    return re.sub(r"\s+", " ", without_code)
+
+
+def claim_pages(root: Path) -> list[Path]:
+    """Every page that makes claims about the project, to a reader.
+
+    The site, the README and the design notes. Not `ledger/`, which is dated
+    and append-only: an entry stating what was true in September is a record,
+    not a claim, and correcting it would destroy the thing it is for.
+    """
+    pages = sorted((root / "site").rglob("*.html"))
+    readme = root / "README.md"
+    if readme.exists():
+        pages.append(readme)
+    pages.extend(sorted((root / "docs").glob("*.md")))
+    return pages
+
+
+def refused_keywords(root: Path) -> list[str]:
+    """The keywords `sql.rs` documents as refused by name.
+
+    Read out of the sentence that lists them rather than out of the parser's
+    `match`, because the parser refuses them in three places and a regex over
+    Rust control flow is a parser for Rust. The sentence is tied to the code by
+    `sql::grammar::the_refused_keywords_are_all_named`, which is the link that
+    makes reading prose here sound.
+    """
+    source = root / "crates" / "slate-sql" / "src" / "sql.rs"
+    if not source.exists():
+        return []
+    match = re.search(r"//! (`UNION`[^\n]*(?:\n//! [^\n]*)*?) are refused by", source.read_text(encoding="utf-8"))
+    if not match:
+        return []
+    return re.findall(r"`([A-Z ]+)`", match.group(1))
+
+
 def crate_roots(root: Path) -> list[Path]:
     """Every crate's root module: `src/lib.rs`, or `src/main.rs` for a binary."""
     out = []
@@ -178,6 +248,39 @@ def check(root: Path, unchecked: dict[str, str] | None = None) -> list[tuple[str
             "the `Table Scan` line in the hero code block names a different row count",
         )
 
+    # --- the same two numbers, wherever else they are stated ---------------
+    #
+    # The first version of this read `site/index.html` and nothing else, which
+    # its own entry recorded as a caveat: the fixture's size is claimed on the
+    # workbench page, on two docs pages, in `README.md` and in
+    # `docs/performance.md`, and a page nobody checks is exactly where a stale
+    # number lives longest. Whitespace is collapsed first, because the landing
+    # page wraps "100,000 real New York / yellow-taxi trips" across a line and
+    # a line-bounded pattern misses the one page this started with.
+    wrong, seen = [], 0
+    for page_path in claim_pages(root):
+        body = prose(page_path.read_text(encoding="utf-8"))
+        if sample:
+            for stated in TRIP_COUNT.findall(body):
+                seen += 1
+                if int(stated.replace(",", "")) != trips:
+                    wrong.append(f"{page_path.relative_to(root)}: {stated} trips")
+    record(
+        "every page that states a trip count states the fixture's",
+        not wrong,
+        "\n      ".join(wrong),
+    )
+    # A pattern that matches nothing satisfies "every match agrees" perfectly,
+    # and that is how a narrowed pattern stops checking anything: this one was
+    # narrowed twice while it was being written. The floor is the *landing
+    # page and one more*, because one match is what the check above it already
+    # covers and this widening exists to reach past that page.
+    record(
+        f"the fixture's size is found on more than one page ({seen} statements)",
+        seen > 1,
+        "the trip-count pattern has stopped matching the pages it was written for",
+    )
+
     csv = root / "crates" / "slate-wasm" / "src" / "taxi_zones.csv"
     if csv.exists():
         count = len(csv.read_text(encoding="utf-8").strip().splitlines()) - 1  # the header
@@ -186,8 +289,51 @@ def check(root: Path, unchecked: dict[str, str] | None = None) -> list[tuple[str
             f"{count}-zone" in page,
             f"taxi_zones.csv holds {count} zones",
         )
+        wrong, seen = [], 0
+        for page_path in claim_pages(root):
+            body = prose(page_path.read_text(encoding="utf-8"))
+            for stated in ZONE_COUNT.findall(body):
+                seen += 1
+                if int(stated) != count:
+                    wrong.append(f"{page_path.relative_to(root)}: {stated} zones")
+        record(
+            "every page that states a zone count states the CSV's",
+            not wrong,
+            "\n      ".join(wrong),
+        )
+        record(
+            f"the zone count is found at all ({seen} statements)",
+            seen > 0,
+            "the zone-count pattern has stopped matching",
+        )
     else:
         record("the zone CSV exists", False, str(csv))
+
+    # --- what the parser refuses, and what the docs say it refuses ----------
+    #
+    # A refusal is a feature here: `ledger/2026-09-16-a-subquery-is-two-reads-
+    # not-an-operator.md` argues that the point of refusing by name is that the
+    # reader is told, and a refusal the *documentation* does not mention is one
+    # the reader meets as a surprise.
+    #
+    # The names come from `sql.rs`'s module documentation rather than from a
+    # list here, and that documentation is tied to the parser by
+    # `sql::grammar::the_refused_keywords_are_all_named`. Parser → module docs
+    # → site, each link checked, and no list in the middle for anyone to keep
+    # in step by hand.
+    refused = refused_keywords(root)
+    record("the parser's module docs name some refusals", bool(refused), str(refused))
+    if refused:
+        docs = " ".join(
+            prose(page_path.read_text(encoding="utf-8"))
+            for page_path in claim_pages(root)
+        )
+        unsaid = [name for name in refused if name not in docs]
+        record(
+            "every keyword the parser refuses by name is named in the docs",
+            not unsaid,
+            ", ".join(unsaid),
+        )
 
     # --- the three clients --------------------------------------------------
     record(
@@ -222,7 +368,10 @@ def main() -> int:
     if failed:
         print(f"{failed} failed")
         return 1
-    print(f"the landing page's checkable claims hold, and {len(UNCHECKED)} are listed as unchecked")
+    print(
+        f"the site's checkable claims hold across {len(claim_pages(REPO))} pages, "
+        f"and {len(UNCHECKED)} are listed as unchecked"
+    )
     return 0
 
 
