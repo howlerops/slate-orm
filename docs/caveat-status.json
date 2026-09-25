@@ -108,7 +108,8 @@
       "entry": "2026-09-14-a-real-dataset.md",
       "key": "`trips` has one secondary index",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
@@ -354,7 +355,8 @@
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "The SDKs cannot run a migration.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -443,8 +445,9 @@
     {
       "entry": "2026-09-15-a-value-belonging-to-the-join.md",
       "key": "The wasm binding's `JoinSpec` still pins compute to the left",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "JoinSpec::compute names its side with ComputeSpec::input and JoinSpec::aggregates with AggregateSpec::input; ledger/2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-15-a-value-belonging-to-the-join.md",
@@ -487,7 +490,8 @@
       "entry": "2026-09-15-having-on-a-join.md",
       "key": "HAVING still takes no computed column.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-15-having-on-a-join.md",
@@ -595,7 +599,8 @@
       "entry": "2026-09-15-pages-that-do-not-shift.md",
       "key": "No cursor over an index.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-15-pages-that-do-not-shift.md",
@@ -661,7 +666,8 @@
       "entry": "2026-09-15-the-guard-nothing-called.md",
       "key": "The SDKs still cannot run or ask about a migration.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-15-the-guard-nothing-called.md",
@@ -4900,21 +4906,21 @@
     },
     {
       "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "276 open caveats are still unread.",
-      "verdict": "open",
-      "checked": "2026-09-25"
-    },
-    {
-      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
       "key": "Nothing makes the stamp expire on a change to the code the c",
       "verdict": "open",
       "checked": "2026-09-25"
     },
     {
       "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "The sample is eight.",
+      "key": "270 open caveats are still unread.",
+      "verdict": "open",
+      "checked": "2026-09-25"
+    },
+    {
+      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "key": "The sample is fourteen, and six of them were not random.",
       "verdict": "deliberate",
-      "by": "this entry: eight is what was read and the entry states the uncertainty rather than hiding it"
+      "by": "this entry: the bias is stated, and the unbiased figure (1/8) is given beside the enriched one"
     }
   ]
 }

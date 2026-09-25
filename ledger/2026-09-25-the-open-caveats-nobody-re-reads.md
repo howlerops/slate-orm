@@ -1,4 +1,4 @@
-# I read eight open caveats against the tree to find out how many were still true. Seven were; one had been closed for four days by work that named it as the blocker. The tracker now has a worklist for the reading, because the reading is the only thing that can decide.
+# I read fourteen open caveats against the tree to find out how many were still true. Twelve were; two had been closed for days by work that named itself as the blocker. The tracker now has a worklist for the reading, because the reading is the only thing that can decide.
 
 - **Date:** 2026-09-25
 - **Author:** Claude Code, working the open-caveat backlog
@@ -32,16 +32,17 @@ it is written, a claim four days old deserves a re-read.
 
 ## The measurement
 
-**Eight open caveats, chosen by taking every nineteenth line of the open list
-so the sample was not the ones I remembered.** Each read against the current
-tree.
+**Fourteen open caveats, read against the current tree.** Eight sampled by
+taking every nineteenth line of the open list, so they were not the ones I
+remembered; six more chosen deliberately from the class the first eight
+suggested — a caveat whose own text names what it is waiting for.
 
 | | |
 |---|---|
-| still true | 7 |
-| stale | 1 |
+| still true | 12 |
+| stale | 2 |
 
-The stale one is `2026-09-21-a-view-the-demo-can-show.md`: *"The Go and Node
+**The first stale one** is `2026-09-21-a-view-the-demo-can-show.md`: *"The Go and Node
 adapters read through the view unchecked."* Its own text said the fix waited on
 the generator — "the generator change above is the right fix and the reason
 this waits for it" — and the generator landed the same day in
@@ -50,10 +51,26 @@ this waits for it" — and the generator landed the same day in
 `main.ts` merges the generated `VIEWS`. The caveat outlived its blocker by four
 days.
 
-**One in eight.** Small enough that the open list is mostly honest, large
-enough that ~35 of 284 are probably closed and nobody knows which. It is a
-sample of eight and the confidence interval on that is wide; it is the number
-I observed and I am not going to dress it up.
+**The second** is `2026-09-15-a-value-belonging-to-the-join.md`: *"The wasm
+binding's `JoinSpec` still pins compute to the left table and aggregates to the
+right."* Both halves are false. `JoinSpec::compute` names its side with
+`ComputeSpec::input` and the field's own comment says "it used to be able to
+read only the left, which was a limitation of this spec rather than of the
+kernel"; `JoinSpec::aggregates` names its input with `AggregateSpec::input`.
+Ten days.
+
+**Two in fourteen.** Small enough that the open list is mostly honest, large
+enough that ~40 of 284 are probably closed and nobody knows which. Fourteen is
+a small sample and the interval on it is wide; it is what I observed and I am
+not going to dress it up.
+
+**Both stale caveats are the same shape**, and it is a shape worth naming: the
+caveat says what it is *waiting for*, the thing it waits for ships, and nobody
+walks back to the entry. Six of the fourteen were chosen for that shape after
+the first one turned up, and it produced the second — so the shape is worth
+more than a random draw, which is the practical advice this measurement
+yields. Neither was detectable without reading: both are "X does not do Y"
+where Y later shipped, and no property of the tree says so.
 
 ## Alternatives rejected
 
@@ -97,9 +114,8 @@ than no stamp because it reads like attention.
 seven new cases covering both directions of the list — one read yesterday must
 drop off, one nobody read must not.
 
-**Against the repository.** 815 caveats: **284 open, 178 closed, 304
-deliberate, 0 untriaged.** `--unread 30` lists 277, and `--unread 0` lists the
-same 277, which is the check that the eight stamped today really are excluded.
+**Against the repository.** 819 caveats: **284 open, 180 closed, 306
+deliberate, 0 untriaged.** `--unread 30` lists 270, down from 285 as caveats are read and stamped.
 
 ## What this does not do
 
@@ -108,7 +124,7 @@ carefully is exactly as checkable as whether the caveat was true when it was
 written, which is to say not at all. The measurement above is the only thing
 that says what a stamp is worth, and it says seven in eight.
 
-**276 open caveats are still unread.** This is a worklist with one entry
+**270 open caveats are still unread.** This is a worklist with one entry
 crossed off and a rate to plan by, not a re-triage.
 
 **Nothing makes the stamp expire on a change to the code the caveat is
@@ -116,6 +132,9 @@ about.** A caveat read today and invalidated tomorrow reads as current for a
 month. Tying a stamp to a commit range would be better and needs the caveat to
 name what it is about, which it does in prose and not in a field.
 
-**The sample is eight.** Every nineteenth line of the open list, which spreads
-it across dates and entries, and eight is eight. A second sample could put the
-stale rate anywhere from one in twenty to one in three.
+**The sample is fourteen, and six of them were not random.** Eight came from
+every nineteenth line of the open list; six were chosen for the "waiting for"
+shape after the first stale one suggested it. That makes 2/14 an *upper*
+estimate of the rate rather than an unbiased one — the enriched half was picked
+because it looked more likely to be stale, and it was. The honest reading is
+1/8 from the random sample, with the shape as a way to find the rest faster.

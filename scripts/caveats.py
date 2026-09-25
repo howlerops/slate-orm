@@ -167,9 +167,10 @@ def unread(days: int, root: Path = ROOT, today: str | None = None) -> list[str]:
 
     The stamp is a claim about a person's attention, not a proof, and
     `2026-09-25-the-open-caveats-nobody-re-reads.md` measures what that
-    attention is worth: eight open caveats read against the tree, one stale.
-    A list is right roughly seven times in eight, which is worth knowing
-    before trusting one.
+    attention is worth: fourteen open caveats read against the tree, two
+    stale, and both stale ones were caveats whose own text named what they
+    were waiting for. A list is right roughly six times in seven, and the
+    "waiting for" shape is where the seventh is.
 
     `checked` is absent on every verdict written before this existed, so the
     first run lists all of them. That is correct and it is also why this is
