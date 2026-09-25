@@ -98,12 +98,19 @@
 //! rather than quietly approximated, because a wrong answer is worse than a
 //! refusal.
 //!
-//! `WHERE a = 1 OR b = 2` **is** supported on a single-table read, and lowers
-//! to `Expr::Or`. One `WHERE` is all `AND` or all `OR`: there are no
-//! parentheses in this grammar, so a mixture would need a precedence, and
-//! `a AND b OR c` reads two ways depending on who is reading. A mixture is
-//! refused by name. A join's `WHERE` and every `HAVING` still take `AND`
-//! only.
+//! `WHERE a = 1 OR b = 2` **is** supported on a single-table read, and so is
+//! `HAVING count(*) > 5 OR count(*) < 2` — on a single table, a join and a
+//! chain alike. Both lower to `Expr::Or`.
+//!
+//! One clause is all `AND` or all `OR`: there are no parentheses in this
+//! grammar, so a mixture would need a precedence, and `a AND b OR c` reads
+//! two ways depending on who is reading. A mixture is refused by name, and
+//! the refusal says which clause it came from.
+//!
+//! A **join's `WHERE`** is the one that still takes `AND` only. Its
+//! conditions are split by side so each scan is narrowed before the hash
+//! join runs, and a disjunction spanning both sides cannot be split that
+//! way.
 //!
 //! # Why hand-written
 //!
@@ -1308,23 +1315,30 @@ impl Parser<'_> {
             // `HAVING count(*) > 100` names an aggregate by what the query
             // *computes* — the same rule ORDER BY follows — and `spec.aggregates`
             // is not populated until the loop above has run.
+            let mut any = false;
+            let mut terms = Vec::new();
             loop {
-                spec.having.push(self.having_condition(&spec, &table)?);
+                terms.push(self.having_condition(&spec, &table)?);
+                let at = self.at();
                 if self.eat("and") {
+                    if any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
                     continue;
                 }
-                if self.peek_word().as_deref() == Some("or") {
-                    return Err(SqlError {
-                        message: "OR is not supported in HAVING. A WHERE takes it and a \
-                                  HAVING does not: a HAVING term is resolved against the \
-                                  group space, and the resolver walks one flat list of \
-                                  conditions. Filter the rows with WHERE, or take the \
-                                  groups apart in two queries."
-                            .to_owned(),
-                        at: self.at(),
-                    });
+                if self.eat("or") {
+                    if terms.len() > 1 && !any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
+                    any = true;
+                    continue;
                 }
                 break;
+            }
+            if any {
+                spec.having_any_of = terms;
+            } else {
+                spec.having = terms;
             }
         }
         if self.eat("order") {
@@ -2244,14 +2258,24 @@ impl Parser<'_> {
         }
     }
 
-    /// One `WHERE` cannot be part `AND` and part `OR`.
+    /// One clause cannot be part `AND` and part `OR`.
     fn mixed_connectives(at: usize) -> SqlError {
+        Self::mixed_connectives_in("WHERE", at)
+    }
+
+    /// The same refusal, naming the clause it came from.
+    ///
+    /// `WHERE` and `HAVING` both take either connective and neither takes a
+    /// mixture, so the message is one string with the clause substituted
+    /// rather than two that can drift apart.
+    fn mixed_connectives_in(clause: &str, at: usize) -> SqlError {
         SqlError {
-            message: "AND and OR cannot be mixed in one WHERE, because this front end \
-                      has no parentheses and the two read differently to different \
-                      people. Write the conditions all with AND, or all with OR, and \
-                      use two queries if you need both."
-                .to_owned(),
+            message: format!(
+                "AND and OR cannot be mixed in one {clause}, because this front end \
+                 has no parentheses and the two read differently to different \
+                 people. Write the conditions all with AND, or all with OR, and \
+                 use two queries if you need both."
+            ),
             at,
         }
     }
@@ -2652,6 +2676,10 @@ impl Parser<'_> {
         let mut aggregates: Vec<AggregateSpec> = Vec::new();
         let mut sort: Vec<SortSpec> = Vec::new();
         let mut having: Vec<FilterSpec> = Vec::new();
+        // Whether that list is ORed rather than ANDed. One flag beside the
+        // list rather than two lists, because the parser fills one and the
+        // spec decides which field it lands in — see the assignment below.
+        let mut having_any = false;
         let mut group_by: Vec<u32> = Vec::new();
         let mut limit: Option<u64> = None;
         let mut offset = 0;
@@ -2907,19 +2935,19 @@ impl Parser<'_> {
                     value,
                     ..FilterSpec::default()
                 });
+                let at = self.at();
                 if self.eat("and") {
+                    if having_any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
                     continue;
                 }
-                if self.peek_word().as_deref() == Some("or") {
-                    return Err(SqlError {
-                        message: "OR is not supported in HAVING. A WHERE takes it and a \
-                                  HAVING does not: a HAVING term is resolved against the \
-                                  group space, and the resolver walks one flat list of \
-                                  conditions. Filter the rows with WHERE, or take the \
-                                  groups apart in two queries."
-                            .to_owned(),
-                        at: self.at(),
-                    });
+                if self.eat("or") {
+                    if having.len() > 1 && !having_any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
+                    having_any = true;
+                    continue;
                 }
                 break;
             }
@@ -2997,7 +3025,16 @@ impl Parser<'_> {
                 right_key: *right_key,
                 left_where: left_where.clone(),
                 right_where: right_where.clone(),
-                having,
+                having: if having_any {
+                    Vec::new()
+                } else {
+                    having.clone()
+                },
+                having_any_of: if having_any {
+                    having.clone()
+                } else {
+                    Vec::new()
+                },
                 compute,
                 group_by,
                 aggregates,
@@ -3032,7 +3069,12 @@ impl Parser<'_> {
         Ok(Statement::Chain(ChainSpec {
             inputs: spec_inputs,
             compute,
-            having,
+            having: if having_any {
+                Vec::new()
+            } else {
+                having.clone()
+            },
+            having_any_of: if having_any { having } else { Vec::new() },
             group_by,
             aggregates,
             sort,

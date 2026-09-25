@@ -712,6 +712,48 @@ pub fn having(
     Ok(out)
 }
 
+/// A group predicate from both connectives: the ANDed terms and the ORed ones.
+///
+/// One function rather than two call sites composing `having` twice, because
+/// every consumer wants the same composition — `(all of these) AND (any of
+/// those)` — and the three that exist would each have written it out.
+///
+/// The parser produces one list or the other and never both, for the reason
+/// `QuerySpec::any_of` gives: there are no parentheses in this grammar, so a
+/// mixture would need a precedence. The composition is written for both
+/// anyway, so that widening the parser later cannot change what an existing
+/// spec means.
+pub fn group_predicate(
+    all: &[FilterSpec],
+    any: &[FilterSpec],
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    inputs: &[&TableDef],
+) -> Result<Expr, String> {
+    let conjunction = having(all, keys, aggregates, inputs)?;
+    if any.is_empty() {
+        return Ok(conjunction);
+    }
+    // Each ORed term through the same `having`, one at a time, so the
+    // per-term conversion — the operator table, the literal parsing, the
+    // group-space type lookup — has exactly one implementation. A second copy
+    // is how the two paths come to disagree about what `matches` does.
+    let mut parts = Vec::with_capacity(any.len());
+    for spec in any {
+        parts.push(having(
+            std::slice::from_ref(spec),
+            keys,
+            aggregates,
+            inputs,
+        )?);
+    }
+    let disjunction = Expr::Or(parts);
+    Ok(match conjunction {
+        Expr::True => disjunction,
+        existing => existing.and(disjunction),
+    })
+}
+
 /// One aggregate, by the name the spec uses, over an ordinal already resolved
 /// into the joined space.
 ///

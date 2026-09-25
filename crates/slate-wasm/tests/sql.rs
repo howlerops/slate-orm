@@ -290,8 +290,11 @@ prop_compose! {
             group_by: Vec::new(),
             aggregates: Vec::new(),
             // HAVING is meaningless without a grouping and the parser refuses
-            // it, so it is empty here for the same reason `group_by` is.
+            // it, so it is empty here for the same reason `group_by` is. The
+            // ORed form is empty for that reason too, and its round trip is
+            // covered by the `WHERE` half above, which does generate one.
             having: Vec::new(),
+            having_any_of: Vec::new(),
             // Rendering a computed column back to SQL would mean teaching the
             // renderer the call syntax and the find-or-add rule; the time
             // functions have their own suite in `datetime.rs`.

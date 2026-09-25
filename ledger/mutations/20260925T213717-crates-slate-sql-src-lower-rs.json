@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-25T21:37:17+00:00",
+  "file": "crates/slate-sql/src/lower.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--no-fail-fast"
+  ],
+  "commit": "b910041",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an ORed HAVING lowers as a conjunction",
+      "old": "    let disjunction = Expr::Or(parts);",
+      "new": "    let disjunction = Expr::all(parts);",
+      "verdict": "caught",
+      "caught_by": [
+        "an_ored_having_admits_a_group_either_arm_admits"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ORed HAVING terms are dropped",
+      "old": "    if any.is_empty() {\n        return Ok(conjunction);\n    }",
+      "new": "    if true {\n        return Ok(conjunction);\n    }",
+      "verdict": "caught",
+      "caught_by": [
+        "an_ored_having_admits_a_group_either_arm_admits"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

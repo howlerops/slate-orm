@@ -292,8 +292,8 @@
     {
       "entry": "2026-09-15-a-having-and-the-type-underneath-it.md",
       "key": "No `OR`, in `HAVING` as in `WHERE`,",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "OR in HAVING, on a single table, a join and a chain"
     },
     {
       "entry": "2026-09-15-a-having-and-the-type-underneath-it.md",
@@ -496,8 +496,8 @@
     {
       "entry": "2026-09-15-having-on-a-join.md",
       "key": "`OR` is still refused in HAVING",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "OR in HAVING, on a single table, a join and a chain"
     },
     {
       "entry": "2026-09-15-money-that-does-not-drift.md",

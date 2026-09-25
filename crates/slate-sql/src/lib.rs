@@ -120,6 +120,13 @@ pub struct QuerySpec {
     /// having cannot — the group it tests does not exist until every row is in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub having: Vec<FilterSpec>,
+    /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
+    /// same reason: a clause is all `AND` or all `OR`, because this grammar
+    /// has no parentheses to give a mixture a precedence with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub having_any_of: Vec<FilterSpec>,
     /// Values computed over a partition, one per input row, appended after the
     /// computed ones — so the `i`th sits at ordinal
     /// `columns().len() + compute.len() + i` and everything downstream, a sort
@@ -344,6 +351,13 @@ pub struct JoinSpec {
     /// accepting it into a field nothing reads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having: Vec<FilterSpec>,
+    /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
+    /// same reason: a clause is all `AND` or all `OR`, because this grammar
+    /// has no parentheses to give a mixture a precedence with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub having_any_of: Vec<FilterSpec>,
     /// How to order the **groups** of a grouped join. Empty leaves them in the
     /// order the encoded key sorts them.
     ///
@@ -415,6 +429,13 @@ pub struct ChainSpec {
     /// accepting it into a field nothing reads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having: Vec<FilterSpec>,
+    /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
+    /// same reason: a clause is all `AND` or all `OR`, because this grammar
+    /// has no parentheses to give a mixture a precedence with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub having_any_of: Vec<FilterSpec>,
     /// How to order the groups. `[keys..., aggregates...]`, as on [`JoinSpec`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortSpec>,

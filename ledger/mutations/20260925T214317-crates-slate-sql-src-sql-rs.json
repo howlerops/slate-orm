@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-25T21:43:17+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "taxi",
+    "--no-fail-fast"
+  ],
+  "commit": "b910041",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a grouped join's ORed HAVING is stored as ANDed",
+      "old": "                having: if having_any { Vec::new() } else { having.clone() },\n                having_any_of: if having_any { having.clone() } else { Vec::new() },",
+      "new": "                having: having.clone(),\n                having_any_of: Vec::new(),",
+      "verdict": "caught",
+      "caught_by": [
+        "having_is_refused_where_it_cannot_mean_anything"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

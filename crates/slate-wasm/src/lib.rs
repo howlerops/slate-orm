@@ -59,7 +59,7 @@ pub use slate_sql::{
 // the split was made on: see `slate_sql::lower`.
 use slate_sql::lower::{
     aggregate_of, aggregates, build, chained_computes, chained_ordinal, conditions,
-    group_value_type, having, joined_computes, joined_ordinal, literal,
+    group_predicate, group_value_type, joined_computes, joined_ordinal, literal,
 };
 
 use futures::executor::block_on;
@@ -800,13 +800,20 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() {
+                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
                     // Over the group, and its stored keys resolved through the
                     // *joined* ordinal -- which is what `group_value_type` now
                     // walks, and the reason the joined path had no HAVING
                     // before: everything downstream of it took one `TableDef`.
-                    grouping = grouping.having(having(
+                    //
+                    // `group_predicate` rather than `having` so that an ORed
+                    // HAVING reaches the kernel as a disjunction here too. The
+                    // three call sites went through one function before and
+                    // still do; a second spelling on one of them is how the
+                    // joined path came to differ from the single-table one.
+                    grouping = grouping.having(group_predicate(
                         &spec.having,
+                        &spec.having_any_of,
                         &keys,
                         &aggregates,
                         &[&authors, &books],
@@ -1057,8 +1064,14 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() {
-                    grouping = grouping.having(having(&spec.having, &keys, &aggregates, &refs)?);
+                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                    grouping = grouping.having(group_predicate(
+                        &spec.having,
+                        &spec.having_any_of,
+                        &keys,
+                        &aggregates,
+                        &refs,
+                    )?);
                 }
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -1540,8 +1553,14 @@ impl Playground {
         // the sort only decides what order they come back in. The kernel
         // applies them in that order regardless; setting them in the same
         // order here is so that reading this says what happens.
-        if !spec.having.is_empty() {
-            grouping = grouping.having(having(&spec.having, &keys, &aggregates, &[table])?);
+        if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+            grouping = grouping.having(group_predicate(
+                &spec.having,
+                &spec.having_any_of,
+                &keys,
+                &aggregates,
+                &[table],
+            )?);
         }
 
         // ORDER BY, LIMIT and OFFSET belong to the *groups* when there is a

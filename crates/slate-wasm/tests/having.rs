@@ -275,14 +275,53 @@ fn it_refuses_what_it_cannot_answer() {
     assert!(message.contains("not a group key"), "{message}");
     assert!(message.contains("HAVING"), "{message}");
 
-    // OR, refused in HAVING — and *not* in WHERE, which takes it now. A
-    // HAVING term resolves against the group space through one flat list.
+    // OR in HAVING is supported now, like OR in WHERE. What is still refused
+    // is mixing the two connectives in one clause, for the same reason: no
+    // parentheses, so a mixture would need a precedence.
     let message = refused(
         &playground,
         "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
-         HAVING count(*) > 1 OR count(*) < 5",
+         HAVING count(*) > 1 AND count(*) < 5 OR count(*) > 99",
     );
-    assert!(message.contains("OR is not supported"), "{message}");
+    assert!(message.contains("cannot be mixed"), "{message}");
+    assert!(
+        message.contains("HAVING"),
+        "the refusal names its clause: {message}"
+    );
+}
+
+#[test]
+fn an_ored_having_admits_a_group_either_arm_admits() {
+    // The answer, not the shape. A HAVING that quietly ANDed its terms would
+    // return the intersection, which is a strict subset — so the assertion
+    // that discriminates is a group admitted by exactly one arm.
+    let playground = loaded();
+
+    let count = |sql: &str| ok(&playground, sql)["returned"].as_u64().unwrap();
+
+    let both = count(
+        "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
+         HAVING count(*) > 4000 OR count(*) < 2",
+    );
+    let high = count(
+        "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
+         HAVING count(*) > 4000",
+    );
+    let low = count(
+        "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
+         HAVING count(*) < 2",
+    );
+
+    assert!(
+        high > 0,
+        "the fixture needs a busy zone for this test to mean anything"
+    );
+    assert!(low > 0, "and a quiet one");
+    assert_eq!(
+        both,
+        high + low,
+        "a disjunction admits the union of its arms: {both} vs {high} + {low}"
+    );
 }
 
 #[test]

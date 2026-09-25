@@ -873,14 +873,43 @@ fn having_is_refused_where_it_cannot_mean_anything() {
     );
     assert!(message.contains("HAVING names `max(fare)`"), "{message}");
     assert!(!message.contains("ORDER BY"), "{message}");
-    // OR, refused in HAVING. A single-table WHERE takes it; a HAVING and a
-    // join's WHERE do not, and the message says which.
+    // OR in a grouped join's HAVING works, like OR in a single-table one.
+    // What is still refused is mixing connectives in one clause, and a
+    // join's WHERE, which splits its conditions by side before the hash join
+    // ever runs and has nowhere to put one that spans both.
+    let mixed = refused(
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough HAVING count(*) > 5 AND count(*) < 9 OR count(*) > 99",
+    );
+    assert!(mixed.contains("cannot be mixed"), "{mixed}");
     assert!(
-        refused(
-            "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
-             GROUP BY borough HAVING count(*) > 5 OR count(*) < 2"
-        )
-        .contains("OR is not supported in HAVING"),
+        mixed.contains("HAVING"),
+        "the refusal names its clause: {mixed}"
+    );
+
+    // And the ORed form answers with the union of its arms. Asserted here and
+    // not only for a single table because the join path routes `having` into
+    // its own spec field, and mutating that routing to always-AND survived
+    // until this existed.
+    let groups = |text: &str| sql(&playground, text)["returned"].as_u64().unwrap();
+    let join = "FROM trips JOIN zones ON trips.pickup_zone = zones.id GROUP BY borough";
+    let both = groups(&format!(
+        "SELECT borough, count(*) {join} HAVING count(*) > 20000 OR count(*) < 400"
+    ));
+    let high = groups(&format!(
+        "SELECT borough, count(*) {join} HAVING count(*) > 20000"
+    ));
+    let low = groups(&format!(
+        "SELECT borough, count(*) {join} HAVING count(*) < 400"
+    ));
+    assert!(
+        high > 0 && low > 0,
+        "both arms need to admit something: {high}, {low}"
+    );
+    assert_eq!(
+        both,
+        high + low,
+        "a disjunction is the union: {both} vs {high} + {low}"
     );
 }
 
