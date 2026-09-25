@@ -1029,7 +1029,7 @@
     },
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
-      "key": "403 is still 4.7× the data, and the biggest remaining piece ",
+      "key": "403 is still 4.7\u00d7 the data, and the biggest remaining piece ",
       "verdict": "open",
       "by": ""
     },
@@ -2883,7 +2883,7 @@
     },
     {
       "entry": "2026-09-20-with-is-three-questions.md",
-      "key": "The inlining equivalence in §3 was reasoned, not executed.",
+      "key": "The inlining equivalence in \u00a73 was reasoned, not executed.",
       "verdict": "deliberate",
       "by": "this entry: stated as such in the note"
     },
@@ -3135,7 +3135,7 @@
     },
     {
       "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
-      "key": "`COUNT(DISTINCT … ) OVER (… ORDER BY …)` is refused, and the",
+      "key": "`COUNT(DISTINCT \u2026 ) OVER (\u2026 ORDER BY \u2026)` is refused, and the",
       "verdict": "deliberate",
       "by": "this entry: partial support is a trap; the alternative was refusing a form that works"
     },
@@ -3153,7 +3153,7 @@
     },
     {
       "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
-      "key": "Nothing checks that §5 and the code still agree.",
+      "key": "Nothing checks that \u00a75 and the code still agree.",
       "verdict": "open",
       "by": ""
     },
@@ -3627,7 +3627,7 @@
     },
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
-      "key": "§4's premise is unconfirmed.",
+      "key": "\u00a74's premise is unconfirmed.",
       "verdict": "open",
       "by": ""
     },
@@ -3821,7 +3821,7 @@
       "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
       "key": "No arm is unhinted.",
       "verdict": "deliberate",
-      "by": "this entry: §6 already measures which path is picked"
+      "by": "this entry: \u00a76 already measures which path is picked"
     },
     {
       "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
@@ -3975,7 +3975,7 @@
     },
     {
       "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
-      "key": "The 71 µs is not explained, only shown to be an artefact.",
+      "key": "The 71 \u00b5s is not explained, only shown to be an artefact.",
       "verdict": "open",
       "by": ""
     },
@@ -3995,7 +3995,7 @@
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
       "key": "Nothing checks that a ledger entry's mutation claims match a",
       "verdict": "closed",
-      "by": "ledger/2026-09-23-a-counted-claim-must-name-its-run.md — #290 built check_mutation_claims.py"
+      "by": "ledger/2026-09-23-a-counted-claim-must-name-its-run.md \u2014 #290 built check_mutation_claims.py"
     },
     {
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
@@ -4025,7 +4025,7 @@
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
       "key": "The stamp's `slatedb` version is the only dependency version",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 — the stamp carries foyer, object_store, slatedb and tokio"
+      "by": "ledger/2026-09-22 #285 \u2014 the stamp carries foyer, object_store, slatedb and tokio"
     },
     {
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
@@ -4079,7 +4079,7 @@
       "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
       "key": "It reads `docs/` only.",
       "verdict": "closed",
-      "by": "#288 — check_table_provenance.py reads README_GLOBS as well as docs/"
+      "by": "#288 \u2014 check_table_provenance.py reads README_GLOBS as well as docs/"
     },
     {
       "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
@@ -4163,11 +4163,11 @@
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
       "key": "It does not stamp the versions of anything above `slate-slat",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 — four dependencies stamped"
+      "by": "ledger/2026-09-22 #285 \u2014 four dependencies stamped"
     },
     {
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
-      "key": "The `-q` defect is latent, not historical — and this paragra",
+      "key": "The `-q` defect is latent, not historical \u2014 and this paragra",
       "verdict": "deliberate",
       "by": "recorded as latent, and the paragraph it replaced was withdrawn in writing"
     },
@@ -4217,7 +4217,7 @@
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
       "key": "It reads `docs/` only.",
       "verdict": "closed",
-      "by": "#288 — check_cost_prose.py reads README_GLOBS as well as docs/"
+      "by": "#288 \u2014 check_cost_prose.py reads README_GLOBS as well as docs/"
     },
     {
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
@@ -4313,7 +4313,7 @@
       "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
       "key": "It does not stop an equivalent mutation being written",
       "verdict": "deliberate",
-      "by": "equivalent-mutation detection is undecidable — scripts/mutate.py says so"
+      "by": "equivalent-mutation detection is undecidable \u2014 scripts/mutate.py says so"
     },
     {
       "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
@@ -4445,7 +4445,7 @@
       "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
       "key": "`mutate.py` cannot read a `should_panic` failure",
       "verdict": "closed",
-      "by": "ledger/2026-09-23-the-mutation-runner-could-not-read-a-doctest.md — #294 taught mutate.py the should_panic shape"
+      "by": "ledger/2026-09-23-the-mutation-runner-could-not-read-a-doctest.md \u2014 #294 taught mutate.py the should_panic shape"
     },
     {
       "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
@@ -4493,7 +4493,7 @@
       "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
       "key": "Round-robin does not make the comparison load-proof",
       "verdict": "deliberate",
-      "by": "load-fair, not load-proof — stated and chosen"
+      "by": "load-fair, not load-proof \u2014 stated and chosen"
     },
     {
       "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
@@ -4722,6 +4722,45 @@
       "key": "`sql.rs:34` may be stale, and I still have not confirmed it.",
       "verdict": "closed",
       "by": "2026-09-25-the-grammar-comment-outlived-the-grammar.md"
+    },
+    {
+      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
+      "key": "It does not audit my other caveats for the same class.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
+      "key": "The union assertion is over one fixture.",
+      "verdict": "deliberate",
+      "by": "this entry: the law holds wherever the arms differ, which the test asserts before comparing"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "No disjunction in a conformance `HAVING`.",
+      "verdict": "deliberate",
+      "by": "this entry: widening the three adapters' having contract costs more than the gap, which two client suites now cover live"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "The two new suites are one fixture each, not properties.",
+      "verdict": "deliberate",
+      "by": "this entry: same reasoning as the Python suite it mirrors"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "The remaining ~28 caveats I wrote today are still unaudited ",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "Nothing stops the fourth one.",
+      "verdict": "deliberate",
+      "by": "this entry: no test can fail on a claim about a file nobody opened; the tracker reading claims back is the only guard there is"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "Nothing checked the other suites for the `as_int` class.",
+      "verdict": "open"
     }
   ]
 }

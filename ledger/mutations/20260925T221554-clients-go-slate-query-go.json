@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-25T22:15:54+00:00",
+  "file": "clients/go/slate/query.go",
+  "dialect": "go",
+  "command": [
+    "env",
+    "SLATE_SERVERD=/home/user/slate-orm/target/debug/slate-serverd",
+    "go",
+    "test",
+    "./slate/",
+    "-run",
+    "Disjunction|OrWithNoParts",
+    "-count=1"
+  ],
+  "commit": "e425e1c",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

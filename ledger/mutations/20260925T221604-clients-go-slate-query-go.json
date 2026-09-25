@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-25T22:16:04+00:00",
+  "file": "clients/go/slate/query.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && SLATE_SERVERD=/home/user/slate-orm/target/debug/slate-serverd go test ./slate/ -run 'Disjunction|OrWithNoParts' -count=1"
+  ],
+  "commit": "e425e1c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "Or builds a disjunction, not a conjunction",
+      "old": "return Expr{&pb.Expr{Node: &pb.Expr_Disjunction{Disjunction: exprList(parts)}}}",
+      "new": "return Expr{&pb.Expr{Node: &pb.Expr_Conjunction{Conjunction: exprList(parts)}}}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAClientSendsADisjunctionInAFilter",
+        "TestAClientSendsADisjunctionInAHaving"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty Or is False, not True",
+      "old": "\tif len(parts) == 0 {\n\t\treturn False()\n\t}",
+      "new": "\tif len(parts) == 0 {\n\t\treturn True()\n\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestOrWithNoPartsIsFalseAndAdmitsNothing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

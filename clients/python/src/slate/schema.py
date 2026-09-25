@@ -134,7 +134,7 @@ class Table:
         object.__setattr__(self, "columns", resolved)
         object.__setattr__(self, "primary_key", tuple(primary_key))
 
-    def as_view(self, name: str) -> "Table":
+    def as_view(self, name: str) -> Table:
         """This table's columns and key, under a view's name.
 
         A view may not narrow columns — `docs/views.md` refuses a projection,

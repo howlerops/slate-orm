@@ -21,11 +21,8 @@ from __future__ import annotations
 
 from slate import Agg, AggregateQuery, Client, Query, any_of, i64
 
+from .conftest import as_int
 from .fixture import DOCS
-
-
-def _ids(client: Client, q: Query) -> set[int]:
-    return {int(row[0]) for row in client.query(q)}
 
 
 def test_a_client_sends_a_disjunction_in_a_where(oracle_client: Client) -> None:
@@ -35,13 +32,13 @@ def test_a_client_sends_a_disjunction_in_a_where(oracle_client: Client) -> None:
     # whatever the seed holds.
     rows = list(oracle_client.query(Query(DOCS)))
     assert len(rows) > 3, "too few rows for a median to split anything"
-    sizes = sorted(int(row[2]) for row in rows)
+    sizes = sorted(as_int(row[2]) for row in rows)
     cut = sizes[len(sizes) // 2]
     kind = str(rows[0][1])
 
     def ids(expr) -> set[int]:
         q = Query(DOCS)
-        return {int(row[0]) for row in oracle_client.query(q.where(expr(q)))}
+        return {as_int(row[0]) for row in oracle_client.query(q.where(expr(q)))}
 
     big = ids(lambda q: q.c.size.gt(i64(cut)))
     named = ids(lambda q: q.c.kind.eq(kind))
