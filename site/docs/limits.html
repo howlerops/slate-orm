@@ -85,20 +85,26 @@
         and a dialect.
       </p>
       <p>
-        <strong><code>OR</code> is all-or-nothing within one clause.</strong>
-        <code>WHERE a = 1 OR b = 2</code> works on a single-table read and
-        lowers to the kernel's own disjunction. What is refused is
-        <em>mixing</em> it with <code>AND</code> in the same
-        <code>WHERE</code>: this grammar has no parentheses, so
-        <code>a AND b OR c</code> would need a precedence, and it reads two
-        ways depending on who is reading. <code>HAVING</code> takes
-        <code>OR</code> too, on a single table, a join and a chain alike.
-        The one clause that still takes <code>AND</code> only is a
-        <em>join's</em> <code>WHERE</code>: its conditions are split by side
-        so each scan is narrowed before the hash join runs, and a disjunction
-        spanning both sides cannot be split that way. A disjunction is also a
-        filter rather than an access path &mdash; it cannot become a scan
-        bound, because <code>a = 1 OR b = 2</code> has no single key range.
+        <strong><code>AND</code> and <code>OR</code> need brackets to
+        mix.</strong> <code>WHERE a = 1 OR b = 2</code> works on a
+        single-table read, and so does
+        <code>WHERE (a = 1 OR b = 2) AND c = 3</code>; both lower to the
+        kernel's own tree. What is refused is an <em>unbracketed</em>
+        mixture: <code>a AND b OR c</code> means <code>(a AND b) OR c</code>
+        in SQL and reads as <code>a AND (b OR c)</code> to about half of
+        everyone, so it is refused by name and the refusal says to write the
+        brackets you mean.
+      </p>
+      <p>
+        Two clauses take no brackets. A <em>join's</em> <code>WHERE</code>
+        is <code>AND</code> only: its conditions are split by side so each
+        scan is narrowed before the hash join runs, and neither a disjunction
+        nor a tree spanning both sides can be split that way. A
+        <code>HAVING</code> is all <code>AND</code> or all <code>OR</code>
+        — on a single table, a join and a chain alike — because the group
+        conditions have no nested form to lower onto. A disjunction is also a
+        filter rather than an access path: it cannot become a scan bound,
+        because <code>a = 1 OR b = 2</code> has no single key range.
       </p>
       <p>
         <strong>The newest features stop where they stop.</strong> A window

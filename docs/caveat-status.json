@@ -4654,8 +4654,8 @@
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
       "key": "No parentheses, so no nesting.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "crates/slate-sql PredicateSpec and the bracket parser; ledger/2026-09-25-parentheses-in-a-where.md"
     },
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
@@ -4806,6 +4806,35 @@
     {
       "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
       "key": "Neither `docs/` nor the site was audited the same way.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No brackets in a `HAVING`",
+      "verdict": "deliberate",
+      "by": "this entry: the group-condition lists have no nested form to lower onto and no query has wanted one"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No brackets in a join's `WHERE`",
+      "verdict": "deliberate",
+      "by": "this entry: its conditions are split by side before the hash join, and a tree spanning both sides cannot be"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "The round-trip property does not generate a nested predicate",
+      "verdict": "deliberate",
+      "by": "this entry: generating brackets is a second implementation of the precedence this front end refuses to have"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No client can send a nested predicate as SQL",
+      "verdict": "deliberate",
+      "by": "this entry: no client sends SQL; they build Expr, which has had And and Or all along"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "The planner still does nothing special with it.",
       "verdict": "open"
     }
   ]

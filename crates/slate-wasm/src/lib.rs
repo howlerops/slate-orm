@@ -51,7 +51,7 @@ pub mod taxi;
 pub use slate_sql::sql;
 pub use slate_sql::{
     AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
-    QuerySpec, SortSpec, WindowSpec,
+    PredicateSpec, QuerySpec, SortSpec, WindowSpec,
 };
 
 // The lowering — a spec onto the kernel's own types — went with them. What is
@@ -1768,7 +1768,21 @@ impl Playground {
     /// `Unknown` where this answers `False`, and both exclude. It would matter
     /// under a `NOT IN`, which is refused for exactly this reason.
     fn resolve_subqueries(&self, spec: &mut QuerySpec) -> Result<(), String> {
-        for filter in &mut spec.filters {
+        // Every condition of the `WHERE`, flat or nested. `spec.filters` was
+        // the whole of it until parentheses arrived; a subquery inside a
+        // bracket lands in `spec.predicate` instead, and missing it here is
+        // silent — `build` turns an unresolved subquery into an `IN` over an
+        // empty list, which matches nothing and reports nothing. The `any_of`
+        // list is included for the same reason even though the parser cannot
+        // put a subquery there today: a list this walks and a list it does not
+        // is exactly the asymmetry that made this a bug once.
+        let mut conditions: Vec<&mut FilterSpec> = Vec::new();
+        conditions.extend(spec.filters.iter_mut());
+        conditions.extend(spec.any_of.iter_mut());
+        if let Some(tree) = spec.predicate.as_mut() {
+            collect_conditions(tree, &mut conditions);
+        }
+        for filter in conditions {
             let Some(inner) = filter.subquery.clone() else {
                 continue;
             };
@@ -2404,4 +2418,21 @@ fn group_scales(
                 .and_then(|(_, scale)| scale)
         })
         .collect()
+}
+
+/// Every leaf condition of a nested predicate, borrowed mutably.
+///
+/// Free rather than a method on `PredicateSpec`: it exists for exactly one
+/// caller — [`Playground::resolve_subqueries`] — and putting a mutable walker
+/// on the spec type would make "hand me every condition so I can rewrite it"
+/// part of `slate-sql`'s surface for one consumer in another crate.
+fn collect_conditions<'a>(spec: &'a mut PredicateSpec, out: &mut Vec<&'a mut FilterSpec>) {
+    match spec {
+        PredicateSpec::Of(filter) => out.push(filter),
+        PredicateSpec::All(parts) | PredicateSpec::Any(parts) => {
+            for part in parts {
+                collect_conditions(part, out);
+            }
+        }
+    }
 }

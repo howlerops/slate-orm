@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-25T23:14:33+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1759ce2",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the flattener keeps a nested Any nested",
+      "old": "            PredicateSpec::Any(ref parts) => match leaves(parts) {\n                Some(flat) => Where::Any(flat),\n                None => Where::Nested(tree),\n            },",
+      "new": "            PredicateSpec::Any(ref parts) => match leaves(parts) {\n                Some(flat) => Where::Any(flat),\n                None => Where::Any(Vec::new()),\n            },",
+      "verdict": "caught",
+      "caught_by": [
+        "two_bracketed_conjunctions_ored_together"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

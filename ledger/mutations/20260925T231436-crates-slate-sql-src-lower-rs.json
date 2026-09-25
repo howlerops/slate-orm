@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-25T23:14:36+00:00",
+  "file": "crates/slate-sql/src/lower.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1759ce2",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a nested All lowers to Expr::And",
+      "old": "            Ok(Expr::And(out))",
+      "new": "            Ok(Expr::Or(out))",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "the_other_nesting_works_too",
+        "two_bracketed_conjunctions_ored_together"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a nested Any lowers to Expr::Or",
+      "old": "            Ok(Expr::Or(out))",
+      "new": "            Ok(Expr::And(out))",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "the_other_nesting_works_too",
+        "two_bracketed_conjunctions_ored_together"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the nested predicate is ANDed onto the query rather than dropped",
+      "old": "        query = query.filter(existing.and(predicate(tree, table)?));",
+      "new": "        query = query.filter(existing);",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "the_other_nesting_works_too",
+        "two_bracketed_conjunctions_ored_together"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -578,3 +578,190 @@ fn the_refused_keywords_really_refuse() {
         );
     }
 }
+
+// --- parentheses -----------------------------------------------------------
+
+/// Evaluate a lowered `WHERE` against one row of `books`.
+fn admits(text: &str, author_id: u64, year: i64) -> bool {
+    use slate_kernel::Truth;
+    let spec = select(text);
+    let filter = lower::build(&spec, &books())
+        .unwrap_or_else(|e| panic!("{text}: {e}"))
+        .filter;
+    let row = slate_schema::Row::new(vec![
+        Value::U64(1),
+        Value::U64(author_id),
+        Value::Str("t".to_owned()),
+        Value::I64(year),
+    ]);
+    filter.evaluate(&row) == Truth::True
+}
+
+#[test]
+fn a_bracketed_disjunction_is_anded_with_what_follows_it() {
+    // The query the front end could not write: two arms that are not a single
+    // column's values, so `IN (…)` does not cover it, ANDed with a third
+    // condition. `ledger/2026-09-25-the-disjunction-the-kernel-always-had.md`
+    // recorded it as `No parentheses, so no nesting`.
+    let text = "SELECT * FROM books WHERE (author_id = 1 OR year >= 1990) AND year < 2000";
+
+    assert!(admits(text, 1, 1970), "left arm, and inside the range");
+    assert!(admits(text, 9, 1995), "right arm, and inside the range");
+    assert!(!admits(text, 1, 2005), "left arm, outside the range");
+    assert!(!admits(text, 9, 1970), "neither arm");
+    // And the whole thing is not just the trailing conjunct, which is what a
+    // lowering that dropped the bracket would produce.
+    assert!(
+        !admits(text, 9, 1980),
+        "a row the trailing conjunct alone admits"
+    );
+}
+
+#[test]
+fn the_other_nesting_works_too() {
+    // `a AND (b OR c)` — the reading the refusal says half of everyone takes,
+    // now writable. Distinguished from the case above by a row the two
+    // disagree on: author 1 in 2005 is admitted by `(a OR b) AND c` reading
+    // nothing and by this one only if `c` holds.
+    let text = "SELECT * FROM books WHERE author_id = 1 AND (year >= 1990 OR year < 1950)";
+    assert!(admits(text, 1, 1995));
+    assert!(admits(text, 1, 1940));
+    assert!(!admits(text, 1, 1970), "between the arms");
+    assert!(!admits(text, 2, 1995), "wrong author");
+}
+
+#[test]
+fn a_flat_where_never_lands_in_the_nested_field() {
+    // The invariant that makes three fields safe rather than three ways to
+    // say one thing. A redundant bracket is the case that would break it
+    // if the parser switched on having seen a `(` rather than flattening.
+    for text in [
+        "SELECT * FROM books WHERE year >= 1970",
+        "SELECT * FROM books WHERE (year >= 1970)",
+        "SELECT * FROM books WHERE ((year >= 1970))",
+        "SELECT * FROM books WHERE year >= 1970 AND author_id = 1",
+        "SELECT * FROM books WHERE (year >= 1970) AND (author_id = 1)",
+        "SELECT * FROM books WHERE year >= 1970 OR author_id = 1",
+        "SELECT * FROM books WHERE (year >= 1970 OR author_id = 1)",
+    ] {
+        let spec = select(text);
+        assert!(
+            spec.predicate.is_none(),
+            "{text} produced a nested predicate: {:?}",
+            spec.predicate
+        );
+        assert!(
+            spec.filters.is_empty() || spec.any_of.is_empty(),
+            "{text} populated both flat lists"
+        );
+    }
+    // And a bracket that really nests populates exactly the one field.
+    let spec = select("SELECT * FROM books WHERE (author_id = 1 OR year >= 1990) AND year < 2000");
+    assert!(spec.predicate.is_some());
+    assert!(spec.filters.is_empty(), "{:?}", spec.filters);
+    assert!(spec.any_of.is_empty(), "{:?}", spec.any_of);
+}
+
+#[test]
+fn a_redundant_bracket_produces_the_same_spec_as_no_bracket() {
+    // Stronger than "not nested": byte for byte the same spec, so the Spec
+    // tab shows one thing and a view stored as text resolves to one query
+    // whichever way its author wrote it.
+    assert_eq!(
+        select("SELECT * FROM books WHERE year >= 1970"),
+        select("SELECT * FROM books WHERE (year >= 1970)"),
+    );
+    assert_eq!(
+        select("SELECT * FROM books WHERE year >= 1970 AND author_id = 1"),
+        select("SELECT * FROM books WHERE (year >= 1970) AND (author_id = 1)"),
+    );
+}
+
+#[test]
+fn mixing_without_brackets_is_still_refused_and_the_message_says_to_write_them() {
+    // The refusal predates parentheses and is kept: `a AND b OR c` reads two
+    // ways and a reader should not have to know which this front end picked.
+    // What changed is that the fix now exists, so the message names it.
+    let tables = [books()];
+    for text in [
+        "SELECT * FROM books WHERE year >= 1970 AND author_id = 3 OR author_id = 4",
+        "SELECT * FROM books WHERE year >= 1970 OR author_id = 3 AND author_id = 4",
+    ] {
+        let error = parse(text, &Schema(&tables)).expect_err("a bare mixture must be refused");
+        assert!(
+            error.message.contains("cannot be mixed"),
+            "{text}: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("parentheses") || error.message.contains("brackets"),
+            "the refusal should point at the fix that now exists: {}",
+            error.message
+        );
+    }
+}
+
+#[test]
+fn an_unclosed_bracket_is_refused_at_the_bracket_and_not_swallowed() {
+    let tables = [books()];
+    let error = parse(
+        "SELECT * FROM books WHERE (year >= 1970 AND author_id = 1",
+        &Schema(&tables),
+    )
+    .expect_err("an unclosed bracket must be refused");
+    assert!(error.message.contains(')'), "{}", error.message);
+}
+
+#[test]
+fn a_nested_predicate_survives_the_json_round_trip() {
+    // The Spec tab serializes and the browser deserializes, and `predicate` is
+    // the first recursive field in this shape.
+    let spec = select("SELECT * FROM books WHERE (author_id = 1 OR year >= 1990) AND year < 2000");
+    let json = serde_json::to_string(&spec).expect("a serializable spec");
+    assert!(json.contains("predicate"), "{json}");
+    let back: QuerySpec = serde_json::from_str(&json).expect("a deserializable spec");
+    assert_eq!(spec, back);
+}
+
+#[test]
+fn a_flat_spec_serializes_exactly_as_it_did_before_predicate_existed() {
+    // `skip_serializing_if` earns its place here: every spec anyone has stored
+    // is flat, and a new always-present `"predicate": null` would change every
+    // one of them and every test that compares JSON.
+    let json = serde_json::to_string(&select("SELECT * FROM books WHERE year >= 1970"))
+        .expect("a serializable spec");
+    assert!(!json.contains("predicate"), "{json}");
+}
+
+#[test]
+fn two_bracketed_conjunctions_ored_together() {
+    // A disjunction whose *parts* nest, which is the other arm of the
+    // flattener: the cases above all nest under an `AND`, so the `Any` branch
+    // was unexercised in this crate and a mutation that made it return an
+    // empty list survived. `slate-wasm`'s round trip had a case; this crate
+    // did not, and "covered somewhere" is not covered here.
+    let text = "SELECT * FROM books WHERE (author_id = 1 AND year >= 1990) \
+                OR (author_id = 2 AND year < 1950)";
+    let spec = select(text);
+    match spec.predicate.as_ref().expect("this nests") {
+        slate_sql::PredicateSpec::Any(parts) => {
+            assert_eq!(parts.len(), 2, "two arms: {parts:?}");
+            for part in parts {
+                assert!(
+                    matches!(part, slate_sql::PredicateSpec::All(inner) if inner.len() == 2),
+                    "each arm is a two-part conjunction: {part:?}"
+                );
+            }
+        }
+        other => panic!("expected a disjunction of conjunctions, got {other:?}"),
+    }
+
+    assert!(admits(text, 1, 1995), "the first arm");
+    assert!(admits(text, 2, 1940), "the second arm");
+    assert!(
+        !admits(text, 1, 1940),
+        "author of one arm, year of the other"
+    );
+    assert!(!admits(text, 2, 1995), "and the other way round");
+    assert!(!admits(text, 3, 1970), "neither");
+}

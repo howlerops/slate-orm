@@ -292,12 +292,12 @@ const EXAMPLES = [
       "  ORDER BY count(*) DESC, pickup_zone\n" +
       "  LIMIT 20 OFFSET 5;\n" +
       "\n" +
-      "-- Three: OR, which needs a statement of its own. A WHERE is all AND\n" +
-      "-- or all OR — there are no parentheses here, so a mixture would need\n" +
-      "-- a precedence, and it is refused rather than guessed at. That is why\n" +
-      "-- this cannot be folded into the query above.\n" +
+      "-- Three: OR, and brackets. An unbracketed `a AND b OR c` is refused —\n" +
+      "-- it reads two ways depending on who is reading — so say which you\n" +
+      "-- mean and the parser lowers the tree you wrote.\n" +
       "SELECT pickup_zone, fare FROM trips\n" +
-      "  WHERE pickup_zone = 132 OR pickup_zone = 138 OR pickup_zone = 161\n" +
+      "  WHERE (pickup_zone = 132 OR pickup_zone = 138 OR pickup_zone = 161)\n" +
+      "    AND fare > 20\n" +
       "  ORDER BY fare DESC LIMIT 10",
   ],
 ];

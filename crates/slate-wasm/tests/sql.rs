@@ -31,7 +31,7 @@ use proptest::prelude::*;
 use serde_json::{Value as Json, json};
 use slate_schema::TableDef;
 use slate_wasm::sql::{Schema, Statement, parse, split};
-use slate_wasm::{FilterSpec, Playground, QuerySpec, SortSpec, fixture, taxi};
+use slate_wasm::{FilterSpec, Playground, PredicateSpec, QuerySpec, SortSpec, fixture, taxi};
 
 fn tables() -> Vec<TableDef> {
     vec![fixture::authors(), fixture::books()]
@@ -86,6 +86,32 @@ fn refusal(playground: &Playground, text: &str) -> String {
 /// be comparing the parser against a renderer written to agree with it, which
 /// is the failure mode an oracle exists to avoid. Two implementations that
 /// disagree are informative; one implementation checked against itself is not.
+/// A nested predicate, back to SQL with the brackets it needs.
+///
+/// Brackets on *every* branch rather than only where precedence requires
+/// them: a renderer that decided where they were needed would be the
+/// precedence implementation this front end refuses to have, and the parser
+/// collapses a redundant bracket anyway, so the extra ones cost nothing and
+/// are checked by `a_redundant_bracket_produces_the_same_spec_as_no_bracket`
+/// in `slate-sql`.
+fn render_predicate(spec: &PredicateSpec, condition: &dyn Fn(&FilterSpec) -> String) -> String {
+    match spec {
+        PredicateSpec::Of(filter) => condition(filter),
+        PredicateSpec::All(parts) | PredicateSpec::Any(parts) => {
+            let joiner = if matches!(spec, PredicateSpec::All(_)) {
+                " AND "
+            } else {
+                " OR "
+            };
+            let rendered: Vec<String> = parts
+                .iter()
+                .map(|part| render_predicate(part, condition))
+                .collect();
+            format!("({})", rendered.join(joiner))
+        }
+    }
+}
+
 fn render(spec: &QuerySpec, table: &TableDef) -> String {
     let name = |ordinal: u32| table.columns()[ordinal as usize].name().to_owned();
     let is_text = |ordinal: u32| {
@@ -148,14 +174,18 @@ fn render(spec: &QuerySpec, table: &TableDef) -> String {
     }
     out.push_str(&format!(" FROM {}", spec.table));
 
-    // A spec is all-AND or all-OR: the parser refuses a mixture because this
-    // grammar has no parentheses, so exactly one of these is non-empty.
+    // A `WHERE` lands in exactly one of three fields: `filters` when it is all
+    // AND, `any_of` when it is all OR, and `predicate` when brackets made it a
+    // tree that is neither. The parser flattens whatever it can, so the third
+    // case only arrives for a genuine nesting.
     if !spec.filters.is_empty() {
         let parts: Vec<String> = spec.filters.iter().map(&condition).collect();
         out.push_str(&format!(" WHERE {}", parts.join(" AND ")));
     } else if !spec.any_of.is_empty() {
         let parts: Vec<String> = spec.any_of.iter().map(&condition).collect();
         out.push_str(&format!(" WHERE {}", parts.join(" OR ")));
+    } else if let Some(tree) = &spec.predicate {
+        out.push_str(&format!(" WHERE {}", render_predicate(tree, &condition)));
     }
     if !spec.sort.is_empty() {
         let parts: Vec<String> = spec
@@ -279,6 +309,13 @@ prop_compose! {
             filter: None,
             filters,
             any_of,
+            // Not generated. A nested predicate has its own round trip in
+            // `a_nested_predicate_survives_the_round_trip` below, written by
+            // hand: generating one means generating the *brackets* too, and a
+            // generator that emits `(a AND b) OR c` is a second implementation
+            // of the precedence rule this parser deliberately refuses to have.
+            // The hand-written case is weaker and says what it proves.
+            predicate: None,
             sort,
             limit,
             offset,
@@ -1169,9 +1206,9 @@ fn refusals_name_what_was_wrong() {
             "SELECT * FROM books WHERE authors.id = 1",
             "is not a column of `books`",
         ),
-        // `OR` in a WHERE is supported now and lowers to `Expr::Or`; what is
-        // still refused is mixing it with `AND` in one clause, because this
-        // grammar has no parentheses to disambiguate the precedence.
+        // `OR` in a WHERE is supported and so are brackets; what is still
+        // refused is an *unbracketed* mixture, where nobody can tell which
+        // reading is meant, and the refusal says to write the brackets.
         (
             "SELECT * FROM books WHERE id = 1 AND year = 2 OR id = 3",
             "cannot be mixed",
@@ -1893,4 +1930,78 @@ fn a_bare_not_before_a_comparison_is_still_a_syntax_error() {
     let why = refusal(&playground, "SELECT id FROM books WHERE author_id NOT 1");
     assert!(!why.contains("notIn"), "{why}");
     assert!(!why.is_empty(), "{why}");
+}
+
+/// A nested `WHERE`, text to spec to text.
+///
+/// Hand-written rather than generated, and the comment on `predicate: None` in
+/// the generator says why: generating the brackets would mean generating the
+/// precedence this parser refuses to have. Three shapes, chosen because each
+/// exercises a different arm of the flattener — a nesting under `AND`, one
+/// under `OR`, and one two deep.
+#[test]
+fn a_nested_predicate_survives_the_round_trip() {
+    let tables = tables();
+    for text in [
+        "SELECT * FROM books WHERE (author_id = 1 OR year >= 1990) AND year < 2000",
+        "SELECT * FROM books WHERE author_id = 1 AND (year >= 1990 OR year < 1950)",
+        "SELECT * FROM books WHERE (author_id = 1 AND year >= 1990) OR (author_id = 2 AND year < 1950)",
+    ] {
+        let parsed =
+            parse(text, &Schema(&tables)).unwrap_or_else(|e| panic!("{text}: {}", e.message));
+        let Statement::Select(spec) = parsed.statement else {
+            panic!("{text} is a single-table read")
+        };
+        assert!(spec.predicate.is_some(), "{text} should nest: {spec:?}");
+
+        let rendered = render(&spec, &fixture::books());
+        let again = parse(&rendered, &Schema(&tables))
+            .unwrap_or_else(|e| panic!("{rendered} (from {text}): {}", e.message));
+        let Statement::Select(round) = again.statement else {
+            panic!("{rendered} is a single-table read")
+        };
+        assert_eq!(spec, round, "{text} rendered as {rendered}");
+    }
+}
+
+/// A subquery inside a bracket is resolved, not silently matched against
+/// nothing.
+///
+/// `resolve_subqueries` walked `spec.filters` and nothing else. A nested
+/// predicate puts a condition somewhere that loop could not see, and an
+/// unresolved subquery becomes `IN` over an empty list — no rows, no error,
+/// no way to tell it from a query that legitimately matched none. Written
+/// while adding parentheses, because the gap arrives *with* them.
+#[test]
+fn a_subquery_inside_a_bracket_is_still_resolved() {
+    let playground = Playground::new();
+    let rows = |answer: &Json| answer["rows"].as_array().map_or(0, Vec::len);
+
+    // The other arm of the bracket matches *nothing* — there is no author 9999
+    // — so the subquery is the only thing that can admit a row. The first
+    // version of this used `OR year >= 1990`, which admits rows on its own:
+    // the test passed with the fix reverted, and `scripts/mutate.py` said so.
+    // A disjunction whose other arm can carry the answer cannot test the arm
+    // you mean.
+    let nested = one(
+        &playground,
+        "SELECT * FROM books WHERE (author_id IN (SELECT id FROM authors WHERE country = 'US') \
+         OR author_id = 9999) AND year < 2000",
+    );
+    let flat = one(
+        &playground,
+        "SELECT * FROM books WHERE author_id IN (SELECT id FROM authors WHERE country = 'US') \
+         AND year < 2000",
+    );
+
+    // Non-empty, and the same rows: the oracle is the flat form of the same
+    // question, which walks a code path the bracket does not.
+    assert!(
+        rows(&nested) > 0,
+        "the bracketed subquery matched nothing: {nested}"
+    );
+    assert_eq!(
+        nested["rows"], flat["rows"],
+        "the bracketed form and the flat one should answer the same question"
+    );
 }

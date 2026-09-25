@@ -63,13 +63,17 @@ pub struct QuerySpec {
     /// entries recorded as a gap.
     ///
     /// Two lists express a disjunction of comparisons and nothing deeper, so
-    /// `WHERE a = 1 OR b = 2` works and `WHERE a = 1 AND (b = 2 OR c = 3)`
-    /// does not. That is a real subset and it is the one with no precedence
-    /// question in it: a WHERE is either all `AND` or all `OR`, the parser
-    /// refuses a mix by name, and a reader never has to know which binds
-    /// tighter. A tree would express more and would make the Spec tab, the
-    /// panel and every consumer of this shape handle a recursive form for a
-    /// query nobody has yet asked to write.
+    /// `WHERE a = 1 OR b = 2` lands here and `WHERE a = 1 AND (b = 2 OR c = 3)`
+    /// lands in [`QuerySpec::predicate`], which is the tree this comment used
+    /// to argue was not worth having. The argument was that a recursive form
+    /// would cost every consumer something for a query nobody had asked to
+    /// write; what it missed is that the recursion can be a *fourth* field
+    /// that is `None` for every query anyone does write, which costs the flat
+    /// consumers nothing. `predicate`'s own comment carries the rest.
+    ///
+    /// A `WHERE` still never lands in two fields at once, and it is still the
+    /// case that neither list has a precedence question in it: a bare mixture
+    /// is refused, and brackets say what was meant.
     ///
     /// Lowering ANDs the two together, so a spec built by hand carrying both
     /// means `(all of these) AND (any of those)` — which is what the nesting
@@ -77,6 +81,32 @@ pub struct QuerySpec {
     /// what today's specs mean.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub any_of: Vec<FilterSpec>,
+    /// A nested predicate, for a `WHERE` the two flat lists above cannot hold.
+    ///
+    /// `Some` only when parentheses made the condition a tree that is neither
+    /// all-`AND` nor all-`OR` — `WHERE (a = 1 AND b = 2) OR c = 3`. Every
+    /// query anyone has written in this front end so far leaves it `None`, and
+    /// the parser flattens whatever it can, so a spec that *could* be flat
+    /// always is.
+    ///
+    /// # Why this is a third field and not a replacement for the other two
+    ///
+    /// Making the tree the only representation is the tidier design and was
+    /// rejected twice, for the same reason both times. Every consumer of this
+    /// shape — the Spec tab, the panel, the round-trip property test,
+    /// `slate-serverd` resolving a view, and every spec JSON on disk — reads
+    /// `filters` and `any_of`. Replacing them means a recursive form for
+    /// `WHERE year >= 1970`, which is the query everybody writes, to buy
+    /// nothing for the query almost nobody does.
+    ///
+    /// The cost is that two fields can describe one thing, which is a shape
+    /// this repository is usually right to distrust. What makes it safe is
+    /// that the parser never populates both, and
+    /// `a_flat_where_never_lands_in_the_nested_field` asserts it: the flat
+    /// fields are the flat case, `predicate` is what will not flatten, and
+    /// the two are not alternatives a caller picks between.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<PredicateSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,9 +152,10 @@ pub struct QuerySpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
-    /// same reason: a clause is all `AND` or all `OR`, because this grammar
-    /// has no parentheses to give a mixture a precedence with.
+    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
+    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
+    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
+    /// still refused whether or not it is bracketed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
     /// Values computed over a partition, one per input row, appended after the
@@ -182,6 +213,28 @@ pub struct WindowSpec {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(n: &u64) -> bool {
     *n == 0
+}
+
+/// A `WHERE` that parentheses made into a tree.
+///
+/// Tagged externally — `{"all": [...]}`, `{"any": [...]}`, `{"of": {...}}` —
+/// so the Spec tab shows the reader's own structure rather than a flat list
+/// with a discriminant beside it. A `FilterSpec` at the leaf, not a second
+/// condition type: the leaf of a nested predicate and a member of `filters`
+/// are the same thing, and two spellings of one condition is the drift this
+/// whole spec exists to avoid.
+///
+/// `All` and `Any` with one element are never produced — the parser collapses
+/// them — so a tree here always branches.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum PredicateSpec {
+    /// Every part must hold.
+    All(Vec<PredicateSpec>),
+    /// At least one part must hold.
+    Any(Vec<PredicateSpec>),
+    /// One comparison.
+    Of(FilterSpec),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Default)]
@@ -353,9 +406,10 @@ pub struct JoinSpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
-    /// same reason: a clause is all `AND` or all `OR`, because this grammar
-    /// has no parentheses to give a mixture a precedence with.
+    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
+    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
+    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
+    /// still refused whether or not it is bracketed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
     /// How to order the **groups** of a grouped join. Empty leaves them in the
@@ -431,9 +485,10 @@ pub struct ChainSpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`], and the same shape for the
-    /// same reason: a clause is all `AND` or all `OR`, because this grammar
-    /// has no parentheses to give a mixture a precedence with.
+    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
+    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
+    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
+    /// still refused whether or not it is bracketed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
     /// How to order the groups. `[keys..., aggregates...]`, as on [`JoinSpec`].

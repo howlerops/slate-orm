@@ -25,15 +25,18 @@
 //! ```text
 //! SELECT  [DISTINCT] <* | item-list> FROM <table> [AS <alias>]
 //!         ( JOIN <table> [AS <alias>] ON <ref> = <ref> )*
-//!         [ WHERE <cond> ((AND <cond>)* | (OR <cond>)*) ]
+//!         [ WHERE <predicate> ]
 //!         [ GROUP BY <item> (, <item>)* ]
 //!         [ HAVING <group-cond> ((AND <group-cond>)* | (OR <group-cond>)*) ]
 //!         [ ORDER BY <item | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //!
+//!         -- <predicate> := <cond> | '(' <predicate> ')'
+//!         --                | <predicate> ((AND <predicate>)* | (OR <predicate>)*)
 //!         -- an ungrouped JOIN takes SELECT * and nothing else
 //!         -- on a join: ORDER BY needs a GROUP BY
-//!         -- a join's WHERE takes AND only
+//!         -- a join's WHERE takes AND only, and no brackets
+//!         -- a HAVING takes no brackets either
 //!         -- AS only where a table is read more than once
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
@@ -158,15 +161,27 @@
 //! `HAVING count(*) > 5 OR count(*) < 2` — on a single table, a join and a
 //! chain alike. Both lower to `Expr::Or`.
 //!
-//! One clause is all `AND` or all `OR`: there are no parentheses in this
-//! grammar, so a mixture would need a precedence, and `a AND b OR c` reads
-//! two ways depending on who is reading. A mixture is refused by name, and
-//! the refusal says which clause it came from.
+//! **Parentheses nest a `WHERE`** on a single table:
+//! `WHERE (a = 1 OR b = 2) AND c = 3` is a tree, and it lands in
+//! `QuerySpec::predicate` rather than in either flat list. A bracket that
+//! nests nothing — `WHERE (a = 1)` — produces the spec the unbracketed form
+//! does, byte for byte, because the parser flattens rather than switching on
+//! having seen a `(`.
 //!
-//! A **join's `WHERE`** is the one that still takes `AND` only. Its
+//! An **unbracketed mixture is still refused**. `a AND b OR c` means
+//! `(a AND b) OR c` in SQL and reads as `a AND (b OR c)` to about half of
+//! everyone, and that has not changed; what has changed is that the reader can
+//! now write the brackets they mean, so the refusal names the fix instead of
+//! being the end of the road.
+//!
+//! A **`HAVING` takes no brackets.** It is all `AND` or all `OR`, and a
+//! mixture is refused bracketed or not: the group-condition lists have no
+//! nested form to lower, and nobody has written a query that wanted one.
+//!
+//! A **join's `WHERE`** takes `AND` only, brackets or no brackets. Its
 //! conditions are split by side so each scan is narrowed before the hash
-//! join runs, and a disjunction spanning both sides cannot be split that
-//! way.
+//! join runs, and neither a disjunction nor a tree spanning both sides can be
+//! split that way.
 //!
 //! # Why hand-written
 //!
@@ -179,7 +194,7 @@
 
 use crate::{
     AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
-    QuerySpec, SortSpec, WindowSpec,
+    PredicateSpec, QuerySpec, SortSpec, WindowSpec,
 };
 use slate_schema::TableDef;
 use slate_tuple::ValueType;
@@ -354,6 +369,19 @@ fn resolve_window_slots(spec: &mut QuerySpec, table: &TableDef) {
     for key in &mut spec.sort {
         fix(&mut key.column);
     }
+}
+
+/// A parsed `WHERE`, in whichever of the spec's three shapes holds it.
+///
+/// Flat by preference: `filters` for an all-`AND` clause, `any_of` for an
+/// all-`OR` one, and `predicate` only for a tree neither can hold. The parser
+/// always builds the tree and then flattens, rather than taking a mode from
+/// whether it saw a `(`, because `WHERE (year >= 1970)` is a flat clause with
+/// a redundant bracket and must produce the spec `WHERE year >= 1970` does.
+enum Where {
+    All(Vec<FilterSpec>),
+    Any(Vec<FilterSpec>),
+    Nested(PredicateSpec),
 }
 
 #[derive(Debug)]
@@ -1201,11 +1229,10 @@ impl Parser<'_> {
         // `SELECT title, count(*) ... GROUP BY author_id` and quietly drop the
         // title.
         if self.eat("where") {
-            let (conditions, any) = self.conditions(&table)?;
-            if any {
-                spec.any_of = conditions;
-            } else {
-                spec.filters = conditions;
+            match self.where_clause(&table)? {
+                Where::All(conditions) => spec.filters = conditions,
+                Where::Any(conditions) => spec.any_of = conditions,
+                Where::Nested(tree) => spec.predicate = Some(tree),
             }
         }
         if distinct {
@@ -2285,32 +2312,117 @@ impl Parser<'_> {
         })
     }
 
-    /// The conditions of a `WHERE`, and whether they are ORed rather than ANDed.
+    /// Everything after `WHERE`, on a single table.
     ///
-    /// A whole clause is one or the other. Mixing them is refused rather than
-    /// given a precedence: `a AND b OR c` means `(a AND b) OR c` in SQL and
-    /// reads as `a AND (b OR c)` to about half of everyone, and a query
-    /// language embedded in a demo is the wrong place to find out which
-    /// reading a visitor holds. The refusal says how to write either one.
-    fn conditions(&mut self, table: &TableDef) -> Result<(Vec<FilterSpec>, bool), SqlError> {
-        let mut out = vec![self.condition(table)?];
-        let mut any = false;
-        loop {
+    /// A join's `WHERE` does not come here: its conditions are split by side
+    /// so each scan is narrowed before the hash join runs, and neither a
+    /// disjunction nor a nested predicate can be split that way.
+    fn where_clause(&mut self, table: &TableDef) -> Result<Where, SqlError> {
+        let tree = self.disjunction(table)?;
+        Ok(Self::flatten(tree))
+    }
+
+    /// `conjunction (OR conjunction)*`.
+    ///
+    /// Refuses an unparenthesized mixture, which is the position
+    /// `ledger/2026-09-25-the-disjunction-the-kernel-always-had.md` took when
+    /// there were no parentheses at all: `a AND b OR c` means `(a AND b) OR c`
+    /// in SQL and reads as `a AND (b OR c)` to about half of everyone. The
+    /// refusal is *more* defensible now rather than less, because the reader
+    /// can write the brackets and the message says to.
+    fn disjunction(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
+        let (first, bare_and) = self.conjunction(table)?;
+        let mut parts = vec![first];
+        let mut bare = vec![bare_and];
+        while self.peek_word().as_deref() == Some("or") {
             let at = self.at();
-            if self.eat("and") {
-                if any {
-                    return Err(Self::mixed_connectives(at));
-                }
-                out.push(self.condition(table)?);
-            } else if self.eat("or") {
-                if out.len() > 1 && !any {
-                    return Err(Self::mixed_connectives(at));
-                }
-                any = true;
-                out.push(self.condition(table)?);
-            } else {
-                return Ok((out, any));
+            self.i += 1;
+            let (part, bare_and) = self.conjunction(table)?;
+            if bare.iter().any(|b| *b) || bare_and {
+                return Err(Self::mixed_connectives(at));
             }
+            parts.push(part);
+            bare.push(bare_and);
+        }
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            PredicateSpec::Any(parts)
+        })
+    }
+
+    /// `primary (AND primary)*`, and whether **this call** joined more than
+    /// one part — that is, whether it is a conjunction the reader wrote with
+    /// no brackets around it.
+    ///
+    /// That flag is the whole of the mixing check, and where it comes from
+    /// matters. `a AND b OR c` reaches [`Self::disjunction`] as one call that
+    /// combined two parts; `(a AND b) OR c` reaches it as one call that
+    /// combined *nothing*, because the `AND` was joined by the recursive call
+    /// inside the brackets and this one saw a single `primary`. The two build
+    /// identical trees and only that difference tells them apart.
+    ///
+    /// A first version also had [`Self::primary`] report whether it had
+    /// consumed brackets, which reads like the natural way to know. It is
+    /// dead: the fact that a bracketed part was parsed by a *different* call
+    /// already carries it, and nothing ever looked at the flag.
+    /// `scripts/mutate.py` found it by flipping the value and watching nothing
+    /// fail — the third cause its message lists, redundant code rather than a
+    /// missing test.
+    ///
+    /// Keeping parenthesisation a parse-time fact rather than a `Group` node
+    /// is what makes `((a))` and `a` produce the same spec, as they must.
+    fn conjunction(&mut self, table: &TableDef) -> Result<(PredicateSpec, bool), SqlError> {
+        let mut parts = vec![self.primary(table)?];
+        while self.peek_word().as_deref() == Some("and") {
+            self.i += 1;
+            parts.push(self.primary(table)?);
+        }
+        if parts.len() == 1 {
+            return Ok((parts.remove(0), false));
+        }
+        Ok((PredicateSpec::All(parts), true))
+    }
+
+    /// `'(' disjunction ')'` or one condition.
+    fn primary(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
+        if self.eat_symbol("(") {
+            let inner = self.disjunction(table)?;
+            self.expect_symbol(")").map_err(|mut e| {
+                // Named, because the reader who opened a bracket and did not
+                // close it has usually lost track of where — and `expected
+                // `)`, found end of input` points at the end of the statement
+                // rather than at the clause that needs one.
+                e.message = format!("{} (an unclosed `(` in the WHERE)", e.message);
+                e
+            })?;
+            return Ok(inner);
+        }
+        Ok(PredicateSpec::Of(self.condition(table)?))
+    }
+
+    /// The flattest shape that holds this tree without losing anything.
+    fn flatten(tree: PredicateSpec) -> Where {
+        /// Every part, if all of them are leaves.
+        fn leaves(parts: &[PredicateSpec]) -> Option<Vec<FilterSpec>> {
+            parts
+                .iter()
+                .map(|part| match part {
+                    PredicateSpec::Of(filter) => Some(filter.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        match tree {
+            PredicateSpec::Of(filter) => Where::All(vec![filter]),
+            PredicateSpec::All(ref parts) => match leaves(parts) {
+                Some(flat) => Where::All(flat),
+                None => Where::Nested(tree),
+            },
+            PredicateSpec::Any(ref parts) => match leaves(parts) {
+                Some(flat) => Where::Any(flat),
+                None => Where::Nested(tree),
+            },
         }
     }
 
@@ -2327,10 +2439,11 @@ impl Parser<'_> {
     fn mixed_connectives_in(clause: &str, at: usize) -> SqlError {
         SqlError {
             message: format!(
-                "AND and OR cannot be mixed in one {clause}, because this front end \
-                 has no parentheses and the two read differently to different \
-                 people. Write the conditions all with AND, or all with OR, and \
-                 use two queries if you need both."
+                "AND and OR cannot be mixed in one {clause} without parentheses: \
+                 `a AND b OR c` means `(a AND b) OR c` in SQL and reads as \
+                 `a AND (b OR c)` to about half of everyone. Write the brackets \
+                 you mean — both readings are supported — or use one connective \
+                 throughout."
             ),
             at,
         }
@@ -2555,11 +2668,10 @@ impl Parser<'_> {
         };
 
         if self.eat("where") {
-            let (conditions, any) = self.conditions(&inner)?;
-            if any {
-                spec.any_of = conditions;
-            } else {
-                spec.filters = conditions;
+            match self.where_clause(&inner)? {
+                Where::All(conditions) => spec.filters = conditions,
+                Where::Any(conditions) => spec.any_of = conditions,
+                Where::Nested(tree) => spec.predicate = Some(tree),
             }
         }
         for clause in ["group", "order", "limit", "offset", "having", "join"] {
@@ -3655,20 +3767,42 @@ mod grammar {
             .nth(1)
             .and_then(|rest| rest.split("//! ```").next())
             .expect("the grammar block is no longer a ```text fence");
-        for clause in ["WHERE", "HAVING"] {
-            let line = block
+        // The `WHERE` line delegates to `<predicate>`, so the connectives are
+        // on that production rather than on the clause. Checked by the text
+        // that introduces each rather than by position, because a block whose
+        // lines moved is exactly the block this test is for.
+        for (what, marker) in [
+            ("the predicate production", "<predicate> :="),
+            ("HAVING", "[ HAVING "),
+        ] {
+            let start = block
                 .lines()
-                .find(|line| line.contains(&format!("[ {clause} ")))
-                .unwrap_or_else(|| panic!("no {clause} line in the grammar block"));
+                .position(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("no {what} line in the grammar block"));
+            // Two lines, because `<predicate>` wraps: the connectives may be
+            // on the continuation.
+            let text: String = block
+                .lines()
+                .skip(start)
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ");
             assert!(
-                line.contains("OR"),
-                "the {clause} line does not mention OR, which the parser accepts: {line}"
+                text.contains("OR"),
+                "{what} does not mention OR, which the parser accepts: {text}"
             );
-            assert!(
-                line.contains("AND"),
-                "the {clause} line does not mention AND: {line}"
-            );
+            assert!(text.contains("AND"), "{what} does not mention AND: {text}");
         }
+        // And the `WHERE` line still reaches the production, rather than
+        // having quietly grown its own connectives back.
+        let where_line = block
+            .lines()
+            .find(|line| line.contains("[ WHERE "))
+            .expect("no WHERE line in the grammar block");
+        assert!(
+            where_line.contains("<predicate>"),
+            "the WHERE line should delegate to <predicate>: {where_line}"
+        );
     }
 
     #[test]
