@@ -84,10 +84,19 @@ now a decision with a stated cost rather than an unexplained asymmetry.
 **No parentheses, so still no nesting.** `HAVING a AND (b OR c)` is
 inexpressible, exactly as in `WHERE`.
 
-**The three SDKs cannot send either form.** `any_of` and `having_any_of` are
+~~**The three SDKs cannot send either form.** `any_of` and `having_any_of` are
 `slate-sql` spec fields with no gRPC equivalent, so both disjunctions are
 reachable from the browser workbench and a view's SQL and nowhere else. One
-boundary, now two features deep.
+boundary, now two features deep.~~
+
+**Withdrawn, 2026-09-25.** Wrong, for the reason the sibling entry's
+correction gives: the wire has carried `Expr.disjunction` all along and
+`AggregateQuery.having` takes an `Expr`, so `any_of([...])` in a `HAVING` has
+always worked from a client. `clients/python/tests/test_disjunction.py` runs
+exactly that against a real server.
+
+The spec fields are the *SQL front end's* shape, not the protocol's, and I
+wrote a claim about the protocol from having just edited the front end.
 
 **No workbench example for an ORed `HAVING`.** The `WHERE` form has two; this
 has tests and prose. A third example would say little the second does not.

@@ -115,9 +115,32 @@ here notices the equivalence.
 **Nothing measures it.** No benchmark; the claim is about what is
 expressible, not about what it costs.
 
-**No client can send one.** `any_of` is a `slate-sql` spec field, and the
+~~**No client can send one.** `any_of` is a `slate-sql` spec field, and the
 gRPC `Query` has no equivalent — the three SDKs build predicates from typed
 builders that have no disjunction either. So this is reachable from the
 browser workbench and from a view's SQL, and from nowhere else. That is the
 same boundary arrays and windows each stopped at first, and it is the obvious
-next increment.
+next increment.~~
+
+**Withdrawn, 2026-09-25, and wrong on both halves.** `Expr.disjunction` is
+field 9 of the wire's `Expr` and has been since the protocol carried
+expressions; `convert.rs` maps it to `Expr::Or` and back. All three clients
+have a builder — Python's `any_of` and `|`, Go's `Disjunction`, TypeScript's
+`or`. A client could always send a disjunction.
+
+What was missing was only a way to *write* one as SQL text, which is what
+this commit added. I generalised from the front end to the whole system
+without checking, and nothing executed the claim either way until
+`clients/python/tests/test_disjunction.py`, which now does. The correct
+caveat is the narrower one below.
+
+## Correction, 2026-09-25
+
+**A client's disjunction is now executed, not assumed.**
+`clients/python/tests/test_disjunction.py` sends one through a real head node
+in a `WHERE` and in a `HAVING`, and asserts the answer is the union of the
+arms — with the arms required to differ, so a server that ANDed them would
+fail rather than coincide.
+
+What remains true and narrower: **Go and TypeScript have the builder and no
+live test of it.** Python's is the only one executed against a server.

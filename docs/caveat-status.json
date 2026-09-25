@@ -4604,6 +4604,24 @@
       "by": ""
     },
     {
+      "entry": "2026-09-25-closing-caveats-opens-caveats.md",
+      "key": "It does not project.",
+      "verdict": "deliberate",
+      "by": "that entry: whether it converges depends on the mix of remaining work"
+    },
+    {
+      "entry": "2026-09-25-closing-caveats-opens-caveats.md",
+      "key": "No test asserts the arithmetic above.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-closing-caveats-opens-caveats.md",
+      "key": "The previous commit bypassed the hook.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
       "entry": "2026-09-25-or-in-having-too.md",
       "key": "A join's `WHERE` still takes `AND` only",
       "verdict": "deliberate",
@@ -4628,22 +4646,10 @@
       "by": ""
     },
     {
-      "entry": "2026-09-25-or-in-having-too.md",
-      "key": "The three SDKs cannot send either form.",
-      "verdict": "open",
-      "by": ""
-    },
-    {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
       "key": "No `OR` on a join or in `HAVING`.",
       "verdict": "closed",
       "by": "2026-09-25-or-in-having-too.md, for the HAVING half"
-    },
-    {
-      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
-      "key": "No client can send one.",
-      "verdict": "open",
-      "by": ""
     },
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
