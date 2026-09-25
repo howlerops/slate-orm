@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-25T22:36:37+00:00",
+  "file": "scripts/codegen.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_codegen.py"
+  ],
+  "commit": "ec20649",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the web module carries the generated banner",
+      "old": "        \"// \" + BANNER,\n        \"//\",\n        \"// Names only: no import, no `TableDef`, nothing from the SDK. A browser\",",
+      "new": "        \"// Names only: no import, no `TableDef`, nothing from the SDK. A browser\",",
+      "verdict": "caught",
+      "caught_by": [
+        "test_the_web_module_says_it_is_generated: AssertionError: // Names only: no import, no `TableDef`, nothing from the SDK. A browser"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

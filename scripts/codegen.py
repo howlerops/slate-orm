@@ -1603,6 +1603,71 @@ def typescript_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
     return "\n".join(out)
 
 
+def web_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
+    """A browser module: table and view names, mapped to their column names.
+
+    # Why this is not the TypeScript target above
+
+    `typescript_module` emits a *client declaration* — `TableDef`s that a
+    `Client` sends, importing `@slate-orm/client`. A browser app that only
+    labels columns cannot have that: the SDK is a gRPC client, and pulling it
+    into a bundle to read a list of strings would be absurd. So this emits
+    plain data and imports nothing.
+
+    # Why it is generated rather than written
+
+    `examples/explorer/web/src/api.ts` held these two maps by hand, guarded by
+    a test that re-parsed `head.toml` with a regex. That guard worked, and it
+    was the *second implementation of resolution* this generator's own
+    docstring warns about four paragraphs in: ordinals come from declaration
+    order, a primary key is named and resolved, a decimal's scale is validated,
+    and a regex over the TOML knows none of it. It happened to agree because
+    the demo's schema is simple.
+
+    Reading the resolved catalog removes the second implementation. What stays
+    hand-written in the app is which tables the UI *shows*, which is a UI
+    decision with reasons and not a copy of anything.
+
+    # Dropped columns
+
+    Included, unlike a row type's fields. A dropped column still occupies its
+    ordinal, and this module's consumer indexes a row by position to put a
+    header over it — so skipping one would shift every later label by one,
+    which is precisely the quiet wrong this generator exists to prevent.
+    """
+    out = [
+        "// " + BANNER,
+        "//",
+        "// Names only: no import, no `TableDef`, nothing from the SDK. A browser",
+        "// app uses this to label columns, and the SDK is a gRPC client.",
+        "//",
+        "// Every column the catalog carries, in ordinal order, dropped ones",
+        "// included — a dropped column keeps its slot in the row, so leaving it",
+        "// out would shift every later header onto the wrong value.",
+        "",
+        "/** Every table the catalog declares, as name -> column names in ordinal order. */",
+        "export const CATALOG_TABLES: Record<string, string[]> = {",
+    ]
+    for table in tables:
+        names = ", ".join(f'"{column["name"]}"' for column in live_columns(table))
+        out.append(f'  {table["name"]}: [{names}],')
+    out.extend([
+        "};",
+        "",
+        "/** Every view, as name -> its base table's column names.",
+        " *",
+        " * The same array object as the base table's, not a copy: a view may not",
+        " * narrow columns, so its ordinals *are* the table's and a second list is",
+        " * a second thing to get wrong.",
+        " */",
+        "export const CATALOG_VIEWS: Record<string, string[]> = {",
+    ])
+    for name, base in views:
+        out.append(f'  {name}: CATALOG_TABLES[\"{base}\"]!,')
+    out.append("};")
+    return "\n".join(out) + "\n"
+
+
 def emit(path: Path, body: str, check: bool) -> bool:
     """Write `body` to `path`, or compare and report. True means agreement."""
     if check:
@@ -1628,6 +1693,11 @@ def main() -> int:
     parser.add_argument("--go-package", default="schema")
     parser.add_argument("--typescript", type=Path)
     parser.add_argument(
+        "--web",
+        type=Path,
+        help="a plain-data TypeScript module of names, importing nothing",
+    )
+    parser.add_argument(
         "--serverd",
         # The same variable the client harnesses use, so a run with a prebuilt
         # binary needs no second thing to set. A path that is set and missing is
@@ -1641,8 +1711,10 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
-    if not (arguments.python or arguments.go or arguments.typescript):
-        parser.error("name at least one of --python, --go, --typescript")
+    if not (
+        arguments.python or arguments.go or arguments.typescript or arguments.web
+    ):
+        parser.error("name at least one of --python, --go, --typescript, --web")
 
     printed = catalog(arguments.config, arguments.serverd)
     tables = printed["tables"]
@@ -1658,6 +1730,8 @@ def main() -> int:
         agreed &= emit(
             arguments.typescript, typescript_module(tables, views), arguments.check
         )
+    if arguments.web:
+        agreed &= emit(arguments.web, web_module(tables, views), arguments.check)
 
     if not agreed:
         print(

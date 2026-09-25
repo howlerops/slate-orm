@@ -7,6 +7,8 @@
  * `conformance/conformance.py` will say so before the UI does.
  */
 
+import { CATALOG_TABLES, CATALOG_VIEWS } from "./catalog.js";
+
 export type Sdk = "go" | "node" | "python";
 
 /** Where each adapter is, when nobody says otherwise: the ports `run.sh` uses
@@ -292,28 +294,45 @@ export function kindOf(value: Tagged | undefined): string {
   return Object.keys(value)[0] ?? "";
 }
 
+/** Tables the catalog carries that the UI deliberately does not show, and why.
+ *
+ * The `EXPECTED_REFUSALS` idiom this repository uses elsewhere: a list you are
+ * forced to edit is a list that stays true. A table added to the catalog fails
+ * `test/api.test.ts` until somebody either lets the UI show it or says here
+ * why it is not there — the decision made once, rather than never.
+ *
+ * In `src/` rather than in the test, now that the UI *filters* by it rather
+ * than being compared against it. The list is a UI decision; a test is not the
+ * place a UI decision lives.
+ */
+export const NOT_IN_THE_UI: Record<string, string> = {
+  posts:
+    "it exists so the generated array decoders have something to decode; " +
+    "nothing seeds it and the UI has no way to render a list cell",
+};
+
+const shown = <T,>(all: Record<string, T>): Record<string, T> =>
+  Object.fromEntries(Object.entries(all).filter(([name]) => !(name in NOT_IN_THE_UI)));
+
 /** The demo's tables, as the UI needs to label them.
  *
- * A copy of the schema, like every client holds — and unlike theirs, **this
- * one never reaches the server**. The adapters' declarations carry a
- * fingerprint and are refused when they disagree with the catalog; these are
- * column *headers*, they stay in the browser, and nothing hashes them. A
- * stale entry here is a wrong label over a right value, which is the quietest
- * kind of wrong there is.
+ * Derived from `catalog.ts`, which `scripts/codegen.py` writes from
+ * `slate-serverd --print-schema` and CI re-checks with `--check`. It used to be
+ * a hand-written literal guarded by a test that re-parsed `head.toml` with a
+ * regex — which worked, and was the *second implementation of resolution* the
+ * generator's own docstring warns about: ordinals come from declaration order,
+ * a primary key is named and resolved, a decimal's scale is validated, and
+ * thirty lines of regex know none of it. It agreed because this schema is
+ * simple.
  *
- * What catches that is `test/api.test.ts`, which parses `head.toml` and
- * compares this table by table and in order, with `NOT_IN_THE_UI` naming the
- * tables that are deliberately absent and why. The comment here used to
- * credit the server's fingerprint check instead, which is true of every other
- * copy of the schema in this repository and not of this one.
+ * Unlike every other copy of the schema in this repository, **this one never
+ * reaches the server**. The adapters' declarations carry a fingerprint and are
+ * refused when they disagree; these are column *headers*, they stay in the
+ * browser, and nothing hashes them. A stale entry here is a wrong label over a
+ * right value, which is the quietest kind of wrong there is — and is exactly
+ * why it is generated now rather than checked.
  */
-export const TABLES: Record<string, string[]> = {
-  authors: ["id", "name", "country", "born"],
-  books: ["id", "author_id", "title", "year", "rating", "released", "embedding", "price"],
-  sales: ["id", "book_id", "units"],
-  editions: ["id", "book_id", "format"],
-  shipments: ["id", "book_id", "status", "deleted_at"],
-};
+export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);
 
 /** The demo's views, as name -> the columns a read through one returns.
  *
@@ -321,13 +340,11 @@ export const TABLES: Record<string, string[]> = {
  * own, and that is the design rather than a shortcut: `docs/views.md` refuses a
  * projection in a view, so a view's ordinals *are* its base table's. A view
  * that could narrow columns would need a list here, and a second list is what
- * drifts.
+ * drifts. `catalog.ts` builds them that way, sharing the array object.
  *
  * Separate from `TABLES` because a view is not a table. `/api/meta` reports
  * the two separately for the same reason, and only `/api/query` accepts a view
  * — the plan panel asks for one anyway, deliberately, so the refusal is
  * visible rather than described.
  */
-export const VIEWS: Record<string, string[]> = {
-  classics: TABLES["books"]!,
-};
+export const VIEWS: Record<string, string[]> = shown(CATALOG_VIEWS);

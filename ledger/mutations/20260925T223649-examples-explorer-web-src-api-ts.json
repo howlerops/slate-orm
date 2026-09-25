@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-25T22:36:49+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer/web && npm test 2>&1"
+  ],
+  "commit": "ec20649",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the UI shows what the roster does NOT name",
+      "old": "  Object.fromEntries(Object.entries(all).filter(([name]) => !(name in NOT_IN_THE_UI)));",
+      "new": "  Object.fromEntries(Object.entries(all).filter(([name]) => name in NOT_IN_THE_UI));",
+      "verdict": "caught",
+      "caught_by": [
+        "the UI shows every table the catalog has, minus the ones it names",
+        "every view the UI offers reads a table, with that table's columns",
+        "a view the UI hides is hidden by the same roster its table is"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "VIEWS comes from the catalog's views, not its tables",
+      "old": "export const VIEWS: Record<string, string[]> = shown(CATALOG_VIEWS);",
+      "new": "export const VIEWS: Record<string, string[]> = shown(CATALOG_TABLES);",
+      "verdict": "caught",
+      "caught_by": [
+        "a view the UI hides is hidden by the same roster its table is"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

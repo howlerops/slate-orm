@@ -931,6 +931,70 @@ def test_a_catalog_that_publishes_no_views_key_is_read_as_none() -> None:
     assert codegen.declared_views({"tables": [books]}, [books]) == []
 
 
+def test_the_web_module_imports_nothing() -> None:
+    """The point of the fourth target: a browser file with no SDK in it.
+
+    `typescript_module` emits a client declaration and imports
+    `@slate-orm/client`, which is a gRPC client. `examples/explorer/web` needs
+    column *names* to label a table, and pulling the SDK into a browser bundle
+    to get them would be absurd — so this target exists precisely to be
+    importable there, and an `import` line appearing in it would silently undo
+    that.
+    """
+    spec = [table("t", [column("id", "u64", 0), column("note", "string", 1)], [0])]
+    body = codegen.web_module(spec, [])
+    # Per line, and not `"import" not in body`: the header comment explains
+    # that it imports nothing, so the crude check fails on its own
+    # documentation. That was the first version of this test and it is the
+    # `if true { x } else { x }` of assertions — it failed for a reason
+    # unrelated to what it was asserting, which is the same waste as a
+    # mutation that survives for a reason unrelated to the mutation.
+    code = [line for line in body.splitlines() if not line.lstrip().startswith(("//", "*", "/*"))]
+    for line in code:
+        assert not line.startswith(("import ", "export type", "declare ")), line
+        assert "TableDef" not in line, line
+    assert 't: ["id", "note"],' in body, body
+
+
+def test_the_web_module_keeps_a_dropped_column() -> None:
+    """The opposite of a row type, and for the same reason it is dangerous.
+
+    `row_columns` skips a dropped column because a field nobody can read is
+    noise. This module's consumer indexes a row *by position* to put a header
+    over the value, so skipping one would shift every later header onto the
+    wrong column — the exact quiet wrong the generator exists to prevent,
+    arriving through the one target where the row-type instinct is wrong.
+    """
+    gone = column("removed", "string", 1)
+    gone["dropped_in"] = 3
+    spec = [table("t", [column("id", "u64", 0), gone, column("kept", "i64", 2)], [0])]
+    body = codegen.web_module(spec, [])
+    assert 't: ["id", "removed", "kept"],' in body, body
+
+
+def test_a_web_view_shares_its_table_s_array_rather_than_copying_it() -> None:
+    """`CATALOG_TABLES["books"]!`, not a second literal.
+
+    A copy would agree on the day it was written and drift on the first column
+    added to the base table, and nothing downstream could notice: the UI would
+    put the right headers over one and stale headers over the other. Sharing
+    the object makes the drift impossible rather than detectable, and lets the
+    web test assert identity.
+    """
+    spec = [table("books", [column("id", "u64", 0), column("title", "string", 1)], [0])]
+    body = codegen.web_module(spec, [("classics", "books")])
+    assert 'classics: CATALOG_TABLES["books"]!,' in body, body
+    # And not a copy that happens to read the same.
+    assert body.count('["id", "title"]') == 1, body
+
+
+def test_the_web_module_says_it_is_generated() -> None:
+    """The banner every other target carries, on the one a reader will find
+    in a `src/` directory beside hand-written code and assume is editable."""
+    body = codegen.web_module([table("t", [column("id", "u64", 0)], [0])], [])
+    assert body.startswith("// " + codegen.BANNER), body[:120]
+
+
 def main() -> int:
     passed = 0
     failed = 0

@@ -507,7 +507,8 @@ jobs:
             --serverd "${{ github.workspace }}/bin/slate-serverd" \
             --python examples/explorer/backends/python/adapter/schema.py \
             --go examples/explorer/backends/go/schema/schema.go \
-            --typescript examples/explorer/backends/node/src/schema.ts
+            --typescript examples/explorer/backends/node/src/schema.ts \
+            --web examples/explorer/web/src/catalog.ts
       # The retention example's declaration is generated too and nothing was
       # checking it, so it silently missed a generator change — which is the
       # drift `--check` exists to catch, on the one generated file that was
