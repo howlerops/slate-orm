@@ -4586,10 +4586,34 @@
       "by": "that entry: the 762 are the ones that followed the template"
     },
     {
-      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
-      "key": "502 caveats are still untriaged.",
+      "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
+      "key": "It does not audit the rest of the grammar block.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
+      "key": "It does not check `ORDER BY needs a GROUP BY` either.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
+      "key": "No chain case.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
+      "key": "The `slate-wasm` suite was not run.",
       "verdict": "closed",
-      "by": "this session's triage, which gave all 771 a verdict"
+      "by": "cargo test -p slate-wasm, 226 passed across 14 files"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "167 `closed` verdicts rest on evidence of very uneven streng",
+      "verdict": "deliberate",
+      "by": "that entry: each kind of evidence is named, and a wrong closed is invisible"
     },
     {
       "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
@@ -4599,21 +4623,21 @@
     },
     {
       "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
-      "key": "No mutation run.",
-      "verdict": "closed",
-      "by": "five mutations through mutate.py, four caught and one equivalent"
-    },
-    {
-      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
-      "key": "No test covers `moment` or the listing.",
-      "verdict": "closed",
-      "by": "four cases in scripts/test_caveats.py"
-    },
-    {
-      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
-      "key": "`sql.rs:34` may be stale, and I did not confirm it.",
+      "key": "Nothing re-triages.",
       "verdict": "open",
       "by": ""
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "`deliberate` outnumbers `open`, and that is a judgement I ma",
+      "verdict": "deliberate",
+      "by": "that entry: the rule is stated, and a second reader would move some"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "`sql.rs:34` may be stale, and I still have not confirmed it.",
+      "verdict": "closed",
+      "by": "2026-09-25-the-grammar-comment-outlived-the-grammar.md"
     }
   ]
 }
