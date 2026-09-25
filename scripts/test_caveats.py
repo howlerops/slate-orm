@@ -358,6 +358,68 @@ def main() -> int:
             print(f"FAIL  the listing returned {lines!r}")
             RESULTS.append(False)
 
+    # --- `--unread`, the re-triage worklist -------------------------------
+    #
+    # It cannot decide whether a claim is still true. What it must get right is
+    # *which* caveats it puts in front of a reader, and the two ways to get
+    # that wrong are opposite: listing one somebody read yesterday wastes the
+    # reading, and dropping one nobody has read hides it.
+    def unread_case(name: str, verdicts: list[dict[str, str]], days: int, want: int) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree(root, {"ledger/a.md": ENTRY, "docs/caveat-status.json": status(verdicts)})
+            got = guard.unread(days, root, today="2026-09-25")
+            if len(got) != want:
+                print(f"FAIL  {name}: wanted {want} listed, got {len(got)}: {got}")
+                RESULTS.append(False)
+            else:
+                print(f"ok    {name}")
+                RESULTS.append(True)
+
+    both_open = [
+        {"entry": "a.md", "key": "It does not do the first thing.", "verdict": "open"},
+        {"entry": "a.md", "key": "It does not do the second thing.", "verdict": "open"},
+    ]
+    unread_case("an open caveat nobody stamped is listed", both_open, 30, 2)
+
+    stamped = [dict(both_open[0], checked="2026-09-25"), both_open[1]]
+    unread_case("one read today drops off the list", stamped, 30, 1)
+
+    stale = [dict(both_open[0], checked="2026-01-01"), both_open[1]]
+    unread_case("a stamp older than the window is listed again", stale, 30, 2)
+    unread_case("and is not listed when the window reaches it", stale, 400, 1)
+
+    unread_case(
+        "a closed caveat is not re-triage work",
+        [
+            {"entry": "a.md", "key": "It does not do the first thing.",
+             "verdict": "closed", "by": "something"},
+            both_open[1],
+        ],
+        30,
+        1,
+    )
+    unread_case(
+        "a deliberate one is not either",
+        [
+            {"entry": "a.md", "key": "It does not do the first thing.",
+             "verdict": "deliberate", "by": "a reason"},
+            both_open[1],
+        ],
+        30,
+        1,
+    )
+    # A date nobody can read is not a date somebody checked. The alternative —
+    # treating it as absent — is the same list with the error invisible, and
+    # the alternative to *that* is raising, which takes the whole run down for
+    # one typo in a file of 800 entries.
+    unread_case(
+        "an unreadable stamp is listed, with the text that could not be read",
+        [dict(both_open[0], checked="yesterday"), both_open[1]],
+        30,
+        2,
+    )
+
     # The never-fires guard: a ledger that moved finds nothing and reads
     # exactly like a repository that never wrote a caveat down.
     with tempfile.TemporaryDirectory() as directory:

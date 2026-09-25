@@ -149,6 +149,57 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
     return counts, problems, orphans
 
 
+def unread(days: int, root: Path = ROOT, today: str | None = None) -> list[str]:
+    """Every `open` caveat whose verdict has not been re-read in `days`.
+
+    # Why a date rather than a check
+
+    `2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md` recorded
+    "Nothing re-triages": a caveat stays `open` whether or not the thing it
+    describes still exists, and the orphan mechanism catches a *reworded*
+    bullet rather than a claim that has quietly become false.
+
+    Nothing here can decide whether a claim is still true — that is reading
+    code and it is what a person does. What it can do is stop the reading
+    being invisible. A verdict carries an optional `checked` date; this lists
+    the open ones nobody has stamped lately, so "re-triage" becomes a thing
+    with a worklist and a finish line instead of an intention.
+
+    The stamp is a claim about a person's attention, not a proof, and
+    `2026-09-25-the-open-caveats-nobody-re-reads.md` measures what that
+    attention is worth: eight open caveats read against the tree, one stale.
+    A list is right roughly seven times in eight, which is worth knowing
+    before trusting one.
+
+    `checked` is absent on every verdict written before this existed, so the
+    first run lists all of them. That is correct and it is also why this is
+    reported rather than enforced: turning it red today would mean stamping
+    285 caveats to get a green build, which is the pressure that produces a
+    rubber stamp.
+    """
+    from datetime import date, timedelta
+
+    now = date.fromisoformat(today) if today else date.today()
+    cutoff = now - timedelta(days=days)
+    status = load(root)
+    out = []
+    for c in caveats(root):
+        k = f"{c['entry']}::{key(c['claim'])}"
+        entry = status.get(k, {})
+        if entry.get("verdict") != "open":
+            continue
+        stamp = entry.get("checked")
+        if stamp:
+            try:
+                if date.fromisoformat(stamp) >= cutoff:
+                    continue
+            except ValueError:
+                out.append(f"{c['entry']}: {c['claim']}  [unreadable checked: {stamp!r}]")
+                continue
+        out.append(f"{c['entry']}: {c['claim']}")
+    return out
+
+
 def listing(verdict: str, root: Path = ROOT) -> list[str]:
     """Every caveat with `verdict`, as `entry: claim` lines, entry order.
 
@@ -168,10 +219,19 @@ def listing(verdict: str, root: Path = ROOT) -> list[str]:
 
 def main(root: Path = ROOT) -> int:
     argv = sys.argv[1:]
+    if argv and argv[0] == "--unread":
+        # Days, because the useful question is "what has nobody looked at
+        # lately" and the useful answer changes with how long ago "lately" is.
+        days = int(argv[1]) if len(argv) > 1 else 30
+        lines = unread(days, root)
+        for line in lines:
+            print(line)
+        print(f"{len(lines)} open and not re-read in {days} days")
+        return 0
     if argv:
         want = argv[0].removeprefix("--")
         if want not in VERDICTS:
-            print(f"usage: caveats.py [--{' | --'.join(VERDICTS)}]")
+            print(f"usage: caveats.py [--{' | --'.join(VERDICTS)} | --unread [days]]")
             return 2
         lines = listing(want, root)
         for line in lines:

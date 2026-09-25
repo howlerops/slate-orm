@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-25T23:54:06+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "ef3b022",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "only open caveats are re-triage work",
+      "old": "        if entry.get(\"verdict\") != \"open\":\n            continue",
+      "new": "        if entry.get(\"verdict\") == \"nonesuch\":\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a closed caveat is not re-triage work: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']",
+        "a deliberate one is not either: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a recent stamp drops the caveat off the list",
+      "old": "                if date.fromisoformat(stamp) >= cutoff:\n                    continue",
+      "new": "                if False:\n                    continue",
+      "verdict": "caught",
+      "caught_by": [
+        "one read today drops off the list: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']",
+        "and is not listed when the window reaches it: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the window is honoured, not ignored",
+      "old": "    cutoff = now - timedelta(days=days)",
+      "new": "    cutoff = now - timedelta(days=100000)",
+      "verdict": "caught",
+      "caught_by": [
+        "a stamp older than the window is listed again: wanted 2 listed, got 1: ['a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unreadable stamp is listed rather than treated as read",
+      "old": "                out.append(f\"{c['entry']}: {c['claim']}  [unreadable checked: {stamp!r}]\")\n                continue",
+      "new": "                continue",
+      "verdict": "caught",
+      "caught_by": [
+        "an unreadable stamp is listed, with the text that could not be read: wanted 2 listed, got 1: ['a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
