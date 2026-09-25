@@ -1168,8 +1168,8 @@
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "The landing page's claims are not checked by anything.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "scripts/check_site_claims.py; ledger/2026-09-25-the-landing-pages-claims-are-checked-now.md"
     },
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
@@ -4836,6 +4836,28 @@
       "entry": "2026-09-25-parentheses-in-a-where.md",
       "key": "The planner still does nothing special with it.",
       "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "It reads one page.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "\"Nothing verifies the two pages agree\" is only half closed.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "It cannot notice a claim that was never made.",
+      "verdict": "deliberate",
+      "by": "this entry: the other direction, which ledger/2026-09-23-five-built-features-the-docs-never-mentioned.md owns"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "`UNCHECKED` has four entries and the page has more than four",
+      "verdict": "deliberate",
+      "by": "this entry: the four are the ones a reader would take as fact; where the line falls is a judgement"
     }
   ]
 }

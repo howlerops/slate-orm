@@ -28,6 +28,10 @@
 
 // A benchmark, and meant to stop loudly if the fixture is not what it should
 // be: a silently wrong result table would be worse than a stack trace.
+// The landing page says "No `unsafe`", and `site/check/claims.py` checks that
+// every crate root says so too. The claim was true here before this line and
+// unenforced: nothing stopped the next edit.
+#![forbid(unsafe_code)]
 #![allow(
     clippy::expect_used,
     clippy::panic,

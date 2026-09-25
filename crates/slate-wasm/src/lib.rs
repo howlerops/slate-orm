@@ -37,6 +37,10 @@
 //! there is no concurrency to express and it would put a `.await` in the
 //! caller's way for a value that is already computed.
 
+// The landing page says "No `unsafe`", and `site/check/claims.py` checks that
+// every crate root says so too. The claim was true here before this line and
+// unenforced: nothing stopped the next edit.
+#![forbid(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod fixture;

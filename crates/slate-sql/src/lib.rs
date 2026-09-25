@@ -24,6 +24,10 @@
 //! the workbench shows it beside the answer, which is what keeps "the editor
 //! is a front end" checkable rather than asserted.
 
+// The landing page says "No `unsafe`", and `site/check/claims.py` checks that
+// every crate root says so too. The claim was true here before this line and
+// unenforced: nothing stopped the next edit.
+#![forbid(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod lower;

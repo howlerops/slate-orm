@@ -93,6 +93,8 @@ cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py
 cited-docs|.|python3 scripts/check_cited_docs.py
 cited-docs-guard|.|python3 scripts/test_check_cited_docs.py
+site-claims|.|python3 scripts/check_site_claims.py
+site-claims-guard|.|python3 scripts/test_check_site_claims.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
