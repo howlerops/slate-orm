@@ -4586,6 +4586,84 @@
       "by": "that entry: the 762 are the ones that followed the template"
     },
     {
+      "entry": "2026-09-25-a-reworded-caveat-is-a-different-claim.md",
+      "key": "No mutation run.",
+      "verdict": "deliberate",
+      "by": "that entry: nothing executable changed"
+    },
+    {
+      "entry": "2026-09-25-a-reworded-caveat-is-a-different-claim.md",
+      "key": "Nothing prevents the next orphan.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-a-reworded-caveat-is-a-different-claim.md",
+      "key": "The 226 were not read.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "A join's `WHERE` still takes `AND` only",
+      "verdict": "deliberate",
+      "by": "that entry: conditions split by side to narrow each scan before the hash join"
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "No parentheses, so still no nesting.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "No workbench example for an ORed `HAVING`.",
+      "verdict": "deliberate",
+      "by": "that entry: a third example would say little the second does not"
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "Nothing measures it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "The three SDKs cannot send either form.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "No `OR` on a join or in `HAVING`.",
+      "verdict": "closed",
+      "by": "2026-09-25-or-in-having-too.md, for the HAVING half"
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "No client can send one.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "No parentheses, so no nesting.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "Nothing measures it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "The planner does nothing with a disjunction.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
       "key": "It does not audit the rest of the grammar block.",
       "verdict": "open",
