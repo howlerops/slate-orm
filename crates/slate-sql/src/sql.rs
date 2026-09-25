@@ -94,9 +94,16 @@
 //! refused rather than treated as a `WHERE`.
 //!
 //! Everything outside that grammar is refused with the position and what was
-//! expected. There is no silent subset: `SELECT ... WHERE a = 1 OR b = 2`
-//! does not quietly become an `AND`, it is rejected, because the spec has no
-//! disjunction to lower it onto and a wrong answer is worse than a refusal.
+//! expected. There is no silent subset: what is not supported is rejected
+//! rather than quietly approximated, because a wrong answer is worse than a
+//! refusal.
+//!
+//! `WHERE a = 1 OR b = 2` **is** supported on a single-table read, and lowers
+//! to `Expr::Or`. One `WHERE` is all `AND` or all `OR`: there are no
+//! parentheses in this grammar, so a mixture would need a precedence, and
+//! `a AND b OR c` reads two ways depending on who is reading. A mixture is
+//! refused by name. A join's `WHERE` and every `HAVING` still take `AND`
+//! only.
 //!
 //! # Why hand-written
 //!
@@ -1131,7 +1138,12 @@ impl Parser<'_> {
         // `SELECT title, count(*) ... GROUP BY author_id` and quietly drop the
         // title.
         if self.eat("where") {
-            spec.filters = self.conditions(&table)?;
+            let (conditions, any) = self.conditions(&table)?;
+            if any {
+                spec.any_of = conditions;
+            } else {
+                spec.filters = conditions;
+            }
         }
         if distinct {
             if self.peek_word().as_deref() == Some("group") {
@@ -1303,8 +1315,11 @@ impl Parser<'_> {
                 }
                 if self.peek_word().as_deref() == Some("or") {
                     return Err(SqlError {
-                        message: "OR is not supported in HAVING, for the reason it is not \
-                                  supported in WHERE"
+                        message: "OR is not supported in HAVING. A WHERE takes it and a \
+                                  HAVING does not: a HAVING term is resolved against the \
+                                  group space, and the resolver walks one flat list of \
+                                  conditions. Filter the rows with WHERE, or take the \
+                                  groups apart in two queries."
                             .to_owned(),
                         at: self.at(),
                     });
@@ -2200,21 +2215,44 @@ impl Parser<'_> {
         })
     }
 
-    fn conditions(&mut self, table: &TableDef) -> Result<Vec<FilterSpec>, SqlError> {
+    /// The conditions of a `WHERE`, and whether they are ORed rather than ANDed.
+    ///
+    /// A whole clause is one or the other. Mixing them is refused rather than
+    /// given a precedence: `a AND b OR c` means `(a AND b) OR c` in SQL and
+    /// reads as `a AND (b OR c)` to about half of everyone, and a query
+    /// language embedded in a demo is the wrong place to find out which
+    /// reading a visitor holds. The refusal says how to write either one.
+    fn conditions(&mut self, table: &TableDef) -> Result<(Vec<FilterSpec>, bool), SqlError> {
         let mut out = vec![self.condition(table)?];
+        let mut any = false;
         loop {
+            let at = self.at();
             if self.eat("and") {
+                if any {
+                    return Err(Self::mixed_connectives(at));
+                }
                 out.push(self.condition(table)?);
-            } else if self.peek_word().as_deref() == Some("or") {
-                return Err(SqlError {
-                    message: "OR is not supported: the query spec ANDs its conditions, and \
-                              lowering an OR onto it would answer a different question"
-                        .to_owned(),
-                    at: self.at(),
-                });
+            } else if self.eat("or") {
+                if out.len() > 1 && !any {
+                    return Err(Self::mixed_connectives(at));
+                }
+                any = true;
+                out.push(self.condition(table)?);
             } else {
-                return Ok(out);
+                return Ok((out, any));
             }
+        }
+    }
+
+    /// One `WHERE` cannot be part `AND` and part `OR`.
+    fn mixed_connectives(at: usize) -> SqlError {
+        SqlError {
+            message: "AND and OR cannot be mixed in one WHERE, because this front end \
+                      has no parentheses and the two read differently to different \
+                      people. Write the conditions all with AND, or all with OR, and \
+                      use two queries if you need both."
+                .to_owned(),
+            at,
         }
     }
 
@@ -2437,7 +2475,12 @@ impl Parser<'_> {
         };
 
         if self.eat("where") {
-            spec.filters = self.conditions(&inner)?;
+            let (conditions, any) = self.conditions(&inner)?;
+            if any {
+                spec.any_of = conditions;
+            } else {
+                spec.filters = conditions;
+            }
         }
         for clause in ["group", "order", "limit", "offset", "having", "join"] {
             if self.peek_word().as_deref() == Some(clause) {
@@ -2869,8 +2912,11 @@ impl Parser<'_> {
                 }
                 if self.peek_word().as_deref() == Some("or") {
                     return Err(SqlError {
-                        message: "OR is not supported in HAVING, for the reason it is not \
-                                  supported in WHERE"
+                        message: "OR is not supported in HAVING. A WHERE takes it and a \
+                                  HAVING does not: a HAVING term is resolved against the \
+                                  group space, and the resolver walks one flat list of \
+                                  conditions. Filter the rows with WHERE, or take the \
+                                  groups apart in two queries."
                             .to_owned(),
                         at: self.at(),
                     });

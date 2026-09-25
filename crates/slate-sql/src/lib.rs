@@ -54,6 +54,29 @@ pub struct QuerySpec {
     /// which is which.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<FilterSpec>,
+    /// Several, ORed. Empty unless the reader wrote `OR`.
+    ///
+    /// A second list rather than a tree, and rather than a flag on `filters`.
+    /// The kernel's `Expr` *is* a tree and has had `Expr::Or` since
+    /// expressions arrived — what was missing is any way to reach it: no
+    /// client, no spec and no parser could produce one, which four ledger
+    /// entries recorded as a gap.
+    ///
+    /// Two lists express a disjunction of comparisons and nothing deeper, so
+    /// `WHERE a = 1 OR b = 2` works and `WHERE a = 1 AND (b = 2 OR c = 3)`
+    /// does not. That is a real subset and it is the one with no precedence
+    /// question in it: a WHERE is either all `AND` or all `OR`, the parser
+    /// refuses a mix by name, and a reader never has to know which binds
+    /// tighter. A tree would express more and would make the Spec tab, the
+    /// panel and every consumer of this shape handle a recursive form for a
+    /// query nobody has yet asked to write.
+    ///
+    /// Lowering ANDs the two together, so a spec built by hand carrying both
+    /// means `(all of these) AND (any of those)` — which is what the nesting
+    /// would mean and is why the field can be widened later without changing
+    /// what today's specs mean.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub any_of: Vec<FilterSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]

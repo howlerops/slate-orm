@@ -275,7 +275,8 @@ fn it_refuses_what_it_cannot_answer() {
     assert!(message.contains("not a group key"), "{message}");
     assert!(message.contains("HAVING"), "{message}");
 
-    // OR, refused in HAVING for the reason it is refused in WHERE.
+    // OR, refused in HAVING — and *not* in WHERE, which takes it now. A
+    // HAVING term resolves against the group space through one flat list.
     let message = refused(
         &playground,
         "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \

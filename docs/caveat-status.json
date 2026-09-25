@@ -58,8 +58,8 @@
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
       "key": "No `OR`, no sub-queries, no window functions, no date arithm",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "OR in the SQL front end, and a third statement in the sink"
     },
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
@@ -1090,8 +1090,8 @@
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
       "key": "No `EXISTS`, no set operators, no correlation",
-      "verdict": "closed",
-      "by": "EXISTS and UNION in the SQL front end"
+      "verdict": "deliberate",
+      "by": "the refusal messages in crates/slate-sql/src/sql.rs, and that entry's reasoning"
     },
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",

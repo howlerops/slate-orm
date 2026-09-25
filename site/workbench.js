@@ -40,6 +40,20 @@ const EXAMPLES = [
     "SELECT * FROM trips JOIN zones ON trips.pickup_zone = zones.id\n  WHERE trips.pickup_zone = 132 LIMIT 20",
   ],
   [
+    "Either of two zones",
+    "-- OR, which the kernel has always had and no front end could reach: it\n" +
+      "-- lowers to Expr::Or and is evaluated per row. A disjunction is a\n" +
+      "-- filter rather than an access path, because `a = 1 OR b = 2` has no\n" +
+      "-- single key range for a scan to be bounded by — the plan says so.\n" +
+      "--\n" +
+      "-- One WHERE is all AND or all OR. Mixing them needs parentheses this\n" +
+      "-- grammar does not have, so it is refused rather than given a\n" +
+      "-- precedence a reader would have to guess.\n" +
+      "SELECT pickup_zone, dropoff_zone, fare FROM trips\n" +
+      "  WHERE pickup_zone = 132 OR pickup_zone = 138\n" +
+      "  LIMIT 20",
+  ],
+  [
     "The whole table, in one row",
     "-- No GROUP BY. One group over every row, which was a front-end refusal\n" +
       "-- and nothing else: the kernel has always answered a grouping with no\n" +
@@ -248,7 +262,7 @@ const EXAMPLES = [
   ["The small fixture, for contrast", "SELECT * FROM books WHERE author_id = 2"],
   [
     "Kitchen sink",
-    "-- Everything the grammar has, in two statements.\n" +
+    "-- Everything the grammar has, in three statements.\n" +
       "--\n" +
       "-- One: a grouped join. The conditions are split by side, so each scan\n" +
       "-- is narrowed before the hash join ever sees it -- look at the Plan tab.\n" +
@@ -276,7 +290,15 @@ const EXAMPLES = [
       "  GROUP BY pickup_zone, passengers\n" +
       "  HAVING count(*) > 5 AND avg(distance) < 5\n" +
       "  ORDER BY count(*) DESC, pickup_zone\n" +
-      "  LIMIT 20 OFFSET 5",
+      "  LIMIT 20 OFFSET 5;\n" +
+      "\n" +
+      "-- Three: OR, which needs a statement of its own. A WHERE is all AND\n" +
+      "-- or all OR — there are no parentheses here, so a mixture would need\n" +
+      "-- a precedence, and it is refused rather than guessed at. That is why\n" +
+      "-- this cannot be folded into the query above.\n" +
+      "SELECT pickup_zone, fare FROM trips\n" +
+      "  WHERE pickup_zone = 132 OR pickup_zone = 138 OR pickup_zone = 161\n" +
+      "  ORDER BY fare DESC LIMIT 10",
   ],
 ];
 

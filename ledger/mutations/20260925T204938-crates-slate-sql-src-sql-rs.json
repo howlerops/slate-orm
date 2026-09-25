@@ -1,0 +1,52 @@
+{
+  "at": "2026-09-25T20:49:38+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "16fb49d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "AND after OR is accepted",
+      "old": "            if self.eat(\"and\") {\n                if any {\n                    return Err(Self::mixed_connectives(at));\n                }",
+      "new": "            if self.eat(\"and\") {\n                if false {\n                    return Err(Self::mixed_connectives(at));\n                }",
+      "verdict": "caught",
+      "caught_by": [
+        "the_other_order_of_mixing_is_refused_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "OR after AND is accepted",
+      "old": "                if out.len() > 1 && !any {\n                    return Err(Self::mixed_connectives(at));\n                }",
+      "new": "                if false {\n                    return Err(Self::mixed_connectives(at));\n                }",
+      "verdict": "caught",
+      "caught_by": [
+        "and_and_or_cannot_be_mixed_in_one_where"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "an ORed WHERE is stored as ANDed conditions",
+      "old": "            let (conditions, any) = self.conditions(&table)?;\n            if any {\n                spec.any_of = conditions;\n            } else {\n                spec.filters = conditions;\n            }",
+      "new": "            let (conditions, _any) = self.conditions(&table)?;\n            spec.filters = conditions;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_disjunction_admits_a_row_either_arm_admits",
+        "or_lowers_to_a_disjunction_the_kernel_understands"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

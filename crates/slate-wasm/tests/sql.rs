@@ -102,6 +102,43 @@ fn render(spec: &QuerySpec, table: &TableDef) -> String {
         }
     };
 
+    // One condition, rendered. Lifted out of the `filters` loop when `OR`
+    // arrived so that both connectives render through the same code: two
+    // copies would let the AND path and the OR path drift, and the round trip
+    // would still pass because it compares specs rather than text.
+    let condition = |f: &slate_sql::FilterSpec| -> String {
+        // `IN` renders as a list rather than `column IN value`, and it is the
+        // only op whose text comes from `values`. A subquery is never
+        // generated: nothing in production renders a spec back to SQL, this
+        // oracle is the only renderer there is, and teaching it to emit
+        // `IN (SELECT …)` would be writing the inverse of the parser purely
+        // to test it against itself.
+        if f.op == "in" {
+            let list: Vec<String> = f.values.iter().map(|v| literal(f.column, v)).collect();
+            return format!("{} IN ({})", name(f.column), list.join(", "));
+        }
+        let op = match f.op.as_str() {
+            "eq" => "=",
+            "ne" => "!=",
+            "lt" => "<",
+            "le" => "<=",
+            "gt" => ">",
+            "ge" => ">=",
+            "like" => "LIKE",
+            "ilike" => "ILIKE",
+            "matches" => "~",
+            "contains" => "CONTAINS",
+            other => panic!("no SQL spelling for {other}"),
+        };
+        // Patterns are always strings, whatever the column's type.
+        let value = if matches!(f.op.as_str(), "like" | "ilike" | "matches" | "contains") {
+            format!("'{}'", f.value.replace('\'', "''"))
+        } else {
+            literal(f.column, &f.value)
+        };
+        format!("{} {op} {value}", name(f.column))
+    };
+
     let mut out = String::from("SELECT ");
     if spec.columns.is_empty() {
         out.push('*');
@@ -111,45 +148,14 @@ fn render(spec: &QuerySpec, table: &TableDef) -> String {
     }
     out.push_str(&format!(" FROM {}", spec.table));
 
+    // A spec is all-AND or all-OR: the parser refuses a mixture because this
+    // grammar has no parentheses, so exactly one of these is non-empty.
     if !spec.filters.is_empty() {
-        let parts: Vec<String> = spec
-            .filters
-            .iter()
-            .map(|f| {
-                // `IN` renders as a list rather than `column IN value`, and
-                // it is the only op whose text comes from `values`. A
-                // subquery is never generated: nothing in production renders
-                // a spec back to SQL, this oracle is the only renderer there
-                // is, and teaching it to emit `IN (SELECT …)` would be
-                // writing the inverse of the parser purely to test it against
-                // itself.
-                if f.op == "in" {
-                    let list: Vec<String> = f.values.iter().map(|v| literal(f.column, v)).collect();
-                    return format!("{} IN ({})", name(f.column), list.join(", "));
-                }
-                let op = match f.op.as_str() {
-                    "eq" => "=",
-                    "ne" => "!=",
-                    "lt" => "<",
-                    "le" => "<=",
-                    "gt" => ">",
-                    "ge" => ">=",
-                    "like" => "LIKE",
-                    "ilike" => "ILIKE",
-                    "matches" => "~",
-                    "contains" => "CONTAINS",
-                    other => panic!("no SQL spelling for {other}"),
-                };
-                // Patterns are always strings, whatever the column's type.
-                let value = if matches!(f.op.as_str(), "like" | "ilike" | "matches" | "contains") {
-                    format!("'{}'", f.value.replace('\'', "''"))
-                } else {
-                    literal(f.column, &f.value)
-                };
-                format!("{} {op} {value}", name(f.column))
-            })
-            .collect();
+        let parts: Vec<String> = spec.filters.iter().map(&condition).collect();
         out.push_str(&format!(" WHERE {}", parts.join(" AND ")));
+    } else if !spec.any_of.is_empty() {
+        let parts: Vec<String> = spec.any_of.iter().map(&condition).collect();
+        out.push_str(&format!(" WHERE {}", parts.join(" OR ")));
     }
     if !spec.sort.is_empty() {
         let parts: Vec<String> = spec
@@ -246,11 +252,33 @@ prop_compose! {
         ),
         limit in proptest::option::of(0u64..1000),
         offset in 0u64..100,
+        or_instead in any::<bool>(),
     ) -> QuerySpec {
+        // A spec carries its conditions in `filters` (ANDed) or `any_of`
+        // (ORed), never both: the parser refuses a mixture, so a generated
+        // spec that carried both could not survive the round trip and would
+        // be testing a shape nothing can produce.
+        //
+        // Split on a generated bool rather than always ANDing, because the
+        // `OR` path was added to the parser and the renderer at once and a
+        // property that only ever exercised one of them would not have
+        // noticed the other being wrong.
+        // Two or more, not one. A single condition renders as `WHERE a = 1`
+        // with no connective in it, so it parses back into `filters` and the
+        // round trip fails — which this property reported on its first run
+        // with `or_instead` in it. The spec is not wrong and neither is the
+        // parser: a one-element disjunction *is* a one-element conjunction,
+        // and `filters` is the canonical spelling of it.
+        let (filters, any_of) = if or_instead && filters.len() > 1 {
+            (Vec::new(), filters)
+        } else {
+            (filters, Vec::new())
+        };
         QuerySpec {
             table: "books".to_owned(),
             filter: None,
             filters,
+            any_of,
             sort,
             limit,
             offset,
@@ -1138,9 +1166,12 @@ fn refusals_name_what_was_wrong() {
             "SELECT * FROM books WHERE authors.id = 1",
             "is not a column of `books`",
         ),
+        // `OR` in a WHERE is supported now and lowers to `Expr::Or`; what is
+        // still refused is mixing it with `AND` in one clause, because this
+        // grammar has no parentheses to disambiguate the precedence.
         (
-            "SELECT * FROM books WHERE id = 1 OR id = 2",
-            "OR is not supported",
+            "SELECT * FROM books WHERE id = 1 AND year = 2 OR id = 3",
+            "cannot be mixed",
         ),
         ("SELECT * FROM books WHERE id", "expected a comparison"),
         ("SELECT * FROM books LIMIT many", "expected a value"),

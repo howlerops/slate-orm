@@ -134,7 +134,7 @@ fn the_kitchen_sink_uses_everything_it_claims_to() {
         .expect("a Kitchen sink example");
 
     let results: Vec<Json> = serde_json::from_str(&playground.sql(&sql)).unwrap();
-    assert_eq!(results.len(), 2, "two statements");
+    assert_eq!(results.len(), 3, "three statements");
 
     // One: the grouped join, with conditions on both sides.
     let join = &results[0];
@@ -142,6 +142,25 @@ fn the_kitchen_sink_uses_everything_it_claims_to() {
     assert_eq!(join["columns"][0], "borough");
     assert_eq!(join["spec"]["leftWhere"].as_array().unwrap().len(), 1);
     assert_eq!(join["spec"]["rightWhere"].as_array().unwrap().len(), 2);
+
+    // Three: the disjunction. Checked here rather than left to the "every
+    // example runs" test, because running is not the claim — the claim in the
+    // comment is that this is an `OR`, and a parser that quietly ANDed it
+    // would return fewer rows and still run.
+    let disjunction = &results[2];
+    assert_eq!(
+        disjunction["spec"]["anyOf"].as_array().map(Vec::len),
+        Some(3),
+        "three ORed conditions: {}",
+        disjunction["spec"]
+    );
+    assert!(
+        disjunction["spec"]["filters"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "an ORed WHERE fills `anyOf`, not `filters`: {}",
+        disjunction["spec"]
+    );
 
     // Two: the monster. Every claim in its comment, checked.
     let sink = &results[1];

@@ -72,6 +72,32 @@ pub fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
         // is the same predicate and gives the planner more work to undo.
         query = query.filter(Expr::all(parts));
     }
+    // ORed conditions, as one conjunct beside the ANDed ones.
+    //
+    // `Expr::Or` directly rather than a fold, for the reason above: the
+    // planner's `conjuncts()` flattens `And` and stops at anything else, so a
+    // disjunction arrives as one opaque conjunct it will evaluate per row
+    // rather than turn into a scan bound. That is correct and it is the cost
+    // of the feature — `a = 1 OR b = 2` has no single key range — and it is
+    // why this is a filter and not an access path.
+    //
+    // Conjoined with whatever `filters` produced rather than replacing it, so
+    // a spec carrying both means `(all) AND (any)`. The parser never produces
+    // both today; the lowering is written for the shape a widened parser
+    // would send, so that widening does not silently change what an existing
+    // spec means.
+    if !spec.any_of.is_empty() {
+        let mut parts = Vec::with_capacity(spec.any_of.len());
+        for condition in &spec.any_of {
+            parts.push(comparison(condition, table)?);
+        }
+        // `Expr::and` on the predicate built above, taken out of the builder
+        // first: `Query::filter` consumes the query, so reading the field it
+        // is about to overwrite has to happen before the call rather than
+        // inside it.
+        let existing = std::mem::replace(&mut query.filter, Expr::True);
+        query = query.filter(existing.and(Expr::Or(parts)));
+    }
     if !spec.sort.is_empty() {
         let keys: Vec<SortKey> = spec
             .sort

@@ -230,3 +230,88 @@ fn a_single_table_groups_by_more_than_one_key() {
         other => panic!("parsed as {other:?}, not a single-table read"),
     }
 }
+
+#[test]
+fn or_lowers_to_a_disjunction_the_kernel_understands() {
+    // `Expr::Or` has existed in the kernel since expressions arrived and no
+    // front end could produce one — four ledger entries recorded that, and
+    // each one said the kernel was not the missing part. This is the test
+    // that it is reachable.
+    let spec = select("SELECT * FROM books WHERE year >= 1970 OR author_id = 3");
+    assert!(
+        spec.filters.is_empty(),
+        "an ORed WHERE does not fill `filters`"
+    );
+    assert_eq!(spec.any_of.len(), 2);
+    let query = lower::build(&spec, &books()).expect("a valid lowering");
+    match query.filter {
+        Expr::Or(parts) => assert_eq!(parts.len(), 2, "{parts:?}"),
+        other => panic!("OR lowered to {other:?}, not a disjunction"),
+    }
+}
+
+#[test]
+fn a_disjunction_admits_a_row_either_arm_admits() {
+    // The shape above is not the point; the answer is. Three rows, one
+    // matching only the left arm, one only the right, one neither.
+    let spec = select("SELECT * FROM books WHERE year >= 1970 OR author_id = 3");
+    let filter = lower::build(&spec, &books())
+        .expect("a valid lowering")
+        .filter;
+    let row = |author_id: u64, year: i64| {
+        slate_schema::Row::new(vec![
+            Value::U64(1),
+            Value::U64(author_id),
+            Value::Str("t".to_owned()),
+            Value::I64(year),
+        ])
+    };
+    use slate_kernel::Truth;
+    assert_eq!(
+        filter.evaluate(&row(9, 1999)),
+        Truth::True,
+        "left arm alone"
+    );
+    assert_eq!(
+        filter.evaluate(&row(3, 1950)),
+        Truth::True,
+        "right arm alone"
+    );
+    assert_eq!(filter.evaluate(&row(9, 1950)), Truth::False, "neither arm");
+}
+
+#[test]
+fn and_and_or_cannot_be_mixed_in_one_where() {
+    // No parentheses in this grammar, so `a AND b OR c` would have to pick a
+    // precedence and be right about it for every reader. It refuses instead,
+    // and the message says what to write.
+    let tables = [books()];
+    let error = parse(
+        "SELECT * FROM books WHERE year >= 1970 AND author_id = 3 OR author_id = 4",
+        &Schema(&tables),
+    )
+    .expect_err("a mixed WHERE must be refused");
+    assert!(
+        error.message.contains("cannot be mixed"),
+        "the refusal should name the problem: {}",
+        error.message
+    );
+}
+
+#[test]
+fn the_other_order_of_mixing_is_refused_too() {
+    // `OR` then `AND`, which takes the other branch of the check. Written
+    // because the first version of this only refused one of the two and the
+    // asymmetry was invisible from the passing test.
+    let tables = [books()];
+    let error = parse(
+        "SELECT * FROM books WHERE year >= 1970 OR author_id = 3 AND author_id = 4",
+        &Schema(&tables),
+    )
+    .expect_err("a mixed WHERE must be refused whichever order it is written");
+    assert!(
+        error.message.contains("cannot be mixed"),
+        "the refusal should name the problem: {}",
+        error.message
+    );
+}

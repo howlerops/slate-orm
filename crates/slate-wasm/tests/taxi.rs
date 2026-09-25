@@ -873,7 +873,8 @@ fn having_is_refused_where_it_cannot_mean_anything() {
     );
     assert!(message.contains("HAVING names `max(fare)`"), "{message}");
     assert!(!message.contains("ORDER BY"), "{message}");
-    // OR, refused for the reason it is refused in WHERE.
+    // OR, refused in HAVING. A single-table WHERE takes it; a HAVING and a
+    // join's WHERE do not, and the message says which.
     assert!(
         refused(
             "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \

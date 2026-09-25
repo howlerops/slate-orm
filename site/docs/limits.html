@@ -78,11 +78,24 @@
         parser and no plan for one. The <a href="../workbench.html">workbench</a>
         does have a SQL front end, and it runs in the browser, compiling a
         subset to that same spec — joins, chains, grouping,
-        <code>HAVING</code>, <code>DISTINCT</code> and
+        <code>HAVING</code>, <code>DISTINCT</code>, <code>OR</code> and
         <code>IN (SELECT …)</code>, stopping at <code>UNION</code>,
         <code>EXISTS</code> and anything correlated. Every stop is refused by
         name with the reason, which is the whole difference between a subset
         and a dialect.
+      </p>
+      <p>
+        <strong><code>OR</code> is all-or-nothing within one clause.</strong>
+        <code>WHERE a = 1 OR b = 2</code> works on a single-table read and
+        lowers to the kernel's own disjunction. What is refused is
+        <em>mixing</em> it with <code>AND</code> in the same
+        <code>WHERE</code>: this grammar has no parentheses, so
+        <code>a AND b OR c</code> would need a precedence, and it reads two
+        ways depending on who is reading. A join's <code>WHERE</code> and
+        every <code>HAVING</code> still take <code>AND</code> only. A
+        disjunction is also a filter rather than an access path &mdash; it
+        cannot become a scan bound, because
+        <code>a = 1 OR b = 2</code> has no single key range.
       </p>
       <p>
         <strong>The newest features stop where they stop.</strong> A window
