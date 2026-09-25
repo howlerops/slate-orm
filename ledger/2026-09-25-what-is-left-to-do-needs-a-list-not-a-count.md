@@ -1,7 +1,7 @@
 # The caveat tracker counted 767 and could name none of them. Triaging 677 needed a fifth verdict and a way to print the answer.
 
 - **Date:** 2026-09-25
-- **Author:** Claude Code, working #301 (F7b), first instalment
+- **Author:** Claude Code, working #301 (F7b), complete
 - **Touches:** `scripts/caveats.py`, `docs/caveat-status.json`
 - **Kind:** using a tool enough to find what it was missing
 
@@ -18,7 +18,19 @@ by reading the file:
 - **A fifth verdict, `moment`.** 677 caveats do not sort into open / closed /
   deliberate without lying about roughly one in twelve.
 
-And 175 verdicts recorded so far, against a starting 677 untriaged.
+And the triage itself: **all 677 read and given a verdict.** The tracker now
+reports `769 caveats: 277 open, 167 closed, 278 deliberate, 0 untriaged`, and
+the answer to "what is left to do" is `caveats.py --open`.
+
+A third change fell out of the last one: **a caveat withdrawn in prose was
+still being counted.** `2026-09-14-schema-checks-in-go-and-typescript.md`
+opens its bullet `**Withdrawn, 2026-09-14.**` and explains what was wrong.
+The `~~` case was already excluded; this spelling was not, and it was the one
+caveat of 772 that could be given no honest verdict — `open` would have made
+it work that was retracted eleven days earlier, and `moment` would have called
+a correction a passing observation. `WITHDRAWN` now drops it, which also
+dropped two bullets this triage had already judged, reported as orphans
+exactly as designed.
 
 ## Why `moment` exists
 
@@ -76,19 +88,23 @@ was checked: `site/check/quickstarts.py`,
 
 ## What this does not do
 
-**502 caveats are still untriaged.** This is the first instalment of #301, not
-its completion. The 175 done are the oldest, 2026-09-13 to 2026-09-15.
+**`deliberate` outnumbers `open`, and that is a judgement I made 278 times.**
+The rule I applied: `deliberate` where the entry's own prose gives a reason for
+not doing the thing that reads as a decision, `open` otherwise. A second reader
+would move some of them, and the ones most likely to move are where an entry
+explains a limit without quite arguing for it.
 
-**No test covers `moment` or the listing.** `test_caveats.py` was not extended.
-The listing is exercised only by my having run it; the fifth verdict is
-exercised by 12 caveats carrying it and the counts adding up. Both should get a
-case in that suite, and a `moment` with a `by` should probably be refused the
-way a `closed` without one is — I did not decide that.
+**167 `closed` verdicts rest on evidence of very uneven strength.** Where a
+feature either exists in the tree or does not, I checked it — the greps are in
+the session and the `by` names what I found. Where the caveat was about a test
+existing, or a guard covering a case, I matched it against the completed task
+whose title names the same gap, which is good evidence and not proof. A wrong
+`closed` is invisible, as the entry before this one recorded, and this
+instalment made 167 opportunities for one.
 
-**No mutation run.** Same reason as the last entry: 1.2 GB free against a 19 GB
-`target/`. The listing and the verdict are Python, so `mutate.py` could reach
-them via `test_caveats.py` without a Rust build — that is a real gap in this
-entry's evidence rather than a container limit, and I am recording it as one.
+**Nothing re-triages.** A caveat closed today stays `closed` in the file even
+if the thing that closed it is reverted. The orphan mechanism catches a
+*reworded* bullet, not a regressed feature.
 
 **A verdict is my reading, not a proof.** `closed` was checked against the tree
 in every case; `deliberate` and `moment` are judgements about what an entry's
@@ -96,7 +112,7 @@ own prose means, and a second reader would move some of them. The key is the
 bullet's opening text, so a reworded caveat surfaces as an orphan rather than
 silently reverting — that is the safety net, and it is the only one.
 
-**`sql.rs:34` may be stale, and I did not confirm it.** Its grammar comment says
+**`sql.rs:34` may be stale, and I still have not confirmed it.** Its grammar comment says
 "on a join: one GROUP BY key", while `Grouping.group` is a `Vec<Ordinal>` and
 `lower.rs` applies no join-specific limit. I marked the caveats that say "one
 group key per join" as closed on the strength of the kernel signature and the

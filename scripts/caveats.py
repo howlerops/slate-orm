@@ -67,7 +67,18 @@ SECTION = re.compile(r"^## What this does not do\s*$(.*?)(?=^## |\Z)", re.M | re
 #: `2026-09-21-the-demo-ui-is-a-subset-on-purpose.md` was read as a bullet.
 #: A struck-through paragraph is a *withdrawn* caveat and is already
 #: excluded, because `~~` opens it rather than `**`.
+#:
+#: A withdrawal can also be written as prose — `**Withdrawn, 2026-09-14.**`
+#: followed by what was wrong — and `WITHDRAWN` drops those. Found by the
+#: triage: it was the one caveat of 772 that could be given no verdict,
+#: because it is not a caveat. `open` would have made it work that was
+#: retracted eleven days earlier, and `moment` would have called a
+#: correction a passing observation.
 BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
+#: A bullet whose lead opens a withdrawal rather than a limitation. Matched
+#: on the first word so that the date and the reasoning after it are free
+#: text, which is how the ledger writes them.
+WITHDRAWN = re.compile(r"^~*\s*Withdrawn\b", re.I)
 VERDICTS = ("open", "closed", "deliberate", "moment", "untriaged")
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
@@ -97,6 +108,8 @@ def caveats(root: Path = ROOT) -> list[dict[str, str]]:
         # boundary here is safer than loosening the pattern, which is what let
         # mid-paragraph emphasis in as a caveat in the first place.
         for bullet in BULLET.findall("\n\n" + section.group(1)):
+            if WITHDRAWN.match(bullet.strip()):
+                continue
             found.append({"entry": path.name, "claim": " ".join(bullet.split())})
     return found
 

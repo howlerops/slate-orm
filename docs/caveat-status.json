@@ -1052,6 +1052,2934 @@
       "by": "this entry: a tighter bound would fail on a schema change"
     },
     {
+      "entry": "2026-09-15-where-the-bytes-a-row-went.md",
+      "key": "The example's own timing is not a benchmark.",
+      "verdict": "deliberate",
+      "by": "this entry: the counting allocator dominates, runs quoted with it off"
+    },
+    {
+      "entry": "2026-09-16-a-batch-is-a-round-trip-a-transaction-is-a-guarantee.md",
+      "key": "No client can call it.",
+      "verdict": "closed",
+      "by": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md"
+    },
+    {
+      "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
+      "key": "Go and TypeScript do not have it.",
+      "verdict": "closed",
+      "by": "relations on the wire and in the three clients"
+    },
+    {
+      "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
+      "key": "No composite relating key",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
+      "key": "One relationship per call, one level deep.",
+      "verdict": "closed",
+      "by": "`through` and nested loading on the wire"
+    },
+    {
+      "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
+      "key": "The Rust `Related` trait and the wire disagree about what a ",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
+      "key": "No `EXISTS`, no set operators, no correlation",
+      "verdict": "closed",
+      "by": "EXISTS and UNION in the SQL front end"
+    },
+    {
+      "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
+      "key": "Nothing crosses the wire.",
+      "verdict": "deliberate",
+      "by": "this entry: resolved to a list before the spec leaves the tab"
+    },
+    {
+      "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
+      "key": "One level, and no depth check.",
+      "verdict": "closed",
+      "by": "an explicit depth limit on the wire's expression conversion"
+    },
+    {
+      "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
+      "key": "The elision is untested by the Rust suite",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
+      "key": "The type check skips computed items.",
+      "verdict": "deliberate",
+      "by": "this entry: a second table mapping functions to types is not worth it"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
+      "key": "No `RETURNING`.",
+      "verdict": "closed",
+      "by": "RETURNING on the wire"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
+      "key": "Nothing crosses the wire.",
+      "verdict": "closed",
+      "by": "predicate writes on the wire"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
+      "key": "One table.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
+      "key": "The matched rows are held in memory at once.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
+      "key": "The oracles run 64 cases each",
+      "verdict": "deliberate",
+      "by": "this entry: the file's own configuration, enough for the matched-set boundary"
+    },
+    {
+      "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
+      "key": "No mobile navigation to speak of.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
+      "key": "No search.",
+      "verdict": "deliberate",
+      "by": "this entry: nine pages do not need one, and it means a build step"
+    },
+    {
+      "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
+      "key": "Nothing was seen.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
+      "key": "The landing page's claims are not checked by anything.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
+      "key": "`site/style.css` still carries rules for elements the workbe",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
+      "key": "No default, so the hang is still reachable",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
+      "key": "No retrying `transact` in Go or TypeScript.",
+      "verdict": "closed",
+      "by": "a retrying transact in Go and TypeScript"
+    },
+    {
+      "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
+      "key": "Nothing changed on the server.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
+      "key": "The Go half added no code",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
+      "key": "It does not build anything.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
+      "key": "The browser render was a one-off, not a check.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
+      "key": "The plan leaves out validations, changesets and lifecycle ho",
+      "verdict": "closed",
+      "by": "docs/validation.md and the check surface (V0-V3)"
+    },
+    {
+      "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
+      "key": "No predicate, ordering or limit per level.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
+      "key": "Nothing measures it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
+      "key": "The depth is bounded; the fan-out is not.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
+      "key": "`ErrorInfo.metadata` still is not surfaced",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
+      "key": "No client branches on the token yet.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
+      "key": "Nothing measures the cost of decoding.",
+      "verdict": "deliberate",
+      "by": "this entry: once per failure on a path already doing a round trip"
+    },
+    {
+      "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
+      "key": "One captured blob, one shape of error.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
+      "key": "The Python decoder's field numbers are pinned by tests, not ",
+      "verdict": "deliberate",
+      "by": "this entry: seven fields unchanged since 2015, drift fails the blob decode"
+    },
+    {
+      "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
+      "key": "No client knows the cap.",
+      "verdict": "deliberate",
+      "by": "this entry: a client-side copy is a second number that can disagree"
+    },
+    {
+      "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
+      "key": "Nothing measures how much the early stop saves.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
+      "key": "The cap is a row count and the thing that breaks is bytes.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
+      "key": "The memory cost of a predicate write is untouched.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-the-formatting-job-was-red-for-two-commits.md",
+      "key": "It says nothing about run 114.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-17-the-formatting-job-was-red-for-two-commits.md",
+      "key": "Nothing prevents the next one.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
+      "key": "A page's row count is not bounded by `limit`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
+      "key": "Grouped reads still refuse a cursor",
+      "verdict": "deliberate",
+      "by": "this entry: a cursor names a row and a grouped read returns groups"
+    },
+    {
+      "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
+      "key": "No per-level predicate, ordering or limit.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
+      "key": "Nothing measures the cost.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
+      "key": "`Related` paths are not paged.",
+      "verdict": "deliberate",
+      "by": "this entry: reachable by paging the query that produces the roots"
+    },
+    {
+      "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
+      "key": "Go's `Transact` cannot be used as a method value",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
+      "key": "No retry budget across calls.",
+      "verdict": "deliberate",
+      "by": "this entry: a shared budget needs a policy object with state"
+    },
+    {
+      "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
+      "key": "Nothing measures it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
+      "key": "Loopback only.",
+      "verdict": "deliberate",
+      "by": "this entry: the conservative direction, a batch helps at least this much"
+    },
+    {
+      "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
+      "key": "No server-side attribution.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
+      "key": "Writes only.",
+      "verdict": "deliberate",
+      "by": "this entry: a read batch is not a thing this protocol has"
+    },
+    {
+      "entry": "2026-09-18-the-demo-shows-the-last-three-features.md",
+      "key": "No new server surface",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-the-demo-shows-the-last-three-features.md",
+      "key": "Nothing here is measured.",
+      "verdict": "deliberate",
+      "by": "examples/batchbench is where the batch's cost is"
+    },
+    {
+      "entry": "2026-09-18-the-demo-shows-the-last-three-features.md",
+      "key": "The batch panel's numbers are the demo fixture's",
+      "verdict": "deliberate",
+      "by": "this entry: the panel says what it ran, the prose gives the general shape"
+    },
+    {
+      "entry": "2026-09-18-two-ci-failures-the-local-runs-could-not-see.md",
+      "key": "Nothing makes the frontend units part of what I run before p",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-untrack-the-benchmarks-build-output.md",
+      "key": "Nothing prevents the fourth example doing this again.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-18-untrack-the-benchmarks-build-output.md",
+      "key": "The repository still has the artifacts in its history",
+      "verdict": "deliberate",
+      "by": "this entry: a history rewrite costs more than the half-megabyte"
+    },
+    {
+      "entry": "2026-09-19-a-purge-something-can-call.md",
+      "key": "No metric.",
+      "verdict": "closed",
+      "by": "purged rows counted in /metrics"
+    },
+    {
+      "entry": "2026-09-19-a-purge-something-can-call.md",
+      "key": "No offline tool",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-a-refusal-a-form-can-render.md",
+      "key": "Go and TypeScript still parse nothing.",
+      "verdict": "closed",
+      "by": "the same typed check failures in Go and TypeScript"
+    },
+    {
+      "entry": "2026-09-19-a-refusal-with-two-things-wrong.md",
+      "key": "The cross-column shape is still fixture-only.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-a-refusal-with-two-things-wrong.md",
+      "key": "Three failures is still fixture-only too.",
+      "verdict": "deliberate",
+      "by": "this entry: the loop that handles two handles twenty"
+    },
+    {
+      "entry": "2026-09-19-a-refusal-with-two-things-wrong.md",
+      "key": "`id_is_seeded` is a rule that exists for the demo's convenie",
+      "verdict": "deliberate",
+      "by": "this entry: an example of a check, not of a good rule"
+    },
+    {
+      "entry": "2026-09-19-a-stops-at-that-stopped-being-true.md",
+      "key": "Nothing checks a design note against the code.",
+      "verdict": "deliberate",
+      "by": "this entry: not worth building for a file read a few times a year"
+    },
+    {
+      "entry": "2026-09-19-a-stops-at-that-stopped-being-true.md",
+      "key": "Only N4 was checked.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
+      "key": "Nothing yet decodes a row with a value of the wrong *kind*.",
+      "verdict": "deliberate",
+      "by": "this entry: the server cannot produce a wrong kind through any surface"
+    },
+    {
+      "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
+      "key": "The Python client has no `ForeignKey` type and its checks ar",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
+      "key": "The demo UI still does not use the decoders.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
+      "key": "Three of five decoders per language are still only run again",
+      "verdict": "closed",
+      "by": "a live-row case for the remaining generated decoders"
+    },
+    {
+      "entry": "2026-09-19-every-generated-decoder-runs.md",
+      "key": "A new table still needs a hand-written case.",
+      "verdict": "deliberate",
+      "by": "this entry: a generated case would be worthless"
+    },
+    {
+      "entry": "2026-09-19-every-generated-decoder-runs.md",
+      "key": "Still nothing decodes a row that came from the server.",
+      "verdict": "closed",
+      "by": "2026-09-19-decoders-over-the-servers-own-rows.md"
+    },
+    {
+      "entry": "2026-09-19-every-generated-decoder-runs.md",
+      "key": "The Python decoders have no equivalent coverage check.",
+      "verdict": "closed",
+      "by": "the Python decoder test, to match Go and TypeScript"
+    },
+    {
+      "entry": "2026-09-19-forgetting-a-retired-row.md",
+      "key": "Nothing calls it.",
+      "verdict": "closed",
+      "by": "something calls purge_deleted, and a schedule for it"
+    },
+    {
+      "entry": "2026-09-19-one-command-for-the-checks.md",
+      "key": "It does not run the suites, and the suites are where the def",
+      "verdict": "deliberate",
+      "by": "this entry: the closing summary names the nine it skips"
+    },
+    {
+      "entry": "2026-09-19-one-command-for-the-checks.md",
+      "key": "Multi-line `run: |` blocks are matched by their `name:`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-one-command-for-the-checks.md",
+      "key": "Nothing runs the script for you.",
+      "verdict": "deliberate",
+      "by": "this entry: one thing to remember instead of nineteen"
+    },
+    {
+      "entry": "2026-09-19-one-command-for-the-checks.md",
+      "key": "The guard compares strings.",
+      "verdict": "deliberate",
+      "by": "this entry: the cost of not writing a shell-command parser"
+    },
+    {
+      "entry": "2026-09-19-the-counter-nobody-scraped.md",
+      "key": "The two claims this corrects were in ledger entries, not in ",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-the-one-path-that-could-not-carry-them.md",
+      "key": "A batch's failures are still not counted by `slate_rows_writ",
+      "verdict": "deliberate",
+      "by": "this entry: a refused operation writes nothing, so there is nothing to count"
+    },
+    {
+      "entry": "2026-09-19-the-one-path-that-could-not-carry-them.md",
+      "key": "An atomic batch still reports nothing per operation.",
+      "verdict": "deliberate",
+      "by": "this entry: a property of the atomicity, and why a form should use INDEPENDENT"
+    },
+    {
+      "entry": "2026-09-19-the-one-path-that-could-not-carry-them.md",
+      "key": "Nothing says which operation a batched failure belongs to ex",
+      "verdict": "deliberate",
+      "by": "this entry: results is positional, which is the existing contract"
+    },
+    {
+      "entry": "2026-09-19-the-one-path-that-could-not-carry-them.md",
+      "key": "`details` is unbounded in principle.",
+      "verdict": "deliberate",
+      "by": "this entry: bounded by the checks a table declares, not by the caller"
+    },
+    {
+      "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
+      "key": "No relation is generated for the reverse direction as a name",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
+      "key": "Python's helper is in the adapter, not the client.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
+      "key": "The referencing columns are not generated.",
+      "verdict": "deliberate",
+      "by": "this entry: generating an unused list is what this exists to stop"
+    },
+    {
+      "entry": "2026-09-19-the-third-and-second-decoders.md",
+      "key": "It does not catch all three clients losing the field at once",
+      "verdict": "deliberate",
+      "by": "this entry: units catch unanimous loss, conformance catches drift"
+    },
+    {
+      "entry": "2026-09-19-the-third-and-second-decoders.md",
+      "key": "Nothing validates against the published checks before sendin",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-the-third-stale-constructor.md",
+      "key": "Nothing checks the other two clients for the same shape.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-19-the-third-stale-constructor.md",
+      "key": "The guard constructs; it does not call.",
+      "verdict": "deliberate",
+      "by": "this entry: a rename is what a type checker is for"
+    },
+    {
+      "entry": "2026-09-19-the-third-stale-constructor.md",
+      "key": "The keyword list in the test is hand-written.",
+      "verdict": "deliberate",
+      "by": "this entry: it mirrors the call site, which is not introspectable"
+    },
+    {
+      "entry": "2026-09-19-the-two-things-i-left-out.md",
+      "key": "Neither test scrapes twice.",
+      "verdict": "deliberate",
+      "by": "this entry: same thing for a counter that only goes up on a fresh process"
+    },
+    {
+      "entry": "2026-09-19-the-two-things-i-left-out.md",
+      "key": "The fixture's second table exists for one test.",
+      "verdict": "deliberate",
+      "by": "this entry: the cheaper of the two costs of not widening docs"
+    },
+    {
+      "entry": "2026-09-19-the-two-things-i-left-out.md",
+      "key": "The purge test asserts three labels and one node.",
+      "verdict": "deliberate",
+      "by": "this entry: the rest is covered in process by transaction_counts.rs"
+    },
+    {
+      "entry": "2026-09-19-two-ruffs-not-one.md",
+      "key": "Nothing stops this recurring.",
+      "verdict": "closed",
+      "by": "scripts/check.sh runs all four"
+    },
+    {
+      "entry": "2026-09-19-what-a-transaction-wrote.md",
+      "key": "A fence mid-transaction is covered by the compiler, not by a",
+      "verdict": "deliberate",
+      "by": "this entry: a signature that makes the wrong code fail to build"
+    },
+    {
+      "entry": "2026-09-19-what-a-transaction-wrote.md",
+      "key": "A rolled-back transaction reports nothing at all, not even t",
+      "verdict": "deliberate",
+      "by": "this entry: a metric added on speculation is a metric nobody debugs"
+    },
+    {
+      "entry": "2026-09-19-what-a-transaction-wrote.md",
+      "key": "The counts are per node.",
+      "verdict": "deliberate",
+      "by": "this entry: the ordinary Prometheus answer, sum across instances"
+    },
+    {
+      "entry": "2026-09-19-who-may-see-a-deleted-row.md",
+      "key": "No client exposes it.",
+      "verdict": "closed",
+      "by": "include_deleted in the three clients, through a real server"
+    },
+    {
+      "entry": "2026-09-19-who-may-see-a-deleted-row.md",
+      "key": "Nothing in the demo or the conformance corpus uses it.",
+      "verdict": "closed",
+      "by": "include_deleted in the conformance corpus"
+    },
+    {
+      "entry": "2026-09-19-who-may-see-a-deleted-row.md",
+      "key": "`purge_deleted` now needs two grants.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
+      "key": "It covers one file.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
+      "key": "It does not generalise the lesson.",
+      "verdict": "closed",
+      "by": "the Authenticator and Catalog-constructor guards"
+    },
+    {
+      "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
+      "key": "It is two greps, and it says so.",
+      "verdict": "deliberate",
+      "by": "this entry: it catches a new unauthorised resolution, the thing that happened"
+    },
+    {
+      "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
+      "key": "The four-line reach is calibrated, not derived.",
+      "verdict": "deliberate",
+      "by": "this entry: widening the constant deliberately is the intended behaviour"
+    },
+    {
+      "entry": "2026-09-20-a-child-that-is-still-a-child.md",
+      "key": "It does not close the restore gap.",
+      "verdict": "closed",
+      "by": "a restore for a soft-deleted row"
+    },
+    {
+      "entry": "2026-09-20-a-child-that-is-still-a-child.md",
+      "key": "It does not revisit whether `RESTRICT` should fire on the so",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-child-that-is-still-a-child.md",
+      "key": "It is a behaviour change, and a deployment can feel it.",
+      "verdict": "deliberate",
+      "by": "this entry: the correct refusal, and purge is the remedy"
+    },
+    {
+      "entry": "2026-09-20-a-child-that-is-still-a-child.md",
+      "key": "Nothing above the kernel was changed or tested for this.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
+      "key": "It does not fix the disk.",
+      "verdict": "deliberate",
+      "by": "this entry: the container's allowance is what it is"
+    },
+    {
+      "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
+      "key": "It says nothing about CI",
+      "verdict": "deliberate",
+      "by": "this entry: a note about here, not about CI's fresh runner"
+    },
+    {
+      "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
+      "key": "The grouping is not measured, only observed to work.",
+      "verdict": "deliberate",
+      "by": "this entry: five groups is what succeeded twice, not what is optimal"
+    },
+    {
+      "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
+      "key": "It checks declarations, not what the clients send.",
+      "verdict": "deliberate",
+      "by": "this entry: the caller's own credential handling, outside the library"
+    },
+    {
+      "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
+      "key": "It is a regex over two languages, not a parser.",
+      "verdict": "deliberate",
+      "by": "this entry: loud rather than silent, and neither client does this today"
+    },
+    {
+      "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
+      "key": "Nothing checks the *formatter* side in Go or TypeScript.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
+      "key": "The three-SDK conformance runner still compares behaviour, n",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
+      "key": "It assumes the command is a Rust test run.",
+      "verdict": "closed",
+      "by": "mutate.py reads pytest and go test runners, and should_panic"
+    },
+    {
+      "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
+      "key": "It does not enforce its own use.",
+      "verdict": "closed",
+      "by": "the guard that checks a ledger entry's mutation claims"
+    },
+    {
+      "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
+      "key": "It does not find mutations for you.",
+      "verdict": "deliberate",
+      "by": "this entry: the cargo-mutants rejection"
+    },
+    {
+      "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
+      "key": "No mutation spec is committed anywhere.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
+      "key": "Four suffixes, and no guard on the list.",
+      "verdict": "closed",
+      "by": "the hand-maintained lists derived instead"
+    },
+    {
+      "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
+      "key": "It checks existence, not aptness.",
+      "verdict": "deliberate",
+      "by": "this entry: the same limitation check_cited_tests.py has"
+    },
+    {
+      "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
+      "key": "It does not check anchors.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing in the tree uses an anchor today"
+    },
+    {
+      "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
+      "key": "It runs over the whole tree on every invocation.",
+      "verdict": "deliberate",
+      "by": "this entry: fast enough that it was not worth measuring"
+    },
+    {
+      "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
+      "key": "`SKIP_PARTS` is a hand-written roster too",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
+      "key": "No test asserts the message for a child that does not soft-d",
+      "verdict": "deliberate",
+      "by": "this entry: false by construction there; the live-child control covers the risk"
+    },
+    {
+      "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
+      "key": "The three clients say nothing new.",
+      "verdict": "deliberate",
+      "by": "this entry: the reason token is unchanged, per the rejected alternative"
+    },
+    {
+      "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
+      "key": "There is still no way to inventory what is blocked.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
+      "key": "`retired` is computed only for the edge that refused.",
+      "verdict": "deliberate",
+      "by": "this entry: the first constraint that fires, as it always has"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "It builds nothing",
+      "verdict": "closed",
+      "by": "a view declared in TOML, and a read path that uses one"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "Materialised views are not considered at all",
+      "verdict": "deliberate",
+      "by": "this entry: a different feature with storage, staleness and a refresh path"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "Nested views are not decided.",
+      "verdict": "closed",
+      "by": "view over a view, decided and recorded"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "Nothing checks that `EXPLAIN` over an expanded view is safe.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "The Postgres comparison is from memory of its documented beh",
+      "verdict": "deliberate",
+      "by": "this entry: decision 2 does not rest on it"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "`CREATE` is refused as a whole word",
+      "verdict": "deliberate",
+      "by": "this entry: right about the first clause, this front end queries a catalog"
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "Elements decode dynamically, not by the column's element typ",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "No column can be declared an array.",
+      "verdict": "closed",
+      "by": "an array column can be declared and generated"
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "No measurement.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing here claims a performance property"
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "Nothing outside the kernel knows about arrays.",
+      "verdict": "closed",
+      "by": "an array on the wire and in three clients"
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "The design note's two open questions are still open.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
+      "key": "The nesting refusal is tested at two entry points, not prove",
+      "verdict": "deliberate",
+      "by": "this entry: two call sites did not earn an enumerating check"
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "No SQL array literal.",
+      "verdict": "closed",
+      "by": "a SQL literal for an array column"
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "No `#[derive(Record)]` support.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "No generated client row types.",
+      "verdict": "closed",
+      "by": "generated array code, executed in a test"
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "No measurement.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing was timed, no statement here is about performance"
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "The `posts` table is in the test server and not in `crates/s",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "The demo and the docs site show no array.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "The four fingerprint implementations are held together only ",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
+      "key": "The testserver's JSON oracle still cannot represent a decima",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
+      "key": "It does not check `ty` for the same hazard.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
+      "key": "It does not close the gap, and says so.",
+      "verdict": "deliberate",
+      "by": "CLAUDE.md: read the diff from the job's log and apply it"
+    },
+    {
+      "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
+      "key": "Two occurrences, one rule.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
+      "key": "It does not widen the contract.",
+      "verdict": "deliberate",
+      "by": "this entry: the weak contract is the one that can hold"
+    },
+    {
+      "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
+      "key": "The codec's *ordering* properties were not attacked.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
+      "key": "Two of the review's four areas are done and one is closed wi",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
+      "key": "`ValueType::ALL` is new public API.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
+      "key": "`any_scalar` is still a hand-written list",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
+      "key": "Four words is a guess with one data point behind it.",
+      "verdict": "deliberate",
+      "by": "this entry: no test here is named in four words, so it costs nothing"
+    },
+    {
+      "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
+      "key": "It does not check that the test says what the prose says it ",
+      "verdict": "deliberate",
+      "by": "this entry: a much harder check, and this is not a step towards it"
+    },
+    {
+      "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
+      "key": "It does not cover `ledger/`, `CLAUDE.md`, `README.md` or `si",
+      "verdict": "closed",
+      "by": "the provenance guards widened to README.md and site/"
+    },
+    {
+      "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
+      "key": "It found nothing outside `docs/security-review.md`.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
+      "key": "The two `RESTRICT`/`CASCADE` names were merged into one test",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
+      "key": "Only `join` and `aggregate` are probed; their `explain` twin",
+      "verdict": "closed",
+      "by": "explain_join and explain_aggregate probed rather than read"
+    },
+    {
+      "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
+      "key": "The chain handlers were assumed to be the join handlers.",
+      "verdict": "closed",
+      "by": "the chain handlers probed with a three-input request"
+    },
+    {
+      "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
+      "key": "The corrected exemption is still a claim about six callers.",
+      "verdict": "closed",
+      "by": "the guard for the resolve-then-convert pattern in service.rs"
+    },
+    {
+      "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
+      "key": "`Action::Explain` on the explain handlers is right for today",
+      "verdict": "deliberate",
+      "by": "this entry: the difference is only which action a refusal names"
+    },
+    {
+      "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
+      "key": "It does not check the third `Authenticator`.",
+      "verdict": "closed",
+      "by": "the Authenticator roster guard"
+    },
+    {
+      "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
+      "key": "It does not probe findings 7 and 8.",
+      "verdict": "closed",
+      "by": "findings 7 and 8 probed rather than read"
+    },
+    {
+      "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
+      "key": "No test exercises a duplicated header over a real connection",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
+      "key": "Nothing stops a fourth implementation repeating this.",
+      "verdict": "closed",
+      "by": "the Authenticator roster guard"
+    },
+    {
+      "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
+      "key": "The clients were not checked for sending it twice.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-reviewing-my-own-newest-code.md",
+      "key": "It is one pass by the person who wrote the code.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-reviewing-my-own-newest-code.md",
+      "key": "No benchmark.",
+      "verdict": "deliberate",
+      "by": "this entry: the invariance argument judged sufficient, a release build costs disk"
+    },
+    {
+      "entry": "2026-09-20-reviewing-my-own-newest-code.md",
+      "key": "The review found nothing wrong with the `RESTRICT` change",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-reviewing-my-own-newest-code.md",
+      "key": "The single-row paths still ask per call",
+      "verdict": "deliberate",
+      "by": "this entry: a second place the soft-delete question gets asked, and the scan is cheap"
+    },
+    {
+      "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
+      "key": "It checks the roster, not the cases.",
+      "verdict": "deliberate",
+      "by": "this entry: what stops it is reading the test"
+    },
+    {
+      "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
+      "key": "Nothing does this for the third pattern instance.",
+      "verdict": "closed",
+      "by": "the guard against a third Catalog constructor"
+    },
+    {
+      "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
+      "key": "One property, not a contract.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
+      "key": "The key each implementation reads is hand-written per case.",
+      "verdict": "deliberate",
+      "by": "this entry: a rename fails loudly, which is why the literal is acceptable"
+    },
+    {
+      "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
+      "key": "`impl Authenticator for` is matched at the start of a line.",
+      "verdict": "deliberate",
+      "by": "this entry: every current one is top-level; the never-fires check covers the rest"
+    },
+    {
+      "entry": "2026-09-20-taking-a-catalog-was-not-the-hazard.md",
+      "key": "A `SecurityContext` parameter is treated as sufficient.",
+      "verdict": "deliberate",
+      "by": "this entry: the weakest link, with no such converter today to test against"
+    },
+    {
+      "entry": "2026-09-20-taking-a-catalog-was-not-the-hazard.md",
+      "key": "It sees adjacency, not coverage.",
+      "verdict": "deliberate",
+      "by": "security_probe.rs asserts the tables by name"
+    },
+    {
+      "entry": "2026-09-20-taking-a-catalog-was-not-the-hazard.md",
+      "key": "Rule 3 runs over `slate-server` and `slate-serverd` only.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-taking-a-catalog-was-not-the-hazard.md",
+      "key": "The 47 and the 59 were not re-measured after the fix.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-taking-a-catalog-was-not-the-hazard.md",
+      "key": "The criterion is a signature, and signatures are not semanti",
+      "verdict": "closed",
+      "by": "the guard widened to a converter that resolves tables itself"
+    },
+    {
+      "entry": "2026-09-20-the-caveat-was-already-true.md",
+      "key": "Four lines is still the reach, still calibrated rather than ",
+      "verdict": "deliberate",
+      "by": "this entry: the widening makes it apply in more places, not better justified"
+    },
+    {
+      "entry": "2026-09-20-the-caveat-was-already-true.md",
+      "key": "I did not re-audit the rest of `convert.rs`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-caveat-was-already-true.md",
+      "key": "The by-caller list is a claim about callers that nothing che",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-caveat-was-already-true.md",
+      "key": "Two crates, named explicitly.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
+      "key": "Finding 8 is still only read.",
+      "verdict": "closed",
+      "by": "finding 8 probed, schema disclosure to a caller with no grant"
+    },
+    {
+      "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
+      "key": "Nothing tests the daemon's `max_concurrent_requests` or `req",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
+      "key": "The `the_default_limits_are_not_unbounded` test does not che",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
+      "key": "The join and chain tests use one join type and one step coun",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
+      "key": "The three ceilings are the three that were found.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-client-printed-what-the-server-redacts.md",
+      "key": "It covers `repr`, not every way an identity can escape.",
+      "verdict": "deliberate",
+      "by": "this entry: the metadata is a caller's decision about their own credential"
+    },
+    {
+      "entry": "2026-09-20-the-client-printed-what-the-server-redacts.md",
+      "key": "It does not audit what the *client* logs.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing in slate calls logging, checked by grep"
+    },
+    {
+      "entry": "2026-09-20-the-client-printed-what-the-server-redacts.md",
+      "key": "The insecure channel default was accepted, not re-argued.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
+      "key": "I did not audit the remaining `self.table(..)` callers beyon",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
+      "key": "Nothing stops the next handler getting this wrong.",
+      "verdict": "closed",
+      "by": "the guard for the resolve-then-convert pattern"
+    },
+    {
+      "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
+      "key": "Table existence is still disclosed, unchanged and deliberate",
+      "verdict": "deliberate",
+      "by": "authorized_table: the reasoning is there and was not revisited"
+    },
+    {
+      "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
+      "key": "The TypeScript suite, the conformance runner and the e2e wer",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
+      "key": "`explain`'s early action is right for today's kernel.",
+      "verdict": "deliberate",
+      "by": "this entry: only the message differs, and it survived a mutation"
+    },
+    {
+      "entry": "2026-09-20-the-cost-the-measurement-pointed-at.md",
+      "key": "Not measured anywhere but this machine, this shape, this bat",
+      "verdict": "deliberate",
+      "by": "this entry: a deployed head node puts RPC and storage in front"
+    },
+    {
+      "entry": "2026-09-20-the-cost-the-measurement-pointed-at.md",
+      "key": "The redundant branch is still redundant.",
+      "verdict": "deliberate",
+      "by": "this entry: removing it would be a worse file the first time somebody adds a bulk mode"
+    },
+    {
+      "entry": "2026-09-20-the-cost-the-measurement-pointed-at.md",
+      "key": "The single-row paths still build a filter per call",
+      "verdict": "deliberate",
+      "by": "this entry: the fix is the transaction-scoped cache rejected above"
+    },
+    {
+      "entry": "2026-09-20-the-cost-the-measurement-pointed-at.md",
+      "key": "`update_where` and `delete_where` were not touched.",
+      "verdict": "deliberate",
+      "by": "this entry: they evaluate through the planner, not row by row"
+    },
+    {
+      "entry": "2026-09-20-the-counter-that-is-not-one-line.md",
+      "key": "It does not audit the rest of the note for the same fault.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-counter-that-is-not-one-line.md",
+      "key": "It does not change how `WriteObserver` is structured.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-counter-that-is-not-one-line.md",
+      "key": "It still does not build the counter",
+      "verdict": "deliberate",
+      "by": "this entry: it states the price so the decision can be made on it"
+    },
+    {
+      "entry": "2026-09-20-the-decisions-an-array-column-needs.md",
+      "key": "It does not check the tag space, and that is the one thing t",
+      "verdict": "closed",
+      "by": "the array encoding built on that design"
+    },
+    {
+      "entry": "2026-09-20-the-decisions-an-array-column-needs.md",
+      "key": "It settles nothing about the clients.",
+      "verdict": "closed",
+      "by": "an array on the wire and in three clients"
+    },
+    {
+      "entry": "2026-09-20-the-decisions-an-array-column-needs.md",
+      "key": "No code was written.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-decisions-an-array-column-needs.md",
+      "key": "Two decisions are left open on purpose",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "Equality and ordering only.",
+      "verdict": "deliberate",
+      "by": "this entry: decision 4, containment needs an index cardinality this store lacks"
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "No `#[derive(Record)]` support.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "No measurement.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing was timed"
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "Nothing outside the kernel can use an array.",
+      "verdict": "closed",
+      "by": "an array on the wire and in three clients"
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "That TOML message is a hand-written roster of types.",
+      "verdict": "closed",
+      "by": "the hand-maintained type rosters derived instead"
+    },
+    {
+      "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
+      "key": "The element check is O(elements) on every write, and that is",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
+      "key": "It does not make the harness dialect-agnostic.",
+      "verdict": "closed",
+      "by": "mutate.py reads pytest and go test runners"
+    },
+    {
+      "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
+      "key": "Nothing detects the general case of a stale cache.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
+      "key": "The `python` dialect reads this repository's own house style",
+      "verdict": "deliberate",
+      "by": "this entry: drift reports zero suites, which is refused rather than wrong"
+    },
+    {
+      "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
+      "key": "The contamination window was not measured.",
+      "verdict": "deliberate",
+      "by": "this entry: the fix makes the distance irrelevant"
+    },
+    {
+      "entry": "2026-09-20-the-frame-that-hid-two-findings.md",
+      "key": "It does not re-run the review under a wider frame.",
+      "verdict": "closed",
+      "by": "findings 2-8 re-examined for the reach-around class"
+    },
+    {
+      "entry": "2026-09-20-the-frame-that-hid-two-findings.md",
+      "key": "The \"probed and clean\" section was not re-read against the s",
+      "verdict": "closed",
+      "by": "the three areas the review had not examined"
+    },
+    {
+      "entry": "2026-09-20-the-frame-that-hid-two-findings.md",
+      "key": "Three of today's edits to this file were corrections of earl",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-gap-list-that-outlived-its-gaps.md",
+      "key": "It does not close any of the remaining gaps.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-gap-list-that-outlived-its-gaps.md",
+      "key": "Nothing stops this recurring.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-generator-refuses-an-array-once.md",
+      "key": "It does not generate anything for an array.",
+      "verdict": "closed",
+      "by": "an array column generated in three languages"
+    },
+    {
+      "entry": "2026-09-20-the-generator-refuses-an-array-once.md",
+      "key": "Nothing checks that the message stays true.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-generator-refuses-an-array-once.md",
+      "key": "The refusal list has one entry and no guard.",
+      "verdict": "closed",
+      "by": "the hand-maintained type rosters derived instead"
+    },
+    {
+      "entry": "2026-09-20-the-guard-i-did-not-need-to-build.md",
+      "key": "It does not check the other `validate_foreign_keys` rules.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-guard-i-did-not-need-to-build.md",
+      "key": "It does not make a second mutating method impossible.",
+      "verdict": "deliberate",
+      "by": "this entry: a much smaller residual risk than a third constructor elsewhere"
+    },
+    {
+      "entry": "2026-09-20-the-guard-i-did-not-need-to-build.md",
+      "key": "It says nothing about `SecurityCatalog`",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-guard-i-did-not-need-to-build.md",
+      "key": "Two entries were edited after the fact.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-handler-that-took-underscore-request.md",
+      "key": "It checks that a handler authenticates, not that it authenti",
+      "verdict": "deliberate",
+      "by": "this entry: rules 1 to 3 cover ordering for the table-resolving channels"
+    },
+    {
+      "entry": "2026-09-20-the-handler-that-took-underscore-request.md",
+      "key": "The lease protocol itself is still not attacked.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
+      "key": "Go and TypeScript never restore against a real server.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
+      "key": "The demo does not show it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
+      "key": "The undo role is an example, not a recommendation with evide",
+      "verdict": "deliberate",
+      "by": "this entry: a question this repository has not looked at, and the comment does not pretend to"
+    },
+    {
+      "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
+      "key": "There is still no way to ask whether a row is restorable.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-index-that-could-not-hold-it.md",
+      "key": "It does not measure the guard.",
+      "verdict": "deliberate",
+      "by": "this entry: the work cannot change an answer, which is not a performance claim"
+    },
+    {
+      "entry": "2026-09-20-the-index-that-could-not-hold-it.md",
+      "key": "It does not test a partial index on the `CASCADE` arm.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-index-that-could-not-hold-it.md",
+      "key": "The equivalent mutation stays equivalent.",
+      "verdict": "deliberate",
+      "by": "this entry: no observable difference, so a test would assert on the implementation"
+    },
+    {
+      "entry": "2026-09-20-the-lease-is-a-file-in-the-same-bucket.md",
+      "key": "It tests `decode`, not `current()`.",
+      "verdict": "deliberate",
+      "by": "this entry: the rest is covered by the existing integration suite"
+    },
+    {
+      "entry": "2026-09-20-the-lease-is-a-file-in-the-same-bucket.md",
+      "key": "The `holder` field is unbounded attacker-controlled text",
+      "verdict": "deliberate",
+      "by": "this entry: behind authentication, and a string to a client that asked"
+    },
+    {
+      "entry": "2026-09-20-the-number-that-was-not-there.md",
+      "key": "It does not measure the `RESTRICT` change",
+      "verdict": "deliberate",
+      "by": "this entry: on the error path rather than the hot one"
+    },
+    {
+      "entry": "2026-09-20-the-number-that-was-not-there.md",
+      "key": "It does not reopen the filter build.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-number-that-was-not-there.md",
+      "key": "One machine, one shape, one batch size.",
+      "verdict": "deliberate",
+      "by": "this entry: read as too small to see here, not a bound on every workload"
+    },
+    {
+      "entry": "2026-09-20-the-other-arm-over-the-same-index.md",
+      "key": "It does not assert which plan either arm chose.",
+      "verdict": "deliberate",
+      "by": "this entry: asserting a plan pins an implementation rather than the property"
+    },
+    {
+      "entry": "2026-09-20-the-other-arm-over-the-same-index.md",
+      "key": "It does not revisit `purge_deleted` against this schema.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-other-arm-over-the-same-index.md",
+      "key": "No composite or multi-column index",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
+      "key": "It does not audit the other refusals for the same shape.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
+      "key": "It does not re-examine findings 2 through 8 for the same cla",
+      "verdict": "closed",
+      "by": "findings 2-8 re-examined for the reach-around class"
+    },
+    {
+      "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
+      "key": "No test asserts the daemon's path is the safe one.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
+      "key": "The performance cost was not measured.",
+      "verdict": "deliberate",
+      "by": "this entry: tens of tables, once at startup"
+    },
+    {
+      "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
+      "key": "`RecordStore` still accepts any `Catalog`.",
+      "verdict": "closed",
+      "by": "the guard against a third Catalog constructor"
+    },
+    {
+      "entry": "2026-09-20-the-path-that-was-neither-subject-nor-control.md",
+      "key": "It checks eleven paths and fixes one.",
+      "verdict": "deliberate",
+      "by": "this entry: finding 4's question is a different one the table does not ask"
+    },
+    {
+      "entry": "2026-09-20-the-path-that-was-neither-subject-nor-control.md",
+      "key": "One hop, not a call graph.",
+      "verdict": "deliberate",
+      "by": "this entry: no such method today"
+    },
+    {
+      "entry": "2026-09-20-the-path-that-was-neither-subject-nor-control.md",
+      "key": "The criterion is the calls, not the effect.",
+      "verdict": "deliberate",
+      "by": "this entry: index maintenance lives in write_row_with, so it would be strange"
+    },
+    {
+      "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
+      "key": "It does not cover a predicate over a *column* rather than a ",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
+      "key": "It does not probe the same shape through the wire.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
+      "key": "`at_most` and `returning` are untouched.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
+      "key": "It covers `Debug`, and a secret can leave by other doors.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
+      "key": "The `access_key_id` is printed deliberately and I did not re",
+      "verdict": "deliberate",
+      "by": "this entry: AWS treats a key id as an identifier, useful in logs"
+    },
+    {
+      "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
+      "key": "Two types, asserted to be the whole surface by enumeration.",
+      "verdict": "deliberate",
+      "by": "this entry: a judgement about cost, argued against building a script"
+    },
+    {
+      "entry": "2026-09-20-the-terminator-was-already-there.md",
+      "key": "It does not check heterogeneous arrays.",
+      "verdict": "deliberate",
+      "by": "this entry: decision 1 makes an array homogeneous, so it is the decoder's problem"
+    },
+    {
+      "entry": "2026-09-20-the-terminator-was-already-there.md",
+      "key": "It does not check the integer encoding I used.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-terminator-was-already-there.md",
+      "key": "It is five cases, not a property test.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-terminator-was-already-there.md",
+      "key": "Still no code.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
+      "key": "Nothing probes the `explain` twins through a *transaction*.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
+      "key": "The client suites were not re-run.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
+      "key": "Three inputs, not four.",
+      "verdict": "deliberate",
+      "by": "this entry: three rules out take(1) and take(2)"
+    },
+    {
+      "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
+      "key": "`two_table_reader` is a fifth role in a shared fixture.",
+      "verdict": "deliberate",
+      "by": "this entry: additive, so no existing test sees it"
+    },
+    {
+      "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
+      "key": "No `MUST_DIFFER`-style pair in the e2e.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
+      "key": "No screenshot or visual regression.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
+      "key": "The `identity` switch does nothing useful on this tab.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
+      "key": "The panel is only exercised against whichever SDK is selecte",
+      "verdict": "deliberate",
+      "by": "this entry: the three-way comparison already happens in the conformance runner"
+    },
+    {
+      "entry": "2026-09-20-the-write-that-names-a-key.md",
+      "key": "A superuser restores without holding anything.",
+      "verdict": "deliberate",
+      "by": "this entry: a named-key write is not an accident; a scan can be"
+    },
+    {
+      "entry": "2026-09-20-the-write-that-names-a-key.md",
+      "key": "It does not revisit `delete_if_unchanged`.",
+      "verdict": "deliberate",
+      "by": "this entry: consistent under the naming-a-key rule, and nobody has asked"
+    },
+    {
+      "entry": "2026-09-20-the-write-that-names-a-key.md",
+      "key": "No client helper.",
+      "verdict": "closed",
+      "by": "2026-09-20-the-helper-that-can-be-used-now.md"
+    },
+    {
+      "entry": "2026-09-20-the-write-that-names-a-key.md",
+      "key": "Restoring can still fail, for a reason nothing warns about.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-the-write-that-names-a-key.md",
+      "key": "The three clients have no test for this.",
+      "verdict": "closed",
+      "by": "2026-09-20-three-sdks-agree-about-a-restore.md"
+    },
+    {
+      "entry": "2026-09-20-three-sdks-agree-about-a-restore.md",
+      "key": "It does not compare the *message* of the refusal in any deta",
+      "verdict": "deliberate",
+      "by": "this entry: the runner diffs whole answers, so the message rides along"
+    },
+    {
+      "entry": "2026-09-20-three-sdks-agree-about-a-restore.md",
+      "key": "No `MUST_DIFFER` pair.",
+      "verdict": "deliberate",
+      "by": "this entry: the runner's own three-way test for whether a pair is needed"
+    },
+    {
+      "entry": "2026-09-20-three-sdks-agree-about-a-restore.md",
+      "key": "The demo UI still has no restore.",
+      "verdict": "closed",
+      "by": "2026-09-20-the-undo-a-visitor-can-see.md"
+    },
+    {
+      "entry": "2026-09-20-three-sdks-agree-about-a-restore.md",
+      "key": "The deployed harness does not exercise it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
+      "key": "It does not cover an expression index",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
+      "key": "It does not test the same interaction on a `delete_where` or",
+      "verdict": "deliberate",
+      "by": "this entry: they retire rather than erase, so the filter is not on their path"
+    },
+    {
+      "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
+      "key": "It says nothing about SlateDB.",
+      "verdict": "deliberate",
+      "by": "tests/concurrency.rs covers the real backend's conflict detection"
+    },
+    {
+      "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
+      "key": "The row count in draft one was not wrong",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-what-shape-the-remaining-gaps-are.md",
+      "key": "No category was actually changed.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-what-shape-the-remaining-gaps-are.md",
+      "key": "The array-type row was left alone",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-what-shape-the-remaining-gaps-are.md",
+      "key": "This is the third pass over the same file today",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-where-an-undo-window-lives.md",
+      "key": "It does not implement any of the three.",
+      "verdict": "deliberate",
+      "by": "this entry: shape 1 exists; 2 and 3 are described with their costs"
+    },
+    {
+      "entry": "2026-09-20-where-an-undo-window-lives.md",
+      "key": "No audit trail, not even the cheap half.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-where-an-undo-window-lives.md",
+      "key": "The note is one person's reading of three options.",
+      "verdict": "deliberate",
+      "by": "this entry: a summary of this codebase's capabilities, not advice"
+    },
+    {
+      "entry": "2026-09-20-where-an-undo-window-lives.md",
+      "key": "The policy demonstration is a kernel test, not a supported f",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-where-else-does-this-live.md",
+      "key": "It does not examine side channels.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-where-else-does-this-live.md",
+      "key": "It is a reading, not a probe, for findings 3 and 4.",
+      "verdict": "closed",
+      "by": "findings 2-8 re-examined for the reach-around class"
+    },
+    {
+      "entry": "2026-09-20-where-else-does-this-live.md",
+      "key": "No new check enforces the table.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-where-else-does-this-live.md",
+      "key": "The `security.rs` correction was not mutation-tested.",
+      "verdict": "deliberate",
+      "by": "this entry: a doc comment, with no behaviour to break"
+    },
+    {
+      "entry": "2026-09-20-with-is-three-questions.md",
+      "key": "A CTE over a join is unexamined.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-with-is-three-questions.md",
+      "key": "It builds nothing.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-20-with-is-three-questions.md",
+      "key": "The inlining equivalence in §3 was reasoned, not executed.",
+      "verdict": "deliberate",
+      "by": "this entry: stated as such in the note"
+    },
+    {
+      "entry": "2026-09-20-with-is-three-questions.md",
+      "key": "The refusal's message is prose with no guard on its accuracy",
+      "verdict": "closed",
+      "by": "scripts/check_cited_docs.py, which resolves a cited document"
+    },
+    {
+      "entry": "2026-09-20-with-is-three-questions.md",
+      "key": "The three-way split is a claim about SQL, not a proof about ",
+      "verdict": "deliberate",
+      "by": "this entry: properties of the constructs, read off the type"
+    },
+    {
+      "entry": "2026-09-20-you-cannot-generate-a-catalog-from-a-hash.md",
+      "key": "It does not decide whether to persist the schema.",
+      "verdict": "closed",
+      "by": "the schema persisted, not only its fingerprint"
+    },
+    {
+      "entry": "2026-09-20-you-cannot-generate-a-catalog-from-a-hash.md",
+      "key": "It does not touch the other six open rows",
+      "verdict": "closed",
+      "by": "F1-F7, each row examined for its real shape"
+    },
+    {
+      "entry": "2026-09-20-you-cannot-generate-a-catalog-from-a-hash.md",
+      "key": "`--print-schema` was not examined as a partial answer.",
+      "verdict": "closed",
+      "by": "client codegen reads --print-schema"
+    },
+    {
+      "entry": "2026-09-21-a-demo-table-so-the-generated-array-code-runs.md",
+      "key": "No array column has a nullable variant in the demo.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-demo-table-so-the-generated-array-code-runs.md",
+      "key": "The deployed harness and the MinIO integration were not run",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-demo-table-so-the-generated-array-code-runs.md",
+      "key": "`posts` is not seeded and nothing reads it through the demo ",
+      "verdict": "deliberate",
+      "by": "rule R6: a decoder test using the server's rows passes when both are wrong"
+    },
+    {
+      "entry": "2026-09-21-a-generated-view-declaration.md",
+      "key": "A view over a view is still unreachable",
+      "verdict": "closed",
+      "by": "view over a view, decided and recorded"
+    },
+    {
+      "entry": "2026-09-21-a-generated-view-declaration.md",
+      "key": "No client library gained a `Table.as_view(name)`.",
+      "verdict": "closed",
+      "by": "Table.as_view, TableDef.AsView, asView in the three clients"
+    },
+    {
+      "entry": "2026-09-21-a-generated-view-declaration.md",
+      "key": "Nothing generates a row *type* for a view.",
+      "verdict": "deliberate",
+      "by": "this entry: the base table's row type already decodes a view's rows"
+    },
+    {
+      "entry": "2026-09-21-a-generated-view-declaration.md",
+      "key": "The Go `named` helper is unexported and generated.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-generated-view-declaration.md",
+      "key": "The web app's `VIEWS` is still hand-written.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
+      "key": "It does not bound a server example.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
+      "key": "It does not measure anything.",
+      "verdict": "deliberate",
+      "by": "this entry: the page says a smoke number is not comparable"
+    },
+    {
+      "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
+      "key": "The budget is two numbers nothing validates",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
+      "key": "`--smoke` at 500 rows proves execution, not correctness.",
+      "verdict": "deliberate",
+      "by": "this entry: the same caveat the runner has always carried"
+    },
+    {
+      "entry": "2026-09-21-a-killed-mutation-run-no-longer-leaves-the-tree-broken.md",
+      "key": "It does not recover a run killed between the write and the m",
+      "verdict": "deliberate",
+      "by": "this entry: the marker is written first, so there is no window"
+    },
+    {
+      "entry": "2026-09-21-a-killed-mutation-run-no-longer-leaves-the-tree-broken.md",
+      "key": "It only notices on the next `mutate.py` run.",
+      "verdict": "deliberate",
+      "by": "this entry: more than before and less than a hook"
+    },
+    {
+      "entry": "2026-09-21-a-killed-mutation-run-no-longer-leaves-the-tree-broken.md",
+      "key": "Nothing cleans up a marker for a file in a directory that st",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is guessing"
+    },
+    {
+      "entry": "2026-09-21-a-killed-mutation-run-no-longer-leaves-the-tree-broken.md",
+      "key": "The three states are checked by writing the marker by hand",
+      "verdict": "deliberate",
+      "by": "this entry: the bug was observed, so the shape is known rather than assumed"
+    },
+    {
+      "entry": "2026-09-21-a-planner-constant-that-said-the-question-was-open.md",
+      "key": "It does not change any constant.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-planner-constant-that-said-the-question-was-open.md",
+      "key": "It does not check citations in Markdown.",
+      "verdict": "deliberate",
+      "by": "the guard's own docstring"
+    },
+    {
+      "entry": "2026-09-21-a-planner-constant-that-said-the-question-was-open.md",
+      "key": "It does not check that a cited entry says what the citing co",
+      "verdict": "deliberate",
+      "by": "this entry: the same limit the docs/ half has always had"
+    },
+    {
+      "entry": "2026-09-21-a-planner-constant-that-said-the-question-was-open.md",
+      "key": "The eight existing citations were all correct.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
+      "key": "It does not establish which state a deployment is in.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
+      "key": "It does not fix the cost model.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
+      "key": "Nothing runs this example either.",
+      "verdict": "closed",
+      "by": "run_examples.sh builds and runs the slate-slatedb examples"
+    },
+    {
+      "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
+      "key": "One fixture, one row width, one scale.",
+      "verdict": "deliberate",
+      "by": "this entry: GET counts do not move with the optimisation level"
+    },
+    {
+      "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
+      "key": "The mechanism is inferred, not observed.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
+      "key": "It does not make the test machine-independent, and that is n",
+      "verdict": "closed",
+      "by": "batched sampling in the wasm timing test"
+    },
+    {
+      "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
+      "key": "Nothing re-runs the measurement automatically.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
+      "key": "The large pair's catch is inferred, not observed.",
+      "verdict": "deliberate",
+      "by": "this entry: the mutated reading is a measurement rather than a test failure"
+    },
+    {
+      "entry": "2026-09-21-a-tools-docstring-is-not-a-measurement-of-the-tool.md",
+      "key": "It does not check that a dialect's patterns are right",
+      "verdict": "deliberate",
+      "by": "this entry: the per-dialect cases guard that, each added after a real misreading"
+    },
+    {
+      "entry": "2026-09-21-a-tools-docstring-is-not-a-measurement-of-the-tool.md",
+      "key": "It does not give `mutate.py` a working directory.",
+      "verdict": "deliberate",
+      "by": "this entry: adding an option for a case that has not come up is how options accumulate"
+    },
+    {
+      "entry": "2026-09-21-a-tools-docstring-is-not-a-measurement-of-the-tool.md",
+      "key": "The conformance runner's `passed` count is cases minus findi",
+      "verdict": "closed",
+      "by": "the conformance runner's passed count derived rather than drifting"
+    },
+    {
+      "entry": "2026-09-21-a-tools-docstring-is-not-a-measurement-of-the-tool.md",
+      "key": "Two scratch harnesses were written and are not in the reposi",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
+      "key": "No window over a join or a chain.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
+      "key": "Nothing outside Rust can ask for a window.",
+      "verdict": "closed",
+      "by": "windows on the wire and in the three clients"
+    },
+    {
+      "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
+      "key": "The SQL front end refuses `OVER` rather than parsing it",
+      "verdict": "closed",
+      "by": "windows in the SQL front end"
+    },
+    {
+      "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
+      "key": "The window pass is single-threaded and holds decoded rows",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
+      "key": "`COUNT(DISTINCT … ) OVER (… ORDER BY …)` is refused, and the",
+      "verdict": "deliberate",
+      "by": "this entry: partial support is a trap; the alternative was refusing a form that works"
+    },
+    {
+      "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
+      "key": "It does not detect a cycle longer than one.",
+      "verdict": "deliberate",
+      "by": "this entry: the graph has depth one by construction"
+    },
+    {
+      "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
+      "key": "It does not refuse a view whose `FROM` is a view in a statem",
+      "verdict": "deliberate",
+      "by": "this entry: believed unreachable, a projection refusal would reject it anyway"
+    },
+    {
+      "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
+      "key": "Nothing checks that §5 and the code still agree.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-view-reported-as-a-typo.md",
+      "key": "Nothing asserts that `Head::table` stays the only producer o",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-view-reported-as-a-typo.md",
+      "key": "The demo still declares no view.",
+      "verdict": "closed",
+      "by": "2026-09-21-a-view-the-demo-can-show.md"
+    },
+    {
+      "entry": "2026-09-21-a-view-reported-as-a-typo.md",
+      "key": "The disclosure judgement is a judgement.",
+      "verdict": "deliberate",
+      "by": "this entry: table names are already enumerable; the fix is the NOT_FOUND split"
+    },
+    {
+      "entry": "2026-09-21-a-view-reported-as-a-typo.md",
+      "key": "`chain` and the relation steps are argued, not asserted.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-view-the-demo-can-show.md",
+      "key": "No client library gained a way to say \"this is a view\".",
+      "verdict": "closed",
+      "by": "Table.as_view, TableDef.AsView, asView in the three clients"
+    },
+    {
+      "entry": "2026-09-21-a-view-the-demo-can-show.md",
+      "key": "Nothing measures a view's cost.",
+      "verdict": "closed",
+      "by": "what a view costs, measured"
+    },
+    {
+      "entry": "2026-09-21-a-view-the-demo-can-show.md",
+      "key": "Nothing mutates the conformance cases or the e2e case.",
+      "verdict": "deliberate",
+      "by": "this entry: the MUST_DIFFER pairs are the structural substitute"
+    },
+    {
+      "entry": "2026-09-21-a-view-the-demo-can-show.md",
+      "key": "Still one view, still one base table, still no view over a v",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-view-the-demo-can-show.md",
+      "key": "The Go and Node adapters read through the view unchecked.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-view-you-can-declare-and-cannot-use.md",
+      "key": "No example configuration declares a view.",
+      "verdict": "closed",
+      "by": "examples/explorer/head.toml declares a view"
+    },
+    {
+      "entry": "2026-09-21-a-view-you-can-declare-and-cannot-use.md",
+      "key": "No read path uses a view.",
+      "verdict": "closed",
+      "by": "a read path that resolves a declared view"
+    },
+    {
+      "entry": "2026-09-21-a-view-you-can-declare-and-cannot-use.md",
+      "key": "The backstop is tested against a clause the named list alrea",
+      "verdict": "deliberate",
+      "by": "this entry: the closest thing available to a field that does not exist yet"
+    },
+    {
+      "entry": "2026-09-21-a-view-you-can-declare-and-cannot-use.md",
+      "key": "`compute` and `window` cannot be reached through the SQL fro",
+      "verdict": "deliberate",
+      "by": "this entry: an item in the select list is also a projection, which refuses first"
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "No client SDK has a window surface.",
+      "verdict": "closed",
+      "by": "a window surface in three languages"
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "No window over a join or a chain",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "The workbench still refuses `OVER`.",
+      "verdict": "closed",
+      "by": "windows in the SQL front end"
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "`Row.windowed` is not carried by `JoinedRow`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-window-surface-in-three-languages.md",
+      "key": "No client refuses anything locally",
+      "verdict": "deliberate",
+      "by": "this entry: the right trade for a query builder's mistake"
+    },
+    {
+      "entry": "2026-09-21-a-window-surface-in-three-languages.md",
+      "key": "Nothing measures the client-side cost of a window at all.",
+      "verdict": "deliberate",
+      "by": "this entry: one extra list per row, too small to have been worth the harness"
+    },
+    {
+      "entry": "2026-09-21-a-window-surface-in-three-languages.md",
+      "key": "The SQL front end still refuses `OVER` by name.",
+      "verdict": "closed",
+      "by": "windows in the SQL front end"
+    },
+    {
+      "entry": "2026-09-21-a-window-surface-in-three-languages.md",
+      "key": "The three clients are not compared against each other.",
+      "verdict": "closed",
+      "by": "a window case in the three-SDK conformance runner"
+    },
+    {
+      "entry": "2026-09-21-a-window-the-three-sdks-must-agree-about.md",
+      "key": "It does not check the answers are right.",
+      "verdict": "deliberate",
+      "by": "crates/slate-kernel/tests/windows.rs holds correctness"
+    },
+    {
+      "entry": "2026-09-21-a-window-the-three-sdks-must-agree-about.md",
+      "key": "No refusal case.",
+      "verdict": "deliberate",
+      "by": "this entry: each client's own suite asserts the refusals"
+    },
+    {
+      "entry": "2026-09-21-a-window-the-three-sdks-must-agree-about.md",
+      "key": "The demo's UI does not call it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-a-window-the-three-sdks-must-agree-about.md",
+      "key": "Windows on a join are not covered",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-an-append-is-not-a-retype-and-now-the-runner-can-tell.md",
+      "key": "It does not check that the stored schema and the stored fing",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-an-append-is-not-a-retype-and-now-the-runner-can-tell.md",
+      "key": "It does not reorder or insert.",
+      "verdict": "deliberate",
+      "by": "this entry: a column added anywhere but the end is a Column change at each ordinal"
+    },
+    {
+      "entry": "2026-09-21-an-append-is-not-a-retype-and-now-the-runner-can-tell.md",
+      "key": "It does not widen a column's type",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-an-append-is-not-a-retype-and-now-the-runner-can-tell.md",
+      "key": "The roadmap table on the site was stale in seven rows, not o",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-an-append-is-not-a-retype-and-now-the-runner-can-tell.md",
+      "key": "`Step::WidenSchema` has no integration coverage in `tests/pl",
+      "verdict": "deliberate",
+      "by": "this entry: one run cannot produce a store narrower than its catalog"
+    },
+    {
+      "entry": "2026-09-21-an-array-literal-in-a-predicate.md",
+      "key": "An element cannot be a placeholder or a column",
+      "verdict": "deliberate",
+      "by": "this entry: the refusal message is where to start if a use appears"
+    },
+    {
+      "entry": "2026-09-21-an-array-literal-in-a-predicate.md",
+      "key": "It does not generate an array column.",
+      "verdict": "closed",
+      "by": "an array column generated in three languages"
+    },
+    {
+      "entry": "2026-09-21-an-array-literal-in-a-predicate.md",
+      "key": "No `contains`.",
+      "verdict": "closed",
+      "by": "contains on the wire, and a text index"
+    },
+    {
+      "entry": "2026-09-21-an-array-literal-in-a-predicate.md",
+      "key": "Nothing writes an array through the TOML `default` beside a ",
+      "verdict": "deliberate",
+      "by": "this entry: a TOML default is TOML and a predicate is this language"
+    },
+    {
+      "entry": "2026-09-21-an-array-literal-in-a-predicate.md",
+      "key": "`slate-wasm`'s SQL front end has no array literal",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-check-sh-ran-the-same-command-as-ci-and-a-different-check.md",
+      "key": "It does not check `Cargo.toml`'s `[lints]`",
+      "verdict": "deliberate",
+      "by": "this entry: they apply to both runs equally"
+    },
+    {
+      "entry": "2026-09-21-check-sh-ran-the-same-command-as-ci-and-a-different-check.md",
+      "key": "It does not close the toolchain-version gap",
+      "verdict": "deliberate",
+      "by": "CLAUDE.md: a lint that does not exist here cannot be run here"
+    },
+    {
+      "entry": "2026-09-21-check-sh-ran-the-same-command-as-ci-and-a-different-check.md",
+      "key": "It does not make a green local run sufficient.",
+      "verdict": "deliberate",
+      "by": "check.sh's closing caveat lists the nine it cannot reach"
+    },
+    {
+      "entry": "2026-09-21-check-sh-ran-the-same-command-as-ci-and-a-different-check.md",
+      "key": "It reads only the workflow-level `env:` block.",
+      "verdict": "deliberate",
+      "by": "this entry: a job- or step-level env sits beside the command a reader compares"
+    },
+    {
+      "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
+      "key": "An element is never nullable",
+      "verdict": "deliberate",
+      "by": "Row::validate refuses a null element on every write"
+    },
+    {
+      "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
+      "key": "Nothing executes the generated Go or TypeScript array code.",
+      "verdict": "closed",
+      "by": "the generated Go and TypeScript array code, executed"
+    },
+    {
+      "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
+      "key": "The `element_type` key is read from `--print-schema` and ass",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
+      "key": "`UNSUPPORTED` is empty",
+      "verdict": "deliberate",
+      "by": "this entry: the schema layer refuses both at build time"
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "It does not know what a column means.",
+      "verdict": "deliberate",
+      "by": "this entry: the generator reads the type, and the type is all it reads"
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "No `slate-serverd --seed` integration.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "No client gets a factory",
+      "verdict": "deliberate",
+      "by": "seed.rs designs a superuser write path out of the wire"
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "Nothing derives a factory from `#[derive(Record)]`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "Plausible is a low bar.",
+      "verdict": "deliberate",
+      "by": "this entry: the next thing a user will want, and it is not built"
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "The `CHECK` refusal is not a solver.",
+      "verdict": "deliberate",
+      "by": "this entry: a CheckDef carries at most one column name and most carry none"
+    },
+    {
+      "entry": "2026-09-21-generate-the-rows-from-the-table.md",
+      "key": "The seed is not part of the fixture's identity.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-i-ran-the-checks-and-then-edited-the-docs.md",
+      "key": "It does not stop the next person doing the same thing.",
+      "verdict": "deliberate",
+      "by": "this entry: no check can catch an edit made after it ran"
+    },
+    {
+      "entry": "2026-09-21-one-entry-per-term.md",
+      "key": "Japanese and Chinese tokenize into one enormous term",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-one-entry-per-term.md",
+      "key": "No per-term statistic",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-one-entry-per-term.md",
+      "key": "No ranking, no phrase search, no prefix or fuzzy matching.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-one-entry-per-term.md",
+      "key": "Nothing outside the kernel knows about it.",
+      "verdict": "closed",
+      "by": "contains on the wire, in the three clients, and a text index"
+    },
+    {
+      "entry": "2026-09-21-one-entry-per-term.md",
+      "key": "The memory store cannot measure any of this.",
+      "verdict": "closed",
+      "by": "2026-09-21-the-inverted-index-walks-like-any-other.md"
+    },
+    {
+      "entry": "2026-09-21-one-read-path-knows-what-a-view-is.md",
+      "key": "No view over a view.",
+      "verdict": "closed",
+      "by": "view over a view, decided and refused in docs/views.md"
+    },
+    {
+      "entry": "2026-09-21-one-read-path-knows-what-a-view-is.md",
+      "key": "Nothing measures the cost.",
+      "verdict": "closed",
+      "by": "what a view costs, measured"
+    },
+    {
+      "entry": "2026-09-21-one-read-path-knows-what-a-view-is.md",
+      "key": "Only `query`.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-one-read-path-knows-what-a-view-is.md",
+      "key": "The Rust mutations cover the read path, not the registry's c",
+      "verdict": "deliberate",
+      "by": "this entry: lower::build has its own suite in slate-sql"
+    },
+    {
+      "entry": "2026-09-21-one-read-path-knows-what-a-view-is.md",
+      "key": "The demo declares no view.",
+      "verdict": "closed",
+      "by": "examples/explorer/head.toml declares a view"
+    },
+    {
+      "entry": "2026-09-21-one-runner-for-both-crates-of-benchmarks.md",
+      "key": "Nothing runs either crate at its recorded size.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-one-runner-for-both-crates-of-benchmarks.md",
+      "key": "`--smoke` numbers are meaningless",
+      "verdict": "deliberate",
+      "by": "this entry: the exit code is the whole check"
+    },
+    {
+      "entry": "2026-09-21-one-runner-for-both-crates-of-benchmarks.md",
+      "key": "`mutate.py`'s restore has a hole.",
+      "verdict": "closed",
+      "by": "mutate.py's marker file, which survives a kill"
+    },
+    {
+      "entry": "2026-09-21-over-in-the-query-editor.md",
+      "key": "A window over a join or a chain is refused, not missing-and-",
+      "verdict": "deliberate",
+      "by": "this entry: a join has no order, so what a window saw is the algorithm's choice"
+    },
+    {
+      "entry": "2026-09-21-over-in-the-query-editor.md",
+      "key": "No explicit frames.",
+      "verdict": "deliberate",
+      "by": "window.rs: the reason is eviction, not parsing"
+    },
+    {
+      "entry": "2026-09-21-over-in-the-query-editor.md",
+      "key": "Nothing measures what a window costs in the browser.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-over-in-the-query-editor.md",
+      "key": "The three SDKs and the SQL front end are still not compared ",
+      "verdict": "closed",
+      "by": "a window case in the three-SDK conformance runner"
+    },
+    {
+      "entry": "2026-09-21-over-in-the-query-editor.md",
+      "key": "`PARTITION BY` and the window's `ORDER BY` take a bare colum",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
+      "key": "It does not explain why the old figures were what they were.",
+      "verdict": "closed",
+      "by": "the block cache compiled out, which explained the old figure"
+    },
+    {
+      "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
+      "key": "No end-to-end confirmation that the new constant chooses bet",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
+      "key": "Nothing re-runs these benchmarks.",
+      "verdict": "closed",
+      "by": "run_examples.sh builds and runs them"
+    },
+    {
+      "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
+      "key": "The 18-requests-cold figure is not investigated.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
+      "key": "`SCAN_ROW_COST` is untouched and at least one measurement of",
+      "verdict": "closed",
+      "by": "the cold-full-scan disagreement resolved"
+    },
+    {
+      "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
+      "key": "It builds nothing",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
+      "key": "Nothing is sized.",
+      "verdict": "deliberate",
+      "by": "this entry: read once per table at startup"
+    },
+    {
+      "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
+      "key": "The disagreement case is a suggestion, not a design.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
+      "key": "The inner blob's own versioning is undecided.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
+      "key": "§4's premise is unconfirmed.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "No end-to-end `--plan` case.",
+      "verdict": "deliberate",
+      "by": "this entry: every store the harness makes already carries a schema"
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "No generator.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "No measurement.",
+      "verdict": "deliberate",
+      "by": "this entry: read once per table at startup"
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "Nothing recomputes the fingerprint from the stored schema.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "The V2 record is one-way per table.",
+      "verdict": "deliberate",
+      "by": "this entry: fail-closed and correct, belongs in a release note"
+    },
+    {
+      "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
+      "key": "The refusal's fallback branch still prints hashes, deliberat",
+      "verdict": "deliberate",
+      "by": "this entry: a restored backup has no expiry"
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "A nonsense section argument runs nothing and exits 0.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "Four of five is what was broken, and the fifth is unproven h",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "Nothing checks the CI job actually runs.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "Release mode is untested by this.",
+      "verdict": "deliberate",
+      "by": "this entry: the job builds debug because that is what is quick"
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "Smoke numbers are meaningless and the script says so, but no",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
+      "key": "The exit code is the whole assertion.",
+      "verdict": "closed",
+      "by": "run_examples.sh's floors, checked"
+    },
+    {
+      "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
+      "key": "Nothing checks the finding *messages*.",
+      "verdict": "deliberate",
+      "by": "this entry: the messages are read by people, not parsed"
+    },
+    {
+      "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
+      "key": "The runner's I/O is still untested.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
+      "key": "`EXPECTED_REFUSALS` is checked for staleness and not for tru",
+      "verdict": "deliberate",
+      "by": "this entry: a judgement the runner makes at run time"
+    },
+    {
+      "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
+      "key": "`tally` cannot see a case that never ran.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
+      "key": "A struck-through figure is skipped by the line.",
+      "verdict": "deliberate",
+      "by": "this entry: both corrected passages put them on separate lines"
+    },
+    {
+      "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
+      "key": "It does not fix the cost model.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
+      "key": "It reads `crates/slate-kernel` only.",
+      "verdict": "closed",
+      "by": "the cost-prose guard widened to docs/, README.md and site/"
+    },
+    {
+      "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
+      "key": "The blast radius is one crate.",
+      "verdict": "deliberate",
+      "by": "this entry: the oracle suites do not fit on this disk in one go"
+    },
+    {
+      "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
+      "key": "The guard reads two figures, not three.",
+      "verdict": "deliberate",
+      "by": "this entry: at 1.0 it is indistinguishable from the other ones in those sentences"
+    },
+    {
+      "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
+      "key": "It does not measure the cacheless build at any other shape o",
+      "verdict": "deliberate",
+      "by": "this entry: the cacheless build is not the one that ships"
+    },
+    {
+      "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
+      "key": "It does not re-derive the constant.",
+      "verdict": "closed",
+      "by": "POINT_READ_COST re-measured at release with the cache on"
+    },
+    {
+      "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
+      "key": "Nothing records which features a measurement was taken under",
+      "verdict": "closed",
+      "by": "the build stamp on a recorded measurement"
+    },
+    {
+      "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
+      "key": "The guard still reads Rust only.",
+      "verdict": "closed",
+      "by": "the cost-prose guard widened to docs/, README.md and site/"
+    },
+    {
+      "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
+      "key": "`cost_at_scale`'s header is now derived, and the other bench",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-demo-ui-is-a-subset-on-purpose.md",
+      "key": "Half closed, by #267.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-demo-ui-is-a-subset-on-purpose.md",
+      "key": "Narrowed, by #273.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-go-roster-was-the-one-i-did-not-register.md",
+      "key": "It does not check the other language rosters are complete",
+      "verdict": "deliberate",
+      "by": "this entry: each roster already checks itself and all three were green"
+    },
+    {
+      "entry": "2026-09-21-the-go-roster-was-the-one-i-did-not-register.md",
+      "key": "Nothing stops the next filtered run.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "It does not settle `POINT_READ_COST`.",
+      "verdict": "closed",
+      "by": "POINT_READ_COST re-measured at release with the cache on"
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "No arm is unhinted.",
+      "verdict": "deliberate",
+      "by": "this entry: §6 already measures which path is picked"
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "Nothing runs this file, either.",
+      "verdict": "closed",
+      "by": "run_examples.sh builds and runs the slate-slatedb examples"
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "The density finding is stated, not acted on.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "The tokenizer's cost is inside the numbers and not separated",
+      "verdict": "deliberate",
+      "by": "this entry: a few microseconds against reads that dominate"
+    },
+    {
+      "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
+      "key": "Two arms, two densities, one row width.",
+      "verdict": "deliberate",
+      "by": "this entry: the endpoints, not a curve"
+    },
+    {
+      "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
+      "key": "It assumes the policy is a `year >= NNNN` comparison.",
+      "verdict": "deliberate",
+      "by": "this entry: evaluating an arbitrary predicate would reimplement the kernel"
+    },
+    {
+      "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
+      "key": "It does not check the `9 of 11` claim against a running demo",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
+      "key": "It does not check the rest of *What the UI shows*.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
+      "key": "It reads the Go seed only.",
+      "verdict": "deliberate",
+      "by": "this entry: seed.go is the demo's single seeder and all adapters read one store"
+    },
+    {
+      "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
+      "key": "Nothing runs any of the four crates at its recorded size.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
+      "key": "The floor rule cannot tell an example from a helper.",
+      "verdict": "deliberate",
+      "by": "this entry: right for cargo, and nobody has put a shared module there"
+    },
+    {
+      "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
+      "key": "The new CI job is untested in CI.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
+      "key": "`FOREVER` is two spellings of one idea.",
+      "verdict": "deliberate",
+      "by": "this entry: the if-not-servers branch fails loudly on a wholesale rewrite"
+    },
+    {
+      "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
+      "key": "An endpoint named anywhere under `web/src` counts as called.",
+      "verdict": "deliberate",
+      "by": "this entry: deliberate, so the count is an upper bound on what a visitor reaches"
+    },
+    {
+      "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
+      "key": "It reads one adapter's routes.",
+      "verdict": "deliberate",
+      "by": "this entry: the conformance runner holds the three together and would fail first"
+    },
+    {
+      "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
+      "key": "Nothing checks the reasons.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
+      "key": "The README half of the original entry is still open.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
+      "key": "The `api.ts` comment is now right and still unguarded.",
+      "verdict": "deliberate",
+      "by": "this entry: what code review is for, with no mechanical answer here"
+    },
+    {
+      "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
+      "key": "Neither rule sees a value that was resolved elsewhere.",
+      "verdict": "deliberate",
+      "by": "this entry: both make adding a resolution a failure rather than a silence"
+    },
+    {
+      "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
+      "key": "Nothing checks the rosters' *reasons*.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
+      "key": "Rule 8's pattern is a spelling, and its never-fires guard is",
+      "verdict": "deliberate",
+      "by": "this entry: the same limitation rules 3, 5 and 6 carry, with no cheap fix"
+    },
+    {
+      "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
+      "key": "The fixture's ordering is now load-bearing and nothing check",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
+      "key": "The never-fires fixtures report more than they test.",
+      "verdict": "deliberate",
+      "by": "this entry: the cases still fail for their own reason"
+    },
+    {
+      "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
+      "key": "It does not measure a registry of more than one view.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
+      "key": "It does not measure a view at scale.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
+      "key": "Nothing runs the examples themselves, still.",
+      "verdict": "closed",
+      "by": "run_examples.sh builds and runs the examples"
+    },
+    {
+      "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
+      "key": "The 71 µs is not explained, only shown to be an artefact.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
       "key": "A record is written by the script, so a hand-run mutation st",
       "verdict": "deliberate",
@@ -1588,6 +4516,102 @@
     {
       "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
       "key": "Three of my own mutations this session were equivalent code",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
+      "key": "675 caveats remain untriaged",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
+      "key": "Eight closures, three verified in code.",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
+      "key": "Nothing checks a guard's account of itself.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
+      "key": "No mutation run.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
+      "key": "The three clients are not compared against each other.",
+      "verdict": "deliberate",
+      "by": "that entry: as_view never reaches the wire, so the runner has nothing to compare"
+    },
+    {
+      "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
+      "key": "The web app's `VIEWS` is still hand-written.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-the-caveat-tracker-counted-emphasis-as-caveats.md",
+      "key": "The 762 is still not audited.",
+      "verdict": "closed",
+      "by": "every caveat read and given a verdict in this session's triage"
+    },
+    {
+      "entry": "2026-09-24-the-caveat-tracker-counted-emphasis-as-caveats.md",
+      "key": "The struck-through case is tested by shape, not by history.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md",
+      "key": "723 caveats are untriaged",
+      "verdict": "moment",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md",
+      "key": "A verdict is a judgement, and nothing checks it.",
+      "verdict": "open",
+      "by": ""
+    },
+    {
+      "entry": "2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md",
+      "key": "It reads one section heading.",
+      "verdict": "deliberate",
+      "by": "that entry: the 762 are the ones that followed the template"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "502 caveats are still untriaged.",
+      "verdict": "closed",
+      "by": "this session's triage, which gave all 771 a verdict"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "A verdict is my reading, not a proof.",
+      "verdict": "deliberate",
+      "by": "that entry: the key orphans on a reword, which is the only safety net"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "No mutation run.",
+      "verdict": "closed",
+      "by": "five mutations through mutate.py, four caught and one equivalent"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "No test covers `moment` or the listing.",
+      "verdict": "closed",
+      "by": "four cases in scripts/test_caveats.py"
+    },
+    {
+      "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
+      "key": "`sql.rs:34` may be stale, and I did not confirm it.",
       "verdict": "open",
       "by": ""
     }

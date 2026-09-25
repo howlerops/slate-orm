@@ -62,8 +62,13 @@ def case(name: str, files: dict[str, str], counts: dict[str, int], problems: int
         got_counts, got_problems, orphans = guard.report(root)
         bad = []
         for verdict, want in counts.items():
-            if got_counts[verdict] != want:
-                bad.append(f"{verdict}: wanted {want}, got {got_counts[verdict]}")
+            # `.get`, not `[...]`: a verdict dropped from `VERDICTS` should
+            # fail this case, and indexing raises `KeyError` instead — which
+            # kills the run before it prints its tally, so `mutate.py` reads
+            # NOTHING RAN and cannot tell a caught mutation from a crashed
+            # suite. Found by mutating `VERDICTS` and watching exactly that.
+            if got_counts.get(verdict) != want:
+                bad.append(f"{verdict}: wanted {want}, got {got_counts.get(verdict)}")
         if len(got_problems) + len(orphans) != problems:
             bad.append(
                 f"problems: wanted {problems}, got "
@@ -90,8 +95,14 @@ def main() -> int:
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
-                [{"entry": "a.md", "key": "It does not do the first thing.",
-                  "verdict": "open", "by": ""}]
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
             ),
         },
         {"open": 1, "untriaged": 1},
@@ -104,8 +115,14 @@ def main() -> int:
         {
             "ledger/a.md": ENTRY.replace("the first thing", "the first thing, reworded"),
             "docs/caveat-status.json": status(
-                [{"entry": "a.md", "key": "It does not do the first thing.",
-                  "verdict": "open", "by": ""}]
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
             ),
         },
         {"untriaged": 2, "open": 0},
@@ -117,8 +134,14 @@ def main() -> int:
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
-                [{"entry": "a.md", "key": "It does not do the first thing.",
-                  "verdict": "closed", "by": ""}]
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "",
+                    }
+                ]
             ),
         },
         {"closed": 1},
@@ -130,8 +153,14 @@ def main() -> int:
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
-                [{"entry": "a.md", "key": "It does not do the first thing.",
-                  "verdict": "deliberate", "by": ""}]
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "deliberate",
+                        "by": "",
+                    }
+                ]
             ),
         },
         {"deliberate": 1},
@@ -143,8 +172,14 @@ def main() -> int:
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
-                [{"entry": "a.md", "key": "It does not do the first thing.",
-                  "verdict": "probably-fine", "by": "x"}]
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "probably-fine",
+                        "by": "x",
+                    }
+                ]
             ),
         },
         {"untriaged": 2},
@@ -229,6 +264,99 @@ def main() -> int:
         {"untriaged": 1},
         0,
     )
+
+    # The fifth verdict, and the listing. Both were added while triaging 677
+    # caveats and neither had a case until the entry that added them recorded
+    # that as a gap.
+    case(
+        "a moment is counted as its own verdict, not as open",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": guard.key("It does not do the first thing."),
+                        "verdict": "moment",
+                        "by": "",
+                    }
+                ]
+            ),
+        },
+        {"moment": 1, "open": 0, "untriaged": 1},
+        0,
+    )
+
+    # `moment` is the one verdict that needs no `by`: the entry's date is the
+    # context, and demanding a citation for "this was true that afternoon"
+    # would be theatre. `closed` and `deliberate` are still held to it.
+    case(
+        "a moment needs no `by`, where closed and deliberate do",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": guard.key("It does not do the first thing."),
+                        "verdict": "moment",
+                        "by": "",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": guard.key("It does not do the second thing."),
+                        "verdict": "closed",
+                        "by": "",
+                    },
+                ]
+            ),
+        },
+        {"moment": 1, "closed": 1},
+        1,
+    )
+
+    # A withdrawal is not a caveat. This shape — the word rather than the
+    # strikethrough — was the last of 772 the triage could not give a verdict.
+    case(
+        "a caveat withdrawn in prose is not counted",
+        {
+            "ledger/a.md": (
+                "# An entry\n\n## What this does not do\n\n"
+                "**Withdrawn, 2026-09-14.** Wrong on both halves, and here "
+                "is why it was wrong.\n\n"
+                "**It does not do the first thing.** A reason.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    # The listing is the answer to the question the counts only size.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        tree(
+            root,
+            {
+                "ledger/a.md": ENTRY,
+                "docs/caveat-status.json": status(
+                    [
+                        {
+                            "entry": "a.md",
+                            "key": guard.key("It does not do the first thing."),
+                            "verdict": "open",
+                            "by": "",
+                        }
+                    ]
+                ),
+            },
+        )
+        lines = guard.listing("open", root)
+        if lines == ["a.md: It does not do the first thing."]:
+            print("ok    the listing names the caveat, not just how many")
+            RESULTS.append(True)
+        else:
+            print(f"FAIL  the listing returned {lines!r}")
+            RESULTS.append(False)
 
     # The never-fires guard: a ledger that moved finds nothing and reads
     # exactly like a repository that never wrote a caveat down.
