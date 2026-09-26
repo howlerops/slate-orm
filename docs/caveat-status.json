@@ -1545,7 +1545,8 @@
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
       "key": "The Python client has no `ForeignKey` type and its checks ar",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
@@ -1594,7 +1595,8 @@
       "entry": "2026-09-19-one-command-for-the-checks.md",
       "key": "Multi-line `run: |` blocks are matched by their `name:`.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-one-command-for-the-checks.md",
@@ -1642,13 +1644,15 @@
       "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
       "key": "No relation is generated for the reverse direction as a name",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
       "key": "Python's helper is in the adapter, not the client.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
@@ -1666,13 +1670,15 @@
       "entry": "2026-09-19-the-third-and-second-decoders.md",
       "key": "Nothing validates against the published checks before sendin",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-the-third-stale-constructor.md",
       "key": "Nothing checks the other two clients for the same shape.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-the-third-stale-constructor.md",
@@ -1744,13 +1750,15 @@
       "entry": "2026-09-19-who-may-see-a-deleted-row.md",
       "key": "`purge_deleted` now needs two grants.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
       "key": "It covers one file.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "scripts/check_handlers.py SOURCES is crates/slate-server/src and crates/slate-serverd/src, walked with rglob(\"*.rs\"); its own comment records that reading service.rs alone missed a fingerprint::check in convert.rs, so this caveat bit within the hour and was fixed then",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
@@ -1780,7 +1788,8 @@
       "entry": "2026-09-20-a-child-that-is-still-a-child.md",
       "key": "It does not revisit whether `RESTRICT` should fire on the so",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-child-that-is-still-a-child.md",
@@ -1829,7 +1838,8 @@
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
       "key": "Nothing checks the *formatter* side in Go or TypeScript.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
@@ -5015,6 +5025,23 @@
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
       "key": "The other dialects are not audited for their own version of ",
       "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-batch-eight-and-a-caveat-that-bit-within-the-hour.md",
+      "key": "Five of the ten were checked by absence",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-batch-eight-and-a-caveat-that-bit-within-the-hour.md",
+      "key": "It does not go looking for more caveats closed in a source c",
+      "verdict": "deliberate",
+      "by": "this entry: the only handle is a phrase, and two text-based heuristics for finding stale caveats have already been measured and found useless (ledger/2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md)"
+    },
+    {
+      "entry": "2026-09-26-batch-eight-and-a-caveat-that-bit-within-the-hour.md",
+      "key": "The `run: |` count will drift again.",
+      "verdict": "deliberate",
+      "by": "this entry: a ledger entry is a dated record and is append-only; tying its numbers to the tree is what the tracker is for"
     },
     {
       "entry": "2026-09-26-batch-four-and-the-shape-that-keeps-recurring.md",
