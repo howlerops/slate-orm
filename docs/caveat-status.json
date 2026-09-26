@@ -5785,8 +5785,10 @@
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
       "key": "It still cannot tell whether the numbers in the table are th",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "scripts/check_mutation_claims.py — no count an entry states may exceed the total cases in the runs it cites, which found one wrong citation in the ledger. ledger/2026-09-26-six-caught-out-of-five.md",
+      "residual": "Totals, not the breakdown: an entry saying `eight cases, six caught, two survived` over a record of eight where seven were caught still passes.",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
@@ -6124,6 +6126,26 @@
       "key": "Sixteen reasons are sixteen sentences I wrote about my own c",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-six-caught-out-of-five.md",
+      "key": "Still nothing re-runs the committed specs.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-six-caught-out-of-five.md",
+      "key": "It compares totals, not the breakdown.",
+      "verdict": "deliberate",
+      "by": "that entry: catching the breakdown means parsing which noun each number belongs to, and the evidence tables here are prose in a fixed shape rather than a format - the shape that could be parsed is the one that would go stale. The clean-sweep rule already covers the direction that matters most",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-six-caught-out-of-five.md",
+      "key": "A number written some other way is unread.",
+      "verdict": "deliberate",
+      "by": "that entry: NUMBER is one through twelve and digits, and the alternative is a number parser that would read every measurement in every entry. Narrower than the phrasing risk deserves, and said so",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-26-the-exclusion-that-was-wrong-and-dead.md",

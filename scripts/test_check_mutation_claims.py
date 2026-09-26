@@ -21,12 +21,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_mutation_claims as guard
 
 #: A record with every case caught.
+#:
+#: Four cases rather than one, because the fixtures below say "Four mutations"
+#: and the arithmetic rule compares that number with the cases the cited run
+#: scored. A one-case record under a four-mutation claim is the defect that
+#: rule is for, and a fixture should not be an instance of a rule it is not
+#: about.
 CLEAN = {
     "at": "2026-09-23T10:00:00+00:00",
     "file": "scripts/x.py",
     "command": ["python3", "scripts/test_x.py"],
     "outcome": "clean",
-    "cases": [{"name": "a case", "verdict": "caught", "caught_by": ["a test"]}],
+    "cases": [
+        {"name": f"case {n}", "verdict": "caught", "caught_by": ["a test"]}
+        for n in range(4)
+    ],
 }
 #: The same run with one survivor, which is the discrepancy that matters.
 WITH_SURVIVOR = {
@@ -174,7 +183,7 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
     (
         "claiming every mutation was caught beside a survivor is refused",
         "2026-09-23-a-slug.md",
-        "Five mutations, all caught. See `ledger/mutations/r.json`.\n",
+        "Two mutations, all caught. See `ledger/mutations/r.json`.\n",
         {"r.json": WITH_SURVIVOR},
         1,
         1,
@@ -182,15 +191,68 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
     (
         "an expected survivor still contradicts `all caught`",
         "2026-09-23-a-slug.md",
-        "Five mutations, all caught. See `ledger/mutations/r.json`.\n",
+        "One mutation, all caught. See `ledger/mutations/r.json`.\n",
         {"r.json": EXPECTED_SURVIVOR},
         1,
         1,
     ),
+    # The arithmetic rule. An entry claiming more than the cited runs scored is
+    # describing a run it did not name, which is the residual the previous
+    # entry left: *"An entry claiming 'six caught' over a record with four
+    # cases passes."* It did, and one entry in this ledger was doing exactly
+    # that.
+    (
+        "a count larger than the cited run's cases is refused",
+        "2026-09-23-a-slug.md",
+        "Nine mutations. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        1,
+    ),
+    (
+        "and it is refused when the number follows the noun, too",
+        "2026-09-23-a-slug.md",
+        "Mutations, nine run. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        1,
+    ),
+    (
+        # One-sided on purpose: a session may run twelve and write up three,
+        # and often should.
+        "a count smaller than the cited run's cases is fine",
+        "2026-09-23-a-slug.md",
+        "Two mutations. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        0,
+    ),
+    (
+        "two cited runs are added together before the comparison",
+        "2026-09-23-a-slug.md",
+        "Eight mutations. See `ledger/mutations/r.json` and "
+        "`ledger/mutations/s.json`.\n",
+        {"r.json": CLEAN, "s.json": CLEAN},
+        1,
+        0,
+    ),
+    (
+        # Measured: applied to the whole entry this shape reported nine
+        # entries here and five were test-suite counts — "131 cases, the
+        # three SDKs agree", "`test_caveats.py` 29 → 35 cases". "Case" means
+        # both things in this ledger, and only the sentence tells them apart.
+        "a test-suite case count on its own line is not a mutation count",
+        "2026-09-23-a-slug.md",
+        "Four mutations. See `ledger/mutations/r.json`.\n\n"
+        "**Suites:** `test_x.py` 29 cases, all passing.\n",
+        {"r.json": CLEAN},
+        1,
+        0,
+    ),
     (
         "an entry that does not claim a clean sweep is fine beside a survivor",
         "2026-09-23-a-slug.md",
-        "Five mutations; one survived, and is recorded as such. See `ledger/mutations/r.json`.\n",
+        "Two mutations; one survived, and is recorded as such. See `ledger/mutations/r.json`.\n",
         {"r.json": WITH_SURVIVOR},
         1,
         0,
@@ -221,7 +283,7 @@ def main() -> int:
         ledger = root / "ledger"
         ledger.mkdir()
         (ledger / "2026-09-23-a.md").write_text(
-            "Four mutations, all caught. See `ledger/mutations/r.json`.\n"
+            "Two mutations, all caught. See `ledger/mutations/r.json`.\n"
         )
         held = root / "mutations"
         held.mkdir()
@@ -235,6 +297,36 @@ def main() -> int:
     ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a malformed record does not crash the guard")
+    if not ok:
+        print(f"        got {wrong}")
+
+    # And it adds nothing to the total. A mutation making an unreadable record
+    # count as many cases survived until this case existed, because with a
+    # malformed record as the *only* citation the arithmetic is skipped either
+    # way — `ran` is zero and the rule does not run. It takes a second, valid
+    # record for the difference to be observable, which is the shape of every
+    # equivalent-looking mutation that turns out not to be one.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        ledger = root / "ledger"
+        ledger.mkdir()
+        (ledger / "2026-09-23-a.md").write_text(
+            "Nine mutations. See `ledger/mutations/r.json` and "
+            "`ledger/mutations/broken.json`.\n"
+        )
+        held = root / "mutations"
+        held.mkdir()
+        (held / "r.json").write_text(json.dumps(CLEAN))
+        (held / "broken.json").write_text("{not json at all")
+        try:
+            _, wrong = guard.check(ledger, held)
+            ok = any("says `Nine` of something" in one for one in wrong)
+        except Exception as raised:  # noqa: BLE001 - a crash is this case failing
+            ok = False
+            wrong = [f"raised {raised!r}"]
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  an unreadable record adds nothing to the total")
     if not ok:
         print(f"        got {wrong}")
 

@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-26T23:55:00+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "3c26599",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a record that cannot be read counts as many cases",
+      "old": "        return 0\n    return len(held.get(\"cases\", []))",
+      "new": "        return 99\n    return len(held.get(\"cases\", []))",
+      "verdict": "caught",
+      "caught_by": [
+        "an unreadable record adds nothing to the total"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

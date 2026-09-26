@@ -111,6 +111,66 @@ CLEAN_CLAIM = re.compile(
 )
 
 
+#: Every number an entry states about mutations, in the three shapes `COUNT`
+#: recognises a claim by.
+#:
+#: Used for the arithmetic rule: a count larger than the number of cases in the
+#: runs the entry cites is a count describing a run it did not name. One-sided
+#: on purpose — you cannot catch more mutations than you ran, and you can
+#: certainly run more than you write up, so only the upper bound is a finding.
+#: The caveat this closes put it exactly that way: *"An entry claiming 'six
+#: caught' over a record with four cases passes."*
+STATED = re.compile(
+    rf"\b({NUMBER})\s+(?:scored\s+)?(?:mutations?|cases?)\b"
+    rf"|\bmutations?\b[^.\n]{{0,30}}?\b({NUMBER})\s+(?:run|caught|survived)\b",
+    re.IGNORECASE,
+)
+
+#: The words `NUMBER` allows, as values.
+WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+
+
+#: A line this repository writes a mutation count on.
+#:
+#: Line-scoped, and the scoping is measured rather than cautious. Applied to
+#: the whole entry, the `N cases` shape reported nine entries and five were
+#: test-suite counts: "131 cases, the three SDKs agree", "`test_caveats.py`
+#: 29 → 35 cases", "21 cases over written trees". "Case" means a mutation case
+#: and a test case in the same file, and only the sentence tells them apart.
+#: Every real claim here is written on a line that says so — `**Mutations.**
+#: Two runs, nine cases` — because the evidence section names what it is
+#: counting before it counts.
+ABOUT = re.compile(r"mutation|ledger/mutations/", re.IGNORECASE)
+
+
+def stated(text: str) -> list[tuple[str, int]]:
+    """Every mutation count an entry states, as (as written, value)."""
+    found = []
+    lines = [line for line in text.splitlines() if ABOUT.search(line)]
+    for match in STATED.finditer("\n".join(lines)):
+        written = match.group(1) or match.group(2)
+        value = WORDS.get(written.lower())
+        if value is None:
+            try:
+                value = int(written)
+            except ValueError:
+                continue
+        found.append((written, value))
+    return found
+
+
+def cases(record: Path) -> int:
+    """How many cases the record scored, or 0 if it could not be read."""
+    try:
+        held = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    return len(held.get("cases", []))
+
+
 def entries(ledger: Path = LEDGER) -> list[Path]:
     """Dated entries, not `README.md`, `TEMPLATE.md` or the records."""
     return [
@@ -160,6 +220,7 @@ def check(ledger: Path = LEDGER, records: Path = RECORDS) -> tuple[int, list[str
             )
             continue
         claims_clean = bool(CLEAN_CLAIM.search(text))
+        ran = 0
         for name in cited:
             record = records / name
             if not record.is_file():
@@ -170,6 +231,7 @@ def check(ledger: Path = LEDGER, records: Path = RECORDS) -> tuple[int, list[str
                     f"missing means the wrong name was written."
                 )
                 continue
+            ran += cases(record)
             left = survivors(record)
             if claims_clean and left:
                 wrong.append(
@@ -179,6 +241,20 @@ def check(ledger: Path = LEDGER, records: Path = RECORDS) -> tuple[int, list[str
                     f"  Either the entry is describing a different run, or it "
                     f"is describing this one wrongly."
                 )
+        # The arithmetic. Only the upper bound: an entry may run twelve and
+        # write up three, and often should. It may not catch twelve out of
+        # three.
+        if ran:
+            for written, value in stated(text):
+                if value > ran:
+                    wrong.append(
+                        f"ledger/{path.name} says `{written}` of something the "
+                        f"cited run(s) scored {ran} of.\n"
+                        f"  Either a run is missing from the citations, or the "
+                        f"number was transcribed from a run that is not there.\n"
+                        f"  Cited: {', '.join(cited)}."
+                    )
+                    break
     return seen, wrong
 
 

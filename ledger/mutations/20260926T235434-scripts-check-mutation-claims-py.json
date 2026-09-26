@@ -1,0 +1,97 @@
+{
+  "at": "2026-09-26T23:54:34+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "3c26599",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the arithmetic rule never reports",
+      "old": "                if value > ran:",
+      "new": "                if value > ran and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a count larger than the cited run's cases is refused",
+        "and it is refused when the number follows the noun, too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the arithmetic is the wrong way round",
+      "old": "                if value > ran:",
+      "new": "                if value < ran:",
+      "verdict": "caught",
+      "caught_by": [
+        "a count larger than the cited run's cases is refused",
+        "and it is refused when the number follows the noun, too",
+        "a count smaller than the cited run's cases is fine",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only the first cited run is counted",
+      "old": "            ran += cases(record)",
+      "new": "            ran = cases(record)",
+      "verdict": "caught",
+      "caught_by": [
+        "two cited runs are added together before the comparison",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the count is scoped to the whole entry, not the mutation lines",
+      "old": "    lines = [line for line in text.splitlines() if ABOUT.search(line)]",
+      "new": "    lines = text.splitlines()",
+      "verdict": "caught",
+      "caught_by": [
+        "a test-suite case count on its own line is not a mutation count",
+        "the real ledger's claims are all cited"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a number after the noun is not read",
+      "old": "    rf\"|\\bmutations?\\b[^.\\n]{{0,30}}?\\b({NUMBER})\\s+(?:run|caught|survived)\\b\",",
+      "new": "    rf\"|\\bmutations?\\b[^.\\n]{{0,30}}?\\b({NUMBER})\\s+(?:runx|caughtx|survivedx)\\b\",",
+      "verdict": "caught",
+      "caught_by": [
+        "and it is refused when the number follows the noun, too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a spelled-out number reads as nothing",
+      "old": "    \"seven\": 7, \"eight\": 8, \"nine\": 9, \"ten\": 10, \"eleven\": 11, \"twelve\": 12,",
+      "new": "    \"seven\": 7, \"eight\": 8, \"ten\": 10, \"eleven\": 11, \"twelve\": 12,",
+      "verdict": "caught",
+      "caught_by": [
+        "a count larger than the cited run's cases is refused",
+        "and it is refused when the number follows the noun, too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a record that cannot be read counts as many cases",
+      "old": "        return 0\n    return len(held.get(\"cases\", []))",
+      "new": "        return 99\n    return len(held.get(\"cases\", []))",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
