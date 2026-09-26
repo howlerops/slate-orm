@@ -186,11 +186,16 @@ def main() -> int:
             ),
         },
         {"narrowed": 1},
-        1,
+        # Two problems, not one: no `by` and no `residual`. A narrowed caveat
+        # has to say both halves and each is its own field.
+        2,
     )
 
     case(
-        "narrowed with a `by` is accepted and counted as its own thing",
+        "narrowed with a `by` and no `residual` is refused",
+        # The hole `residual` was added for: a `by` that says what closed and
+        # forgets what is left reads as a closure with a hedge, and nothing
+        # could count what the narrowed caveats still owe.
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
@@ -199,12 +204,120 @@ def main() -> int:
                         "entry": "a.md",
                         "key": "It does not do the first thing.",
                         "verdict": "narrowed",
-                        "by": "half of it shipped in b.md; the other half is open",
+                        "by": "half of it shipped in b.md",
                     }
                 ]
             ),
         },
         {"narrowed": 1},
+        1,
+    )
+
+    case(
+        "narrowed with a `by` and a `residual` is accepted and counted as its own thing",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                        "by": "half of it shipped in b.md",
+                        "residual": "the other half is still open",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        0,
+    )
+
+    # `checked` is a claim about the tree and `--unread` reads it, so a settled
+    # verdict wearing one is a stamp nothing will ever look at again pretending
+    # to be one that will. The reverse sweep put `checked` on 316 `deliberate`
+    # rows before this told it not to.
+    case(
+        "a settled verdict carrying `checked` rather than `reviewed` is refused",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "deliberate",
+                        "by": "the entry argues it",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"deliberate": 1},
+        1,
+    )
+
+    # The other side of the same rule, and the one a mutation found missing:
+    # `checked` is exactly right on an `open` row — it is what `--unread`
+    # reads — so a rule written as "no row may carry `checked`" would pass
+    # every test above and break the only field that drives a worklist.
+    case(
+        "an open caveat carrying `checked` is accepted",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"open": 1},
+        0,
+    )
+
+    case(
+        "a narrowed caveat carrying `checked` is accepted",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                        "by": "half shipped",
+                        "residual": "half open",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        0,
+    )
+
+    case(
+        "a settled verdict carrying `reviewed` is accepted",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "deliberate",
+                        "by": "the entry argues it",
+                        "reviewed": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"deliberate": 1},
         0,
     )
 
@@ -431,7 +544,7 @@ def main() -> int:
     # is not done — which is the failure `narrowed` was invented to avoid,
     # reappearing one layer down.
     half = [
-        dict(both_open[0], verdict="narrowed", by="half shipped; half open"),
+        dict(both_open[0], verdict="narrowed", by="half shipped", residual="half open"),
         both_open[1],
     ]
     unread_case("a narrowed caveat is re-read like an open one", half, 30, 2)
@@ -495,6 +608,42 @@ def main() -> int:
             RESULTS.append(False)
         else:
             print("ok    a tree with no caveats at all is refused")
+            RESULTS.append(True)
+
+    # `--residual` is the reason `residual` is a field rather than prose in
+    # `by`: a narrowed caveat is partly work, and this is what counts it.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        tree(
+            root,
+            {
+                "ledger/a.md": ENTRY,
+                "docs/caveat-status.json": status(
+                    [
+                        {
+                            "entry": "a.md",
+                            "key": "It does not do the first thing.",
+                            "verdict": "narrowed",
+                            "by": "half shipped in b.md",
+                            "residual": "the other half is still open",
+                        },
+                        {
+                            "entry": "a.md",
+                            "key": "It does not do the second thing either.",
+                            "verdict": "open",
+                        },
+                    ]
+                ),
+            },
+        )
+        lines = guard.residuals(root)
+        want = ["a.md: the other half is still open"]
+        if lines != want:
+            print(f"FAIL  --residual lists what each narrowed caveat owes\n"
+                  f"        got {lines}, want {want}")
+            RESULTS.append(False)
+        else:
+            print("ok    --residual lists what each narrowed caveat owes")
             RESULTS.append(True)
 
     print(f"\n{sum(RESULTS)} passed, {len(RESULTS) - sum(RESULTS)} failed")

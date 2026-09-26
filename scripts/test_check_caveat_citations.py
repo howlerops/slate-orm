@@ -73,6 +73,38 @@ def malformed(name: str) -> bool:
     return True
 
 
+def names(name: str, by: str, want: list[str]) -> bool:
+    got = guard.cited_names(by)
+    if got != want:
+        print(f"FAIL  {name}\n        {by!r}\n        got {got}, want {want}")
+        return False
+    print(f"ok    {name}")
+    return True
+
+
+def name_case(name: str, verdicts, files: dict[str, str], failing: set[str]) -> bool:
+    """The name half, over a written tree: what defines a name and what does not.
+
+    Its own writer rather than `tree()`: that one takes bare paths and writes
+    `x` into each, which is all the path half needs and defines no function at
+    all. The first draft passed a dict to it and every name case failed for
+    want of a body.
+    """
+    root = tree(verdicts)
+    for path, body in files.items():
+        full = root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(body, encoding="utf-8")
+    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    unexpected = [f for f in failed if not any(frag in f for frag in failing)]
+    unseen = [frag for frag in failing if not any(frag in f for f in failed)]
+    if unexpected or unseen:
+        print(f"FAIL  {name}\n        got {failed}, wanted {sorted(failing)}")
+        return False
+    print(f"ok    {name}")
+    return True
+
+
 def parses(name: str, by: str, want: list[str]) -> bool:
     got = guard.citations(by)
     if got != want:
@@ -122,13 +154,13 @@ def main() -> int:
             # whose every citation resolves.
             [{"entry": "a.md", "key": "k", "verdict": "deliberate", "by": "this entry"}],
             (),
-            {"cites a path at all"},
+            {"cites a path or a name at all"},
         ),
         case(
             "an empty verdict list is reported rather than passing empty",
             [],
             (),
-            {"cites a path at all"},
+            {"cites a path or a name at all"},
         ),
         case(
             "a verdict with no by at all does not crash",
@@ -184,6 +216,56 @@ def main() -> int:
                "fixed in check_cost_prose.py", []),
         parses("two different paths are both found, in order",
                "crates/a.rs then ledger/b.md", ["crates/a.rs", "ledger/b.md"]),
+        names("a five-word test name in backticks is a citation",
+              "caught by `a_join_groups_by_more_than_one_key`",
+              ["a_join_groups_by_more_than_one_key"]),
+        names("a short identifier is not a citation",
+              # `read_text`, `max_groups` and every other two- or three-word
+              # identifier would flood the check and teach people to ignore it.
+              "reads `max_groups` from `read_text`", []),
+        names("a name outside backticks is not a citation",
+              "caught by a_join_groups_by_more_than_one_key", []),
+        names("the same name twice is one citation",
+              "`a_test_name_with_five_words` and `a_test_name_with_five_words`",
+              ["a_test_name_with_five_words"]),
+        name_case(
+            "a cited name that nothing defines is reported",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "caught by `a_test_that_was_renamed_away`"}],
+            {"src/x.rs": "fn something_else_entirely_here() {}\n"},
+            {"every cited test or function name is defined somewhere"},
+        ),
+        name_case(
+            "a cited name a Rust fn defines passes",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "caught by `a_test_that_is_really_there`"}],
+            {"src/x.rs": "fn a_test_that_is_really_there() {}\n"},
+            set(),
+        ),
+        name_case(
+            "a cited name a Go func defines passes",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "caught by `a_test_that_is_really_there`"}],
+            {"src/x.go": "func a_test_that_is_really_there() {}\n"},
+            set(),
+        ),
+        name_case(
+            "a file whose every by is prose is reported, not passed",
+            # The never-fires half: no name cited at all means the pattern
+            # stopped matching or the file stopped citing, and both want a
+            # person.
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "the caveat itself: the alternative is guessing"}],
+            {"src/x.rs": "fn something() {}\n"},
+            {"cites a path or a name at all"},
+        ),
+        name_case(
+            "a vendored tree does not define a name",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "caught by `a_test_that_is_really_there`"}],
+            {"node_modules/p/x.py": "def a_test_that_is_really_there(): pass\n"},
+            {"every cited test or function name is defined somewhere"},
+        ),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

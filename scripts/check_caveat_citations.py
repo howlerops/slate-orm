@@ -66,6 +66,13 @@ STATUS = ROOT / "docs" / "caveat-status.json"
 #: same narrowness `check_cited_docs.py` uses, and for the same reason: a
 #: pattern wide enough to catch every careless reference also catches every
 #: ordinary noun.
+#: Vendored or generated trees, skipped when collecting defined names. The
+#: same list `check_cited_docs.py` carries, for the same reason: a megabyte of
+#: `node_modules` would make almost any name look defined.
+SKIP_TREES = frozenset(
+    {"node_modules", "dist", "dist-test", "target", ".git", "_proto", "__pycache__"}
+)
+
 TREES = (
     "ledger",
     "crates",
@@ -90,6 +97,48 @@ TREES = (
 CITATION = re.compile(
     r"(?<![\w/.\-])((?:" + "|".join(re.escape(t) for t in TREES) + r")/[\w./\-]*[\w/])"
 )
+
+
+#: A function or test name a `by` cites, in backticks.
+#:
+#: The same shape `scripts/check_cited_tests.py` reads, and the same threshold:
+#: five or more underscore-separated words. Below that the pattern matches
+#: ordinary identifiers — `read_text`, `max_groups` — and a citation guard that
+#: reports a field name is one people learn to ignore.
+#:
+#: `ledger/2026-09-26-the-citation-nobody-could-follow.md` recorded this as the
+#: half not done: "Nothing checks a `by` that names a test, a function or a
+#: commit. Several name `security_probe.rs`'s test functions … and only the
+#: file half of those is followed."
+NAMED = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+){4,})`")
+
+#: Where a cited name may be defined, per language.
+DEFINES = (
+    ("*.rs", re.compile(r"(?:async\s+)?fn\s+([a-z_][a-z0-9_]*)")),
+    ("*.py", re.compile(r"def\s+([a-z_][a-z0-9_]*)")),
+    ("*.go", re.compile(r"func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)")),
+    ("*.ts", re.compile(r"(?:function|const)\s+([A-Za-z_][A-Za-z0-9_]*)")),
+)
+
+
+def defined(root: Path) -> set[str]:
+    """Every function and test name this repository defines."""
+    names: set[str] = set()
+    for glob, pattern in DEFINES:
+        for path in root.rglob(glob):
+            if SKIP_TREES & set(path.relative_to(root).parts):
+                continue
+            names.update(pattern.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return names
+
+
+def cited_names(by: str) -> list[str]:
+    """Every function-shaped name a `by` cites, deduplicated, in order."""
+    seen: list[str] = []
+    for hit in NAMED.findall(by):
+        if hit not in seen:
+            seen.append(hit)
+    return seen
 
 
 def citations(by: str) -> list[str]:
@@ -132,12 +181,34 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
     # The never-fires guard every check in this directory carries. A renamed
     # field, or a file whose verdicts all cite prose, finds nothing and reads
     # exactly like a file whose every citation resolves.
+    # The name half. Collected first so the never-fires guard below can cover
+    # both kinds of citation with one check.
+    wanted: list[tuple[str, str]] = []
+    for verdict in verdicts:
+        for name in cited_names(verdict.get("by") or ""):
+            wanted.append((verdict.get("entry", "?"), name))
+
+    # One never-fires guard over both halves. A renamed field, or a file whose
+    # every `by` became prose, finds nothing of either kind and reads exactly
+    # like a repository whose every citation resolves.
     record(
-        "some verdict cites a path at all",
-        counted > 0,
-        f"{counted} citations across {len(verdicts)} verdicts",
+        "some verdict cites a path or a name at all",
+        counted > 0 or bool(wanted),
+        f"{counted} paths and {len(wanted)} names across {len(verdicts)} verdicts",
     )
     record("every cited path resolves", not dead, "\n      ".join(dead))
+
+    # `defined()` walks the workspace, which is seconds of I/O, so it runs only
+    # when something cited a name.
+    missing = []
+    if wanted:
+        known = defined(root)
+        missing = [f"{entry}: `{name}`" for entry, name in wanted if name not in known]
+    record(
+        "every cited test or function name is defined somewhere",
+        not missing,
+        "\n      ".join(missing),
+    )
     return out
 
 
@@ -153,7 +224,7 @@ def main() -> int:
     if failed:
         print(f"{failed} failed")
         return 1
-    print("every path a caveat verdict cites can be opened")
+    print("every path, test and function name a caveat verdict cites is there")
     return 0
 
 

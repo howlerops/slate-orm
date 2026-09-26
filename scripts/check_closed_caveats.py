@@ -91,6 +91,9 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "check-sh-four": ("python-rest-ruff", "scripts/check.sh"),
  "checked-field": ("checked", "scripts/caveats.py"),
  "cited-docs": (None, "scripts/check_cited_docs.py"),
+ "residual-field": ("RESIDUAL", "scripts/caveats.py"),
+ "reviewed-field": ("REVIEWED", "scripts/caveats.py"),
+ "exempt-because": ("EXEMPT_BECAUSE", "scripts/check_closed_caveats.py"),
  "conformance-restore-live": ("api/restore", "examples/explorer/conformance/conformance.py"),
  "demo-restore-panel": ("restore-run", "examples/explorer/web/src/panels.tsx"),
  "reverse-sweep": (None, "ledger/2026-09-26-the-reverse-sweep-found-six.md"),
@@ -211,6 +214,87 @@ EXEMPT: dict[str, str] = {
     ),
 }
 
+#: Why each exempt closure leaves nothing in the tree — one sentence per
+#: caveat, not one per kind.
+#:
+#: `EXEMPT` began as three kinds covering sixteen rows, and
+#: `ledger/2026-09-26-a-witness-for-every-closure.md` recorded what that costs:
+#: "a closure filed under `=read` because writing a witness was hard looks
+#: exactly like one filed there because no witness exists." A kind is a
+#: category; a reason is an argument, and only the second can be wrong in a way
+#: a reader can see.
+EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-14-a-real-dataset.md',
+     'The 1,290 bytes a row was measured and not investigated.'):
+        'closed by a measurement that found where the bytes go. The finding is '
+        'the entry; the tree carries the cut that followed, not the investigation',
+    ('2026-09-15-a-value-belonging-to-the-join.md',
+     'The extra flatten on the grouped path is unmeasured.'):
+        'closed by measuring it and finding the flatten too small to see. A null '
+        'measurement changes no file by construction',
+    ('2026-09-20-the-frame-that-hid-two-findings.md',
+     'It does not re-run the review under a wider frame.'):
+        'closed by re-running the review. A review produces findings, and the '
+        'findings that had code became commits with their own caveats',
+    ('2026-09-20-the-frame-that-hid-two-findings.md',
+     'The "probed and clean" section was not re-read against the s'):
+        'closed by re-reading that section under the wider frame. It came back '
+        'clean, which is prose and nothing else',
+    ('2026-09-20-the-other-way-to-build-a-catalog.md',
+     'It does not re-examine findings 2 through 8 for the same cla'):
+        'closed by the re-examination, which found the reach-around class in '
+        'two places; both fixes have their own witnessed caveats',
+    ('2026-09-20-where-else-does-this-live.md',
+     'It is a reading, not a probe, for findings 3 and 4.'):
+        'closed by probing them. The probes are tests in security_probe.rs and '
+        'are witnessed by the caveats that asked for them; this row is the '
+        'reading that preceded them',
+    ('2026-09-20-you-cannot-generate-a-catalog-from-a-hash.md',
+     'It does not touch the other six open rows'):
+        'closed by reading each of the six for its real shape. The output is '
+        'six corrected gap-table rows, which are prose in a table',
+    ('2026-09-21-one-entry-per-term.md',
+     'The memory store cannot measure any of this.'):
+        'closed by measuring it somewhere that can — the inverted-index walk on '
+        'a loopback S3 server. The numbers are in the entry',
+    ('2026-09-21-point-read-cost-is-three-times-what-it-measures.md',
+     'It does not explain why the old figures were what they were.'):
+        'closed by the explanation: the block cache was compiled out. That is a '
+        'finding about a build that no longer exists, so there is nothing in '
+        'this tree for it to be',
+    ('2026-09-21-point-read-cost-is-three-times-what-it-measures.md',
+     '`SCAN_ROW_COST` is untouched and at least one measurement of'):
+        'closed by resolving the cold-full-scan disagreement, which left '
+        'SCAN_ROW_COST where it was. A measurement that moves no constant '
+        'changes no file',
+    ('2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md',
+     'It does not re-derive the constant.'):
+        'closed by re-deriving it at release with the cache on, and finding the '
+        'shipped value right. The constant did not move',
+    ('2026-09-21-the-inverted-index-walks-like-any-other.md',
+     'It does not settle `POINT_READ_COST`.'):
+        'closed by the re-measurement that settled it. Same null result: the '
+        'value stands, so no line changed',
+    ('2026-09-25-the-grammar-comment-outlived-the-grammar.md',
+     'The `slate-wasm` suite was not run.'):
+        'closed by running it — 226 passed across 14 files. A run leaves a '
+        'transcript and not a file',
+    ('2026-09-25-the-open-caveats-nobody-re-reads.md',
+     '270 open caveats are still unread.'):
+        'closed by reading them. The artifact is docs/caveat-status.json '
+        'itself, which check_caveat_citations.py and caveats.py --unread both '
+        'read; a witness pointing at the file this guard already parses would '
+        'be circular',
+    ('2026-09-26-a-cached-go-run-is-not-a-run.md',
+     'The other dialects are not audited for their own version of '):
+        'closed by auditing them and finding go the only one with a result '
+        'cache. Four negative findings, which are the entry',
+    ('2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md',
+     '267 open caveats are still unread'):
+        'same as the row above: closed by the reading pass, whose artifact is '
+        'the status file this guard parses',
+}
+
 #: Every `closed` caveat, and the witness that must still be in the tree.
 #:
 #: Keyed the way `caveats.py` keys a verdict — entry filename and the first 60
@@ -218,6 +302,15 @@ EXEMPT: dict[str, str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md',
+     '`narrowed` has no `residual` field.'):
+        'residual-field',
+    ('2026-09-26-the-reverse-sweep-found-six.md',
+     '`checked` now means two different things.'):
+        'reviewed-field',
+    ('2026-09-26-a-witness-for-every-closure.md',
+     '16 closures are exempt and are checked by nothing.'):
+        'exempt-because',
     ('2026-09-20-the-helper-that-can-be-used-now.md',
      'Go and TypeScript never restore against a real server.'):
         'conformance-restore-live',
@@ -898,6 +991,20 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
     )
     record("every exemption used is one EXEMPT explains", not bad_exempt, ", ".join(bad_exempt))
 
+    exempt_rows = {k for k, w in WITNESSED.items() if w.startswith("=")}
+    unreasoned = sorted(f"{e}: {k}" for e, k in exempt_rows - set(EXEMPT_BECAUSE))
+    record(
+        "every exempt closure says why it leaves nothing in the tree",
+        not unreasoned,
+        "\n      ".join(unreasoned),
+    )
+    stale_reason = sorted(f"{e}: {k}" for e, k in set(EXEMPT_BECAUSE) - exempt_rows)
+    record(
+        "no reason outlives the exemption it explains",
+        not stale_reason,
+        "\n      ".join(stale_reason),
+    )
+
     unknown = sorted(
         {w for w in WITNESSED.values() if not w.startswith("=")} - set(WITNESS)
     )
@@ -949,7 +1056,8 @@ def main() -> int:
     witnessed = sum(1 for w in WITNESSED.values() if not w.startswith("="))
     print(
         f"{witnessed} of {len(WITNESSED)} closed caveats have a witness in the tree; "
-        f"the other {len(WITNESSED) - witnessed} are exempt for a reason EXEMPT gives"
+        f"the other {len(WITNESSED) - witnessed} are exempt, each with its own "
+        f"reason in EXEMPT_BECAUSE"
     )
     return 0
 

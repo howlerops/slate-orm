@@ -104,6 +104,31 @@ BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
 #: text, which is how the ledger writes them.
 WITHDRAWN = re.compile(r"^~*\s*Withdrawn\b", re.I)
 VERDICTS = ("open", "closed", "narrowed", "deliberate", "moment", "untriaged")
+
+#: What a `narrowed` verdict must say is *left*, beside the `by` that says what
+#: closed.
+#:
+#: `ledger/2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md` recorded the
+#: hole this fills: "the residual lives in the `by` prose, so nothing can count
+#: how much work the narrowed caveats represent, and nothing stops a `by` that
+#: names what closed and forgets what is left." A prose `by` beginning
+#: "closed: … Left: …" is a convention a reader can break silently; a field
+#: cannot be forgotten, because `report` refuses a `narrowed` row without one.
+RESIDUAL = "residual"
+
+#: Two dates, because one meant two things.
+#:
+#: `checked` on an `open` or `narrowed` row says somebody read the caveat
+#: *against the tree* and believes it is still true. That is what `--unread`
+#: lists on.
+#:
+#: The 2026-09-26 reverse sweep then stamped `checked` on 316 `deliberate` rows
+#: to record that their *verdict* had been re-read — a weaker and different
+#: claim, about an entry's prose rather than about code, which
+#: `ledger/2026-09-26-the-reverse-sweep-found-six.md` wrote down as a caveat the
+#: same day. `reviewed` is that second claim, so the two cannot be mistaken for
+#: each other and `--unread` keeps meaning one thing.
+CHECKED, REVIEWED = "checked", "reviewed"
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
 #: does not orphan the verdict.
@@ -163,10 +188,27 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
         if verdict not in VERDICTS:
             problems.append(f"{c['entry']}: unknown verdict {verdict!r}")
             verdict = "untriaged"
-        if verdict in ("closed", "narrowed", "deliberate") and not status.get(k, {}).get("by"):
+        row = status.get(k, {})
+        if verdict in ("closed", "narrowed", "deliberate") and not row.get("by"):
             problems.append(
                 f"{c['entry']}: `{key(c['claim'])}` is {verdict} and names nothing "
                 f"that closed or decided it"
+            )
+        if verdict == "narrowed" and not row.get(RESIDUAL):
+            problems.append(
+                f"{c['entry']}: `{key(c['claim'])}` is narrowed and has no "
+                f"`{RESIDUAL}`. `by` says what closed; a narrowed caveat must "
+                f"also say what is left, in a field, so it can be counted."
+            )
+        # A settled verdict carries `reviewed`, never `checked`: `checked` is a
+        # claim about the tree and `--unread` reads it, so a `deliberate` row
+        # wearing one is a stamp nothing will ever look at again pretending to
+        # be one that will.
+        if verdict in ("closed", "deliberate", "moment") and row.get(CHECKED):
+            problems.append(
+                f"{c['entry']}: `{key(c['claim'])}` is {verdict} and carries "
+                f"`{CHECKED}`, which means read against the tree. A settled "
+                f"verdict re-read for correctness carries `{REVIEWED}`."
             )
         counts[verdict] += 1
     orphans = sorted(set(status) - seen)
@@ -227,6 +269,23 @@ def unread(days: int, root: Path = ROOT, today: str | None = None) -> list[str]:
     return out
 
 
+def residuals(root: Path = ROOT) -> list[str]:
+    """What each `narrowed` caveat still owes, as `entry: residual` lines.
+
+    The reason `residual` is a field and not prose in `by`: this listing. A
+    narrowed caveat is partly work, and until the residual was a field the only
+    way to see how much was to read eighteen `by` strings and hope each
+    happened to say.
+    """
+    status = load(root)
+    out = []
+    for c in caveats(root):
+        row = status.get(f"{c['entry']}::{key(c['claim'])}", {})
+        if row.get("verdict") == "narrowed":
+            out.append(f"{c['entry']}: {row.get(RESIDUAL, '')}")
+    return out
+
+
 def listing(verdict: str, root: Path = ROOT) -> list[str]:
     """Every caveat with `verdict`, as `entry: claim` lines, entry order.
 
@@ -255,10 +314,19 @@ def main(root: Path = ROOT) -> int:
             print(line)
         print(f"{len(lines)} open or narrowed and not re-read in {days} days")
         return 0
+    if argv and argv[0] == "--residual":
+        lines = residuals(root)
+        for line in lines:
+            print(line)
+        print(f"{len(lines)} narrowed caveats, each with a residual")
+        return 0
     if argv:
         want = argv[0].removeprefix("--")
         if want not in VERDICTS:
-            print(f"usage: caveats.py [--{' | --'.join(VERDICTS)} | --unread [days]]")
+            print(
+                f"usage: caveats.py [--{' | --'.join(VERDICTS)} "
+                "| --unread [days] | --residual]"
+            )
             return 2
         lines = listing(want, root)
         for line in lines:

@@ -54,12 +54,17 @@ def case(
     failing: set[str],
 ) -> bool:
     root = repo(files, verdicts)
-    saved = (guard.WITNESS, guard.WITNESSED, guard.EXEMPT)
+    saved = (guard.WITNESS, guard.WITNESSED, guard.EXEMPT, guard.EXEMPT_BECAUSE)
     guard.WITNESS, guard.WITNESSED, guard.EXEMPT = witness, witnessed, exempt
+    # Every exempt row in a case is given a reason unless the case is about
+    # reasons, so the two new checks do not fire on every other case.
+    guard.EXEMPT_BECAUSE = {
+        k: "a reason" for k, w in witnessed.items() if w.startswith("=")
+    }
     try:
         report = guard.check(root)
     finally:
-        guard.WITNESS, guard.WITNESSED, guard.EXEMPT = saved
+        guard.WITNESS, guard.WITNESSED, guard.EXEMPT, guard.EXEMPT_BECAUSE = saved
     failed = [what for what, ok, _ in report if not ok]
     unexpected = [f for f in failed if not any(frag in f for frag in failing)]
     unseen = [frag for frag in failing if not any(frag in f for f in failed)]
@@ -69,6 +74,46 @@ def case(
             print(f"        unexpected failure: {f}")
         for frag in unseen:
             print(f"        expected a failure mentioning {frag!r}, got {failed}")
+        return False
+    print(f"ok    {name}")
+    return True
+
+
+def _with_roster(root, witness, witnessed, exempt, because):
+    saved = (guard.WITNESS, guard.WITNESSED, guard.EXEMPT, guard.EXEMPT_BECAUSE)
+    guard.WITNESS, guard.WITNESSED, guard.EXEMPT, guard.EXEMPT_BECAUSE = (
+        witness, witnessed, exempt, because,
+    )
+    try:
+        return [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.WITNESS, guard.WITNESSED, guard.EXEMPT, guard.EXEMPT_BECAUSE = saved
+
+
+def unreasoned(name: str) -> bool:
+    """An exempt closure needs its own sentence, not just its kind.
+
+    Three kinds covered sixteen rows before this, and a closure filed under
+    `=read` because a witness was hard to write looked exactly like one filed
+    there because none exists.
+    """
+    root = repo(FILES, V)
+    failed = _with_roster(root, W, {("a.md", "a claim"): "=measured"}, E, {})
+    if not any("says why it leaves nothing" in f for f in failed):
+        print(f"FAIL  {name}\n        got {failed}")
+        return False
+    print(f"ok    {name}")
+    return True
+
+
+def stale_reason(name: str) -> bool:
+    """A reason whose exemption has gone is reported, not silently kept."""
+    root = repo(FILES, V)
+    failed = _with_roster(
+        root, W, R, E, {("gone.md", "a claim that moved"): "a reason"}
+    )
+    if not any("no reason outlives" in f for f in failed):
+        print(f"FAIL  {name}\n        got {failed}")
         return False
     print(f"ok    {name}")
     return True
@@ -195,6 +240,8 @@ def main() -> int:
         malformed(
             "a status file that is not JSON is reported rather than read as no closures"
         ),
+        unreasoned("an exempt closure with no reason of its own is reported"),
+        stale_reason("a reason for a closure that is no longer exempt is reported"),
     ]
 
     # Two properties of the real roster, which the cases above cannot see
