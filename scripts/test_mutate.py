@@ -165,6 +165,10 @@ if "WILL_NOT_BUILD_TAGGED" in text:
     print("FAIL\texample.com/pkg [build failed]")
     print("FAIL")
     sys.exit(1)
+if "CACHED" in text:
+    print("--- PASS: TestANamedCase (0.00s)")
+    print("ok  \texample.com/pkg\t(cached)")
+    sys.exit(0)
 if "MUTATED" in text:
     print("--- FAIL: TestANamedCase (0.00s)")
     print("FAIL")
@@ -825,6 +829,22 @@ def main() -> int:
             ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
             0,
             ["ok   m", "TestANamedCase"],
+        ),
+        case(
+            "a cached go result is not a suite that reported",
+            # `go test` replays a cached package result when its *Go* inputs
+            # have not changed. `clients/go` exercises a Rust server over a
+            # socket, so a mutation in `crates/` changes nothing the cache
+            # hashes: the replay prints the old `--- PASS` lines and
+            # `ok <pkg> (cached)`, and a caught mutation scores as a survivor.
+            # Met for real on a chain's grouped sort — `-count=1` on the very
+            # same command failed two named tests. NOTHING RAN is the honest
+            # answer, because nothing did.
+            '{"file": "__SUBJECT__", "command": [__GO__], "dialect": "go",'
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "CACHED"}]}',
+            1,
+            ["NOTHING RAN"],
+            ["SURVIVED"],
         ),
         case(
             "a go build failure with a package name is not a suite that reported",

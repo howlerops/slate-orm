@@ -32,6 +32,14 @@ this script's own fault:**
    read as a broken test rather than a dirty tree. That is the first lie again
    with a longer fuse: a suite running against code nobody meant to be there.
 
+6. **A cached result is replayed.** `go test` caches a package's result on
+   its *Go* inputs. `clients/go` exercises a Rust server over a socket, so a
+   mutation in `crates/` changes nothing the cache hashes: the run prints
+   `ok <pkg> (cached)`, replays the old `--- PASS` lines, and the mutation
+   scores as a survivor. Same shape as the fourth — the wrong code judged —
+   and not a bug in `go`, which is why `-count=1` belongs in the command and
+   the `go` dialect refuses a cached line rather than reading it.
+
 Each is caught here rather than trusted to a reader's attention:
 
 - the old text must occur **exactly once**, and the count is reported when not;
@@ -248,10 +256,24 @@ DIALECTS = {
     # not compile scored as a clean run and read as a survivor, which is the
     # same lie the pytest `ERROR` hole told, met in the same session. `[setup
     # failed]` is the other shape `go test` prints in that position.
+    #
+    # `(cached)` is the sixth lie in the docstring, and the only one that is
+    # nobody's bug: `go test` replays a cached result — the `--- PASS` lines
+    # and their original durations — for a package whose *Go* inputs have not
+    # changed. `clients/go` builds `slate-serverd` out of the Rust tree and
+    # talks to it over a socket, so every mutation this repository runs
+    # through the `go` dialect is invisible to that cache, and a cached replay
+    # scored a caught mutation as a survivor. Met on a chain's grouped sort:
+    # `if !grouping.sort.is_empty()` mutated to `if false`, `ok ... (cached)`,
+    # SURVIVED — and `-count=1` on the same command failed two named tests.
+    # Excluded rather than accepted, so the run reports NOTHING RAN and says
+    # to add `-count=1` instead of quietly scoring a replay.
     "go": (
         re.compile(r"^\s*--- FAIL: (\S+)", re.MULTILINE),
         re.compile(
-            r"^(?:ok|FAIL)[ \t]+\S+(?![^\n]*\[(?:build|setup) failed\])", re.MULTILINE
+            r"^(?:ok|FAIL)[ \t]+\S+"
+            r"(?![^\n]*(?:\[(?:build|setup) failed\]|\(cached\)))",
+            re.MULTILINE,
         ),
     ),
 }

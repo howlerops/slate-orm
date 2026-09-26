@@ -23,7 +23,8 @@
       "entry": "2026-09-14-a-keyspace-viewer.md",
       "key": "Paging is forward-only and starts from the top.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-a-keyspace-viewer.md",
@@ -41,13 +42,15 @@
       "entry": "2026-09-14-a-keyspace-viewer.md",
       "key": "Values are counted, never shown.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
       "key": "It does not check the examples are *good",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
@@ -102,7 +105,8 @@
       "entry": "2026-09-14-a-real-dataset.md",
       "key": "The full month is not reachable from the browser",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-a-real-dataset.md",
@@ -115,13 +119,15 @@
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
       "key": "It does not address the deprecation warnings",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
       "key": "It does not close the reporting gap.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
@@ -133,19 +139,22 @@
       "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
       "key": "A `books` ordinal is shifted into the joined row's space by ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
       "key": "Pages is not enabled, and cannot be enabled from here.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
       "key": "Mobile is narrow-screen-tolerant, not designed for.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
@@ -157,7 +166,8 @@
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
       "key": "Nothing verifies the two pages agree.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
@@ -193,37 +203,43 @@
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "The cap is 1,000 rows and is not configurable.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "The write paths are not timed.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "`kernel_ms` still includes building the `Vec<Vec<String>>`",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "No outer-join step in a chain carries a computed value.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "No test declares a per-input computed value on a chain",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "Nothing checks the other value-rendering sites for the same ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
@@ -234,8 +250,9 @@
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "`ORDER BY` a chain's computed value is untested from a clien",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "clients/go/slate/join_test.go and clients/typescript/test/join.test.ts: TestOrderingAChainsGroupsByItsComputedValue / \"ordering a chain's groups by its computed value\", both descending so a dropped sort changes the answer",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-dist-nobody-built.md",
@@ -247,7 +264,8 @@
       "entry": "2026-09-15-a-dist-nobody-built.md",
       "key": "Nothing else in the repository is audited for the same depen",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-dist-nobody-built.md",
@@ -265,7 +283,8 @@
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
       "key": "No test asserts what the caution *looks* like.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
@@ -277,7 +296,8 @@
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
       "key": "The warning is the only warning.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
@@ -1039,7 +1059,7 @@
     },
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
-      "key": "403 is still 4.7\u00d7 the data, and the biggest remaining piece ",
+      "key": "403 is still 4.7× the data, and the biggest remaining piece ",
       "verdict": "open",
       "by": ""
     },
@@ -2899,7 +2919,7 @@
     },
     {
       "entry": "2026-09-20-with-is-three-questions.md",
-      "key": "The inlining equivalence in \u00a73 was reasoned, not executed.",
+      "key": "The inlining equivalence in §3 was reasoned, not executed.",
       "verdict": "deliberate",
       "by": "this entry: stated as such in the note"
     },
@@ -3151,7 +3171,7 @@
     },
     {
       "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
-      "key": "`COUNT(DISTINCT \u2026 ) OVER (\u2026 ORDER BY \u2026)` is refused, and the",
+      "key": "`COUNT(DISTINCT … ) OVER (… ORDER BY …)` is refused, and the",
       "verdict": "deliberate",
       "by": "this entry: partial support is a trap; the alternative was refusing a form that works"
     },
@@ -3169,7 +3189,7 @@
     },
     {
       "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
-      "key": "Nothing checks that \u00a75 and the code still agree.",
+      "key": "Nothing checks that §5 and the code still agree.",
       "verdict": "open",
       "by": ""
     },
@@ -3644,7 +3664,7 @@
     },
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
-      "key": "\u00a74's premise is unconfirmed.",
+      "key": "§4's premise is unconfirmed.",
       "verdict": "open",
       "by": ""
     },
@@ -3838,7 +3858,7 @@
       "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
       "key": "No arm is unhinted.",
       "verdict": "deliberate",
-      "by": "this entry: \u00a76 already measures which path is picked"
+      "by": "this entry: §6 already measures which path is picked"
     },
     {
       "entry": "2026-09-21-the-inverted-index-walks-like-any-other.md",
@@ -3992,7 +4012,7 @@
     },
     {
       "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
-      "key": "The 71 \u00b5s is not explained, only shown to be an artefact.",
+      "key": "The 71 µs is not explained, only shown to be an artefact.",
       "verdict": "open",
       "by": ""
     },
@@ -4012,7 +4032,7 @@
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
       "key": "Nothing checks that a ledger entry's mutation claims match a",
       "verdict": "closed",
-      "by": "ledger/2026-09-23-a-counted-claim-must-name-its-run.md \u2014 #290 built check_mutation_claims.py"
+      "by": "ledger/2026-09-23-a-counted-claim-must-name-its-run.md — #290 built check_mutation_claims.py"
     },
     {
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
@@ -4042,7 +4062,7 @@
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
       "key": "The stamp's `slatedb` version is the only dependency version",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 \u2014 the stamp carries foyer, object_store, slatedb and tokio"
+      "by": "ledger/2026-09-22 #285 — the stamp carries foyer, object_store, slatedb and tokio"
     },
     {
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
@@ -4096,7 +4116,7 @@
       "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
       "key": "It reads `docs/` only.",
       "verdict": "closed",
-      "by": "#288 \u2014 check_table_provenance.py reads README_GLOBS as well as docs/"
+      "by": "#288 — check_table_provenance.py reads README_GLOBS as well as docs/"
     },
     {
       "entry": "2026-09-22-a-recorded-table-that-cannot-say-what-built-it.md",
@@ -4180,11 +4200,11 @@
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
       "key": "It does not stamp the versions of anything above `slate-slat",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 \u2014 four dependencies stamped"
+      "by": "ledger/2026-09-22 #285 — four dependencies stamped"
     },
     {
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
-      "key": "The `-q` defect is latent, not historical \u2014 and this paragra",
+      "key": "The `-q` defect is latent, not historical — and this paragra",
       "verdict": "deliberate",
       "by": "recorded as latent, and the paragraph it replaced was withdrawn in writing"
     },
@@ -4234,7 +4254,7 @@
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
       "key": "It reads `docs/` only.",
       "verdict": "closed",
-      "by": "#288 \u2014 check_cost_prose.py reads README_GLOBS as well as docs/"
+      "by": "#288 — check_cost_prose.py reads README_GLOBS as well as docs/"
     },
     {
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
@@ -4330,7 +4350,7 @@
       "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
       "key": "It does not stop an equivalent mutation being written",
       "verdict": "deliberate",
-      "by": "equivalent-mutation detection is undecidable \u2014 scripts/mutate.py says so"
+      "by": "equivalent-mutation detection is undecidable — scripts/mutate.py says so"
     },
     {
       "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
@@ -4462,7 +4482,7 @@
       "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
       "key": "`mutate.py` cannot read a `should_panic` failure",
       "verdict": "closed",
-      "by": "ledger/2026-09-23-the-mutation-runner-could-not-read-a-doctest.md \u2014 #294 taught mutate.py the should_panic shape"
+      "by": "ledger/2026-09-23-the-mutation-runner-could-not-read-a-doctest.md — #294 taught mutate.py the should_panic shape"
     },
     {
       "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
@@ -4510,7 +4530,7 @@
       "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
       "key": "Round-robin does not make the comparison load-proof",
       "verdict": "deliberate",
-      "by": "load-fair, not load-proof \u2014 stated and chosen"
+      "by": "load-fair, not load-proof — stated and chosen"
     },
     {
       "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",

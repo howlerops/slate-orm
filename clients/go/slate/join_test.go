@@ -809,3 +809,77 @@ func TestGroupingAChainByItsComputedValue(t *testing.T) {
 		}
 	}
 }
+
+// And *ordering* those groups by the chain's computed value, which
+// `ledger/2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md`
+// recorded as untested from any client.
+//
+// Descending, deliberately. The kernel's own order is ascending by encoded
+// key, so an ascending assertion passes against a server that dropped the
+// sort entirely — which is the shape of test that records a feature as
+// covered while covering nothing. Descending disagrees with the default, so
+// the answer changes if the sort does not arrive.
+func TestOrderingAChainsGroupsByItsComputedValue(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+	})
+	b.Add(slate.JoinInput{
+		Table: "books",
+		On:    []slate.On{{Earlier: slate.At(books, 0), Own: 0}},
+	})
+	chain := slate.JoinQuery{
+		Inputs: b.Query().Inputs,
+		Compute: []slate.Scalar{
+			slate.Mul(
+				slate.Div(slate.Ref(slate.At(books, 3)), slate.Lit(slate.Int(10))),
+				slate.Lit(slate.Int(10)),
+			),
+		},
+	}
+
+	decades := func(direction slate.Direction) []int64 {
+		t.Helper()
+		stream, err := session.AggregateJoin(testContext(t), chain, slate.Grouping{
+			GroupBy:    []slate.Column{slate.JoinComputed(0)},
+			Aggregates: []slate.Aggregate{slate.Count()},
+			Sort:       []slate.GroupSortKey{{Column: slate.Key(0), Direction: direction}},
+		})
+		if err != nil {
+			t.Fatalf("ordering a chain's groups by its computed value: %v", err)
+		}
+		groups, err := stream.Collect()
+		if err != nil {
+			t.Fatalf("draining: %v", err)
+		}
+		out := make([]int64, 0, len(groups))
+		for _, group := range groups {
+			decade, ok := group.Key[0].(slate.Int)
+			if !ok {
+				t.Fatalf("the key is %v, not an i64 decade", group.Key[0])
+			}
+			out = append(out, int64(decade))
+		}
+		return out
+	}
+
+	// Compared as text because `[]int64` is not comparable with `==` and
+	// pulling in `reflect` for three integers is more machinery than the
+	// assertion is worth.
+	descending := fmt.Sprint(decades(slate.Desc))
+	if descending != "[2010 2000 1990]" {
+		t.Fatalf("descending by the computed decade: got %s", descending)
+	}
+
+	// The ascending run is here to prove the descending one was the sort
+	// talking rather than the fixture: the two must be reverses of each
+	// other, which they cannot be if the server ignored `Sort` in both.
+	ascending := fmt.Sprint(decades(slate.Asc))
+	if ascending != "[1990 2000 2010]" {
+		t.Fatalf("ascending by the computed decade: got %s", ascending)
+	}
+}
