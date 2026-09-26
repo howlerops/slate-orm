@@ -99,6 +99,8 @@ site-css|.|python3 scripts/check_site_css.py
 site-css-guard|.|python3 scripts/test_check_site_css.py
 build-output|.|python3 scripts/check_build_output.py
 build-output-guard|.|python3 scripts/test_check_build_output.py
+caveat-citations|.|python3 scripts/check_caveat_citations.py
+caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py

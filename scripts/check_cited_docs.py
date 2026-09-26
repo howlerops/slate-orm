@@ -81,6 +81,12 @@ FIXTURES: dict[str, str] = {
         "writes temporary trees containing invented `docs/…` paths, for the same "
         "reason the cited-tests guard does"
     ),
+    "scripts/test_check_caveat_citations.py": (
+        "writes temporary `docs/caveat-status.json` files whose verdicts cite "
+        "`ledger/a.md`, `ledger/b.md` and `ledger/c.md`; several cases exist "
+        "precisely to prove the caveat-citation checker reports a path that "
+        "does not resolve, so the dead ones are the point"
+    ),
 }
 
 #: A citation is a path under `docs/` or `ledger/` ending in `.md`.

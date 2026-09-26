@@ -1,0 +1,114 @@
+{
+  "at": "2026-09-26T01:53:08+00:00",
+  "file": "scripts/check_caveat_citations.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_caveat_citations.py"
+  ],
+  "commit": "30041af",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a dead citation is not reported",
+      "old": "if not (root / cited).exists():",
+      "new": "if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a citation naming a file that does not exist is reported",
+        "the failure names the entry and the path, not just a count",
+        "one dead citation among several live ones is still reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires guard always passes",
+      "old": "counted > 0,",
+      "new": "True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a file where no verdict cites any path is reported, not passed",
+        "an empty verdict list is reported rather than passing empty"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the trailing-character guard is dropped from the pattern",
+      "old": "r\")/[\\w./\\-]*[\\w/])\"",
+      "new": "r\")/[\\w./\\-]*)\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a trailing full stop is not part of the path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the leading guard is dropped from the pattern",
+      "old": "r\"(?<![\\w/.\\-])((?:\"",
+      "new": "r\"((?:\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a relative path out of the tree is not a citation",
+        "a word ending in a tree name is not a citation"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a malformed status file reads as zero verdicts",
+      "old": "        record(\"docs/caveat-status.json parses\", False, str(exc))\n        return out",
+      "new": "        record(\"docs/caveat-status.json parses\", True, str(exc))\n        return out",
+      "verdict": "caught",
+      "caught_by": [
+        "a status file that is not JSON is reported rather than passing empty"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing status file passes",
+      "old": "record(\"docs/caveat-status.json exists\", False, str(path))",
+      "new": "record(\"docs/caveat-status.json exists\", True, str(path))",
+      "verdict": "caught",
+      "caught_by": [
+        "a missing status file is reported rather than passing empty"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "duplicate citations are counted twice",
+      "old": "if hit not in seen:",
+      "new": "if True:",
+      "verdict": "caught",
+      "caught_by": [
+        "the same path twice is one citation"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "ledger is dropped from the trees it reads",
+      "old": "    \"ledger\",\n    \"crates\",",
+      "new": "    \"crates\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a file whose every citation resolves passes",
+        "a by that cites only the caveat itself is not a failure",
+        "a verdict with no by at all does not crash",
+        "a by of null does not crash",
+        "a directory citation resolves",
+        "a trailing full stop is not part of the path",
+        "a trailing comma is not part of the path",
+        "the same path twice is one citation"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

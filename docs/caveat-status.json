@@ -4488,7 +4488,7 @@
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
       "key": "The stamp's `slatedb` version is the only dependency version",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 — the stamp carries foyer, object_store, slatedb and tokio"
+      "by": "ledger/2026-09-22-four-dependencies-and-a-tool-that-was-lying.md — the stamp carries foyer, object_store, slatedb and tokio"
     },
     {
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
@@ -4644,7 +4644,7 @@
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
       "key": "It does not stamp the versions of anything above `slate-slat",
       "verdict": "closed",
-      "by": "ledger/2026-09-22 #285 — four dependencies stamped"
+      "by": "ledger/2026-09-22-four-dependencies-and-a-tool-that-was-lying.md — four dependencies stamped"
     },
     {
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
@@ -5113,8 +5113,8 @@
     {
       "entry": "2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md",
       "key": "A verdict is a judgement, and nothing checks it.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "closed: the dead-path half. scripts/check_caveat_citations.py reads this file and fails on any `by` naming a path that does not resolve — it found one on its first run, a verdict citing a guard that has never existed (ledger/2026-09-26-the-citation-nobody-could-follow.md). Left: the caveat's larger half, that the named thing is not verified to *say what the verdict claims*. That is reading the entry and judging it, which the guard's docstring states it cannot do — the same limitation scripts/check_cited_docs.py has always carried",
       "checked": "2026-09-26"
     },
     {
@@ -5382,7 +5382,7 @@
       "key": "\"Nothing verifies the two pages agree\" is only half closed.",
       "verdict": "deliberate",
       "checked": "2026-09-26",
-      "by": "the caveat itself: checking that two pages tell the same *story* is named and refused as the unverifiable kind — the class `scripts/check_unverifiable_claims.py` exists to refuse. The numbers, which are checkable, are checked against the repository rather than against each other"
+      "by": "the caveat itself: checking that two pages tell the same *story* is named and refused as the unverifiable kind — the class `scripts/check_cost_prose.py`'s `is N% low` rule exists to refuse. The numbers, which are checkable, are checked against the repository rather than against each other"
     },
     {
       "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
@@ -5872,6 +5872,31 @@
       "verdict": "deliberate",
       "checked": "2026-09-26",
       "by": "this entry: the open/narrowed distinction changes what somebody picks up next, which is a property of the open list; on a settled decision it changes nothing, which is the same argument ledger/2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md already made"
+    },
+    {
+      "entry": "2026-09-26-the-citation-nobody-could-follow.md",
+      "key": "It checks existence, not aptness",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-citation-nobody-could-follow.md",
+      "key": "38 verdicts cite \"the caveat itself\" and are invisible to it",
+      "verdict": "deliberate",
+      "checked": "2026-09-26",
+      "by": "this entry's Alternatives: requiring every `by` to name a file would manufacture a plausible filename where an honest sentence was, which is the failure this guard exists to catch"
+    },
+    {
+      "entry": "2026-09-26-the-citation-nobody-could-follow.md",
+      "key": "Nothing checks a `by` that names a test, a function or a com",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-citation-nobody-could-follow.md",
+      "key": "The fourth invented citation was found by a guard written in",
+      "verdict": "open",
+      "checked": "2026-09-26"
     }
   ]
 }
