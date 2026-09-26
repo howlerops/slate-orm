@@ -239,14 +239,31 @@ DIALECTS = {
     ),
     # `node --test`'s TAP output, which `clients/typescript` uses:
     # `not ok 3 - the name` per failure, and a closing `# pass N` / `# fail N`.
+    # The `# fail` line is the report marker rather than `# pass` because a run
+    # where everything fails still prints it.
     #
-    # The failure pattern skips the per-file wrapper line, which node emits as
-    # `not ok 1 - test/foo.test.ts` alongside the real case — a name ending in
-    # `.ts` is the file, not a test, and counting it would report a failure
-    # nobody wrote. The `# fail` line is the report marker rather than `# pass`
-    # because a run where everything fails still prints it.
+    # This used to carry `(?!.*\.ts$)` to skip a "per-file wrapper line",
+    # believed to be emitted beside the real case. Both halves of that were
+    # wrong, and the exclusion was a hole in the shape of the pytest `ERROR`
+    # one. Observed on node v22.22.2, two files, one passing case and one
+    # failing case:
+    #
+    #   ok 1 - a named case
+    #   not ok 2 - a failing case
+    #
+    # No wrapper. Add a third file that throws while loading and it appears:
+    #
+    #   not ok 3 - c.test.js
+    #
+    # So the wrapper is emitted *only* for a file that could not run, and it is
+    # the only thing that file says. Excluding it is therefore exactly backwards
+    # — with no other failure in the run, `# fail 1` still matches the report
+    # pattern, no failure name is found, and a mutation that broke a test file
+    # outright scores as a **survivor**. And the exclusion never fired here
+    # anyway: `package.json` runs `node --test dist-test/test/*.test.js`, so
+    # the wrapper ends in `.js`. A guard that was both wrong and dead.
     "node": (
-        re.compile(r"^not ok \d+ - (?!.*\.ts$)(.+?)\s*$", re.MULTILINE),
+        re.compile(r"^not ok \d+ - (.+?)\s*$", re.MULTILINE),
         re.compile(r"^# fail \d+\s*$", re.MULTILINE),
     ),
     # `go test`, which `clients/go` uses: `--- FAIL: TestName (0.00s)` per

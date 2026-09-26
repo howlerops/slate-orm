@@ -6081,6 +6081,59 @@
       "key": "Sixteen reasons are sixteen sentences I wrote about my own c",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-exclusion-that-was-wrong-and-dead.md",
+      "key": "The TypeScript suite has not been re-run.",
+      "verdict": "deliberate",
+      "by": "that entry: the alternative is a release build of slate-serverd to confirm one string, and that string — `node --test dist-test/test/*.test.js` — is quoted from clients/typescript/package.json, a file in this repository",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-exclusion-that-was-wrong-and-dead.md",
+      "key": "No corpus sample carries the wrapper.",
+      "verdict": "deliberate",
+      "by": "that entry: CORPUS's contract is one clean and one failing run per dialect, checked as a cross product; a third shape per dialect makes that table's rules per-dialect. The load-failure shape lives in NODE_FAKE, where node-specific mechanics already are",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-exclusion-that-was-wrong-and-dead.md",
+      "key": "The audit of the other two dialects is by observation, not b",
+      "verdict": "deliberate",
+      "by": "that entry: both were re-examined and both are safe, with the runs recorded under Evidence. A test needs a broken-input fixture per dialect — a sixth table beside CORPUS, DIALECTS and three fakes — against a risk that is a runner changing what it prints when it cannot run",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-refusal-nothing-ran.md",
+      "key": "The corpus is captured, not re-captured.",
+      "verdict": "deliberate",
+      "by": "that entry: the alternative is a script running all five real runners in CI, which needs rustc, go, node and pytest in the static check run — the one thing scripts/test_mutate.py's docstring says it deliberately does not need. The samples are real either way; only re-capture is given up.",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-refusal-nothing-ran.md",
+      "key": "Nothing has run the negative case end to end.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-refusal-nothing-ran.md",
+      "key": "`node --test`'s per-file wrapper line is absent from the nod",
+      "verdict": "closed",
+      "by": "chasing it the same day found the claim under it wrong in a more useful way: node emits that line only for a file that threw while loading, and the `node` dialect was skipping it, which would score a broken test file as a survivor. scripts/mutate.py, ledger/2026-09-26-the-exclusion-that-was-wrong-and-dead.md",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-refusal-nothing-ran.md",
+      "key": "The refusal check runs one argument per example.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-refusal-nothing-ran.md",
+      "key": "Neither guard can see a fourth kind of silent pass.",
+      "verdict": "open",
+      "checked": "2026-09-26"
     }
   ]
 }

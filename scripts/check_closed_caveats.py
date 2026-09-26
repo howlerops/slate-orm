@@ -76,6 +76,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
  "array-codegen": ("element", "scripts/codegen.py"),
  "dialect-corpus": ("CORPUS", "scripts/test_mutate.py"),
+ "node-wrapper-counted": ("will not load is counted", "scripts/test_mutate.py"),
  "array-literal-sql": ("array", "crates/slate-serverd/src/lang/pred.rs"),
  "array-schema": ("Array", "crates/slate-schema/src/table.rs"),
  "array-wire": ("array", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -310,6 +311,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-22-four-dependencies-and-a-tool-that-was-lying.md',
      "`mutate.py`'s refusal cannot catch a dialect that reads *too"):
         'dialect-corpus',
+    ('2026-09-26-the-refusal-nothing-ran.md',
+     "`node --test`'s per-file wrapper line is absent from the nod"):
+        'node-wrapper-counted',
     ('2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md',
      '`narrowed` has no `residual` field.'):
         'residual-field',

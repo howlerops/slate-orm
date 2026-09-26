@@ -112,17 +112,24 @@ else:
 
 #: The same stand-in, speaking `node --test`'s TAP.
 #:
-#: The wrapper line is the point: node reports the *file* as a failing test
-#: alongside the real case, so a dialect that counted every `not ok` would name
-#: `test/t.test.ts` as a test nobody wrote. The fake emits both.
+#: The per-file wrapper line is the point, and the reason it is a *third*
+#: branch rather than a line beside the failure: node emits it only for a file
+#: that threw while loading, and it is then the only thing that file says.
+#: Observed on v22.22.2 — the second branch below is a real failing run and has
+#: no wrapper in it. The dialect used to skip that line, which would have
+#: scored a mutation that broke a test file outright as a survivor.
 NODE_FAKE = '''
 import sys
 text = open(sys.argv[1]).read()
-if "MUTATED" in text:
+if "WILL_NOT_LOAD" in text:
+    print("ok 1 - a named case")
+    print("not ok 2 - c.test.js")
+    print("# pass 1")
+    print("# fail 1")
+elif "MUTATED" in text:
     print("not ok 1 - a named case")
-    print("not ok 2 - test/t.test.ts")
     print("# pass 0")
-    print("# fail 2")
+    print("# fail 1")
 else:
     print("ok 1 - a named case")
     print("# pass 1")
@@ -1020,15 +1027,17 @@ def main() -> int:
             ["ok   m", "a named case"],
         ),
         case(
-            "the node dialect does not count the per-file wrapper as a test",
-            # node reports the file itself as `not ok N - test/t.test.ts`
-            # beside the real case. Counting it would attribute the catch to a
-            # test nobody wrote, which reads like coverage that is not there.
+            "a test file that will not load is counted, not skipped",
+            # This case replaces one asserting the opposite. node emits the
+            # per-file line only for a file that threw while loading, and it is
+            # then the only thing that file says — so skipping it leaves a run
+            # where `# fail 1` matches the report pattern, no failure name is
+            # found, and a mutation that broke a test file outright scores as a
+            # survivor. Same hole as the pytest `ERROR` one, written on purpose.
             '{"file": "__SUBJECT__", "command": [__NODE__], "dialect": "node",'
-            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "MUTATED"}]}',
+            ' "cases": [{"name": "m", "old": "ORIGINAL", "new": "WILL_NOT_LOAD"}]}',
             0,
-            ["a named case"],
-            reject_text=["t.test.ts"],
+            ["ok   m", "c.test.js"],
         ),
         case(
             "node output read as libtest reports nothing rather than a pass",
