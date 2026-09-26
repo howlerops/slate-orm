@@ -91,6 +91,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "check-sh-four": ("python-rest-ruff", "scripts/check.sh"),
  "checked-field": ("checked", "scripts/caveats.py"),
  "cited-docs": (None, "scripts/check_cited_docs.py"),
+ "conformance-restore-live": ("api/restore", "examples/explorer/conformance/conformance.py"),
+ "demo-restore-panel": ("restore-run", "examples/explorer/web/src/panels.tsx"),
+ "reverse-sweep": (None, "ledger/2026-09-26-the-reverse-sweep-found-six.md"),
+ "closed-audited": (None, "ledger/2026-09-26-the-closed-verdicts-audited.md"),
  "closed-caveats-guard": (None, "scripts/check_closed_caveats.py"),
  "codegen-print-schema": ("print-schema", "scripts/codegen.py"),
  "compute-input": ("ComputeSpec", "crates/slate-wasm/src"),
@@ -214,6 +218,24 @@ EXEMPT: dict[str, str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-20-the-helper-that-can-be-used-now.md',
+     'Go and TypeScript never restore against a real server.'):
+        'conformance-restore-live',
+    ('2026-09-20-the-helper-that-can-be-used-now.md',
+     'The demo does not show it.'):
+        'demo-restore-panel',
+    ('2026-09-26-a-verdict-is-not-a-reading.md',
+     'The reverse direction was not swept.'):
+        'reverse-sweep',
+    ('2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md',
+     'The reverse sweep is still not done'):
+        'reverse-sweep',
+    ('2026-09-26-the-reverse-sweep-found-six.md',
+     'The 195 `closed` verdicts have never been re-read by anythin'):
+        'closed-audited',
+    ('2026-09-26-the-closed-verdicts-audited.md',
+     'Nothing re-reads a `closed` verdict when the thing that clos'):
+        'closed-caveats-guard',
     ('2026-09-20-cis-ruff-is-newer-than-mine-too.md',
      'Two occurrences, one rule.'):
         'none-last',

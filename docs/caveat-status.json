@@ -2446,8 +2446,8 @@
     {
       "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
       "key": "Nothing tests the daemon's `max_concurrent_requests` or `req",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "closed: the configuration half. crates/slate-serverd/tests/refusals.rs has `a_zero_concurrency_limit_is_refused_because_it_would_serve_nobody`, `the_ceilings_and_the_timeout_are_accepted_when_they_are_sensible` and `omitting_them_entirely_is_still_a_valid_configuration`, over the real binary. Left: exactly what the caveat names — that setting them in TOML takes effect end to end, which needs a live server and a 65th request",
       "checked": "2026-09-26"
     },
     {
@@ -2759,16 +2759,16 @@
     {
       "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
       "key": "Go and TypeScript never restore against a real server.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py — the case `a retired row can be restored` posts /api/restore and `the soft-delete column is not the caller's to write` posts /api/restore-unchanged, both run against all three adapters against a live head node. ledger/2026-09-20-three-sdks-agree-about-a-restore.md",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
       "key": "The demo does not show it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx:653 — a restore panel with a `restore-run` control and a `restore-summary` readout, over the /api/restore endpoint each adapter now serves. ledger/2026-09-20-the-undo-a-visitor-can-see.md",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
@@ -4767,8 +4767,8 @@
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
       "key": "It still reads Rust only, and only two constants.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "closed: the Markdown half. scripts/check_cost_prose.py reads `docs/` and README_GLOBS (README.md, clients/*/README.md, examples/*/README.md) beside `crates/`. Left: the non-Rust *source* half this caveat names — a figure in a Python harness, a Go comment or a TOML fixture is still unseen, and it is still two constants",
       "checked": "2026-09-26"
     },
     {
@@ -5560,8 +5560,9 @@
     {
       "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
       "key": "The reverse direction was not swept.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "checked": "2026-09-26",
+      "by": "ledger/2026-09-26-the-reverse-sweep-found-six.md — all 322 deliberate verdicts the original triage wrote, re-read against the same criterion. Six moved: five to open, one to moment"
     },
     {
       "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
@@ -5817,14 +5818,16 @@
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
       "key": "The reverse sweep is still not done",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "checked": "2026-09-26",
+      "by": "ledger/2026-09-26-the-reverse-sweep-found-six.md — the same job this entry's sibling caveat asked for, done the same day. 322 read, 6 moved, 316 confirmed and stamped"
     },
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
       "key": "Nothing checks a `by`.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "checked": "2026-09-26",
+      "by": "closed: the path half. scripts/check_caveat_citations.py fails on any `by` naming a path that does not resolve, and found one on its first run (ledger/2026-09-26-the-citation-nobody-could-follow.md). Left: a `by` that names an entry which exists and does not say what the verdict claims still passes, and 38 that cite \"the caveat itself\" are unfollowable by design"
     },
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
@@ -5846,8 +5849,9 @@
     {
       "entry": "2026-09-26-the-reverse-sweep-found-six.md",
       "key": "The 195 `closed` verdicts have never been re-read by anythin",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "checked": "2026-09-26",
+      "by": "read by ledger/2026-09-26-the-closed-verdicts-audited.md (all 195, one wrong verdict and four wrong supporting details found) and then by scripts/check_closed_caveats.py, which re-checks a witness per closure on every run of check.sh and in CI"
     },
     {
       "entry": "2026-09-26-the-reverse-sweep-found-six.md",
@@ -5910,8 +5914,9 @@
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
       "key": "Nothing re-reads a `closed` verdict when the thing that clos",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "checked": "2026-09-26",
+      "by": "scripts/check_closed_caveats.py — 180 of 196 closed verdicts name a witness in the tree, re-checked on every run, so a closure that regresses turns the build red instead of staying hidden behind a settled verdict. That is the reverted-feature case this names. ledger/2026-09-26-a-witness-for-every-closure.md"
     },
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
@@ -6003,6 +6008,30 @@
       "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
       "key": "The mutation record's filename was invented and a guard caug",
       "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
+      "key": "Nothing stops the next same-session duplicate.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
+      "key": "The 190 that remain were checked for \"already done\", not re-",
+      "verdict": "deliberate",
+      "by": "this entry: that reading happened on 2026-09-26 (ledger/2026-09-26-the-backlog-is-read.md) and a fourth pass of the same kind is the instrument this audit rejected for finding nothing three times",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
+      "key": "The word-overlap detector is measured and discarded.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
+      "key": "Six greps decided six closures.",
+      "verdict": "open",
+      "checked": "2026-09-26"
     }
   ]
 }
