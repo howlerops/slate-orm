@@ -332,8 +332,9 @@
     {
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "Nothing checks the `slate-wasm` bundle's freshness the same ",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "site/check/workbench.py stale_sources(), added the same day by ledger/2026-09-15-one-table-twice.md: sources newer than site/slate_wasm_bg.wasm are a hard error, the same rule task #140 gave slate-serverd",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
@@ -345,19 +346,22 @@
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "The truncation is UTC, like everything else here.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "`date_trunc` still stops at the year.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "A backfill is not concurrent-safe against writers.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -369,7 +373,8 @@
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "Nothing in the browser writes a schema-state key.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -424,13 +429,15 @@
       "entry": "2026-09-15-a-table-is-not-a-database.md",
       "key": "No zone on a literal in the SQL front end's `WHERE`.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-table-is-not-a-database.md",
       "key": "The reverse direction is missing.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-table-is-not-a-database.md",
@@ -479,7 +486,8 @@
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
       "key": "No `DISTINCT ON`",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
@@ -577,7 +585,8 @@
       "entry": "2026-09-15-one-space-for-a-joined-query.md",
       "key": "The demo's HTTP contract and its three adapters do not expos",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-one-space-for-a-joined-query.md",
@@ -681,7 +690,8 @@
       "entry": "2026-09-15-the-guard-nothing-called.md",
       "key": "Nothing measures a large backfill.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-the-guard-nothing-called.md",
@@ -4659,6 +4669,34 @@
       "by": ""
     },
     {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "No disjunction in a conformance `HAVING`.",
+      "verdict": "deliberate",
+      "by": "this entry: widening the three adapters' having contract costs more than the gap, which two client suites now cover live"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "Nothing checked the other suites for the `as_int` class.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "Nothing stops the fourth one.",
+      "verdict": "deliberate",
+      "by": "this entry: no test can fail on a claim about a file nobody opened; the tracker reading claims back is the only guard there is"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "The remaining ~28 caveats I wrote today are still unaudited ",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
+      "key": "The two new suites are one fixture each, not properties.",
+      "verdict": "deliberate",
+      "by": "this entry: same reasoning as the Python suite it mirrors"
+    },
+    {
       "entry": "2026-09-25-or-in-having-too.md",
       "key": "A join's `WHERE` still takes `AND` only",
       "verdict": "deliberate",
@@ -4681,6 +4719,69 @@
       "key": "Nothing measures it.",
       "verdict": "open",
       "by": ""
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No brackets in a `HAVING`",
+      "verdict": "deliberate",
+      "by": "this entry: the group-condition lists have no nested form to lower onto and no query has wanted one"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No brackets in a join's `WHERE`",
+      "verdict": "deliberate",
+      "by": "this entry: its conditions are split by side before the hash join, and a tree spanning both sides cannot be"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "No client can send a nested predicate as SQL",
+      "verdict": "deliberate",
+      "by": "this entry: no client sends SQL; they build Expr, which has had And and Or all along"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "The planner still does nothing special with it.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-parentheses-in-a-where.md",
+      "key": "The round-trip property does not generate a nested predicate",
+      "verdict": "deliberate",
+      "by": "this entry: generating brackets is a second implementation of the precedence this front end refuses to have"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "It still checks numbers and names, not sentences.",
+      "verdict": "deliberate",
+      "by": "this entry: a check whose failures are arguments is not a check this repository's guards can be"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "Nothing checks the *examples* on the pages run.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "The refusals chain has a weak link this does not fix.",
+      "verdict": "deliberate",
+      "by": "this entry: a reworded sentence fails loudly, because the list is asserted non-empty; the parser refuses in three places and a regex over Rust control flow is a parser for Rust"
+    },
+    {
+      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
+      "key": "`docs/*.md` is read for claims and not for its own numbers.",
+      "verdict": "deliberate",
+      "by": "this entry: check_table_provenance.py and check_cost_prose.py own the measurements"
+    },
+    {
+      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
+      "key": "It does not audit my other caveats for the same class.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
+      "key": "The union assertion is over one fixture.",
+      "verdict": "deliberate",
+      "by": "this entry: the law holds wherever the arms differ, which the test asserts before comparing"
     },
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
@@ -4707,6 +4808,29 @@
       "by": ""
     },
     {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "Neither `docs/` nor the site was audited the same way.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The operator list is still unchecked.",
+      "verdict": "deliberate",
+      "by": "this entry: the parser holds the operators as match arms, and a table existing only to be checked is a worse trade"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The productions are checked by example, not by shape.",
+      "verdict": "deliberate",
+      "by": "this entry: a grammar engine fed the block would be a second implementation with an exception per refusal"
+    },
+    {
+      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
+      "key": "The prose outside the lists is unchecked",
+      "verdict": "deliberate",
+      "by": "this entry: explanation rather than specification; no test can tell whether one stopped being true"
+    },
+    {
       "entry": "2026-09-25-the-grammar-comment-outlived-the-grammar.md",
       "key": "It does not audit the rest of the grammar block.",
       "verdict": "closed",
@@ -4729,6 +4853,76 @@
       "key": "The `slate-wasm` suite was not run.",
       "verdict": "closed",
       "by": "cargo test -p slate-wasm, 226 passed across 14 files"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "\"Nothing verifies the two pages agree\" is only half closed.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "It cannot notice a claim that was never made.",
+      "verdict": "deliberate",
+      "by": "this entry: the other direction, which ledger/2026-09-23-five-built-features-the-docs-never-mentioned.md owns"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "It reads one page.",
+      "verdict": "closed",
+      "by": "scripts/check_site_claims.py now reads every page under site/, README.md and docs/*.md; ledger/2026-09-25-the-claims-guard-reaches-past-one-page.md"
+    },
+    {
+      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
+      "key": "`UNCHECKED` has four entries and the page has more than four",
+      "verdict": "deliberate",
+      "by": "this entry: the four are the ones a reader would take as fact; where the line falls is a judgement"
+    },
+    {
+      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "key": "270 open caveats are still unread.",
+      "verdict": "open",
+      "checked": "2026-09-25"
+    },
+    {
+      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "key": "It decides nothing.",
+      "verdict": "deliberate",
+      "by": "this entry: deciding is reading code, and the measurement says what a stamp is worth"
+    },
+    {
+      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "key": "Nothing makes the stamp expire on a change to the code the c",
+      "verdict": "open",
+      "checked": "2026-09-25"
+    },
+    {
+      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
+      "key": "The sample is fourteen, and six of them were not random.",
+      "verdict": "deliberate",
+      "by": "this entry: the bias is stated, and the unbiased figure (1/8) is given beside the enriched one"
+    },
+    {
+      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
+      "key": "Nothing checks that `catalog.ts` is in the bundle the browse",
+      "verdict": "deliberate",
+      "by": "this entry: the e2e fails on wrong headers; asserting the import graph would assert Vite"
+    },
+    {
+      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
+      "key": "The `EXPECTED_REFUSALS` idiom now has a fourth copy.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
+      "key": "The retention example's config has no web target",
+      "verdict": "deliberate",
+      "by": "this entry: it has no web app"
+    },
+    {
+      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
+      "key": "`--web` emits no types, no checks, no foreign keys.",
+      "verdict": "deliberate",
+      "by": "this entry: a browser labelling columns needs names; validation belongs in the adapter"
     },
     {
       "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
@@ -4762,194 +4956,66 @@
       "by": "2026-09-25-the-grammar-comment-outlived-the-grammar.md"
     },
     {
-      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
-      "key": "It does not audit my other caveats for the same class.",
+      "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
+      "key": "Nothing stops the next `go` mutation being written without `",
+      "verdict": "deliberate",
+      "by": "this entry: the command may be a shell pipeline, so matching argv to decide whether caching applies is the cleverness that fails on the one command that matters. A cached run now fails loudly instead."
+    },
+    {
+      "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
+      "key": "The audit of earlier runs came back clean, and that is luck ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
+      "key": "The in-flight marker's post-restore check inherits the hole'",
       "verdict": "open"
     },
     {
-      "entry": "2026-09-25-the-clients-could-always-send-a-disjunction.md",
-      "key": "The union assertion is over one fixture.",
-      "verdict": "deliberate",
-      "by": "this entry: the law holds wherever the arms differ, which the test asserts before comparing"
-    },
-    {
-      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
-      "key": "No disjunction in a conformance `HAVING`.",
-      "verdict": "deliberate",
-      "by": "this entry: widening the three adapters' having contract costs more than the gap, which two client suites now cover live"
-    },
-    {
-      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
-      "key": "The two new suites are one fixture each, not properties.",
-      "verdict": "deliberate",
-      "by": "this entry: same reasoning as the Python suite it mirrors"
-    },
-    {
-      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
-      "key": "The remaining ~28 caveats I wrote today are still unaudited ",
+      "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
+      "key": "The other dialects are not audited for their own version of ",
       "verdict": "open"
     },
     {
-      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
-      "key": "Nothing stops the fourth one.",
-      "verdict": "deliberate",
-      "by": "this entry: no test can fail on a claim about a file nobody opened; the tracker reading claims back is the only guard there is"
+      "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
+      "key": "The closure was found by hand and nothing will find the next",
+      "verdict": "moment"
     },
     {
-      "entry": "2026-09-25-every-client-sends-a-disjunction.md",
-      "key": "Nothing checked the other suites for the `as_int` class.",
+      "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
+      "key": "The demo HTTP check was a route listing, not a contract audi",
       "verdict": "open"
     },
     {
-      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
-      "key": "The retention example's config has no web target",
-      "verdict": "deliberate",
-      "by": "this entry: it has no web app"
+      "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
+      "key": "Two batches is 20 of 247.",
+      "verdict": "moment"
     },
     {
-      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
-      "key": "Nothing checks that `catalog.ts` is in the bundle the browse",
-      "verdict": "deliberate",
-      "by": "this entry: the e2e fails on wrong headers; asserting the import graph would assert Vite"
+      "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
+      "key": "Nine read is not 247 read.",
+      "verdict": "moment"
     },
     {
-      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
-      "key": "`--web` emits no types, no checks, no foreign keys.",
-      "verdict": "deliberate",
-      "by": "this entry: a browser labelling columns needs names; validation belongs in the adapter"
-    },
-    {
-      "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
-      "key": "The `EXPECTED_REFUSALS` idiom now has a fourth copy.",
+      "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
+      "key": "Only the group key is sorted, not an aggregate over a chain'",
       "verdict": "open"
     },
     {
-      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
-      "key": "The operator list is still unchecked.",
-      "verdict": "deliberate",
-      "by": "this entry: the parser holds the operators as match arms, and a table existing only to be checked is a worse trade"
-    },
-    {
-      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
-      "key": "The productions are checked by example, not by shape.",
-      "verdict": "deliberate",
-      "by": "this entry: a grammar engine fed the block would be a second implementation with an exception per refusal"
-    },
-    {
-      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
-      "key": "The prose outside the lists is unchecked",
-      "verdict": "deliberate",
-      "by": "this entry: explanation rather than specification; no test can tell whether one stopped being true"
-    },
-    {
-      "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
-      "key": "Neither `docs/` nor the site was audited the same way.",
+      "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
+      "key": "Python still cannot order a chain's groups in a test.",
       "verdict": "open"
     },
     {
-      "entry": "2026-09-25-parentheses-in-a-where.md",
-      "key": "No brackets in a `HAVING`",
-      "verdict": "deliberate",
-      "by": "this entry: the group-condition lists have no nested form to lower onto and no query has wanted one"
-    },
-    {
-      "entry": "2026-09-25-parentheses-in-a-where.md",
-      "key": "No brackets in a join's `WHERE`",
-      "verdict": "deliberate",
-      "by": "this entry: its conditions are split by side before the hash join, and a tree spanning both sides cannot be"
-    },
-    {
-      "entry": "2026-09-25-parentheses-in-a-where.md",
-      "key": "The round-trip property does not generate a nested predicate",
-      "verdict": "deliberate",
-      "by": "this entry: generating brackets is a second implementation of the precedence this front end refuses to have"
-    },
-    {
-      "entry": "2026-09-25-parentheses-in-a-where.md",
-      "key": "No client can send a nested predicate as SQL",
-      "verdict": "deliberate",
-      "by": "this entry: no client sends SQL; they build Expr, which has had And and Or all along"
-    },
-    {
-      "entry": "2026-09-25-parentheses-in-a-where.md",
-      "key": "The planner still does nothing special with it.",
+      "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
+      "key": "The fixture is four books and three decades.",
       "verdict": "open"
-    },
-    {
-      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
-      "key": "It reads one page.",
-      "verdict": "closed",
-      "by": "scripts/check_site_claims.py now reads every page under site/, README.md and docs/*.md; ledger/2026-09-25-the-claims-guard-reaches-past-one-page.md"
-    },
-    {
-      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
-      "key": "\"Nothing verifies the two pages agree\" is only half closed.",
-      "verdict": "open"
-    },
-    {
-      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
-      "key": "It cannot notice a claim that was never made.",
-      "verdict": "deliberate",
-      "by": "this entry: the other direction, which ledger/2026-09-23-five-built-features-the-docs-never-mentioned.md owns"
-    },
-    {
-      "entry": "2026-09-25-the-landing-pages-claims-are-checked-now.md",
-      "key": "`UNCHECKED` has four entries and the page has more than four",
-      "verdict": "deliberate",
-      "by": "this entry: the four are the ones a reader would take as fact; where the line falls is a judgement"
-    },
-    {
-      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
-      "key": "It still checks numbers and names, not sentences.",
-      "verdict": "deliberate",
-      "by": "this entry: a check whose failures are arguments is not a check this repository's guards can be"
-    },
-    {
-      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
-      "key": "`docs/*.md` is read for claims and not for its own numbers.",
-      "verdict": "deliberate",
-      "by": "this entry: check_table_provenance.py and check_cost_prose.py own the measurements"
-    },
-    {
-      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
-      "key": "The refusals chain has a weak link this does not fix.",
-      "verdict": "deliberate",
-      "by": "this entry: a reworded sentence fails loudly, because the list is asserted non-empty; the parser refuses in three places and a regex over Rust control flow is a parser for Rust"
-    },
-    {
-      "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
-      "key": "Nothing checks the *examples* on the pages run.",
-      "verdict": "open"
-    },
-    {
-      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "It decides nothing.",
-      "verdict": "deliberate",
-      "by": "this entry: deciding is reading code, and the measurement says what a stamp is worth"
-    },
-    {
-      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "Nothing makes the stamp expire on a change to the code the c",
-      "verdict": "open",
-      "checked": "2026-09-25"
-    },
-    {
-      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "270 open caveats are still unread.",
-      "verdict": "open",
-      "checked": "2026-09-25"
-    },
-    {
-      "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
-      "key": "The sample is fourteen, and six of them were not random.",
-      "verdict": "deliberate",
-      "by": "this entry: the bias is stated, and the unbiased figure (1/8) is given beside the enriched one"
     },
     {
       "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
-      "key": "It does not prove no detector exists.",
-      "verdict": "deliberate",
-      "by": "this entry: it reports two that do not work and says so, which is the whole claim"
+      "key": "267 open caveats are still unread",
+      "verdict": "open",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
@@ -4959,9 +5025,9 @@
     },
     {
       "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
-      "key": "267 open caveats are still unread",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "key": "It does not prove no detector exists.",
+      "verdict": "deliberate",
+      "by": "this entry: it reports two that do not work and says so, which is the whole claim"
     }
   ]
 }
