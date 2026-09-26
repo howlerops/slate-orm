@@ -5462,8 +5462,8 @@
     {
       "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
       "key": "167 `closed` verdicts rest on evidence of very uneven streng",
-      "verdict": "deliberate",
-      "by": "that entry: each kind of evidence is named, and a wrong closed is invisible",
+      "verdict": "narrowed",
+      "by": "closed: the strength is now uniform in one direction. Every closed verdict names a witness in the tree that scripts/check_closed_caveats.py re-checks, so a closure that regresses fails a check instead of hiding (ledger/2026-09-26-a-witness-for-every-closure.md). Left: a witness is deliberately coarse and proves presence, not that the closure answered the caveat's real complaint — the class the same day's audit found with \"the 762 is still not audited\", where the work happened and answered the easier half",
       "checked": "2026-09-26"
     },
     {
@@ -5903,8 +5903,9 @@
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
       "key": "188 `closed` verdicts still rest on a task title.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "checked": "2026-09-26",
+      "by": "scripts/check_closed_caveats.py — a witness per closed caveat, checked against the tree on every run of scripts/check.sh and in CI. 178 of the 194 have one; the other 16 are in EXEMPT with the reason each leaves no artifact. ledger/2026-09-26-a-witness-for-every-closure.md"
     },
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
@@ -5924,6 +5925,30 @@
       "verdict": "deliberate",
       "checked": "2026-09-26",
       "by": "this entry and ledger/2026-09-26-the-reverse-sweep-found-six.md: a second reader is the one thing this repository cannot supply, so every rate in the three audit entries is stated as a floor rather than an estimate"
+    },
+    {
+      "entry": "2026-09-26-a-witness-for-every-closure.md",
+      "key": "A witness proves presence, not aptness.",
+      "verdict": "deliberate",
+      "by": "this entry's Why: a tighter witness means pinning test names, which ordinary renames break, and a guard that fails on a rename is one somebody loosens. The presence direction is the one a roster can catch",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-witness-for-every-closure.md",
+      "key": "The witnesses are one person's choices, and 179 of them.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-witness-for-every-closure.md",
+      "key": "16 closures are exempt and are checked by nothing.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-witness-for-every-closure.md",
+      "key": "It says nothing about the 196 open caveats.",
+      "verdict": "moment"
     }
   ]
 }

@@ -1,0 +1,145 @@
+{
+  "at": "2026-09-26T02:10:58+00:00",
+  "file": "scripts/check_closed_caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_closed_caveats.py"
+  ],
+  "commit": "58d2095",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a vanished witness is not reported",
+      "old": "        if not present(needle, path, root):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness whose string has gone is reported",
+        "a witness whose file has gone is reported",
+        "the needle must be in the named file, not merely somewhere",
+        "a file witness fails when the file is gone"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the needle is ignored and only the file is checked",
+      "old": "    if needle is None:\n        return (root / path).exists()",
+      "new": "    if True:\n        return (root / path).exists()",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness whose string has gone is reported",
+        "the needle must be in the named file, not merely somewhere"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pathspec is dropped, so any file in the tree satisfies a witness",
+      "old": "[\"git\", \"grep\", \"-q\", \"-F\", \"--\", needle, \"--\", path],",
+      "new": "[\"git\", \"grep\", \"-q\", \"-F\", \"--\", needle],",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness whose file has gone is reported",
+        "the needle must be in the named file, not merely somewhere"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unrostered closed verdict passes",
+      "old": "        if (entry, key) not in WITNESSED",
+      "new": "        if False",
+      "verdict": "caught",
+      "caught_by": [
+        "a closed verdict in neither roster is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an invented exemption passes",
+      "old": "    bad_exempt = sorted(\n        {w[1:] for w in WITNESSED.values() if w.startswith(\"=\")} - set(EXEMPT)\n    )",
+      "new": "    bad_exempt = []",
+      "verdict": "caught",
+      "caught_by": [
+        "an exemption EXEMPT does not explain is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an undefined witness name passes",
+      "old": "    unknown = sorted(\n        {w for w in WITNESSED.values() if not w.startswith(\"=\")} - set(WITNESS)\n    )",
+      "new": "    unknown = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness name WITNESS does not define is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an orphaned witness row passes",
+      "old": "    orphans = sorted(f\"{e}: {k}\" for e, k in WITNESSED if (e, k) not in live)",
+      "new": "    orphans = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness row whose verdict is no longer closed is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires guard always passes",
+      "old": "        bool(verdicts),",
+      "new": "        True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness row whose verdict is no longer closed is reported",
+        "a file with no closed verdict at all is reported, not passed",
+        "a missing status file is reported rather than passing empty"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a witness for a still-open verdict is demanded",
+      "old": "        if v.get(\"verdict\") == \"closed\"",
+      "new": "        if True",
+      "verdict": "caught",
+      "caught_by": [
+        "an open verdict needs no witness",
+        "a witness row whose verdict is no longer closed is reported",
+        "the real roster: every closed verdict names a witness or an exemption"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a grep that errors counts as found",
+      "old": "    return found.returncode == 0",
+      "new": "    return True",
+      "verdict": "caught",
+      "caught_by": [
+        "a witness whose string has gone is reported",
+        "a witness whose file has gone is reported",
+        "the needle must be in the named file, not merely somewhere"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a malformed status file reads as no closed verdicts",
+      "old": "    except json.JSONDecodeError:\n        return []",
+      "new": "    except json.JSONDecodeError:\n        return [(\"a.md\", \"a claim\")]",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
