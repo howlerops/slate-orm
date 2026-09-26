@@ -1067,7 +1067,7 @@
       "entry": "2026-09-15-three-tables-in-the-front-end.md",
       "key": "Nothing outside the wasm crate is touched.",
       "verdict": "closed",
-      "by": "both halves shipped with aliases (ledger/2026-09-15-one-table-twice.md): site/check/workbench.py has \"the aliased chain plans as three steps\" over the pickup/dropoff borough query, and the two-dropdown panel no longer exists — site/ holds only the workbench now",
+      "by": "both halves shipped with aliases (ledger/2026-09-15-one-table-twice.md): site/check/workbench.py has \"the aliased chain plans as three steps\" over the pickup/dropoff borough query, and the two-dropdown panel no longer exists. This once added 'site/ holds only the workbench now', which is wrong — site/ holds index.html and workbench.html. What went is the panel, not the landing page",
       "checked": "2026-09-26"
     },
     {
@@ -1973,7 +1973,7 @@
       "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
       "key": "No mutation spec is committed anywhere.",
       "verdict": "closed",
-      "by": "ledger/mutations/ holds 80 records, each carrying the file, the dialect, the command and every case's old/new text — the spec, committed. Added by ledger/2026-09-22-a-mutation-run-now-leaves-a-trace.md. The residual (nothing re-runs them) is recorded as a fresh caveat in ledger/2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "by": "ledger/mutations/ holds one record per run, each carrying the file, the dialect, the command and every case's old/new text — the spec, committed. Added by ledger/2026-09-22-a-mutation-run-now-leaves-a-trace.md. The residual (nothing re-runs them) is recorded as a fresh caveat in ledger/2026-09-26-the-guard-that-only-knew-one-phrasing.md",
       "checked": "2026-09-26"
     },
     {
@@ -4501,7 +4501,7 @@
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
       "key": "`docs/` prose is still unguarded.",
       "verdict": "closed",
-      "by": "#283 widened check_cost_prose.py to docs/; verified at scripts/check_cost_prose.py:401"
+      "by": "#283 widened check_cost_prose.py to docs/; verified by reading scripts/check_cost_prose.py, where DOCS = ROOT / 'docs' is read beside crates/ and the module docstring records the widening. The line number this once carried, :401, pointed at a whitespace helper"
     },
     {
       "entry": "2026-09-22-a-recipe-nobody-could-test.md",
@@ -5094,8 +5094,9 @@
     {
       "entry": "2026-09-24-the-caveat-tracker-counted-emphasis-as-caveats.md",
       "key": "The 762 is still not audited.",
-      "verdict": "closed",
-      "by": "every caveat read and given a verdict in this session's triage"
+      "verdict": "narrowed",
+      "by": "closed: the pattern's *precision*. All 762 were read and given a verdict across 2026-09-25 and 2026-09-26, and none turned out to be something other than a caveat — the one non-caveat found (a prose withdrawal) is why `WITHDRAWN` exists. Left: the pattern's *recall*. A caveat written under a different heading, in a list, or with an italic rather than bold lead is still invisible, and reading the ones it found says nothing about the ones it did not. `scripts/caveats.py`'s own docstring records the heading limit",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-24-the-caveat-tracker-counted-emphasis-as-caveats.md",
@@ -5490,7 +5491,8 @@
       "entry": "2026-09-25-what-is-left-to-do-needs-a-list-not-a-count.md",
       "key": "`sql.rs:34` may be stale, and I still have not confirmed it.",
       "verdict": "closed",
-      "by": "2026-09-25-the-grammar-comment-outlived-the-grammar.md"
+      "by": "confirmed on 2026-09-26 by reading the tree rather than by inference: the grammar block in crates/slate-sql/src/sql.rs now reads `[ GROUP BY <item> (, <item>)* ]` with no join-specific limit — ledger/2026-09-25-the-grammar-comment-outlived-the-grammar.md is the entry that found the old wording stale — and crates/slate-sql/tests/front_end.rs:185 `a_join_groups_by_more_than_one_key` fails with \"two group keys on a join were refused\" if the parser ever does refuse. The \"one group key per join\" verdicts are safe",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
@@ -5897,6 +5899,31 @@
       "key": "The fourth invented citation was found by a guard written in",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-closed-verdicts-audited.md",
+      "key": "188 `closed` verdicts still rest on a task title.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-closed-verdicts-audited.md",
+      "key": "Nothing re-reads a `closed` verdict when the thing that clos",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-closed-verdicts-audited.md",
+      "key": "The four corrected details were found because they were chec",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-closed-verdicts-audited.md",
+      "key": "One verdict moved and it was mine, found by me, on the same ",
+      "verdict": "deliberate",
+      "checked": "2026-09-26",
+      "by": "this entry and ledger/2026-09-26-the-reverse-sweep-found-six.md: a second reader is the one thing this repository cannot supply, so every rate in the three audit entries is stated as a floor rather than an estimate"
     }
   ]
 }
