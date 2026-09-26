@@ -606,7 +606,8 @@
       "entry": "2026-09-15-pages-that-do-not-shift.md",
       "key": "The prefetch window is not tuned for a cursor.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-pages-that-do-not-shift.md",
@@ -1425,7 +1426,8 @@
       "entry": "2026-09-19-a-purge-something-can-call.md",
       "key": "No offline tool",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-a-refusal-a-form-can-render.md",
@@ -1480,7 +1482,7 @@
       "key": "The demo UI still does not use the decoders.",
       "verdict": "open",
       "by": "",
-      "checked": "2026-09-25"
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
@@ -1720,7 +1722,8 @@
       "entry": "2026-09-20-a-child-that-is-still-a-child.md",
       "key": "Nothing above the kernel was changed or tested for this.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
@@ -4921,6 +4924,24 @@
       "key": "The sample is fourteen, and six of them were not random.",
       "verdict": "deliberate",
       "by": "this entry: the bias is stated, and the unbiased figure (1/8) is given beside the enriched one"
+    },
+    {
+      "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
+      "key": "It does not prove no detector exists.",
+      "verdict": "deliberate",
+      "by": "this entry: it reports two that do not work and says so, which is the whole claim"
+    },
+    {
+      "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
+      "key": "Four caveats were checked per heuristic, not all of their ca",
+      "verdict": "deliberate",
+      "by": "this entry: four consecutive misses from a ranking meant to concentrate them is where trusting it stops, and the entry calls that a judgement"
+    },
+    {
+      "entry": "2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md",
+      "key": "267 open caveats are still unread",
+      "verdict": "open",
+      "checked": "2026-09-26"
     }
   ]
 }
