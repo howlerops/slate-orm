@@ -237,6 +237,21 @@ if [ -n "$FAILED" ]; then
 else
     printf '%d passed, all of them\n' "$PASSED"
 fi
+# How much of the caveat backlog has gone unread. Reported, never failed:
+# `caveats.py --unread`'s own docstring says why — turning it red would mean
+# stamping the whole list to get a green build, which is the pressure that
+# produces a rubber stamp. A line here is the nudge at the moment somebody is
+# already about to commit, which is the only moment it can be acted on.
+#
+# `ledger/2026-09-26-the-backlog-is-read.md` recorded "nothing schedules the
+# next pass" as a caveat. This is the answer to it, and deliberately the weak
+# form: a calendar cannot make a CI job red on a day nobody touched the code.
+UNREAD=$(python3 "$(dirname "$0")/caveats.py" --unread 30 2>/dev/null | tail -1)
+case "$UNREAD" in
+    0\ *) ;;
+    *[0-9]*) printf '\n%s — `python3 scripts/caveats.py --unread 30` lists them.\n' "$UNREAD" ;;
+esac
+
 cat <<'CAVEAT'
 
 Not covered here, and each has found a real defect: the Go, Python and

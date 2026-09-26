@@ -128,13 +128,23 @@ spelled implementation would pass them. I counted those in the two batch
 entries that used them and not elsewhere, so the total is unknown.
 
 **The stamps all carry one date.** On 2026-10-26 the whole list falls off
-`--unread 30` at once, and the next pass has no ordering to work from. Spacing
-them was not possible — they were read today — and nothing in the tracker
-staggers a re-read.
+`--unread 30` at once. ~~and the next pass has no ordering to work from~~ —
+**wrong, within the hour.** `unread()` iterates `caveats(root)`, which yields
+in entry order, so the list comes out oldest-entry-first whether the stamps
+tie or not; that is the ordering today's pass worked through and it does not
+depend on the dates differing. Spacing the stamps was not possible — they were
+read today — and nothing in the tracker staggers a re-read, which is the part
+of this that is true.
 
-**Nothing schedules the next pass.** `--unread` will start listing again in a
-month and only a person running it will notice. That is the same weakness the
-whole tracker has and this does not change it.
+**Nothing schedules the next pass.** ~~`--unread` will start listing again in a
+month and only a person running it will notice.~~ **Answered**, in the weak
+form: `scripts/check.sh` now prints the unread count in its closing summary
+when it is not zero, which puts it in front of somebody at the moment they are
+already about to commit. It is not a failing check, for the reason
+`unread()`'s own docstring gives — turning it red would mean stamping the list
+to get a green build, and a calendar cannot make CI red on a day nobody
+touched the code. What remains is that nobody is *obliged* to act on the
+line.
 
 **Three of the day's closures were code, and code has its own caveats.** The
 widened CSS guard, the build-output check, the Python test and the two guard

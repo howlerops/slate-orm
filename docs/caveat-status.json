@@ -5346,14 +5346,16 @@
     {
       "entry": "2026-09-26-the-backlog-is-read.md",
       "key": "Nothing schedules the next pass.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "checked": "2026-09-26",
+      "by": "scripts/check.sh prints the unread count in its closing summary when it is not zero, which puts it in front of somebody about to commit. Deliberately not a failing check — unread()'s docstring says why. The residual is that nobody is obliged to act on the line"
     },
     {
       "entry": "2026-09-26-the-backlog-is-read.md",
       "key": "The stamps all carry one date.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "checked": "2026-09-26",
+      "by": "the second clause was wrong within the hour and is struck through in the entry: unread() iterates caveats(root), which yields in entry order, so the list comes out oldest-first whether the stamps tie or not. The residual is that they all expire on the same day and nothing staggers a re-read"
     },
     {
       "entry": "2026-09-26-the-backlog-is-read.md",
