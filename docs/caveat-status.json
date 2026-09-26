@@ -1085,8 +1085,8 @@
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
       "key": "Nothing is attributed between 369 and 491.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "one of the four named components is attributed: docs/performance.md:1780 measures the commit's conflict history at two allocations a row and no measurable bytes. The snapshot Arc, the RecordStore and the statistics are the residual",
       "checked": "2026-09-26"
     },
     {
@@ -1370,8 +1370,8 @@
     {
       "entry": "2026-09-17-the-formatting-job-was-red-for-two-commits.md",
       "key": "Nothing prevents the next one.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "scripts/check.sh (first committed 2026-09-19, two days after this entry) runs `cargo fmt --all -- --check` as one of its checks, so what a person must remember shrank from that command run last to one script. That a person must remember is the residual, and CLAUDE.md records why it cannot be closed here at all: CI's rustfmt is newer than this container's",
       "checked": "2026-09-26"
     },
     {
@@ -2033,13 +2033,15 @@
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The `posts` table is in the test server and not in `crates/s",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The demo and the docs site show no array.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "narrowed",
+      "by": "the docs site does: site/docs/features.html has an \"Arrays, ordered by prefix\" section. The demo still shows none, and deliberately — `posts` is in NOT_IN_THE_UI at examples/explorer/web/src/api.ts:308 because nothing seeds it and the UI has no list cell. The demo half is the residual",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -2059,7 +2061,8 @@
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
       "key": "It does not check `ty` for the same hazard.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
@@ -2071,7 +2074,8 @@
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
       "key": "Two occurrences, one rule.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
@@ -2083,7 +2087,8 @@
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
       "key": "The codec's *ordering* properties were not attacked.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
@@ -2101,7 +2106,8 @@
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
       "key": "`any_scalar` is still a hand-written list",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
@@ -2131,7 +2137,8 @@
       "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
       "key": "The two `RESTRICT`/`CASCADE` names were merged into one test",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
@@ -2173,7 +2180,8 @@
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
       "key": "No test exercises a duplicated header over a real connection",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
@@ -2185,7 +2193,8 @@
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
       "key": "The clients were not checked for sending it twice.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-reviewing-my-own-newest-code.md",
@@ -2227,7 +2236,8 @@
       "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
       "key": "One property, not a contract.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
@@ -5034,6 +5044,28 @@
     {
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
       "key": "The other dialects are not audited for their own version of ",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md",
+      "key": "It does not go back over the 188 closed and 320 deliberate v",
+      "verdict": "deliberate",
+      "by": "this entry: the distinction changes what somebody picks up next, which is a property of the open list; a hundred re-reads of settled verdicts buys nothing"
+    },
+    {
+      "entry": "2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md",
+      "key": "Nothing promotes a `narrowed` to `closed` when its residual ",
+      "verdict": "deliberate",
+      "by": "this entry: it comes round on --unread like any other unsettled verdict, which is the same hand-reading the whole pass depends on"
+    },
+    {
+      "entry": "2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md",
+      "key": "Three is a small sample for a new verdict.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md",
+      "key": "`narrowed` has no `residual` field.",
       "verdict": "open"
     },
     {

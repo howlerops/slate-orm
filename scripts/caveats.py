@@ -21,6 +21,12 @@ records a verdict per caveat. The verdicts are:
   * `deliberate` &mdash; a decision with reasoning written down, not a backlog
     item. `by` names where the reasoning lives. Reversing it is a design
     conversation, not a chore, and counting it as debt misreads the ledger.
+  * `narrowed` &mdash; part of the claim has been answered and part has not,
+    and rewriting the claim is not allowed. `by` must name **both**: what
+    closed it, and what is left. Counting it `open` overstates the debt and
+    reading it as written misleads, because the sentence describes a gap
+    wider than the one that remains. Reversing nothing; the residual is the
+    work, and when the residual closes the verdict becomes `closed`.
   * `moment` &mdash; a statement about one run, one commit or one moment,
     which cannot be "still true" because it was never a standing claim.
     "It does not prove CI is green", "the deployed job's steps have run
@@ -29,11 +35,29 @@ records a verdict per caveat. The verdicts are:
     misreads it. `by` is not required: the entry's own date is the context.
   * `untriaged` &mdash; the default. Not yet read.
 
-The fifth verdict was added while triaging, because 677 caveats could not be
-sorted into the first four without lying about roughly one in twelve of them.
-A caveat that says a check had run once is not debt, not a decision, and not
-closed by anything — it simply stopped being current, and `open` would have
-put it on a backlog where it would be read as work forever.
+`moment` was added while triaging, because 677 caveats could not be sorted
+into the first four without lying about roughly one in twelve of them. A caveat
+that says a check had run once is not debt, not a decision, and not closed by
+anything — it simply stopped being current, and `open` would have put it on a
+backlog where it would be read as work forever.
+
+`narrowed` was added on 2026-09-26, after the re-triage pass met three in one
+day and the second one's entry said a fifth verdict "may become worth it":
+
+  * "Nothing prevents the next formatting failure" — `scripts/check.sh` now
+    runs `cargo fmt --all -- --check`, so what a person must remember shrank
+    from a specific command run last to one script; that a person must
+    remember did not change.
+  * "Nothing is attributed between 369 and 491" — one of the four named
+    components, the commit's conflict history, has since been measured at no
+    measurable bytes; the other three are still unattributed.
+  * "The demo and the docs site show no array" — `site/docs/features.html` has
+    a whole section on arrays; the demo still hides `posts`, deliberately.
+
+Each was left `open` because closing it would erase a true residual, and each
+then read as more missing than is missing. Three is enough: the shape recurs
+whenever a caveat names two things and one gets done, which in a repository
+that writes caveats as sentences rather than as tickets is often.
 
 WHY A SEPARATE FILE RATHER THAN EDITING THE ENTRIES
 
@@ -79,7 +103,7 @@ BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
 #: on the first word so that the date and the reasoning after it are free
 #: text, which is how the ledger writes them.
 WITHDRAWN = re.compile(r"^~*\s*Withdrawn\b", re.I)
-VERDICTS = ("open", "closed", "deliberate", "moment", "untriaged")
+VERDICTS = ("open", "closed", "narrowed", "deliberate", "moment", "untriaged")
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
 #: does not orphan the verdict.
@@ -139,7 +163,7 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
         if verdict not in VERDICTS:
             problems.append(f"{c['entry']}: unknown verdict {verdict!r}")
             verdict = "untriaged"
-        if verdict in ("closed", "deliberate") and not status.get(k, {}).get("by"):
+        if verdict in ("closed", "narrowed", "deliberate") and not status.get(k, {}).get("by"):
             problems.append(
                 f"{c['entry']}: `{key(c['claim'])}` is {verdict} and names nothing "
                 f"that closed or decided it"
@@ -150,7 +174,7 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
 
 
 def unread(days: int, root: Path = ROOT, today: str | None = None) -> list[str]:
-    """Every `open` caveat whose verdict has not been re-read in `days`.
+    """Every `open` or `narrowed` caveat not re-read in `days`.
 
     # Why a date rather than a check
 
@@ -187,7 +211,9 @@ def unread(days: int, root: Path = ROOT, today: str | None = None) -> list[str]:
     for c in caveats(root):
         k = f"{c['entry']}::{key(c['claim'])}"
         entry = status.get(k, {})
-        if entry.get("verdict") != "open":
+        # `narrowed` too: part of it is still true, so it is still work and
+        # still wants re-reading. Only the part that closed is settled.
+        if entry.get("verdict") not in ("open", "narrowed"):
             continue
         stamp = entry.get("checked")
         if stamp:
@@ -227,7 +253,7 @@ def main(root: Path = ROOT) -> int:
         lines = unread(days, root)
         for line in lines:
             print(line)
-        print(f"{len(lines)} open and not re-read in {days} days")
+        print(f"{len(lines)} open or narrowed and not re-read in {days} days")
         return 0
     if argv:
         want = argv[0].removeprefix("--")
@@ -255,8 +281,9 @@ def main(root: Path = ROOT) -> int:
         )
         return 1
     print(
-        f"{total} caveats: {counts['open']} open, {counts['closed']} closed, "
-        f"{counts['deliberate']} deliberate, {counts['untriaged']} untriaged"
+        f"{total} caveats: {counts['open']} open, {counts['narrowed']} narrowed, "
+        f"{counts['closed']} closed, {counts['deliberate']} deliberate, "
+        f"{counts['untriaged']} untriaged"
     )
     return 1 if problems or orphans else 0
 

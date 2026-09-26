@@ -167,6 +167,47 @@ def main() -> int:
         1,
     )
 
+    # `narrowed` is held to `by` for a stronger reason than `closed` is: the
+    # whole point of the verdict is that part of the claim is still true, so a
+    # `narrowed` with nothing written down is a caveat nobody can act on — it
+    # says "some of this is done" and not which part.
+    case(
+        "narrowed without naming what closed and what is left is refused",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        1,
+    )
+
+    case(
+        "narrowed with a `by` is accepted and counted as its own thing",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                        "by": "half of it shipped in b.md; the other half is open",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        0,
+    )
+
     case(
         "an unknown verdict is refused and counted untriaged",
         {
@@ -385,6 +426,22 @@ def main() -> int:
     stamped = [dict(both_open[0], checked="2026-09-25"), both_open[1]]
     unread_case("one read today drops off the list", stamped, 30, 1)
 
+    # A `narrowed` caveat still has a residual, so it is still work and still
+    # wants re-reading. Listing only `open` would quietly retire the half that
+    # is not done — which is the failure `narrowed` was invented to avoid,
+    # reappearing one layer down.
+    half = [
+        dict(both_open[0], verdict="narrowed", by="half shipped; half open"),
+        both_open[1],
+    ]
+    unread_case("a narrowed caveat is re-read like an open one", half, 30, 2)
+
+    settled = [
+        dict(both_open[0], verdict="closed", by="b.md"),
+        dict(both_open[1], verdict="deliberate", by="a reason"),
+    ]
+    unread_case("closed and deliberate are not re-read", settled, 30, 0)
+
     stale = [dict(both_open[0], checked="2026-01-01"), both_open[1]]
     unread_case("a stamp older than the window is listed again", stale, 30, 2)
     unread_case("and is not listed when the window reaches it", stale, 400, 1)
@@ -392,8 +449,12 @@ def main() -> int:
     unread_case(
         "a closed caveat is not re-triage work",
         [
-            {"entry": "a.md", "key": "It does not do the first thing.",
-             "verdict": "closed", "by": "something"},
+            {
+                "entry": "a.md",
+                "key": "It does not do the first thing.",
+                "verdict": "closed",
+                "by": "something",
+            },
             both_open[1],
         ],
         30,
@@ -402,8 +463,12 @@ def main() -> int:
     unread_case(
         "a deliberate one is not either",
         [
-            {"entry": "a.md", "key": "It does not do the first thing.",
-             "verdict": "deliberate", "by": "a reason"},
+            {
+                "entry": "a.md",
+                "key": "It does not do the first thing.",
+                "verdict": "deliberate",
+                "by": "a reason",
+            },
             both_open[1],
         ],
         30,
