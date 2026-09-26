@@ -5076,9 +5076,10 @@
     {
       "entry": "2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
       "key": "Nothing checks a guard's account of itself.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "scripts/check_guard_scope.py — a guard's docstring must agree with the paths beneath it about which trees it reads, both directions, over all 21 guards under scripts/. ledger/2026-09-26-a-guard-that-reads-the-guards.md",
+      "residual": "Scope is the only part of a docstring compared. A comment claiming a mutation was caught, a pattern's stated reason, a count of cases: still unchecked, and two of those have guards of their own.",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
@@ -5531,6 +5532,27 @@
       "key": "The other dialects are not audited for their own version of ",
       "verdict": "closed",
       "by": "audited the same day: `go` was the only one. pytest registers cacheprovider/LFPlugin/NFPlugin but they skip nothing unless --lf or --nf is passed; node --test has no result cache and neither tsconfig sets `incremental`, so `tsc` re-emits; `cargo test` rebuilds on a source change and caches no results; the `python` dialect runs a script directly",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-guard-that-reads-the-guards.md",
+      "key": "It reads `scripts/check_*.py` and nothing else.",
+      "verdict": "deliberate",
+      "by": "that entry: `roots` relies on a Python convention — a root-ish name divided by a string literal — so the two shell runners need a second reader for a third of the files, and no claim in the other Python is currently wrong. A widening with nothing behind it is how the `~~` exemption got coarse",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-guard-that-reads-the-guards.md",
+      "key": "A tree reached by string concatenation, or from a root under",
+      "verdict": "deliberate",
+      "by": "that entry: an unseen path only shrinks the `read` set, so rule 1 can miss a contradiction and cannot invent one; rule 2 is the direction that can go wrong that way, which is why its pattern demands the sentence's subject be the file itself",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-guard-that-reads-the-guards.md",
+      "key": "Scope is the only part of a docstring compared.",
+      "verdict": "deliberate",
+      "by": "that entry: the rest is prose a script cannot judge, and the two parts that are checkable already have guards — scripts/check_mutation_claims.py and scripts/check_cited_docs.py",
       "reviewed": "2026-09-26"
     },
     {

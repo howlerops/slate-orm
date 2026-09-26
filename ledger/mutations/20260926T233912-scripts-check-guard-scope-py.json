@@ -1,0 +1,118 @@
+{
+  "at": "2026-09-26T23:39:12+00:00",
+  "file": "scripts/check_guard_scope.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_guard_scope.py"
+  ],
+  "commit": "a60ce46",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "rule 1 never reports",
+      "old": "        for tree in sorted(denied & read):",
+      "new": "        for tree in sorted(denied & read & set()):",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that says a tree is out of scope and reads it is reported",
+        "the other phrasings are read the same way"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 2 never reports",
+      "old": "        for tree in sorted(wanted - read):",
+      "new": "        for tree in sorted(set()):",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard claiming to read a tree it has no path into is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a bare tree name counts as a scope claim",
+      "old": "rf\"`?({TREE})/`?[^.\\n]{{0,60}}?\"",
+      "new": "rf\"`?({TREE})/?`?[^.\\n]{{0,60}}?\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree named without a slash is prose, not a scope claim"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a claim may reach across a full stop",
+      "old": "rf\"`?({TREE})/`?[^.\\n]{{0,60}}?\"",
+      "new": "rf\"`?({TREE})/`?[^\\n]{{0,60}}?\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a full stop between the tree and the phrase is not a claim"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "any sentence with `reads` is a claim about this guard",
+      "old": "    r\"(?:^|\\. |\\*\\*)(?:It|This guard|This check|This)\\s+(?:reads|walks)([^.\\n]{0,120})\",",
+      "new": "    r\"(?:reads|walks)([^.\\n]{0,120})\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a mid-sentence mention of what another guard reads is not a claim",
+        "every guard here describes its own scope correctly"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only ROOT is followed, not REPO or a root parameter",
+      "old": "ROOTISH = re.compile(r\"^(?:root|repo)$\", re.IGNORECASE)",
+      "new": "ROOTISH = re.compile(r\"^ROOT$\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a root called REPO is followed like ROOT",
+        "and a root taken as a parameter, which is where most of them are",
+        "every guard here describes its own scope correctly"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-guards never-fires half is gone",
+      "old": "    if not guards:",
+      "new": "    if guards and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "no guards at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-claims never-fires half is gone",
+      "old": "    elif not claims:",
+      "new": "    elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "no scope claim anywhere is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-paths never-fires half is gone",
+      "old": "    elif not any(roots(path.read_text(encoding=\"utf-8\")) for path in guards):",
+      "new": "    elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "no root path anywhere is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
