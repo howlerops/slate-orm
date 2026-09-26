@@ -178,6 +178,223 @@ else:
 '''
 
 
+#: Real output from each dialect's real runner, on a clean run and on a run
+#: with one failing test.
+#:
+#: # Why this is here
+#:
+#: Everything else in this file drives `mutate.py` against a *fake* command,
+#: which makes the parsing testable with no toolchain — and means every sample
+#: it parses was written by the same hand as the pattern parsing it. Three of
+#: `mutate.py`'s six recorded lies were a failure pattern that matched too
+#: *little*: `- should panic`, pytest's `ERROR`, `go test -q`. Each scored a
+#: caught mutation as a survivor, and each was loud in the end, because a
+#: survivor exits non-zero and demands an explanation.
+#:
+#: The opposite error is silent. A failure pattern that matches a line which is
+#: not a failure makes **every** mutation look caught: the run reports a name,
+#: exits 0, and the session writes up a test that defends nothing. Nothing in
+#: `mutate.py` can detect it — the exact-once rule is about the anchor and the
+#: reported-suites count is about the report pattern, and neither reads the
+#: failure pattern at all. That was recorded as a caveat in
+#: `ledger/2026-09-22-four-dependencies-and-a-tool-that-was-lying.md`, and this
+#: closes it.
+#:
+#: # How the samples were taken
+#:
+#: Each was captured from the real runner on 2026-09-26, on this container,
+#: rather than recalled — the same rule the dialect comments in `mutate.py`
+#: already follow, with the output kept instead of paraphrased:
+#:
+#:   rust    `rustc --test -o t t.rs && ./t`, on a two-test file
+#:   python  `python3 scripts/test_check_examples_roster.py`, this repository's
+#:           own house style, clean and with one guard arm disabled
+#:   pytest  `pytest -q`, on a two-test file
+#:   node    `node --test`, on a two-case `.js` file (node 22)
+#:   go      `go test -count=1 ./...`, on a one-package module
+#:
+#: They are trimmed only where a sample would otherwise carry a duration that
+#: differs every run; nothing is reworded. A sample that goes stale against a
+#: newer runner is a sample that stops matching its own dialect, which the
+#: second case below reports rather than passes over.
+#:
+#: dialect -> (a clean run, a run with one failure, the name that failure has)
+CORPUS: dict[str, tuple[str, str, str]] = {
+    "rust": (
+        "running 2 tests\n"
+        "test a_unit_test ... ok\n"
+        "test b_unit_test ... ok\n"
+        "\n"
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; "
+        "0 filtered out; finished in 0.00s\n",
+        "running 2 tests\n"
+        "test b_unit_test ... ok\n"
+        "test a_unit_test ... FAILED\n"
+        "\n"
+        "failures:\n"
+        "\n"
+        "---- a_unit_test stdout ----\n"
+        "\n"
+        "thread 'a_unit_test' panicked at f.rs:1:26:\n"
+        "assertion failed: false\n"
+        "\n"
+        "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; "
+        "0 filtered out; finished in 0.09s\n",
+        "a_unit_test",
+    ),
+    "python": (
+        "ok    a crate whose floor matches, with no servers, is clean\n"
+        "ok    a crate with examples and no floor is reported\n"
+        "ok    the real tree's four tables agree\n"
+        "\n"
+        "24 passed, 0 failed\n",
+        "ok    a crate whose floor matches, with no servers, is clean\n"
+        "FAIL  an example that takes sections and has no refusal line is reported\n"
+        "        expected 'has no line in `refuses()`', got []\n"
+        "ok    the real tree's four tables agree\n"
+        "\n"
+        "23 passed, 1 failed\n",
+        "an example that takes sections and has no refusal line is reported",
+    ),
+    "pytest": (
+        "..                                                                       "
+        "[100%]\n"
+        "2 passed in 0.00s\n",
+        ".F                                                                       "
+        "[100%]\n"
+        "=================================== FAILURES ==========================="
+        "====\n"
+        "____________________________ test_a_failing_case ______________________"
+        "______\n"
+        "\n"
+        "    def test_a_failing_case():\n"
+        ">       assert False\n"
+        "E       assert False\n"
+        "\n"
+        "test_f.py:2: AssertionError\n"
+        "=========================== short test summary info ===================="
+        "========\n"
+        "FAILED test_f.py::test_a_failing_case - assert False\n"
+        "1 failed, 2 passed in 0.01s\n",
+        "test_f.py::test_a_failing_case",
+    ),
+    "node": (
+        "TAP version 13\n"
+        "# Subtest: a named case\n"
+        "ok 1 - a named case\n"
+        "  ---\n"
+        "  duration_ms: 0.756938\n"
+        "  type: 'test'\n"
+        "  ...\n"
+        "1..1\n"
+        "# tests 1\n"
+        "# suites 0\n"
+        "# pass 1\n"
+        "# fail 0\n"
+        "# cancelled 0\n"
+        "# skipped 0\n"
+        "# todo 0\n",
+        "TAP version 13\n"
+        "# Subtest: a failing case\n"
+        "not ok 1 - a failing case\n"
+        "  ---\n"
+        "  duration_ms: 1.104\n"
+        "  type: 'test'\n"
+        "  error: 'no'\n"
+        "  ...\n"
+        "1..1\n"
+        "# tests 1\n"
+        "# suites 0\n"
+        "# pass 0\n"
+        "# fail 1\n",
+        "a failing case",
+    ),
+    "go": (
+        "ok  \texample.com/pkg\t0.003s\n",
+        "--- FAIL: TestFails (0.00s)\n"
+        "    y_test.go:5: no\n"
+        "FAIL\n"
+        "FAIL\texample.com/pkg\t0.003s\n"
+        "FAIL\n",
+        "TestFails",
+    ),
+}
+
+
+def case_no_dialect_reads_a_clean_run_as_a_failure() -> list[bool]:
+    """No failure pattern matches anything in any runner's clean output.
+
+    The whole cross product, not each dialect against its own sample. A
+    dialect is chosen by the caller and applied to whatever that command
+    prints, so `python` pointed at `go test` is an ordinary mistake — and a
+    `python` pattern of `FAIL` alone would match `go test`'s bare trailing
+    `FAIL` and report a failure on a clean run. That is not hypothetical: the
+    `go` dialect's own report pattern had to be narrowed for the same line.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    results = []
+    for dialect, (failed, _) in sorted(mutate.DIALECTS.items()):
+        for other, (clean, _, _) in sorted(CORPUS.items()):
+            found = failed.findall(clean)
+            ok = not found
+            results.append(ok)
+            print(
+                f"{'ok  ' if ok else 'FAIL'}  the {dialect} failure pattern "
+                f"reads no failure in a clean {other} run"
+                + ("" if ok else f" (it found {found})")
+            )
+    return results
+
+
+def case_every_dialect_reads_its_own_runner() -> list[bool]:
+    """And each pattern still matches the output it was written for.
+
+    The other half, and the reason the case above cannot stand alone: a
+    failure pattern of `^will-never-match` passes it perfectly. Both
+    directions against real output, so a runner whose format moves is reported
+    here rather than discovered as a mutation run that scores nothing.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    results = []
+    for dialect, (clean, broken, named) in sorted(CORPUS.items()):
+        failed, reported = mutate.DIALECTS[dialect]
+        for what, ok in (
+            ("names the failing test", failed.findall(broken) == [named]),
+            ("sees the clean run report", bool(reported.search(clean))),
+            ("sees the failing run report", bool(reported.search(broken))),
+        ):
+            results.append(ok)
+            print(f"{'ok  ' if ok else 'FAIL'}  the {dialect} dialect {what}")
+    return results
+
+
+def case_every_dialect_has_a_sample() -> bool:
+    """The never-fires half: a sixth dialect needs a sample, not a pass.
+
+    Without this the two cases above iterate whatever `CORPUS` happens to
+    hold, and a dialect added to `mutate.py` and not here is checked by
+    nothing — silently, since both loops still print a screenful of `ok`. The
+    `EXPECTED_REFUSALS` idiom: a list you are forced to edit is a list that
+    stays true.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    missing = sorted(set(mutate.DIALECTS) - set(CORPUS))
+    invented = sorted(set(CORPUS) - set(mutate.DIALECTS))
+    ok = not missing and not invented
+    print(
+        f"{'ok  ' if ok else 'FAIL'}  every dialect has real output to be "
+        "checked against"
+        + ("" if ok else f" (missing {missing}, invented {invented})")
+    )
+    return ok
+
+
 def run(
     spec: str,
     subject: Path,
@@ -884,6 +1101,9 @@ def main() -> int:
         case_fresh_bytecode(),
         *case_recovers_from_a_kill(),
         case_help_lists_every_dialect(),
+        *case_no_dialect_reads_a_clean_run_as_a_failure(),
+        *case_every_dialect_reads_its_own_runner(),
+        case_every_dialect_has_a_sample(),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

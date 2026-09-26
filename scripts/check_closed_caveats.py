@@ -72,8 +72,10 @@ ROOT = Path(__file__).resolve().parent.parent
 WITNESS: dict[str, tuple[str | None, str]] = {
 
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
+ "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
  "array-codegen": ("element", "scripts/codegen.py"),
+ "dialect-corpus": ("CORPUS", "scripts/test_mutate.py"),
  "array-literal-sql": ("array", "crates/slate-serverd/src/lang/pred.rs"),
  "array-schema": ("Array", "crates/slate-schema/src/table.rs"),
  "array-wire": ("array", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -302,6 +304,12 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-26-a-mistyped-section-is-a-refusal-now.md',
+     'Nothing in CI runs an example with a bad section.'):
+        'bad-section-run',
+    ('2026-09-22-four-dependencies-and-a-tool-that-was-lying.md',
+     "`mutate.py`'s refusal cannot catch a dialect that reads *too"):
+        'dialect-corpus',
     ('2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md',
      '`narrowed` has no `residual` field.'):
         'residual-field',

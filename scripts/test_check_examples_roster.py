@@ -24,28 +24,48 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import check_examples_roster
 
-#: A source that runs to completion, and one that does not.
+#: A source that runs to completion, one that does not, and one that reads
+#: section names off its command line.
 RUNS = "fn main() { println!(\"done\"); }\n"
 SERVES = 'fn main() { println!("LISTENING 1"); std::future::pending::<()>(); }\n'
+PICKY = 'fn main() { let _ = sections::from_args(&["rpc", "lease"]); }\n'
 
 
-def script(floors: dict[str, int], shakes: dict[tuple[str, str], str]) -> str:
-    """A `run_examples.sh` with only the two tables the guard reads.
+def script(
+    floors: dict[str, int],
+    shakes: dict[tuple[str, str], str],
+    refusals: dict[tuple[str, str], str],
+) -> str:
+    """A `run_examples.sh` with only the three tables the guard reads.
 
-    Not a copy of the real script: the guard reads two `case` arms out of it
+    Not a copy of the real script: the guard reads three `case` arms out of it
     and nothing else, and a fixture carrying the rest would go stale against
     the original for no benefit.
+
+    The two per-example tables are wrapped in their real function names, and
+    that is load-bearing rather than cosmetic: their arms are spelled
+    identically — `crate/name) echo "…" ;;` — so the guard tells them apart by
+    which function's body they sit in, and a fixture emitting bare `case`
+    blocks would be checking a parse the real script never gets.
     """
+
+    def table(name: str, arms: dict[tuple[str, str], str]) -> str:
+        return (
+            f"{name}() {{\n"
+            + '    case "$1/$2" in\n'
+            + "".join(
+                f'        {crate}/{example}) echo "{line}" ;;\n'
+                for (crate, example), line in arms.items()
+            )
+            + "    esac\n}\n"
+        )
+
     return (
         "case \"$crate\" in\n"
         + "".join(f"    {name}) least={least} ;;\n" for name, least in floors.items())
         + "esac\n"
-        + 'case "$1/$2" in\n'
-        + "".join(
-            f'        {crate}/{name}) echo "{line}" ;;\n'
-            for (crate, name), line in shakes.items()
-        )
-        + "esac\n"
+        + table("handshake", shakes)
+        + table("refuses", refusals)
     )
 
 
@@ -59,6 +79,11 @@ def script(floors: dict[str, int], shakes: dict[tuple[str, str], str]) -> str:
 #: about a table being empty pass `bare=True`.
 SPARE = ("spare", "up")
 
+#: The same, for rule 4: an example that takes sections, so that the
+#: never-fires half of the refusal table is satisfied in every case that is
+#: not about it.
+SPARE_PICKY = ("spare", "choosy")
+
 
 def run(
     crates: dict[str, dict[str, str]],
@@ -66,12 +91,27 @@ def run(
     shakes: dict[tuple[str, str], str],
     members: list[str] | None = None,
     bare: bool = False,
+    refusals: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
-    """Run the real guard over a workspace this writes."""
+    """Run the real guard over a workspace this writes.
+
+    `refusals=None` means "a correct line for every example that takes
+    sections", which is what the cases that are about the other three rules
+    want: rule 4 then reports nothing and they stay about what they are about.
+    A case that *is* about rule 4 passes the table it means.
+    """
+    if refusals is None:
+        refusals = {
+            (crate, name): "--not-a-section"
+            for crate, examples in crates.items()
+            for name, source in examples.items()
+            if "sections::from_args" in source
+        }
     if not bare:
-        crates = {**crates, SPARE[0]: {SPARE[1]: SERVES}}
-        floors = {**floors, SPARE[0]: 1}
+        crates = {**crates, SPARE[0]: {SPARE[1]: SERVES, SPARE_PICKY[1]: PICKY}}
+        floors = {**floors, SPARE[0]: 2}
         shakes = {**shakes, SPARE: "LISTENING"}
+        refusals = {**refusals, SPARE_PICKY: "--not-a-section"}
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for crate, examples in crates.items():
@@ -90,7 +130,7 @@ def run(
             + "]\n"
         )
         runner = root / "run_examples.sh"
-        runner.write_text(script(floors, shakes))
+        runner.write_text(script(floors, shakes, refusals))
         return check_examples_roster.problems(runner, root, manifest)
 
 
@@ -234,6 +274,95 @@ CASES: list[tuple[str, dict, dict, dict, str, bool]] = [
 ]
 
 
+#: Rule 4's cases, which are about the refusal table and nothing else.
+#:
+#: A shorter shape than `CASES` on purpose: the floors and the handshake table
+#: are derived from the crates here, because a rule-4 case that also had to
+#: state a floor would be two rules' fixture and would go red for the wrong
+#: reason when the other rules changed — which is the defect `_least()` above
+#: exists for, one level down.
+#:
+#: name, crates, the refusal table (`None` for a correct one), the text the
+#: report must carry, and whether to run without the spare crate.
+SECTION_CASES: list[tuple[str, dict, dict | None, str, bool]] = [
+    (
+        "an example that takes sections and has a refusal line is clean",
+        {"a": {"picky": PICKY}},
+        None,
+        "",
+        False,
+    ),
+    (
+        # The defect, back again: `head_report --typo` printed its header, ran
+        # nothing and exited 0. An example that gains sections without a
+        # refusal line is in exactly that state, and the run stays green.
+        "an example that takes sections and has no refusal line is reported",
+        {"a": {"picky": PICKY}},
+        {},
+        "`a/picky` takes section names and has no line in `refuses()`",
+        False,
+    ),
+    (
+        "a refusal for an example that is gone is reported",
+        {"a": {"picky": PICKY}},
+        {("a", "picky"): "--not-a-section", ("a", "ghost"): "--not-a-section"},
+        "`refuses()` names `a/ghost`, which is not an example here any more",
+        False,
+    ),
+    (
+        "a refusal for an example that takes no sections is reported",
+        {"a": {"one": RUNS, "picky": PICKY}},
+        {("a", "picky"): "--not-a-section", ("a", "one"): "--not-a-section"},
+        "names `a/one`, which takes no sections",
+        False,
+    ),
+    (
+        # The one that reads as its own opposite. `rpc` is a section this
+        # source has, so the example runs, exits 0, and the runner reports
+        # `wanted 2` — which sends the next reader looking for a refusal that
+        # never went anywhere.
+        "a refusal argument the example's own source carries is reported",
+        {"a": {"picky": PICKY}},
+        {("a", "picky"): "rpc"},
+        "which is a string in its own source",
+        False,
+    ),
+    (
+        # Not about rule 4 at all: it is about `body()`, which slices a
+        # function out of the script before either per-example table is
+        # parsed. Both tables' arms are brace-free in the real tree, so a
+        # closing-brace pattern without its `^` anchor slices exactly the same
+        # text and every other case here passes — a mutation dropping the
+        # anchor survived, which is how this case came to exist. An arm
+        # carrying a `${…}` ends the body early and silently drops every arm
+        # after it, including the spare's, so the guard reads half a table and
+        # reports `ok`.
+        "an arm containing a brace does not truncate the table",
+        {"a": {"picky": PICKY}},
+        {("a", "picky"): "--${nope}"},
+        "",
+        False,
+    ),
+    (
+        "no refusals at all is reported, not passed over",
+        {"a": {"one": SERVES}},
+        {},
+        "nothing hands a built example a section name it does not have",
+        True,
+    ),
+    (
+        # The other never-fires half. Without this, deleting `TAKES_SECTIONS`
+        # or renaming what it matches leaves rule 4 checking an empty set and
+        # printing `ok`.
+        "a tree where no example takes sections is reported, not passed over",
+        {"a": {"one": SERVES}},
+        {("a", "one"): "--not-a-section"},
+        "no example anywhere reads section names",
+        True,
+    ),
+]
+
+
 def main() -> int:
     failed = 0
     for name, crates, floors, shakes, wanted, bare in CASES:
@@ -250,18 +379,37 @@ def main() -> int:
         if not ok:
             print(f"        expected {wanted!r}, got {found}")
 
+    for name, crates, refusals, wanted, bare in SECTION_CASES:
+        floors = {crate: len(examples) for crate, examples in crates.items()}
+        shakes = {
+            (crate, example): "LISTENING"
+            for crate, examples in crates.items()
+            for example, source in examples.items()
+            if "future::pending" in source
+        }
+        try:
+            found = run(crates, floors, shakes, refusals=refusals, bare=bare)
+        except Exception as raised:  # noqa: BLE001 - a crash is this case failing
+            found = [f"raised {raised!r} instead of reporting a problem"]
+        ok = (not found) if not wanted else any(wanted in one for one in found)
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected {wanted!r}, got {found}")
+
     # The real tree, last, so a failure here reads as "the tree drifted"
     # rather than as a broken test.
     found = check_examples_roster.problems()
     ok = not found
     failed += not ok
-    print(f"{'ok  ' if ok else 'FAIL'}  the real tree's floors and handshakes agree")
+    print(f"{'ok  ' if ok else 'FAIL'}  the real tree's four tables agree")
     if not ok:
         for one in found:
             print(f"      {one}")
 
     print()
-    print(f"{len(CASES) + 1 - failed} passed, {failed} failed")
+    total = len(CASES) + len(SECTION_CASES) + 1
+    print(f"{total - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

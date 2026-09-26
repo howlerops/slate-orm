@@ -1,0 +1,107 @@
+{
+  "at": "2026-09-26T23:04:52+00:00",
+  "file": "scripts/check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "438b4be",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a taker with no refusal line is not reported",
+      "old": "        if (crate, name) not in refusals:",
+      "new": "        if (crate, name) not in refusals and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that takes sections and has no refusal line is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refusal for a non-taker is not reported",
+      "old": "        elif (crate, name) not in takers:",
+      "new": "        elif (crate, name) not in takers and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a refusal for an example that takes no sections is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refusal argument in the source is not reported",
+      "old": "        elif f'\"{bad}\"' in source:",
+      "new": "        elif f'\"{bad}\"' not in source:",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate whose floor matches, with no servers, is clean",
+        "examples in a directory that is not a member are not demanded",
+        "an example that takes sections and has a refusal line is clean",
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the takers never-fires half is gone",
+      "old": "    if not takers:",
+      "new": "    if takers and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree where no example takes sections is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusals never-fires half is gone",
+      "old": "    if not refusals:",
+      "new": "    if refusals and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "no refusals at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "nothing is recognised as taking sections",
+      "old": "TAKES_SECTIONS = re.compile(r\"sections::from_args\")",
+      "new": "TAKES_SECTIONS = re.compile(r\"sections::from_args_nowhere\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate whose floor matches, with no servers, is clean",
+        "examples in a directory that is not a member are not demanded",
+        "an example that takes sections and has a refusal line is clean",
+        "an example that takes sections and has no refusal line is reported",
+        "a refusal argument the example's own source carries is reported",
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the function body slice stops at any brace",
+      "old": "rf\"^{re.escape(function)}\\(\\) \\{{\\n(.*?)^\\}}\", script, re.MULTILINE | re.DOTALL",
+      "new": "rf\"^{re.escape(function)}\\(\\) \\{{\\n(.*?)\\}}\", script, re.MULTILINE | re.DOTALL",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing function reads as an empty table",
+      "old": "    return None if found is None else found.group(1)",
+      "new": "    return \"\" if found is None else found.group(1)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

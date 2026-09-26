@@ -4661,9 +4661,9 @@
     {
       "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
       "key": "`mutate.py`'s refusal cannot catch a dialect that reads *too",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/test_mutate.py — `CORPUS` holds real clean and failing output from all five runners, and `case_no_dialect_reads_a_clean_run_as_a_failure` checks every dialect's failure pattern against every dialect's clean run. ledger/2026-09-26-the-refusal-nothing-ran.md",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
@@ -5981,8 +5981,9 @@
     {
       "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",
       "key": "Nothing in CI runs an example with a bad section.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/run_examples.sh — `refuses()` hands each example that takes sections an argument none of them has and requires exit 2, and CI's `headbench` job runs `crates/slate-headbench/run.sh --smoke`, which is that runner. scripts/check_examples_roster.py rule 4 keeps the roster equal to the examples that call `sections::from_args`. ledger/2026-09-26-the-refusal-nothing-ran.md",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",

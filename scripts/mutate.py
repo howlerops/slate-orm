@@ -5,9 +5,11 @@
 thing, confirm a *named* test fails, restore, re-verify. The discipline is
 sound and doing it by hand has a failure mode that looks exactly like success.
 
-**Five ways a mutation run lies. The first three were met by hand in one
-session; the fourth was found by pointing this script at itself; the fifth was
-this script's own fault:**
+**Six ways a mutation run lies. The first three were met by hand in one
+session; the fourth was found by pointing this script at itself; the fifth
+was this script's own fault; the sixth is `go test` doing what it is
+documented to do.** (It said *five* while listing six for four days, which
+is the smallest possible version of the staleness this file argues against.)
 
 1. **The patch does not apply.** An anchor string moves under `cargo fmt` and
    the replacement silently matches nothing. The suite then runs against
@@ -58,6 +60,19 @@ Each is caught here rather than trusted to a reader's attention:
   command line somebody happened to quote in a ledger entry, and none had. A
   defect in this script is only as expensive as the runs it silently ruined,
   and that number was unknowable.
+
+**And one lie nothing here can catch, which is caught beside it instead.** Every
+protection above is about a pattern matching too *little*: the exact-once rule
+watches the anchor, the reported-suites count watches the report pattern, and a
+failure pattern that misses a real failure eventually shows up as a survivor,
+which exits non-zero and demands an explanation. A failure pattern matching a
+line that is *not* a failure is the mirror image and is silent — every mutation
+then looks caught, the run exits 0, and the session writes up a test that
+defends nothing. Nothing in this file reads the failure patterns at all, so
+`scripts/test_mutate.py` holds a corpus of real output from all five runners and
+checks every pattern against every dialect's clean run. Two realistic
+over-matches — reading libtest's `... ok` as `... FAILED`, and TAP's `ok 1 -` as
+`not ok 1 -` — were written and caught by it.
 
 **A surviving mutation exits non-zero.** That is the point: a survival is a
 finding — a missing test, or code that is redundant — and it should interrupt

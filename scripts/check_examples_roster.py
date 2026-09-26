@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Every crate's examples are run by something, and `run_examples.sh` is honest.
 
-`scripts/run_examples.sh` holds three hand-maintained facts about this tree: a
-floor per crate, a handshake line per server example, and — by omission — the
-list of crates whose examples anything runs at all. None of the three was
+`scripts/run_examples.sh` holds four hand-maintained facts about this tree: a
+floor per crate, a handshake line per server example, a refusal line per
+example that takes section names, and — by omission — the list of crates whose
+examples anything runs at all. None of the three was
 checked, and the third was wrong when this was written: **four** crates carry
 an `examples/` directory and the script named two. `slate-kernel`'s four and
 `slate-orm`'s one were in precisely the state `slate-headbench`'s five were in
@@ -13,7 +14,7 @@ That is the same defect three times now (#265, #271, here), which is what makes
 it worth a guard rather than a fourth fix. A benchmark nobody runs is a
 constant nobody re-measures.
 
-The three rules, each in both directions:
+The four rules, each in both directions:
 
 1. **A crate with examples has a floor.** This is the one that found the
    defect. A fifth crate gaining a benchmark directory fails here rather than
@@ -30,6 +31,14 @@ The three rules, each in both directions:
    also occur in that example's source, or the budget is spent and the run
    fails with `no LISTENING in 30s` against a binary that prints something
    else.
+4. **An example that takes section names is handed a bad one, and only such an
+   example is.** `head_report --typo` printed its header, ran nothing and
+   exited 0; `slate_headbench::sections` fixed that by exiting 2, and nothing
+   ran a built binary to see it. A line in `refuses()` is what does, so an
+   example that gains sections without one is back where the defect was found.
+   The argument must also not be a string in that example's source: one that
+   is a real section makes the example run, exit 0, and the run report a
+   refusal as lost.
 
 Run directly: `python3 scripts/check_examples_roster.py`.
 """
@@ -49,7 +58,49 @@ MANIFEST = ROOT / "Cargo.toml"
 #: `    slate-headbench) least=5 ;;`
 FLOOR = re.compile(r"^\s*([a-z0-9-]+)\)\s*least=(\d+)\s*;;", re.MULTILINE)
 #: `        slate-slatedb/s3_server) echo "LISTENING" ;;`
-HANDSHAKE = re.compile(r'^\s*([a-z0-9-]+)/(\w+)\)\s*echo\s*"([^"]+)"\s*;;', re.MULTILINE)
+#:
+#: Both per-example tables in the runner are spelled exactly this way, so this
+#: pattern alone cannot tell a handshake line from a refusal line. `arm()`
+#: below slices the named function's body out first and applies it to that,
+#: which is why the pattern is shared rather than duplicated with a
+#: distinguishing prefix nobody would keep true.
+ARM = re.compile(r'^\s*([a-z0-9-]+)/(\w+)\)\s*echo\s*"([^"]+)"\s*;;', re.MULTILINE)
+
+def body(script: str, function: str) -> str:
+    """The text between `<function>() {` and the next **unindented** `}`.
+
+    The anchor on the closing brace is load-bearing and its absence is
+    invisible in this tree today: neither table's arms contain a brace, so a
+    lazy match to the first `}` anywhere slices exactly the same text and every
+    case here still passes. A `${…}` in one arm — a variable, a default, a
+    substitution, all ordinary things to write in a `case` — would then end the
+    body at that line and silently drop every arm after it. That is a guard
+    reading half a table and reporting `ok`, so `test_check_examples_roster.py`
+    has a case with a brace in an arm rather than trusting the comment.
+
+    Empty when the function is not there, which reads the same as a table with
+    no arms. Deliberately not distinguished: the callers' message names both
+    causes already — "either it moved, or the last one went away" — and a
+    distinction nothing acts on is one more branch to keep true. A mutation
+    collapsing the two was caught by nothing, which is what said so.
+    """
+    found = re.search(
+        rf"^{re.escape(function)}\(\) \{{\n(.*?)^\}}", script, re.MULTILINE | re.DOTALL
+    )
+    return "" if found is None else found.group(1)
+
+
+def arm(script: str, function: str) -> dict[tuple[str, str], str]:
+    """`{(crate, example): echoed}` for one of the runner's two tables."""
+    return {(crate, name): line for crate, name, line in ARM.findall(body(script, function))}
+
+
+#: An example that reads section names off its own command line.
+#:
+#: A property of the source, like `FOREVER` below, and for the same reason: a
+#: fourth example gaining sections is caught by having them rather than by
+#: somebody remembering the roster exists.
+TAKES_SECTIONS = re.compile(r"sections::from_args")
 
 #: What an example that never returns looks like.
 #:
@@ -75,7 +126,8 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
     """Every rule above, against a tree."""
     script = runner.read_text(encoding="utf-8")
     floors = {name: int(least) for name, least in FLOOR.findall(script)}
-    shakes = {(crate, name): line for crate, name, line in HANDSHAKE.findall(script)}
+    shakes = arm(script, "handshake")
+    refusals = arm(script, "refuses")
 
     # Where the examples actually are. A member with no `examples/` is not a
     # problem — most have none.
@@ -92,11 +144,11 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
 
     said = []
 
-    # The never-fires halves, and there are three because this reads three
-    # different files with three different patterns. Each would match nothing
-    # after an ordinary edit — the `case` rewritten as an `if`, the manifest's
-    # members moved, `examples/` renamed — and leave this printing `ok` over a
-    # tree it did not read.
+    # The never-fires halves, and there are four because this reads three
+    # different files with four different patterns. Each would match nothing
+    # after an ordinary edit — a `case` rewritten as an `if`, a function
+    # renamed, the manifest's members moved, `examples/` renamed — and leave
+    # this printing `ok` over a tree it did not read.
     if not floors:
         said.append(
             f"no `<crate>) least=N ;;` lines in {runner.name}, so the floors "
@@ -105,9 +157,10 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
         )
     if not shakes:
         said.append(
-            f"no `<crate>/<example>) echo \"...\" ;;` lines in {runner.name}. "
-            "Either the handshake table moved, or the last server example "
-            "went away — and if it went away, delete this guard deliberately."
+            f"no `<crate>/<example>) echo \"...\" ;;` lines in a `handshake()` "
+            f"in {runner.name}. Either the handshake table moved, or the last "
+            "server example went away — and if it went away, delete this guard "
+            "deliberately."
         )
     if not found:
         said.append(
@@ -187,6 +240,74 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
                 "against a binary that is up. Say what it really prints."
             )
 
+    # Rule 4, both ways, plus the argument itself.
+    #
+    # `head_report --typo` printed its header, ran nothing and exited 0. The
+    # fix — `slate_headbench::sections` — is unit-tested six ways, and the
+    # `exit(2)` under it was reached by nothing until `refuses()` existed. An
+    # example that gains sections and no refusal line goes back to the state
+    # the defect was found in, silently, because a benchmark that has stopped
+    # refusing still benchmarks.
+    takers = {
+        (crate, name)
+        for crate, sources in found.items()
+        for name, source in sources.items()
+        if TAKES_SECTIONS.search(source)
+    }
+    # Not in the early-return block above, unlike the other three never-fires
+    # halves: an empty floor table makes every crate "missing a floor" and
+    # buries the real message, while an empty refusal table cascades only into
+    # rule 4's own forward loop — which this skips instead.
+    if not refusals:
+        said.append(
+            f"no `<crate>/<example>) echo \"...\" ;;` lines in a `refuses()` "
+            f"in {runner.name}, so nothing hands a built example a section "
+            "name it does not have. That is the state `head_report --typo` was "
+            "in when it printed a header, ran nothing and exited 0."
+        )
+        return said
+    if not takers:
+        said.append(
+            "no example anywhere reads section names, so the refusal table is "
+            "checking nothing. If `sections::from_args` was renamed, teach "
+            "`TAKES_SECTIONS` about it; if the last example that took sections "
+            "went away, delete the table and this rule together."
+        )
+    for crate, name in sorted(takers):
+        if (crate, name) not in refusals:
+            said.append(
+                f"`{crate}/{name}` takes section names and has no line in "
+                "`refuses()`, so no run ever hands it one it does not have.\n"
+                f"  Add `{crate}/{name}) echo \"--not-a-section\" ;;` — the "
+                "refusal is the only thing standing between a mistyped "
+                "argument and an empty report that exits 0."
+            )
+    for (crate, name), bad in sorted(refusals.items()):
+        source = found.get(crate, {}).get(name)
+        if source is None:
+            said.append(
+                f"`refuses()` names `{crate}/{name}`, which is not an example "
+                "here any more. Delete the line."
+            )
+        elif (crate, name) not in takers:
+            said.append(
+                f"`refuses()` names `{crate}/{name}`, which takes no sections. "
+                "It will exit 0 for any argument and the run will read that as "
+                "a lost refusal. Delete the line."
+            )
+        elif f'"{bad}"' in source:
+            # The failure this rule is for reads as the opposite of what it is.
+            # A "bad" argument that the example's own roster lists makes it run
+            # normally and exit 0 — and the runner reports `wanted 2`, which
+            # sends the next reader to look for a refusal that is still there.
+            said.append(
+                f"`refuses()` hands `{crate}/{name}` the argument `{bad}`, "
+                "which is a string in its own source and may well be a section "
+                "it has.\n"
+                "  Then it runs, exits 0, and the run reports the refusal as "
+                "lost. Pick an argument no section could be named."
+            )
+
     return said
 
 
@@ -202,8 +323,8 @@ def main() -> int:
     floors = {name: int(least) for name, least in FLOOR.findall(script)}
     print(
         f"ok    {sum(floors.values())} examples across {len(floors)} crates, "
-        f"every floor exact, {len(HANDSHAKE.findall(script))} handshake(s) "
-        "rostered"
+        f"every floor exact, {len(arm(script, 'handshake'))} handshake(s) "
+        f"and {len(arm(script, 'refuses'))} refusal(s) rostered"
     )
     return 0
 
