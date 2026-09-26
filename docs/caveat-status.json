@@ -67,9 +67,9 @@
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
       "key": "The extractor is a regex and a hand-rolled unescaper.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "the caveat itself: it reads the format the file uses today, and asserts it found at least eight so a format change fails loudly rather than passing with zero — the coupling is named and the mitigation is stated",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
@@ -165,8 +165,8 @@
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
       "key": "Nothing verifies the two pages agree.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "scripts/check_site_claims.py, written citing this caveat, compares the checkable claims across 27 pages — counts, lints, directories, the refused keywords. The residual is the prose: a claim about character, which its UNCHECKED roster names and explains",
       "checked": "2026-09-26"
     },
     {
@@ -216,8 +216,8 @@
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "`kernel_ms` still includes building the `Vec<Vec<String>>`",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the honest number would time only the cursor loop, and splitting it further means timing inside the kernel rather than around it — the alternative is named and its cost is why this stands",
       "checked": "2026-09-26"
     },
     {
@@ -230,8 +230,8 @@
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "No test declares a per-input computed value on a chain",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the mechanism is the same as the two-input join's — the value travels in that input's row — and the three accessors are exercised there",
       "checked": "2026-09-26"
     },
     {
@@ -345,15 +345,15 @@
     {
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "The truncation is UTC, like everything else here.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: month_start in another zone is month_start(t + offset) shifted back, which is not what a caller means, so the naive version is not offered rather than offered wrong",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "`date_trunc` still stops at the year.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a week boundary is not a calendar field but a day offset from an arbitrary weekday, so it needs a convention — ISO's Monday or SQL's Sunday — and picking one silently is how day_of_week nearly went wrong",
       "checked": "2026-09-26"
     },
     {
@@ -435,8 +435,8 @@
     {
       "entry": "2026-09-15-a-table-is-not-a-database.md",
       "key": "The reverse direction is missing.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the inverse lookup is where the fall-back ambiguity becomes real, and no caller has asked for it",
       "checked": "2026-09-26"
     },
     {
@@ -492,9 +492,9 @@
     {
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
       "key": "No client-side spelling of it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "the caveat itself: all three clients can already send a grouping with no aggregates, and saying so in the doc comments is the whole of the client-side change this needed",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
@@ -517,9 +517,9 @@
     {
       "entry": "2026-09-15-having-on-a-join.md",
       "key": "HAVING still takes no computed column.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "the caveat itself: it resolves through join_group_ordinal, so it works when the computed value is the group key and is refused otherwise — which matches the single-table path rather than diverging from it",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-having-on-a-join.md",
@@ -584,8 +584,8 @@
     {
       "entry": "2026-09-15-one-space-for-a-joined-query.md",
       "key": "The demo's HTTP contract and its three adapters do not expos",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the sides are a browser concern, and the adapters build their joins in typed clients where At(input, ordinal) already says which",
       "checked": "2026-09-26"
     },
     {
@@ -634,8 +634,8 @@
     {
       "entry": "2026-09-15-pages-that-do-not-shift.md",
       "key": "The prefetch window is not tuned for a cursor.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: planning_limit() is more generous than a cursor needs, and it was left alone rather than changed on a guess — the decision is not to tune without measuring",
       "checked": "2026-09-26"
     },
     {
@@ -1022,8 +1022,8 @@
     {
       "entry": "2026-09-15-three-tables-in-the-front-end.md",
       "key": "The chain path has no proptest round trip.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a chain renderer is a strictly bigger independent implementation — n inputs, n-1 keys, each naming any earlier input — and the entry says plainly which kind of test it wrote instead",
       "checked": "2026-09-26"
     },
     {
@@ -1047,8 +1047,8 @@
     {
       "entry": "2026-09-15-three-types-and-none-of-them-new.md",
       "key": "No measurement.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the claim is about the mechanism, and docs/performance.md already holds the per-row footprint work that would be the place for a number if one is ever taken",
       "checked": "2026-09-26"
     },
     {
@@ -1078,8 +1078,8 @@
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
       "key": "403 is still 4.7× the data, and the biggest remaining piece ",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the remaining 128 bytes a row are four Bytes structs inline in the map's nodes, and Bytes is load-bearing — Arc<BTreeMap<Bytes, Bytes>> is what makes begin O(1)",
       "checked": "2026-09-26"
     },
     {
@@ -1192,8 +1192,8 @@
     {
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
       "key": "The matched rows are held in memory at once.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the daemon bounds per-request work above this layer, and a LIMIT on a predicate write would raise the question of *which* rows, which a predicate write has no answer to",
       "checked": "2026-09-26"
     },
     {
@@ -1283,8 +1283,8 @@
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "No predicate, ordering or limit per level.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: all three want a level to be a Query rather than a Relation, which is a much larger message — \"the item said it stops here and it stops here\"",
       "checked": "2026-09-26"
     },
     {
@@ -1350,15 +1350,15 @@
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "The cap is a row count and the thing that breaks is bytes.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the number is round because it is a guard rather than a tuning knob, derived from 10,000 x a 256-byte row against the 4 MiB client limit",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "The memory cost of a predicate write is untouched.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: it belongs in ExecutionLimits as a per-store memory guard — a different limit with a different default — and is written up in docs/orm-comparison.md rather than done there",
       "checked": "2026-09-26"
     },
     {
@@ -1377,8 +1377,8 @@
     {
       "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
       "key": "A page's row count is not bounded by `limit`.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a read is streamed, which is why N2's max_returned_rows does not apply and should not, and a caller needing a bounded response needs the composite cursor that entry rejects above with its reasoning",
       "checked": "2026-09-26"
     },
     {
@@ -1390,15 +1390,15 @@
     {
       "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
       "key": "No per-level predicate, ordering or limit.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "inherited from the join, where it is a stated scope decision: ledger/2026-09-17-a-path-of-relationships-on-the-wire.md — a level would have to be a Query rather than a Relation",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
       "key": "Nothing measures the cost.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: every page costs what the first costs because the cursor narrows the driving scan's key range, which is Plan::resume_after's own mechanism — its reasoning is quoted rather than re-measured, deliberately",
       "checked": "2026-09-26"
     },
     {
@@ -1467,8 +1467,8 @@
     {
       "entry": "2026-09-18-two-ci-failures-the-local-runs-could-not-see.md",
       "key": "Nothing makes the frontend units part of what I run before p",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a script that runs every suite is the obvious answer and is declined, because its right shape is the same question CI already answers and one more place for the two to disagree",
       "checked": "2026-09-26"
     },
     {
@@ -1544,15 +1544,15 @@
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
       "key": "The Python client has no `ForeignKey` type and its checks ar",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: Books.from_row is the only generated Python artefact this could exercise, and its generated declaration is covered by the fingerprint check",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
       "key": "The demo UI still does not use the decoders.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the UI reads the adapters' JSON, which is the adapters' shape and not a client's; making it use the TypeScript row types would be a fourth consumer and a larger change",
       "checked": "2026-09-26"
     },
     {
@@ -1643,15 +1643,15 @@
     {
       "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
       "key": "No relation is generated for the reverse direction as a name",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a key is one object with two readings, which is how the catalog models it and how Relation's own comment argues it should be; an accessor per direction needs a naming scheme surviving two keys between the same pair of tables, which this catalog has no example of",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-19-the-parent-a-client-cannot-derive.md",
       "key": "Python's helper is in the adapter, not the client.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "that entry's Alternatives rejected section, where the placement is argued; the caveat repeats it because the asymmetry is invisible until somebody ports code between the two",
       "checked": "2026-09-26"
     },
     {
@@ -1787,8 +1787,8 @@
     {
       "entry": "2026-09-20-a-child-that-is-still-a-child.md",
       "key": "It does not revisit whether `RESTRICT` should fire on the so",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: it is a pre-existing question, and widening that change to answer it would have made its mutation table meaningless",
       "checked": "2026-09-26"
     },
     {
@@ -1844,8 +1844,8 @@
     {
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
       "key": "The three-SDK conformance runner still compares behaviour, n",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the general answer needs a fixture in three languages for a property two of them cannot currently exhibit — \"I chose the cheaper check and am recording what it is cheaper than\"",
       "checked": "2026-09-26"
     },
     {
@@ -1900,8 +1900,8 @@
     {
       "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
       "key": "`SKIP_PARTS` is a hand-written roster too",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: a vendored tree with a name not on the list is a false positive rather than a miss, which is the safer direction, and noisy enough to notice",
       "checked": "2026-09-26"
     },
     {
@@ -1969,8 +1969,8 @@
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
       "key": "Elements decode dynamically, not by the column's element typ",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the bytes are the same either way, so nothing about ordering or the round trip turns on it, and correcting the tag is scoped to the increment that adds element_type",
       "checked": "2026-09-26"
     },
     {
@@ -2032,8 +2032,8 @@
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The `posts` table is in the test server and not in `crates/s",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the Rust tests need no array fixture — crates/slate-kernel/tests/arrays.rs covers the kernel and crates/slate-server/tests/wire.rs the conversion — so nothing is untested by the difference",
       "checked": "2026-09-26"
     },
     {
@@ -2053,15 +2053,15 @@
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The testserver's JSON oracle still cannot represent a decima",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: an arm added there alone would *create* a disagreement, because the Python tagger spells a Units as (\"Units\", n) from its own type name — closing it means agreeing on one spelling in two places at once, so it was left named rather than half-closed",
       "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
       "key": "It does not check `ty` for the same hazard.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: ty is versioned with the client's dev dependencies, so it is pinned where ruff is not — and the caveat flags that as read from pyproject.toml rather than observed",
       "checked": "2026-09-26"
     },
     {
@@ -2105,8 +2105,8 @@
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
       "key": "`any_scalar` is still a hand-written list",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself, whose second half is struck through: it is eight of Value's ten variants with both exclusions reasoned, and Value has no ALL because its variants carry data and the strategies differ per variant",
       "checked": "2026-09-26"
     },
     {
@@ -2192,8 +2192,8 @@
     {
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
       "key": "The clients were not checked for sending it twice.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "deliberate",
+      "by": "the caveat itself: the three-SDK conformance run and the deployed harness exercise every client against a real server in CI, so a break surfaces there — named as a reason to trust CI rather than as a check that was run",
       "checked": "2026-09-26"
     },
     {
@@ -5234,6 +5234,31 @@
     {
       "entry": "2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md",
       "key": "`narrowed` has no `residual` field.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
+      "key": "242 caveats are still open and they are still work.",
+      "verdict": "moment",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
+      "key": "Every judgement here is mine and nothing checks it.",
+      "verdict": "deliberate",
+      "checked": "2026-09-26",
+      "by": "scripts/caveats.py's own docstring, and ledger/2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md: a verdict is a judgement; the criterion is written down in this entry so a reader can disagree with a specific one"
+    },
+    {
+      "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
+      "key": "The reverse direction was not swept.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
+      "key": "`narrowed` was applied once and could fit more.",
       "verdict": "open",
       "checked": "2026-09-26"
     },
