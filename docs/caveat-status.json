@@ -1271,7 +1271,8 @@
       "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
       "key": "The browser render was a one-off, not a check.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
@@ -1283,25 +1284,29 @@
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "No predicate, ordering or limit per level.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "Nothing measures it.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "The depth is bounded; the fan-out is not.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "`ErrorInfo.metadata` still is not surfaced",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1320,7 +1325,8 @@
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
       "key": "One captured blob, one shape of error.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1338,19 +1344,22 @@
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "Nothing measures how much the early stop saves.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "The cap is a row count and the thing that breaks is bytes.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "The memory cost of a predicate write is untouched.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-17-the-formatting-job-was-red-for-two-commits.md",
@@ -1362,7 +1371,8 @@
       "entry": "2026-09-17-the-formatting-job-was-red-for-two-commits.md",
       "key": "Nothing prevents the next one.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-18-a-page-of-a-join-is-a-page-of-its-driving-table.md",
@@ -5017,6 +5027,21 @@
       "key": "The seam this suggests was deliberately not mined.",
       "verdict": "deliberate",
       "by": "this entry: reading in order keeps the staleness-rate estimate honest, which is the only number that says how much of the open list is dead"
+    },
+    {
+      "entry": "2026-09-26-batch-six-found-nothing.md",
+      "key": "It does not make the null result cheap.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-batch-six-found-nothing.md",
+      "key": "The formatting caveat is now wrong in a way no status can ex",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-batch-six-found-nothing.md",
+      "key": "Two of the ten were checked by absence.",
+      "verdict": "open"
     },
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
