@@ -313,6 +313,8 @@ jobs:
       # nothing compiles a path in a string literal either.
       - run: python3 scripts/check_site_claims.py
       - run: python3 scripts/test_check_site_claims.py
+      - run: python3 scripts/check_site_css.py
+      - run: python3 scripts/test_check_site_css.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
       # A handler must authorise before it touches a table's shape.

@@ -1,0 +1,92 @@
+{
+  "at": "2026-09-26T00:34:42+00:00",
+  "file": "scripts/check_site_css.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_css.py"
+  ],
+  "commit": "0f4ea3d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the comment stripper is dropped, so a class named in a comment reads as defined",
+      "old": "body = re.sub(r\"/\\*.*?\\*/\", \" \", css, flags=re.DOTALL)",
+      "new": "body = css",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet whose every selector is used passes",
+        "an id no page or script names is reported",
+        "a class named only inside a CSS comment is not treated as defined",
+        "the docs pages count as sources"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the hex-colour stripper is dropped",
+      "old": "body = re.sub(r\"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b\", \" \", body)",
+      "new": "body = body",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet whose every selector is used passes",
+        "a class no page or script names is reported",
+        "a class named only inside a CSS comment is not treated as defined",
+        "a class only ever built dynamically still counts as used",
+        "the docs pages count as sources",
+        "the generated wasm glue is not a source",
+        "a stylesheet with no classes at all is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the generated wasm glue is read as a source after all",
+      "old": "GENERATED = {\"slate_wasm.js\"}",
+      "new": "GENERATED: set[str] = set()",
+      "verdict": "caught",
+      "caught_by": [
+        "the generated wasm glue is not a source"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the docs pages are not read as sources",
+      "old": "found += sorted((site / \"docs\").glob(\"*.html\"))",
+      "new": "found += []",
+      "verdict": "caught",
+      "caught_by": [
+        "the docs pages count as sources"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a dead class is reported as fine",
+      "old": "dead = sorted(name for name in classes if name not in used)",
+      "new": "dead = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a class no page or script names is reported",
+        "a class only ever built dynamically still counts as used",
+        "the generated wasm glue is not a source"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an orphaned id is reported as fine",
+      "old": "orphan_ids = sorted(name for name in ids if name not in used)",
+      "new": "orphan_ids = []",
+      "verdict": "caught",
+      "caught_by": [
+        "an id no page or script names is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

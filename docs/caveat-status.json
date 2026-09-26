@@ -1123,7 +1123,8 @@
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
       "key": "No composite relating key",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
@@ -1135,7 +1136,8 @@
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
       "key": "The Rust `Related` trait and the wire disagree about what a ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
@@ -1159,7 +1161,8 @@
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
       "key": "The elision is untested by the Rust suite",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
@@ -1183,13 +1186,15 @@
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
       "key": "One table.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
       "key": "The matched rows are held in memory at once.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
@@ -1201,7 +1206,8 @@
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "No mobile navigation to speak of.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
@@ -1213,7 +1219,8 @@
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "Nothing was seen.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
@@ -1224,14 +1231,16 @@
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "`site/style.css` still carries rules for elements the workbe",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "measured and then guarded: scripts/check_site_css.py finds all 61 class selectors named by one of the 13 pages and scripts, and 0 ids; scripts/test_check_site_css.py holds it",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
       "key": "No default, so the hang is still reachable",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
@@ -1243,7 +1252,8 @@
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
       "key": "Nothing changed on the server.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
@@ -5041,6 +5051,34 @@
     {
       "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
       "key": "The fixture is four books and three decades.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",
+      "key": "It cannot see a rule that is reachable and pointless.",
+      "verdict": "deliberate",
+      "by": "this entry: a cascade needs a renderer, which is out of proportion to a dead-rule check"
+    },
+    {
+      "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",
+      "key": "It does not check the reverse direction",
+      "verdict": "deliberate",
+      "by": "this entry: a class in the markup with no rule is a styling bug a reader sees on first load, so it needs no guard"
+    },
+    {
+      "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",
+      "key": "Substring matching accepts a name that only appears in a com",
+      "verdict": "deliberate",
+      "by": "this entry: the same looseness that makes a dynamically built class name count as used; it cannot be had one way without the other"
+    },
+    {
+      "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",
+      "key": "The id check is vacuous on this tree.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",
+      "key": "`examples/explorer/web` has its own stylesheet and is not ch",
       "verdict": "open"
     },
     {
