@@ -36,11 +36,19 @@ PAGE = """<html><body>
 #: concatenation and never appears as a whole attribute value.
 SCRIPT = 'const badge = (tone) => `<span class="badge" data-tone="${tone}"></span>`;\n'
 
+#: The demo's stylesheet and its one source, so the second sheet in `SHEETS`
+#: is present and clean in every case. Without it every case would carry a
+#: "does not exist" failure and `failing` would have to name it each time.
+DEMO_CSS = ".panel { padding: 8px; }\n"
+DEMO_SOURCE = 'export const Panel = () => <div class="panel" />;\n'
+
 CLEAN: dict[str, str] = {
     "site/style.css": CSS,
     "site/index.html": PAGE,
     "site/workbench.js": SCRIPT,
     "site/docs/features.html": "<html><body><p>nothing styled here</p></body></html>\n",
+    "examples/explorer/web/src/styles.css": DEMO_CSS,
+    "examples/explorer/web/src/panels.tsx": DEMO_SOURCE,
 }
 
 
@@ -82,12 +90,12 @@ def main() -> int:
         case(
             "a class no page or script names is reported",
             {"site/style.css": CSS + ".ghost { display: none; }\n"},
-            {"every class the stylesheet defines"},
+            {"every class site/style.css defines"},
         ),
         case(
             "an id no page or script names is reported",
             {"site/style.css": CSS + "#gone { color: red; }\n"},
-            {"every id the stylesheet defines"},
+            {"every id site/style.css defines"},
         ),
         case(
             # The whole reason `selectors()` strips comments first. Without it
@@ -103,7 +111,7 @@ def main() -> int:
             # "tightening" the match to whole attribute values.
             "a class only ever built dynamically still counts as used",
             {"site/index.html": PAGE.replace('<div class="card">a card</div>', "")},
-            {"every class the stylesheet defines"},
+            {"every class site/style.css defines"},
         ),
         case(
             "the docs pages count as sources",
@@ -122,7 +130,35 @@ def main() -> int:
                 "site/style.css": CSS + ".ghost { display: none; }\n",
                 "site/slate_wasm.js": "// ghost\n",
             },
-            {"every class the stylesheet defines"},
+            {"every class site/style.css defines"},
+        ),
+        case(
+            # The caveat the widening closed: the demo has a stylesheet of its
+            # own and the first version of this guard read only `site/`.
+            "a dead class in the demo's own stylesheet is reported",
+            {"examples/explorer/web/src/styles.css": DEMO_CSS + ".ghost { display: none; }\n"},
+            {"every class examples/explorer/web/src/styles.css defines"},
+        ),
+        case(
+            # Each sheet is checked against its *own* sources. A class defined
+            # in the demo's sheet and mentioned only in `site/` is dead in the
+            # demo, and reading one pooled corpus would have missed it.
+            "a demo class named only by a site page is still dead",
+            {
+                "examples/explorer/web/src/styles.css": DEMO_CSS + ".card { border: 0; }\n",
+            },
+            {"every class examples/explorer/web/src/styles.css defines"},
+        ),
+        case(
+            "a stylesheet with no sources at all is reported, not passed",
+            {"examples/explorer/web/src/panels.tsx": None},
+            # Both: with no sources the class check also fails, which is the
+            # right answer — every class is dead when nothing can name one —
+            # and the sources check is what says *why*.
+            {
+                "examples/explorer/web/src/styles.css has sources",
+                "every class examples/explorer/web/src/styles.css defines",
+            },
         ),
         case(
             "a missing stylesheet is reported rather than passing empty",
@@ -132,7 +168,7 @@ def main() -> int:
         case(
             "a stylesheet with no classes at all is reported",
             {"site/style.css": ":root { --line: #ddd; }\n"},
-            {"defines some classes"},
+            {"site/style.css defines some classes"},
         ),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")

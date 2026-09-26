@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Every selector `site/style.css` defines is still used by a page or a script.
+"""Every selector a stylesheet defines is still used by one of its sources.
 
     python3 scripts/check_site_css.py
 
 `ledger/2026-09-16-the-site-looks-like-the-family-it-belongs-to.md` recorded,
-as a caveat, that the stylesheet "still carries rules for elements the
+as a caveat, that `site/style.css` "still carries rules for elements the
 workbench may no longer use". Reading it in the re-triage pass on 2026-09-26
 found the answer is **no** — every class and id it names appears somewhere.
+
+Two stylesheets, not one: `SHEETS` below says which, and why the demo's was
+added the same day the guard admitted leaving it out.
 
 The caveat was an admitted unknown rather than a known gap, which is the kind
 that stays open for ever: nobody re-derives it, because deriving it is the
@@ -18,6 +21,10 @@ A rule for a class nobody writes any more is dead weight in a file a reader
 treats as a description of the page. The site has been rewritten twice — the
 panel became the workbench, the landing page was restyled — and each time the
 markup moved and the stylesheet did not have to.
+
+Each stylesheet is compared against **its own** sources, not against one
+pooled corpus. A class defined in the demo's sheet and mentioned only in
+`site/` is dead in the demo, and pooling would call it used.
 
 It does **not** catch the other direction: a class the markup uses and the
 stylesheet does not define. That is a styling bug a reader sees immediately,
@@ -54,11 +61,37 @@ REPO = Path(__file__).resolve().parents[1]
 GENERATED = {"slate_wasm.js"}
 
 
-def sources(site: Path) -> list[Path]:
-    """The files a selector may be used by: the pages, and the scripts."""
-    found = [p for p in sorted(site.glob("*.html"))]
-    found += [p for p in sorted(site.glob("*.js")) if p.name not in GENERATED]
-    found += sorted((site / "docs").glob("*.html"))
+#: Each stylesheet, and where its selectors may be used.
+#:
+#: Two, because the caveat this guard closed
+#: (`ledger/2026-09-16-the-site-looks-like-the-family-it-belongs-to.md`) was
+#: about `site/` and the guard that closed it admitted, in its own entry, that
+#: `examples/explorer/web` has a stylesheet of its own and was not checked.
+#: That is the same shape as reading `service.rs` alone and missing
+#: `convert.rs`, and it was written down in the same session it was created —
+#: so it is fixed in the next one rather than in six days' time.
+#:
+#: The demo's sources are `.tsx` and `.ts` rather than `.html`: it is a SolidJS
+#: app whose markup is in the components, and its one `index.html` carries only
+#: the mount point.
+SHEETS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("site/style.css", ("site/*.html", "site/*.js", "site/docs/*.html")),
+    (
+        "examples/explorer/web/src/styles.css",
+        (
+            "examples/explorer/web/*.html",
+            "examples/explorer/web/src/*.tsx",
+            "examples/explorer/web/src/*.ts",
+        ),
+    ),
+)
+
+
+def sources(root: Path, globs: tuple[str, ...]) -> list[Path]:
+    """The files a selector may be used by, for one stylesheet."""
+    found: list[Path] = []
+    for pattern in globs:
+        found += [p for p in sorted(root.glob(pattern)) if p.name not in GENERATED]
     return found
 
 
@@ -91,30 +124,35 @@ def check(root: Path) -> list[tuple[str, bool, str]]:
     def record(what: str, ok: bool, detail: str = "") -> None:
         out.append((what, ok, detail))
 
-    site = root / "site"
-    stylesheet = site / "style.css"
-    if not stylesheet.is_file():
-        record("site/style.css exists", False, str(stylesheet))
-        return out
+    for sheet, globs in SHEETS:
+        stylesheet = root / sheet
+        if not stylesheet.is_file():
+            record(f"{sheet} exists", False, str(stylesheet))
+            continue
 
-    used = "\n".join(p.read_text(encoding="utf-8") for p in sources(site))
-    classes, ids = selectors(stylesheet.read_text(encoding="utf-8"))
+        files = sources(root, globs)
+        used = "\n".join(p.read_text(encoding="utf-8") for p in files)
+        classes, ids = selectors(stylesheet.read_text(encoding="utf-8"))
 
-    record("site/style.css defines some classes", bool(classes), f"{len(classes)}")
+        record(f"{sheet} defines some classes", bool(classes), f"{len(classes)}")
+        # A stylesheet with no sources would pass both checks below by having
+        # nothing to compare against, which is the vacuous-green shape this
+        # repository keeps meeting. Named rather than inferred.
+        record(f"{sheet} has sources to check against", bool(files), str(globs))
 
-    dead = sorted(name for name in classes if name not in used)
-    record(
-        "every class the stylesheet defines is named by a page or a script",
-        not dead,
-        ", ".join(dead),
-    )
+        dead = sorted(name for name in classes if name not in used)
+        record(
+            f"every class {sheet} defines is named by one of its sources",
+            not dead,
+            ", ".join(dead),
+        )
 
-    orphan_ids = sorted(name for name in ids if name not in used)
-    record(
-        "every id the stylesheet defines is named by a page or a script",
-        not orphan_ids,
-        ", ".join(orphan_ids),
-    )
+        orphan_ids = sorted(name for name in ids if name not in used)
+        record(
+            f"every id {sheet} defines is named by one of its sources",
+            not orphan_ids,
+            ", ".join(orphan_ids),
+        )
     return out
 
 
@@ -130,11 +168,12 @@ def main() -> int:
     if failed:
         print(f"{failed} failed")
         return 1
-    classes, ids = selectors((REPO / "site" / "style.css").read_text(encoding="utf-8"))
-    print(
-        f"{len(classes)} classes and {len(ids)} ids in site/style.css, "
-        f"all of them reachable from {len(sources(REPO / 'site'))} pages and scripts"
-    )
+    for sheet, globs in SHEETS:
+        classes, ids = selectors((REPO / sheet).read_text(encoding="utf-8"))
+        print(
+            f"{len(classes)} classes and {len(ids)} ids in {sheet}, all of them "
+            f"reachable from {len(sources(REPO, globs))} sources"
+        )
     return 0
 
 

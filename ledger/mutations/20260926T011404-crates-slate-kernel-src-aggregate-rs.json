@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-26T01:14:04+00:00",
+  "file": "crates/slate-kernel/src/aggregate.rs",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_grouped_join.py -q 2>&1"
+  ],
+  "commit": "01803e0",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a grouping's sort is never applied, read by the Python suite",
+      "old": "if !grouping.sort.is_empty() {",
+      "new": "if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_grouped_join.py::test_ordering_a_chains_groups_by_its_computed_value"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
