@@ -101,6 +101,11 @@ clean, including `slate-wasm`. `cargo clippy --workspace --all-targets`: zero
 warnings. `ruff`, both roots: clean. `ty` against the CI virtualenv: clean.
 `scripts/test_check_sh.py`: 90 CI steps, all accounted for.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T232956-site-check-claims-py.json` — site/check/claims.py, the run interrupted part-way
+- `ledger/mutations/20260925T233013-site-check-claims-py.json` — site/check/claims.py, the full run
+
 ## What this does not do
 
 **It reads one page.** `site/docs/*.html` carry claims too — `limits.html`

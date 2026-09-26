@@ -68,15 +68,34 @@ FIRST_DAY = "2026-09-23"
 #: `ledger/2026-09-23-a-slug.md`
 DATED = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 
-#: "Five mutations", "4 mutations", "three mutations against the recording".
+#: Three ways an entry says it ran mutations.
 #:
-#: A count is required. Without one this matches the ambient prose every entry
-#: in this repository carries — "a surviving mutation is a missing test" is a
-#: statement of policy, not a claim to have run one.
+#: A count, or a table, is required. Without one this matches the ambient prose
+#: every entry in this repository carries — "a surviving mutation is a missing
+#: test" is a statement of policy, not a claim to have run one.
+#:
+#: The first version required the number *before* the noun, and on 2026-09-26
+#: three entries in one session slipped past it: "A mutation, run twice, caught
+#: both times", "**Mutations**, six run, six caught", and "Six were run". All
+#: three had run real mutations, all three had records sitting in
+#: `ledger/mutations/`, and none cited one — which is exactly the failure this
+#: check exists to catch, going uncaught because the claim was phrased in a
+#: word order the pattern did not have. A guard that only recognises one way of
+#: saying a thing is a guard on a phrasing, not on a practice.
+NUMBER = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)"
+
 COUNT = re.compile(
-    r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
-    r"|\d+)\s+mutations?\b",
-    re.IGNORECASE,
+    # "Five mutations", "4 mutations", "three mutations against the recording".
+    rf"\b{NUMBER}\s+mutations?\b"
+    # "Mutations: six run, six caught", "mutations, five run". The number
+    # after the noun rather than before it, which is how an evidence heading
+    # reads when the word comes first.
+    rf"|\bmutations?\b[^.\n]{{0,30}}\b{NUMBER}\s+(?:run|caught|survived)\b"
+    # The evidence table every such claim in this repository carries:
+    # `| mutation | caught by |`. The most reliable signal of the three,
+    # because the table is a fixed shape and the prose above it is not.
+    r"|^\|\s*mutation\s*\|",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 #: A citation of a specific run.
@@ -95,9 +114,7 @@ CLEAN_CLAIM = re.compile(
 def entries(ledger: Path = LEDGER) -> list[Path]:
     """Dated entries, not `README.md`, `TEMPLATE.md` or the records."""
     return [
-        path
-        for path in sorted(ledger.glob("*.md"))
-        if path.is_file() and DATED.match(path.name)
+        path for path in sorted(ledger.glob("*.md")) if path.is_file() and DATED.match(path.name)
     ]
 
 

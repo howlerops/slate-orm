@@ -120,6 +120,14 @@ because the workbench's third statement is now a bracketed mixture rather than
 a flat `OR`. `cargo clippy --workspace --all-targets`: zero warnings.
 `sh scripts/check.sh`: 53 passed, all of them.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T230322-crates-slate-wasm-src-lib-rs.json` — crates/slate-wasm/src/lib.rs, the run with the survivor
+- `ledger/mutations/20260925T230415-crates-slate-wasm-src-lib-rs.json` — crates/slate-wasm/src/lib.rs, after the test was rewritten
+- `ledger/mutations/20260925T231358-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the run with the two survivors
+- `ledger/mutations/20260925T231433-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the flattener case after its test existed
+- `ledger/mutations/20260925T231436-crates-slate-sql-src-lower-rs.json` — crates/slate-sql/src/lower.rs
+
 ## What this does not do
 
 **No brackets in a `HAVING`**, on any shape. Rejected above; the group

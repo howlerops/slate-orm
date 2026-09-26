@@ -46,9 +46,7 @@ EXPECTED_SURVIVOR = {
 }
 
 
-def run(
-    name: str, body: str, records: dict[str, dict] | None = None
-) -> tuple[int, list[str]]:
+def run(name: str, body: str, records: dict[str, dict] | None = None) -> tuple[int, list[str]]:
     """The guard over one entry and a records directory of its own."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
@@ -106,14 +104,68 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
         1,
         1,
     ),
+    # The three phrasings that slipped past the first version of `COUNT`, on
+    # 2026-09-26, in one session. Each had run real mutations, each had a
+    # record waiting in `ledger/mutations/`, and none cited one — the exact
+    # failure this guard exists to catch, uncaught because the number sat on
+    # the wrong side of the noun or there was no number in the sentence at all.
+    (
+        "a count after the noun is a claim",
+        "2026-09-23-a-slug.md",
+        "**Mutations**, six run, six caught.\n",
+        None,
+        1,
+        1,
+    ),
+    (
+        "an evidence table is a claim even with no count in the prose",
+        "2026-09-23-a-slug.md",
+        "A mutation, run twice, caught both times:\n\n"
+        "| mutation | caught by |\n|---|---|\n| the sort is dropped | a test |\n",
+        None,
+        1,
+        1,
+    ),
+    (
+        "a table alone, with no sentence about mutations at all",
+        "2026-09-23-a-slug.md",
+        "| mutation | dialect | caught by |\n|---|---|---|\n| x | rust | y |\n",
+        None,
+        1,
+        1,
+    ),
+    # And the other side of the widening: a table whose first column happens
+    # to be about something else must not be read as a mutation table.
+    (
+        "a table about something else is not a mutation table",
+        "2026-09-23-a-slug.md",
+        "| caveat | verdict |\n|---|---|\n| a mutation would be nice | open |\n",
+        None,
+        0,
+        0,
+    ),
+    # The `^` on the table arm, which is the only thing this case can tell.
+    # An entry *describing* this guard quotes the header inline — as the entry
+    # that widened the pattern does, in the sentence you are reading about.
+    # Without the anchor that quotation is read as a claim to have run
+    # mutations, and the entry is told to cite a run it never made. Written
+    # after a mutation dropping the anchor survived every other case.
+    (
+        "an entry quoting the table header inline is not claiming a run",
+        "2026-09-23-a-slug.md",
+        "The evidence table this repository uses has the header "
+        "`| mutation | caught by |`, which is the shape the guard looks for.\n",
+        None,
+        0,
+        0,
+    ),
     # A count is required. Without one, the ambient prose in every entry here
     # — policy statements about what a surviving mutation means — would each
     # demand a citation.
     (
         "prose about mutation without a count is not a claim",
         "2026-09-23-a-slug.md",
-        "A surviving mutation is a missing test, which is why mutation "
-        "testing matters.\n",
+        "A surviving mutation is a missing test, which is why mutation testing matters.\n",
         None,
         0,
         0,
@@ -138,8 +190,7 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
     (
         "an entry that does not claim a clean sweep is fine beside a survivor",
         "2026-09-23-a-slug.md",
-        "Five mutations; one survived, and is recorded as such. "
-        "See `ledger/mutations/r.json`.\n",
+        "Five mutations; one survived, and is recorded as such. See `ledger/mutations/r.json`.\n",
         {"r.json": WITH_SURVIVOR},
         1,
         0,

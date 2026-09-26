@@ -157,6 +157,12 @@ fails loudly rather than passing vacuously. Counts note=3, memo=2, sheet=1,
 so an ORed `HAVING` of `> 2` and `< 2` leaves memo out — without which the
 assertion would hold against a server that ignored `HAVING` entirely.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T221604-clients-go-slate-query-go.json` — clients/go/slate/query.go
+- `ledger/mutations/20260925T221621-clients-typescript-src-query-ts.json` — clients/typescript/src/query.ts
+- `ledger/mutations/20260925T221732-examples-explorer-backends-go-query-go.json` — examples/explorer/backends/go/query.go
+
 ## What this does not do
 
 **No disjunction in a conformance `HAVING`.** The three adapters model

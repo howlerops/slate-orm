@@ -90,6 +90,12 @@ Mutations, via `scripts/mutate.py`:
 The second was run **before** its test existed and survived; that survival is
 why the test is here.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T101030-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the run that survived
+- `ledger/mutations/20260925T101058-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the join case
+- `ledger/mutations/20260925T101302-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the single-table case once its test existed
+
 ## What this does not do
 
 **It does not audit the rest of the grammar block.** Eleven other lines make

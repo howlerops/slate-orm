@@ -1845,7 +1845,8 @@
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
       "key": "The three-SDK conformance runner still compares behaviour, n",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
@@ -1868,8 +1869,9 @@
     {
       "entry": "2026-09-20-a-mutation-run-that-cannot-lie.md",
       "key": "No mutation spec is committed anywhere.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "ledger/mutations/ holds 80 records, each carrying the file, the dialect, the command and every case's old/new text — the spec, committed. Added by ledger/2026-09-22-a-mutation-run-now-leaves-a-trace.md. The residual (nothing re-runs them) is recorded as a fresh caveat in ledger/2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
@@ -1899,7 +1901,8 @@
       "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
       "key": "`SKIP_PARTS` is a hand-written roster too",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
@@ -1917,7 +1920,8 @@
       "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
       "key": "There is still no way to inventory what is blocked.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
@@ -1947,7 +1951,8 @@
       "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
       "key": "Nothing checks that `EXPLAIN` over an expanded view is safe.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
@@ -1965,7 +1970,8 @@
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
       "key": "Elements decode dynamically, not by the column's element typ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
@@ -1989,7 +1995,8 @@
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
       "key": "The design note's two open questions are still open.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
@@ -2007,7 +2014,8 @@
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "No `#[derive(Record)]` support.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -2037,13 +2045,15 @@
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The four fingerprint implementations are held together only ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The testserver's JSON oracle still cannot represent a decima",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
@@ -5137,6 +5147,27 @@
       "key": "`out/`, `.next/` and `bin/` are not in `BUILD_DIRS`.",
       "verdict": "deliberate",
       "by": "this entry: the list is the names this repository's toolchains write, and a named list you are forced to edit beats guessing at directory names by shape"
+    },
+    {
+      "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "key": "A fenced code block containing the table header at the start",
+      "verdict": "deliberate",
+      "by": "this entry: stripping fenced blocks (as check_site_claims.py does) was not worth adding for a case no entry has ever produced"
+    },
+    {
+      "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "key": "It still cannot tell whether the numbers in the table are th",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "key": "Nothing re-runs the committed specs.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
+      "key": "The thirteen citations were reconstructed, not recorded at t",
+      "verdict": "moment"
     },
     {
       "entry": "2026-09-26-the-stylesheet-had-nothing-dead-in-it.md",

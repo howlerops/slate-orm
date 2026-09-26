@@ -117,6 +117,10 @@ drop off, one nobody read must not.
 **Against the repository.** 819 caveats: **284 open, 180 closed, 306
 deliberate, 0 untriaged.** `--unread 30` lists 270, down from 285 as caveats are read and stamped.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T235406-scripts-caveats-py.json` — scripts/caveats.py
+
 ## What this does not do
 
 **It decides nothing.** A stamp says a person looked; whether they looked

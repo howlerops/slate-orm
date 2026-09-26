@@ -76,6 +76,12 @@ because nothing ran. Same shape as the `| tail -5` mistake earlier today, and
 the same lesson twice in one session: **count what passed and check the exit
 code**, never grep for the word "failed". The runs above report both.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T213717-crates-slate-sql-src-lower-rs.json` — crates/slate-sql/src/lower.rs
+- `ledger/mutations/20260925T213846-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the run with the survivor
+- `ledger/mutations/20260925T214317-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs, the same case after the test was written
+
 ## What this does not do
 
 **A join's `WHERE` still takes `AND` only**, for the reason above. That is

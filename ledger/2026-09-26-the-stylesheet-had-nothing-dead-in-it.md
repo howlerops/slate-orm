@@ -111,6 +111,10 @@ against this repository.
 unbiased sample was 1 in 8; this is 1 in 9.6, which is the same number given
 how few reads either rests on. Not revised.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260926T003442-scripts-check-site-css-py.json` — scripts/check_site_css.py
+
 ## What this does not do
 
 **It cannot see a rule that is reachable and pointless.** A `.card` whose every

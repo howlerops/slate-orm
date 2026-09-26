@@ -134,6 +134,12 @@ writing the guard the caveat asked for rather than by finding the caveat
 already stale, which is a different thing and is counted separately: **four
 found stale, two closed by doing the work.**
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260926T004215-scripts-check-build-output-py.json` — scripts/check_build_output.py, the run with the survivor
+- `ledger/mutations/20260926T004246-scripts-check-build-output-py.json` — scripts/check_build_output.py, that case after the fixture was fixed
+- `ledger/mutations/20260926T004314-scripts-check-build-output-py.json` — scripts/check_build_output.py, all five re-run after `ruff format`
+
 ## What this does not do
 
 **`out/`, `.next/` and `bin/` are not in `BUILD_DIRS`.** The list is the names

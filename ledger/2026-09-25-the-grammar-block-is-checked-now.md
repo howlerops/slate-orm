@@ -112,6 +112,10 @@ columns as "`hour()`, `day_of_week()`, `year()` and the rest", which is not a
 list and so was not stale. I checked it because this entry is about lists
 going stale, and found nothing to fix.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T224539-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs
+
 ## What this does not do
 
 **The operator list is still unchecked.** `= != <> < <= > >= LIKE ILIKE ~ IN

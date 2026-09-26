@@ -84,6 +84,11 @@ re-read from the entry:
 | the warning is the only warning | exactly one `warnings.push` in `crates/slate-sql/src/sql.rs` |
 | no test asserts what the caution looks like | unchanged |
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260926T001533-crates-slate-kernel-src-aggregate-rs.json` — crates/slate-kernel/src/aggregate.rs, read by the Go suite
+- `ledger/mutations/20260926T001607-crates-slate-kernel-src-aggregate-rs.json` — crates/slate-kernel/src/aggregate.rs, read by the TypeScript suite
+
 ## What this does not do
 
 **Python still cannot order a chain's groups in a test.** The caveat is closed

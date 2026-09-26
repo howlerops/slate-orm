@@ -96,6 +96,10 @@ over a tree it writes. Against the repository: **18 checks, all holding**, over
 **27 pages**, with the fixture's size found in 7 statements and the zone count
 in 2. `sh scripts/check.sh`: 55 passed, all of them.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T234738-scripts-check-site-claims-py.json` — scripts/check_site_claims.py
+
 ## What this does not do
 
 **It still checks numbers and names, not sentences.** The prose half of

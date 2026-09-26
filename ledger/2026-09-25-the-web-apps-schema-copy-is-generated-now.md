@@ -115,6 +115,12 @@ tables the UI shows, column for column and in order — which is the null result
 worth stating plainly: the regex parser had not drifted, and this change fixes
 a latent disagreement rather than a live one.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T223630-scripts-codegen-py.json` — scripts/codegen.py, the run interrupted part-way
+- `ledger/mutations/20260925T223637-scripts-codegen-py.json` — scripts/codegen.py, the banner case
+- `ledger/mutations/20260925T223649-examples-explorer-web-src-api-ts.json` — examples/explorer/web/src/api.ts
+
 ## What this does not do
 
 **The retention example's config has no web target**, because it has no web

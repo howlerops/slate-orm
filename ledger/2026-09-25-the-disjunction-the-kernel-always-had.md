@@ -97,6 +97,11 @@ adjacent work rather than by any check.
   disjunction is a **filter, not an access path**, because `a = 1 OR b = 2`
   has no single key range.
 
+**The runs themselves**, as `mutate.py` recorded them:
+
+- `ledger/mutations/20260925T204924-crates-slate-sql-src-lower-rs.json` — crates/slate-sql/src/lower.rs
+- `ledger/mutations/20260925T204938-crates-slate-sql-src-sql-rs.json` — crates/slate-sql/src/sql.rs
+
 ## What this does not do
 
 **No `OR` on a join or in `HAVING`.** The two largest remaining pieces, both
