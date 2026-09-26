@@ -800,7 +800,8 @@
       "entry": "2026-09-15-the-values-that-arrived-and-vanished.md",
       "key": "No test declares a computed value on an outer join's unmatch",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-the-values-that-arrived-and-vanished.md",
@@ -818,7 +819,8 @@
       "entry": "2026-09-15-the-wal-the-collector-would-not-take.md",
       "key": "11.0 MB is still 100 bytes a row for rows that serialise to ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-the-wal-the-collector-would-not-take.md",
@@ -938,7 +940,8 @@
       "entry": "2026-09-15-three-clients-a-replica-and-a-kill.md",
       "key": "Tenant affinity.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
@@ -963,7 +966,8 @@
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
       "key": "The schema change is silent for a reader of the demo's table",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
@@ -998,8 +1002,9 @@
     {
       "entry": "2026-09-15-three-sdks-that-can-say-it.md",
       "key": "The `decade` grouping changes what the demo's chart can draw",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx:331 — the Groups panel's group-by select offers author, country and decade",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-sdks-that-can-say-it.md",
@@ -1010,14 +1015,16 @@
     {
       "entry": "2026-09-15-three-tables-in-the-front-end.md",
       "key": "Nothing outside the wasm crate is touched.",
-      "verdict": "open",
-      "by": ""
+      "verdict": "closed",
+      "by": "both halves shipped with aliases (ledger/2026-09-15-one-table-twice.md): site/check/workbench.py has \"the aliased chain plans as three steps\" over the pickup/dropoff borough query, and the two-dropdown panel no longer exists — site/ holds only the workbench now",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-tables-in-the-front-end.md",
       "key": "The chain path has no proptest round trip.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-tables-in-the-front-end.md",
@@ -1041,7 +1048,8 @@
       "entry": "2026-09-15-three-types-and-none-of-them-new.md",
       "key": "No measurement.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-three-types-and-none-of-them-new.md",
@@ -1071,13 +1079,15 @@
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
       "key": "403 is still 4.7× the data, and the biggest remaining piece ",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
       "key": "Nothing is attributed between 369 and 491.",
       "verdict": "open",
-      "by": ""
+      "by": "",
+      "checked": "2026-09-26"
     },
     {
       "entry": "2026-09-15-where-the-bytes-a-row-went.md",
@@ -4975,6 +4985,28 @@
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
       "key": "The other dialects are not audited for their own version of ",
       "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-batch-four-and-the-shape-that-keeps-recurring.md",
+      "key": "\"Six of six have the same shape\" is a count over found-stale",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-26-batch-four-and-the-shape-that-keeps-recurring.md",
+      "key": "234 unstamped open caveats remain",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-batch-four-and-the-shape-that-keeps-recurring.md",
+      "key": "No code changed, so nothing here is mutation-tested.",
+      "verdict": "deliberate",
+      "by": "this entry: the change is a tracker status file; scripts/test_caveats.py covers the tracker"
+    },
+    {
+      "entry": "2026-09-26-batch-four-and-the-shape-that-keeps-recurring.md",
+      "key": "The seam this suggests was deliberately not mined.",
+      "verdict": "deliberate",
+      "by": "this entry: reading in order keeps the staleness-rate estimate honest, which is the only number that says how much of the open list is dead"
     },
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
