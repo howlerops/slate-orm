@@ -382,26 +382,46 @@ def paragraphs(text: str) -> list[Chunk]:
     return chunks
 
 
-def live(text: str) -> str | None:
-    """`text` with withdrawn figures removed, or None if it is all history.
+def live(text: str, inside: bool = False) -> tuple[str | None, bool]:
+    """`text` with withdrawn figures removed, and whether a span is left open.
 
     A struck-through figure is a record of what was believed, not a claim
     about today. Removing the spans rather than skipping the whole chunk is
     what lets one paragraph carry both — `stats.rs` strikes two sentences
     through and then states the current figure in the third.
+
+    `inside` says a span was still open when the previous chunk ended, so this
+    one begins inside it. The returned flag says the same about this chunk, and
+    the caller carries it forward.
+
+    That state is the difference between this and what it replaced. An
+    unbalanced `~~` used to skip the **whole chunk**, which was conservative in
+    the direction that costs coverage: a paragraph opening a struck span in its
+    last clause had its first three sentences skipped along with it, and a
+    skipped claim is one nobody checks. With the flag, an odd `~~` is a
+    boundary rather than a verdict — the live side of it is read and the struck
+    side is not, whichever side that is.
     """
     stripped = STRUCK.sub(" ", text)
-    # An unbalanced `~~` means the span is open across a boundary this cannot
-    # see. Skipping is the conservative read: a missed claim, never a false
-    # accusation against a passage that is marked as history.
-    if "~~" in stripped:
-        return None
+    at = stripped.find("~~")
+    if at != -1:
+        # One unbalanced marker: everything on the struck side goes, the other
+        # side stays. A second one would mean the `STRUCK` pass missed a pair,
+        # which it cannot — it is non-greedy and dot-matches-newline — so this
+        # takes the first and lets the flag flip.
+        stripped = stripped[at + 2 :] if inside else stripped[:at]
+        inside = not inside
+    elif inside:
+        # No marker at all and a span still open: the whole chunk is inside it.
+        return None, True
+    if not stripped.strip():
+        return None, inside
     # Whitespace is collapsed because a joined comment run carries the second
     # line's indent into the middle of the sentence — `costs` and `about` end
     # up three spaces apart, and every pattern here is written with the one
     # space a reader sees. This cost the first two cases of the wrapped-claim
     # test, which is the cheapest place to have found it.
-    return re.sub(r"\s+", " ", stripped)
+    return re.sub(r"\s+", " ", stripped), inside
 
 
 def sources(
@@ -430,6 +450,48 @@ def sources(
         for pattern in README_GLOBS:
             found += [one for one in sorted(readmes.glob(pattern)) if one.is_file()]
     return found
+
+
+#: Every pattern that can have something to say about a passage.
+#:
+#: Written once here rather than at each `finditer` below, because the
+#: stale-marker rule has to ask "would anything have matched?" and a list that
+#: drifted from the loop would answer for a guard that no longer exists — the
+#: `NOT_A_CLAIM` marker would then read as undeserved on a live claim, or as
+#: deserved on a paragraph nothing reads. `test_check_cost_prose.py` holds this
+#: to the `finditer` calls in `check` so the two cannot separate.
+PATTERNS = (PER_READ, PER_REQUEST, UNVERIFIABLE, CROSSOVER, RESTATED)
+
+
+def claimed(current: str) -> bool:
+    """Would any of this guard's patterns have had something to say?"""
+    return any(pattern.search(current) for pattern in PATTERNS)
+
+
+def undeserved(path: Path, marker: Chunk) -> str:
+    """A `NOT_A_CLAIM` marker excusing a passage with no claim in it.
+
+    The failure this is for is silent and slow: a paragraph is written as
+    history, marked, and then rewritten over a later session into a statement
+    about today. The marker stays, because nothing in a diff makes it obvious
+    that the sentence under it changed kind — and the live figure it now covers
+    is the one figure on the page nobody checks. Recorded as a caveat in
+    `ledger/2026-09-22-the-page-a-reader-actually-reads.md`, which named the
+    roster-style answer and did not write it.
+
+    Reported rather than ignored even though a stale marker is not, by itself,
+    a wrong claim: an exemption nobody has to justify is an exemption that
+    spreads, which is the `EXPECTED_REFUSALS` argument this repository makes
+    everywhere else.
+    """
+    return (
+        f"{named(path)}:{marker.where()} carries `{NOT_A_CLAIM}` over a "
+        "passage stating no cost-model figure, so it excuses nothing.\n"
+        "  Either the passage was rewritten and the marker outlived it — "
+        "delete the marker — or it was meant for\n"
+        "  the paragraph after the next one, which is further than a marker "
+        "reaches."
+    )
 
 
 def check(
@@ -461,18 +523,40 @@ def check(
         markdown = path.suffix == ".md"
         chunks = prose(text) if markdown else paragraphs(text)
         excused = False
+        # Whether a struck span was still open when the last chunk ended. Per
+        # file, because a span cannot cross one.
+        inside = False
+        # A marker on its own line, waiting to see whether the paragraph it
+        # excuses has anything in it to excuse.
+        pending: Chunk | None = None
         for chunk in chunks:
             if markdown:
                 # A marker covers the paragraph it is in, and — when it is a
                 # paragraph of its own, which is how it reads best above a
                 # long passage — the next one.
                 if NOT_A_CLAIM in chunk.text:
+                    if pending is not None:
+                        wrong.append(undeserved(path, pending))
+                        pending = None
                     excused = chunk.text.strip() == NOT_A_CLAIM
+                    if excused:
+                        pending = chunk
+                    else:
+                        # Inline: it excuses the paragraph it sits in, so the
+                        # question is answerable now.
+                        here, inside = live(chunk.text, inside)
+                        if here is None or not claimed(here):
+                            wrong.append(undeserved(path, chunk))
                     continue
                 if excused:
                     excused = False
+                    here, inside = live(chunk.text, inside)
+                    if pending is not None:
+                        if here is None or not claimed(here):
+                            wrong.append(undeserved(path, pending))
+                        pending = None
                     continue
-            current = live(chunk.text)
+            current, inside = live(chunk.text, inside)
             if current is None:
                 continue
             for match in PER_READ.finditer(current):
@@ -543,6 +627,9 @@ def check(
                         f"it is {values[name]:g}. Print it from "
                         f"`slate_kernel::stats` rather than copying it."
                     )
+        # A marker at the end of a file, with nothing after it to excuse.
+        if pending is not None:
+            wrong.append(undeserved(path, pending))
     return seen, wrong
 
 

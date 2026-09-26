@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import re
 import sys
 import tempfile
 
@@ -261,8 +262,40 @@ def main() -> int:
          f"{guard.NOT_A_CLAIM}\n\nA point read costs about three requests.\n", 0, 0),
         # But not the one after that: an excuse that runs to the end of the
         # file would quietly cover every claim below it.
+        # The excused paragraph has a figure in it on purpose: a marker over a
+        # passage stating nothing is now its own failure, so a fixture without
+        # one would be about two rules and would report the wrong marker.
         ("but not the one after that",
-         f"{guard.NOT_A_CLAIM}\n\nHistory.\n\nA point read costs three.\n", 1, 1),
+         f"{guard.NOT_A_CLAIM}\n\nA point read cost about three requests, once.\n\n"
+         "A point read costs three.\n", 1, 1),
+        # The marker, checked the way every other exemption here is: a
+        # paragraph rewritten from history into a live claim keeps its marker
+        # and goes unchecked, and the live figure it covers is then the one
+        # figure on the page nobody reads.
+        ("a marker over a passage stating no figure is reported",
+         f"{guard.NOT_A_CLAIM}\n\nHistory, with no numbers in it.\n", 0, 1),
+        ("an inline marker over a passage stating no figure is reported too",
+         f"{guard.NOT_A_CLAIM}\nHistory, with no numbers in it.\n", 0, 1),
+        ("a marker with nothing after it at all is reported",
+         f"{guard.NOT_A_CLAIM}\n", 0, 1),
+        ("two markers in a row report the first, which excused the second",
+         f"{guard.NOT_A_CLAIM}\n\n{guard.NOT_A_CLAIM}\n\n"
+         "A point read cost three requests, once.\n", 0, 1),
+        # An unbalanced `~~` used to skip the whole chunk. The live half of a
+        # paragraph that opens a struck span is a claim like any other, and
+        # skipping it is a claim nobody checks.
+        ("a paragraph that opens a struck span keeps its live half",
+         "A point read costs three requests. ~~The rest\n\nis history.~~\n", 1, 1),
+        # Three chunks, so that the middle one carries no `~~` of its own and
+        # is known to be history only by the flag. A mutation dropping that
+        # arm survived until this case existed: every other fixture's struck
+        # span opens and closes within two paragraphs.
+        ("a paragraph wholly inside a struck span is not read",
+         "Opening ~~here.\n\nA point read costs three requests.\n\n"
+         "Still history.~~ A point read costs 1 request.\n", 1, 0),
+        ("and the paragraph that closes one keeps the half after it",
+         "Opening ~~here.\n\nA point read costs three requests.~~ "
+         "A point read costs 1 request.\n", 1, 0),
         # Strikethrough still works in markdown, and is preferred where a
         # paragraph states the current figure beside the old one — it keeps
         # the live claim under the guard, which the marker cannot.
@@ -414,6 +447,31 @@ def main() -> int:
     print(f"{'ok  ' if ok else 'FAIL'}  a stats.rs without the constants fails")
     if not ok:
         print(f"        got {wrong}")
+
+    # `PATTERNS` exists so the stale-marker rule can ask "would anything have
+    # matched?", and it is a second copy of the list `check` loops over. A copy
+    # that drifted would answer for a guard that no longer exists: a marker
+    # would read as undeserved over a live claim of the dropped kind, or as
+    # deserved over a paragraph nothing reads. Held to the source rather than
+    # to a list restated here, for the reason `_least()` in
+    # `scripts/test_run_examples.py` gives.
+    used = set(
+        re.findall(
+            r"for match in (\w+)\.finditer\(current\)",
+            (pathlib.Path(guard.__file__)).read_text(encoding="utf-8"),
+        )
+    )
+    listed = {
+        name
+        for name in dir(guard)
+        if name.isupper() and getattr(guard, name) in guard.PATTERNS
+    }
+    ok = bool(used) and used == listed
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  PATTERNS is exactly what check() scans for")
+    if not ok:
+        print(f"        scanned {sorted(used)}, listed {sorted(listed)}")
 
     seen, wrong = guard.check()
     ok = seen > 0 and not wrong

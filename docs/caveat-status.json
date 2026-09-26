@@ -4717,9 +4717,9 @@
     {
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
       "key": "Nothing checks that a marker is still deserved.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_cost_prose.py — `undeserved()` reports a `NOT_A_CLAIM` marker over a passage stating no cost-model figure, in all three positions a marker can take. ledger/2026-09-26-an-exemption-nobody-has-to-justify.md",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
@@ -4781,9 +4781,9 @@
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
       "key": "The `~~` exemption is coarser than the guard now needs.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_cost_prose.py — `live()` carries an open-span flag between chunks, so an unbalanced `~~` splits a chunk instead of skipping it. ledger/2026-09-26-an-exemption-nobody-has-to-justify.md",
+      "reviewed": "2026-09-26"
     },
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
@@ -6002,6 +6002,27 @@
       "key": "It says nothing about `slate-slatedb`'s nine examples",
       "verdict": "deliberate",
       "by": "this entry: those examples take no section arguments, so there is no hole to close there yet; the module exists for the first one that grows them",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-an-exemption-nobody-has-to-justify.md",
+      "key": "No marker in the tree was found stale.",
+      "verdict": "deliberate",
+      "by": "that entry: the caveat asked for a guard against a future edit, and the run over the tree is the evidence that there was no present defect to find",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-an-exemption-nobody-has-to-justify.md",
+      "key": "The rule asks whether a figure is there, not whether it is h",
+      "verdict": "deliberate",
+      "by": "that entry: narrowing it means deciding from prose whether a sentence is about now, which is the judgement the marker exists to delegate to a person. The sharper alternative — a marker naming what it excuses — is rejected there as a migration with no failure behind it",
+      "reviewed": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-an-exemption-nobody-has-to-justify.md",
+      "key": "A struck span is still tracked per file and per chunk list, ",
+      "verdict": "deliberate",
+      "by": "that entry: Markdown does not nest strikethrough and fenced blocks are already skipped, so the remaining case is a literal `~~` inside inline backticks, which no page here writes. A real parser is the fix if one ever does",
       "reviewed": "2026-09-26"
     },
     {

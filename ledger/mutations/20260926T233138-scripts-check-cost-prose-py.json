@@ -1,0 +1,114 @@
+{
+  "at": "2026-09-26T23:31:38+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "8f978cb",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the stale-marker rule never reports an own-line marker",
+      "old": "                        if here is None or not claimed(here):\n                            wrong.append(undeserved(path, pending))",
+      "new": "                        if False:\n                            wrong.append(undeserved(path, pending))",
+      "verdict": "caught",
+      "caught_by": [
+        "a marker over a passage stating no figure is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an inline marker is never judged",
+      "old": "                        if here is None or not claimed(here):\n                            wrong.append(undeserved(path, chunk))",
+      "new": "                        if False:\n                            wrong.append(undeserved(path, chunk))",
+      "verdict": "caught",
+      "caught_by": [
+        "an inline marker over a passage stating no figure is reported too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a marker at the end of a file is forgotten",
+      "old": "        if pending is not None:\n            wrong.append(undeserved(path, pending))",
+      "new": "        if False:\n            wrong.append(undeserved(path, pending))",
+      "verdict": "caught",
+      "caught_by": [
+        "a marker with nothing after it at all is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a marker displaced by a second marker is forgotten",
+      "old": "                    if pending is not None:\n                        wrong.append(undeserved(path, pending))\n                        pending = None",
+      "new": "                    if False:\n                        wrong.append(undeserved(path, pending))\n                        pending = None",
+      "verdict": "caught",
+      "caught_by": [
+        "two markers in a row report the first, which excused the second"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "claimed() says yes to everything",
+      "old": "    return any(pattern.search(current) for pattern in PATTERNS)",
+      "new": "    return True",
+      "verdict": "caught",
+      "caught_by": [
+        "a marker over a passage stating no figure is reported",
+        "an inline marker over a passage stating no figure is reported too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "PATTERNS loses one of its five",
+      "old": "PATTERNS = (PER_READ, PER_REQUEST, UNVERIFIABLE, CROSSOVER, RESTATED)",
+      "new": "PATTERNS = (PER_READ, PER_REQUEST, UNVERIFIABLE, CROSSOVER)",
+      "verdict": "caught",
+      "caught_by": [
+        "PATTERNS is exactly what check() scans for"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unbalanced marker skips the whole chunk again",
+      "old": "        stripped = stripped[at + 2 :] if inside else stripped[:at]\n        inside = not inside",
+      "new": "        return None, not inside",
+      "verdict": "caught",
+      "caught_by": [
+        "a paragraph that opens a struck span keeps its live half",
+        "and the paragraph that closes one keeps the half after it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the open-span flag is never carried into the next chunk",
+      "old": "        stripped = stripped[at + 2 :] if inside else stripped[:at]",
+      "new": "        stripped = stripped[:at]",
+      "verdict": "caught",
+      "caught_by": [
+        "and the paragraph that closes one keeps the half after it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a chunk wholly inside a struck span is read as live",
+      "old": "    elif inside:\n        # No marker at all and a span still open: the whole chunk is inside it.\n        return None, True",
+      "new": "    elif False:\n        return None, True",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

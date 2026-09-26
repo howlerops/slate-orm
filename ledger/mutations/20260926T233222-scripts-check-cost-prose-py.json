@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-26T23:32:22+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "8f978cb",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a chunk wholly inside a struck span is read as live",
+      "old": "    elif inside:\n        # No marker at all and a span still open: the whole chunk is inside it.\n        return None, True",
+      "new": "    elif False:\n        return None, True",
+      "verdict": "caught",
+      "caught_by": [
+        "a paragraph wholly inside a struck span is not read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
