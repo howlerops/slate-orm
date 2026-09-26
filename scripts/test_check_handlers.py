@@ -602,19 +602,71 @@ impl Authenticator for Known {}
 ]
 
 
-def run(body: str | dict[str, str] | None) -> tuple[int, str]:
+#: The smallest workspace rule 9 can be satisfied by: a manifest with one
+#: member whose `src/` holds nothing this guard is about.
+#:
+#: Every case needs one, because rule 9 reads a `Cargo.toml` rather than the
+#: files it is handed, and its never-fires half fails a run whose manifest
+#: yields no members. Without it, `main`'s `root` would keep defaulting to this
+#: repository while every other rule read a fixture — which is exactly what
+#: happened on the first run: nine cases failed reporting
+#: `crates/slate-server/src/auth.rs`, a file in *this* tree, against a
+#: `SOURCES` the fixture had replaced. `check_cost_prose.py`'s `main` carries
+#: the same note about `docs` and `readmes`, and this is the third time.
+def workspace(root: pathlib.Path) -> None:
+    (root / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["crates/quiet"]\n'
+    )
+    src = root / "crates" / "quiet" / "src"
+    src.mkdir(parents=True)
+    (src / "lib.rs").write_text("pub fn nothing() {}\n")
+
+
+def run(
+    body: str | dict[str, str] | None,
+    crates: dict[str, str] | None = None,
+    inside_crate: str | None = None,
+) -> tuple[int, str]:
+    """`crates` adds `crates/<name>/src/lib.rs` files and lists them as members,
+    which is the only way to write a case about rule 9.
+
+    `inside_crate` puts the service files in that crate's `src/` instead of in
+    a directory of their own, so the member *is* the scanned tree. Without it
+    no case reaches rule 9's skip-what-is-already-covered branch, and a
+    mutation deleting that branch survived — the fixture's source directory was
+    never a listed member."""
     with tempfile.TemporaryDirectory() as directory:
-        path = pathlib.Path(directory) / "service.rs"
+        root = pathlib.Path(directory)
+        workspace(root)
+        if crates:
+            listed = ['"crates/quiet"'] + [f'"crates/{name}"' for name in crates]
+            (root / "Cargo.toml").write_text(
+                "[workspace]\nmembers = [" + ", ".join(listed) + "]\n"
+            )
+            for name, text in crates.items():
+                src = root / "crates" / name / "src"
+                src.mkdir(parents=True)
+                (src / "lib.rs").write_text(text)
+        # The service files go in a directory of their own, so rule 9's
+        # fixture crates are not also walked by the other eight — unless a case
+        # is about a crate that *is* the scanned tree.
+        if inside_crate is None:
+            inside = root / "svc"
+            inside.mkdir()
+        else:
+            inside = root / "crates" / inside_crate / "src"
+        directory = str(inside)
+        path = inside / "service.rs"
         if isinstance(body, dict):
             # Several files, handed over as a *directory*. Every other case
             # passes one file, which never exercises the walk — and the walk is
             # the whole point of scanning a tree rather than the one file the
             # first version read.
             for name, text in body.items():
-                (pathlib.Path(directory) / name).write_text(text)
+                (inside / name).write_text(text)
             out = io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                code = check_handlers.main([directory])
+                code = check_handlers.main([directory], root=root)
             return code, out.getvalue()
         if body == "NO_HANDLER":
             path.write_text(
@@ -662,8 +714,71 @@ def run(body: str | dict[str, str] | None) -> tuple[int, str]:
             path.write_text(PREAMBLE + body + "}\n")
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            code = check_handlers.main([str(path)])
+            code = check_handlers.main([str(path)], root=root)
         return code, out.getvalue()
+
+
+#: Rule 9's cases: a crate outside `SOURCES` carrying what these rules guard.
+#:
+#: name, the extra crates, the exit code, and the text the report must carry.
+#: The service itself is always the passing one, so a failure here is rule 9's
+#: and not another rule's.
+SCOPE_CASES: list[tuple[str, dict[str, str], int, str]] = [
+    (
+        # The caveat: "a converter in another crate reached from a handler is
+        # outside SOURCES", and the one under it: the never-fires halves fire
+        # on "nothing found anywhere", never on "a tree nobody listed".
+        "a crate outside SOURCES that fingerprints is reported",
+        {"rogue": "fn f() {\n    fingerprint::check(table, schema)?;\n}\n"},
+        1,
+        "crates/rogue/src/lib.rs contains `fingerprint::check`",
+    ),
+    (
+        "a crate outside SOURCES with a fourth Authenticator is reported",
+        {"rogue": "impl Authenticator for Mine {}\n"},
+        1,
+        "contains `impl Authenticator for`",
+    ),
+    (
+        "a crate outside SOURCES serving the wire is reported",
+        {"rogue": "async fn get(&self, r: Request<pb::GetRequest>) {}\n"},
+        1,
+        "contains `Request<pb::`",
+    ),
+    (
+        "and it says which line to add to SOURCES",
+        {"rogue": "fn f() {\n    fingerprint::check(table, schema)?;\n}\n"},
+        1,
+        "Add `crates/rogue/src` to SOURCES",
+    ),
+    (
+        "a crate outside SOURCES carrying none of them is clean",
+        {"rogue": "pub fn add(a: u8, b: u8) -> u8 {\n    a + b\n}\n"},
+        0,
+        "",
+    ),
+    (
+        # The other half of the rule, and the one that has to hold for the
+        # whole of `SOURCES`: a crate that is scanned carries every marker
+        # there is and must be silent. A mutation deleting the
+        # already-covered branch survived until this case existed, because no
+        # fixture's source directory was also a listed member.
+        "a crate that IS the scanned tree is not reported against itself",
+        {},
+        0,
+        "",
+    ),
+    (
+        # Measured, not assumed: with `self.table(` in MARKERS this rule
+        # reported three of this repository's crates and all three were false.
+        # `self.table` names a method on whatever `self` is, and rule 1 is
+        # about a `self` that is a gRPC service.
+        "a bare `self.table(` in another crate is not this guard's business",
+        {"parser": "fn inner(&self) {\n    let t = self.table()?;\n}\n"},
+        0,
+        "",
+    ),
+]
 
 
 def main() -> int:
@@ -677,7 +792,43 @@ def main() -> int:
             print(f"        expected exit {expected} and {wanted!r}, got {code}")
             for line in said.splitlines():
                 print(f"      {line}")
-    print(f"\n{len(CASES) - failed} passed, {failed} failed")
+    for name, crates, expected, wanted in SCOPE_CASES:
+        # The one case whose service lives inside a listed member, named by
+        # what it is about rather than by a fifth column nothing else uses.
+        served = "served" if "IS the scanned tree" in name else None
+        if served:
+            crates = {served: "pub fn nothing() {}\n"}
+        code, said = run("", crates=crates, inside_crate=served)
+        ok = code == expected and (not wanted or wanted in said)
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected exit {expected} and {wanted!r}, got {code}")
+            for line in said.splitlines():
+                print(f"      {line}")
+
+    # Rule 9's never-fires half, which needs a manifest the helper above will
+    # not write: an empty `members` leaves the rule comparing SOURCES against
+    # nothing and reporting a crate it never looked for.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        workspace(root)
+        (root / "Cargo.toml").write_text("[workspace]\nmembers = []\n")
+        inside = root / "svc"
+        inside.mkdir()
+        (inside / "service.rs").write_text(PREAMBLE + "}\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = check_handlers.main([str(inside / "service.rs")], root=root)
+    said = out.getvalue()
+    ok = code == 1 and "no workspace members parsed" in said
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a workspace with no members fails, not passes")
+    if not ok:
+        print(f"        exit {code}: {said}")
+
+    total = len(CASES) + len(SCOPE_CASES) + 1
+    print(f"\n{total - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

@@ -79,6 +79,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "node-wrapper-counted": ("will not load is counted", "scripts/test_mutate.py"),
  "marker-deserved": ("def undeserved", "scripts/check_cost_prose.py"),
  "struck-span-flag": ("inside: bool = False", "scripts/check_cost_prose.py"),
+ "sources-complete": ("def unscanned", "scripts/check_handlers.py"),
  "array-literal-sql": ("array", "crates/slate-serverd/src/lang/pred.rs"),
  "array-schema": ("Array", "crates/slate-schema/src/table.rs"),
  "array-wire": ("array", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -322,6 +323,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-22-widening-the-tree-was-not-widening-the-claim.md',
      'The `~~` exemption is coarser than the guard now needs.'):
         'struck-span-flag',
+    ('2026-09-20-taking-a-catalog-was-not-the-hazard.md',
+     'Rule 3 runs over `slate-server` and `slate-serverd` only.'):
+        'sources-complete',
+    ('2026-09-20-the-caveat-was-already-true.md',
+     'Two crates, named explicitly.'):
+        'sources-complete',
     ('2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md',
      '`narrowed` has no `residual` field.'):
         'residual-field',
