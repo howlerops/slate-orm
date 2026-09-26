@@ -155,6 +155,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "retry-transact": ("Transact", "clients/go/slate/batch.go"),
  "returning-wire": ("returning", "crates/slate-server/proto/slate/v1/records.proto"),
  "run-examples": ("slate-slatedb", "scripts/run_examples.sh"),
+ "sections-refused": (None, "crates/slate-headbench/src/sections.rs"),
  "scalar-go": (None, "clients/go/slate/scalar.go"),
  "security-probe": ("explain_join", "crates/slate-server/tests/security_probe.rs"),
  "site-claims": (None, "scripts/check_site_claims.py"),
@@ -212,6 +213,9 @@ EXEMPT: dict[str, str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md',
+     'A nonsense section argument runs nothing and exits 0.'):
+        'sections-refused',
     ('2026-09-26-the-closed-verdicts-audited.md',
      '188 `closed` verdicts still rest on a task title.'):
         'closed-caveats-guard',

@@ -138,10 +138,13 @@ fn runtimes() -> Runtimes {
     Runtimes { head, load }
 }
 
+/// The sections this example offers, in the order it runs them. See
+/// `head_report.rs` for why this is a roster and what keeps it true.
+const SECTIONS: &[&str] = &["nagle", "scale", "limit", "slow", "lease"];
+
 fn main() {
     slate_slatedb::announce();
-    let requested: Vec<String> = std::env::args().skip(1).collect();
-    let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
+    let mut wanted = slate_headbench::sections::from_args(SECTIONS);
 
     let rt = runtimes();
 
@@ -158,21 +161,22 @@ fn main() {
     );
     println!();
 
-    if wanted("nagle") {
+    if wanted.wants("nagle") {
         section_nagle(&rt);
     }
-    if wanted("scale") {
+    if wanted.wants("scale") {
         section_scale(&rt);
     }
-    if wanted("limit") {
+    if wanted.wants("limit") {
         section_limit(&rt);
     }
-    if wanted("slow") {
+    if wanted.wants("slow") {
         section_slow(&rt);
     }
-    if wanted("lease") {
+    if wanted.wants("lease") {
         section_lease(&rt);
     }
+    wanted.confirm();
 }
 
 fn cores() -> usize {

@@ -103,11 +103,17 @@ macro_rules! measure {
     }};
 }
 
+/// The sections this example offers, in the order it runs them.
+///
+/// A roster rather than a derived list, because each section is a function and
+/// nothing enumerates them. `Selection::confirm` below refuses a roster that
+/// has drifted from the body, which is what keeps a hand-written list true.
+const SECTIONS: &[&str] = &["rpc", "stream", "commit", "routing", "lease", "views"];
+
 #[tokio::main]
 async fn main() {
     slate_slatedb::announce();
-    let requested: Vec<String> = std::env::args().skip(1).collect();
-    let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
+    let mut wanted = slate_headbench::sections::from_args(SECTIONS);
 
     println!("# slate-server head node: baseline");
     println!();
@@ -120,24 +126,25 @@ async fn main() {
     println!("over the median.");
     println!();
 
-    if wanted("rpc") {
+    if wanted.wants("rpc") {
         section_rpc().await;
     }
-    if wanted("stream") {
+    if wanted.wants("stream") {
         section_stream().await;
     }
-    if wanted("commit") {
+    if wanted.wants("commit") {
         section_commit().await;
     }
-    if wanted("routing") {
+    if wanted.wants("routing") {
         section_routing().await;
     }
-    if wanted("lease") {
+    if wanted.wants("lease") {
         section_lease().await;
     }
-    if wanted("views") {
+    if wanted.wants("views") {
         section_views().await;
     }
+    wanted.confirm();
 }
 
 fn heading(title: &str) {

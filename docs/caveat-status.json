@@ -4089,8 +4089,8 @@
     {
       "entry": "2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md",
       "key": "A nonsense section argument runs nothing and exits 0.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "closed",
+      "by": "crates/slate-headbench/src/sections.rs — `head_report --typo` now exits 2 naming the sections that exist, in all three examples that take them; `Selection::confirm` also refuses a roster that has drifted from the body. ledger/2026-09-26-a-mistyped-section-is-a-refusal-now.md",
       "checked": "2026-09-26"
     },
     {
@@ -5949,6 +5949,31 @@
       "entry": "2026-09-26-a-witness-for-every-closure.md",
       "key": "It says nothing about the 196 open caveats.",
       "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",
+      "key": "Nothing in CI runs an example with a bad section.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",
+      "key": "`confirm()` is only reached by a run that finishes.",
+      "verdict": "deliberate",
+      "by": "this entry's Alternatives: checking the roster first would mean the roster drives the run rather than describing it, which is a larger change than this one",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",
+      "key": "The two `SECTIONS` rosters that are not `head_report`'s were",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-a-mistyped-section-is-a-refusal-now.md",
+      "key": "It says nothing about `slate-slatedb`'s nine examples",
+      "verdict": "deliberate",
+      "by": "this entry: those examples take no section arguments, so there is no hole to close there yet; the module exists for the first one that grows them",
+      "checked": "2026-09-26"
     }
   ]
 }
