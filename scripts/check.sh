@@ -97,6 +97,8 @@ site-claims|.|python3 scripts/check_site_claims.py
 site-claims-guard|.|python3 scripts/test_check_site_claims.py
 site-css|.|python3 scripts/check_site_css.py
 site-css-guard|.|python3 scripts/test_check_site_css.py
+build-output|.|python3 scripts/check_build_output.py
+build-output-guard|.|python3 scripts/test_check_build_output.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
