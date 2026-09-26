@@ -103,6 +103,8 @@ caveat-citations|.|python3 scripts/check_caveat_citations.py
 caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
 closed-caveats|.|python3 scripts/check_closed_caveats.py
 closed-caveats-guard|.|python3 scripts/test_check_closed_caveats.py
+none-last|.|python3 scripts/check_none_last.py
+none-last-guard|.|python3 scripts/test_check_none_last.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py

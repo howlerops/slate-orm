@@ -155,6 +155,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "retry-transact": ("Transact", "clients/go/slate/batch.go"),
  "returning-wire": ("returning", "crates/slate-server/proto/slate/v1/records.proto"),
  "run-examples": ("slate-slatedb", "scripts/run_examples.sh"),
+ "none-last": (None, "scripts/check_none_last.py"),
  "sections-refused": (None, "crates/slate-headbench/src/sections.rs"),
  "scalar-go": (None, "clients/go/slate/scalar.go"),
  "security-probe": ("explain_join", "crates/slate-server/tests/security_probe.rs"),
@@ -213,6 +214,9 @@ EXEMPT: dict[str, str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-20-cis-ruff-is-newer-than-mine-too.md',
+     'Two occurrences, one rule.'):
+        'none-last',
     ('2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md',
      'A nonsense section argument runs nothing and exits 0.'):
         'sections-refused',

@@ -2189,8 +2189,8 @@
     {
       "entry": "2026-09-20-cis-ruff-is-newer-than-mine-too.md",
       "key": "Two occurrences, one rule.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "closed",
+      "by": "scripts/check_none_last.py — the sweep, run on every check.sh and in CI. 121 files read, one occurrence found (a type alias in clients/python/src/slate/values.py, which RUF036 does not read) and fixed. ledger/2026-09-26-the-sweep-for-none-first-that-never-happened.md",
       "checked": "2026-09-26"
     },
     {
@@ -5974,6 +5974,35 @@
       "verdict": "deliberate",
       "by": "this entry: those examples take no section arguments, so there is no hole to close there yet; the module exists for the first one that grows them",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
+      "key": "It reads the `|` operator only.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
+      "key": "It does not close the gap the entry it came from is about.",
+      "verdict": "deliberate",
+      "by": "CLAUDE.md: there is no local command that finds the next lint CI's ruff knows and this one does not; the mitigation is reading the diff out of the job's log, and one AST walk per rule does not scale to hundreds",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
+      "key": "The one occurrence was not a bug.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
+      "key": "Nothing checks the guard against a newer `ruff`.",
+      "verdict": "open",
+      "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
+      "key": "The mutation record's filename was invented and a guard caug",
+      "verdict": "moment"
     }
   ]
 }

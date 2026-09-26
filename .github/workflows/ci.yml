@@ -321,6 +321,8 @@ jobs:
       - run: python3 scripts/test_check_caveat_citations.py
       - run: python3 scripts/check_closed_caveats.py
       - run: python3 scripts/test_check_closed_caveats.py
+      - run: python3 scripts/check_none_last.py
+      - run: python3 scripts/test_check_none_last.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
       # A handler must authorise before it touches a table's shape.
