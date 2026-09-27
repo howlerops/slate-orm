@@ -187,10 +187,17 @@
     <div class="callout">
       <p>
         <strong>Built, as a <code>Related</code> RPC</strong> in all three
-        clients. The one-level form, at least &mdash; many-to-many and nested
-        loading were built afterwards in Rust and have <em>not</em> crossed the
-        wire, which is why they are the first item of the next plan below. The
-        same gap, one level deeper.
+        clients &mdash; and past one level, as a <code>path</code> of
+        relationships resolved level by level in one round trip, so
+        <code>article &rarr; article_tags &rarr; tags</code> is two steps and
+        two reads. That was the first item of the next plan below and it is
+        done; exactly one of <code>relation</code> and <code>path</code> may be
+        set.
+      </p>
+      <p>
+        What it stops at is narrower: no predicate, ordering or limit
+        <em>per level</em>, and a path's fan-out is bounded by nothing &mdash;
+        four steps is four reads and the fourth can return a million rows.
       </p>
     </div>
 

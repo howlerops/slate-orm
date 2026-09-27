@@ -98,7 +98,16 @@ REGISTRY = "scripts/retired_claims.json"
 # The live tree. `ledger/` is absent on purpose — see the docstring.
 ROOTS = ("crates", "clients", "docs", "examples", "scripts", "site")
 ROOT_FILES = ("README.md", "CLAUDE.md")
-SUFFIXES = {".rs", ".py", ".go", ".ts", ".tsx", ".js", ".sh", ".md", ".toml"}
+# `.html` because the documentation site is written in it, and the site is
+# the copy of a claim a correction is most likely to miss: the reasoning
+# lives in `docs/*.md`, the reader lives on the page, and nothing carried
+# an edit from one to the other. Left out until 2026-09-27, when a claim
+# struck in `docs/orm-comparison.md` was found still standing in
+# `site/docs/roadmap.html` — this guard read that directory and skipped
+# every file in it. Tags are not stripped, so a phrase interrupted by an
+# `<em>` or a `<code>` still will not match; a phrase is registered as the
+# longest run of plain words the sentence contains.
+SUFFIXES = {".rs", ".py", ".go", ".ts", ".tsx", ".js", ".sh", ".md", ".toml", ".html"}
 SKIP_DIRS = {
     "target",
     "node_modules",

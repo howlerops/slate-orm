@@ -87,6 +87,24 @@ def main() -> int:
         1,
     )
 
+    # The site is HTML, and for a long time this guard read `site/` and skipped
+    # every file in it — so the one copy of a claim a correction is most likely
+    # to miss was the one copy nothing checked. Found when a sentence struck in
+    # `docs/orm-comparison.md` was left standing on `site/docs/roadmap.html`.
+    ok &= case(
+        "the claim is found on a documentation page, not only in source",
+        {**base, "site/docs/roadmap.html": f"    <p>Note: {PHRASE} today.</p>\n"},
+        1,
+    )
+
+    # The other half of that: a page with nothing retired on it must stay
+    # silent, or widening the suffix set buys a guard people switch off.
+    ok &= case(
+        "a page stating nothing retired passes",
+        {**base, "site/docs/roadmap.html": "    <p>The suite runs in release.</p>\n"},
+        0,
+    )
+
     # The case the guard exists for. Written as it actually appeared.
     ok &= case(
         "the claim is found when it wraps",
