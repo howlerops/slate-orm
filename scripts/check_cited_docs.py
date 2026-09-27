@@ -10,20 +10,49 @@ It was written after adding an error message that ends "See docs/ctes.md",
 noticing that nothing would notice if the file were deleted, and writing that
 down as a gap rather than closing it. Closing it is one loop.
 
-WHY THIS IS NARROW, AND WHERE IT LOOKS
+WHERE IT LOOKS
 
-Source only — `.rs`, `.py`, `.go`, `.ts` — and never `docs/` or `ledger/`.
+Source — `.rs`, `.py`, `.go`, `.ts` — **and prose, under `docs/` and
+`ledger/`**. `node_modules`, `dist`, `target` and other vendored or generated
+trees are skipped. Measured before that list was written: `playwright-core`'s
+type definitions alone cite `docs/user_data_dir.md` and
+`docs/chromium_browser_vs_google_chrome.md`, neither of which is ours and
+neither of which should exist here.
+
+# The prose half, and the argument it overturned
+
+`docs/` and `ledger/` were skipped **as sources**, on two reasons that read
+well and were both wrong in the same way:
 
   * `docs/` cross-links are Markdown links, and `site/check/docs.py` already
-    requires every relative link to resolve.
+    requires every relative link to resolve. True of a link; a bare path in a
+    sentence is not one.
   * `ledger/` cites paths that were right on the day, which is what a dated
     record is for. An entry saying "moved to `docs/x.md`" is provenance even
     after `x.md` moves again, and rewriting it destroys the thing a ledger is.
-  * `node_modules`, `dist`, `target` and other vendored or generated trees are
-    skipped. Measured before this list was written: `playwright-core`'s type
-    definitions alone cite `docs/user_data_dir.md` and
-    `docs/chromium_browser_vs_google_chrome.md`, neither of which is ours and
-    neither of which should exist here.
+
+The second is the interesting one, because it is a real property of a ledger
+and it does not cover the case that matters. A citation that resolved when it
+was written and has since moved is provenance. A citation that **never**
+resolved is a fabrication, and the two are only distinguishable by asking
+whether the file ever existed — which is exactly what the roster below does,
+one sentence at a time.
+
+That distinction is not academic here. This repository has recorded **seven**
+invented citations in a week, each a plausible filename recalled instead of
+looked up, and every one was caught because the claim happened to sit in a
+tree something opened. Two were not: `2026-09-25-the-grammar-block-is-checked-now.md`
+cited a `docs/sql.md` that has never existed, and the entry adding this guard
+first cited a ledger entry that has never existed. Both were in prose, and
+prose was the one tree nothing read.
+
+Measured when this was widened: **439 citations across `docs/` and `ledger/`,
+14 of them dead, 10 distinct.** Nine are deliberate — illustrative paths in an
+entry *about* citations, an elided filename, the template's
+`ledger/YYYY-MM-DD-slug.md` — and are rostered below with why. One was a
+defect and is fixed. Zero were the "right on the day, moved since" case the
+old exemption was written for, which is why a roster is affordable: it starts
+at nine and grows only when somebody writes a path they mean not to resolve.
 
 FIXTURES ARE NOT CITATIONS. `scripts/test_check_cited_tests.py` writes a
 temporary tree containing `docs/d.md` and runs the other checker over it. That
@@ -41,9 +70,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: Where a citation counts. Documents and the ledger are covered or exempt for
-#: the reasons in the module docstring.
+#: Where a citation counts, in code.
 SOURCE_SUFFIXES = (".rs", ".py", ".go", ".ts")
+
+#: The prose trees, read as sources rather than only as targets.
+PROSE_TREES = ("docs", "ledger")
 
 #: Trees that are vendored, generated, or not ours.
 SKIP_PARTS = frozenset(
@@ -89,6 +120,71 @@ FIXTURES: dict[str, str] = {
     ),
 }
 
+#: Citations in prose that are deliberately not files, one line each.
+#:
+#: Keyed by `(file, citation)` rather than by file, unlike `FIXTURES` above.
+#: A fixture *script* is a fixture all the way through; a ledger entry is a
+#: real record with one illustrative path in it, and exempting the whole file
+#: would stop checking the citations that are claims. The narrowest exemption
+#: that works is the one somebody has to widen.
+#:
+#: Same idiom, same reason: a list you are forced to edit is a list that stays
+#: true. Each reason says why the path is not meant to resolve, and a reason
+#: that has stopped being true is one somebody reads when the row fails.
+NOT_A_FILE: dict[tuple[str, str], str] = {
+    ("ledger/2026-09-20-a-path-in-a-string-literal-compiles.md", "docs/x.md"): (
+        "the entry is about paths written in string literals; `docs/x.md` is "
+        "its worked example of one, and a real filename there would make the "
+        "example about a real file"
+    ),
+    ("ledger/2026-09-20-a-path-in-a-string-literal-compiles.md", "docs/d.md"): (
+        "the fixture path `scripts/test_check_cited_tests.py` writes, quoted "
+        "in the entry that explains why that script is exempt"
+    ),
+    (
+        "ledger/2026-09-20-a-path-in-a-string-literal-compiles.md",
+        "docs/user_data_dir.md",
+    ): (
+        "`playwright-core`'s own citation, quoted as the measurement that "
+        "produced the vendored-tree skip list"
+    ),
+    (
+        "ledger/2026-09-20-the-helper-that-can-be-used-now.md",
+        "ledger/2026-09-20-...-the-accessor-three-adapters-now-call.md",
+    ): (
+        "an elided filename — the `...` is the elision — written before this "
+        "guard existed and left because shortening a name in running prose is "
+        "not a citation anybody would follow"
+    ),
+    ("ledger/2026-09-26-the-citation-nobody-could-follow.md", "ledger/a.md"): (
+        "one of three illustrative entry names in the guard's own worked "
+        "example, matching the fixtures `test_check_caveat_citations.py` writes"
+    ),
+    ("ledger/2026-09-26-the-citation-nobody-could-follow.md", "ledger/b.md"): "the second of those three",
+    ("ledger/2026-09-26-the-citation-nobody-could-follow.md", "ledger/c.md"): "the third of those three",
+    (
+        "ledger/2026-09-26-the-refusal-nothing-ran.md",
+        "ledger/2026-09-21-mutate-py-reads-three-more-runners.md",
+    ): (
+        "the sixth invented citation, quoted by the entry that reports it. "
+        "Naming a fabrication is the opposite of making one, and spelling it "
+        "some other way would make the report unreadable — but it is why this "
+        "roster is keyed on the pair: the entry's other citations are claims"
+    ),
+    (
+        "ledger/2026-09-27-a-ledger-entry-could-cite-anything.md",
+        "docs/x.md",
+    ): (
+        "the entry that added this roster, quoting the docstring sentence it "
+        "overturned — `an entry saying \"moved to docs/x.md\"` — whose whole "
+        "point is a path that need not resolve"
+    ),
+    ("ledger/README.md", "ledger/YYYY-MM-DD-slug.md"): (
+        "the filename shape a new entry takes, which is a pattern rather than "
+        "a file"
+    ),
+}
+
 #: A citation is a path under `docs/` or `ledger/` ending in `.md`.
 #:
 #: `ledger/` was added after `stats.rs` cited an entry and nothing would have
@@ -112,7 +208,7 @@ def source_files(root: Path) -> list[Path]:
         relative = path.relative_to(root)
         if SKIP_PARTS & set(relative.parts):
             continue
-        if relative.parts and relative.parts[0] in {"docs", "ledger"}:
+        if relative.parts and relative.parts[0] in PROSE_TREES:
             continue
         if relative.as_posix() in FIXTURES:
             continue
@@ -120,11 +216,44 @@ def source_files(root: Path) -> list[Path]:
     return found
 
 
-def check(root: Path) -> tuple[int, list[str]]:
-    """Returns how many citations were seen, and what is broken."""
+def prose_files(root: Path) -> list[Path]:
+    """Every `.md` under `docs/` and `ledger/`, in a stable order.
+
+    Separate from `source_files` rather than a suffix added to it, because the
+    two want different exemptions: a fixture script is exempt whole, and a
+    prose file is exempt one citation at a time. Keeping them apart is what
+    makes `NOT_A_FILE`'s narrowness possible.
+    """
+    found = []
+    for tree in PROSE_TREES:
+        for path in sorted((root / tree).rglob("*.md")):
+            if SKIP_PARTS & set(path.relative_to(root).parts):
+                continue
+            found.append(path)
+    return found
+
+
+def check(
+    root: Path, roster: dict[tuple[str, str], str] | None = None
+) -> tuple[int, list[str]]:
+    """Returns how many citations were seen, and what is broken.
+
+    `roster` is an argument, and it has to be. `NOT_A_FILE`'s rows name real
+    files in this repository, so over a fixture tree every one of them is
+    "exempting a citation that is gone" and the stale-row check below buries
+    whatever the fixture was about. That happened on the first run: fifteen of
+    sixteen cases failed, all with the same nine lines. Defaulting to `None`
+    rather than to `NOT_A_FILE` makes the fixture's answer the quiet one — the
+    fourth time in this session a parameter with a real default made a test
+    read the repository instead of its own tree, and the first where the
+    default was the *roster* rather than the root.
+    """
+    if roster is None:
+        roster = NOT_A_FILE
     seen = 0
     broken = []
-    for path in source_files(root):
+    used: set[tuple[str, str]] = set()
+    for path in source_files(root) + prose_files(root):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -132,14 +261,37 @@ def check(root: Path) -> tuple[int, list[str]]:
             # and refusing the whole run over one would make the guard the
             # thing that breaks rather than the thing that reports.
             continue
+        here = path.relative_to(root).as_posix()
         for line_number, line in enumerate(text.splitlines(), start=1):
             for cited in CITATION.findall(line):
+                if (here, cited) in roster:
+                    # Counted as used, not as seen: a rostered path is not a
+                    # citation this guard checked, and folding it into `seen`
+                    # would let the never-fires guard below be satisfied by
+                    # the roster alone.
+                    used.add((here, cited))
+                    continue
                 seen += 1
                 if not (root / cited).is_file():
                     broken.append(
-                        f"{path.relative_to(root)}:{line_number} points at "
+                        f"{here}:{line_number} points at "
                         f"`{cited}`, which is not a file"
                     )
+
+    # The roster's own never-fires half, and the one that matters most here: a
+    # row whose file was deleted, or whose illustrative path was quietly made
+    # real, is an exemption nobody is checking any more — and an exemption is
+    # the only way a fabricated citation gets through. `FIXTURES` has no
+    # equivalent and should; that is recorded rather than added, because a
+    # whole-file exemption going stale hides less than one path does.
+    for (where, cited), why in sorted(roster.items()):
+        if (where, cited) not in used:
+            broken.append(
+                f"NOT_A_FILE exempts `{cited}` in {where}, which no longer "
+                f"cites it.\n      The reason was: {why}\n      "
+                "Delete the row — an exemption for a citation that is gone is "
+                "one nobody reads before adding the next."
+            )
     return seen, broken
 
 
@@ -159,14 +311,17 @@ def main(root: Path = ROOT) -> int:
     if seen == 0:
         print(
             "no `docs/*.md` or `ledger/*.md` citation was found anywhere in "
-            "the source, which means this check is looking in the wrong place "
-            "rather than that the code cites nothing"
+            "the source or the prose, which means this check is looking in "
+            "the wrong place rather than that nothing cites anything"
         )
         return 1
     if broken:
         print(f"\n{len(broken)} broken of {seen} citations")
         return 1
-    print(f"ok    {seen} `docs/*.md` and `ledger/*.md` citations, all openable")
+    print(
+        f"ok    {seen} `docs/*.md` and `ledger/*.md` citations in source and "
+        f"prose, all openable; {len(NOT_A_FILE)} rostered as not files"
+    )
     return 0
 
 

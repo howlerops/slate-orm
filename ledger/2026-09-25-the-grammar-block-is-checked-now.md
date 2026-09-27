@@ -135,5 +135,13 @@ are explanations rather than specifications, and no test here can tell whether
 one has stopped being true.
 
 **Neither `docs/` nor the site was audited the same way.** This is one file.
-`docs/sql.md` and `site/docs/features.html` describe the same grammar in
-prose, and whether either has the same six defects, I did not check.
+`site/docs/features.html` describes the same grammar in prose, as do
+`docs/ctes.md`, `docs/views.md` and `docs/full-text.md` for the parts they
+cover, and whether any of them has the same six defects, I did not check.
+
+> Corrected 2026-09-27: this named a `sql.md` under `docs/`, which has never
+> existed —
+> `docs/` has no single SQL page, which is itself part of why nothing audits
+> it. Found by widening `scripts/check_cited_docs.py` to read `ledger/` and
+> `docs/` as sources rather than only as targets; see
+> `ledger/2026-09-27-a-ledger-entry-could-cite-anything.md`.

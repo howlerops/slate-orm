@@ -6350,15 +6350,44 @@
     {
       "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
       "key": "A ledger entry citing a ledger entry is checked by nothing.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "scripts/check_cited_docs.py now reads docs/ and ledger/ as sources, with a per-citation roster; ledger/2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
       "key": "The MinIO job is still the other failure in run 387",
       "verdict": "moment",
       "by": "a statement about CI run 387 (2026-09-27), not about the tree. The MinIO failure has its own open caveat under ledger/2026-09-27-three-red-jobs-nobody-was-watching.md.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "key": "It checks existence, not that the entry says what the citati",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading the cited entry and judging whether it supports the claim, which is the work the claim is. Inherited word for word from check_cited_docs.py's original limitation and from check_caveat_citations.py; no pattern does it.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "key": "A file under `docs/` or `ledger/` that is not `.md` is read ",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading every suffix under both trees, rejected because there is no such file today (scripts live in scripts/) and a case named for it is what a reader finds the day one appears. A mutation widening the glob is caught by it.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "key": "`FIXTURES` still has no never-fires half.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "key": "Nothing catches the eighth invented citation before it is co",
+      "verdict": "narrowed",
+      "residual": "a citation invented and committed with --no-verify is caught on the next check.sh run rather than before the commit. The hook and the script are both run before an ordinary commit, so the ordinary path is covered.",
+      "by": "scripts/check_cited_docs.py in scripts/check.sh and .github/workflows/ci.yml; ledger/2026-09-27-a-ledger-entry-could-cite-anything.md",
       "reviewed": "2026-09-27"
     }
   ]
