@@ -99,6 +99,9 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "stops-at-reread": ("**Superseded by N1.**", "docs/orm-comparison.md"),
  "arrays-answered": ("Left open here, and answered by the build", "docs/arrays.md"),
  "views-answered": ("Left open here; one answered, one still open", "docs/views.md"),
+ "sole-missing-table": ("NAMES_A_MISSING_TABLE", "scripts/check_handlers.py"),
+ "converter-callers": ("a handler converting before authorising fails", "scripts/test_check_handlers.py"),
+ "convert-audited": ("pub fn aggregate_from_proto_query", "crates/slate-server/src/convert.rs"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -347,6 +350,15 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-21-generate-an-array-column-in-three-languages.md',
      'The `element_type` key is read from `--print-schema` and ass'):
         'element-spelling',
+    ('2026-09-21-a-view-reported-as-a-typo.md',
+     'Nothing asserts that `Head::table` stays the only producer o'):
+        'sole-missing-table',
+    ('2026-09-20-the-caveat-was-already-true.md',
+     'The by-caller list is a claim about callers that nothing che'):
+        'converter-callers',
+    ('2026-09-20-the-caveat-was-already-true.md',
+     'I did not re-audit the rest of `convert.rs`.'):
+        'convert-audited',
     ('2026-09-23-five-built-features-the-docs-never-mentioned.md',
      'The client-facing docs were not touched.'):
         'client-five',

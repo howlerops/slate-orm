@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-27T03:27:11+00:00",
+  "file": "crates/slate-server/src/convert.rs",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "python3 scripts/check_handlers.py && echo '1 passed, 0 failed' || echo '0 passed, 1 failed'"
+  ],
+  "commit": "acab1aa",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a fourth function builds the missing-table refusal",
+      "old": "fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Status> {\n    if !query.sort.is_empty() {",
+      "new": "fn refuse_unused(query: &pb::Query, what: &str, instead: &str) -> Result<(), Status> {\n    if query.table == \"\\u{0}\" {\n        return Err(Status::not_found(format!(\"no table named `{}`\", query.table)));\n    }\n    if !query.sort.is_empty() {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

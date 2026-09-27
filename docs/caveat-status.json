@@ -2425,16 +2425,16 @@
     {
       "entry": "2026-09-20-the-caveat-was-already-true.md",
       "key": "I did not re-audit the rest of `convert.rs`.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "the audit, done on 2026-09-27 and reported in ledger/2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md. crates/slate-server/src/convert.rs has exactly two functions taking a `&Catalog` — `join_from_proto` and `aggregate_from_proto_query` — and both are the sites rule 3 of scripts/check_handlers.py holds, demonstrated by deleting `authorize_join_inputs` above one and reading the refusal. It has exactly two `fingerprint::` calls: `check_named`, which rule 2 covers, and `claim(table)` inside `plan_to_proto`, which builds a response from a `&TableDef` the handler already resolved. Nothing else in the file reaches a table's shape from a name. The generalisation to the other 29 files the walk reads is answered structurally rather than by 29 more readings: rules 1, 6 and 8 roster every way a name becomes a `TableDef`.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-caveat-was-already-true.md",
       "key": "The by-caller list is a claim about callers that nothing che",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "rules 1 and 3 of `scripts/check_handlers.py`, which between them close the shape this caveat names — a caller that only converts and never fingerprints. Demonstrated against the real tree on 2026-09-27. A seventh caller taking a bare `self.table` and converting was reported by rule 1 (`service.rs:532: `preview` resolves a table with the bare `self.table(..)``), and deleting `authorize_join_inputs` above `join_from_proto` was reported by rule 3 (`service.rs:2654: `join` calls `join_from_proto` with no authorisation in the 4 lines above it`) — which is the half the caveat says was read rather than checked. Both restored clean.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-caveat-was-already-true.md",
@@ -3527,9 +3527,9 @@
     {
       "entry": "2026-09-21-a-view-reported-as-a-typo.md",
       "key": "Nothing asserts that `Head::table` stays the only producer o",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`scripts/check_handlers.py` rule 7, which rosters every function building a `\"no table named\"` refusal in NAMES_A_MISSING_TABLE and fires on a fourth. Demonstrated against the real tree on 2026-09-27: a fourth producer injected into `refuse_unused` in crates/slate-server/src/convert.rs made the guard report `convert.rs:1974: `refuse_unused` builds a \"no table named\" refusal` and exit 1, and the tree restored clean. The rule itself is mutation-tested — vacating its roster check and blinding its pattern are both caught by named cases in scripts/test_check_handlers.py.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-view-reported-as-a-typo.md",
@@ -6864,6 +6864,42 @@
       "key": "The future-tense paragraph is kept, struck through.",
       "verdict": "deliberate",
       "by": "this entry, and the same call as every other correction in its neighbourhood: the argument that got the refactor built is worth more than the fact that it is built, and deleting it would leave crates/slate-sql looking like it had always been there.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md",
+      "key": "No new protection was written, so the caveats close at the s",
+      "verdict": "deliberate",
+      "by": "this entry, under Alternatives rejected: the alternative is matching on `Status::not_found` rather than on the refusal's text and making every call justify itself. Not taken because `not_found` has honest uses throughout the server — a missing row, a missing index, a missing view — and a rule that reports all of them is a rule people add to a roster without reading, which is worse than the string match it replaces.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md",
+      "key": "The pass-along hole is untouched and now tracked in one plac",
+      "verdict": "deliberate",
+      "by": "this entry: the hole is real and is recorded where it was found, in `scripts/check_handlers.py`'s own docstring. Closing it means type-level provenance — an `Authorized<TableDef>` only the authorising resolver can mint — which is a wide refactor of every signature in slate-server. Not taken here because re-recording another entry's caveat as this one's residual is how a gap comes to be tracked in three places and fixed in none.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md",
+      "key": "The demonstrations are hand injections, not `mutate.py` runs",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a `guard` dialect in scripts/mutate.py reading `^\\d+ problem\\(s\\)$`, which would put every guard in scripts/ under the harness's four protections at once. Not taken in this change because a new dialect needs a corpus entry in scripts/test_mutate.py checked against all five existing dialects — the over-match lie the corpus exists for — and this change is a triage pass, not a tooling one. The historical fact these demonstrations were hand-run does not stop being true if the dialect is added later.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md",
+      "key": "The third caveat closed here rests on one reading of one fil",
+      "verdict": "narrowed",
+      "by": "the reading is backed by the structural argument in the same paragraph: rules 1, 6 and 8 of scripts/check_handlers.py roster every way a name becomes a `TableDef`, so a new schema-dependent site in convert.rs has to arrive through one of them and be reported.",
+      "residual": "nothing ties the reading to those rules except the prose; if rules 1, 6 or 8 were removed the closure would silently become a bare point-in-time reading. The witness `convert-audited` pins the file, not the rules.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-sole-producer-caveats-the-guard-already-answered.md",
+      "key": "I did not extend the reading to the other 29 files the walk ",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading all 29, which is a day's work whose output is a claim that goes stale on the next commit — the exact thing the rosters replaced. The structural answer covers the case that matters (a name becoming a `TableDef`) and the case it does not is the pass-along hole, tracked in check_handlers.py's docstring.",
       "reviewed": "2026-09-27"
     }
   ]
