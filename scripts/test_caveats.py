@@ -257,6 +257,53 @@ def main() -> int:
         1,
     )
 
+    # The third side, and the one that was written in the docstring and
+    # enforced nowhere: `narrowed` is a live verdict with a residual to
+    # re-read, so its date belongs in `checked`. Five rows in this repository
+    # carried `reviewed` and were therefore invisible to `--unread` forever —
+    # not listed as stale, never listed at all.
+    case(
+        "a narrowed caveat carrying `reviewed` rather than `checked` is refused",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                        "by": "half of it shipped in b.md",
+                        "residual": "the other half is still open",
+                        "reviewed": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        1,
+    )
+
+    case(
+        "a narrowed caveat carrying `checked` is accepted",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "narrowed",
+                        "by": "half of it shipped in b.md",
+                        "residual": "the other half is still open",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"narrowed": 1},
+        0,
+    )
+
     # The other side of the same rule, and the one a mutation found missing:
     # `checked` is exactly right on an `open` row — it is what `--unread`
     # reads — so a rule written as "no row may carry `checked`" would pass

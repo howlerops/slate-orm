@@ -4884,8 +4884,7 @@
       "key": "It guards `crates/`, `docs/` and the READMEs",
       "verdict": "narrowed",
       "by": "scripts/check_cost_prose.py now reads site/*.html and site/docs/*.html as prose, the fourth tree. ledger/2026-09-27-the-page-a-visitor-reaches-first.md",
-      "residual": "It still reads two constants: a figure derived from anything but POINT_READ_COST or SCAN_ROW_COST is not a claim it knows how to check, in any of the four trees.",
-      "reviewed": "2026-09-27"
+      "residual": "It still reads two constants: a figure derived from anything but POINT_READ_COST or SCAN_ROW_COST is not a claim it knows how to check, in any of the four trees."
     },
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
@@ -5081,8 +5080,7 @@
       "key": "Nothing checks a guard's account of itself.",
       "verdict": "narrowed",
       "by": "scripts/check_guard_scope.py — a guard's docstring must agree with the paths beneath it about which trees it reads, both directions, over all 21 guards under scripts/. ledger/2026-09-26-a-guard-that-reads-the-guards.md",
-      "residual": "Scope is the only part of a docstring compared. A comment claiming a mutation was caught, a pattern's stated reason, a count of cases: still unchecked, and two of those have guards of their own.",
-      "reviewed": "2026-09-26"
+      "residual": "Scope is the only part of a docstring compared. A comment claiming a mutation was caught, a pattern's stated reason, a count of cases: still unchecked, and two of those have guards of their own."
     },
     {
       "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
@@ -5790,8 +5788,7 @@
       "key": "It still cannot tell whether the numbers in the table are th",
       "verdict": "narrowed",
       "by": "scripts/check_mutation_claims.py — no count an entry states may exceed the total cases in the runs it cites, which found one wrong citation in the ledger. ledger/2026-09-26-six-caught-out-of-five.md",
-      "residual": "Totals, not the breakdown: an entry saying `eight cases, six caught, two survived` over a record of eight where seven were caught still passes.",
-      "reviewed": "2026-09-26"
+      "residual": "Totals, not the breakdown: an entry saying `eight cases, six caught, two survived` over a record of eight where seven were caught still passes."
     },
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
@@ -6317,7 +6314,7 @@
       "verdict": "narrowed",
       "residual": "only for a server example, which has no roster line because run_examples.sh never reaches the refusal branch for one. Every non-server example that reads arguments is also handed a bad one by a run, which is what proves the path is live.",
       "by": "scripts/run_examples.sh's refusal probe; ledger/2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
-      "reviewed": "2026-09-27"
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
@@ -6388,7 +6385,28 @@
       "verdict": "narrowed",
       "residual": "a citation invented and committed with --no-verify is caught on the next check.sh run rather than before the commit. The hook and the script are both run before an ordinary commit, so the ordinary path is covered.",
       "by": "scripts/check_cited_docs.py in scripts/check.sh and .github/workflows/ci.yml; ledger/2026-09-27-a-ledger-entry-could-cite-anything.md",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md",
+      "key": "It does not check that a `checked` date is true.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is evidence per re-read — a hash of the cited code, a test run — which is a second tracker for a field whose whole job is to expire. Not taken; --unread expiring the claim is the mechanism.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md",
+      "key": "`closed` and `moment` rows may still carry neither date.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md",
+      "key": "Three residuals are now on the worklist and have not been re",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
     }
   ]
 }

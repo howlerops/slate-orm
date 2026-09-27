@@ -210,6 +210,20 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
                 f"`{CHECKED}`, which means read against the tree. A settled "
                 f"verdict re-read for correctness carries `{REVIEWED}`."
             )
+        # And the other direction, which was written down and not enforced.
+        # `narrowed` is a live verdict — something is left, and `--unread`
+        # exists to make somebody look at it again — so its date belongs in
+        # `checked`. Five rows carried `reviewed` instead and were therefore
+        # invisible to `--unread` **permanently**: not "stale and listed", but
+        # never listed at all, which is the quieter of the two failures and
+        # the one a staleness report cannot show you.
+        if verdict == "narrowed" and row.get(REVIEWED):
+            problems.append(
+                f"{c['entry']}: `{key(c['claim'])}` is narrowed and carries "
+                f"`{REVIEWED}`, which is the settled-verdict stamp. A narrowed "
+                f"caveat still has a residual to re-read, so its date is "
+                f"`{CHECKED}` — `--unread` reads that one and nothing else."
+            )
         counts[verdict] += 1
     orphans = sorted(set(status) - seen)
     return counts, problems, orphans
