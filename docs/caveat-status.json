@@ -5242,9 +5242,9 @@
     {
       "entry": "2026-09-25-or-in-having-too.md",
       "key": "Nothing measures it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the claim it makes is about what is expressible, and a benchmark would answer a question nobody asked — a disjunction costs what evaluating it per row costs, which is the planner caveat beside it rather than a number.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-parentheses-in-a-where.md",
@@ -5270,8 +5270,9 @@
     {
       "entry": "2026-09-25-parentheses-in-a-where.md",
       "key": "The planner still does nothing special with it.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: it is the same open question ledger/2026-09-25-the-disjunction-the-kernel-always-had.md records as `The planner does nothing with a disjunction`, and that one is where the work belongs. Duplicating it here would be two caveats for one gap.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-parentheses-in-a-where.md",
@@ -5337,9 +5338,9 @@
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
       "key": "Nothing measures it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the claim it makes is about what is expressible, and a benchmark would answer a question nobody asked — a disjunction costs what evaluating it per row costs, which is the planner caveat beside it rather than a number.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
@@ -5443,8 +5444,9 @@
     {
       "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
       "key": "Nothing makes the stamp expire on a change to the code the c",
-      "verdict": "open",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: tying a stamp to a commit range needs the caveat to name what it is about in a *field* rather than in prose — a path list per caveat, kept true by hand across 976 of them. The expiry this has is time, which is coarse and needs nothing maintained.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-open-caveats-nobody-re-reads.md",
@@ -5463,8 +5465,9 @@
     {
       "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
       "key": "The `EXPECTED_REFUSALS` idiom now has a fourth copy.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the idiom's value is that a list you are forced to edit stays true, and tracking how many such lists exist is a roster of rosters whose own reasons nothing checks either. The repetition is the idiom working, not a duplication to remove.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
@@ -5613,14 +5616,16 @@
     {
       "entry": "2026-09-26-a-verdict-is-not-a-reading.md",
       "key": "`narrowed` was applied once and could fit more.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: applying `narrowed` needs the residual written per caveat, which is a closer reading than a verdict pass gives. The sweep in ledger/2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md took the ones whose residual was already stated in the entry; the rest want the work the entry names, at the grain it names.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-batch-eight-and-a-caveat-that-bit-within-the-hour.md",
       "key": "Five of the ten were checked by absence",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a search that finds nothing is weaker than finding the thing and reading it, and the entry says so in those words. The alternative is reading every file in the area for a differently spelled implementation, which is the audit-with-no-termination-condition this repository declines elsewhere.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-batch-eight-and-a-caveat-that-bit-within-the-hour.md",
@@ -5677,8 +5682,9 @@
     {
       "entry": "2026-09-26-batch-six-found-nothing.md",
       "key": "Two of the ten were checked by absence.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a search that finds nothing is weaker than finding the thing and reading it, and the entry says so in those words. The alternative is reading every file in the area for a differently spelled implementation, which is the audit-with-no-termination-condition this repository declines elsewhere.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
@@ -5883,14 +5889,16 @@
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
       "key": "\"The caveat itself\" is a `by` that points nowhere a tool can",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative it names — a `by` quoting the deciding sentence — has to be kept true by hand against a bullet that can be reworded, which is the orphan problem one level down. 38 of 64 point at the caveat because the reasoning genuinely is there, and the entry calls that honest and unresolvable.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
       "key": "One caveat was moved to `narrowed` and its residual overlaps",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: noticing that two caveats describe one piece of work means comparing prose for sameness, which is the judgement the tracker keys around rather than makes. Both are recorded and closing the work will need both edited, which the entry says.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
@@ -5921,8 +5929,9 @@
     {
       "entry": "2026-09-26-the-reverse-sweep-found-six.md",
       "key": "Five caveats went back on the backlog and none of them got d",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "moment",
+      "by": "a statement about the backlog on 2026-09-26, immediately after that sweep. Two of the three examples it gives have since been decided deliberate and one remains; the sentence is about that moment, not about a property of the tree.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-reverse-sweep-found-six.md",
@@ -5934,8 +5943,9 @@
     {
       "entry": "2026-09-26-the-citation-nobody-could-follow.md",
       "key": "It checks existence, not aptness",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: reading a cited entry and judging whether it supports the verdict is the work the verdict *is*, and no pattern does it — the same limitation check_cited_docs.py has carried since it was written. The entry calls it the larger half and does not pretend to approach it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-citation-nobody-could-follow.md",
@@ -5955,8 +5965,10 @@
     {
       "entry": "2026-09-26-the-citation-nobody-could-follow.md",
       "key": "The fourth invented citation was found by a guard written in",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "checked": "2026-09-27",
+      "residual": "a filename written in a suffix none of the four guards reads — a .yml, a .toml, an .html, a shell script. Source (.rs/.py/.go/.ts), prose (docs/**/*.md and ledger/**/*.md) and docs/caveat-status.json are covered; everything else is not, and the eighth invented citation will be there.",
+      "by": "scripts/check_cited_docs.py now reads docs/ and ledger/ prose as sources as well as targets, which was the tree this caveat predicted a later invention would land in — and it did, twice, on 2026-09-27. ledger/2026-09-27-a-ledger-entry-could-cite-anything.md"
     },
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
@@ -5975,8 +5987,9 @@
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
       "key": "The four corrected details were found because they were chec",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: following a `by` that claims what an entry argues or what a message says means reading the argument and grading it — the aptness half, which has its own caveat and no mechanism. Four checkable details were checked and the entry says the other six are not of that kind.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-closed-verdicts-audited.md",
@@ -5995,8 +6008,9 @@
     {
       "entry": "2026-09-26-a-witness-for-every-closure.md",
       "key": "The witnesses are one person's choices, and 179 of them.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the audit it describes is 179 reverts, one per closure, confirming each witness fails — a day of work that the entry costs out and declines. What the check can report is that every witness is still in the tree, and it says 'a count' rather than 'load-bearing'.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-a-witness-for-every-closure.md",
@@ -6060,8 +6074,9 @@
     {
       "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
       "key": "It reads the `|` operator only.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `Optional[X]`, `Union[None, X]` and a union inside a string annotation each need their own arm, and none occurs in this tree — checked when the guard was written. An arm for a shape nobody writes is a false-positive surface over every annotation in the repository.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
@@ -6078,8 +6093,9 @@
     {
       "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
       "key": "Nothing checks the guard against a newer `ruff`.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: comparing against a newer `ruff` means installing one, which the disk note in CLAUDE.md is about. The direction that matters is the other one — the house rule being stricter than the linter — and that is what the guard holds.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-sweep-for-none-first-that-never-happened.md",
@@ -6089,8 +6105,9 @@
     {
       "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
       "key": "Nothing stops the next same-session duplicate.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: its own Alternatives section works through the guard shapes and finds each worse than the habit — a caveat is keyed to its words, not to the job, and any tool keying it to the job has to read the job. The habit is written in the entry, which is where a habit lives.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
@@ -6107,14 +6124,16 @@
     {
       "entry": "2026-09-26-nine-open-caveats-were-already-done.md",
       "key": "Six greps decided six closures.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: each hit was read in context before the verdict moved, and what would distinguish a grep that hit for an unrelated reason is a second reader. The entry names the exposure rather than claiming the greps were proofs.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-four-holes-in-the-trackers-own-data-model.md",
       "key": "`residual` is prose, like `by`.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: measuring a residual means grading a sentence, which is the same wall `by` hits. Counting them is what a field buys and the entry says so — eighteen is the point, and 'the other half' counting as one is the cost.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-four-holes-in-the-trackers-own-data-model.md",
@@ -6126,20 +6145,23 @@
     {
       "entry": "2026-09-26-four-holes-in-the-trackers-own-data-model.md",
       "key": "The name check reads five-word identifiers in backticks and ",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a short commit hash has no shape a regular expression tells from a hex number, and below five underscore-separated words the pattern matches ordinary field names — a guard reporting `read_text` is one people learn to ignore. The threshold's reason is in the constant.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-four-holes-in-the-trackers-own-data-model.md",
       "key": "Sixteen reasons are sixteen sentences I wrote about my own c",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: independence needs a second reader, which is a person rather than an alternative. What the sixteen buy over the three kinds they replace is specificity, and the entry states that they are not independent of the reader who filed them.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-six-caught-out-of-five.md",
       "key": "Still nothing re-runs the committed specs.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: it is the same caveat ledger/2026-09-26-the-guard-that-only-knew-one-phrasing.md carries as its own, where the work belongs. Two open rows for one gap is the double-counting the tracker exists to avoid.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-six-caught-out-of-five.md",
@@ -6207,8 +6229,9 @@
     {
       "entry": "2026-09-26-the-refusal-nothing-ran.md",
       "key": "Nothing has run the negative case end to end.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "CI run 389's `head-node benchmarks, smoke` job, 2026-09-27: `ok head_concurrency, 91s, refused --not-a-section`, and the same for head_report and stream_step. The built binary was handed a name it does not have and exited 2, which is the meeting the entry said had not happened. 5 passed, 0 failed.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-refusal-nothing-ran.md",
@@ -6220,8 +6243,9 @@
     {
       "entry": "2026-09-26-the-refusal-nothing-ran.md",
       "key": "The refusal check runs one argument per example.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a near miss, a name from another example and two bad names at once are all unit-tested in sections.rs against `Selection::new`, which is the code that decides. Running each against a built binary is three more process launches per example to reach the same function.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-refusal-nothing-ran.md",
@@ -6407,16 +6431,16 @@
     {
       "entry": "2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md",
       "key": "`closed` and `moment` rows may still carry neither date.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: a settled verdict needs no worklist stamp — that is why the rule the other way exists — so 'has this closure been re-read' is a question with no answer the tracker should be forced to give. `reviewed` is optional on purpose.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md",
       "key": "Three residuals are now on the worklist and have not been re",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "re-read on 2026-09-27 in commit 483154d against the tree: all three residuals still hold, and the 2026-09-24 one's citation had gone stale — it said 'all 21 guards under scripts/' where check_guard_scope.py now reports 22. `python3 scripts/caveats.py --unread 30` answers 0.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
@@ -6533,9 +6557,9 @@
     {
       "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
       "key": "Nothing checks the other direction — an action bump.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: knowing that `setup-go@v7` stopped forcing `GOTOOLCHAIN=local` means a model of what each action's majors do to the environment, maintained against upstream. The failure it would prevent is a guard demanding something unnecessary, which is the harmless direction.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
@@ -6547,9 +6571,9 @@
     {
       "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
       "key": "A `deliberate` verdict is a judgement and nothing checks it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: the same wall `closed` hits, recorded in ledger/2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md — a verdict is a reading and no pattern grades one. The protection chosen is that each reason names its alternative concretely enough to be argued with, which is what a second reader needs.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
@@ -6563,6 +6587,27 @@
       "key": "The rate is not fixed, only the backlog.",
       "verdict": "deliberate",
       "by": "this entry: the rate is the discipline — an entry that stops recording its limits is the failure CLAUDE.md is written against. What was changed is when a limit gets decided, not whether it gets written down.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guards-own-backlog-decided.md",
+      "key": "Twenty-five `deliberate` verdicts are twenty-five judgements",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a second reader and this repository has one writer. It is the same judgement ledger/2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md carries as 'A `deliberate` verdict is a judgement and nothing checks it'. What is enforced instead is that the verdict name its alternative, so a wrong one is legible as a wrong argument rather than as an absence.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guards-own-backlog-decided.md",
+      "key": "The `headbench-smoke` witness is coarser than the closure.",
+      "verdict": "deliberate",
+      "by": "this entry: the coarse-witness trade is argued at length in scripts/check_closed_caveats.py. A witness tight enough to name the probe's output line would have to live in a CI log rather than the tree, and a witness that fails on an ordinary rename is one somebody loosens under time pressure. Coarse and kept beats exact and switched off.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guards-own-backlog-decided.md",
+      "key": "Fifty-six open rows remain, and they are the hard ones.",
+      "verdict": "moment",
+      "by": "a statement about the backlog on 2026-09-27, not a property of the tree. The count moves with every sweep and every entry written; what the sentence is for is warning the next reader not to read 56 as progress at the same rate.",
       "reviewed": "2026-09-27"
     }
   ]

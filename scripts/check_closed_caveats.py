@@ -87,6 +87,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "fixtures-alive": ("FIXTURES exempts", "scripts/check_cited_docs.py"),
  "runner-continue": ("ASKS_HANDSHAKE", "scripts/check_examples_roster.py"),
  "tracker-in-ci": ("scripts/caveats.py", ".github/workflows/ci.yml"),
+ "headbench-smoke": ("crates/slate-headbench/run.sh --smoke", ".github/workflows/ci.yml"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -240,6 +241,11 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
+     'Three residuals are now on the worklist and have not been re'):
+        'closed by re-reading the three residuals against the tree. Two still held '
+        'unchanged and the third had gone stale by a count, so the only artifact is '
+        'a corrected citation inside the tracker itself',
     ('2026-09-14-a-real-dataset.md',
      'The 1,290 bytes a row was measured and not investigated.'):
         'closed by a measurement that found where the bytes go. The finding is '
@@ -321,6 +327,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-26-a-mistyped-section-is-a-refusal-now.md',
      'Nothing in CI runs an example with a bad section.'):
         'bad-section-run',
+    ('2026-09-26-the-refusal-nothing-ran.md',
+     'Nothing has run the negative case end to end.'):
+        'headbench-smoke',
+    ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
+     'Three residuals are now on the worklist and have not been re'):
+        '=read',
     ('2026-09-26-the-refusal-nothing-ran.md',
      'Neither guard can see a fourth kind of silent pass.'):
         'argv-roster',
