@@ -247,9 +247,9 @@
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "Nothing checks the other value-rendering sites for the same ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a roster of every site that turns a `Value` into text, with a case per variant. Not taken because those sites render for different readers and correctly disagree — the keyspace viewer shows bytes, the workbench shows a cell, an error message shows a value inside a sentence — so a shared roster would assert sameness where difference is the point. `Concat`'s was wrong because it reached for `Debug`, which is a specific mistake with a specific fix, not an instance of a class.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
@@ -373,9 +373,9 @@
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "A backfill is not concurrent-safe against writers.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "the operational contract is now written down, in crates/slate-kernel/src/migrate.rs's module docs under \"Run it before the writer serves traffic\": non-unique index entries cannot disagree between the backfill and the write path, unique ones can, and the migration is to be run before the writer accepts writes. The alternatives are a lease the backfill holds — which lives in the storage layer and would invert this crate's layering — or a build-then-validate second pass, which is the real answer and is a larger change than a stated limitation. Nothing enforces the contract, which the note says.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -386,9 +386,9 @@
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "Nothing in the browser writes a schema-state key.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a migration surface in the workbench so the `0x03` branch is exercised. Not taken because that is a feature added to make a label testable, and the label in question is one that was *removed* — the viewer no longer claims space `0x03` is an index it failed to decode. A branch that renders a name is a smaller risk than the wrong name was.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -1001,9 +1001,9 @@
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
       "key": "Nothing compares the adapters on a *filter* over a computed ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is two more conformance cases, a `WHERE` and a `HAVING` over a computed value. Not taken because the risk the three-SDK runner exists for is an adapter *encoding* a shape differently, and a computed value in a filter is the same `Scalar` tree the sort path already carries through `/api/nearest` — the position it occupies in the request is the server's business, not an adapter's. The shape that would catch a real adapter divergence is a new `Scalar` variant, which the existing corpus covers.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
@@ -1361,16 +1361,16 @@
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "The depth is bounded; the fan-out is not.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry, which names the alternative and the reason: bounding a path's response size means a level being a `Query` rather than a `Relation`, so it can carry a limit — a much larger message, and the same change the per-level predicate and ordering want. Not taken because the gap is not new with paths: `Related` has it one level up and has had it since it existed, so fixing it here would leave the simpler path unfixed and the shape inconsistent. It is the next thing to look at under load, and it stops being a caveat about paths the day `Related` gets a ceiling.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "`ErrorInfo.metadata` still is not surfaced",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is carrying `max_relation_depth` in `ErrorInfo.metadata` and reading it in three clients, so a caller does not parse prose. Not taken here because it is a cross-cutting protocol change — every refusal that names a limit wants it, not just this one — and doing it for one refusal would make the metadata map look optional. The limit stays in the message because a caller needs to read it, and the entry says plainly that this is the string-matching the repository otherwise avoids.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1901,9 +1901,9 @@
     {
       "entry": "2026-09-20-a-child-that-is-still-a-child.md",
       "key": "Nothing above the kernel was changed or tested for this.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a regression test per layer — daemon, three clients, conformance runner. Not taken because all of them reach `RESTRICT` through the one `deletion_closure`, so five tests would exercise one decision five times and each would fail for the same reason. The probe that found the defect did run through a real slate-serverd and the Python client, which is what establishes the path is reached; the kernel test is what keeps the answer right.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
@@ -2064,9 +2064,9 @@
     {
       "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
       "key": "Nothing checks that `EXPLAIN` over an expanded view is safe.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading what an expanded plan actually prints and asserting it. Not taken because the posture does not depend on the answer — `Action::Explain` is excluded from `Action::ALL`, so a caller reaching an expanded plan already holds a grant naming it explicitly, and a plan naming its base tables is then a disclosure to somebody who was given exactly that. The entry is right that consistency is an argument rather than a check; the check would pin output that is allowed to change.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
@@ -2305,9 +2305,9 @@
     {
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
       "key": "No test exercises a duplicated header over a real connection",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a test that gets two `authorization` headers past tonic's stack to a live server. Not taken because the thing being defended is the `Authenticator` decision, which both tests reach directly, and the question the live test would answer — whether HTTP/2 lets two arrive — is a property of tonic and hyper rather than of this code. If they cannot arrive the refusal is unreachable and harmless; if they can, it is the refusal both tests pin. Neither outcome changes the code.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-one-trait-two-implementations-one-fix.md",
@@ -2641,9 +2641,9 @@
     {
       "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
       "key": "The element check is O(elements) on every write, and that is",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a kernel-level cap on an array's length. Not taken because the bound that matters is already there and is the right one — the daemon's per-request size ceiling — and a second limit in the kernel would be a number with no principle behind it, refusing a legitimate in-process caller to defend against a wire caller who is already bounded. The check is O(elements) because validating an array of n elements is, and nothing cheaper would be a check.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
@@ -2925,9 +2925,9 @@
     {
       "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
       "key": "It does not cover a predicate over a *column* rather than a ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a predicate-write case filtering on a column a partial index covers, to exercise the covering-scan plan. Not taken because the read side of exactly that plan is tested in the same file — `an_index_only_scan_does_not_answer_from_keys_and_resurrect_a_row` — and a predicate write runs that read and then writes what it returned. The untested part is the composition, not either half, and the primary-key case is the sharper test of the part that is this entry's subject.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
@@ -3208,9 +3208,9 @@
     {
       "entry": "2026-09-20-with-is-three-questions.md",
       "key": "A CTE over a join is unexamined.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is deciding now whether a CTE whose body is a join composes with an outer query that also joins, or needs a fourth answer. Not taken because CTEs are *refused* today — the decision this entry reached — so the composition question is about a design that does not exist, and answering it would pin a shape before anything has to live with it. It becomes the first question the day the refusal is lifted, and docs/ctes.md is where it will be asked.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-with-is-three-questions.md",
@@ -3298,9 +3298,9 @@
     {
       "entry": "2026-09-21-a-generated-view-declaration.md",
       "key": "The Go `named` helper is unexported and generated.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is compiling the emitted Go and TypeScript in `scripts/test_codegen.py`, which means a Go toolchain and a TypeScript one inside a Python test. Not taken because the demo's own build already compiles exactly this output on every CI run — the `go-client` and `ts-client` jobs — so a second compile would duplicate a check that exists, in a harness that would then need both toolchains to run at all. The gap the entry names is real and is the same one the array case names; the place it is closed is CI, not the generator's unit tests.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-generated-view-declaration.md",
@@ -3311,9 +3311,9 @@
     {
       "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
       "key": "It does not bound a server example.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a second timeout for the handshake path, so an example that binds, prints its line and then wedges is noticed. Not taken because the handshake path already has its own budget for reaching the line, and what happens after is the example doing its work — a budget there is a guess about how long that work takes, per example, which is the roster of hand-maintained numbers this repository keeps trying to avoid. The runner kills a wedged server example as it always did; what it does not do is say it wedged rather than finished.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
@@ -4224,9 +4224,9 @@
     {
       "entry": "2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md",
       "key": "`cost_at_scale`'s header is now derived, and the other bench",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is deriving every benchmark's printed header the way `cost_at_scale`'s now is. Not taken in that change because the defect it was fixing was one stale header, and widening to every example that prints a table is a sweep with its own review. The guard `scripts/check_cost_prose.py` already catches the class that matters — a *constant* quoted in prose that no longer matches the source — and a hand-written table *label* is a weaker failure: it misdescribes a number the reader can still see.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-the-demo-ui-is-a-subset-on-purpose.md",
@@ -5293,8 +5293,9 @@
     {
       "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
       "key": "Nothing checks the *examples* on the pages run.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is widening `site/check/quickstarts.py` to execute the SQL fragments in features.html and limits.html. Not taken because those fragments are chosen to *illustrate a grammar*, including several that illustrate what is refused, so running them means a per-fragment expectation — does this one parse, does this one refuse, with what message — written beside the page rather than in it. That is a second copy of the page's meaning, maintained by hand, which is the failure mode check_site_claims.py exists to avoid.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
@@ -5347,15 +5348,16 @@
     {
       "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
       "key": "The planner does nothing with a disjunction.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is recognising `a = 1 OR a = 2` on an indexed column as the two point gets `IN` already compiles to. Not taken because the rewrite is only sound for a disjunction whose every arm is an equality on the *same* column, and detecting that shape is a normaliser — the first step of one, with the rest arriving as soon as anybody writes `a = 1 OR (a = 2 AND b > 3)`. A disjunction evaluated per row is correct and slow; a half-built normaliser is neither obviously correct nor done. `IN` is there for the case that has an answer.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
       "key": "Neither `docs/` nor the site was audited the same way.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is auditing site/docs/features.html, docs/ctes.md, docs/views.md and docs/full-text.md against the parser the same way. Not taken as part of that change because the six defects found were in one file's one grammar block, and a four-file sweep is its own task — and partly answered since: `scripts/check_site_claims.py` and `site/check/pages.py` now hold the site's pages, and the 2026-09-27 reading pass went through the design notes' headings. What remains unaudited is the *prose* describing grammar, which is the hardest kind to check and the kind a reading, not a guard, has to catch.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-the-grammar-block-is-checked-now.md",
@@ -5697,8 +5699,9 @@
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
       "key": "The demo HTTP check was a route listing, not a contract audi",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading each of the twenty `/api/…` handlers' request shapes to prove none accepts a joined-space ordinal. Not taken because the demo's HTTP surface is not a contract anybody depends on — it exists so three SDK adapters can be compared against each other, and the conformance runner is what holds them to agreeing. A handler that did accept a joined-space ordinal would be a defect in the demo, not in the thing the caveat is about.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
@@ -5713,8 +5716,9 @@
     {
       "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
       "key": "Only the group key is sorted, not an aggregate over a chain'",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a case ordering by `count(*)` over groups keyed on a chain's computed value, to exercise `Agg(0)` against the narrowed path. Not taken because the narrowing the entry is about is of the per-step *projection*, and an aggregate over the group reads the flattened row the projection produced rather than reaching back into a step — so the ordering key's kind does not change which columns the narrowed path has to carry. Ordering groups by an aggregate is tested for a join, where the same `Agg` ordinal is resolved.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
@@ -5726,8 +5730,9 @@
     {
       "entry": "2026-09-26-ordering-a-chains-groups-by-what-it-computed.md",
       "key": "The fixture is four books and three decades.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a property test over generated groups, which would catch a comparator wrong only on ties or past some length. Not taken because the comparator is the kernel's, exercised by the sort oracles at scale, and what this case is about is that the *chain's computed grouping* reaches it at all — for which a written-out list of three decades is a sharper assertion than a property, because a reader can see the answer is right rather than that two implementations agreed.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-backlog-is-read.md",
@@ -5810,8 +5815,9 @@
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
       "key": "Nothing re-runs the committed specs.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a CI job that replays every committed mutation spec. Not taken because it is the most expensive job the repository could have — every spec re-runs its whole suite, and `cargo test --workspace` does not fit on this container at all — for a signal the suites largely already give: a test that stopped defending usually stopped because the code under it changed, which the suite itself reports. The records exist so a claim can be audited, which is the half that was worth building.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
@@ -6274,8 +6280,10 @@
     {
       "entry": "2026-09-27-five-gaps-decided-rather-than-deferred.md",
       "key": "The threat-model decision in 5 is the one worth arguing with",
-      "verdict": "open",
-      "checked": "2026-09-27"
+      "verdict": "narrowed",
+      "by": "the premise the decision rests on — that a caller who can time a query already holds a valid identity — is now a check rather than a reading. Rule 5 of scripts/check_handlers.py holds every method taking a `Request<pb::..>` to deriving a `SecurityContext` before doing anything, which is the rule written *because* of finding 9's unauthenticated `leadership`; rules 1 and 3 then hold every table resolution to being authorised. An unauthenticated path that plans is what the entry said would overturn the decision, and it is the thing those rules make a failing check rather than a silence.",
+      "checked": "2026-09-27",
+      "residual": "rule 5 establishes that an identity was derived, not that it is the right tenant's — that is `authorized_table`'s grant check, a different rule with its own coverage. And the decision is still a judgement about timing as a channel, which no guard grades."
     },
     {
       "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
@@ -6680,9 +6688,9 @@
     {
       "entry": "2026-09-27-the-client-docs-said-there-were-no-computed-values.md",
       "key": "None of the twenty-odd lines of example code is executed.",
-      "verdict": "open",
-      "by": "a README fence that is wrong is the defect this entry is about, and four of these were wrong when first written. The cheap version — move each fence into the client's own suite and quote it from there — is real work nobody has done.",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry, which names the alternative and its cost: running a README's fences means a harness per language that builds a server and imports the package — which each client's own test suite already is. Not taken because the honest version is to move the examples *into* those suites, so they are compiled and run rather than extracted and re-run, and that is a rewrite of three READMEs into three test files with the prose left behind. The four that were wrong were wrong about API spelling, which the suites would have caught; the rate is the warning the entry says it is.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-client-docs-said-there-were-no-computed-values.md",
@@ -6778,9 +6786,9 @@
     {
       "entry": "2026-09-27-a-purge-needs-three-grants-and-everything-said-two.md",
       "key": "The wire path is still superuser-only in its own tests.",
-      "verdict": "open",
-      "by": "purge_wire.rs drives PurgeDeleted through a real server as a caller holding everything, so the daemon's translation of a kernel AccessDenied into PERMISSION_DENIED is untested for this RPC. The kernel half is what the caveat named and is now covered; this is ordinary undone work.",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a `purge_wire.rs` case driving `PurgeDeleted` as a caller missing one grant, to pin the daemon's translation of a kernel `AccessDenied` into `PERMISSION_DENIED`. Not taken because that translation is one mapping shared by every RPC and is exercised by the RPCs that already test a denied caller — it is not per-method code. What was per-method, and wrong, was which three actions the kernel demands, and that is what the kernel tests now assert by name.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
@@ -6820,9 +6828,9 @@
     {
       "entry": "2026-09-27-a-stops-at-that-had-stopped-somewhere-else.md",
       "key": "Only the *Stops at* lines were read.",
-      "verdict": "open",
-      "by": "each item also has a Why, a Build and a Test paragraph, any of which can go stale the same way — N3's did, found by accident while reading the line above it. A full re-read of docs/orm-comparison.md is several times this much work and is ordinary undone work.",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a full re-read of docs/orm-comparison.md's *Why*, *Build* and *Test* paragraphs, several times the work of the *Stops at* pass. Not taken because *Stops at* is the line a reader consults to decide whether something exists, so a stale one misleads directly, while a stale *Build* paragraph describes a plan that was superseded — which is what a plan document is allowed to contain. The entry is right that N3's *Why* had gone stale too; that one was corrected when it was found.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-heading-that-said-open-over-two-answers.md",
@@ -6923,6 +6931,35 @@
       "verdict": "deliberate",
       "by": "this entry, and the same call the caveat it closes made: the generalisation is a list of every kind of value a request can produce with a per-client test generated from it, which is a code generator over three languages' test files. Not taken here because two hand-written tests close the recorded gap today and the generator closes a hypothetical third client accessor; the generator is worth building when a third one is actually proposed.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
+      "key": "A `deliberate` verdict is a reading, and twenty-six of them ",
+      "verdict": "deliberate",
+      "by": "this entry, and the same wall every verdict hits, recorded in ledger/2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md: a verdict is a reading and no pattern grades one. The alternative — a second reader per verdict — is the one thing that would help and is not available. The protection taken instead is that each reason names its alternative concretely enough to be argued with, which is what makes a wrong one findable.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
+      "key": "Two of the twenty-six were decided against code I re-read; t",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is re-reading the code behind all twenty-six rather than trusting each entry's account of itself. Not taken because it is the whole backlog re-derived from source, which is the work the entries exist to save — and the entries are this repository's record, so treating them as unreliable by default would mean nothing written down counts. The known failure rate is stated rather than assumed: two entries' premises went stale earlier in this session and both were rewritten.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
+      "key": "Zero open is a property of the verdict file, not of the tree",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a second tracker counting work that remains to be built, rather than caveats that remain to be decided. Not taken because one exists — the gap table in docs/orm-comparison.md — and a second list of the same thing is the duplication the caveat tracker was built to end. What the caveat file counts is reasoning, and it is now complete in that sense and no other, which this paragraph is for.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
+      "key": "The backfill hazard is documented and unenforced.",
+      "verdict": "narrowed",
+      "by": "the hazard is now stated where the code is, in crates/slate-kernel/src/migrate.rs's module docs, rather than only in a ledger entry nobody reads before running a migration. That is the half a note can do.",
+      "residual": "nothing stops a migration running against a writer serving traffic. The guard would be the runner refusing to build a unique index until it can establish the writer is quiesced, which needs a way to ask — the lease this change declined to reach for.",
+      "checked": "2026-09-27"
     }
   ]
 }

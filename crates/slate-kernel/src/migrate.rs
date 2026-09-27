@@ -61,6 +61,28 @@
 //! must not look like one. Nor does it cover `CHECK` constraints or foreign
 //! keys, which are rules about future writes rather than about existing bytes.
 //! Neither claim is obvious, so both are tested.
+//!
+//! # Run it before the writer serves traffic
+//!
+//! **A backfill is not safe against a concurrent writer building a *unique*
+//! index.** The backfill reads a batch, decides each row's index entry and
+//! commits; the write path does the same for a row arriving now. For a
+//! non-unique index the two cannot disagree — an entry either exists or is
+//! written again with the same bytes, and a row deleted from a range the
+//! backfill has not reached loses its entry through the write path. For a
+//! unique index they can: the backfill's uniqueness check and the write path's
+//! are separate reads, so two rows colliding on the new key can each pass
+//! their own check and both be written.
+//!
+//! This is stated rather than fixed, and the alternative was weighed. Making
+//! it safe means the backfill holding something the writer respects — a lease,
+//! or a build-then-validate second pass over the finished index. A lease lives
+//! in the storage layer, not here, so giving this module one inverts the
+//! layering the rest of the crate keeps; a validation pass is the real answer
+//! and is a larger change than a note. The operational contract in the
+//! meantime is the one every system with an online index build starts with:
+//! run the migration before the writer accepts writes. Nothing enforces that,
+//! which is why it is written here rather than assumed.
 
 use crate::error::{KernelError, Result};
 use crate::keys;
