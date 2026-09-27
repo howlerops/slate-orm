@@ -5537,8 +5537,9 @@
     {
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
       "key": "The in-flight marker's post-restore check inherits the hole'",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`restore_report` in scripts/mutate.py returns three outcomes rather than two — a dirty tree, a restore that could not be scored for want of a report, and one that could not be scored because the exit is unreadable — and records `null` rather than `false` for the two that mean 'I could not tell'. ledger/2026-09-27-i-could-not-tell-and-the-tree-is-dirty-printed-the-same-line.md. Four checks in test_mutate.py, 70 to 74; four mutations, three caught and one expected survivor.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-26-a-cached-go-run-is-not-a-run.md",
@@ -6737,6 +6738,27 @@
       "key": "The `is not None` filter is now redundant in one of the two ",
       "verdict": "deliberate",
       "by": "this entry: the alternative is dropping it, which is simpler and leaves two adjacent lines reading differently where one of them is load-bearing. The mutation run records it as an equivalent mutation rather than an uncaught one, which is the honest form of redundant code kept on purpose.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-i-could-not-tell-and-the-tree-is-dirty-printed-the-same-line.md",
+      "key": "`apply`'s use of the answer is still untested",
+      "verdict": "deliberate",
+      "by": "this entry: driving `apply`'s restore arm needs a command that scores its baseline and then stops reporting, which is the state `restore_report`'s docstring says cannot be arranged here on purpose. It is recorded as an expected survivor in the mutation spec, which is where somebody re-running them reads it.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-i-could-not-tell-and-the-tree-is-dirty-printed-the-same-line.md",
+      "key": "Nothing reads `restored_clean` yet.",
+      "verdict": "deliberate",
+      "by": "this entry: a consumer would be a guard over ledger/mutations/*.json, and scripts/check_mutation_claims.py already reads those records for the claim they back rather than for the restore's outcome. Widening the field before anything needs the third state would be designing for a reader who does not exist; recording the honest value now costs nothing and is what makes that reader possible.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-i-could-not-tell-and-the-tree-is-dirty-printed-the-same-line.md",
+      "key": "The wording is still one person's judgement.",
+      "verdict": "deliberate",
+      "by": "this entry: there is no test for whether a sentence is clear, and the alternative — a second reader — is what this repository does not have. What is checkable is that the three states are distinguishable at all, and four cases check that.",
       "reviewed": "2026-09-27"
     }
   ]

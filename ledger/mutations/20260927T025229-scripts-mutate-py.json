@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-27T02:52:29+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "0992194",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a dirty tree is reported as merely unscorable",
+      "old": "    if failures:\n        return f\"  !! the tree did not come back clean: {failures[:5]}\", False",
+      "new": "    if failures:\n        return \"  !! the restore could not be scored\", None",
+      "verdict": "caught",
+      "caught_by": [
+        "a named failure is a dirty tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "nothing reporting is reported as clean",
+      "old": "    if reported == 0:\n        return (",
+      "new": "    if False:\n        return (",
+      "verdict": "caught",
+      "caught_by": [
+        "nothing reporting cannot be scored"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unreadable exit is reported as clean",
+      "old": "    if unreadable(failures, reported, status):\n        return (\n            f\"  !! the restore could not be scored: the command exited \"",
+      "new": "    if False:\n        return (\n            f\"  !! the restore could not be scored: the command exited \"",
+      "verdict": "caught",
+      "caught_by": [
+        "an unreadable exit cannot be scored"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unscorable restore stops being a problem",
+      "old": "    problems += clean is not True",
+      "new": "    problems += clean is False",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "unreachable from test_mutate.py, which calls restore_report directly and never reaches the line in `apply` that counts its answer. Driving it needs a command that scores its baseline and then stops reporting, which is the state restore_report's own docstring says cannot be arranged here on purpose."
+    }
+  ],
+  "restored_clean": true
+}

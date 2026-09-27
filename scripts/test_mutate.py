@@ -379,6 +379,45 @@ def case_every_dialect_reads_its_own_runner() -> list[bool]:
     return results
 
 
+def case_restore_says_dirty_and_unscorable_apart() -> list[bool]:
+    """The restore's three outcomes, which read as two before this.
+
+    `apply` printed `the tree did not come back clean: []` whether the restore
+    *failed* or merely could not be scored, and an empty list after that
+    sentence asserts a dirty tree while showing no evidence of one. Two of the
+    three states mean "I could not tell", and a reader deciding whether to
+    trust the results above needs to know which.
+
+    Four cases, because there are four states and each has a wrong answer that
+    the other three would not catch: a real failure reported as unscorable
+    would hide a dirty tree, and an unscorable run reported as clean would
+    hide the tool being broken — which is the fifth lie `unreadable` exists
+    for.
+
+    Called rather than driven through a mutation run: reaching the two
+    unscorable arms needs a command that scores its baseline and then stops
+    reporting, which cannot be arranged on purpose here.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    expected = [
+        ("a named failure is a dirty tree", ["a_test FAILED"], 1, 1, False, "not come back clean"),
+        ("nothing reporting cannot be scored", [], 0, 0, None, "could not be scored"),
+        ("an unreadable exit cannot be scored", [], 1, 1, None, "could not be scored"),
+        ("a clean run says so", [], 1, 0, True, "restored:"),
+    ]
+    results = []
+    for name, failures, reported, status, clean, phrase in expected:
+        message, got = mutate.restore_report(failures, reported, status)
+        ok = got is clean and phrase in message
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        got {got!r} and {message!r}")
+        results.append(ok)
+    return results
+
+
 def case_every_dialect_has_a_sample() -> bool:
     """The never-fires half: a sixth dialect needs a sample, not a pass.
 
@@ -1113,6 +1152,7 @@ def main() -> int:
         *case_no_dialect_reads_a_clean_run_as_a_failure(),
         *case_every_dialect_reads_its_own_runner(),
         case_every_dialect_has_a_sample(),
+        *case_restore_says_dirty_and_unscorable_apart(),
     ]
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

@@ -481,6 +481,51 @@ def run(command: list[str], dialect: str) -> tuple[list[str], int, str, int]:
     )
 
 
+def restore_report(
+    failures: list[str], reported: int, status: int
+) -> tuple[str, bool | None]:
+    """What to print after the restore, and whether the tree came back clean.
+
+    Three outcomes and not two, which is the whole of this function. The
+    version before it printed `the tree did not come back clean: []` for all
+    three — and an empty list after that sentence is the worst of both
+    readings: it asserts a dirty tree and shows no evidence of one. Two of the
+    three actually mean *I could not tell*, which is a different thing to hand
+    somebody deciding whether to trust the results above it.
+
+    `None` rather than `False` for those two, in the record as well as in the
+    prose, because "could not be scored" and "came back dirty" are different
+    facts about a run and a later reader should not have to guess which one a
+    `false` meant.
+
+    Every outcome but the first is still a problem and still exits non-zero:
+    the point is to say *why*, not to soften it.
+
+    Split out of `apply` so the two unreadable arms can be tested. Reaching
+    them through `apply` needs a command that scores its baseline and then
+    stops reporting, which is a state this container cannot arrange on purpose
+    — and an untestable branch about an unreadable result is the shape
+    `unreadable` itself was written to catch.
+    """
+    if failures:
+        return f"  !! the tree did not come back clean: {failures[:5]}", False
+    if reported == 0:
+        return (
+            "  !! the restore could not be scored: nothing reported, so the "
+            "tree may or may not be clean. Re-run the command by hand.",
+            None,
+        )
+    if unreadable(failures, reported, status):
+        return (
+            f"  !! the restore could not be scored: the command exited "
+            f"{status} with {reported} suites reporting and named no failing "
+            f"test, which this dialect cannot read. The tree may or may not "
+            f"be clean.",
+            None,
+        )
+    return f"restored: {reported} suites reported, none failing", True
+
+
 def unreadable(failures: list[str], reported: int, status: int) -> bool:
     """Whether the command failed in a way this could not read.
 
@@ -695,13 +740,10 @@ def scored(
     # skipped most often: a mutation run that leaves the tree broken makes every
     # later result a lie.
     failures, reported, _, status = run(command, dialect)
-    if failures or reported == 0 or unreadable(failures, reported, status):
-        print(f"  !! the tree did not come back clean: {failures[:5]}")
-        entry["restored_clean"] = False
-        problems += 1
-    else:
-        print(f"restored: {reported} suites reported, none failing")
-        entry["restored_clean"] = True
+    message, clean = restore_report(failures, reported, status)
+    print(message)
+    entry["restored_clean"] = clean
+    problems += clean is not True
     entry["outcome"] = "problems" if problems else "clean"
     return 1 if problems else 0
 
