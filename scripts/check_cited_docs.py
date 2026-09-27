@@ -179,6 +179,19 @@ NOT_A_FILE: dict[tuple[str, str], str] = {
         "overturned — `an entry saying \"moved to docs/x.md\"` — whose whole "
         "point is a path that need not resolve"
     ),
+    (
+        "ledger/2026-09-27-the-other-exemption-roster-was-unchecked.md",
+        "docs/d.md",
+    ): (
+        "the entry that gave FIXTURES its never-fires half, quoting a roster "
+        "reason back — the whole subject is paths that are fixtures, so the "
+        "quotation is one too. It failed the run it was written in, which is "
+        "the rule working"
+    ),
+    (
+        "ledger/2026-09-27-the-other-exemption-roster-was-unchecked.md",
+        "ledger/e.md",
+    ): "the second path in the same quoted reason",
     ("ledger/README.md", "ledger/YYYY-MM-DD-slug.md"): (
         "the filename shape a new entry takes, which is a pattern rather than "
         "a file"
@@ -199,8 +212,9 @@ NOT_A_FILE: dict[tuple[str, str], str] = {
 CITATION = re.compile(r"(?:docs|ledger)/[A-Za-z0-9_][A-Za-z0-9_.-]*\.md")
 
 
-def source_files(root: Path) -> list[Path]:
+def source_files(root: Path, fixtures: dict[str, str] | None = None) -> list[Path]:
     """Every source file a citation could live in, in a stable order."""
+    skip = FIXTURES if fixtures is None else fixtures
     found = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix not in SOURCE_SUFFIXES:
@@ -210,7 +224,7 @@ def source_files(root: Path) -> list[Path]:
             continue
         if relative.parts and relative.parts[0] in PROSE_TREES:
             continue
-        if relative.as_posix() in FIXTURES:
+        if relative.as_posix() in skip:
             continue
         found.append(path)
     return found
@@ -234,7 +248,9 @@ def prose_files(root: Path) -> list[Path]:
 
 
 def check(
-    root: Path, roster: dict[tuple[str, str], str] | None = None
+    root: Path,
+    roster: dict[tuple[str, str], str] | None = None,
+    fixtures: dict[str, str] | None = None,
 ) -> tuple[int, list[str]]:
     """Returns how many citations were seen, and what is broken.
 
@@ -250,10 +266,12 @@ def check(
     """
     if roster is None:
         roster = NOT_A_FILE
+    if fixtures is None:
+        fixtures = FIXTURES
     seen = 0
     broken = []
     used: set[tuple[str, str]] = set()
-    for path in source_files(root) + prose_files(root):
+    for path in source_files(root, fixtures) + prose_files(root):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -277,6 +295,34 @@ def check(
                         f"{here}:{line_number} points at "
                         f"`{cited}`, which is not a file"
                     )
+
+    # `FIXTURES`' never-fires half, added a commit after `NOT_A_FILE`'s and
+    # for the same reason: an exemption nobody checks is the only way a
+    # fabricated citation gets through, and a whole-file exemption hides more
+    # than a single-path one, not less. Two ways it goes dead — the file is
+    # gone, or it stopped containing any citation-shaped string — and the
+    # second is the quiet one, because the file is still there to read and the
+    # reason still sounds right.
+    #
+    # Scoped to `fixtures` for the same reason `roster` is an argument: these
+    # name real files, so over a fixture tree every row would report.
+    for where, why in sorted(fixtures.items()):
+        path = root / where
+        if not path.is_file():
+            broken.append(
+                f"FIXTURES exempts {where}, which is not a file any more.\n"
+                f"      The reason was: {why}\n      Delete the row."
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if not CITATION.search(text):
+            broken.append(
+                f"FIXTURES exempts {where}, which no longer contains a "
+                f"`docs/…` or `ledger/…` path at all.\n"
+                f"      The reason was: {why}\n      "
+                "Delete the row — the file is checked by nothing and the "
+                "exemption is one nobody reads before adding the next."
+            )
 
     # The roster's own never-fires half, and the one that matters most here: a
     # row whose file was deleted, or whose illustrative path was quietly made

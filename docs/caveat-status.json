@@ -6265,8 +6265,9 @@
     {
       "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
       "key": "The MinIO job is still red, and it is not this repository's ",
-      "verdict": "open",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "moved to chainguard/minio:latest, the one anonymously pullable MinIO image measured on 2026-09-27; ledger/2026-09-27-the-minio-image-moved-a-third-time.md. Whether the container comes up is answered by the next CI run, which that entry records as its own caveat.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
@@ -6375,9 +6376,9 @@
     {
       "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
       "key": "`FIXTURES` still has no never-fires half.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "scripts/check_cited_docs.py reports a FIXTURES row whose file is gone and one whose file no longer contains a citation; ledger/2026-09-27-the-other-exemption-roster-was-unchecked.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-ledger-entry-could-cite-anything.md",
@@ -6407,6 +6408,48 @@
       "verdict": "open",
       "by": "",
       "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
+      "key": "CI is the first run.",
+      "verdict": "moment",
+      "by": "a statement about this commit: there is no Docker on this container, so the image was read over the registry API and not started. Run 389 onward is where it is answered.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
+      "key": "It is unpinned, and `latest` will move under it.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a digest pin, which Chainguard's free tier garbage-collects within weeks — the same failure the Bitnami tag gave. The digest is recorded in the workflow comment instead, so a reader can tell afterwards whether it moved.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
+      "key": "Nothing watches whether the image is still pullable.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
+      "key": "The fourth move is not prevented, only made cheaper.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-exemption-roster-was-unchecked.md",
+      "key": "It does not check that a `FIXTURES` reason is true.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is extracting the path a prose reason names and checking that one, which makes the guard's correctness depend on parsing a sentence. Same limitation NOT_A_FILE and every other roster here carries.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-exemption-roster-was-unchecked.md",
+      "key": "It fires on nothing today, so its own never-fires half is th",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative to a guard written against a clean roster is no guard, and the roster is clean because it is seven rows old. Four mutations and three fixture cases are the evidence; stated as weaker than a real-tree finding rather than dressed up.",
+      "reviewed": "2026-09-27"
     }
   ]
 }

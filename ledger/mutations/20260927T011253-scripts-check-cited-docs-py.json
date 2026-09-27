@@ -1,0 +1,66 @@
+{
+  "at": "2026-09-27T01:12:53+00:00",
+  "file": "scripts/check_cited_docs.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_docs.py"
+  ],
+  "commit": "01e8b7e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a FIXTURES row outliving its file is not reported",
+      "old": "        if not path.is_file():\n            broken.append(\n                f\"FIXTURES exempts {where}, which is not a file any more.",
+      "new": "        if not path.is_file() and False:\n            broken.append(\n                f\"FIXTURES exempts {where}, which is not a file any more.",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "a FIXTURES row whose file lost its citation is not reported",
+      "old": "        if not CITATION.search(text):",
+      "new": "        if not CITATION.search(text) and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a FIXTURES row for a file with no citation left is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the fixtures roster defaults to the real one over a fixture tree",
+      "old": "    if fixtures is None:\n        fixtures = FIXTURES",
+      "new": "    if fixtures is None or not fixtures:\n        fixtures = FIXTURES",
+      "verdict": "caught",
+      "caught_by": [
+        "a citation that resolves is counted and not reported",
+        "a citation that does not resolve is reported",
+        "a broken citation in an error message is reported too",
+        "every source language is read, not only Rust",
+        "source citing a ledger entry that resolves is counted",
+        "source citing a ledger entry that is gone is reported",
+        "a ledger entry citing an entry that is gone is reported",
+        "a document citing a document that is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a named fixture file is no longer excluded from the scan",
+      "old": "        if relative.as_posix() in skip:",
+      "new": "        if relative.as_posix() in skip and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a named fixture file is excluded, and only by name",
+        "a FIXTURES row for a file that still has one is clean",
+        "every citation in this repository resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

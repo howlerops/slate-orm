@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-27T01:13:07+00:00",
+  "file": "scripts/check_cited_docs.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_docs.py"
+  ],
+  "commit": "01e8b7e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a FIXTURES row outliving its file is not reported",
+      "old": "        if not path.is_file():",
+      "new": "        if not path.is_file() and False:",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -33,6 +33,7 @@ def case(
     seen: int,
     broken: int,
     roster: dict[tuple[str, str], str] | None = None,
+    fixtures: dict[str, str] | None = None,
 ) -> bool:
     """One tree, one expectation. `roster` defaults to empty, not to the real one.
 
@@ -44,7 +45,7 @@ def case(
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         tree(root, files)
-        got_seen, got_broken = guard.check(root, roster or {})
+        got_seen, got_broken = guard.check(root, roster or {}, fixtures or {})
         problems = []
         if got_seen != seen:
             problems.append(f"saw {got_seen} citations, expected {seen}")
@@ -256,6 +257,36 @@ def main() -> int:
             },
             seen=1,
             broken=1,
+            fixtures={"scripts/test_check_cited_tests.py": "a fixture tree"},
+        ),
+        case(
+            # `FIXTURES`' never-fires half. A whole-file exemption hides more
+            # than a single-path one, so a row outliving its file is worse
+            # here than in `NOT_A_FILE`.
+            "a FIXTURES row for a file that is gone is reported",
+            {"src/a.rs": "// docs/x.md\n", "docs/x.md": "# x\n"},
+            seen=1,
+            broken=1,
+            fixtures={"scripts/vanished.py": "wrote a fixture tree once"},
+        ),
+        case(
+            # The quieter half: the file is still there, still readable, and
+            # has stopped containing anything this guard would have checked.
+            # The reason still sounds right, which is what makes it dead.
+            "a FIXTURES row for a file with no citation left is reported",
+            {"scripts/quiet.py": "# nothing cited here\n", "src/a.rs": "// docs/x.md\n",
+             "docs/x.md": "# x\n"},
+            seen=1,
+            broken=1,
+            fixtures={"scripts/quiet.py": "used to write `docs/d.md`"},
+        ),
+        case(
+            "a FIXTURES row for a file that still has one is clean",
+            {"scripts/loud.py": "# docs/d.md\n", "src/a.rs": "// docs/x.md\n",
+             "docs/x.md": "# x\n"},
+            seen=1,
+            broken=0,
+            fixtures={"scripts/loud.py": "writes a tree containing `docs/d.md`"},
         ),
         case(
             "a path that is not a .md is not a citation",

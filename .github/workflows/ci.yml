@@ -721,20 +721,37 @@ jobs:
       SLATE_S3_ALLOW_HTTP: "true"
     steps:
       - uses: actions/checkout@v5
-      # Started as a step rather than a service container, and pulled from
-      # quay.io, which took two tries to get right.
+      # Started as a step rather than a service container, and the image has
+      # now moved three times. The history is the point, because each move was
+      # a registry decision rather than anything in this repository:
       #
-      # `bitnami/minio:latest` is what this used, and it does not exist —
-      # Bitnami withdrew those tags, so the workflow's first run in its life
-      # failed on `manifest unknown` before checking anything out. The obvious
-      # replacement, `minio/minio` on Docker Hub, answers `pull access denied
-      # ... repository does not exist`. quay.io is MinIO's own registry and
-      # serves it anonymously.
+      #   1. `bitnami/minio:latest` — withdrawn by Bitnami, so the workflow's
+      #      first run in its life failed on `manifest unknown` before
+      #      checking anything out.
+      #   2. `minio/minio` on Docker Hub — `pull access denied ... repository
+      #      does not exist`, then and now.
+      #   3. `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` — MinIO's own
+      #      registry, which served it anonymously and no longer does:
+      #      `unauthorized: access to the requested resource is not
+      #      authorized`, exit 125, on every run from 2026-09-26 on. Measured
+      #      2026-09-27: a bare manifest GET for that tag *and* for `latest`
+      #      both answer 401 with no credentials.
+      #   4. `chainguard/minio:latest`, which is where it is now. Anonymous,
+      #      entrypoint `/usr/bin/minio`, so `server /data` is unchanged.
       #
-      # Pinned to a release rather than `latest`, which is the lesson the
-      # Bitnami tag taught in the other direction: an unpinned tag is one
-      # upstream decision away from vanishing, and a pinned one at least fails
-      # on the day it is removed rather than the day it changes.
+      # **Unpinned, deliberately, reversing what step 3's comment argued.**
+      # That comment said a pinned tag "at least fails on the day it is
+      # removed rather than the day it changes", which is right when the
+      # registry keeps serving old tags. Chainguard's free tier keeps exactly
+      # one: `latest`. A digest pin here would be garbage-collected within
+      # weeks and fail for the same reason step 1 did. So the version is
+      # recorded rather than pinned — the index digest on 2026-09-27 was
+      # sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1,
+      # built 2026-09-24 — and a reader comparing that with what the job
+      # pulled can tell whether the image moved under them.
+      #
+      # It runs as uid 65532, not root, which the `chmod -R 777` below already
+      # accommodates. It was there for MinIO's own non-root user.
       #
       # The official image needs an explicit `server /data`, which the
       # `services:` syntax cannot express — hence `docker run`. The bucket is a
@@ -748,7 +765,7 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
             -v /tmp/minio:/data \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            chainguard/minio:latest server /data
           for _ in $(seq 60); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
               echo "minio is live"; exit 0
