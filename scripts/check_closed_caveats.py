@@ -98,6 +98,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "outer-computed": ("a_chains_computed_value_over_an_unmatched_step_reads_nulls", "crates/slate-kernel/tests/chain.rs"),
  "stops-at-reread": ("**Superseded by N1.**", "docs/orm-comparison.md"),
  "arrays-answered": ("Left open here, and answered by the build", "docs/arrays.md"),
+ "views-answered": ("Left open here; one answered, one still open", "docs/views.md"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -370,6 +371,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-an-array-is-a-terminator-not-a-count.md',
      "The design note's two open questions are still open."):
         'arrays-answered',
+    ('2026-09-27-a-heading-that-said-open-over-two-answers.md',
+     'The other design notes were not checked for the same thing.'):
+        'views-answered',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         '=read',

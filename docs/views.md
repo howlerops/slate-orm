@@ -257,7 +257,14 @@ lookup rather than a walk. If the two predicates genuinely belong to different
 owners — one a policy, one a convenience — that is what row-level security is,
 and §3 already composes it with the view's predicate by `AND`.
 
-## Open, and deliberately not decided here
+## Left open here; one answered, one still open
+
+~~Open, and deliberately not decided here.~~ The first question below is
+answered *and built* — the paragraph is written in the future tense about a
+refactor that has since happened — and the second is genuinely open. A heading
+saying both were undecided is what a reader navigates by, so it is corrected
+rather than left for the `>` block to argue with.
+
 
 **Where a view is declared — answered, and the answer dissolves the
 objection.** The paragraph this replaces said a `[[views]]` block holding SQL
@@ -289,13 +296,22 @@ the parser, the spec types, the lowering — leaves `slate-wasm` as the thin
 on the parser exactly as the browser does. There is no new direction: both
 become peers over a shared crate.
 
-That is a refactor of some size and it is not free. But it is ordinary work
+~~That is a refactor of some size and it is not free. But it is ordinary work
 with a known shape, rather than the architectural objection this section
 recorded, and calling it blocking was wrong. `[[views]]` holding SQL is the
 readable surface, and the way to get there is to move the parser to where both
-callers can see it.
+callers can see it.~~
 
-**What `EXPLAIN` shows.** The expanded plan mentions the base table, which
+**Done.** `crates/slate-sql` exists — `sql.rs`, `lower.rs` and `lib.rs` — and
+both `slate-serverd` and `slate-wasm` take it as a workspace dependency, which
+is the peers-over-a-shared-crate arrangement this paragraph proposed.
+`slate-wasm` is the thin shell it predicted: five mentions of `wasm_bindgen`
+left in `lib.rs`. `[[views]]` holds SQL. The paragraph is kept in the future
+tense above because it is the argument that got the refactor built, and the
+argument is the part worth reading.
+
+**What `EXPLAIN` shows.** *Still open — the one question in this section that
+is.* The expanded plan mentions the base table, which
 tells a caller what the view is made of. `EXPLAIN` is already privileged
 (`Action::Explain` is excluded from `Action::ALL` on purpose), so this is
 consistent rather than a new leak — but "consistent" is an argument, and nobody

@@ -6841,9 +6841,30 @@
     {
       "entry": "2026-09-27-a-heading-that-said-open-over-two-answers.md",
       "key": "The other design notes were not checked for the same thing.",
-      "verdict": "open",
-      "by": "docs/views.md, docs/ctes.md, docs/full-text.md, docs/validation.md, docs/paging-a-join.md and docs/persisting-the-schema.md all follow this note's structure and any could have an answered question under an open heading. Six files, read the way this one was read; ordinary undone work.",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "all nine design notes in docs/ grepped for a section heading claiming something is open, undecided or deferred. One hit: docs/views.md, whose first question was already marked answered inline and whose closing paragraph was in the future tense about the slate-sql extraction that has since shipped. Corrected there; the other eight have no such heading. ledger/2026-09-27-the-other-five-notes-had-no-such-heading-and-the-sixth-did.md",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-five-notes-had-no-such-heading-and-the-sixth-did.md",
+      "key": "It checks one heading shape.",
+      "verdict": "deliberate",
+      "by": "this entry: the grep looks for six words in a `##` line, and what was run is exactly what is claimed. Widening it to every heading is the larger question the entry rejects in Alternatives — answering it here would leave the narrow residual answered by implication rather than by reading.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-five-notes-had-no-such-heading-and-the-sixth-did.md",
+      "key": "`EXPLAIN` over an expanded view is still unexamined.",
+      "verdict": "deliberate",
+      "by": "this entry: it is the open caveat ledger/2026-09-20-a-view-cannot-be-a-privilege-boundary.md already carries, and labelling it in the note is a pointer rather than a duplicate. Two open rows for one gap is the double-counting the tracker exists to prevent.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-five-notes-had-no-such-heading-and-the-sixth-did.md",
+      "key": "The future-tense paragraph is kept, struck through.",
+      "verdict": "deliberate",
+      "by": "this entry, and the same call as every other correction in its neighbourhood: the argument that got the refactor built is worth more than the fact that it is built, and deleting it would leave crates/slate-sql looking like it had always been there.",
+      "reviewed": "2026-09-27"
     }
   ]
 }
