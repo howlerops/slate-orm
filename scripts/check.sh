@@ -117,6 +117,8 @@ demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
+toolchain-pins|.|python3 scripts/check_toolchain_pins.py
+toolchain-pins-guard|.|python3 scripts/test_check_toolchain_pins.py
 cost-prose|.|python3 scripts/check_cost_prose.py
 cost-prose-guard|.|python3 scripts/test_check_cost_prose.py
 build-stamp|.|python3 scripts/check_build_stamp.py

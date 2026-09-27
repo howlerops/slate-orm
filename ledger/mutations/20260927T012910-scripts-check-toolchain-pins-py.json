@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-27T01:29:10+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "c52a969",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "go-version-file counts as a pin",
+      "old": "GO_VERSION = re.compile(r'^\\s*go-version:\\s*[\"\\']?([\\d.]+)[\"\\']?\\s*$', re.MULTILINE)",
+      "new": "GO_VERSION = re.compile(r'^\\s*go-version[\\w-]*:\\s*\\S+\\s*$', re.MULTILINE)",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree whose workflows take Go from go.mod is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unpinned `go install` counts as pinned",
+      "old": "    ([\\w.\\-/]+@v?[\\d][\\w.\\-+]*)                 # the pinned package",
+      "new": "        ([\\w.\\-/@]+)                 # any package at all",
+      "verdict": "caught",
+      "caught_by": [
+        "an unpinned `go install` is not a pinned one",
+        "a tree with no pinned `go install` at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "vendored trees are scanned after all",
+      "old": "        if SKIP_PARTS & set(relative.parts):\n            continue\n        try:",
+      "new": "        if SKIP_PARTS & set(relative.parts) and False:\n            continue\n        try:",
+      "verdict": "caught",
+      "caught_by": [
+        "vendored trees are skipped, because their installers are not ours"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

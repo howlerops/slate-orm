@@ -4884,7 +4884,8 @@
       "key": "It guards `crates/`, `docs/` and the READMEs",
       "verdict": "narrowed",
       "by": "scripts/check_cost_prose.py now reads site/*.html and site/docs/*.html as prose, the fourth tree. ledger/2026-09-27-the-page-a-visitor-reaches-first.md",
-      "residual": "It still reads two constants: a figure derived from anything but POINT_READ_COST or SCAN_ROW_COST is not a claim it knows how to check, in any of the four trees."
+      "residual": "It still reads two constants: a figure derived from anything but POINT_READ_COST or SCAN_ROW_COST is not a claim it knows how to check, in any of the four trees.",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
@@ -5079,8 +5080,9 @@
       "entry": "2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
       "key": "Nothing checks a guard's account of itself.",
       "verdict": "narrowed",
-      "by": "scripts/check_guard_scope.py — a guard's docstring must agree with the paths beneath it about which trees it reads, both directions, over all 21 guards under scripts/. ledger/2026-09-26-a-guard-that-reads-the-guards.md",
-      "residual": "Scope is the only part of a docstring compared. A comment claiming a mutation was caught, a pattern's stated reason, a count of cases: still unchecked, and two of those have guards of their own."
+      "by": "scripts/check_guard_scope.py — a guard's docstring must agree with the paths beneath it about which trees it reads, both directions, over every guard under scripts/ (22 on 2026-09-27, 3 of them making a scope claim). ledger/2026-09-26-a-guard-that-reads-the-guards.md",
+      "residual": "Scope is the only part of a docstring compared. A comment claiming a mutation was caught, a pattern's stated reason, a count of cases: still unchecked, and two of those have guards of their own.",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-24-a-view-a-client-can-name-without-the-generator.md",
@@ -5788,7 +5790,8 @@
       "key": "It still cannot tell whether the numbers in the table are th",
       "verdict": "narrowed",
       "by": "scripts/check_mutation_claims.py — no count an entry states may exceed the total cases in the runs it cites, which found one wrong citation in the ledger. ledger/2026-09-26-six-caught-out-of-five.md",
-      "residual": "Totals, not the breakdown: an entry saying `eight cases, six caught, two survived` over a record of eight where seven were caught still passes."
+      "residual": "Totals, not the breakdown: an entry saying `eight cases, six caught, two survived` over a record of eight where seven were caught still passes.",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-26-the-guard-that-only-knew-one-phrasing.md",
@@ -6341,8 +6344,9 @@
     {
       "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
       "key": "Nothing checks that a pinned generator's Go floor is met.",
-      "verdict": "open",
-      "by": "",
+      "verdict": "narrowed",
+      "by": "scripts/check_toolchain_pins.py — a pinned `go install` beside a pinned go-version must decide GOTOOLCHAIN rather than inherit it; ledger/2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
+      "residual": "the two version numbers are still not compared — that needs the module proxy and scripts/check.sh makes no network calls. CI catches the arithmetic loudly on the first run after a pin moves; what is closed is the silent half, a job working on a default nobody chose.",
       "checked": "2026-09-27"
     },
     {
@@ -6496,6 +6500,34 @@
     {
       "entry": "2026-09-27-the-branch-is-green.md",
       "key": "Nothing here watches the branch.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
+      "key": "It does not compare the two version numbers.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a network call from a static check whose value is needing none. CI catches the arithmetic for free on the first run after a pin moves; the division of labour is stated rather than assumed.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
+      "key": "It is Go only.",
+      "verdict": "deliberate",
+      "by": "this entry: rustup has no GOTOOLCHAIN equivalent to inherit and pip resolves against requires-python, so neither cargo install nor the Python pins has the same shape. Stated so the guard's name is not read as a promise about them.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
+      "key": "A file could mention `GOTOOLCHAIN` in a comment and satisfy ",
+      "verdict": "deliberate",
+      "by": "this entry: matching an assignment means parsing four languages' ways of setting an environment variable. The looser rule's failure mode is a file that thought about the problem; the stricter one's is a parser nobody can debug.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
+      "key": "Nothing checks the other direction — an action bump.",
       "verdict": "open",
       "by": "",
       "checked": "2026-09-27"

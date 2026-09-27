@@ -345,6 +345,8 @@ jobs:
       # third and fourth time.
       - run: python3 scripts/check_examples_roster.py
       - run: python3 scripts/test_check_examples_roster.py
+      - run: python3 scripts/check_toolchain_pins.py
+      - run: python3 scripts/test_check_toolchain_pins.py
       # …and that no comment states a cost constant's old value. The
       # planner's reasoning lives in prose around three numbers, and when
       # `POINT_READ_COST` was re-measured from 3.0 to 1.0 eight files went
