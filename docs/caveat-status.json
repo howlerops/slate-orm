@@ -1334,9 +1334,9 @@
     {
       "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
       "key": "The browser render was a one-off, not a check.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "site/check/pages.py opens all ten documentation pages in Chromium and checks the sidebar, the contents and the pager on each, with a CI job of its own — ledger/2026-09-27-one-javascript-error-would-have-emptied-every-sidebar.md. Five mutations of nav.js, including a ReferenceError before it renders anything, all caught.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
@@ -6695,6 +6695,27 @@
       "key": "The two withdrawn bullets were found by hand, and nothing lo",
       "verdict": "deliberate",
       "by": "this entry: a guard would have to decide whether a sentence of English is still true of the code, which is the prose parsing every guard here declines. What is possible and not done is narrower — a roster of 'what is not here' claims, each naming a symbol that must NOT exist — and it is the EXPECTED_REFUSALS idiom pointed at documentation.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-one-javascript-error-would-have-emptied-every-sidebar.md",
+      "key": "It runs in Chromium and nowhere else.",
+      "verdict": "deliberate",
+      "by": "this entry: a second engine is another Playwright download per CI run, for ten pages whose only JavaScript is the navigation module. site/check/workbench.py takes the same trade for the one page that actually runs, where the cost of being wrong is higher.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-one-javascript-error-would-have-emptied-every-sidebar.md",
+      "key": "It asserts that the navigation rendered, not that it is righ",
+      "verdict": "deliberate",
+      "by": "this entry: following a link in the browser would duplicate site/check/docs.py, which already resolves every relative link against the filesystem. Two checks failing on one defect is the duplication the guards here are written to avoid.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-one-javascript-error-would-have-emptied-every-sidebar.md",
+      "key": "The job count in `CLAUDE.md` is still a hand-maintained numb",
+      "verdict": "deliberate",
+      "by": "this entry: a guard counting `jobs:` keys and comparing against the prose is possible and would be the third sentence-against-a-file guard here. The number is narrative rather than load-bearing — nothing derives from it — so what is kept is the one-line command that answers it, written beside it.",
       "reviewed": "2026-09-27"
     }
   ]

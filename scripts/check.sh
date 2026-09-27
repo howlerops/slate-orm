@@ -268,9 +268,10 @@ cat <<'CAVEAT'
 
 Not covered here, and each has found a real defect: the Go, Python and
 TypeScript client suites, the three-SDK conformance runner, the browser e2e,
-the workbench, the MinIO integration, the deployed harness, the site's
-quickstarts, and `cargo test --workspace`. They need a built binary, a browser
-or a container. Run the ones your change touches.
+the workbench, the ten docs pages in a browser, the MinIO integration, the
+deployed harness, the site's quickstarts, and `cargo test --workspace`. They
+need a built binary, a browser or a container. Run the ones your change
+touches.
 CAVEAT
 
 [ -z "$FAILED" ]

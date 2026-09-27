@@ -70,6 +70,7 @@ ELSEWHERE = {
     "python3 site/check/docs.py": "reads the built site",
     "python3 site/check/quickstarts.py": "runs the docs' code against a server",
     "python3 site/check/workbench.py": "needs a browser and the wasm build",
+    "python3 site/check/pages.py": "needs a browser",
     "./run.sh --trips 20000": "the whole stack, against object storage",
     "./run.sh --conformance": "three SDKs and a server",
     "./run.sh --e2e": "a browser",

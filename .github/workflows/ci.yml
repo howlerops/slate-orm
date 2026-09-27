@@ -417,6 +417,36 @@ jobs:
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
+  # The ten documentation pages, rendered in a real browser.
+  #
+  # `docs.py` above reads them as text and cannot see anything that happens
+  # after the file is served — and all of the navigation does. `nav.js` builds
+  # the sidebar, the contents and the pager on every page, so one JavaScript
+  # error empties the navigation site-wide with every static check green. That
+  # is what this catches.
+  #
+  # A job of its own rather than a step in `playground` below, which already
+  # has Playwright: `playground` needs a wasm toolchain, a `cargo install` and
+  # a wasm build first, so a failure in any of those would mean this never
+  # runs — the "a check that never fires" shape `CLAUDE.md` names. This needs
+  # node, Playwright and the checkout, and nothing else.
+  pages:
+    name: the docs pages, in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: npm ci
+        working-directory: examples/explorer/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: examples/explorer/web
+      - run: python3 site/check/pages.py
+
   # The playground: the kernel compiled to wasm, driven in a real browser.
   #
   # It is the only part of the site that runs rather than describes, so it is
