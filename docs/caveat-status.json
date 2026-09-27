@@ -212,16 +212,16 @@
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "The cap is 1,000 rows and is not configurable.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the workbench is a SQL editor and the grammar already has `LIMIT` and `OFFSET`, so a reader who wants row 1001 writes the query that asks for it and sees what that costs. A JavaScript pager over the capped result would page through rows the kernel already returned, reporting one query's `kernel_ms` across several screens — which is the overstatement this very entry exists to correct.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
       "key": "The write paths are not timed.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`Playground::wrote` sets `kernel_ms` on an INSERT, UPDATE or DELETE and `site/workbench.js` renders it per statement and in the status bar. Four tests in crates/slate-wasm/tests/timing.rs hold the number to being a measurement rather than a constant: a_write_reports_what_the_index_maintenance_cost, an_update_charges_for_the_read_it_has_to_do, a_buffer_reports_a_time_for_every_statement and the_reported_time_never_exceeds_an_independent_clock. `cargo test -p slate-wasm --test timing` on 2026-09-27: 6 passed, 0 failed.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-what-the-timer-measures.md",
@@ -1194,9 +1194,9 @@
     {
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
       "key": "The Rust `Related` trait and the wire disagree about what a ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is narrowing `Related` to foreign keys so the two agree by construction. It costs the Rust surface a relationship over any two ordinals — the reason the trait is shaped that way — to buy a compile-time version of a refusal the wire already gives at runtime, naming the keys that do exist.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
@@ -1315,9 +1315,9 @@
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
       "key": "Nothing changed on the server.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: prompt server-side abort needs cooperative cancellation points threaded through the executor, because the kernel answers a request in one synchronous span. That is a large change to the hot path for a benefit the client already has — the deadline releases the caller — and it buys back only the server work already in flight. tonic delivers the cancellation; what is untested is how fast it is acted on.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
@@ -2208,9 +2208,9 @@
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
       "key": "The codec's *ordering* properties were not attacked.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a hostile encoding cannot reach the codec. Every key in the store and every bound in a plan is produced by `encode` from a typed `Value`, and the one place a caller hands back something that came out of the store — keyset pagination — is `repeated Value after` on the wire, typed values the server re-encodes, not bytes. Fuzzing the ordering against hostile input would be fuzzing a path that does not exist; what would be worth attacking is a corrupted store, which the security review put outside the model.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
@@ -3432,9 +3432,9 @@
     {
       "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
       "key": "Nothing re-runs the measurement automatically.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry names the alternative and it is right — a check comparing today's ratio against a recorded one. What it costs is a timing assertion in CI, which CLAUDE.md and the `headbench` job both refuse for the same reason: a wall-clock threshold on a shared runner is a flake waiting for a slow morning, and a flaky check is one somebody switches off. The recorded band plus `check_cost_prose.py` holding the prose to the constants is what is kept instead.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
@@ -4008,9 +4008,9 @@
     {
       "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
       "key": "The 18-requests-cold figure is not investigated.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the figure is reported as what the counter said and the cold column is already labelled as not a per-row cost, which is the part that affects the model. Attributing the 18 means instrumenting SlateDB's manifest read, in a dependency this repository does not vendor, to explain a number no constant is derived from.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
@@ -4048,9 +4048,9 @@
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
       "key": "§4's premise is unconfirmed.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: confirming it means reading Drizzle Kit's and Alembic's current documentation, which is a network fetch this container's checks do not make, to firm up a comparison that is context for a decision rather than its basis. It is labelled as from memory, which is the honest form of an unconfirmed premise.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-store-the-schema-so-a-refusal-can-name-the-column.md",
@@ -4324,9 +4324,9 @@
     {
       "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
       "key": "Nothing runs any of the four crates at its recorded size.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: running them at recorded size is the `--smoke` trade made the other way. CLAUDE.md measures the cost — the nine slate-slatedb examples are 131 MB at --release against well over 1.4 GB in debug, and `cargo test --workspace` already does not fit on this disk. A recorded-size run in CI is a timing assertion on a shared runner, refused for the same reason as the threshold above.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-two-more-crates-of-benchmarks-nobody-ran.md",
@@ -4583,9 +4583,10 @@
     {
       "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
       "key": "It does not reach a million rows",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "the blocker the caveat names is gone. It says the cliff that stops the measurement is 'unchanged and still unattributed'; the next day ledger/2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md loaded a million rows in 22.0 / 23.2 / 22.5 s with identical PUT counts across runs, so there is no cliff to attribute. Re-read 2026-09-27.",
+      "residual": "the scan-cost-per-row measurement itself still stops short of a million rows. Nothing now says it cannot reach one; it has not been re-run since the loader was cleared.",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
@@ -4672,9 +4673,9 @@
     {
       "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
       "key": "It does not settle `SCAN_ROW_COST`.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry, with the reason corrected by ledger/2026-09-21-a-planner-constant-that-said-the-question-was-open.md: the 3.5x disagreement is explained, not open — the two examples scan stores in different cache states and a partially populated block cache fragments a scan into many small ranged reads. What is left is three explained values spanning 7x, and choosing one is a decision about which cache state a server should assume, which depends on its workload rather than on its data. A measurement cannot settle that.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-the-cost-model-re-measured-with-the-cache-on.md",
@@ -4907,9 +4908,9 @@
     {
       "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
       "key": "It does not audit the rest of the surface the same way.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry states the alternative and its cost: enumerating the difference between what the kernel does and what the docs say it does needs a machine-readable inventory of the kernel's surface, which does not exist and would be a second schema to keep true. What is kept instead is `check_claims.py` over the pages that make claims, plus the honest statement that five known gaps closed is not the same as complete.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
@@ -6291,8 +6292,9 @@
     {
       "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
       "key": "It still reads two constants.",
-      "verdict": "open",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this is the standing residual recorded in ledger/2026-09-21-the-constant-was-right-about-a-build-that-no-longer-exists.md and widened twice since. A figure derived from something other than POINT_READ_COST or SCAN_ROW_COST needs the guard to know how it was derived, which means a machine-readable provenance beside every number — the second schema rejected above. Widening the trees it reads is the part that is cheap, and that is what each of the four passes has done.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
@@ -6323,9 +6325,9 @@
     {
       "entry": "2026-09-27-the-other-doors-a-secret-can-leave-by.md",
       "key": "It reads `crates/` only.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: a per-language version is three more parsers, each with the never-fires half and the roster this one carries, for three clients that pass a bearer token through rather than storing it. The entry already says that is a weaker reason than it sounds, which is the honest form of this trade — the guard is where the secret types live.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-other-doors-a-secret-can-leave-by.md",
@@ -6459,16 +6461,16 @@
     {
       "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
       "key": "Nothing watches whether the image is still pullable.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: a watcher is the same thing rejected in ledger/2026-09-27-the-branch-is-green.md and for the same recorded reason. The failure is exit 125 on the job's first step, which is as loud as a failure gets; what was slow last time was nobody reading the run, and that is answered by asking rather than by a second thing to watch.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
       "key": "The fourth move is not prevented, only made cheaper.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry names the fix and its cost: mirroring MinIO into a registry this repository owns means a registry, a credential in CI, and a mirror job that itself goes stale. Three moves in three months is two lines of YAML each; the mirror is a standing piece of infrastructure to avoid them.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-other-exemption-roster-was-unchecked.md",
@@ -6487,9 +6489,9 @@
     {
       "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
       "key": "`check_mutation_claims.py` reads a per-run phrase as a claim",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: narrowing the rule means associating a sentence with the record it is about, which is the prose parsing this repository keeps declining to do — every guard here matches phrases, not meaning. The cost of leaving it is a loud immediate false positive on an entry citing several runs, which is the failure direction a guard should have.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
@@ -6529,9 +6531,9 @@
     {
       "entry": "2026-09-27-the-branch-is-green.md",
       "key": "Nothing here watches the branch.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: a watch is what went wrong last time. ledger/2026-09-14-ci-clippy-is-newer-than-mine.md records a watch that matched on the wrong string and expired after thirty minutes while three red runs went by, and concluded the honest fix is to ask. CLAUDE.md carries the two calls; a second self-expiring watcher would repeat the failure it is named after.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-pinned-tool-must-not-inherit-its-toolchain.md",
@@ -6578,9 +6580,9 @@
     {
       "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
       "key": "Nothing re-reads a `deliberate` verdict.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "deliberate",
+      "by": "this entry: it is the design, argued in the same paragraph. Putting settled verdicts on an expiring worklist would put 594 rows back on a list whose whole purpose is to be short enough to read, to catch the rare decision whose premise moved. The cheaper half of that — a `narrowed` residual going stale — is what `--unread` already covers.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
@@ -6608,6 +6610,27 @@
       "key": "Fifty-six open rows remain, and they are the hard ones.",
       "verdict": "moment",
       "by": "a statement about the backlog on 2026-09-27, not a property of the tree. The count moves with every sweep and every entry written; what the sentence is for is warning the next reader not to read 56 as progress at the same rate.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
+      "key": "It does not re-read the seventeen reasons that were not corr",
+      "verdict": "deliberate",
+      "by": "this entry: re-reading every file every reason touches is the reading pass ledger/2026-09-26-the-closed-verdicts-audited.md already costed, and it does not scale with a backlog this size. What is kept instead is that each reason cites something openable, so the next reader can check one in a `git show` rather than all of them.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
+      "key": "The `narrowed` residual is the measurement, and nothing sche",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a scheduler, and there is none — no cron, no queue, nothing that runs between sessions. An expiring `checked` date read by `caveats.py --unread` is the mechanism this repository chose for exactly this, argued in ledger/2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
+      "key": "Thirty-seven rows remain open and every one of them is work.",
+      "verdict": "moment",
+      "by": "a statement about the backlog on 2026-09-27, not a standing gap. It is also the point of the sweep: what survives four passes is the part that needs doing rather than deciding.",
       "reviewed": "2026-09-27"
     }
   ]
