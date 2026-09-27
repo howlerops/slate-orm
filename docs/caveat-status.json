@@ -6320,9 +6320,9 @@
     {
       "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
       "key": "The exclusion of servers from rule 4 is a property of the ru",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "scripts/check_examples_roster.py rule 5 reads the run loop between the handshake call and the refusal call and requires a continue in it; ledger/2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
@@ -6449,6 +6449,34 @@
       "key": "It fires on nothing today, so its own never-fires half is th",
       "verdict": "deliberate",
       "by": "this entry: the alternative to a guard written against a clean roster is no guard, and the roster is clean because it is seven rows old. Four mutations and three fixture cases are the evidence; stated as weaker than a real-tree finding rather than dressed up.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
+      "key": "`check_mutation_claims.py` reads a per-run phrase as a claim",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
+      "key": "It reads control flow by looking for a keyword in a byte ran",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a shell grammar, which every other pattern in this file and in check_guard_scope.py declines for the same reason — a narrow pattern with a loud never-fires half beats a parser nobody can debug. The thing it approximates is four lines long.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
+      "key": "It does not check that the exclusion is still the *right* de",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is the guard picking which of the two files is wrong, which is a design judgement. It reports the disagreement and names both sides instead.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-now-reads-the-runner-it-depends-on.md",
+      "key": "The summary fix is one file, and the class is one file wide.",
+      "verdict": "deliberate",
+      "by": "this entry: the one other suite that sums (test_check_handlers.py) prints 43 for a run of 43, verified by counting its result lines, so there is no second defect. Changing a file this entry is not about to prevent a number it is not getting wrong is how a small change becomes a sweep.",
       "reviewed": "2026-09-27"
     }
   ]

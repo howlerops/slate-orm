@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-27T01:19:35+00:00",
+  "file": "scripts/test_check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "4f4941e",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the summary is summed from the lists again",
+      "old": "print(f\"{ran - failed} passed, {failed} failed\")",
+      "new": "print(f\"{len(CASES) + len(SECTION_CASES) + 1 - failed} passed, {failed} failed\")",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "nothing in a test file tests the test file's own arithmetic, and a case asserting the printed total would be that arithmetic written twice. Recorded rather than tested because the fix was structural: `ran` is counted as the cases run, so the number cannot drift from the run unless somebody deliberately puts the sum back \u2014 which is what this mutation is."
+    }
+  ],
+  "restored_clean": true
+}

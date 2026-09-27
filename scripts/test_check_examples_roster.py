@@ -57,10 +57,23 @@ SERVES_PICKY = (
 )
 
 
+#: The run loop's two calls with a `continue` between them, which is what rule
+#: 5 requires and what the real `run_examples.sh` does.
+LOOP = """for name in $examples; do
+    wanted=$(handshake "$crate" "$name")
+    if [ -n "$wanted" ]; then
+        continue
+    fi
+    bad=$(refuses "$crate" "$name")
+done
+"""
+
+
 def script(
     floors: dict[str, int],
     shakes: dict[tuple[str, str], str],
     refusals: dict[tuple[str, str], str],
+    loop: str | None = None,
 ) -> str:
     """A `run_examples.sh` with only the three tables the guard reads.
 
@@ -86,8 +99,15 @@ def script(
             + "    esac\n}\n"
         )
 
+    # The run loop, reduced to what rule 5 reads: the two calls and the
+    # `continue` between them. Not a copy of the real loop — the guard looks at
+    # control flow between two literal calls and nothing else — but it has to
+    # be here, because without it every case would fail rule 5 instead of
+    # saying what it is about. `loop` lets the three cases that *are* about
+    # rule 5 replace it.
     return (
-        "case \"$crate\" in\n"
+        (loop if loop is not None else LOOP)
+        + "case \"$crate\" in\n"
         + "".join(f"    {name}) least={least} ;;\n" for name, least in floors.items())
         + "esac\n"
         + table("handshake", shakes)
@@ -118,6 +138,7 @@ def run(
     members: list[str] | None = None,
     bare: bool = False,
     refusals: dict[tuple[str, str], str] | None = None,
+    loop: str | None = None,
 ) -> list[str]:
     """Run the real guard over a workspace this writes.
 
@@ -161,7 +182,7 @@ def run(
             + "]\n"
         )
         runner = root / "run_examples.sh"
-        runner.write_text(script(floors, shakes, refusals))
+        runner.write_text(script(floors, shakes, refusals, loop))
         return check_examples_roster.problems(runner, root, manifest)
 
 
@@ -454,8 +475,71 @@ SECTION_CASES: list[tuple[str, dict, dict | None, str, bool]] = [
 ]
 
 
+#: Rule 5's cases, which are about the run loop rather than about any table.
+#:
+#: Their own list for the reason `SECTION_CASES` has one: every other case
+#: passes `loop=None` and would need a fifth element that says nothing.
+#:
+#: name, the loop text, the text the report must carry.
+LOOP_CASES: list[tuple[str, str, str]] = [
+    (
+        "the real loop's shape passes",
+        LOOP,
+        "",
+    ),
+    (
+        # The day rule 4's exclusion becomes wrong. A server would be handed a
+        # bad argument, its (absent) roster line would matter, and this file
+        # would still be reporting that such a line should be deleted.
+        "a loop that reaches the refusal probe for a server is reported",
+        LOOP.replace("        continue\n", "        :\n"),
+        "no longer `continue`s before the refusal probe",
+    ),
+    (
+        "a loop that asks for a refusal before a handshake is reported",
+        """for name in $examples; do
+    bad=$(refuses "$crate" "$name")
+    wanted=$(handshake "$crate" "$name")
+done
+""",
+        "asks `refuses` before `handshake`",
+    ),
+    (
+        # Why the search is windowed rather than over the whole script. A
+        # mutation reading the *whole* file for `continue` survived every case
+        # here: the fixture's only `continue` was the one being removed, so
+        # the two searches agreed, and so do they in the real runner today.
+        # They stop agreeing the moment the loop grows a `continue` anywhere
+        # else — a skip, the timeout branch — and then a whole-file search
+        # reads "the server branch still continues" off an unrelated line.
+        "a `continue` outside the server branch does not satisfy rule 5",
+        """for name in $examples; do
+    wanted=$(handshake "$crate" "$name")
+    if [ -n "$wanted" ]; then
+        :
+    fi
+    bad=$(refuses "$crate" "$name")
+    if [ -z "$bad" ]; then
+        continue
+    fi
+done
+""",
+        "no longer `continue`s before the refusal probe",
+    ),
+    (
+        # The never-fires half. A loop rewritten so neither call is spelled
+        # this way leaves rule 5 reading nothing and printing `ok`, which is
+        # the same shape as the four halves above it.
+        "a loop with neither call is reported, not passed over",
+        "for name in $examples; do\n    :\n done\n",
+        "no longer calls both",
+    ),
+]
+
+
 def main() -> int:
     failed = 0
+    ran = 0
     for name, crates, floors, shakes, wanted, bare in CASES:
         # `detached` is the one case about a directory that is not a member,
         # so it is the one case that cannot list every crate it wrote.
@@ -466,6 +550,19 @@ def main() -> int:
             found = [f"raised {raised!r} instead of reporting a problem"]
         ok = (not found) if not wanted else any(wanted in one for one in found)
         failed += not ok
+        ran += 1
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected {wanted!r}, got {found}")
+
+    for name, loop, wanted in LOOP_CASES:
+        try:
+            found = run({"a": {"one": RUNS}}, {"a": 1}, {}, ["a"], loop=loop)
+        except Exception as raised:  # noqa: BLE001 - a crash is this case failing
+            found = [f"raised {raised!r} instead of reporting a problem"]
+        ok = (not found) if not wanted else any(wanted in one for one in found)
+        failed += not ok
+        ran += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
         if not ok:
             print(f"        expected {wanted!r}, got {found}")
@@ -484,6 +581,7 @@ def main() -> int:
             found = [f"raised {raised!r} instead of reporting a problem"]
         ok = (not found) if not wanted else any(wanted in one for one in found)
         failed += not ok
+        ran += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
         if not ok:
             print(f"        expected {wanted!r}, got {found}")
@@ -493,14 +591,21 @@ def main() -> int:
     found = check_examples_roster.problems()
     ok = not found
     failed += not ok
+    ran += 1
     print(f"{'ok  ' if ok else 'FAIL'}  the real tree's four tables agree")
     if not ok:
         for one in found:
             print(f"      {one}")
 
     print()
-    total = len(CASES) + len(SECTION_CASES) + 1
-    print(f"{total - failed} passed, {failed} failed")
+    # Counted as the cases run, not summed from the lists. It was
+    # `len(CASES) + len(SECTION_CASES) + 1`, and adding a third list left it
+    # reporting 30 for a run of 34 — a summary smaller than the run, which
+    # `scripts/mutate.py` reads as the score. A mutation restoring the sum
+    # survived every case here, because nothing in a test file tests the test
+    # file's own arithmetic. Deriving the number makes that mutation
+    # impossible rather than caught, which is the better of the two.
+    print(f"{ran - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

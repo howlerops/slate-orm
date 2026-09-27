@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-27T01:19:00+00:00",
+  "file": "scripts/test_check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "4f4941e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the summary stops counting the loop cases",
+      "old": "len(CASES) + len(SECTION_CASES) + len(LOOP_CASES) + 1",
+      "new": "len(CASES) + len(SECTION_CASES) + 1",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

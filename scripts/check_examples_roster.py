@@ -14,7 +14,7 @@ That is the same defect three times now (#265, #271, here), which is what makes
 it worth a guard rather than a fourth fix. A benchmark nobody runs is a
 constant nobody re-measures.
 
-The five rules, each in both directions:
+The six rules, each in both directions:
 
 1. **A crate with examples has a floor.** This is the one that found the
    defect. A fifth crate gaining a benchmark directory fails here rather than
@@ -41,7 +41,16 @@ The five rules, each in both directions:
    exit 0, and the run report a refusal as lost. Server examples are excluded
    in both directions — the runner returns to the next example as soon as a
    handshake lands, so a `refuses()` line for one is never reached.
-5. **An example that reads its command line refuses an argument it does not
+5. **The runner really does skip a server's refusal probe.** Rule 4 excludes
+   server examples in both directions, and that exclusion is a property of
+   `run_examples.sh` — its handshake branch `continue`s to the next example
+   before reaching the `refuses()` call — written down in *this* file.
+   `ledger/2026-09-27-two-more-examples-ignored-a-mistyped-flag.md` recorded
+   the gap: "if the runner ever grew a refusal probe for servers, this guard
+   would keep demanding that their lines be deleted and nothing would connect
+   the two files." This is the connection. It reads the run loop between the
+   `handshake` call and the `refuses` call and requires a `continue` in it.
+6. **An example that reads its command line refuses an argument it does not
    understand.** The rule the other four rest on, and the one that was
    missing: rules 1-4 keyed the roster on `sections::from_args`, so an example
    parsing `std::env::args()` by hand — which is what all three headbench ones
@@ -144,6 +153,16 @@ READS_ARGS = re.compile(r"std::env::args|sections::from_args")
 #: is the example with no refusing path at all, which that run cannot catch
 #: because such an example exits 0 and looks like a benchmark that worked.
 REFUSES_UNKNOWN = re.compile(r"sections::from_args|process::exit")
+
+#: The two calls that bracket the run loop's server branch.
+#:
+#: Rule 5 asks whether a `continue` sits between them. Matched as the literal
+#: calls rather than as a `case` or a variable name, because what the rule is
+#: about is the *control flow* between one and the other: a run that reaches
+#: `refuses` for a server is a run whose refusal line would fire, which is the
+#: day rule 4's exclusion becomes wrong.
+ASKS_HANDSHAKE = re.compile(r'handshake "\$crate" "\$name"')
+ASKS_REFUSAL = re.compile(r'refuses "\$crate" "\$name"')
 
 #: What an example that never returns looks like.
 #:
@@ -283,6 +302,37 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
                 "against a binary that is up. Say what it really prints."
             )
 
+    # Rule 5. Before rule 4 uses `servers` to narrow `takers`, because it is
+    # the assumption that narrowing rests on.
+    opens = ASKS_HANDSHAKE.search(script)
+    closes = ASKS_REFUSAL.search(script)
+    if opens is None or closes is None:
+        said.append(
+            f"{runner.name} no longer calls both `handshake \"$crate\" "
+            "\"$name\"` and `refuses \"$crate\" \"$name\"` in its run loop, "
+            "so rule 5 read nothing. Rule 4 excludes server examples from the "
+            "refusal roster on the strength of what happens between those two "
+            "calls; if the loop was restructured, re-derive the exclusion "
+            "before moving this pattern."
+        )
+    elif closes.start() < opens.start():
+        said.append(
+            f"{runner.name} asks `refuses` before `handshake`, so a server's "
+            "refusal line would now be reached.\n"
+            "  Rule 4 excludes servers from the roster on the opposite "
+            "assumption. Add their lines and delete the exclusion, or put the "
+            "calls back in order."
+        )
+    elif "continue" not in script[opens.end() : closes.start()]:
+        said.append(
+            f"{runner.name}'s server branch no longer `continue`s before the "
+            "refusal probe, so a server example *is* handed a bad argument "
+            "now.\n"
+            "  Rule 4 excludes servers from `refuses()` because it was not. "
+            "Give them roster lines and delete the exclusion in this file — "
+            "the two have to move together."
+        )
+
     # Rule 4, both ways, plus the argument itself.
     #
     # `head_report --typo` printed its header, ran nothing and exited 0. The
@@ -397,7 +447,7 @@ def main() -> int:
         f"every floor exact, {len(arm(script, 'handshake'))} handshake(s) "
         f"and {len(arm(script, 'refuses'))} refusal(s) rostered, "
         "every example that reads a command line refusing an argument it "
-        "does not understand"
+        "does not understand, and the runner still skipping a server's probe"
     )
     return 0
 
