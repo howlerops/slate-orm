@@ -4738,9 +4738,9 @@
     {
       "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
       "key": "It does not read `site/`",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_cost_prose.py now reads site/*.html and site/docs/*.html as prose, the fourth tree. ledger/2026-09-27-the-page-a-visitor-reaches-first.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
@@ -4880,9 +4880,10 @@
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
       "key": "It guards `crates/`, `docs/` and the READMEs",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "scripts/check_cost_prose.py now reads site/*.html and site/docs/*.html as prose, the fourth tree. ledger/2026-09-27-the-page-a-visitor-reaches-first.md",
+      "residual": "It still reads two constants: a figure derived from anything but POINT_READ_COST or SCAN_ROW_COST is not a claim it knows how to check, in any of the four trees.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
@@ -6220,6 +6221,26 @@
       "key": "Neither guard can see a fourth kind of silent pass.",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
+      "key": "Tags are not stripped.",
+      "verdict": "deliberate",
+      "by": "that entry: every claim on the site today is plain text inside a <p>, and closing it means a parser, which the guard's whole shape - three hundred lines of regular expressions - is an argument against",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
+      "key": "Only `site/*.html` and `site/docs/*.html`.",
+      "verdict": "deliberate",
+      "by": "that entry: the two globs are where the pages a visitor reads live; a third would be a guess about where the next one goes. The bundle, the snippets and the data directory are not prose",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
+      "key": "It still reads two constants.",
+      "verdict": "open",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",

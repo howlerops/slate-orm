@@ -72,9 +72,14 @@ stale sentence in `latency.rs`, a file eight rounds of sweeping by hand had
 never flagged. A guard aimed at the right tree and the wrong shape reads as
 thorough and is not.
 
-`site/` is out of scope, and deliberately: `site/check/docs.py` is that tree's
-guard, and the pages there restate figures this one already checks at their
-source.
+`site/` came last, and its exclusion was the same mistake as `docs/`'s one
+paragraph up. The stated reason was that `site/check/docs.py` is that tree's
+guard — it is not: it checks the pages hold together, and
+`scripts/check_site_claims.py` checks the counts and the lints, neither of them
+a cost figure. The page a visitor reaches first was the one page where a stale
+`POINT_READ_COST` could sit unchecked. Nothing there states one today; that is
+what the run says, and it is a guard against the next edit rather than a fix
+for a present defect.
 
 `docs/` *was* out of scope for the same reason until #283 — `correctness.md`
 narrates the history of these numbers at length, and a guard that cannot tell
@@ -101,6 +106,8 @@ from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+#: The site, whose pages are the first prose a visitor reaches.
+SITE = ROOT / "site"
 #: Markdown outside `docs/` that talks about the cost model.
 #:
 #: `README.md` is why this exists. It carried "`POINT_READ_COST` is 13-19% low
@@ -425,9 +432,12 @@ def live(text: str, inside: bool = False) -> tuple[str | None, bool]:
 
 
 def sources(
-    where: Path = WHERE, docs: Path | None = DOCS, readmes: Path | None = ROOT
+    where: Path = WHERE,
+    docs: Path | None = DOCS,
+    readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> list[Path]:
-    """Every Rust file under `where` and every doc under `docs`, in order.
+    """Every Rust file under `where`, every doc, README and site page, in order.
 
     `where` is every crate, not the kernel, since #278 — the sentence that
     said "under the kernel" outlived that change by two tasks, in the file
@@ -442,6 +452,13 @@ def sources(
     is the first page a reader reaches and it was in neither tree. Passing
     `None` is how a fixture keeps this from reaching the real repository —
     see the note on `run` in the test file, and #281 for what that costs.
+
+    `site` is the fourth and last tree, and the third time the same widening
+    has been made one directory at a time. Its pages are HTML rather than
+    Markdown, so they go through `prose` like a document: the chunking is by
+    blank line either way, and a figure inside a `<p>` reads the same as one
+    inside a paragraph. Tags are not stripped — an `<em>` inside a sentence
+    would break a pattern — which is a hole this does not close and says so.
     """
     found = [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
     if docs is not None and docs.is_dir():
@@ -449,6 +466,17 @@ def sources(
     if readmes is not None:
         for pattern in README_GLOBS:
             found += [one for one in sorted(readmes.glob(pattern)) if one.is_file()]
+    if site is not None and site.is_dir():
+        found += [
+            one
+            for one in sorted(site.glob("*.html"))
+            if one.is_file()
+        ]
+        found += [
+            one
+            for one in sorted(site.glob("docs/*.html"))
+            if one.is_file()
+        ]
     return found
 
 
@@ -499,6 +527,7 @@ def check(
     stats: Path = STATS,
     docs: Path | None = DOCS,
     readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> tuple[int, list[str]]:
     """Returns how many claims were read, and which disagree."""
     values = constants(stats)
@@ -515,12 +544,12 @@ def check(
 
     seen = 0
     wrong = []
-    for path in sources(where, docs, readmes):
+    for path in sources(where, docs, readmes, site):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        markdown = path.suffix == ".md"
+        markdown = path.suffix in (".md", ".html")
         chunks = prose(text) if markdown else paragraphs(text)
         excused = False
         # Whether a struck span was still open when the last chunk ended. Per
@@ -638,6 +667,7 @@ def main(
     stats: Path = STATS,
     docs: Path | None = DOCS,
     readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> int:
     # All four are arguments so the never-fires guard below can be tested. It
     # could not be: the cases call `check` directly, `main` read the two
@@ -656,7 +686,7 @@ def main(
     # repository's own README claim into a fixture that had written none, and
     # the never-fires case passed again. Whatever this function reads, the
     # tests must be able to say "read nothing".
-    seen, wrong = check(where, stats, docs, readmes)
+    seen, wrong = check(where, stats, docs, readmes, site)
     for problem in wrong:
         print(problem, file=sys.stderr)
         print(

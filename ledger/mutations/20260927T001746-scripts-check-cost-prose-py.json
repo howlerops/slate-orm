@@ -1,0 +1,63 @@
+{
+  "at": "2026-09-27T00:17:46+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "f517a5a",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "site pages are not read",
+      "old": "    if site is not None and site.is_dir():",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a stale figure on a site page is reported",
+        "a current one on a site page passes",
+        "and a page under site/docs/ is read too, not only the root",
+        "a struck figure on a site page is history, as everywhere else"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only the site root is read, not site/docs/",
+      "old": "        found += [\n            one\n            for one in sorted(site.glob(\"docs/*.html\"))\n            if one.is_file()\n        ]",
+      "new": "        pass",
+      "verdict": "caught",
+      "caught_by": [
+        "and a page under site/docs/ is read too, not only the root"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an html page is chunked as code rather than as prose",
+      "old": "markdown = path.suffix in (\".md\", \".html\")",
+      "new": "markdown = path.suffix == \".md\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "check() stops passing the site tree through",
+      "old": "    for path in sources(where, docs, readmes, site):",
+      "new": "    for path in sources(where, docs, readmes, None):",
+      "verdict": "caught",
+      "caught_by": [
+        "a stale figure on a site page is reported",
+        "a current one on a site page passes",
+        "and a page under site/docs/ is read too, not only the root",
+        "a struck figure on a site page is history, as everywhere else"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

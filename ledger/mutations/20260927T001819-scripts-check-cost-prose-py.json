@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-27T00:18:19+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cost_prose.py"
+  ],
+  "commit": "f517a5a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an html page is chunked as code rather than as prose",
+      "old": "markdown = path.suffix in (\".md\", \".html\")",
+      "new": "markdown = path.suffix == \".md\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a marker excuses a historical paragraph on a site page"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

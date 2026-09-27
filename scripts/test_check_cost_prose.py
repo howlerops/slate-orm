@@ -34,7 +34,8 @@ STATS = (
 def run(prose: str, stats: str = STATS) -> tuple[int, list[str]]:
     """Run the real guard over one source file and one `stats.rs`.
 
-    `docs` and `readmes` are both passed as `None`, never left to default.
+    `docs`, `readmes` and `site` are all passed as `None`, never left to
+    default.
     #283 gave `check` a docs tree with a real default, and a fixture that let
     it default would read the repository's own `docs/` alongside its one-line
     temporary file — every case would then carry 24 extra claims it did not
@@ -52,7 +53,7 @@ def run(prose: str, stats: str = STATS) -> tuple[int, list[str]]:
         (root / "a.rs").write_text(prose)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where, None, None)
+        return guard.check(root, where, None, None, None)
 
 
 def run_markdown(page: str, stats: str = STATS) -> tuple[int, list[str]]:
@@ -64,7 +65,28 @@ def run_markdown(page: str, stats: str = STATS) -> tuple[int, list[str]]:
         (docs / "perf.md").write_text(page)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where, docs, None)
+        return guard.check(root, where, docs, None, None)
+
+
+def run_site(page: str, at: str = "index.html", stats: str = STATS) -> tuple[int, list[str]]:
+    """The same, over one `site/` page and no other tree.
+
+    `site/` is HTML rather than Markdown and goes through the same chunker,
+    because a figure inside a `<p>` reads the same as one inside a paragraph
+    and the chunking is by blank line either way. `at` places the page so the
+    `docs/` subdirectory is exercised as well as the root — the glob is two
+    patterns and only one of them would otherwise be reached.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        site = root / "site"
+        (site / at).parent.mkdir(parents=True, exist_ok=True)
+        (site / at).write_text(page)
+        where = root / "crates"
+        where.mkdir()
+        statsfile = root / "stats.rs"
+        statsfile.write_text(stats)
+        return guard.check(where, statsfile, None, None, site)
 
 
 def run_readme(
@@ -84,7 +106,7 @@ def run_readme(
         target.write_text(page)
         where = root / "stats.rs"
         where.write_text(stats)
-        return guard.check(root, where, None, root)
+        return guard.check(root, where, None, root, None)
 
 
 #: name, the comment, how many claims it should hold, how many are stale.
@@ -341,7 +363,7 @@ def main() -> int:
         stats.write_text(STATS)
         out = io.StringIO()
         with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
-            code = guard.main(root, stats, None, None)
+            code = guard.main(root, stats, None, None, None)
     ok = code == 1 and "looking in the wrong place" in out.getvalue()
     ran += 1
     failed += not ok
@@ -426,7 +448,7 @@ def main() -> int:
         stats.write_text(STATS)
         out = io.StringIO()
         with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
-            code = guard.main(root, stats, None, root)
+            code = guard.main(root, stats, None, root, None)
     ok = code == 1 and "costs three" in out.getvalue()
     ran += 1
     failed += not ok
@@ -472,6 +494,38 @@ def main() -> int:
     print(f"{'ok  ' if ok else 'FAIL'}  PATTERNS is exactly what check() scans for")
     if not ok:
         print(f"        scanned {sorted(used)}, listed {sorted(listed)}")
+
+    # `site/`, the fourth tree and the third time this widening has been made
+    # one directory at a time. The page a visitor reaches first was the one
+    # page a stale figure could sit on unchecked.
+    for name, page, at, want_seen, want_wrong in [
+        ("a stale figure on a site page is reported",
+         "<p>A point read costs about three requests.</p>\n", "index.html", 1, 1),
+        ("a current one on a site page passes",
+         "<p>A point read costs 1 request.</p>\n", "index.html", 1, 0),
+        ("and a page under site/docs/ is read too, not only the root",
+         "<p>A point read costs about three requests.</p>\n", "docs/perf.html", 1, 1),
+        # The marker, which is an HTML comment and so is native here. It is
+        # also what the `markdown` flag really decides: a mutation chunking
+        # `.html` as *code* left every other site case passing, because the
+        # patterns find the sentence either way — only the marker tells the
+        # two chunkers apart.
+        ("a marker excuses a historical paragraph on a site page",
+         "<!-- not a cost-model claim -->\n\n"
+         "<p>A point read cost about three requests, once.</p>\n",
+         "index.html", 0, 0),
+        ("a struck figure on a site page is history, as everywhere else",
+         "<p>A point read costs ~~about three requests~~ 1 request.</p>\n",
+         "index.html", 1, 0),
+    ]:
+        seen, wrong = run_site(page, at)
+        ok = seen == want_seen and len(wrong) == want_wrong
+        ran += 1
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        wanted {want_seen} claim(s) and {want_wrong} "
+                  f"problem(s), got {seen} and {wrong}")
 
     seen, wrong = guard.check()
     ok = seen > 0 and not wrong
