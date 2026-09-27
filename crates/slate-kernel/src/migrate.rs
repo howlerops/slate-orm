@@ -62,7 +62,7 @@
 //! keys, which are rules about future writes rather than about existing bytes.
 //! Neither claim is obvious, so both are tested.
 //!
-//! # Run it before the writer serves traffic
+//! # A rolling deploy can race a unique index build
 //!
 //! **A backfill is not safe against a concurrent writer building a *unique*
 //! index.** The backfill reads a batch, decides each row's index entry and
@@ -74,14 +74,22 @@
 //! are separate reads, so two rows colliding on the new key can each pass
 //! their own check and both be written.
 //!
+//! **A single node cannot do this to itself.** `slate-serverd`'s `reconcile`
+//! runs the plan before it serves, and a node configured not to migrate
+//! refuses to start while anything is outstanding — so the writer doing the
+//! backfill is not also taking writes. The case that remains is a *rolling*
+//! deploy: the new node builds the index while the old one is still the
+//! leader and still writing, through a binary whose catalog does not have the
+//! index at all.
+//!
 //! This is stated rather than fixed, and the alternative was weighed. Making
-//! it safe means the backfill holding something the writer respects — a lease,
-//! or a build-then-validate second pass over the finished index. A lease lives
-//! in the storage layer, not here, so giving this module one inverts the
-//! layering the rest of the crate keeps; a validation pass is the real answer
-//! and is a larger change than a note. The operational contract in the
-//! meantime is the one every system with an online index build starts with:
-//! run the migration before the writer accepts writes. Nothing enforces that,
+//! it safe means the backfill holding something the other writer respects — a
+//! lease — or a build-then-validate second pass over the finished index. A
+//! lease lives in the storage layer, not here, so giving this module one
+//! inverts the layering the rest of the crate keeps; a validation pass is the
+//! real answer and is a larger change than a note. The operational contract in
+//! the meantime is the one every system with an online index build starts
+//! with: do not add a unique index in a rolling deploy. Nothing enforces that,
 //! which is why it is written here rather than assumed.
 
 use crate::error::{KernelError, Result};

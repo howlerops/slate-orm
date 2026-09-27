@@ -8,13 +8,24 @@ deliberate, 0 untriaged.
 
 One of the twenty-six could not honestly be decided as it stood, and the change
 that made it decidable is the only code in this commit.
-`crates/slate-kernel/src/migrate.rs` gains a module-doc section, **"Run it
-before the writer serves traffic"**, stating what
+`crates/slate-kernel/src/migrate.rs` gains a module-doc section, **"A rolling
+deploy can race a unique index build"**, stating what
 `ledger/2026-09-15-a-new-index-returns-nothing.md` recorded as "not analysed,
 not claimed": a backfill building a **unique** index is not safe against a
 concurrent writer, because the backfill's uniqueness check and the write path's
 are separate reads, so two rows colliding on the new key can each pass their own
 and both be written. A non-unique index cannot disagree, and the note says why.
+
+**Writing it narrowed it.** The caveat says "against writers" and the section
+originally said "run the migration before the writer accepts writes" — which
+turned out to be advice the daemon already takes. `reconcile` in
+`crates/slate-serverd/src/main.rs` runs the plan *before* the node serves, and a
+node with `migrate_on_start = false` refuses to start while anything is
+outstanding, so a single node cannot race itself. What is left is a rolling
+deploy: the new node backfills while the old leader is still writing, through a
+binary whose catalog has no such index. That is a smaller hazard than the caveat
+described and a sharper one, and it is only visible from the daemon, which is
+why it took reading `reconcile` rather than reading the entry.
 
 ## Why
 
@@ -43,8 +54,8 @@ flat. What actually moved the number was deciding at write time, which is what
 these verdicts are.
 
 **Fix the backfill rather than document it.** Two real designs: the backfill
-holds something the writer respects — a lease — or it builds and then validates
-in a second pass over the finished index. A lease lives in the storage layer, so
+holds something the other writer respects — a lease — or it builds and then
+validates in a second pass over the finished index. A lease lives in the storage layer, so
 giving `slate-kernel::migrate` one inverts the layering the rest of the crate
 keeps; the validation pass is the right answer and is a substantially larger
 change than this commit. Documenting a hazard is not a fix and is not offered as
@@ -116,8 +127,15 @@ useful thing for a reader and exactly as much software as before. The list that
 would say what is left to build is the gap table in
 `docs/orm-comparison.md`, not this one.
 
-**The backfill hazard is documented and unenforced.** Nothing stops somebody
-running a migration against a head node that is serving writes, and the note
+**The backfill hazard is documented and unenforced.** Nothing stops a rolling
+deploy adding a unique index while the old leader still writes, and the note
 says so in its last sentence. A guard would be the runner refusing to build a
-unique index unless it can establish the writer is quiesced — which means it
-needs a way to ask, which is the lease this change declined to reach for.
+unique index unless it can establish that no other writer holds the lease —
+which means it needs a way to ask, which is the lease this change declined to
+reach for.
+
+**And the narrowing is itself a reading of one function.** `reconcile` runs the
+plan before the node serves *as it is written today*; nothing asserts that it
+keeps doing so, and a future startup that served during a backfill would make
+the single-node case live again with the note saying it cannot happen. The
+ordering is load-bearing and untested as an ordering.

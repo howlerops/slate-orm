@@ -374,7 +374,7 @@
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "A backfill is not concurrent-safe against writers.",
       "verdict": "deliberate",
-      "by": "the operational contract is now written down, in crates/slate-kernel/src/migrate.rs's module docs under \"Run it before the writer serves traffic\": non-unique index entries cannot disagree between the backfill and the write path, unique ones can, and the migration is to be run before the writer accepts writes. The alternatives are a lease the backfill holds — which lives in the storage layer and would invert this crate's layering — or a build-then-validate second pass, which is the real answer and is a larger change than a stated limitation. Nothing enforces the contract, which the note says.",
+      "by": "the hazard is now written down where the code is, in crates/slate-kernel/src/migrate.rs's module docs under \"A rolling deploy can race a unique index build\", and reading the daemon to write it narrowed the hazard: `reconcile` in slate-serverd runs the plan before the node serves and a node configured not to migrate refuses to start while anything is outstanding, so a single node cannot race itself. What remains is a rolling deploy, where the new node backfills while the old leader still writes through a catalog that has no such index. Non-unique entries still cannot disagree. The alternatives — a lease, which lives in the storage layer and would invert this crate's layering, or a build-then-validate second pass — are named there; nothing enforces the contract, which the note says.",
       "reviewed": "2026-09-27"
     },
     {
@@ -6958,8 +6958,15 @@
       "key": "The backfill hazard is documented and unenforced.",
       "verdict": "narrowed",
       "by": "the hazard is now stated where the code is, in crates/slate-kernel/src/migrate.rs's module docs, rather than only in a ledger entry nobody reads before running a migration. That is the half a note can do.",
-      "residual": "nothing stops a migration running against a writer serving traffic. The guard would be the runner refusing to build a unique index until it can establish the writer is quiesced, which needs a way to ask — the lease this change declined to reach for.",
+      "residual": "nothing stops a rolling deploy adding a unique index while the old leader still writes. The guard would be the runner refusing to build one until it can establish no other writer holds the lease, which needs a way to ask — the lease this change declined to reach for.",
       "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
+      "key": "And the narrowing is itself a reading of one function.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a test asserting that slate-serverd serves nothing until `reconcile` returns — that the ordering the note relies on is the ordering. Not taken because it is a test of a startup sequence, which means driving the daemon to the point where it is listening and proving a migration is already finished; the shape that would actually catch a regression is `reconcile` being unreachable from the serving path at all, which is a rule for scripts/check_handlers.py rather than a test. Recorded so the note's premise is visible as a premise.",
+      "reviewed": "2026-09-27"
     }
   ]
 }
