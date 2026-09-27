@@ -2111,9 +2111,9 @@
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
       "key": "The design note's two open questions are still open.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "both were already answered in docs/arrays.md and in the tree, under a heading that still said open. Each question now states its answer in its opening line — a null element is refused, reversibly; `SUM` refuses and `COUNT` counts — backed by an_element_of_the_wrong_type_is_refused and an_array_cannot_be_summed_but_can_be_counted in crates/slate-kernel/tests/arrays.rs. ledger/2026-09-27-a-heading-that-said-open-over-two-answers.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
@@ -6822,6 +6822,27 @@
       "key": "Only the *Stops at* lines were read.",
       "verdict": "open",
       "by": "each item also has a Why, a Build and a Test paragraph, any of which can go stale the same way — N3's did, found by accident while reading the line above it. A full re-read of docs/orm-comparison.md is several times this much work and is ordinary undone work.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-heading-that-said-open-over-two-answers.md",
+      "key": "One question in that section really is open, and it is now t",
+      "verdict": "deliberate",
+      "by": "this entry: an array-shaped aggregate is a feature nobody has asked for, and designing one on spec is the opposite of how every other item here was decided. It is now visible as the section's only open question rather than hidden among two answered ones, which is what makes it askable.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-heading-that-said-open-over-two-answers.md",
+      "key": "Nothing stops a heading going stale again.",
+      "verdict": "deliberate",
+      "by": "this entry: what goes stale is the frame around content somebody updated, which is not something a string match can see. The three shapes met today — a Stops-at line, a 'what is not here' bullet and a section heading — share only that the writer updated the paragraph and not the label, and a guard would need to know what the label claims about the paragraph.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-heading-that-said-open-over-two-answers.md",
+      "key": "The other design notes were not checked for the same thing.",
+      "verdict": "open",
+      "by": "docs/views.md, docs/ctes.md, docs/full-text.md, docs/validation.md, docs/paging-a-join.md and docs/persisting-the-schema.md all follow this note's structure and any could have an answered question under an open heading. Six files, read the way this one was read; ordinary undone work.",
       "checked": "2026-09-27"
     }
   ]

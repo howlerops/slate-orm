@@ -141,10 +141,23 @@ ordering in a predicate evaluated per row, and refuses one in a key or an
 index — with an error message that says containment is the thing that would
 need an index and that it is not built, rather than a bare "not supported".
 
-## Open, and deliberately not decided here
+## Left open here, and answered by the build
 
-**Whether the element type may be nullable.** A `[1, null, 3]` is meaningful in
-Postgres and a nuisance everywhere else. The encoding handles it — `Value::Null`
+~~Open, and deliberately not decided here.~~ Both questions below now have an
+answer in the tree, and the heading said otherwise for a week. They are kept
+as questions with their answers attached rather than rewritten as decisions,
+because the reasoning for each is *why the build chose what it chose* and that
+is worth more than the choice: the first was decided on reversibility rather
+than on semantics, and the second was decided by running it.
+
+**Neither answer is a shrug.** Refusing a null element is a promise that can be
+relaxed; refusing `SUM` is what a wildcard already did and is now what a named
+test says. What is still undecided is one thing and it is named at the end of
+the second: the aggregate *surface*.
+
+
+**Whether the element type may be nullable.** *Answered: no, and reversibly.*
+A `[1, null, 3]` is meaningful in Postgres and a nuisance everywhere else. The encoding handles it — `Value::Null`
 has a code — but the question is whether a non-nullable array column should
 accept a null element, and that is a semantics question with no obvious right
 answer.
@@ -158,8 +171,8 @@ answer.
 > nullability, which still works — the whole value may be absent, and
 > `an_element_of_the_wrong_type_is_refused` asserts both.
 
-**What `SUM` and `COUNT` do with an array column.** Nothing, presumably, the
-way they do nothing with a vector; but "presumably" is how three of today's
+**What `SUM` and `COUNT` do with an array column.** *Answered: `SUM` refuses,
+`COUNT` counts.* Nothing, presumably, the way they do nothing with a vector; but "presumably" is how three of today's
 findings started, and the aggregate path has a closed enum that will need an
 arm or an explicit refusal either way.
 
