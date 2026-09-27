@@ -1149,3 +1149,90 @@ async fn a_cross_side_comparison_between_types_is_refused() {
         "got {err:?}"
     );
 }
+
+// --- a computed value over a row one side did not contribute to ------------
+
+/// A join's computed value on an outer row is computed from nulls, not skipped.
+///
+/// `computed_values` says so in its doc comment and nothing demonstrated it.
+/// The distinction matters because the obvious alternative — leave the slot
+/// null whenever a side is missing — makes `coalesce(right.x, 0)` answer
+/// differently here than in a `WHERE`, and a caller writing a default for
+/// exactly this case would get the one answer they were guarding against.
+///
+/// Two computed values, because one cannot tell the two readings apart:
+///
+/// - `books.published + 1` reads a column the unmatched row *does* have, so it
+///   must be a real number on every row. If the engine skipped computing over
+///   an outer row this would be null there.
+/// - `authors.died` alone reads the absent side, so it must be null on the
+///   unmatched rows and the author's year on the matched ones. A rule that
+///   nulled the whole computed tail would pass the second assertion and fail
+///   the first; one that computed nothing at all would fail both.
+///
+/// A right outer join, because the fixture's unmatched rows are on the book
+/// side: id 13 names an author that does not exist and id 14 names none.
+#[tokio::test]
+async fn a_joins_computed_value_over_an_unmatched_outer_row_is_computed_from_nulls() {
+    let (store, _) = store(open()).await;
+    let txn = store.begin().await.unwrap();
+    let at = JoinSchema::of(&authors(), &books());
+
+    let join = on_author().right_outer().computing([
+        slate_kernel::Scalar::Add(
+            Box::new(slate_kernel::Scalar::Column(
+                at.right(book_col("published")),
+            )),
+            Box::new(slate_kernel::Scalar::Literal(Value::I64(1))),
+        ),
+        slate_kernel::Scalar::Column(at.left(author_col("died"))),
+    ]);
+
+    let rows = txn
+        .join(&reader(1), &authors(), &books(), &join)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let mut seen: Vec<(String, Value, Value)> = rows
+        .iter()
+        .map(|r| {
+            let title = match r.right.as_ref().and_then(|b| b.get(book_col("title"))) {
+                Some(Value::Str(s)) => s.clone(),
+                other => format!("{other:?}"),
+            };
+            (title, r.computed[0].clone(), r.computed[1].clone())
+        })
+        .collect();
+    seen.sort_by(|a, b| a.0.cmp(&b.0));
+
+    assert_eq!(
+        seen,
+        vec![
+            // Matched: both sides present, both computed values real.
+            (
+                "A Wizard of Earthsea".to_owned(),
+                Value::I64(1969),
+                Value::I64(2018),
+            ),
+            // Unmatched, null author id: the book's own column still computes.
+            ("Anonymous".to_owned(), Value::I64(2000), Value::Null),
+            (
+                "Consider Phlebas".to_owned(),
+                Value::I64(1988),
+                Value::I64(1980)
+            ),
+            // Unmatched, author 99 does not exist.
+            ("Orphaned".to_owned(), Value::I64(2001), Value::Null),
+            (
+                "The Dispossessed".to_owned(),
+                Value::I64(1975),
+                Value::I64(2018),
+            ),
+        ],
+        "a computed value over an outer row must read the present side and \
+         null the absent one"
+    );
+}

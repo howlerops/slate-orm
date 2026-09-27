@@ -233,9 +233,9 @@
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
       "key": "No outer-join step in a chain carries a computed value.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "a_chains_computed_value_over_an_unmatched_step_reads_nulls in crates/slate-kernel/tests/chain.rs computes over a three-table chain that is outer at both steps, covering a row where the last step matched nothing and one where neither step did. Its twin a_joins_computed_value_over_an_unmatched_outer_row_is_computed_from_nulls does the two-table shape. One mutation — nulling the whole computed tail when any slot is empty — is caught by both and by nothing else. ledger/2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md",
@@ -6781,6 +6781,27 @@
       "verdict": "open",
       "by": "purge_wire.rs drives PurgeDeleted through a real server as a caller holding everything, so the daemon's translation of a kernel AccessDenied into PERMISSION_DENIED is untested for this RPC. The kernel half is what the caveat named and is now covered; this is ordinary undone work.",
       "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
+      "key": "The client accessors on an unmatched side are still untested",
+      "verdict": "open",
+      "by": "an input's own computed values on a side that produced no row — InputComputed in Go, inputComputed in TypeScript — need a live server and all three client suites. It is the caveat ledger/2026-09-15-the-values-that-arrived-and-vanished.md already carries, and it is ordinary undone work.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
+      "key": "Neither test covers a full outer join.",
+      "verdict": "deliberate",
+      "by": "this entry: a full outer adds unmatched rows on both sides at once, and in a two-table join a row with neither side is not a row — so the shape it adds over a right outer is a second unmatched direction rather than a new rule for the expression. join_oracle.rs already runs every join type against a fold for the rows themselves.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
+      "key": "The expression under test is arithmetic and a column.",
+      "verdict": "deliberate",
+      "by": "this entry: what is pinned is that the row reaching the expression contains nulls rather than being skipped, which is the property every null-aware function then depends on. A case per Scalar variant would be a case per variant times per join type, and the variants' own null behaviour is scalars.rs's subject.",
+      "reviewed": "2026-09-27"
     }
   ]
 }

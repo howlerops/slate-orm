@@ -95,6 +95,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "silent-case": ("def silent_cases", "examples/explorer/conformance/conformance.py"),
  "restore-report": ("def restore_report", "scripts/mutate.py"),
  "purge-grants": ("a_purge_needs_all_three_grants_and_says_which_is_missing", "crates/slate-kernel/tests/soft_delete.rs"),
+ "outer-computed": ("a_chains_computed_value_over_an_unmatched_step_reads_nulls", "crates/slate-kernel/tests/chain.rs"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -358,6 +359,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-19-who-may-see-a-deleted-row.md',
      '`purge_deleted` now needs two grants.'):
         'purge-grants',
+    ('2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md',
+     'No outer-join step in a chain carries a computed value.'):
+        'outer-computed',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         '=read',
