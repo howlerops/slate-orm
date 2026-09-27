@@ -104,13 +104,17 @@ edited a command rather than adding or removing one.
 
 ## What this does not do
 
-**CI is the first run.** There is no Docker on this container, so the image was
-verified by reading its manifest and config over the registry API and not by
-starting it. Whether MinIO comes up, answers `/minio/health/live`, and takes
-the pre-made bucket directory the same way is unknown until the job runs —
-which is the "a check that never fires is a check nobody has debugged" risk
-`CLAUDE.md` names, taken knowingly because the alternative is a job that is
-certainly red.
+**CI was the first run, and it answered.** There is no Docker on this
+container, so the image was verified by reading its manifest and config over
+the registry API and not by starting it — the "a check that never fires is a
+check nobody has debugged" risk `CLAUDE.md` names, taken knowingly because the
+alternative was a job that was certainly red.
+
+> Answered 2026-09-27, run 389: `integration against MinIO` is **green**.
+> `Start MinIO` completed in 5 seconds and
+> `cargo test -p slate-slatedb --test s3` passed. The health probe, the
+> pre-made bucket directory and the non-root uid all behaved as the manifest
+> predicted. The rest of this section stands.
 
 **It is unpinned, and `latest` will move under it.** A MinIO release that
 breaks something this suite relies on arrives without a commit here. The

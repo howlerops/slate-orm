@@ -6411,9 +6411,9 @@
     },
     {
       "entry": "2026-09-27-the-minio-image-moved-a-third-time.md",
-      "key": "CI is the first run.",
+      "key": "CI was the first run, and it answered.",
       "verdict": "moment",
-      "by": "a statement about this commit: there is no Docker on this container, so the image was read over the registry API and not started. Run 389 onward is where it is answered.",
+      "by": "answered by CI run 389 (2026-09-27T01:16Z): the `integration against MinIO` job is green — `Start MinIO` succeeded in 5s and `cargo test -p slate-slatedb --test s3` passed. The image reads as MinIO to the job exactly as its manifest said it would.",
       "reviewed": "2026-09-27"
     },
     {
@@ -6478,6 +6478,27 @@
       "verdict": "deliberate",
       "by": "this entry: the one other suite that sums (test_check_handlers.py) prints 43 for a run of 43, verified by counting its result lines, so there is no second defect. Changing a file this entry is not about to prevent a number it is not getting wrong is how a small change becomes a sweep.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-branch-is-green.md",
+      "key": "Green once is not green.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is pinning everything the workflow depends on, which three registries in three months has shown is not available — chainguard's free tier keeps one tag and MinIO's own registry now keeps none anonymously. Each moving part has its own open caveat in its own entry.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-branch-is-green.md",
+      "key": "Two suites in the workflow are smoke runs, not full ones.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is running the examples at full fixture size in CI, rejected because the point of the job is that they run and refuse a bad argument, and the numbers they print have their own guards (check_table_provenance.py, check_cost_prose.py). --smoke is what makes the job affordable.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-branch-is-green.md",
+      "key": "Nothing here watches the branch.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
     }
   ]
 }
