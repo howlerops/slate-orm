@@ -2944,9 +2944,9 @@
     {
       "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
       "key": "It covers `Debug`, and a secret can leave by other doors.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_secret_types.py closes three of the four doors (Debug, Display, Serialize) for every rostered type; ledger/2026-09-27-the-other-doors-a-secret-can-leave-by.md. The fourth, a secret interpolated into an error or trace field, is carried forward as that entry's own caveat.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
@@ -2958,9 +2958,9 @@
     {
       "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
       "key": "Two types, asserted to be the whole surface by enumeration.",
-      "verdict": "deliberate",
-      "by": "this entry: a judgement about cost, argued against building a script",
-      "reviewed": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_secret_types.py enumerates them from the source and refuses an unrostered one; ledger/2026-09-27-the-other-doors-a-secret-can-leave-by.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-terminator-was-already-there.md",
@@ -6280,6 +6280,27 @@
       "key": "Reading the conclusion is a practice, not a check.",
       "verdict": "deliberate",
       "by": "that entry: nothing can enforce it from inside the repository, because the thing being checked is whether a session asks. CLAUDE.md names the two calls instead",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-doors-a-secret-can-leave-by.md",
+      "key": "A secret formatted into an error or a trace field is still i",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is knowing the type of the value interpolated into a format!, which a regular expression does not have; matching on `{secret}` would miss `{t}` and flag every unrelated field of that name. Not taken because a guard whose misses and false positives are both structural is one people stop reading.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-doors-a-secret-can-leave-by.md",
+      "key": "It reads `crates/` only.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-other-doors-a-secret-can-leave-by.md",
+      "key": "A struct nested inside another is reported against the outer",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is brace-tracking to find the innermost open struct, rejected because every block in this workspace is flat, the rule still fires on a nested one, and it names a type a reader can find. Revisit if a nested secret-holding struct is ever written.",
       "reviewed": "2026-09-27"
     }
   ]

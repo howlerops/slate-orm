@@ -107,6 +107,8 @@ none-last|.|python3 scripts/check_none_last.py
 none-last-guard|.|python3 scripts/test_check_none_last.py
 guard-scope|.|python3 scripts/check_guard_scope.py
 guard-scope-guard|.|python3 scripts/test_check_guard_scope.py
+secret-types|.|python3 scripts/check_secret_types.py
+secret-types-guard|.|python3 scripts/test_check_secret_types.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py

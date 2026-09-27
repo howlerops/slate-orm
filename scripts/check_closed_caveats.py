@@ -80,6 +80,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "marker-deserved": ("def undeserved", "scripts/check_cost_prose.py"),
  "struck-span-flag": ("inside: bool = False", "scripts/check_cost_prose.py"),
  "sources-complete": ("def unscanned", "scripts/check_handlers.py"),
+ "secret-roster": ("def holders", "scripts/check_secret_types.py"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -314,6 +315,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-26-a-mistyped-section-is-a-refusal-now.md',
      'Nothing in CI runs an example with a bad section.'):
         'bad-section-run',
+    ('2026-09-20-the-secret-that-debug-prints-as-numbers.md',
+     'It covers `Debug`, and a secret can leave by other doors.'):
+        'secret-roster',
+    ('2026-09-20-the-secret-that-debug-prints-as-numbers.md',
+     'Two types, asserted to be the whole surface by enumeration.'):
+        'secret-roster',
     ('2026-09-22-four-dependencies-and-a-tool-that-was-lying.md',
      "`mutate.py`'s refusal cannot catch a dialect that reads *too"):
         'dialect-corpus',
