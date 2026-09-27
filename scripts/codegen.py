@@ -154,6 +154,35 @@ def element_of(column: dict) -> str:
     return element
 
 
+def element_spelling(table: dict, column: dict, what: str):
+    """One spelling table, looked up by an array column's element type.
+
+    A scalar column's type goes through `types.get(...)` and raises `Unknown`
+    when the table has no spelling for it. An array's *element* type used to go
+    through a bare `table[element_of(column)]` in five places, so the same
+    catalog — one carrying a type name these tables do not know — produced a
+    readable refusal for a scalar column and a bare `KeyError` for an array of
+    the same type. The name comes from `ValueType::name()` on the server and
+    the tables here have to agree with it; when they do not, the two halves
+    should say so the same way.
+
+    Not folded into `element_of`, which would need every table passed to it and
+    would make the array-of-arrays refusal depend on which language is being
+    generated. `what` names the table for the message, because "no spelling
+    for `u128`" is only actionable if you know which of the nine tables is
+    missing it.
+    """
+    element = element_of(column)
+    try:
+        return table[element]
+    except KeyError:
+        raise Unknown(
+            f"column `{column['name']}` is an array of `{element}`, which "
+            f"{what} has no spelling for; the catalog spells a type the way "
+            f"`ValueType::name()` does and this table has to agree with it"
+        ) from None
+
+
 def declared(column: dict, types: dict[str, str], element_keyword: str) -> str:
     """The declaration a client's `Column` takes: the type, plus what it needs.
 
@@ -166,7 +195,8 @@ def declared(column: dict, types: dict[str, str], element_keyword: str) -> str:
         raise Unknown(f"no spelling for `{column['type']}`")
     if column["type"] != "array":
         return kind
-    return f"{kind}{element_keyword}{types[element_of(column)]}"
+    element = element_spelling(types, column, "this language's type table")
+    return f"{kind}{element_keyword}{element}"
 
 
 def field_of(column: dict, fields: dict[str, tuple[str, str]], shape: str) -> tuple[str, str]:
@@ -179,7 +209,7 @@ def field_of(column: dict, fields: dict[str, tuple[str, str]], shape: str) -> tu
     """
     if column["type"] != "array":
         return fields[column["type"]]
-    native, runtime = fields[element_of(column)]
+    native, runtime = element_spelling(fields, column, "this language's field table")
     return shape.format(native), runtime
 
 
@@ -194,7 +224,7 @@ def python_encode(column: dict, expression: str) -> str:
     """
     if column["type"] != "array":
         return PYTHON_ENCODE[column["type"]].format(expression)
-    inner = PYTHON_ENCODE[element_of(column)]
+    inner = element_spelling(PYTHON_ENCODE, column, "PYTHON_ENCODE")
     if inner == "{}":
         return f"Array({expression})"
     # A list comprehension rather than a generator expression: `Array.__new__`
@@ -216,7 +246,7 @@ class GoElement(typing.NamedTuple):
 
 
 def go_element(column: dict) -> GoElement:
-    native, _ = GO_FIELDS[element_of(column)]
+    native, _ = element_spelling(GO_FIELDS, column, "GO_FIELDS")
     lowered = go_field(column["name"])
     return GoElement(var=lowered[:1].lower() + lowered[1:] + "Elements", native=native)
 
@@ -1014,7 +1044,7 @@ def go_rows(tables: list[dict]) -> list[str]:
                 # need a type parameter for no gain, and `gofmt` is happy with
                 # either.
                 element = go_element(column)
-                inner = GO_ENCODE[element_of(column)]
+                inner = element_spelling(GO_ENCODE, column, "GO_ENCODE")
                 source = f"*r.{field}" if column["nullable"] else f"r.{field}"
                 body = [
                     f"\t{element.var} := make(slate.Array, 0, len({source}))",

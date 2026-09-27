@@ -1,0 +1,84 @@
+{
+  "at": "2026-09-27T02:16:12+00:00",
+  "file": "scripts/codegen.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "scripts/test_codegen.py",
+    "-q"
+  ],
+  "commit": "9a76c3e",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the element lookup goes back to a bare subscript",
+      "old": "    element = element_of(column)\n    try:\n        return table[element]\n    except KeyError:",
+      "new": "    element = element_of(column)\n    if True:\n        return table[element]\n    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_an_element_type_no_table_spells_is_refused_by_every_emitter",
+        "scripts/test_codegen.py::test_every_element_lookup_refuses_readably_on_its_own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "declared's element lookup is unguarded again",
+      "old": "    element = element_spelling(types, column, \"this language's type table\")",
+      "new": "    element = types[element_of(column)]",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_an_element_type_no_table_spells_is_refused_by_every_emitter",
+        "scripts/test_codegen.py::test_every_element_lookup_refuses_readably_on_its_own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "field_of's element lookup is unguarded again",
+      "old": "    native, runtime = element_spelling(fields, column, \"this language's field table\")",
+      "new": "    native, runtime = fields[element_of(column)]",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_every_element_lookup_refuses_readably_on_its_own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "python_encode's element lookup is unguarded again",
+      "old": "    inner = element_spelling(PYTHON_ENCODE, column, \"PYTHON_ENCODE\")",
+      "new": "    inner = PYTHON_ENCODE[element_of(column)]",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_every_element_lookup_refuses_readably_on_its_own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "go_element's element lookup is unguarded again",
+      "old": "    native, _ = element_spelling(GO_FIELDS, column, \"GO_FIELDS\")",
+      "new": "    native, _ = GO_FIELDS[element_of(column)]",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_every_element_lookup_refuses_readably_on_its_own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the Go encoder's element lookup is unguarded again",
+      "old": "                inner = element_spelling(GO_ENCODE, column, \"GO_ENCODE\")",
+      "new": "                inner = GO_ENCODE[element_of(column)]",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "unreachable with an unspellable element. `go_element(column)` runs on the line above and looks the same name up in GO_FIELDS, so it raises Unknown first; this lookup is defensive against GO_ENCODE and GO_FIELDS disagreeing about which element types they spell, which no test can reach without making them disagree."
+    }
+  ],
+  "restored_clean": true
+}

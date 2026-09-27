@@ -765,6 +765,88 @@ def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> N
             raise AssertionError(f"`{expected}` was generated rather than refused")
 
 
+def test_an_element_type_no_table_spells_is_refused_by_every_emitter() -> None:
+    """A scalar column and an array of the same type refuse the same way.
+
+    The element type is a second field on the column, so an unknown spelling
+    reaches the emitters through a different door from an unknown *column*
+    type: `declared` looks the column's own type up with `.get` and raises
+    `Unknown`, while the element used to be a bare subscript. The same catalog
+    — one whose server spells a type these tables do not know — therefore gave
+    a readable refusal naming the column for `u128` and a bare `KeyError` for
+    `array<u128>`, which is the failure
+    `ledger/2026-09-21-generate-an-array-column-in-three-languages.md` recorded
+    as unchecked.
+
+    All three languages, because the tables are deliberately separate: a type
+    added to one client and not the others is the case the separation exists
+    for, and an element of that type must still refuse readably in the two
+    that do not have it.
+
+    Not `web_module`, which was in this list on the first draft and passed an
+    `array<u128>` through without a word. That is correct: it emits column
+    *names* and nothing else, so it never looks a type up and has nothing to
+    refuse. Written down because an emitter silently accepting an unspellable
+    element looks exactly like the defect this test closes.
+    """
+    emitters = {
+        "python_module": lambda spec: codegen.python_module(spec, []),
+        "typescript_module": lambda spec: codegen.typescript_module(spec, []),
+        "go_file": lambda spec: codegen.go_file(spec, [], "demo"),
+    }
+    for name, emit in emitters.items():
+        spec = [
+            table(
+                "posts",
+                [column("id", "u64", 0), array_column("tags", "u128", 1)],
+                [0],
+            )
+        ]
+        try:
+            emit(spec)
+        except codegen.Unknown as why:
+            assert "tags" in str(why), why
+            assert "u128" in str(why), why
+        except KeyError as why:  # pragma: no cover - the defect this closes
+            raise AssertionError(f"{name} raised a bare KeyError: {why}") from None
+        else:
+            raise AssertionError(f"{name} generated an element it cannot spell")
+
+
+def test_every_element_lookup_refuses_readably_on_its_own() -> None:
+    """Each table's element lookup, called directly rather than through a module.
+
+    The emitter test above only reaches the *first* lookup an emitter makes:
+    `declared` refuses before `field_of` is called, and `go_element` refuses
+    before the Go encoder's `GO_ENCODE` lookup on the next line. Mutating those
+    later sites back to a bare subscript therefore survived the emitter test —
+    found by `scripts/mutate.py`, which is the whole reason this second test
+    exists rather than the first being assumed to cover them.
+
+    `GO_ENCODE`'s own site is still not reachable this way, because it is inline
+    in `go_rows` after the `go_element` call that refuses first. It is recorded
+    as an expected survivor in the mutation spec with that reason, which is the
+    honest form of "this code is defensive rather than exercised".
+    """
+    col = array_column("tags", "u128", 1)
+    lookups = {
+        "declared": lambda: codegen.declared(col, codegen.PYTHON_TYPES, "(element="),
+        "field_of": lambda: codegen.field_of(col, codegen.PYTHON_FIELDS, "Sequence[{}]"),
+        "python_encode": lambda: codegen.python_encode(col, "value"),
+        "go_element": lambda: codegen.go_element(col),
+    }
+    for name, call in lookups.items():
+        try:
+            call()
+        except codegen.Unknown as why:
+            assert "tags" in str(why), why
+            assert "u128" in str(why), why
+        except KeyError as why:  # pragma: no cover - the defect this closes
+            raise AssertionError(f"{name} raised a bare KeyError: {why}") from None
+        else:
+            raise AssertionError(f"{name} accepted an element it cannot spell")
+
+
 def test_refuse_unsupported_fires_and_does_not_over_fire() -> None:
     """`UNSUPPORTED` is empty, and the mechanism is still exercised.
 

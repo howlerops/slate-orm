@@ -89,6 +89,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "tracker-in-ci": ("scripts/caveats.py", ".github/workflows/ci.yml"),
  "headbench-smoke": ("crates/slate-headbench/run.sh --smoke", ".github/workflows/ci.yml"),
  "write-timed": ("a_write_reports_what_the_index_maintenance_cost", "crates/slate-wasm/tests/timing.rs"),
+ "element-spelling": ("def element_spelling", "scripts/codegen.py"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -334,6 +335,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-what-the-timer-measures.md',
      'The write paths are not timed.'):
         'write-timed',
+    ('2026-09-21-generate-an-array-column-in-three-languages.md',
+     'The `element_type` key is read from `--print-schema` and ass'):
+        'element-spelling',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         '=read',

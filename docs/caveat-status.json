@@ -3800,9 +3800,9 @@
     {
       "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
       "key": "The `element_type` key is read from `--print-schema` and ass",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`element_spelling` in scripts/codegen.py replaces the five bare `table[element_of(column)]` subscripts, so an element type no table spells raises the same readable `Unknown` a scalar column's unknown type already did, naming the column and the table. Two tests: test_an_element_type_no_table_spells_is_refused_by_every_emitter through Python, TypeScript and Go, and test_every_element_lookup_refuses_readably_on_its_own per lookup. Six mutations, five caught and one recorded as an expected survivor.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-generate-an-array-column-in-three-languages.md",
@@ -6631,6 +6631,27 @@
       "key": "Thirty-seven rows remain open and every one of them is work.",
       "verdict": "moment",
       "by": "a statement about the backlog on 2026-09-27, not a standing gap. It is also the point of the sweep: what survives four passes is the part that needs doing rather than deciding.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-arrays-element-refused-differently-from-a-column.md",
+      "key": "`web_module` was in the emitter list on the first draft and ",
+      "verdict": "moment",
+      "by": "a note about one draft of one test, kept because the observation is useful and the condition it describes is settled: web_module emits column names and looks no type up.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-arrays-element-refused-differently-from-a-column.md",
+      "key": "Nothing checks that the five tables agree with `ValueType::n",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is comparing the tables against the server's own type list, which needs either a `--print-schema` call from a static check that makes no subprocess calls or a parse of crates/slate-tuple/src/value.rs — the second schema rejected in ledger/2026-09-21-store-the-hash-inputs-and-nothing-else.md. The refusal catches the same divergence one release later, readably.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-an-arrays-element-refused-differently-from-a-column.md",
+      "key": "`wants()` still ignores an element type it does not recognis",
+      "verdict": "deliberate",
+      "by": "this entry: `wants` decides which names to import and treats an unrecognised scalar the same way, so refusing there would be a different rule from the one the rest of the file follows. The failure it leaves is a NameError at import of the generated module, which is loud and immediate; a `wants` that refused every type it cannot import would refuse `bool` and `string`, which need no import at all.",
       "reviewed": "2026-09-27"
     }
   ]
