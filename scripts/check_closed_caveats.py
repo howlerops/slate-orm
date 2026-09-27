@@ -92,6 +92,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "element-spelling": ("def element_spelling", "scripts/codegen.py"),
  "client-five": ("Windows, arrays, full-text, views and soft delete", "site/docs/clients.html"),
  "docs-in-a-browser": (None, "site/check/pages.py"),
+ "silent-case": ("def silent_cases", "examples/explorer/conformance/conformance.py"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -346,6 +347,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-16-what-the-other-orms-have-that-this-does-not.md',
      'The browser render was a one-off, not a check.'):
         'docs-in-a-browser',
+    ('2026-09-21-the-conformance-runners-own-arithmetic.md',
+     '`tally` cannot see a case that never ran.'):
+        'silent-case',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         '=read',

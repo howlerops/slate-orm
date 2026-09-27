@@ -1,0 +1,60 @@
+{
+  "at": "2026-09-27T02:47:45+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "examples/explorer/conformance/test_conformance.py"
+  ],
+  "commit": "4a4986e",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a silent case is reported as having a verdict",
+      "old": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)",
+      "new": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name) | set(names)",
+      "verdict": "caught",
+      "caught_by": [
+        "a case with neither an agreement nor a finding is reported",
+        "and it says it was skipped rather than that it failed",
+        "so the tally stops counting it as a pass",
+        "a pair finding, which is about no case, does not fill a case's slot"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the `is not None` filter on the verdict set is dropped",
+      "old": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)",
+      "new": "    verdict = {f.case for f in findings} | set(agreed_by_name)",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "equivalent, not uncaught. The filter removes `None` from a set that is only ever asked `name not in verdict` for a `name` out of CASES, and no case is called None. It is kept because `tally` filters the same way one line over, where it does matter \u2014 `len(broken)` would be one too many \u2014 and two lines reading differently would invite somebody to make tally's match this one."
+    },
+    {
+      "name": "the silent finding is blamed on no case, so it costs no pass",
+      "old": "        Finding(name, [\n            f\"FAIL  {name}: no adapter comparison ran for this case, and it \"",
+      "new": "        Finding(None, [\n            f\"FAIL  {name}: no adapter comparison ran for this case, and it \"",
+      "verdict": "caught",
+      "caught_by": [
+        "a case with neither an agreement nor a finding is reported",
+        "so the tally stops counting it as a pass",
+        "a pair finding, which is about no case, does not fill a case's slot"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the silent-case findings are never added to the run's findings",
+      "old": "    findings.extend(silent_cases([c[0] for c in CASES], findings, agreed_by_name))",
+      "new": "    silent_cases([c[0] for c in CASES], findings, agreed_by_name)",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "unreachable from the unit suite, which calls `silent_cases` directly and never runs `main`. Reaching it needs three adapters and a server, which is what `examples/explorer/run.sh --conformance` is; nothing that fits in `check.sh` drives `main` at all."
+    }
+  ],
+  "restored_clean": true
+}

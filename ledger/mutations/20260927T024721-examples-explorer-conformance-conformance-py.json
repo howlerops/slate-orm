@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-27T02:47:21+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "examples/explorer/conformance/test_conformance.py"
+  ],
+  "commit": "4a4986e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a silent case is reported as having a verdict",
+      "old": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)",
+      "new": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name) | set(names)",
+      "verdict": "caught",
+      "caught_by": [
+        "a case with neither an agreement nor a finding is reported",
+        "and it says it was skipped rather than that it failed",
+        "so the tally stops counting it as a pass",
+        "a pair finding, which is about no case, does not fill a case's slot"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a pair finding is read as a verdict for a case",
+      "old": "    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)",
+      "new": "    verdict = {f.case for f in findings} | set(agreed_by_name)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the silent finding is blamed on no case, so it costs no pass",
+      "old": "        Finding(name, [\n            f\"FAIL  {name}: no adapter comparison ran for this case, and it \"",
+      "new": "        Finding(None, [\n            f\"FAIL  {name}: no adapter comparison ran for this case, and it \"",
+      "verdict": "caught",
+      "caught_by": [
+        "a case with neither an agreement nor a finding is reported",
+        "so the tally stops counting it as a pass",
+        "a pair finding, which is about no case, does not fill a case's slot"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

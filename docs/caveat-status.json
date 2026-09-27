@@ -4158,9 +4158,9 @@
     {
       "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
       "key": "`tally` cannot see a case that never ran.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`silent_cases` in examples/explorer/conformance/conformance.py turns a case that produced neither an agreement nor a finding into a finding, so it is both named in the output and subtracted from the passed count — ledger/2026-09-27-a-case-that-never-ran-counted-as-a-pass.md. Five checks in test_conformance.py, 52 to 57; four mutations, two caught and two recorded as expected survivors with reasons.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-the-constant-moved-and-eight-files-did-not.md",
@@ -6716,6 +6716,27 @@
       "key": "The job count in `CLAUDE.md` is still a hand-maintained numb",
       "verdict": "deliberate",
       "by": "this entry: a guard counting `jobs:` keys and comparing against the prose is possible and would be the third sentence-against-a-file guard here. The number is narrative rather than load-bearing — nothing derives from it — so what is kept is the one-line command that answers it, written beside it.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-case-that-never-ran-counted-as-a-pass.md",
+      "key": "`main` is still untested, and that is where the call lives.",
+      "verdict": "deliberate",
+      "by": "this entry: reaching `main` needs three SDK adapters and a head node, which is `examples/explorer/run.sh --conformance` and not anything `check.sh` can run. The expected-survivor entry in the mutation spec records it where somebody re-running the mutations will read it, rather than leaving it implied.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-case-that-never-ran-counted-as-a-pass.md",
+      "key": "A case can still be wrong without being silent.",
+      "verdict": "deliberate",
+      "by": "this entry: checking that a case exercises what its name says means a second statement of each case's intent, which is the oracle problem the runner exists to sidestep — it compares three implementations precisely because no fourth statement of the right answer exists.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-case-that-never-ran-counted-as-a-pass.md",
+      "key": "The `is not None` filter is now redundant in one of the two ",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is dropping it, which is simpler and leaves two adjacent lines reading differently where one of them is load-bearing. The mutation run records it as an equivalent mutation rather than an uncaught one, which is the honest form of redundant code kept on purpose.",
       "reviewed": "2026-09-27"
     }
   ]

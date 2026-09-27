@@ -894,6 +894,39 @@ def tally(cases: int, findings: list[Finding]) -> tuple[int, int]:
     return cases - len(broken), len(findings)
 
 
+def silent_cases(
+    names: list[str], findings: list[Finding], agreed_by_name: dict[str, str]
+) -> list[Finding]:
+    """Every case that produced neither an agreement nor a finding.
+
+    `tally` defines passing as "not named by a finding", which makes a case
+    that never ran indistinguishable from one that passed — a `continue` in the
+    wrong place would take a case out of the comparison and *raise* the passed
+    count's credibility rather than lowering it. That is the residual
+    `ledger/2026-09-21-the-conformance-runners-own-arithmetic.md` recorded and
+    this closes.
+
+    Positive rather than by subtraction inside `tally`: a silent case becomes a
+    finding, so it is named in the output the way every other failure is, and
+    the arithmetic that was the original defect stays untouched. Subtracting it
+    inside `tally` would make the count right and the report silent, which is
+    the same class of quiet as the bug.
+
+    The `case` is set, so a silent case costs a passing case — unlike
+    `must_differ_findings`, whose findings are about a *pair* and belong to
+    neither.
+    """
+    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)
+    return [
+        Finding(name, [
+            f"FAIL  {name}: no adapter comparison ran for this case, and it "
+            f"produced no finding — it was skipped, not passed"
+        ])
+        for name in names
+        if name not in verdict
+    ]
+
+
 def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
     """Every `MUST_DIFFER` pair that did not, as findings about no case.
 
@@ -989,6 +1022,9 @@ def main() -> int:
             *(f"    {sdk:7} {text[:400]}" for sdk, text in rendered.items()),
         ]))
 
+    # Before `must_differ_findings`, whose findings are about no case and so
+    # would not fill a silent case's slot.
+    findings.extend(silent_cases([c[0] for c in CASES], findings, agreed_by_name))
     findings.extend(must_differ_findings(agreed_by_name))
 
     print()
