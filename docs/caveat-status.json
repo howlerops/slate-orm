@@ -1847,9 +1847,9 @@
     {
       "entry": "2026-09-19-who-may-see-a-deleted-row.md",
       "key": "`purge_deleted` now needs two grants.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "two tests in crates/slate-kernel/tests/soft_delete.rs cover it — a_purge_needs_all_three_grants_and_says_which_is_missing and a_purge_holding_all_three_grants_erases_the_retired_row — and writing them found the contract is three grants, not two: granting `delete` and `read_deleted` is refused naming `read`, because the scan authorises as an ordinary read first. The proto, both generated stub sets, three client docstrings, three READMEs and site/docs/clients.html all said two and now say three. ledger/2026-09-27-a-purge-needs-three-grants-and-everything-said-two.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-check-for-the-mistake-made-three-times.md",
@@ -6760,6 +6760,27 @@
       "verdict": "deliberate",
       "by": "this entry: there is no test for whether a sentence is clear, and the alternative — a second reader — is what this repository does not have. What is checkable is that the three states are distinguishable at all, and four cases check that.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-purge-needs-three-grants-and-everything-said-two.md",
+      "key": "The refusal order is now asserted, and it is an implementati",
+      "verdict": "deliberate",
+      "by": "this entry: asserting only that a refusal happened is one line shorter and would have hidden this entire finding, since a refusal naming `read` satisfies it. The cost is that rearranging the authorisation order fails these tests for something that is not a defect, which is the trade taken knowingly.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-purge-needs-three-grants-and-everything-said-two.md",
+      "key": "Nothing checks the documentation against the code.",
+      "verdict": "deliberate",
+      "by": "this entry: a guard would need a machine-readable list of the actions each RPC authorises, which is the second schema rejected in ledger/2026-09-21-store-the-hash-inputs-and-nothing-else.md and again for the features page. What caught this was a test asserting the action's name, which is cheaper and only covers the RPCs somebody writes such a test for.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-purge-needs-three-grants-and-everything-said-two.md",
+      "key": "The wire path is still superuser-only in its own tests.",
+      "verdict": "open",
+      "by": "purge_wire.rs drives PurgeDeleted through a real server as a caller holding everything, so the daemon's translation of a kernel AccessDenied into PERMISSION_DENIED is untested for this RPC. The kernel half is what the caveat named and is now covered; this is ordinary undone work.",
+      "checked": "2026-09-27"
     }
   ]
 }

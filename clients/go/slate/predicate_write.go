@@ -102,7 +102,7 @@ func (s *Session) DeleteWhere(ctx context.Context, write DeleteWhere) (WriteResu
 // destroys data nobody can get back, and a mistyped `before` is how that
 // happens.
 //
-// Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+// Needs `delete`, `read` *and* `read_deleted` on the table: erasing a retired row
 // means reading it first.
 //
 // The result's Affected is the count. Rows is always empty — they no longer

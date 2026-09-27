@@ -259,10 +259,10 @@ docs.AsView("recent")
 
 // Soft delete: reading retired rows, and erasing them.
 slate.Query{Table: "docs", IncludeDeleted: true}   // needs `read_deleted`
-session.PurgeDeleted(ctx, "docs", before, 0)       // needs `delete` *and* `read_deleted`
+session.PurgeDeleted(ctx, "docs", before, 0)       // needs `delete`, `read` and `read_deleted`
 ```
 
-`IncludeDeleted` without the grant is **refused**, not ignored: a read that
+`IncludeDeleted` without `read_deleted` is **refused**, not ignored: a read that
 asked to see retired rows and silently did not is worse than one that failed.
 
 There is no `Restore`. A soft delete stamps a column, so undoing one is an

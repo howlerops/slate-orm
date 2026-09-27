@@ -885,7 +885,7 @@ export class Session {
    * first is erased. This is the one call here that destroys data nobody can
    * get back, and a mistyped `before` is how that happens.
    *
-   * Needs `delete` *and* `read_deleted` on the table: erasing a retired row
+   * Needs `delete`, `read` *and* `read_deleted` on the table: erasing a retired row
    * means reading it first.
    *
    * The result's `affected` is the count; `rows` is always empty.

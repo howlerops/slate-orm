@@ -45,10 +45,17 @@ class RecordsStub:
     PurgeDeleted: _grpc.UnaryUnaryMultiCallable[_records_pb2.PurgeDeletedRequest, _records_pb2.WriteResponse]
     """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
 
-    Needs `delete` *and* `read_deleted` on the table: erasing a retired row
-    means reading it first, and `read_deleted` is what says a caller may see
-    one. A caller holding only `delete` can remove rows it can see and not
-    ones the convention hid from it.
+    Needs `delete`, `read` *and* `read_deleted` on the table: erasing a
+    retired row means reading it first, `read` is what says a caller may read
+    at all, and `read_deleted` is what says it may see a retired one. A caller
+    holding only `delete` can remove rows it can see and not ones the
+    convention hid from it.
+
+    This said `delete` and `read_deleted` until a test granted exactly those
+    two and was refused naming `read` — the scan is an ordinary read and
+    authorises as one. Written out because an operator granting what a
+    comment lists and being refused has no way to tell an incomplete list
+    from a bug.
     """
     Batch: _grpc.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]
     """Several writes in one round trip. The caller says whether they are
@@ -81,10 +88,17 @@ class RecordsAsyncStub(RecordsStub):
     PurgeDeleted: _aio.UnaryUnaryMultiCallable[_records_pb2.PurgeDeletedRequest, _records_pb2.WriteResponse]  # type: ignore[assignment]
     """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
 
-    Needs `delete` *and* `read_deleted` on the table: erasing a retired row
-    means reading it first, and `read_deleted` is what says a caller may see
-    one. A caller holding only `delete` can remove rows it can see and not
-    ones the convention hid from it.
+    Needs `delete`, `read` *and* `read_deleted` on the table: erasing a
+    retired row means reading it first, `read` is what says a caller may read
+    at all, and `read_deleted` is what says it may see a retired one. A caller
+    holding only `delete` can remove rows it can see and not ones the
+    convention hid from it.
+
+    This said `delete` and `read_deleted` until a test granted exactly those
+    two and was refused naming `read` — the scan is an ordinary read and
+    authorises as one. Written out because an operator granting what a
+    comment lists and being refused has no way to tell an incomplete list
+    from a bug.
     """
     Batch: _aio.UnaryUnaryMultiCallable[_records_pb2.BatchRequest, _records_pb2.BatchResponse]  # type: ignore[assignment]
     """Several writes in one round trip. The caller says whether they are
@@ -168,10 +182,17 @@ class RecordsServicer(metaclass=_abc_1.ABCMeta):
     ) -> _typing.Union[_records_pb2.WriteResponse, _abc.Awaitable[_records_pb2.WriteResponse]]:
         """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
 
-        Needs `delete` *and* `read_deleted` on the table: erasing a retired row
-        means reading it first, and `read_deleted` is what says a caller may see
-        one. A caller holding only `delete` can remove rows it can see and not
-        ones the convention hid from it.
+        Needs `delete`, `read` *and* `read_deleted` on the table: erasing a
+        retired row means reading it first, `read` is what says a caller may read
+        at all, and `read_deleted` is what says it may see a retired one. A caller
+        holding only `delete` can remove rows it can see and not ones the
+        convention hid from it.
+
+        This said `delete` and `read_deleted` until a test granted exactly those
+        two and was refused naming `read` — the scan is an ordinary read and
+        authorises as one. Written out because an operator granting what a
+        comment lists and being refused has no way to tell an incomplete list
+        from a bug.
         """
 
     @_abc_1.abstractmethod

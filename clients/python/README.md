@@ -262,10 +262,10 @@ docs.as_view("recent")
 
 # Soft delete: reading retired rows, and erasing them.
 q.include_deleted()                              # needs `read_deleted`
-client.purge_deleted(docs, before=cutoff)        # needs `delete` *and* `read_deleted`
+client.purge_deleted(docs, before=cutoff)        # needs `delete`, `read` and `read_deleted`
 ```
 
-`include_deleted` without the grant is **refused**, not ignored: a read that
+`include_deleted` without `read_deleted` is **refused**, not ignored: a read that
 asked to see retired rows and silently did not is worse than one that failed.
 
 There is no `restore`. A soft delete stamps a column, so undoing one is an

@@ -735,6 +735,95 @@ async fn a_reader_granted_read_deleted_sees_them() {
     assert_eq!(rows.len(), 3, "all three, retired one included");
 }
 
+/// A purge needs `delete`, `read` **and** `read_deleted`, and each is checked.
+///
+/// `purge_deleted` authorises `Delete` and then scans with `include_deleted`,
+/// so it needs all three. That is coherent — you should be able to see retired
+/// rows in order to destroy them — and it was a change to the contract that no
+/// test covered: every purge test above runs as a superuser, for whom
+/// `SecurityCatalog::authorize` returns early and no grant is consulted.
+///
+/// **Three, not two.** The proto, both hand-written client docstrings and the
+/// site all said `delete` and `read_deleted`. Granting exactly those two is
+/// refused naming `read`: the scan is an ordinary read and authorises as one
+/// before `include_deleted` is anywhere in the picture. Found by writing this
+/// loop and reading what the first case actually returned; every one of those
+/// places now says three.
+///
+/// One case per missing grant, because a wrong answer has as many shapes as
+/// there are grants and one case cannot tell them apart.
+///
+/// The refusals assert *which* action was named. A purge refused for the wrong
+/// reason tells an operator to ask for the wrong grant, and asking for a
+/// privilege you do not need is how a fleet ends up holding `delete`.
+#[tokio::test]
+async fn a_purge_needs_all_three_grants_and_says_which_is_missing() {
+    for (actions, missing) in [
+        (vec![slate_kernel::Action::Delete], "read"),
+        (
+            vec![slate_kernel::Action::Delete, slate_kernel::Action::Read],
+            "read_deleted",
+        ),
+        (
+            vec![
+                slate_kernel::Action::Read,
+                slate_kernel::Action::ReadDeleted,
+            ],
+            "delete",
+        ),
+    ] {
+        let store = store_granting(&actions);
+        seeded_for(&store).await;
+
+        let txn = store.begin().await.expect("begin");
+        let refused = txn
+            .purge_deleted(&reader(), &docs(), i64::MAX, None)
+            .await
+            .expect_err("a purge needs both grants");
+        assert!(
+            matches!(
+                refused,
+                slate_kernel::KernelError::AccessDenied { action, .. }
+                if action == missing
+            ),
+            "holding {actions:?}, expected a refusal naming {missing}, got {refused:?}"
+        );
+        // And it erased nothing on the way to refusing.
+        assert_eq!(
+            all_ids(&store).await,
+            vec![1, 2, 3],
+            "holding {actions:?}, the refused purge still removed a row"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_purge_holding_all_three_grants_erases_the_retired_row() {
+    // The other half. Without it the two refusals above are satisfied by a
+    // `purge_deleted` that refuses everybody, which is the cheapest way to
+    // pass them and the least useful.
+    let store = store_granting(&[
+        slate_kernel::Action::Delete,
+        slate_kernel::Action::Read,
+        slate_kernel::Action::ReadDeleted,
+    ]);
+    seeded_for(&store).await;
+
+    let txn = store.begin().await.expect("begin");
+    let purged = txn
+        .purge_deleted(&reader(), &docs(), i64::MAX, None)
+        .await
+        .expect("all three grants held");
+    txn.commit().await.expect("commit");
+
+    assert_eq!(purged, 1, "the one retired row");
+    assert_eq!(
+        all_ids(&store).await,
+        vec![1, 3],
+        "and the live rows survive"
+    );
+}
+
 #[tokio::test]
 async fn include_deleted_needs_no_grant_on_a_table_that_does_not_soft_delete() {
     // Demanding a privilege for a no-op teaches callers to ask for privileges

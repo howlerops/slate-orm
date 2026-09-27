@@ -94,6 +94,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "docs-in-a-browser": (None, "site/check/pages.py"),
  "silent-case": ("def silent_cases", "examples/explorer/conformance/conformance.py"),
  "restore-report": ("def restore_report", "scripts/mutate.py"),
+ "purge-grants": ("a_purge_needs_all_three_grants_and_says_which_is_missing", "crates/slate-kernel/tests/soft_delete.rs"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -354,6 +355,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-26-a-cached-go-run-is-not-a-run.md',
      "The in-flight marker's post-restore check inherits the hole'"):
         'restore-report',
+    ('2026-09-19-who-may-see-a-deleted-row.md',
+     '`purge_deleted` now needs two grants.'):
+        'purge-grants',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         '=read',

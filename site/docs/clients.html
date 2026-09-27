@@ -220,9 +220,11 @@
       <strong>Reading retired rows</strong> is privileged: without
       <code>read_deleted</code> the flag is refused rather than ignored, because
       a request that asked to see deleted rows and silently did not is worse
-      than one that failed. And a <strong>purge</strong> needs
-      <code>delete</code> <em>and</em> <code>read_deleted</code>, since it scans
-      what it is about to destroy.
+      than one that failed. And a <strong>purge</strong> needs three —
+      <code>delete</code>, <code>read</code> and <code>read_deleted</code> —
+      because it scans what it is about to destroy, and the scan authorises as
+      an ordinary read before the retired rows are even in scope. Grant it the
+      first two and the refusal names <code>read</code>.
     </p>
 
     <p>

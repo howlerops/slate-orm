@@ -263,10 +263,10 @@ asView(docs, "recent");
 
 // Soft delete: reading retired rows, and erasing them.
 ({ table: "docs", includeDeleted: true });        // needs `read_deleted`
-session.purgeDeleted("docs", before);             // needs `delete` *and* `read_deleted`
+session.purgeDeleted("docs", before);             // needs `delete`, `read`, `read_deleted`
 ```
 
-`includeDeleted` without the grant is **refused**, not ignored: a read that
+`includeDeleted` without `read_deleted` is **refused**, not ignored: a read that
 asked to see retired rows and silently did not is worse than one that failed.
 
 There is no `restore`. A soft delete stamps a column, so undoing one is an
