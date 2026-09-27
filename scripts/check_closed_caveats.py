@@ -86,6 +86,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "minio-image": ("chainguard/minio", ".github/workflows/ci.yml"),
  "fixtures-alive": ("FIXTURES exempts", "scripts/check_cited_docs.py"),
  "runner-continue": ("ASKS_HANDSHAKE", "scripts/check_examples_roster.py"),
+ "tracker-in-ci": ("scripts/caveats.py", ".github/workflows/ci.yml"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -335,6 +336,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-27-two-more-examples-ignored-a-mistyped-flag.md',
      'The exclusion of servers from rule 4 is a property of the ru'):
         'runner-continue',
+    ('2026-09-25-a-reworded-caveat-is-a-different-claim.md',
+     'Nothing prevents the next orphan.'):
+        'tracker-in-ci',
     ('2026-09-20-the-secret-that-debug-prints-as-numbers.md',
      'It covers `Debug`, and a secret can leave by other doors.'):
         'secret-roster',

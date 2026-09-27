@@ -24,9 +24,9 @@
     {
       "entry": "2026-09-14-a-keyspace-viewer.md",
       "key": "Paging is forward-only and starts from the top.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a cursor and a key search in the viewer, rejected because the viewer's job is to show what a record layer's keys look like, which twenty-five at a time does; deep paging into 100,000 keys is a use nobody has and would want a real index over the listing.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-a-keyspace-viewer.md",
@@ -43,16 +43,16 @@
     {
       "entry": "2026-09-14-a-keyspace-viewer.md",
       "key": "Values are counted, never shown.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is rendering each row's encoded bytes, rejected because the property the viewer exists to show — a prefix of the key is a prefix of the tuple — is visible in the keys, and a hex dump beside every one of them buries it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
       "key": "It does not check the examples are *good",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: judging whether an example demonstrates anything is not mechanical. The alternative — asserting a minimum row count or a particular plan shape per example — encodes today's fixtures and breaks on every data change without ever catching a dull example.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-a-kitchen-sink-example.md",
@@ -108,16 +108,16 @@
     {
       "entry": "2026-09-14-a-real-dataset.md",
       "key": "The full month is not reachable from the browser",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is shipping the month to the browser, which is hundreds of megabytes over the wire for a demo; the sample's size is stated in site/README.md and the docs. Putting it on screen too is a fourth place to keep one number true.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-a-real-dataset.md",
       "key": "`trips` has one secondary index",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is indexing time, distance and fare as well, rejected because a demo where every query uses an index never shows a scan, and the planner choosing between the two is the thing worth watching.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
@@ -142,23 +142,23 @@
     {
       "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
       "key": "A `books` ordinal is shifted into the joined row's space by ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a ColumnRef type crossing the wasm boundary, as the three SDKs have. Rejected for one call site: it is a new type in the JavaScript API, and the arithmetic it removes is visible and wrong-loudly rather than wrong-quietly.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
       "key": "Pages is not enabled, and cannot be enabled from here.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: not takeable from here. `enablement: true` was tried and answered `Resource not accessible by integration` — repository settings are not writable by this session or the workflow token. The remedy is an owner enabling Pages in the repository's settings.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
       "key": "Mobile is narrow-screen-tolerant, not designed for.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a mobile layout for a three-pane developer tool, which is a design piece rather than a CSS change — the tree, the editor and the plan all want to be visible at once. Below 720px it stacks and works; that is the bar chosen.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
@@ -273,9 +273,9 @@
     {
       "entry": "2026-09-15-a-dist-nobody-built.md",
       "key": "Nothing else in the repository is audited for the same depen",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry names the alternative: a test that runs a script in a tree with no build artifacts. Rejected because such a fixture has to `npm ci`, and scripts/check.sh makes no network calls — that property is what makes it worth running before every commit. The two consumers that exist were checked by hand.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-dist-nobody-built.md",
@@ -292,9 +292,9 @@
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
       "key": "No test asserts what the caution *looks* like.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a screenshot baseline, which this repository has already decided against for the same reason each time — a baseline that fails on a font change is one somebody deletes. The browser check reads the caution's text and counts it; its class is asserted in the CSS, not in a picture.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
@@ -305,9 +305,9 @@
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
       "key": "The warning is the only warning.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the mechanism is built and the list is one item long on purpose. Adding the candidates it names — a LIMIT with no ORDER BY, a filter that cannot become a scan bound — is guessing at what a reader will find surprising, and a parser that warns about everything is one whose warnings are skipped.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-grouped-joins-order-and-a-name-that-meant-two-things.md",
@@ -393,9 +393,9 @@
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
       "key": "The SDKs cannot run a migration.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: the shape is an admin RPC rather than a client call, because a migration is a writer-side operation and the head node is the writer. That is a protocol decision nobody has needed to make yet; making it speculatively fixes the wire surface around a guess.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -445,9 +445,9 @@
     {
       "entry": "2026-09-15-a-table-is-not-a-database.md",
       "key": "No zone on a literal in the SQL front end's `WHERE`.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a zone-aware comparison in the WHERE clause, which means the filter and the stored value disagree about what instant a literal names. Time functions take a zone in the select list and the group key, where the answer is displayed rather than compared; extending it to comparison is a semantics decision, not a parser change.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-a-table-is-not-a-database.md",
@@ -505,9 +505,9 @@
     {
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
       "key": "No `DISTINCT ON`",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `DISTINCT ON` is PostgreSQL-specific and picks an arbitrary row per group unless ORDER BY disambiguates, which is the kind of surprising default this front end refuses elsewhere. The refusal message points at count(distinct ...) for the case people usually mean.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-distinct-was-two-defaults-not-a-feature.md",
@@ -653,9 +653,9 @@
     {
       "entry": "2026-09-15-pages-that-do-not-shift.md",
       "key": "No cursor over an index.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry names the shape it needs and rejects it in the same breath: an opaque token, which the entry argues against because a cursor a client cannot read is one nobody can debug. A query ordered by an index is refused rather than approximated, which is the honest answer until the token question is settled.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-pages-that-do-not-shift.md",
@@ -719,16 +719,16 @@
     {
       "entry": "2026-09-15-the-guard-nothing-called.md",
       "key": "Nothing measures a large backfill.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a backfill over a fixture large enough to time, which does not fit this container's disk and adds minutes to CI for a constant — BACKFILL_BATCH — that nobody has reported as wrong. The guess stays admitted rather than tuned against a number nobody needs.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-the-guard-nothing-called.md",
       "key": "The SDKs still cannot run or ask about a migration.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: the same protocol decision as ledger/2026-09-15-a-new-index-returns-nothing.md — a migration is a writer-side operation wanting an admin RPC, and the read-only window this names is the argument for designing it once rather than twice.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-the-guard-nothing-called.md",
@@ -855,9 +855,9 @@
     {
       "entry": "2026-09-15-the-wal-the-collector-would-not-take.md",
       "key": "11.0 MB is still 100 bytes a row for rows that serialise to ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a churn benchmark — overwrite and delete until compaction has something to do, then measure again. Rejected here because the number is already stated with the condition that produces it (one compacted SST, freshly loaded, no tombstones), so it misleads nobody; a steady-state figure is its own measurement task with its own fixture.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-the-wal-the-collector-would-not-take.md",
@@ -987,9 +987,9 @@
     {
       "entry": "2026-09-15-three-clients-a-replica-and-a-kill.md",
       "key": "Tenant affinity.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a second deployed run with `[routing] tenant_affinity` set. Rejected because the deployed harness exists to show the stack comes up and serves three clients against real object storage, not to cover the routing matrix — which has kernel tests — and each deployed run is minutes of CI.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
@@ -1015,9 +1015,9 @@
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
       "key": "The schema change is silent for a reader of the demo's table",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is UI copy explaining two new columns, rejected because the demo's tables are meant to be read as data rather than as documentation, and the contract the adapters share is where a reader who cares looks.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-three-sdks-on-more-than-a-division.md",
@@ -1181,9 +1181,9 @@
     {
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
       "key": "No composite relating key",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a relating key of several columns, which needs a composite-key shape on the wire and in three clients for a case the tenant prefix already covers. Not taken until something wants it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-a-relationship-is-a-foreign-key-read-backwards.md",
@@ -1221,9 +1221,9 @@
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
       "key": "The elision is untested by the Rust suite",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a workbench example long enough to trigger the elision, which makes the example list worse for every reader in order to serve one assertion. The panel itself is exercised; the marker is not, and that is the trade.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-a-subquery-is-two-reads-not-an-operator.md",
@@ -1247,9 +1247,9 @@
     {
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
       "key": "One table.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `UPDATE … FROM` and a predicate write across a join need the write path to resolve rows from a join plan, which is a kernel change rather than a surface one. Not taken because a single-table predicate write is what the recorded gap asked for.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-predicate-writes-and-the-increment-that-was-not-lost.md",
@@ -1268,9 +1268,9 @@
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "No mobile navigation to speak of.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a drawer, which is real interaction design and JavaScript on every docs page. Under 820px the sidebar becomes a row of links above the article, which is honest rather than good, and the entry says so.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
@@ -1282,9 +1282,9 @@
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
       "key": "Nothing was seen.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: there is no browser on this container that renders to something a session can look at, and whether the hero breathes is not a property any check can hold. It needs eyes, which is a person rather than an alternative.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-the-site-looks-like-the-family-it-belongs-to.md",
@@ -1302,9 +1302,9 @@
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
       "key": "No default, so the hang is still reachable",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a default deadline for every caller, rejected because silently cancelling a long legitimate call is worse than a hang the caller can see and fix, and a default that is right for a point read is wrong for a bulk scan. All three READMEs say so in the same paragraph as the feature.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-16-two-clients-could-wait-for-ever.md",
@@ -1354,9 +1354,9 @@
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "Nothing measures it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the claim it makes is a read count, and that *is* asserted — a whole path is one request, counted at the stub. A wall-clock comparison against the two-call version on this container would be a number about this container, which docs/performance.md is full of warnings about.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
@@ -1375,9 +1375,9 @@
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
       "key": "No client branches on the token yet.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-25"
+      "verdict": "deliberate",
+      "by": "this entry: branching needs somewhere to read the limit from, which is the metadata map that is not surfaced — its own caveat under ledger/2026-09-17-a-path-of-relationships-on-the-wire.md. Splitting Unavailable four ways before a client can read why is a hierarchy built against a guess.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1389,9 +1389,9 @@
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
       "key": "One captured blob, one shape of error.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is capturing more real statuses, which needs a server that can be made to emit two details or none on demand — a test hook in the daemon for the benefit of a decoder test. The hand-built cases cover the decoding; what the capture proves is that a real status decodes at all.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1410,9 +1410,9 @@
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
       "key": "Nothing measures how much the early stop saves.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a benchmark over a large match set on this container, whose wall-clock numbers docs/performance.md is full of warnings about. The entry labels its own 'obviously' rather than dressing arithmetic as a measurement, which is the honest version of not having the number.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-17-the-delete-that-succeeded-and-reported-failure.md",
@@ -1480,9 +1480,9 @@
     {
       "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
       "key": "Go's `Transact` cannot be used as a method value",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a `session.Transact` method forwarding to the function, which gives the package two spellings of one operation. Rejected because the compiler error names the function that exists, and a second entry point is a thing to keep documented forever.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
@@ -1494,9 +1494,9 @@
     {
       "entry": "2026-09-18-a-retrying-transact-in-go-and-typescript.md",
       "key": "Nothing measures it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: measuring retry cost needs contention produced on purpose — two writers racing a fixed key — which is a benchmark harness of its own. `examples/batchbench` measures uncontended writes and says so; the cost per conflict is at least one round trip, which is arithmetic rather than a claim.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
@@ -1508,9 +1508,9 @@
     {
       "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
       "key": "No server-side attribution.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the breakdown needs client-side instrumentation the clients do not have — per-request timing inside each SDK, in three languages, to attribute one benchmark. The numbers claim what they measured (a batch is faster from a client, by how much) and stop there.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-18-batching-from-a-client-is-worth-more-not-less.md",
@@ -1569,9 +1569,9 @@
     {
       "entry": "2026-09-19-a-purge-something-can-call.md",
       "key": "No offline tool",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: purging a stopped node's keyspace needs a binary that opens the store directly, outside the writer's lease — which is a second way into the data and a second place the retention rule has to be true. Purge is an operation on a running writer, deliberately.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-a-refusal-a-form-can-render.md",
@@ -1582,9 +1582,9 @@
     {
       "entry": "2026-09-19-a-refusal-with-two-things-wrong.md",
       "key": "The cross-column shape is still fixture-only.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a live case needs a check with no column in the demo schema, added for no reason but to be rendered beside a form in a test. The fixture covers the rendering; what a live case would add is that the server emits that shape, which the kernel tests already say.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-a-refusal-with-two-things-wrong.md",
@@ -1676,9 +1676,9 @@
     {
       "entry": "2026-09-19-one-command-for-the-checks.md",
       "key": "Multi-line `run: |` blocks are matched by their `name:`.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: seeing inside a block means parsing shell embedded in YAML, which is the parser-nobody-can-debug trade every guard here refuses. The three blocks are matched by name, so renaming one fails loudly; a static check smuggled inside one is the residual and is smaller than the parser.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-one-command-for-the-checks.md",
@@ -1759,16 +1759,16 @@
     {
       "entry": "2026-09-19-the-third-and-second-decoders.md",
       "key": "Nothing validates against the published checks before sendin",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: local validation means reimplementing the server's check evaluation in three languages, where a divergence is worse than the round trip it saves — a client refusing a row the server would accept is a bug with no error message. The published checks narrow a generated enum's type, which is the part that cannot diverge.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-the-third-stale-constructor.md",
       "key": "Nothing checks the other two clients for the same shape.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: both were read, and neither has the shape that drifted — Go's `Error` is a struct whose new field is a zero value, TypeScript's has one constructor and no subclasses. A guard would be asserting that two languages keep not having a constructor, which is a rule about absence.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-the-third-stale-constructor.md",
@@ -1922,8 +1922,9 @@
     {
       "entry": "2026-09-20-a-command-that-cannot-finish-here.md",
       "key": "The grouping is not measured, only observed to work.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: finding the minimal grouping is a search whose each step is a multi-minute link on a disk-constrained container, to tune a number that already works. Five groups succeeded twice and the entry says that is what it is, rather than calling it optimal.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
@@ -1942,9 +1943,9 @@
     {
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
       "key": "Nothing checks the *formatter* side in Go or TypeScript.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the secondary rule fires only when `ALLOWED` is non-empty, which is never today, so a case would assert the behaviour of a Go `String()` that does not exist. The rule's job is to make a future exemption argue for itself, and that half is asserted.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-fourth-identity-member-is-a-decision.md",
@@ -2030,9 +2031,9 @@
     {
       "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
       "key": "There is still no way to inventory what is blocked.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: an operator can write the join today against an `include_deleted` read. A built-in needs a new RPC, a grant to go with it, and a shape in three clients — for a question asked once, at upgrade time, by somebody who already has read access to both tables.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-a-refusal-you-cannot-act-on.md",
@@ -2130,9 +2131,9 @@
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "No `#[derive(Record)]` support.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the macro needs an attribute naming an array field's element type, because the Rust type alone does not say which `ValueType` the elements are. That is a derive-surface design — one more attribute people must know — and no caller has wanted a derived record with an array.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -2259,9 +2260,9 @@
     {
       "entry": "2026-09-20-four-demonstrations-nobody-could-open.md",
       "key": "The two `RESTRICT`/`CASCADE` names were merged into one test",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the old probes no longer exist to run, so the alternative is reconstructing two deleted tests from a diff in order to compare them with the one that replaced them. The merged test loops over both actions and asserts the same error; reading the collapse commit is the evidence available, and the entry says that is what it is.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-four-more-handlers-the-exemption-vouched-for.md",
@@ -2362,9 +2363,9 @@
     {
       "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
       "key": "One property, not a contract.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a contract suite across implementations means a shared harness for a trait with two impls, covering behaviours (malformed value, absent key) that each already tests for itself. The one property here is finding 6, which is the one that was got wrong twice.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-so-a-third-authenticator-cannot-be-wrong-quietly.md",
@@ -2465,16 +2466,16 @@
     {
       "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
       "key": "The join and chain tests use one join type and one step coun",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: there is one `with_limits` call in each function, so an outer join and a three-step chain reach the same construction by inspection. A case per join type asserts one line four times, which is the shape of test that makes a suite slow without making it stronger.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
       "key": "The three ceilings are the three that were found.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: enumerating everything that holds per-request state is an audit with no termination condition — every accumulator, every buffer, forever. Three came from the review naming them and a search finding no fourth, which the entry reports as a search rather than as a proof.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-client-printed-what-the-server-redacts.md",
@@ -2567,9 +2568,9 @@
     {
       "entry": "2026-09-20-the-counter-that-is-not-one-line.md",
       "key": "It does not change how `WriteObserver` is structured.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: closing the seam means moving the observer into the kernel or the transition into the server, and the entry proposes neither because neither is obviously right. Naming a seam without a design for it is what this records.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-counter-that-is-not-one-line.md",
@@ -2613,9 +2614,9 @@
     {
       "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
       "key": "No `#[derive(Record)]` support.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the same derive-surface design as ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md — the Rust type alone does not say which ValueType the elements are, so the macro needs one more attribute people must know, for a shape no caller has wanted.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-element-type-lives-on-the-column.md",
@@ -2652,9 +2653,9 @@
     {
       "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
       "key": "Nothing detects the general case of a stale cache.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: handling a hypothetical bundler or incremental typechecker cache means guessing which of them key on mtime and where they write. `PYTHONPYCACHEPREFIX` fixes the one that bit; the entry says plainly that no search for a second was made.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-fourth-way-a-mutation-lies.md",
@@ -2710,9 +2711,9 @@
     {
       "entry": "2026-09-20-the-generator-refuses-an-array-once.md",
       "key": "Nothing checks that the message stays true.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the message is prose about what the type tables can express, and checking prose against a capability is the parse-a-sentence trade every guard here refuses. If the tables grow a way to express an array, the refusal itself stops firing, which is louder than a stale sentence.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-generator-refuses-an-array-once.md",
@@ -2785,9 +2786,9 @@
     {
       "entry": "2026-09-20-the-helper-that-can-be-used-now.md",
       "key": "There is still no way to ask whether a row is restorable.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: an API answering 'is this row restorable' is a read whose answer can be false by the time the restore runs — the slot it checks is the one another writer is racing for. The refusal names the reason when it happens, which is the only moment the answer is true.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-index-that-could-not-hold-it.md",
@@ -2855,9 +2856,9 @@
     {
       "entry": "2026-09-20-the-other-arm-over-the-same-index.md",
       "key": "It does not revisit `purge_deleted` against this schema.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the entries such a test would look for are ones a partial index does not hold in the first place, so it would assert the absence of something the schema cannot produce. The purge's own test checks entries go with their rows on a table where they exist.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-other-arm-over-the-same-index.md",
@@ -2882,9 +2883,9 @@
     {
       "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
       "key": "No test asserts the daemon's path is the safe one.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the refusal added here *is* the check — a sixth call site using the other constructor is now caught wherever it is. A test asserting which constructor the daemon calls asserts a line of code, and passes unchanged the day somebody adds a seventh call site elsewhere.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-other-way-to-build-a-catalog.md",
@@ -2930,16 +2931,16 @@
     {
       "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
       "key": "It does not probe the same shape through the wire.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the predicate reaches the same `matching_rows` from either side, so a wire probe asserts the RPC plumbing rather than the behaviour — and the plumbing is what the three-SDK conformance runner exists for.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
       "key": "`at_most` and `returning` are untouched.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: both go through the same read and both report the empty set, so the cases differ from the one that exists only in which field of an empty answer they look at.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-secret-that-debug-prints-as-numbers.md",
@@ -2991,9 +2992,9 @@
     {
       "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
       "key": "Nothing probes the `explain` twins through a *transaction*.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: authorisation runs before the branch on `request.transaction`, so the branch cannot change the answer these probes are about. Stated as a reading rather than dressed as a probe, which is the point of the sentence.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-two-i-said-i-read-rather-than-ran.md",
@@ -3066,9 +3067,9 @@
     {
       "entry": "2026-09-20-the-write-that-names-a-key.md",
       "key": "Restoring can still fail, for a reason nothing warns about.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: an API answering 'is this row restorable' is a read whose answer can be false by the time the restore runs — the slot it checks is the one another writer is racing for. The refusal names the reason when it happens, which is the only moment the answer is true.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-write-that-names-a-key.md",
@@ -3099,16 +3100,16 @@
     {
       "entry": "2026-09-20-three-sdks-agree-about-a-restore.md",
       "key": "The deployed harness does not exercise it.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: restoring is an ordinary update, and each deployed case costs minutes of CI against real object storage. The harness's list is for shapes where the storage backend could plausibly matter.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
       "key": "It does not cover an expression index",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `admits` is the same call for both, and it is `admits` the purge filter turns on. An expression index differs at key construction, which the purge does not do — so the case would exercise a fixture rather than a branch.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-two-drafts-that-could-not-fail.md",
@@ -3158,9 +3159,9 @@
     {
       "entry": "2026-09-20-where-an-undo-window-lives.md",
       "key": "No audit trail, not even the cheap half.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the counter it calls cheap is not, and ledger/2026-09-20-the-counter-that-is-not-one-line.md records why — the kernel knows the transition and the server owns the observer, so a restore counter crosses that seam. Correcting the note is what this entry did; building the counter waits on the seam.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-where-an-undo-window-lives.md",
@@ -3257,9 +3258,9 @@
     {
       "entry": "2026-09-21-a-demo-table-so-the-generated-array-code-runs.md",
       "key": "No array column has a nullable variant in the demo.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the demo's schema is a story about taxis and books, and a nullable array column added only so one generated line runs makes the demo worse for every reader. `scripts/test_codegen.py` compiles the path on a synthetic catalog, which is where a generated-code check belongs.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-demo-table-so-the-generated-array-code-runs.md",
@@ -3323,9 +3324,9 @@
     {
       "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
       "key": "The budget is two numbers nothing validates",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: validating a timeout means running something for 900 seconds to establish that 900 is the right number, which is the cost the timeout exists to avoid. They are judgements against the slowest recorded run and the entry labels them as such; a benchmark that grows to an hour is a reason to raise the number, not evidence the number was wrong.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-hang-is-now-a-named-failure.md",
@@ -3391,9 +3392,9 @@
     {
       "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
       "key": "It does not establish which state a deployment is in.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: which cache state a deployment is in is a fact about a real workload, and this repository has none — every number here comes from a fixture it built. Naming the three states and saying which is probably commonest is the most the evidence supports, and the entry says 'probably' rather than hiding it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
@@ -3418,9 +3419,9 @@
     {
       "entry": "2026-09-21-a-scan-costs-what-the-reads-before-it-left-behind.md",
       "key": "The mechanism is inferred, not observed.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: distinguishing the mechanism needs the *sizes* of the ranged GETs, and the counting store records requests. Teaching it sizes is a change to the instrument to settle a question the numbers already answer the practical half of — and the entry states that a different mechanism with the same counts is not excluded.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-threshold-calibrated-against-a-reading-that-moved.md",
@@ -3471,9 +3472,9 @@
     {
       "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
       "key": "No window over a join or a chain.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the joined and chained readers have their own spec types and their own ordinal spaces, so a window there is a third spec rather than a field added to one. Nothing can express it, which is why nothing refuses it — worth knowing, and weaker than a refusal, as the entry says.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-value-per-row-over-a-partition.md",
@@ -3518,9 +3519,9 @@
     {
       "entry": "2026-09-21-a-view-over-a-view-is-refused.md",
       "key": "Nothing checks that §5 and the code still agree.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a section number pointing at the same argument is prose against prose, which no pattern settles. `check_cited_docs.py` holds the document to existing, which is the half a tool can hold.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-view-reported-as-a-typo.md",
@@ -3545,9 +3546,9 @@
     {
       "entry": "2026-09-21-a-view-reported-as-a-typo.md",
       "key": "`chain` and the relation steps are argued, not asserted.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the same reading it gives above — the steps reach the view through the same resolution and the argument is in the entry rather than in a test. Asserting it means a fixture per step for a branch that is one call.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-a-view-the-demo-can-show.md",
@@ -3855,9 +3856,9 @@
     {
       "entry": "2026-09-21-generate-the-rows-from-the-table.md",
       "key": "The seed is not part of the fixture's identity.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: recording the seed means a sidecar beside every stored fixture, kept true forever, so that a reader can avoid opening the test that made it. The call is in the repository and names its own seed.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-i-ran-the-checks-and-then-edited-the-docs.md",
@@ -3934,9 +3935,9 @@
     {
       "entry": "2026-09-21-one-runner-for-both-crates-of-benchmarks.md",
       "key": "Nothing runs either crate at its recorded size.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the recorded sizes take minutes to hours and do not fit this container — that is #269 and #270's subject and their own open work. The smoke run establishes the examples run and refuse a bad argument, which is what a runner can do in CI.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-one-runner-for-both-crates-of-benchmarks.md",
@@ -3968,9 +3969,9 @@
     {
       "entry": "2026-09-21-over-in-the-query-editor.md",
       "key": "Nothing measures what a window costs in the browser.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a wall-clock number from one browser on one machine is the thing `ledger/2026-09-14-what-the-timer-measures.md` spent an entry making honest. The plan panel states the read does not stream, which is a fact about the plan; the entry labels the rest an observation.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-over-in-the-query-editor.md",
@@ -3981,9 +3982,9 @@
     {
       "entry": "2026-09-21-over-in-the-query-editor.md",
       "key": "`PARTITION BY` and the window's `ORDER BY` take a bare colum",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the spec underneath takes ordinals and would carry an expression, so this is parser surface rather than a capability — and every shape added there is one more thing the front end promises. A bare column is what the window examples need.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
@@ -3994,9 +3995,9 @@
     {
       "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
       "key": "No end-to-end confirmation that the new constant chooses bet",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: ClickBench is 70 seconds a run and needs the `slate-clickbench` fixture this container keeps deleting to reclaim disk; the deployed harness is minutes against object storage. The constant now matches the measurement for one shape at one scale, which is what the change claims.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-point-read-cost-is-three-times-what-it-measures.md",
@@ -4033,16 +4034,16 @@
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
       "key": "The disagreement case is a suggestion, not a design.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the state is impossible today — one writer computes both — and the recovery it sketches is cheap whenever it stops being impossible. Designing the recomputation now is designing against a guess about how the two could come apart.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
       "key": "The inner blob's own versioning is undecided.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the outer format number already carries a change to the nested schema, so a second version byte buys the ability to add a column property without bumping the outer one — a migration nobody has, paid for now in a format with one producer.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-store-the-hash-inputs-and-nothing-else.md",
@@ -4302,16 +4303,16 @@
     {
       "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
       "key": "It does not check the `9 of 11` claim against a running demo",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: deriving the count from the two source files is what a static check can do without a stack. Asserting it from a live request couples the conformance runner or the e2e to a README's wording, so editing prose turns a browser job red.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
       "key": "It does not check the rest of *What the UI shows*.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: checking that a paragraph still describes the panels a directory contains is prose against code — the counts are derivable and are checked, the description is not. Every guard here that tried to hold prose to code ended up holding a phrase instead, which goes stale the first time somebody rewords it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-the-readmes-nine-of-eleven-is-derived-now.md",
@@ -4371,9 +4372,9 @@
     {
       "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
       "key": "The README half of the original entry is still open.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: checking that a paragraph still describes the panels a directory contains is prose against code — the counts are derivable and are checked, the description is not. Every guard here that tried to hold prose to code ended up holding a phrase instead, which goes stale the first time somebody rewords it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
@@ -4427,9 +4428,9 @@
     {
       "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
       "key": "It does not measure a view at scale.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the composition is one `Expr::and` whichever way it is built, so the shape does not change with row count — and scaling the fixture to confirm that costs a benchmark run per size. The entry names its own reasoning as the kind this section exists to doubt, which is the honest version.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
@@ -4440,9 +4441,9 @@
     {
       "entry": "2026-09-21-what-a-view-costs-and-three-benchmarks-that-could-not-run.md",
       "key": "The 71 µs is not explained, only shown to be an artefact.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: it vanished under A-B-A, which is what identifies it as an artefact of measurement order rather than a property of views. Chasing a difference that does not reproduce under control — channel settling, allocator, a second `Serving` in one process — is unbounded and would produce a number about this container.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-a-mutation-run-now-leaves-a-trace.md",
@@ -4603,8 +4604,9 @@
     {
       "entry": "2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md",
       "key": "Two points are a line through two points.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a third point is another full benchmark run at a third size, and the claim made is exactly what two points support — sub-linear over that interval, nothing about the shape. The entry says a third point could show it flattening or reversing.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
@@ -4616,9 +4618,9 @@
     {
       "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
       "key": "It does not re-examine the other two commits' reasoning, onl",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: re-running #278's measurement is #284's subject and was done there, with the cache on. A review of a diff re-reads code; re-deriving each conclusion it rests on is a different task, and this one names which it did.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-eleven-findings-against-three-commits-of-mine.md",
@@ -4747,30 +4749,30 @@
     {
       "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
       "key": "Two of 74 tables were added to the frozen roster, not stampe",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the runs are from September and the builds that produced them cannot be reconstructed. Freezing records that they predate the rule, which is the true statement available; stamping them would be inventing a build line.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md",
       "key": "`examples/batchbench/README.md` duplicates a `docs/performan",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the digest-keyed roster covering both copies with one entry is the design — a body appearing twice is one measurement, and keying on the digest is what makes the duplication safe. The `file` field naming one of the two places is the cost of that, and it is tested.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
       "key": "A claim split across a Rust string literal's backslash-conti",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: joining adjacent code lines invents sentences nobody wrote, which is a worse failure than missing one — a guard that reports a claim its author did not make is one people stop reading. Nothing splits a claim that way today, and `paragraphs()` says so.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
       "key": "It does not run the example.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: running `cost_at_scale` needs a real S3 server and minutes; re-measuring with the cache on is #284's subject and was done there. `rustc` checks the format strings, which is what a static pass can do.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
@@ -4790,9 +4792,10 @@
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
       "key": "The general defect from #278 is still open.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "the build stamp and scripts/check_table_provenance.py, which reports `78 measurement tables, 73 predating the stamp` — so a measurement recorded from now on does say which feature set produced it. Verified 2026-09-27 by running the guard and reading the `build:` lines in docs/performance.md.",
+      "checked": "2026-09-27",
+      "residual": "73 of the 78 recorded tables predate the stamp and are frozen — their runs are from September and the builds cannot be reconstructed, which ledger/2026-09-22-the-stale-claim-was-in-the-file-everyone-reads-first.md records as its own caveat. Every table recorded since carries the line."
     },
     {
       "entry": "2026-09-23-a-counted-claim-must-name-its-run.md",
@@ -4840,9 +4843,9 @@
     {
       "entry": "2026-09-23-a-survivor-has-a-third-cause.md",
       "key": "The three equivalent mutations are mine and recent.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the records begin on 2026-09-22 and hold the `old`/`new` text, so whether earlier sessions wrote equivalent mutations is unanswerable rather than unanswered. From here forward reading the records answers it, which is the change.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
@@ -4861,16 +4864,16 @@
     {
       "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
       "key": "Three phrases is not coverage.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: sweeping every claim this ledger has withdrawn means reading every entry and judging each phrase distinctive enough to match without false positives. Three is what was read; the mechanism takes a fourth in one line when somebody withdraws one.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-a-withdrawn-claim-is-not-stated-anywhere-as-current.md",
       "key": "`NOT_A_CLAIM` is checked within three lines either side of t",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the distance between a marker and what it marks has no right number, and the alternatives are worse — a whole-paragraph search makes a marker exempt text it was never near. Three lines is a guess and the entry labels it one; a long quotation failing is the residual.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
@@ -4890,9 +4893,9 @@
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
       "key": "It reads one phrasing.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: the pattern was built from the sentence that actually went stale rather than from a survey of how one could be written, and widening it to 'half what it should be' or 'out by a third' is guessing at phrasings nobody has used here. Each arm added is a false-positive surface over every entry in the ledger.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-an-unverifiable-claim-is-refused-now.md",
@@ -4925,16 +4928,16 @@
     {
       "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
       "key": "It does not say what the cliff is.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: narrowing between compaction, manifest growth, memory and the index write path is a separate investigation per candidate, each a loader run at a size this container has already refused once. What this run could do was remove a candidate, and it says so rather than claiming an answer.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
       "key": "It never reproduced the cliff.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: reproducing it at a smaller scale and watching it move is what the design tried and could not do — every configuration loads 120,000 rows in about two and a half seconds. If the mechanism engages only above an absolute size, no knob here reaches it, and the entry calls that a limit of the design rather than a caveat.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
@@ -4946,9 +4949,9 @@
     {
       "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
       "key": "The example is not in CI's measured path",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: another full-size run, which is minutes on a container that deletes fixtures to reclaim disk. The smoke path establishes the example runs; the figures it would produce are docs/performance.md's hand-taken ones, whose staleness is #269 and #270's open subject.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
@@ -4960,9 +4963,9 @@
     {
       "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
       "key": "It does not measure the cost model at a million rows.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: another full-size run, which is minutes on a container that deletes fixtures to reclaim disk. The smoke path establishes the example runs; the figures it would produce are docs/performance.md's hand-taken ones, whose staleness is #269 and #270's open subject.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md",
@@ -5001,9 +5004,9 @@
     {
       "entry": "2026-09-23-the-example-suite-does-run-here-in-release.md",
       "key": "It does not make the whole suite runnable.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: whether the other three crates' examples fit in debug is a fact about this container's disk, not about the repository — CI builds them in debug with room and its `headbench` job is green. Establishing it here means the builds that have already ENOSPC'd three times.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
@@ -5015,15 +5018,16 @@
     {
       "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
       "key": "It does not re-verify the repository's doctests.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a mutation run per doctest, and `slate-orm/src/lib.rs` alone has five `compile_fail` blocks. What this change did was make them *readable* by the runner — the precondition for that work rather than the work. 'No branch to break' is named as an argument, not a test.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-mutation-runner-could-not-read-a-doctest.md",
       "key": "The four shapes are the four I found.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: provoking libtest's other shapes — `ignored`, benchmark output, `--format json` — means making the suite emit them on purpose to check a pattern that is already wide enough to catch them. The entry labels that an argument about the pattern rather than a test of it.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md",
@@ -5047,16 +5051,16 @@
     {
       "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
       "key": "It does not check the message text a user sees for the other",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `expand_record` has more than twenty diagnostics, so covering them is twenty string assertions that go stale on any rewording. The four written are `expand_enum`'s whole set, and the defect this entry is about was a `compile_fail` block passing for the wrong reason, not a message.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
       "key": "It does not cover the `Record` doctests outside those eight.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: a mutation run per doctest, and `slate-orm/src/lib.rs` alone has five `compile_fail` blocks. What this change did was make them *readable* by the runner — the precondition for that work rather than the work. 'No branch to break' is named as an argument, not a test.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-two-compile-fail-doctests-were-passing-for-the-wrong-reason.md",
@@ -5114,9 +5118,9 @@
     {
       "entry": "2026-09-24-the-caveat-tracker-counted-emphasis-as-caveats.md",
       "key": "The struck-through case is tested by shape, not by history.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: checking every real withdrawal passage in the ledger means reading each one and judging whether it should have counted, which is the judgement the tracker exists to avoid making by hand. What decides is the opening `~~`, and that is what the suite tests.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-24-the-ledger-records-762-caveats-and-tracked-none-of-them.md",
@@ -5149,9 +5153,9 @@
     {
       "entry": "2026-09-25-a-reworded-caveat-is-a-different-claim.md",
       "key": "Nothing prevents the next orphan.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "`python3 scripts/caveats.py` and `scripts/test_caveats.py` now run in .github/workflows/ci.yml, so a reworded bullet detaches its verdict and the run goes red. The tracker was in scripts/check.sh all along and in CI never; the entry called adding it 'a real thing to want and is not done'. Two lines.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-a-reworded-caveat-is-a-different-claim.md",
@@ -5169,9 +5173,9 @@
     {
       "entry": "2026-09-25-closing-caveats-opens-caveats.md",
       "key": "No test asserts the arithmetic above.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `caveats.py` reports a state, and diffing against yesterday needs yesterday stored — a second committed artifact whose only reader is a sentence in an entry. `git show <sha>:docs/caveat-status.json` recovers any past count, which is how this session measured the trajectory.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-closing-caveats-opens-caveats.md",
@@ -5189,8 +5193,9 @@
     {
       "entry": "2026-09-25-every-client-sends-a-disjunction.md",
       "key": "Nothing checked the other suites for the `as_int` class.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "this entry: `ty` is clean over the package, so any remaining cast-where-an-assert-belongs is one `ty` cannot see — which makes the sweep a human reading of every test file for a judgement call, not a check.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-25-every-client-sends-a-disjunction.md",
@@ -6531,6 +6536,34 @@
       "verdict": "open",
       "by": "",
       "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
+      "key": "Eighty-three remain open and they are the real ones.",
+      "verdict": "moment",
+      "by": "a statement about the backlog on 2026-09-27 after this sweep. The count is what `python3 scripts/caveats.py` prints, not a property of the tree.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
+      "key": "A `deliberate` verdict is a judgement and nothing checks it.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
+      "key": "Nothing re-reads a `deliberate` verdict.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-hundred-and-three-caveats-decided-and-one-that-was-already-false.md",
+      "key": "The rate is not fixed, only the backlog.",
+      "verdict": "deliberate",
+      "by": "this entry: the rate is the discipline — an entry that stops recording its limits is the failure CLAUDE.md is written against. What was changed is when a limit gets decided, not whether it gets written down.",
+      "reviewed": "2026-09-27"
     }
   ]
 }

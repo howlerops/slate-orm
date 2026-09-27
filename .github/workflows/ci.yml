@@ -321,6 +321,13 @@ jobs:
       - run: python3 scripts/test_check_caveat_citations.py
       - run: python3 scripts/check_closed_caveats.py
       - run: python3 scripts/test_check_closed_caveats.py
+      # The tracker itself, which `scripts/check.sh` has always run and
+      # CI never did. `ledger/2026-09-25-a-reworded-caveat-is-a-different-claim.md`
+      # recorded the gap: rewording a bullet detaches its verdict
+      # silently, and until this ran here the only thing that noticed
+      # was a session remembering to look.
+      - run: python3 scripts/caveats.py
+      - run: python3 scripts/test_caveats.py
       - run: python3 scripts/check_none_last.py
       - run: python3 scripts/test_check_none_last.py
       - run: python3 scripts/check_guard_scope.py
