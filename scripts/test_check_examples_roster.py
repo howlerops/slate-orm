@@ -24,11 +24,37 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import check_examples_roster
 
-#: A source that runs to completion, one that does not, and one that reads
-#: section names off its command line.
+#: A source that runs to completion, one that does not, and three that read
+#: their own command line: through the shared parser, by hand with a refusal,
+#: and by hand without one.
 RUNS = "fn main() { println!(\"done\"); }\n"
 SERVES = 'fn main() { println!("LISTENING 1"); std::future::pending::<()>(); }\n'
 PICKY = 'fn main() { let _ = sections::from_args(&["rpc", "lease"]); }\n'
+
+#: The `s3_server` shape: every argument matched, an unknown one exits 2.
+#:
+#: Spelled by hand rather than through `sections::from_args`, because that is
+#: the half rule 5 exists for — an example parsing `std::env::args()` itself
+#: was invisible to every rule when the roster was keyed on the shared parser.
+HANDY = (
+    'fn main() { for a in std::env::args().skip(1) { match a.as_str() {\n'
+    '    "--json" => {}, _ => std::process::exit(2) } } }\n'
+)
+
+#: The defect rule 5 reports: read, compare, ignore anything else, exit 0.
+#:
+#: This is `bucket_layout` and `cost_calibration` as they were — `--jsonn`
+#: printed the human listing and `--codl` ran the warm suite, each exiting 0.
+SLOPPY = 'fn main() { let j = std::env::args().any(|a| a == "--json"); let _ = j; }\n'
+
+#: A server that also reads its command line, which is `s3_server` exactly.
+#: Rule 5 applies to it; rule 4 does not, because the runner never reaches the
+#: refusal branch for an example it stops at the handshake.
+SERVES_PICKY = (
+    'fn main() { for a in std::env::args().skip(1) { match a.as_str() {\n'
+    '    "--bucket" => {}, _ => std::process::exit(2) } }\n'
+    '    println!("LISTENING 1"); std::future::pending::<()>(); }\n'
+)
 
 
 def script(
@@ -105,7 +131,12 @@ def run(
             (crate, name): "--not-a-section"
             for crate, examples in crates.items()
             for name, source in examples.items()
-            if "sections::from_args" in source
+            # The guard's own two predicates, spelled out rather than
+            # imported: a fixture that asked `check_examples_roster` which
+            # examples need a line would agree with it by construction, and
+            # every rule-4 case would pass against a broken pair.
+            if ("std::env::args" in source or "sections::from_args" in source)
+            and "future::pending" not in source
         }
     if not bare:
         crates = {**crates, SPARE[0]: {SPARE[1]: SERVES, SPARE_PICKY[1]: PICKY}}
@@ -299,7 +330,7 @@ SECTION_CASES: list[tuple[str, dict, dict | None, str, bool]] = [
         "an example that takes sections and has no refusal line is reported",
         {"a": {"picky": PICKY}},
         {},
-        "`a/picky` takes section names and has no line in `refuses()`",
+        "`a/picky` reads its command line and has no line in `refuses()`",
         False,
     ),
     (
@@ -310,10 +341,10 @@ SECTION_CASES: list[tuple[str, dict, dict | None, str, bool]] = [
         False,
     ),
     (
-        "a refusal for an example that takes no sections is reported",
+        "a refusal for an example that reads no arguments is reported",
         {"a": {"one": RUNS, "picky": PICKY}},
         {("a", "picky"): "--not-a-section", ("a", "one"): "--not-a-section"},
-        "names `a/one`, which takes no sections",
+        "names `a/one`, which reads no arguments",
         False,
     ),
     (
@@ -351,14 +382,74 @@ SECTION_CASES: list[tuple[str, dict, dict | None, str, bool]] = [
         True,
     ),
     (
-        # The other never-fires half. Without this, deleting `TAKES_SECTIONS`
-        # or renaming what it matches leaves rule 4 checking an empty set and
-        # printing `ok`.
-        "a tree where no example takes sections is reported, not passed over",
+        # The other never-fires half. Without this, deleting `READS_ARGS`
+        # or renaming what it matches leaves rules 4 and 5 checking an empty
+        # set and printing `ok`.
+        "a tree where no example reads its command line is reported, not passed over",
         {"a": {"one": SERVES}},
         {("a", "one"): "--not-a-section"},
-        "no example anywhere reads section names",
+        "no example anywhere reads its command line",
         True,
+    ),
+    (
+        # Rule 5's forward half, and the reason the roster key was widened:
+        # this source was invisible to every rule when the key was
+        # `sections::from_args`.
+        "an example that reads arguments and refuses none is reported",
+        {"a": {"sloppy": SLOPPY}},
+        {("a", "sloppy"): "--not-an-option"},
+        "`a/sloppy` reads its command line and has no path that refuses",
+        False,
+    ),
+    (
+        "a hand-written refusal counts, so an s3_server-shaped example is clean",
+        {"a": {"handy": HANDY}},
+        {("a", "handy"): "--not-an-option"},
+        "",
+        False,
+    ),
+    (
+        # Without the roster half, `SLOPPY` would only ever be caught by rule
+        # 5 — and rule 5 reads the source, so an example that gained a
+        # `process::exit` for some unrelated reason would pass it while still
+        # never being handed a bad argument by a run.
+        "an example that reads arguments by hand still needs a refusal line",
+        {"a": {"handy": HANDY}},
+        {},
+        "`a/handy` reads its command line and has no line in `refuses()`",
+        False,
+    ),
+    (
+        # The exclusion, forward: a server is run for its handshake and the
+        # runner moves on, so demanding a line for it would demand a line
+        # that is never read.
+        "a server that reads arguments is not asked for a refusal line",
+        {"a": {"serving": SERVES_PICKY}},
+        {},
+        "",
+        False,
+    ),
+    (
+        # And backwards. Before the exclusion this reported "reads no
+        # arguments", which is false about `s3_server` and would send the
+        # reader to the wrong file.
+        "a refusal line for a server is reported as unreachable",
+        {"a": {"serving": SERVES_PICKY}},
+        {("a", "serving"): "--not-an-option"},
+        "never returns and is run for its handshake instead",
+        False,
+    ),
+    (
+        # Rule 5 does apply to a server: `s3_server` refuses, and one that
+        # stopped would be the same silent pass one command-line away.
+        "a server that reads arguments and refuses none is still reported",
+        {"a": {"serving": SERVES.replace(
+            "fn main() {",
+            'fn main() { let _ = std::env::args().any(|a| a == "--x");',
+        )}},
+        {},
+        "`a/serving` reads its command line and has no path that refuses",
+        False,
     ),
 ]
 

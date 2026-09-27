@@ -177,6 +177,8 @@ refuses() {
         slate-headbench/head_report) echo "--not-a-section" ;;
         slate-headbench/head_concurrency) echo "--not-a-section" ;;
         slate-headbench/stream_step) echo "--not-a-section" ;;
+        slate-slatedb/bucket_layout) echo "--not-an-option" ;;
+        slate-slatedb/cost_calibration) echo "--not-an-option" ;;
         *) echo "" ;;
     esac
 }

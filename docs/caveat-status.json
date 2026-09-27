@@ -6221,8 +6221,9 @@
     {
       "entry": "2026-09-26-the-refusal-nothing-ran.md",
       "key": "Neither guard can see a fourth kind of silent pass.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "scripts/check_examples_roster.py rule 5 plus a roster keyed on READS_ARGS rather than on sections::from_args; ledger/2026-09-27-two-more-examples-ignored-a-mistyped-flag.md, which found the hypothetical had already shipped in two slate-slatedb examples",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-five-gaps-decided-rather-than-deferred.md",
@@ -6301,6 +6302,35 @@
       "key": "A struct nested inside another is reported against the outer",
       "verdict": "deliberate",
       "by": "this entry: the alternative is brace-tracking to find the innermost open struct, rejected because every block in this workspace is flat, the rule still fires on a nested one, and it names a type a reader can find. Revisit if a nested secret-holding struct is ever written.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
+      "key": "The two Rust fixes are not mutation-tested, because nothing ",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a test binary per example wrapping its main, rejected because each example is meant to read top to bottom as a demonstration and run_examples.sh already runs the built binary with a bad argument. Demonstrated before and after on the release build instead.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
+      "key": "`REFUSES_UNKNOWN` cannot tell a refusing path from an unreac",
+      "verdict": "narrowed",
+      "residual": "only for a server example, which has no roster line because run_examples.sh never reaches the refusal branch for one. Every non-server example that reads arguments is also handed a bad one by a run, which is what proves the path is live.",
+      "by": "scripts/run_examples.sh's refusal probe; ledger/2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
+      "key": "The exclusion of servers from rule 4 is a property of the ru",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-two-more-examples-ignored-a-mistyped-flag.md",
+      "key": "Three `slate-kernel` and `slate-orm` examples read no argume",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is demanding every example take and refuse an argument, rejected because an example with nothing to select has nothing to mistype. Rule 5 catches the one that starts.",
       "reviewed": "2026-09-27"
     }
   ]

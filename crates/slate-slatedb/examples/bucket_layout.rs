@@ -36,6 +36,34 @@ use std::time::Duration;
 /// that collects the WAL has to be pointed at the same place the `Db` was.
 const SLATE_PATH: &str = "/records";
 
+/// Was `--json` asked for, refusing any other argument.
+///
+/// A `.any(|a| a == "--json")` was here, and it read `--jsonn` as "no JSON":
+/// the human listing, exit 0, and nothing to tell a caller who wanted the
+/// site's artifact that they had mistyped. That is `head_report --typo` in a
+/// second place — the defect
+/// `ledger/2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md`
+/// recorded and `slate_headbench::sections` fixed for the examples that take
+/// section names. This one takes a flag rather than sections, so it gets the
+/// same refusal spelled by hand rather than the shared parser.
+///
+/// Exit 2, matching `sections::from_args` and `s3_server`: `run_examples.sh`
+/// reads a non-zero exit as "the benchmark failed", and 2 is "you asked for
+/// the wrong thing".
+fn wanted_json() -> bool {
+    let mut json = false;
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--json" => json = true,
+            other => {
+                eprintln!("usage: bucket_layout [--json]; `{other}` is not an option");
+                std::process::exit(2);
+            }
+        }
+    }
+    json
+}
+
 struct Entry {
     path: String,
     bytes: u64,
@@ -43,7 +71,7 @@ struct Entry {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let json = std::env::args().any(|a| a == "--json");
+    let json = wanted_json();
     // Human mode only. `--json` writes the committed `site/data/bucket.json`
     // straight to stdout, and a build line above it would be a syntax error
     // in the artifact rather than provenance on it. The JSON's own

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-27T00:44:32+00:00",
+  "file": "scripts/check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "014a828",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a refusal line naming a server is not reported as unreachable",
+      "old": "        elif (crate, name) in servers:",
+      "new": "        elif (crate, name) in servers and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a refusal line for a server is reported as unreachable"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 4's forward half never reports",
+      "old": "        if (crate, name) not in refusals:\n            said.append(\n                f\"`{crate}/{name}` reads its command line and has no line in \"",
+      "new": "        if (crate, name) not in refusals and False:\n            said.append(\n                f\"`{crate}/{name}` reads its command line and has no line in \"",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that takes sections and has no refusal line is reported",
+        "an example that reads arguments by hand still needs a refusal line"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

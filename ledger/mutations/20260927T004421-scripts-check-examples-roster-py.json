@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-27T00:44:21+00:00",
+  "file": "scripts/check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "014a828",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an example reading argv by hand is not read as reading argv",
+      "old": "READS_ARGS = re.compile(r\"std::env::args|sections::from_args\")",
+      "new": "READS_ARGS = re.compile(r\"sections::from_args\")",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that reads arguments and refuses none is reported",
+        "a hand-written refusal counts, so an s3_server-shaped example is clean",
+        "an example that reads arguments by hand still needs a refusal line",
+        "a server that reads arguments and refuses none is still reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a hand-written exit(2) does not count as refusing",
+      "old": "REFUSES_UNKNOWN = re.compile(r\"sections::from_args|process::exit\")",
+      "new": "REFUSES_UNKNOWN = re.compile(r\"sections::from_args\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a hand-written refusal counts, so an s3_server-shaped example is clean",
+        "a server that reads arguments is not asked for a refusal line",
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 5 never reports",
+      "old": "        if not REFUSES_UNKNOWN.search(found[crate][name]):",
+      "new": "        if False and not REFUSES_UNKNOWN.search(found[crate][name]):",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that reads arguments and refuses none is reported",
+        "a server that reads arguments and refuses none is still reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a server is asked for a refusal line after all",
+      "old": "    takers = readers - servers",
+      "new": "    takers = set(readers)",
+      "verdict": "caught",
+      "caught_by": [
+        "a server that reads arguments is not asked for a refusal line",
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 5's never-fires half never fires",
+      "old": "    if not readers:",
+      "new": "    if readers and not readers:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree where no example reads its command line is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
