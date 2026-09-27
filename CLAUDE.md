@@ -227,6 +227,19 @@ that is set and missing is a hard error, never a silent fall back to building.
   file was absent from the checkout, a browser check whose expectation had gone
   stale, and a registry refusing an anonymous pull. None was visible from this
   container, and the first two were a session's own work.
+- **An action's defaults are part of your toolchain.** `actions/setup-go` sets
+  `GOTOOLCHAIN=local` for a pinned `go-version`, so bumping it to `@v6` turned
+  the Go client job red with no Go changed: `protoc-gen-go-grpc@v1.6.2` is
+  pinned because it generates committed code, and it declares `go >= 1.25.0`
+  against the 1.24 the workflow installs. `GOTOOLCHAIN` had been `auto` and
+  had been quietly downloading a newer compiler for two weeks. When an action
+  bump turns a job red, read what the action's new major changed about the
+  *environment* before looking at the diff — there may not be one.
+  `clients/go/scripts/generate_proto.py` now sets `GOTOOLCHAIN` itself, which
+  is also what makes the failure reproducible here:
+  `GOTOOLCHAIN=local go test ./slate -run TestStubsAreFresh -count=1` is CI's
+  condition, and it is the only way to meet it locally.
+
 - **CI's clippy is newer than yours, and `-D warnings` makes that fatal.**
   `dtolnay/rust-toolchain@stable` tracks the current release; this container
   has whatever it was built with. That gap is not theoretical: three commits

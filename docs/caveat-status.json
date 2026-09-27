@@ -6332,6 +6332,34 @@
       "verdict": "deliberate",
       "by": "this entry: the alternative is demanding every example take and refuse an argument, rejected because an example with nothing to select has nothing to mistype. Rule 5 catches the one that starts.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
+      "key": "It does not stop the next action default from doing this.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a guard that diffs each action's new major for environment changes, which needs the action's own source and a model of what counts as an environment change. Not taken; the CLAUDE.md note is the mitigation and it is a note.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
+      "key": "Nothing checks that a pinned generator's Go floor is met.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
+      "key": "A ledger entry citing a ledger entry is checked by nothing.",
+      "verdict": "open",
+      "by": "",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-setup-go-v6-pins-gotoolchain-and-the-generator-needed-1-25.md",
+      "key": "The MinIO job is still the other failure in run 387",
+      "verdict": "moment",
+      "by": "a statement about CI run 387 (2026-09-27), not about the tree. The MinIO failure has its own open caveat under ledger/2026-09-27-three-red-jobs-nobody-was-watching.md.",
+      "reviewed": "2026-09-27"
     }
   ]
 }

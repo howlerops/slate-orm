@@ -63,7 +63,26 @@ def gopath_bin() -> pathlib.Path:
 def ensure_plugins() -> pathlib.Path:
     """Install the two generators if they are not already there."""
     binaries = gopath_bin()
-    env = {**os.environ, "GOFLAGS": "-mod=mod"}
+    # `GOTOOLCHAIN=auto`, explicitly, because the plugin below is pinned and
+    # the pin carries a Go floor the repository's own does not meet:
+    # `protoc-gen-go-grpc@v1.6.2` declares `go >= 1.25.0` and `go.mod` here
+    # says 1.24, which is the version CI installs. With `GOTOOLCHAIN=local`
+    # this is a hard error —
+    #
+    #   go: ...protoc-gen-go-grpc@v1.6.2 requires go >= 1.25.0
+    #       (running go 1.24.7; GOTOOLCHAIN=local)
+    #
+    # — and `actions/setup-go` sets exactly that for a pinned `go-version`,
+    # so bumping it to v6 turned this job red without a line of Go changing.
+    #
+    # Downloading a toolchain to build a pinned plugin is safe in a way that
+    # floating the plugin would not be: the generator's *output* is fixed by
+    # its own version, and `TestStubsAreFresh` compares the result byte for
+    # byte, so a toolchain that changed the output would fail loudly rather
+    # than drift. Raising CI's `go-version` instead was the alternative, and
+    # it would stop CI testing the version `go.mod` actually claims to
+    # support.
+    env = {**os.environ, "GOFLAGS": "-mod=mod", "GOTOOLCHAIN": "auto"}
     for name, package in (
         ("protoc-gen-go", PROTOC_GEN_GO),
         ("protoc-gen-go-grpc", PROTOC_GEN_GO_GRPC),
