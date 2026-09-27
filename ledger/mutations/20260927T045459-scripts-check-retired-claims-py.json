@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-27T04:54:59+00:00",
+  "file": "scripts/check_retired_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_retired_claims.py"
+  ],
+  "commit": "531e5bb",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the guard stops reading HTML again",
+      "old": "\".md\", \".toml\", \".html\"}",
+      "new": "\".md\", \".toml\"}",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found on a documentation page, not only in source: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the guard reads only HTML, so source copies go unseen",
+      "old": "SUFFIXES = {\".rs\", \".py\", \".go\", \".ts\", \".tsx\", \".js\", \".sh\", \".md\", \".toml\", \".html\"}",
+      "new": "SUFFIXES = {\".html\"}",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found on one line: wanted 1 problems, got 0",
+        "the claim is found when it wraps: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

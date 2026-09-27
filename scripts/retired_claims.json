@@ -24,6 +24,12 @@
       "retired_by": "ledger/2026-09-24-a-guard-said-it-did-not-read-the-tree-it-reads.md",
       "why": "check_cost_prose.py has walked docs/ since #283; the docstring paragraph was left behind by that widening.",
       "instead": "site/ is out of scope; docs/ is read, with NOT_A_CLAIM for historical narration."
+    },
+    {
+      "phrase": "nested loading were built afterwards in Rust and have",
+      "retired_by": "ledger/2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "why": "N1 put a `path` of relationships on the wire, so nested loading crossed it. The claim was struck in docs/orm-comparison.md and left standing on site/docs/roadmap.html, which is the two-copies failure this list exists for.",
+      "instead": "A path resolves levels in one round trip; what it stops at is a predicate, ordering or limit per level."
     }
   ]
 }

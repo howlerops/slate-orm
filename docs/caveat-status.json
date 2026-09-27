@@ -6967,6 +6967,42 @@
       "verdict": "deliberate",
       "by": "this entry: the alternative is a test asserting that slate-serverd serves nothing until `reconcile` returns — that the ordering the note relies on is the ordering. Not taken because it is a test of a startup sequence, which means driving the daemon to the point where it is listening and proving a migration is already finished; the shape that would actually catch a regression is `reconcile` being unreachable from the serving path at all, which is a rule for scripts/check_handlers.py rather than a test. Recorded so the note's premise is visible as a premise.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "It registers one phrase, and the registry is still the whole",
+      "verdict": "deliberate",
+      "by": "this entry, and the same call check_retired_claims.py's own docstring makes and defends: detecting \"these two sentences assert the same thing\" is the undecidable problem, and the approximations are worse than nothing. Not taken for that reason. What a declaration buys is not the first catch — that is the read that prompted it — but every later one.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "A phrase interrupted by a tag still will not match.",
+      "verdict": "narrowed",
+      "by": "the limitation is now stated where somebody writing a registry entry will read it: the comment on SUFFIXES says to register the longest run of plain words a sentence contains.",
+      "residual": "that is a convention held by a comment. Nothing refuses a registry entry whose phrase could never match because it spans a tag, and such an entry would sit in the file looking like protection.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "Nine other items in the audit have a counterpart paragraph o",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is reading all nine of docs/orm-comparison.md's items against their paragraph on site/docs/roadmap.html. Not taken because the items most likely to be stale are the ones a session has just touched, which is how both survivors so far were found, and a nine-item sweep produces a reading that goes stale on the next commit. The registry catches a reintroduction of the phrase that was found, which is the durable half.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "The fan-out sentence added to the page is a new claim with n",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a CHECKED roster entry in check_site_claims.py pinning the sentence. Not taken because what it would pin is an *absence* — no ceiling on a path's response — and a roster entry naming a thing that does not exist goes stale on the change that fixes it rather than the change that breaks it, which is the wrong direction for a guard. The honest close is a ceiling, tracked in ledger/2026-09-17-a-path-of-relationships-on-the-wire.md.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "`.html` was added to one guard, and the sweep for others fou",
+      "verdict": "deliberate",
+      "by": "the sweep was done and is reported in this entry: five of the guard scripts under scripts/ deal with the site and four already read .html. The one latent gap it found — check_cited_docs.py not walking site/ — is recorded rather than fixed because no page cites a ledger entry today, so widening it would add a check with nothing to check, which is the never-fires shape this repository treats as a liability rather than a win.",
+      "reviewed": "2026-09-27"
     }
   ]
 }
